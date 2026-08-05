@@ -1,158 +1,194 @@
-//! The statline: the deck's bottom row, regrouped into four labeled zones
-//! separated by a single `│` divider in the theme's divider color (D1):
+//! The statline: the deck's bottom band, **two rows** tall — a micro-label
+//! row sitting directly over its bright value row, cells split by a `│`
+//! hairline, with the ethos chip pinned right, over an always-on MODELS row:
 //!
 //! ```text
-//! ✦ lead · lead · ● execute │ ctx 35k/200k · cpu 73% · cache 85% │ turn $0.99 · run $1.00 · saved $2.87 │   ✉ 29 · queue empty
-//! └─ zone A: identity ──────┘└─ zone B: resources ─────────────┘└─ zone C: money ─────────────────────┘ └─ zone D: attention ─┘
+//!  MODEL                          │ EXECUTE     │ CPU         │ CONTEXT         │ SPEND │ CACHE                │ SAVED  │ WARMTH │ ENGINE   │ PIPELINE │ INBOX
+//!  worker: anthropic/claude-fable-5 │ Step 4 of 5 │ ▮▮▮▮▮▮ 100% │ ▮▮▮▯▯▯ 91k/200k │ $3.77 │ 94% (7.0M rd · 0 wr) │ $18.80 │ cold   │ 0 active │ ON       │ ✉ 29
+//!  MODELS  T·z-ai/glm-5.2  W·moonshotai/kimi-k3  J·anthropic/claude-opus-5
 //! ```
 //!
-//! Zone A is identity (brand glyph + focused agent + role + stage dot), B is
-//! resources (`ctx` · `cpu` · `cache` hit-rate), C is money (`turn` · `run
-//! [of cap]` · `saved`), D is attention (`✉` unread + queue status,
-//! right-aligned, plus `✦/◆` lane counts when subagents exist). WARMTH,
-//! ENGINE and PIPELINE left this row for the context overlay / SETTINGS —
-//! diagnostics, not glanceables — and the MODELS row is gone outright
-//! (routing lives on the scope card and `/models`).
+//! ## Why two rows and not one
 //!
-//! ## Degradation: zones drop whole, they never squish
+//! A one-row statline has to name each value inline (`ctx 91k/200k · cpu
+//! 73%`), which is the most expensive possible way to say it: the label is
+//! redrawn beside the value on every frame, competing with it for the same
+//! scarce columns. Stacking the label *above* the value spends free vertical
+//! space instead of scarce horizontal space, and leaves the value row
+//! carrying information only. That is the room the CPU/CONTEXT meters, the
+//! CACHE read/write volumes and the MODELS pins occupy — none of which fit
+//! beside their own inline labels at ordinary deck widths.
 //!
-//! On a narrow row, items are dropped in a fixed order (`cpu`, then the rest
-//! of zone B, then `turn`+`saved`, then `run`, `role`, `queue`, `stage`,
-//! lane counts — zone A's brand and zone D's inbox badge survive to the
-//! narrowest widths). Nothing is elided mid-token, and a dropped zone takes
-//! its divider with it, so two zones never share a divider-less boundary.
+//! ## What leads the band
+//!
+//! MODEL and the stage box, not an identity. The brand glyph, the agent id
+//! and a `● execute` dot led the row for a long time and none of them earned
+//! it: on a single-agent session two of the three never changed, and the
+//! third said in a whole cell what the stage stepper one row up already
+//! says. In their place the band opens with the two things that *do* move —
+//! which pin is answering (`worker: anthropic/claude-fable-5`, the model's
+//! own vendor, not the gateway that proxied it) and how far through the task
+//! board this stage has gotten.
+//!
+//! The stage box is the one cell whose *label* is live state: the stage name
+//! heads it, in the stage's own color, over `Step 4 of 5` read off the task
+//! board. A stage with no board reads `—` rather than inventing a step.
+//!
+//! ## The meters
+//!
+//! CPU and CONTEXT lead with a 6-cell `▮▯` bar colored by
+//! [`theme::gauge_color`]: the shape reads before the digits do, so "how full
+//! is the window" survives a glance that the number would not. Six cells is
+//! deliberately coarse — it is a saturation gauge, not a readout, and the
+//! exact figure sits immediately beside it.
+//!
+//! ## Degradation: the lowest-priority cell leaves first
+//!
+//! Every cell carries a drop priority. On a narrow row the ethos chip goes
+//! first (pure chrome, before any data cell), then the lowest-priority cell
+//! still standing, until the row fits. MODEL, the stage box and CONTEXT are
+//! [`MUST_KEEP`] and never leave — what is answering, where it is, and how
+//! much window is left. Cells leave whole; nothing is clipped mid-token.
 //!
 //! ## Collapse: a card on top gets a quiet floor
 //!
-//! When any overlay/card is open the row collapses to at most four items
-//! chosen for that context (the task card keeps `turn $` + tok/s, the scope
-//! card keeps `ctx` + `run of cap`, the witness panel keeps its phase).
-//! [`statline_items`] is the single decision function, unit-testable
-//! without a buffer.
+//! When any overlay/card is open the band collapses to at most four cells
+//! chosen for that context (the task card keeps `TURN` + tok/s, the scope
+//! card keeps `CONTEXT` + `SPEND`, the witness panel keeps its phase).
+//! [`statline_items`] is the single decision function, unit-testable without
+//! a buffer.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
 use crate::cache_panel;
-use crate::deck::WorkspaceModel;
+use crate::deck::{PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::deck_ui::cards::Card;
-use crate::textline::stage_label;
 use crate::theme;
 
-/// The context window the `ctx` meter divides by.
-pub(crate) const CTX_WINDOW: u64 = 200_000;
+/// The context window the CONTEXT meter divides by.
+pub const CTX_WINDOW: u64 = 200_000;
 
-/// The four zones. Order is display order; D is right-aligned.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StatZone {
-    Identity,
-    Resources,
-    Money,
-    Attention,
-}
+/// Cells at this priority are never dropped for width: MODEL (what is
+/// answering), the stage box (where the run is) and CONTEXT (how much window
+/// is left). Everything else is negotiable.
+pub const MUST_KEEP: u8 = 9;
 
-/// One statline item: a stable key (what tests assert on), its zone, and the
-/// styled spans that render it.
+/// The ethos chip, pinned right. Pure chrome, so it is the *first* thing
+/// dropped when the row is tight — before any cell carrying data.
+const ETHOS: &str = "↝ deterministic-first ";
+
+/// One statline cell: a stable key (what tests assert on), the dim
+/// micro-label drawn above it, its drop priority, and the styled value spans.
 #[derive(Clone, Debug)]
 pub struct StatItem {
     pub key: &'static str,
-    pub zone: StatZone,
+    pub label: &'static str,
+    pub priority: u8,
     pub spans: Vec<Span<'static>>,
+    /// Overrides the label row's dim for this one cell. `None` for every
+    /// constant label; the stage box sets it so the live stage word carries
+    /// the stage's own color instead of reading as chrome.
+    pub label_color: Option<Color>,
 }
 
 impl StatItem {
-    fn new(key: &'static str, zone: StatZone, spans: Vec<Span<'static>>) -> Self {
-        Self { key, zone, spans }
+    fn new(
+        key: &'static str,
+        label: &'static str,
+        priority: u8,
+        spans: Vec<Span<'static>>,
+    ) -> Self {
+        Self {
+            key,
+            label,
+            priority,
+            spans,
+            label_color: None,
+        }
     }
 
-    /// Display width of the item's spans.
-    fn width(&self) -> usize {
+    /// Draw this cell's label in `color` rather than the label row's dim.
+    fn with_label_color(mut self, color: Color) -> Self {
+        self.label_color = Some(color);
+        self
+    }
+
+    /// Display width of the value spans.
+    fn value_width(&self) -> usize {
         self.spans.iter().map(|s| s.content.as_ref().width()).sum()
+    }
+
+    /// The column width the cell occupies: label and value share one column,
+    /// so the wider of the two sets it.
+    fn column_width(&self) -> usize {
+        self.value_width().max(self.label.width())
     }
 }
 
-/// The fixed order items are dropped in when the row is too narrow. Earlier
-/// entries go first; anything not listed survives to the narrowest widths
-/// (`agent` — the brand-glyph identity — `inbox`, and a failing-CI PR
-/// badge).
-const DROP_ORDER: [&str; 9] = [
-    "cpu", "cache", "ctx", "turn", "saved", "run", "role", "queue", "pr",
-];
-
-/// The statline's items for this frame — THE decision function (collapse
-/// rule included), pure over `(model, ui)` so it is unit-testable without a
+/// The statline's cells for this frame — THE decision function (collapse rule
+/// included), pure over `(model, ui)` so it is unit-testable without a
 /// buffer.
 pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
     let dim = Style::new().fg(theme::TEXT_TERTIARY);
-    let primary = Style::new().fg(theme::TEXT_PRIMARY);
+    let val = Style::new().fg(theme::TEXT_PRIMARY);
     let ok = Style::new().fg(theme::SUCCESS_BRIGHT);
     let focused = model.agents.get(ui.focused);
 
-    // ── zone A: identity ────────────────────────────────────────────────
-    let agent_name = focused
-        .map(|a| a.meta.id.clone())
-        .unwrap_or_else(|| "—".into());
-    let agent = StatItem::new(
-        "agent",
-        StatZone::Identity,
-        vec![
-            Span::styled("✦ ", theme::accent()),
-            Span::styled(agent_name.clone(), theme::accent()),
-        ],
-    );
-    // The role, dimmed — suppressed when it just repeats the id.
-    let role = focused
-        .map(|a| a.meta.role.clone())
-        .filter(|role| !role.is_empty() && *role != agent_name)
-        .map(|role| StatItem::new("role", StatZone::Identity, vec![Span::styled(role, dim)]));
+    // MODEL: which pin is serving right now, as `role: vendor/model`. This
+    // is the band's identity anchor — it replaced the brand glyph, the agent
+    // id and the stage dot, none of which changed often enough to earn the
+    // columns. Which model is answering *does* change mid-turn, and it is the
+    // thing a scored run is read against.
+    let model_cell = StatItem::new("model", "MODEL", MUST_KEEP, model_spans(model, dim, val));
+
+    // The stage box: the stage NAME is the label (top row), so the row above
+    // stops repeating a constant word and starts carrying live state; the
+    // value below is how far through the task board this stage has gotten.
     let stage_kind = focused.and_then(|a| a.model.hud.stage);
     let stage = StatItem::new(
         "stage",
-        StatZone::Identity,
-        vec![
-            Span::styled(
-                "● ",
-                Style::new().fg(stage_kind
-                    .map(theme::stage_color)
-                    .unwrap_or(theme::TEXT_TERTIARY)),
-            ),
-            Span::styled(
-                stage_kind.map(stage_label).unwrap_or("idle").to_string(),
-                primary,
-            ),
-        ],
+        stage_label_upper(stage_kind),
+        MUST_KEEP,
+        vec![match focused.map(|a| step_of(&a.model.tasks)) {
+            Some(Some(text)) => Span::styled(text, val),
+            // No board built, or an empty one: the stage name above is the
+            // whole story, and an invented "Step 1 of 1" would not be.
+            _ => Span::styled("—", dim),
+        }],
+    )
+    .with_label_color(
+        stage_kind
+            .map(theme::stage_color)
+            .unwrap_or(theme::TEXT_TERTIARY),
     );
 
-    // ── zone C values shared with the collapsed forms ───────────────────
-    let turn_cost = focused.map_or(0.0, |a| a.model.hud.turn_spent_usd());
-    let turn = StatItem::new(
-        "turn",
-        StatZone::Money,
-        vec![
-            Span::styled("turn ", dim),
-            Span::styled(format!("${turn_cost:.2}"), ok),
-        ],
-    );
-    let mut run_spans = vec![
-        Span::styled("run ", dim),
-        Span::styled(format!("${:.2}", model.total_cost()), primary),
-    ];
+    // SPEND: the *session* total across every agent. The live per-turn figure
+    // deliberately lives one row up in `render_composer_footer` — the two
+    // numbers answer different questions and move at different speeds.
+    let mut spend_spans = vec![Span::styled(format!("${:.2}", model.total_cost()), ok)];
     if let Some(cap) = model.budget_cap_usd.filter(|cap| *cap > 0.0) {
-        run_spans.push(Span::styled(format!(" of ${cap:.2}"), dim));
+        spend_spans.push(Span::styled(format!(" of ${cap:.2}"), dim));
     }
-    let run = StatItem::new("run", StatZone::Money, run_spans);
+    let spend = StatItem::new("spend", "SPEND", 6, spend_spans);
 
-    // ── the collapse rule: a card on top gets at most four items ────────
+    // ── the collapse rule: a card on top gets at most four cells ────────────
     if let Some(context) = open_surface(ui) {
-        let mut items = vec![agent, stage];
+        let mut items = vec![model_cell, stage];
         match context {
             Card::Tasks => {
-                items.push(turn);
+                let turn_cost = focused.map_or(0.0, |a| a.model.hud.turn_spent_usd());
+                items.push(StatItem::new(
+                    "turn",
+                    "TURN",
+                    6,
+                    vec![Span::styled(format!("${turn_cost:.2}"), ok)],
+                ));
                 let (rate, contributors) = model.combined_tok_per_s();
                 if let Some(rate) = rate {
                     let text = if contributors > 1 {
@@ -162,8 +198,9 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
                     };
                     items.push(StatItem::new(
                         "toks",
-                        StatZone::Attention,
-                        vec![Span::styled(text, dim)],
+                        "RATE",
+                        4,
+                        vec![Span::styled(text, val)],
                     ));
                 }
             }
@@ -173,75 +210,104 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
                     .unwrap_or_else(|| "witness".to_string());
                 items.push(StatItem::new(
                     "witness",
-                    StatZone::Attention,
+                    "WITNESS",
+                    MUST_KEEP,
                     vec![Span::styled(phase, theme::accent())],
                 ));
-                items.push(run);
+                items.push(spend);
             }
-            // The scope card — and every other overlay — keeps the resource
-            // meter and the run figure: the quiet floor.
+            // The scope card — and every other overlay — keeps the context
+            // meter and the session spend: the quiet floor.
             _ => {
-                items.push(ctx_item(model, ui, dim, primary));
-                items.push(run);
+                items.push(ctx_item(model, ui, val));
+                items.push(spend);
             }
         }
         return items;
     }
 
-    // ── the full row ────────────────────────────────────────────────────
-    let mut items = vec![agent];
-    items.extend(role);
-    items.push(stage);
-
-    items.push(ctx_item(model, ui, dim, primary));
+    // ── the full band ───────────────────────────────────────────────────────
     let cpu = f64::from(model.global_cpu_pct);
-    items.push(StatItem::new(
-        "cpu",
-        StatZone::Resources,
-        vec![
-            Span::styled("cpu ", dim),
-            Span::styled(format!("{cpu:.0}%"), primary),
-        ],
-    ));
-    // The hit rate only — the read/write volumes live in the context
-    // overlay's cache detail now.
-    let hit = cache_panel::hit_pct(model.cache_hit_tokens(), model.total_input_tokens());
-    items.push(StatItem::new(
-        "cache",
-        StatZone::Resources,
-        vec![
-            Span::styled("cache ", dim),
-            match hit {
-                Some(pct) => Span::styled(format!("{pct}%"), primary),
-                None => Span::styled("—", dim),
-            },
-        ],
-    ));
-
-    items.push(turn);
-    items.push(run);
-    items.push(StatItem::new(
-        "saved",
-        StatZone::Money,
-        vec![
-            Span::styled("saved ", dim),
-            Span::styled(
-                cache_panel::fmt_savings(model.total_cache_savings_usd()),
-                if model.total_cache_savings_usd() < 0.0 {
-                    Style::new().fg(theme::DANGER_BRIGHT)
-                } else {
-                    ok
-                },
+    let mut items = vec![
+        model_cell,
+        stage,
+        StatItem::new(
+            "cpu",
+            "CPU",
+            5,
+            vec![
+                Span::styled(
+                    meter_bar(cpu / 100.0),
+                    Style::new().fg(theme::gauge_color(cpu / 100.0)),
+                ),
+                Span::styled(format!(" {cpu:>3.0}%"), val),
+            ],
+        ),
+        ctx_item(model, ui, val),
+        spend,
+        StatItem::new(
+            "cache",
+            "CACHE",
+            4,
+            cache_spans(
+                model.cache_hit_tokens(),
+                model.total_cache_write_tokens(),
+                model.total_input_tokens(),
+                dim,
+                val,
             ),
-        ],
-    ));
+        ),
+        StatItem::new(
+            "saved",
+            "SAVED",
+            3,
+            saved_spans(
+                model.total_cache_savings_usd(),
+                model.total_input_tokens() > 0,
+            ),
+        ),
+        StatItem::new(
+            "warmth",
+            "WARMTH",
+            3,
+            warmth_spans(focused.and_then(|a| a.cache_warmth_secs(model.now_ms))),
+        ),
+        StatItem::new(
+            "engine",
+            "ENGINE",
+            4,
+            vec![Span::styled(
+                format!("{} active", model.active_count()),
+                val,
+            )],
+        ),
+        StatItem::new(
+            "pipeline",
+            "PIPELINE",
+            3,
+            // ON when the session drives the staged pipeline, OFF for the raw
+            // engine loop.
+            if model.pipeline {
+                vec![Span::styled("ON", ok)]
+            } else {
+                vec![Span::styled("OFF", dim)]
+            },
+        ),
+    ];
 
-    // ── zone D: attention (right-aligned) ───────────────────────────────
+    // LANES: only once this session has spawned subagents — a solo run has
+    // nothing to disambiguate and pays no columns for the cell. Priority 3,
+    // *below* CACHE, even though it is the wider cell: at 150 columns a tie
+    // at 4 was resolved by declaration order and cost the cache readout its
+    // place, and the lane split is already spelled out in the Session tab's
+    // nested subagent rows while the cache figures are nowhere else on the
+    // deck.
     let subs = model.subagent_count();
     if subs > 0 {
         items.push(StatItem::new(
             "lanes",
-            StatZone::Attention,
+            "LANES",
+            3,
             vec![
                 Span::styled(format!("✦ {} lead", model.lead_count()), theme::accent()),
                 Span::styled(" · ", dim),
@@ -249,55 +315,284 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
             ],
         ));
     }
-    // The PR badge, once a Pr event has been observed. Failing CI takes a
-    // survivor key — a red ✗ must outlive a narrow row the way unread mail
-    // does.
+
+    // PR: only once a Pr event has been observed. Failing CI raises the drop
+    // priority the same way unread mail does — a red ✗ must survive a narrow
+    // row.
     if let Some(pr) = &model.pr {
-        let key = if pr.ci == Some(stella_protocol::CiStatus::Failing) {
-            "pr-failing"
-        } else {
-            "pr"
-        };
-        items.push(StatItem::new(key, StatZone::Attention, pr_spans(pr)));
+        let failing = pr.ci == Some(stella_protocol::CiStatus::Failing);
+        let key = if failing { "pr-failing" } else { "pr" };
+        items.push(StatItem::new(
+            key,
+            "PR",
+            if failing { 8 } else { 5 },
+            pr_spans(pr),
+        ));
     }
+
+    // INBOX: persist-until-read notifications. The badge is the always-on
+    // surface; `/inbox` opens the overlay that clears it.
     let unread = ui.notifications.iter().filter(|n| !n.read).count();
     items.push(StatItem::new(
         "inbox",
-        StatZone::Attention,
+        "INBOX",
+        if unread > 0 { 8 } else { 2 },
         vec![if unread > 0 {
             Span::styled(
                 format!("✉ {unread}"),
-                theme::accent().add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(theme::WARNING_BRIGHT)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
-            Span::styled("✉ 0", dim)
-        }],
-    ));
-    let queued = model.queue.pending();
-    items.push(StatItem::new(
-        "queue",
-        StatZone::Attention,
-        vec![if queued > 0 {
-            Span::styled(format!("{queued} queued"), primary)
-        } else {
-            Span::styled("queue empty", dim)
+            Span::styled("—", dim)
         }],
     ));
     items
 }
 
-/// The `ctx used/cap` item — used in primary, `/cap` dimmed.
-fn ctx_item(model: &WorkspaceModel, ui: &DeckUi, dim: Style, primary: Style) -> StatItem {
+/// The MODEL cell's spans: `worker: anthropic/claude-fable-5` — the role
+/// word dimmed, the slug bright.
+///
+/// The role shown is whichever one most recently *served* a call
+/// ([`WorkspaceModel::active_role`]), falling back to the worker pin and then
+/// to any pin at all, so the cell names something real from the first call
+/// onward. With no pin observed yet it reads `—`, never a configured default
+/// dressed up as evidence.
+fn model_spans(model: &WorkspaceModel, dim: Style, val: Style) -> Vec<Span<'static>> {
+    let role = model
+        .active_role
+        .filter(|r| model.role_pins.contains_key(r))
+        .or_else(|| {
+            PipelineRole::ORDER
+                .iter()
+                .copied()
+                .find(|r| *r == PipelineRole::Worker && model.role_pins.contains_key(r))
+        })
+        .or_else(|| {
+            PipelineRole::ORDER
+                .iter()
+                .copied()
+                .find(|r| model.role_pins.contains_key(r))
+        });
+    let Some(role) = role else {
+        return vec![Span::styled("—", dim)];
+    };
+    let slug = model
+        .role_pins
+        .get(&role)
+        .map(vendor_slug)
+        .unwrap_or_else(|| "—".into());
+    vec![
+        Span::styled(format!("{}: ", role_word(role)), dim),
+        Span::styled(slug, val),
+    ]
+}
+
+/// The pipeline role as the deck says it out loud: triage / worker / verify.
+///
+/// `Judge` reads "verify" because that is the stage word the stepper and the
+/// witness panel already use for the same step; "judge" is the internal role
+/// name, and two words for one thing is one too many on a glanceable row.
+fn role_word(role: PipelineRole) -> &'static str {
+    match role {
+        PipelineRole::Triage => "triage",
+        PipelineRole::Worker => "worker",
+        PipelineRole::Judge => "verify",
+    }
+}
+
+/// A pin's slug with the API gateway stripped: the *model's own* vendor, not
+/// whoever proxied the call.
+///
+/// `RolePin::slug` answers "where did this call go", which is the right
+/// question for routing and the wrong one for a glanceable cell — every row
+/// of a session reads `openrouter/…`, spending columns on a constant. When
+/// the model string already carries its vendor (`z-ai/glm-5.2`) that prefix
+/// IS the identity, so the provider is dropped; when it does not
+/// (`claude-fable-5`) the provider is the vendor (`anthropic`) and stays.
+fn vendor_slug(pin: &crate::deck::RolePin) -> String {
+    if pin.model.contains('/') || pin.provider.is_empty() {
+        pin.model.clone()
+    } else {
+        format!("{}/{}", pin.provider, pin.model)
+    }
+}
+
+/// The stage name, uppercased for the label row it now heads. `None` — no
+/// stage observed yet — reads `IDLE`.
+fn stage_label_upper(stage: Option<stella_protocol::StageKind>) -> &'static str {
+    use stella_protocol::StageKind as S;
+    match stage {
+        None => "IDLE",
+        Some(S::Triage) => "TRIAGE",
+        Some(S::ContextRecall) => "CONTEXT RECALL",
+        Some(S::Plan) => "PLAN",
+        Some(S::ScopeReview) => "SCOPE REVIEW",
+        Some(S::Witness) => "WITNESS",
+        Some(S::Execute) => "EXECUTE",
+        Some(S::Verify) => "VERIFY",
+        Some(S::Judge) => "JUDGE",
+        Some(S::Reflect) => "REFLECT",
+        Some(S::ContextWrite) => "CONTEXT WRITE",
+        Some(S::Complete) => "COMPLETE",
+    }
+}
+
+/// How far through the task board the session has gotten: `Step 4 of 5`.
+///
+/// The step is the position of the task actually being worked, not the count
+/// finished — those differ the moment a task is cancelled or the board is
+/// worked out of order, and the question the cell answers is "where am I",
+/// not "how many are done". With nothing in progress the last finished
+/// position stands in, so a board between steps does not blink back to zero.
+/// `None` for an empty board: there is no step to be on.
+fn step_of(tasks: &[stella_protocol::TaskItem]) -> Option<String> {
+    use stella_protocol::TaskStatus;
+    if tasks.is_empty() {
+        return None;
+    }
+    let total = tasks.len();
+    let step = tasks
+        .iter()
+        .position(|t| t.status == TaskStatus::InProgress)
+        .map(|i| i + 1)
+        .unwrap_or_else(|| tasks.iter().filter(|t| !t.status.is_open()).count());
+    Some(format!("Step {step} of {total}"))
+}
+
+/// The CONTEXT cell: the 6-cell meter, then `used/window` in compact tokens.
+fn ctx_item(model: &WorkspaceModel, ui: &DeckUi, val: Style) -> StatItem {
+    // Current window occupancy = the latest call's prompt size, not the
+    // session's cumulative input (which dwarfs the window after a few turns).
     let used = model.agents.get(ui.focused).map_or(0, |a| a.context_tokens);
+    let frac = (used as f64 / CTX_WINDOW as f64).min(1.0);
     StatItem::new(
         "ctx",
-        StatZone::Resources,
+        "CONTEXT",
+        MUST_KEEP,
         vec![
-            Span::styled("ctx ", dim),
-            Span::styled(fmt_k(used), primary),
-            Span::styled(format!("/{}", fmt_k(CTX_WINDOW)), dim),
+            Span::styled(meter_bar(frac), Style::new().fg(theme::gauge_color(frac))),
+            Span::styled(format!(" {}/{}", fmt_k(used), fmt_k(CTX_WINDOW)), val),
         ],
     )
+}
+
+/// A compact 6-cell utilization meter for a `[0, 1]` fraction.
+fn meter_bar(frac: f64) -> String {
+    const CELLS: usize = 6;
+    let filled = (frac.clamp(0.0, 1.0) * CELLS as f64).round() as usize;
+    (0..CELLS)
+        .map(|i| if i < filled { '▮' } else { '▯' })
+        .collect()
+}
+
+/// CACHE cell: hit% then the compact read/write token volumes behind it, or
+/// the no-data dash before any input is metered.
+fn cache_spans(
+    cache_read: u64,
+    cache_write: u64,
+    total_input: u64,
+    dim: Style,
+    val: Style,
+) -> Vec<Span<'static>> {
+    match cache_panel::hit_pct(cache_read, total_input) {
+        None => vec![Span::styled("—", val)],
+        Some(pct) => vec![
+            Span::styled(format!("{pct}%"), val),
+            Span::styled(
+                format!(
+                    " ({} rd · {} wr)",
+                    cache_panel::fmt_tokens(cache_read),
+                    cache_panel::fmt_tokens(cache_write)
+                ),
+                dim,
+            ),
+        ],
+    }
+}
+
+/// SAVED cell: session dollars saved by caching, danger-colored when the
+/// write premium outran the reads (the low-hit incident). `metered` gates the
+/// dash — no input yet shows `—`, never a misleading `$0.00`.
+fn saved_spans(savings_usd: f64, metered: bool) -> Vec<Span<'static>> {
+    if !metered {
+        return vec![Span::styled("—", Style::new().fg(theme::TEXT_PRIMARY))];
+    }
+    let color = if savings_usd < 0.0 {
+        theme::DANGER_BRIGHT
+    } else {
+        theme::SUCCESS_BRIGHT
+    };
+    vec![Span::styled(
+        cache_panel::fmt_savings(savings_usd),
+        Style::new().fg(color),
+    )]
+}
+
+/// WARMTH cell: countdown until the focused agent's cached prefix expires —
+/// danger once cold, warning under a minute, success while comfortably warm,
+/// dim `—` when there is no warm prefix to preserve.
+fn warmth_spans(remaining_secs: Option<u64>) -> Vec<Span<'static>> {
+    let color = match remaining_secs {
+        Some(0) => theme::DANGER_BRIGHT,
+        Some(s) if s < 60 => theme::WARNING_BRIGHT,
+        Some(_) => theme::SUCCESS_BRIGHT,
+        None => theme::TEXT_TERTIARY,
+    };
+    vec![Span::styled(
+        cache_panel::fmt_warmth(remaining_secs),
+        Style::new().fg(color),
+    )]
+}
+
+/// The MODELS row: the pin serving each of triage / worker / judge, with the
+/// role that most recently served drawn in the brand accent.
+///
+/// Its own row because the cell row cannot hold it — three `provider/model`
+/// slugs measured 210 columns inside the cell row against the 160 the row is
+/// designed around, and the ethos chip is dropped before any data cell, so no
+/// cell priority could have saved it. A dedicated row is what makes all three
+/// visible at every width instead of none of them.
+///
+/// A role that has not served yet reads `—` rather than borrowing another
+/// role's pin. In a scored run "the judge is pinned to X" and "the judge ran
+/// on X" are different claims, and only the second is evidence.
+fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
+    let label = Style::new().fg(theme::TEXT_TERTIARY);
+    let val = Style::new().fg(theme::TEXT_PRIMARY);
+    let active = Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD);
+
+    let mut spans = vec![Span::styled(" MODELS  ", label)];
+    for (i, role) in PipelineRole::ORDER.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", label));
+        }
+        let is_active = highlight && model.active_role == Some(*role);
+        spans.push(Span::styled(
+            format!("{}·", role.initial()),
+            if is_active { active } else { label },
+        ));
+        match model.role_pins.get(role) {
+            Some(pin) => {
+                let style = if is_active {
+                    active
+                } else if pin.served {
+                    val
+                } else {
+                    // Configured but not yet reached. Drawn at label weight so
+                    // intent never reads as evidence — a judge that has not run
+                    // must not look like one that has.
+                    label
+                };
+                // Same gateway-stripped form the MODEL cell uses, so the two
+                // surfaces name a pin identically.
+                spans.push(Span::styled(vendor_slug(pin), style));
+            }
+            None => spans.push(Span::styled("—", label)),
+        }
+    }
+    spans
 }
 
 /// Which card/overlay is on top, for the collapse rule — the card enum for
@@ -318,128 +613,139 @@ fn open_surface(ui: &DeckUi) -> Option<Card> {
     other_overlay.then_some(Card::Scope)
 }
 
-/// Render the statline band: the zoned row, plus the low-hit-rate diagnosis
-/// on a second row when one is earned and the band has the height.
+/// Render the statline band: the label row over the value row, the always-on
+/// MODELS row beneath them, and the low-hit-rate diagnosis on a fourth row
+/// when one is earned and the band has the height.
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let mut items = statline_items(model, ui);
-    let width = area.width as usize;
+    let top_y = area.y;
+    let bot_y = area.y + (area.height.saturating_sub(1)).min(1);
 
-    // Zones drop whole: remove items in the fixed order until the row fits.
-    let mut drop_at = 0usize;
-    while row_width(&items) > width && drop_at < DROP_ORDER.len() {
-        let key = DROP_ORDER[drop_at];
-        items.retain(|item| item.key != key);
-        drop_at += 1;
-    }
-    // Below even that, shed the remaining non-survivors back-to-front
-    // (lane counts, stage) — brand, inbox and a failing-CI badge go last.
-    while row_width(&items) > width && items.len() > 2 {
-        let Some(victim) = items
-            .iter()
-            .rposition(|i| !matches!(i.key, "agent" | "inbox" | "pr-failing"))
-        else {
-            break;
-        };
-        items.remove(victim);
-    }
-
-    // Left: zones A/B/C in order. Right: zone D.
+    let dim = Style::new().fg(theme::TEXT_TERTIARY);
     let sep = Style::new().fg(theme::HAIRLINE);
-    let mut left: Vec<Span<'static>> = vec![Span::raw(" ")];
-    let mut last_zone: Option<StatZone> = None;
-    for item in items.iter().filter(|i| i.zone != StatZone::Attention) {
-        match last_zone {
-            Some(zone) if zone == item.zone => left.push(Span::styled(" · ", sep)),
-            Some(_) => left.push(Span::styled(" │ ", sep)),
-            None => {}
+    let items = statline_items(model, ui);
+
+    // Fit: drop the ethos chip, then the lowest-priority non-must-keep cell,
+    // until the band fits (or only must-keep cells remain — then accept a
+    // clip rather than dropping a load-bearing cell).
+    let ethos_w = ETHOS.width();
+    let mut kept = vec![true; items.len()];
+    let mut ethos_on = true;
+    loop {
+        // One leading space opens the row; every later cell is opened by the
+        // 3-column " │ " hairline that separates it from the one before.
+        let shown = (0..items.len()).filter(|&i| kept[i]).count();
+        let cells_w: usize = (0..items.len())
+            .filter(|&i| kept[i])
+            .map(|i| items[i].column_width())
+            .sum::<usize>()
+            + if shown > 0 { 1 + (shown - 1) * 3 } else { 0 };
+        let need = cells_w + if ethos_on { ethos_w } else { 0 };
+        if need <= area.width as usize {
+            break;
         }
-        left.extend(item.spans.iter().cloned());
-        last_zone = Some(item.zone);
-    }
-    let mut right: Vec<Span<'static>> = Vec::new();
-    for (i, item) in items
-        .iter()
-        .filter(|i| i.zone == StatZone::Attention)
-        .enumerate()
-    {
-        if i > 0 {
-            right.push(Span::styled(" · ", sep));
+        if ethos_on {
+            ethos_on = false;
+            continue;
         }
-        right.extend(item.spans.iter().cloned());
-    }
-    if !right.is_empty() {
-        right.push(Span::raw(" "));
+        match (0..items.len())
+            .filter(|&i| kept[i] && items[i].priority < MUST_KEEP)
+            .min_by_key(|&i| items[i].priority)
+        {
+            Some(i) => kept[i] = false,
+            None => break,
+        }
     }
 
-    let row = Rect { height: 1, ..area };
-    Paragraph::new(Line::from(left)).render(row, buf);
-    let right_w = right
-        .iter()
-        .map(|s| s.content.as_ref().width())
-        .sum::<usize>()
-        .min(width) as u16;
-    if right_w > 0 {
-        Paragraph::new(Line::from(right)).render(
-            Rect {
-                x: area.x + area.width - right_w,
-                y: area.y,
-                width: right_w,
-                height: 1,
-            },
+    // Both rows are built cell-by-cell with the same leader, so a label can
+    // only ever land in the same column as its own value.
+    let mut labels: Vec<Span<'static>> = Vec::new();
+    let mut values: Vec<Span<'static>> = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        if !kept[i] {
+            continue;
+        }
+        let cw = item.column_width();
+        let lead = if labels.is_empty() { " " } else { " │ " };
+        labels.push(Span::styled(lead, sep));
+        values.push(Span::styled(lead, sep));
+        let label_style = item.label_color.map_or(dim, |c| Style::new().fg(c));
+        labels.push(Span::styled(format!("{:<cw$}", item.label), label_style));
+        // Value, right-padded into the same column width so the labels above
+        // stay aligned with the values below.
+        let pad = cw.saturating_sub(item.value_width());
+        values.extend(item.spans.iter().cloned());
+        if pad > 0 {
+            values.push(Span::raw(" ".repeat(pad)));
+        }
+    }
+
+    let row = |y: u16| Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height: 1,
+    };
+    Paragraph::new(Line::from(labels)).render(row(top_y), buf);
+    Paragraph::new(Line::from(values)).render(row(bot_y), buf);
+    if ethos_on {
+        render_right(
+            vec![Span::styled(
+                ETHOS,
+                Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
+            )],
+            row(bot_y),
             buf,
         );
     }
 
-    // The low-hit-rate diagnosis keeps its own second row when earned.
-    if area.height >= 2
+    // MODELS is permanent by design: which pins are serving triage, worker
+    // and judge is the thing a scored run is read against, so it must never
+    // be the row that got dropped. Guarded on height so a caller handing this
+    // function a bare 2-row area gets the pair, not a clipped third row.
+    if area.height >= 3 {
+        Paragraph::new(Line::from(models_spans(model, model.active_count() > 0)))
+            .render(row(top_y + 2), buf);
+    }
+
+    // The low-hit-rate diagnosis: full-sentence and byte-identical to what
+    // `stella stats` prints for the same cause. Only present when the caller
+    // reserved the row AND the focused agent earned it.
+    if area.height >= 4
         && let Some(cause) = model
             .agents
             .get(ui.focused)
             .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
     {
-        Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(
-            Rect {
-                x: area.x,
-                y: area.y + 1,
-                width: area.width,
-                height: 1,
-            },
-            buf,
-        );
+        Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(row(top_y + 3), buf);
     }
 }
 
-/// The rendered width of `items`: leading pad + spans + separators (` · `
-/// within a zone, ` │ ` between zones on the left; ` · ` + trailing pad on
-/// the right).
-fn row_width(items: &[StatItem]) -> usize {
-    let mut w = 1; // leading pad
-    let mut last_zone: Option<StatZone> = None;
-    let mut right_items = 0usize;
-    for item in items {
-        if item.zone == StatZone::Attention {
-            right_items += 1;
-            w += item.width();
-            continue;
-        }
-        if last_zone.is_some() {
-            w += 3; // " · " or " │ "
-        }
-        w += item.width();
-        last_zone = Some(item.zone);
+/// Render `spans` flush to the right edge of `area`.
+fn render_right(spans: Vec<Span<'static>>, area: Rect, buf: &mut Buffer) {
+    let w = spans
+        .iter()
+        .map(|s| s.content.as_ref().width())
+        .sum::<usize>()
+        .min(area.width as usize) as u16;
+    if w == 0 {
+        return;
     }
-    if right_items > 0 {
-        w += (right_items - 1) * 3 + 1 /* trailing pad */ + 2 /* breathing gap */;
-    }
-    w
+    Paragraph::new(Line::from(spans)).render(
+        Rect {
+            x: area.x + area.width - w,
+            width: w,
+            ..area
+        },
+        buf,
+    );
 }
 
-/// The PR badge's spans: `⇢ #183 open` (or the URL tail when the monitor
-/// parsed no number) colored by PR status, plus a CI glyph once a verdict
-/// has been observed — `✓` passing, `✗` failing (bold), `◌` pending / `…`
+/// The PR cell's spans: `⇢ #183 open` (or the URL tail when the monitor
+/// parsed no number) colored by PR status, plus a CI glyph once a verdict has
+/// been observed — `✓` passing, `✗` failing (bold), `◌` pending / `…`
 /// running (dim).
 fn pr_spans(pr: &crate::deck::PrInfo) -> Vec<Span<'static>> {
     use stella_protocol::{CiStatus, PrStatus};
@@ -520,12 +826,13 @@ mod tests {
     }
 
     #[test]
-    fn the_full_row_carries_all_four_zones() {
+    fn the_full_band_carries_every_labeled_cell() {
         let model = running_model();
         let ui = DeckUi::default();
         let items = statline_items(&model, &ui);
         for key in [
-            "agent", "stage", "ctx", "cpu", "cache", "turn", "run", "saved", "inbox", "queue",
+            "model", "stage", "cpu", "ctx", "spend", "cache", "saved", "warmth", "engine",
+            "pipeline", "inbox",
         ] {
             assert!(
                 keys(&items).contains(&key),
@@ -533,14 +840,165 @@ mod tests {
                 keys(&items)
             );
         }
-        // WARMTH / ENGINE / PIPELINE / MODELS left the statline outright.
-        for gone in ["warmth", "engine", "pipeline", "models"] {
-            assert!(!keys(&items).contains(&gone), "{gone} must not return");
+    }
+
+    #[test]
+    fn every_cell_labels_itself_for_the_row_above() {
+        let model = running_model();
+        let items = statline_items(&model, &DeckUi::default());
+        for item in &items {
+            assert!(!item.label.is_empty(), "{} must label its column", item.key);
+            assert_eq!(
+                item.label.to_uppercase(),
+                item.label,
+                "{} label is drawn uppercase",
+                item.key
+            );
         }
     }
 
     #[test]
-    fn each_card_collapses_the_row_to_at_most_four_items() {
+    fn the_stage_box_heads_itself_with_the_live_stage_name() {
+        let model = running_model();
+        let items = statline_items(&model, &DeckUi::default());
+        let stage = items.iter().find(|i| i.key == "stage").expect("stage");
+        assert_eq!(stage.label, "EXECUTE", "the stage name IS the label");
+        assert!(
+            stage.label_color.is_some(),
+            "the live label carries the stage's own color, not the row's dim"
+        );
+        // No board on this fixture, so no step is invented.
+        assert_eq!(stage.spans[0].content.as_ref(), "—");
+    }
+
+    #[test]
+    fn the_step_counter_reads_the_board_position_not_the_done_count() {
+        use stella_protocol::{TaskItem, TaskStatus};
+        let task = |id: &str, status| TaskItem {
+            id: id.into(),
+            subject: format!("task {id}"),
+            description: None,
+            status,
+            owner: None,
+        };
+        // Working the 4th of 5 — even though only two before it are done.
+        let board = vec![
+            task("1", TaskStatus::Completed),
+            task("2", TaskStatus::Cancelled),
+            task("3", TaskStatus::Completed),
+            task("4", TaskStatus::InProgress),
+            task("5", TaskStatus::Pending),
+        ];
+        assert_eq!(step_of(&board).as_deref(), Some("Step 4 of 5"));
+
+        // Between steps: the last finished position stands in rather than
+        // blinking back to zero.
+        let idle = vec![
+            task("1", TaskStatus::Completed),
+            task("2", TaskStatus::Completed),
+            task("3", TaskStatus::Pending),
+        ];
+        assert_eq!(step_of(&idle).as_deref(), Some("Step 2 of 3"));
+
+        // No board is no step.
+        assert_eq!(step_of(&[]), None);
+    }
+
+    #[test]
+    fn the_model_cell_names_the_vendor_not_the_gateway() {
+        use crate::deck::RolePin;
+        // A gateway-proxied pin: the model string already carries its vendor,
+        // so `openrouter/` is dropped.
+        assert_eq!(
+            vendor_slug(&RolePin {
+                provider: "openrouter".into(),
+                model: "z-ai/glm-5.2".into(),
+                served: true,
+            }),
+            "z-ai/glm-5.2"
+        );
+        // A direct pin: the provider IS the vendor and stays.
+        assert_eq!(
+            vendor_slug(&RolePin {
+                provider: "anthropic".into(),
+                model: "claude-fable-5".into(),
+                served: true,
+            }),
+            "anthropic/claude-fable-5"
+        );
+        // Legacy events carry no provider.
+        assert_eq!(
+            vendor_slug(&RolePin {
+                provider: String::new(),
+                model: "glm-5.2".into(),
+                served: true,
+            }),
+            "glm-5.2"
+        );
+    }
+
+    #[test]
+    fn the_role_word_is_the_one_the_deck_says_out_loud() {
+        assert_eq!(role_word(PipelineRole::Triage), "triage");
+        assert_eq!(role_word(PipelineRole::Worker), "worker");
+        // `Judge` reads "verify" — the stage word the stepper already uses.
+        assert_eq!(role_word(PipelineRole::Judge), "verify");
+    }
+
+    #[test]
+    fn the_meter_fills_proportionally_and_clamps() {
+        assert_eq!(meter_bar(0.0), "▯▯▯▯▯▯");
+        assert_eq!(meter_bar(0.5), "▮▮▮▯▯▯");
+        assert_eq!(meter_bar(1.0), "▮▮▮▮▮▮");
+        // Over-full never overflows the six cells, and a negative fraction
+        // never underflows the padding subtraction.
+        assert_eq!(meter_bar(4.2), "▮▮▮▮▮▮");
+        assert_eq!(meter_bar(-1.0), "▯▯▯▯▯▯");
+    }
+
+    #[test]
+    fn cpu_and_context_lead_with_a_meter() {
+        let model = running_model();
+        let items = statline_items(&model, &DeckUi::default());
+        for key in ["cpu", "ctx"] {
+            let cell = items.iter().find(|i| i.key == key).expect(key);
+            let first = cell.spans[0].content.as_ref().to_string();
+            assert_eq!(
+                first.chars().count(),
+                6,
+                "{key} leads with the 6-cell meter, got {first:?}"
+            );
+            assert!(
+                first.chars().all(|c| c == '▮' || c == '▯'),
+                "{key} meter uses ▮/▯, got {first:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_cache_cell_carries_its_read_write_volumes() {
+        let spans = cache_spans(150_000, 40_000, 200_000, Style::new(), Style::new());
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "75% (150.0K rd · 40.0K wr)");
+        // Before any input is metered the cell is a dash, never 0%.
+        let none = cache_spans(0, 0, 0, Style::new(), Style::new());
+        assert_eq!(none[0].content.as_ref(), "—");
+    }
+
+    #[test]
+    fn only_the_load_bearing_cells_are_undroppable() {
+        let model = running_model();
+        let items = statline_items(&model, &DeckUi::default());
+        let pinned: Vec<&str> = items
+            .iter()
+            .filter(|i| i.priority >= MUST_KEEP)
+            .map(|i| i.key)
+            .collect();
+        assert_eq!(pinned, vec!["model", "stage", "ctx"]);
+    }
+
+    #[test]
+    fn each_card_collapses_the_band_to_at_most_four_cells() {
         use crate::deck_ui::cards::Card;
         let model = running_model();
         for card in [
@@ -555,10 +1013,10 @@ mod tests {
             let items = statline_items(&model, &ui);
             assert!(
                 items.len() <= 4,
-                "{card:?} must collapse to ≤4 items, got {:?}",
+                "{card:?} must collapse to ≤4 cells, got {:?}",
                 keys(&items)
             );
-            assert_eq!(items[0].key, "agent", "the brand identity survives");
+            assert_eq!(items[0].key, "model", "the model anchor survives");
         }
     }
 
@@ -580,7 +1038,7 @@ mod tests {
         ui.cards.raise(Card::Witness);
         let items = statline_items(&model, &ui);
         assert!(keys(&items).contains(&"witness"), "{:?}", keys(&items));
-        assert!(keys(&items).contains(&"run"), "{:?}", keys(&items));
+        assert!(keys(&items).contains(&"spend"), "{:?}", keys(&items));
     }
 
     #[test]

@@ -28,7 +28,7 @@ CARGO_SCOPE ?= --workspace
 # wire-schema is separated out because it runs the two schema exporters, which
 # is a cargo build.
 GATE_GUARDS_FAST := no-scratch action-pins cargo-install-pins license-allowlist-parity \
-                    repro-wiring shellcheck invariants doc-links file-size
+                    repro-wiring shellcheck invariants doc-links command-docs file-size
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 .PHONY: help
@@ -170,6 +170,10 @@ doc-report: ## Which documents are stale, superseded, or cited by nothing
 doc-adopt: ## Scaffold frontmatter onto a document so it can be cited: make doc-adopt DOC=path
 	@test -n "$(DOC)" || { echo "usage: make doc-adopt DOC=docs/design/thing.md"; exit 2; }
 	@python3 ./scripts/check-doc-links.py init $(DOC)
+
+.PHONY: command-docs
+command-docs: ## Assert every stella subcommand has a listed reference page (#993)
+	@./scripts/check-command-docs.sh
 
 .PHONY: wire-schema
 wire-schema: ## Assert docs/wire/ still describes the AgentEvent wire format (#971)

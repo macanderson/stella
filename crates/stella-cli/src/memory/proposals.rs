@@ -213,4 +213,4 @@ pub(crate) fn all_proposals(store: &ContextStore, limit: usize) -> Vec<ProposalR
 }
 
 #[cfg(test)]
-mod proposal_tests;
+mod tests;

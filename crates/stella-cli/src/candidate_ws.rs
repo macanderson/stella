@@ -93,6 +93,7 @@ use crate::agent::{
 };
 
 mod adopt;
+mod snapshot_gaps;
 mod witness_tools;
 use adopt::{attach_diffs, attach_numstat, conflict_paths_from_stderr, parse_name_status};
 use witness_tools::WitnessToolExecutor;
@@ -418,6 +419,7 @@ impl GitCandidateWorkspaces {
                 let tools: Box<dyn stella_core::ToolExecutor> = Box::new(
                     crate::agent::PolicyToolSet::new_owned(tools, self.policy.clone()),
                 );
+                let omitted = snapshot_gaps::omitted_ignored_paths(&toplevel, &root_rel).await;
                 Ok(GitCandidateWorkspace {
                     toplevel,
                     dir: dir.clone(),
@@ -437,6 +439,7 @@ impl GitCandidateWorkspaces {
                         ws_root,
                         overlay: overlay_untracked,
                     },
+                    omitted,
                 })
             }
             Err(reason) => {
@@ -628,6 +631,10 @@ pub(crate) struct GitCandidateWorkspace {
     diagnostics: GitDiagnosticRunner,
     tests: TypedTestRunner,
     repo_status: SnapshotRepoStatus,
+    /// Ignored paths present in the real tree and elided from this snapshot —
+    /// see [`snapshot_gaps`]. A display list for the candidate's context, not
+    /// a set anything branches on.
+    omitted: Vec<String>,
 }
 
 impl GitCandidateWorkspace {
@@ -860,6 +867,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     fn repo_status(&self) -> &dyn RepoStatusPort {
         &self.repo_status
+    }
+
+    fn omitted_paths(&self) -> &[String] {
+        &self.omitted
     }
 
     async fn seal(&self) -> Result<(), WorkspaceError> {

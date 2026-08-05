@@ -242,7 +242,7 @@ impl RemoteProvider {
             // The host stream is gone; a disconnect mid-flight is a retryable
             // transport condition, classified here at the adapter as upstream.
             self.pending.abandon(&request_id);
-            return Err(ProviderError::Transport(
+            return Err(ProviderError::transport(
                 "serve host disconnected before the model call could be dispatched".to_string(),
             ));
         }
@@ -274,7 +274,7 @@ impl RemoteProvider {
                         // reports the discard, so there is no per-request
                         // event here.
                         Err(_) if self.pending.is_cancelled() => Err(ProviderError::Cancelled),
-                        Err(_) => Err(ProviderError::Transport(
+                        Err(_) => Err(ProviderError::transport(
                             "serve host dropped the model call without answering".to_string(),
                         )),
                     };

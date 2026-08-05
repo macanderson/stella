@@ -128,22 +128,16 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus};
 //               execution-level paid-call accounting gate
 //   usage       `usage.db` — user-tier cross-project telemetry aggregate
 mod ddl;
-#[cfg(test)]
-mod forget_tests;
 mod migrations;
 mod private;
-#[cfg(test)]
-mod private_state_tests;
-#[cfg(test)]
-mod quarantine_tests;
 mod receipts;
 mod reconstruct;
 mod telemetry;
 #[cfg(test)]
+mod test_env;
+#[cfg(test)]
 mod tests;
 mod tool_calls;
-#[cfg(test)]
-mod usage_completeness_tests;
 
 pub mod cache_gaps;
 pub mod cache_trend;

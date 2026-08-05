@@ -210,4 +210,4 @@ pub(crate) fn write_rule(
 }
 
 #[cfg(test)]
-mod rule_mining_tests;
+mod tests;

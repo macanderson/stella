@@ -86,23 +86,43 @@ pub(crate) fn candidate_winner_notice(best_idx: usize, n: u32, ran: u32) -> Opti
 /// no longer byte-identical to its seal, which fails adoption for the whole
 /// candidate. Both halves of a split turn lose.
 ///
+/// It also names what the snapshot does NOT carry. A git-shaped snapshot
+/// elides every ignored path, so a candidate can be handed a tree whose
+/// `node_modules/` or `.venv/` is simply gone — and the only symptom is the
+/// project's own test command failing for a reason the tree does not explain.
+/// A candidate that knows can reinstall; a candidate that doesn't reports the
+/// project as broken.
+///
 /// Appended AFTER the shared prefix, never inside it: the candidates of a
 /// fan-out share one cached prefix, so the single message that differs between
 /// them has to be last (the prompt-cache stability invariant).
 pub(crate) fn messages_rooted_at(
     base: &[CompletionMessage],
-    root: Option<&str>,
+    workspace: Option<&dyn crate::ports::CandidateWorkspace>,
 ) -> Vec<CompletionMessage> {
     let mut messages = base.to_vec();
-    if let Some(root) = root {
-        messages.push(CompletionMessage::user(format!(
+    if let Some(ws) = workspace {
+        let root = ws.root();
+        let mut notice = format!(
             "Workspace: your tools and shell are rooted at `{root}`, an isolated \
              snapshot of the project. Only work inside this root is collected when \
              the turn finishes. Absolute paths in the task above name the original \
              tree; resolve them against this root instead (`/x/y` -> `{root}/x/y`). \
              Another copy of the project may be readable elsewhere on this machine — \
              editing it does not count, so do not `cd` out of this root."
-        )));
+        );
+        let omitted = ws.omitted_paths();
+        if !omitted.is_empty() {
+            notice.push_str(&format!(
+                "\n\nThis snapshot carries tracked and untracked files but NOT ignored \
+                 ones, so these exist in the original tree and are absent here: {}. \
+                 If a build or test fails on something they would have provided, \
+                 regenerate it inside this root (reinstall, rebuild) rather than \
+                 reaching outside for it.",
+                omitted.join(", ")
+            ));
+        }
+        messages.push(CompletionMessage::user(notice));
     }
     messages
 }
@@ -110,6 +130,73 @@ pub(crate) fn messages_rooted_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::{
+        AdoptedChange, CandidateWorkspace, DiagnosticRunner, RepoStatusPort, TestRunner,
+        WorkspaceError,
+    };
+
+    /// A workspace that answers only what the notice actually reads. The other
+    /// nine port methods are unreachable from this code path, and stubbing
+    /// them with plausible values would invite a future caller to depend on
+    /// something this fake never modelled.
+    struct NoticeOnlyWorkspace {
+        root: String,
+        omitted: Vec<String>,
+    }
+
+    impl NoticeOnlyWorkspace {
+        fn at(root: &str) -> Self {
+            Self {
+                root: root.into(),
+                omitted: Vec::new(),
+            }
+        }
+
+        fn missing(mut self, paths: &[&str]) -> Self {
+            self.omitted = paths.iter().map(|p| (*p).to_string()).collect();
+            self
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CandidateWorkspace for NoticeOnlyWorkspace {
+        fn root(&self) -> &str {
+            &self.root
+        }
+        fn omitted_paths(&self) -> &[String] {
+            &self.omitted
+        }
+        fn tools(&self) -> &dyn stella_core::ToolExecutor {
+            unimplemented!("the workspace notice dispatches no tool")
+        }
+        fn witness_tools(&self) -> &dyn stella_core::ToolExecutor {
+            unimplemented!("the workspace notice dispatches no tool")
+        }
+        fn diagnostics(&self) -> &dyn DiagnosticRunner {
+            unimplemented!("the workspace notice runs no diagnostics")
+        }
+        fn tests(&self) -> &dyn TestRunner {
+            unimplemented!("the workspace notice runs no tests")
+        }
+        fn repo_status(&self) -> &dyn RepoStatusPort {
+            unimplemented!("the workspace notice reads no repo status")
+        }
+        async fn seal(&self) -> Result<(), WorkspaceError> {
+            unimplemented!("the workspace notice seals nothing")
+        }
+        async fn sealed_is_unchanged(&self) -> Result<bool, WorkspaceError> {
+            unimplemented!("the workspace notice seals nothing")
+        }
+        async fn adopt(&self, _withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+            unimplemented!("the workspace notice adopts nothing")
+        }
+        async fn graft_witness(&self, _source: &str, _path: &str) -> Result<(), WorkspaceError> {
+            unimplemented!("the workspace notice grafts nothing")
+        }
+        async fn remove(&self) {
+            unimplemented!("the workspace notice removes nothing")
+        }
+    }
 
     #[test]
     fn a_fan_out_names_its_position_total_and_isolation() {
@@ -136,7 +223,8 @@ mod tests {
             CompletionMessage::system("prefix"),
             CompletionMessage::user("write vm.js to /app"),
         ];
-        let rooted = messages_rooted_at(&base, Some("/tmp/stella_candidate_64_0"));
+        let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_64_0");
+        let rooted = messages_rooted_at(&base, Some(&ws));
 
         assert_eq!(
             rooted.len(),
@@ -167,6 +255,44 @@ mod tests {
     fn a_shared_tree_candidate_is_told_nothing() {
         let base = vec![CompletionMessage::user("goal")];
         assert_eq!(messages_rooted_at(&base, None), base);
+    }
+
+    /// The failure this prevents: `npm test` dies on a missing module, in a
+    /// tree that looks complete, for a reason the candidate cannot observe.
+    /// Naming the elision converts an inexplicable failure into a fixable one.
+    #[test]
+    fn a_candidate_is_told_what_the_snapshot_left_behind() {
+        let base = vec![CompletionMessage::user("run the tests")];
+        let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_7_0")
+            .missing(&["node_modules/", ".venv/"]);
+
+        let notice = messages_rooted_at(&base, Some(&ws))
+            .pop()
+            .expect("a notice is appended")
+            .content;
+
+        assert!(notice.contains("node_modules/"), "{notice}");
+        assert!(notice.contains(".venv/"), "{notice}");
+        assert!(
+            notice.contains("regenerate it inside this root"),
+            "naming the gap without naming the remedy leaves the candidate stuck: {notice}"
+        );
+    }
+
+    /// A tree that ignores nothing must not be handed a paragraph about
+    /// nothing — the notice is paid for on every candidate of every fan-out.
+    #[test]
+    fn a_snapshot_that_elides_nothing_says_nothing_about_omissions() {
+        let base = vec![CompletionMessage::user("goal")];
+        let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_7_1");
+
+        let notice = messages_rooted_at(&base, Some(&ws))
+            .pop()
+            .expect("a notice is appended")
+            .content;
+
+        assert!(notice.contains("/tmp/stella_candidate_7_1"), "{notice}");
+        assert!(!notice.contains("absent here"), "{notice}");
     }
 
     #[test]

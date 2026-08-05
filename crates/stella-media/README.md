@@ -84,7 +84,7 @@ hundred lines of it already.
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The authoritative crate description, the public re-export surface, and the recorded architecture deviation. Read it first. |
 | [`src/provider.rs`](src/provider.rs) | The `MediaProvider` trait, its request/response types, and `MediaCapabilities` rate-card estimation. Open it to change the port. |
-| [`src/adapters/`](src/adapters/mod.rs) | One file per vendor endpoint: `zai_image.rs` (CogView), `zai_video.rs` (CogVideoX), `openai_image.rs` (gpt-image). `mod.rs` also owns the live-smoke env gate. |
+| [`src/adapters.rs`](src/adapters.rs) (+ [`src/adapters/`](src/adapters/)) | One file per vendor endpoint: `zai_image.rs` (CogView), `zai_video.rs` (CogVideoX), `openai_image.rs` (gpt-image). `adapters.rs` also owns the live-smoke env gate. |
 | [`src/http.rs`](src/http.rs) | Private, shared adapter plumbing: the bounded `reqwest` client, `classify_http_error`, `Retry-After` parsing, and the size-capped `download_bytes`. |
 | [`src/artifact.rs`](src/artifact.rs) | `ArtifactStore` — the single writer to `.stella/artifacts/`, plus the `manifest.json` upsert. |
 | [`src/svg.rs`](src/svg.rs) | `SvgPipeline`: validate → sanitize → optimize, and the bounded model-repair loop. Pure text in, pure text out. |
@@ -242,7 +242,7 @@ To add a provider:
    match is how a `401` starts meaning something different per vendor.
 3. Fill `MediaCapabilities` with the vendor's documented rates: those numbers
    are what the spend gate shows the user before charging.
-4. Register the module in [`src/adapters/mod.rs`](src/adapters/mod.rs)
+4. Register the module in [`src/adapters.rs`](src/adapters.rs)
    (`pub mod` + `pub use`).
 5. Add wiremock tests for the happy path plus 401 / 429 / content-policy /
    malformed, and one live smoke behind `live_smoke_enabled()`.

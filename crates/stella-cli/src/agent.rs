@@ -70,8 +70,8 @@ use outcome::{
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
 pub(crate) use persistence::{
-    close_event_stream, persist_event, persist_event_detailed, record_execution_end,
-    spawn_renderer, warn_store_write_failed,
+    PersistOutcome, close_event_stream, persist_event, persist_event_detailed,
+    record_execution_end, spawn_renderer, warn_store_write_failed,
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
@@ -2267,5 +2267,4 @@ fn print_help() {
 }
 
 #[cfg(test)]
-#[path = "agent_tests.rs"]
 mod tests;

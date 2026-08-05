@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::{AgentEngineConfig, project_settings_path, user_settings_path};
+use crate::settings::{AgentEngineConfig, project_settings_path, user_settings_path};
 
 #[cfg(unix)]
 #[test]

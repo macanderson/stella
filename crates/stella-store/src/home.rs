@@ -529,13 +529,17 @@ mod tests {
 
     #[test]
     fn stella_home_honors_the_override() {
-        // SAFETY: single-threaded test; set and read one process env var.
+        // The environment is process-global and cargo runs these tests on a
+        // thread pool — "single-threaded test", as this used to claim, was
+        // never true. A leaked `STELLA_HOME` also makes
+        // `migrate_legacy_global_dirs` no-op for every later test. See #1137.
+        let _lock = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_HOME"]);
+        // SAFETY: the lock is held for the whole test, and `_restore` undoes
+        // this on drop — including if the assertion below panics.
         unsafe {
             std::env::set_var("STELLA_HOME", "/tmp/stella-home-test");
         }
         assert_eq!(stella_home(), Some(PathBuf::from("/tmp/stella-home-test")));
-        unsafe {
-            std::env::remove_var("STELLA_HOME");
-        }
     }
 }
