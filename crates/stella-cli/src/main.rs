@@ -313,7 +313,11 @@ pub(crate) use cli::{
 /// Computed here, once, because it is the only place the parsed flags, the
 /// resolved config, and the real terminal handles are all in hand; each
 /// long-running arm then asks one question instead of re-deriving three.
-fn supervision(globals: &cli::GlobalArgs, cfg: &config::Config) -> Option<bool> {
+fn supervision(
+    globals: &cli::GlobalArgs,
+    output_format: OutputFormat,
+    cfg: &config::Config,
+) -> Option<bool> {
     if !daemon::should_supervise(
         globals.foreground,
         daemon::supervised_id().is_some(),
@@ -322,7 +326,7 @@ fn supervision(globals: &cli::GlobalArgs, cfg: &config::Config) -> Option<bool> 
         return None;
     }
     let approval = agent::approval_capability_for(
-        matches!(globals.output_format, OutputFormat::Text),
+        matches!(output_format, OutputFormat::Text),
         std::io::stdin().is_terminal(),
         std::io::stdout().is_terminal(),
     );
@@ -956,7 +960,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             )?;
             // Resolved first on purpose: the prompt may have come from this
             // process's stdin, and a detached child has none to read.
-            if let Some(scope_review_lost) = supervision(&cli.globals, &cfg) {
+            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1007,7 +1011,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 std::io::stdin().is_terminal(),
                 prompt_source::read_stdin_to_string,
             )?;
-            if let Some(scope_review_lost) = supervision(&cli.globals, &cfg) {
+            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1031,7 +1035,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             task_timeout,
             output_format,
         } => {
-            if let Some(scope_review_lost) = supervision(&cli.globals, &cfg) {
+            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1064,7 +1068,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         }
         Command::Monitor { target } => {
             let target = target.unwrap_or_else(|| "main".to_string());
-            if let Some(scope_review_lost) = supervision(&cli.globals, &cfg) {
+            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
