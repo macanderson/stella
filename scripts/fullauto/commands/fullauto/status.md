@@ -48,7 +48,7 @@ resets it to zero.
 |---|---|
 | `0` | the last audit found something new — plenty left |
 | `1` | one clean audit; could be convergence, could be an audit that looked in the same place twice |
-| `2` | **converged.** Stop the loop. |
+| `2` | **this lens is done.** `cycle-end` advances the aperture; the next cycle audits through the new lens |
 
 A streak stuck at `0` for several cycles while `fixed` is also `0` is the failure
 mode to watch for: the loop is spinning. Three consecutive cycles with zero fixes
