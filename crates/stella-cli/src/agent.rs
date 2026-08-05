@@ -3,7 +3,7 @@
 //!
 //! `run_turn` drives `stella_core::Engine::run_turn` (the step-driver: one
 //! model call per step, retry+backoff, compaction, loop detection, budget
-//! checks — see `stella-core/src/driver.rs`) and renders its
+//! checks — see `crates/stella-core/src/driver.rs`) and renders its
 //! `AgentEvent` stream live via a spawned draining task.
 
 use std::collections::HashMap;

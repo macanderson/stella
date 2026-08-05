@@ -9,7 +9,7 @@
 //! spawned with `setsid()`, which puts it in its own session — and the tty
 //! delivers Ctrl-C's SIGINT only to the *foreground* process group. So the
 //! child never saw the signal either. `GroupKillGuard`
-//! (`stella-tools/src/exec.rs`) is the only thing that reaps that tree, and
+//! (`crates/stella-tools/src/exec.rs`) is the only thing that reaps that tree, and
 //! it could not fire. A cancelled build or test suite kept running,
 //! unattached, still mutating the workspace.
 //!
