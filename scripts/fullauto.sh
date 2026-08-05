@@ -541,14 +541,24 @@ reconcile_abandoned_run() {
 # Every probe returns a NUMBER on stdout and degrades to a conservative value
 # rather than failing. A governor that dies because `pmset` is missing is worse
 # than one that assumes mains power.
+#
+# And every probe yields to a FULLAUTO_PROBE_* override before touching the
+# machine, for two consumers. The hermetic test suite has to drive the tier
+# ladder on whatever box CI hands it — on Linux the probes read /proc directly,
+# so no PATH stub can intercept them. And an operator on a box where a probe
+# reads the wrong machine (a container whose /proc reports the host, an overlay
+# mount whose df reports the layer) needs to pin the sense rather than fight
+# the conclusion. A governor whose senses cannot be pinned can only be believed.
 
 probe_cpu_total() {
+  [ -n "${FULLAUTO_PROBE_CPU:-}" ] && { echo "$FULLAUTO_PROBE_CPU"; return 0; }
   if have nproc; then nproc
   elif have sysctl; then sysctl -n hw.ncpu 2>/dev/null || echo 2
   else echo 2; fi
 }
 
 probe_load1() {
+  [ -n "${FULLAUTO_PROBE_LOAD1:-}" ] && { echo "$FULLAUTO_PROBE_LOAD1"; return 0; }
   # Integer part only; the governor compares magnitudes, not decimals.
   if [ -r /proc/loadavg ]; then cut -d' ' -f1 < /proc/loadavg | cut -d. -f1
   elif have uptime; then uptime | sed -E 's/.*load averages?: *//; s/[, ].*//' | cut -d. -f1
@@ -556,6 +566,7 @@ probe_load1() {
 }
 
 probe_mem_total_gb() {
+  [ -n "${FULLAUTO_PROBE_MEM_TOTAL_GB:-}" ] && { echo "$FULLAUTO_PROBE_MEM_TOTAL_GB"; return 0; }
   if [ -r /proc/meminfo ]; then
     awk '/^MemTotal:/ {printf "%d", $2/1024/1024}' /proc/meminfo
   elif have sysctl; then
@@ -564,6 +575,7 @@ probe_mem_total_gb() {
 }
 
 probe_mem_free_gb() {
+  [ -n "${FULLAUTO_PROBE_MEM_FREE_GB:-}" ] && { echo "$FULLAUTO_PROBE_MEM_FREE_GB"; return 0; }
   if [ -r /proc/meminfo ]; then
     awk '/^MemAvailable:/ {printf "%d", $2/1024/1024}' /proc/meminfo
   elif have vm_stat; then
@@ -579,12 +591,14 @@ probe_mem_free_gb() {
 }
 
 probe_disk_free_gb() {
+  [ -n "${FULLAUTO_PROBE_DISK_FREE_GB:-}" ] && { echo "$FULLAUTO_PROBE_DISK_FREE_GB"; return 0; }
   # -P forces POSIX single-line output; without it a long device name wraps and
   # the field offsets silently shift.
   df -Pk "${1:-$REPO_ROOT}" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}' || echo 0
 }
 
 probe_on_battery() {
+  [ -n "${FULLAUTO_PROBE_ON_BATTERY:-}" ] && { echo "$FULLAUTO_PROBE_ON_BATTERY"; return 0; }
   if have pmset; then
     pmset -g batt 2>/dev/null | grep -q "AC Power" && echo 0 || echo 1
   else echo 0; fi
@@ -600,6 +614,7 @@ probe_on_battery() {
 # tier forever after a single benchmark ends, which is a worse failure than not
 # detecting contention at all: it is permanent, silent, and looks like caution.
 probe_contention() {
+  [ -n "${FULLAUTO_PROBE_CONTENTION:-}" ] && { echo "$FULLAUTO_PROBE_CONTENTION"; return 0; }
   have pgrep || { echo 0; return 0; }
   local hits
   hits="$(pgrep -fl 'arenabench|harbor|cargo|docker' 2>/dev/null | awk '
