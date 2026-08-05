@@ -53,10 +53,10 @@
 //! ## Collapse: a card on top gets a quiet floor
 //!
 //! When any overlay/card is open the band collapses to at most four cells
-//! chosen for that context (the task card keeps `TURN` + tok/s, the scope
-//! card keeps `CONTEXT` + `SPEND`, the witness panel keeps its phase).
-//! [`statline_items`] is the single decision function, unit-testable without
-//! a buffer.
+//! chosen for that context (the plan card keeps `TURN` + where the plan
+//! stands; every other card, and every non-card overlay, keeps `CONTEXT` +
+//! `SPEND`). [`statline_items`] is the single decision function,
+//! unit-testable without a buffer.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -181,7 +181,10 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
     if let Some(context) = open_surface(ui) {
         let mut items = vec![model_cell, stage];
         match context {
-            Card::Tasks => {
+            // `/plan` is one card where `/tasks`, `/scope` and `/witness` used
+            // to be three, so it gets one arm carrying what all three needed:
+            // the turn's cost and where the plan stands.
+            Some(Card::Plan) => {
                 let turn_cost = focused.map_or(0.0, |a| a.model.hud.turn_spent_usd());
                 items.push(StatItem::new(
                     "turn",
@@ -189,35 +192,21 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
                     6,
                     vec![Span::styled(format!("${turn_cost:.2}"), ok)],
                 ));
-                let (rate, contributors) = model.combined_tok_per_s();
-                if let Some(rate) = rate {
-                    let text = if contributors > 1 {
-                        format!("{rate} tok/s combined")
-                    } else {
-                        format!("{rate} tok/s")
-                    };
-                    items.push(StatItem::new(
-                        "toks",
-                        "RATE",
-                        4,
-                        vec![Span::styled(text, val)],
-                    ));
-                }
-            }
-            Card::Witness => {
-                let phase = focused
-                    .map(|a| crate::views::witness_card::phase_label(&a.model.proof))
-                    .unwrap_or_else(|| "witness".to_string());
+                let progress = focused
+                    .map(|a| {
+                        let (done, total) = a.model.plan.progress();
+                        format!("{} {done}/{total}", a.model.plan.state.label())
+                    })
+                    .unwrap_or_else(|| "no plan".to_string());
                 items.push(StatItem::new(
-                    "witness",
-                    "WITNESS",
+                    "plan",
+                    "PLAN",
                     MUST_KEEP,
-                    vec![Span::styled(phase, theme::accent())],
+                    vec![Span::styled(progress, theme::accent())],
                 ));
-                items.push(spend);
             }
-            // The scope card — and every other overlay — keeps the context
-            // meter and the session spend: the quiet floor.
+            // Every other card — and every non-card overlay — keeps the
+            // context meter and the session spend: the quiet floor.
             _ => {
                 items.push(ctx_item(model, ui, val));
                 items.push(spend);
@@ -546,8 +535,8 @@ fn warmth_spans(remaining_secs: Option<u64>) -> Vec<Span<'static>> {
     )]
 }
 
-/// The MODELS row: the pin serving each of triage / worker / judge, with the
-/// role that most recently served drawn in the brand accent.
+/// The MODELS row: the pin serving each of triage / worker / verifier, with
+/// the role that most recently served drawn in the brand accent.
 ///
 /// Its own row because the cell row cannot hold it — three `provider/model`
 /// slugs measured 210 columns inside the cell row against the 160 the row is
@@ -556,8 +545,8 @@ fn warmth_spans(remaining_secs: Option<u64>) -> Vec<Span<'static>> {
 /// visible at every width instead of none of them.
 ///
 /// A role that has not served yet reads `—` rather than borrowing another
-/// role's pin. In a scored run "the judge is pinned to X" and "the judge ran
-/// on X" are different claims, and only the second is evidence.
+/// role's pin. In a scored run "the verifier is pinned to X" and "the verifier
+/// ran on X" are different claims, and only the second is evidence.
 fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
     let label = Style::new().fg(theme::TEXT_TERTIARY);
     let val = Style::new().fg(theme::TEXT_PRIMARY);
@@ -581,8 +570,8 @@ fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
                     val
                 } else {
                     // Configured but not yet reached. Drawn at label weight so
-                    // intent never reads as evidence — a judge that has not run
-                    // must not look like one that has.
+                    // intent never reads as evidence — a verifier that has not
+                    // run must not look like one that has.
                     label
                 };
                 // Same gateway-stripped form the MODEL cell uses, so the two
@@ -596,11 +585,11 @@ fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
 }
 
 /// Which card/overlay is on top, for the collapse rule — the card enum for
-/// the three named contexts, `Card::Scope` standing in for "some other
+/// the named contexts, with `None` standing in for "some other
 /// overlay" too (they share the quiet floor).
-fn open_surface(ui: &DeckUi) -> Option<Card> {
+fn open_surface(ui: &DeckUi) -> Option<Option<Card>> {
     if let Some(card) = ui.cards.open {
-        return Some(card);
+        return Some(Some(card));
     }
     let other_overlay = ui.help_open
         || ui.queue_open
@@ -608,9 +597,8 @@ fn open_surface(ui: &DeckUi) -> Option<Card> {
         || ui.sessions_open
         || ui.inbox_open
         || ui.context_open
-        || ui.inspect_open
-        || ui.state_open;
-    other_overlay.then_some(Card::Scope)
+        || ui.inspect_open;
+    other_overlay.then_some(None)
 }
 
 /// Render the statline band: the label row over the value row, the always-on
@@ -702,7 +690,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
     }
 
     // MODELS is permanent by design: which pins are serving triage, worker
-    // and judge is the thing a scored run is read against, so it must never
+    // and verifier is the thing a scored run is read against, so it must never
     // be the row that got dropped. Guarded on height so a caller handing this
     // function a bare 2-row area gets the pair, not a clipped third row.
     if area.height >= 3 {
@@ -1001,13 +989,7 @@ mod tests {
     fn each_card_collapses_the_band_to_at_most_four_cells() {
         use crate::deck_ui::cards::Card;
         let model = running_model();
-        for card in [
-            Card::Tasks,
-            Card::Scope,
-            Card::Witness,
-            Card::Models,
-            Card::Budget,
-        ] {
+        for card in [Card::Plan, Card::Models, Card::Budget] {
             let mut ui = DeckUi::default();
             ui.cards.raise(card);
             let items = statline_items(&model, &ui);
@@ -1025,20 +1007,24 @@ mod tests {
         use crate::deck_ui::cards::Card;
         let model = running_model();
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Tasks);
+        ui.cards.raise(Card::Plan);
         let items = statline_items(&model, &ui);
         assert!(keys(&items).contains(&"turn"), "{:?}", keys(&items));
     }
 
+    /// The plan card's collapse names where the plan stands. This used to be
+    /// three assertions across three cards; `/plan` is one card now, and the
+    /// verification phase it also carried lives permanently in the rail's
+    /// DONE VERIFICATION panel rather than in a collapsed statline cell.
     #[test]
-    fn the_witness_collapse_names_the_phase() {
+    fn the_plan_collapse_names_where_the_plan_stands() {
         use crate::deck_ui::cards::Card;
         let model = running_model();
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Witness);
+        ui.cards.raise(Card::Plan);
         let items = statline_items(&model, &ui);
-        assert!(keys(&items).contains(&"witness"), "{:?}", keys(&items));
-        assert!(keys(&items).contains(&"spend"), "{:?}", keys(&items));
+        assert!(keys(&items).contains(&"plan"), "{:?}", keys(&items));
+        assert!(keys(&items).contains(&"turn"), "{:?}", keys(&items));
     }
 
     #[test]

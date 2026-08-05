@@ -24,10 +24,12 @@ from arenabench.agents import (
     missing_credentials,
     resolve_agent,
 )
+from arenabench.config import match_from_toml, match_to_toml_dict
 from arenabench.harbor_agent import arena_posture
 from arenabench.model import (
     DIMENSIONS,
     DIMENSIONS_BY_KEY,
+    ROLES,
     Contestant,
     Engine,
     MatchSpec,
@@ -980,3 +982,51 @@ class TestOfflineTaskSource:
         command = self._launched_command(tmp_path, monkeypatch, export=False)
         assert "--dataset" in command and "--path" not in command
         assert command[command.index("--include-task-name") + 1] == "terminal-bench/alpha"
+
+
+class TestMatchTemplateRoles:
+    """A role override in a committed match file must reach the engine.
+
+    This is the silent shape this file exists for. A loader that files a role
+    under a key nothing reads does not raise, does not fail, and does not stop
+    the match: the seat runs with that role inheriting the baseline while the
+    scoreboard reports it as configured, so the contest publishes a number for
+    a pairing it never ran. `arenabench.toml` and Stella's engine spelled this
+    role differently for one release and the translation between them outlived
+    the difference, which is exactly how such a key survives review.
+    """
+
+    @staticmethod
+    def _spec(role_name: str) -> MatchSpec:
+        return match_from_toml(
+            {
+                "match": {"name": "t", "dataset": "terminal-bench-2.1"},
+                "contestant": [
+                    {
+                        "id": "stella",
+                        "agent": "stella",
+                        "engine": {
+                            "model": "z-ai/glm-5.2",
+                            "effort": "medium",
+                            "roles": {role_name: {"model": "openai/gpt-5.5"}},
+                        },
+                    }
+                ],
+            }
+        )
+
+    def test_a_role_override_lands_on_a_key_the_engine_reads(self):
+        engine = self._spec("verifier").contestants[0].engine
+        stray = set(engine.roles) - set(ROLES)
+        assert not stray, f"{stray} is outside ROLES, so nothing reads it"
+        assert engine.effective_role("verifier").model == "openai/gpt-5.5"
+
+    def test_the_retired_spelling_still_loads(self):
+        # A match file committed before the rename must keep running.
+        engine = self._spec("judge").contestants[0].engine
+        assert engine.effective_role("verifier").model == "openai/gpt-5.5"
+
+    def test_nothing_writes_the_retired_spelling_back_out(self):
+        raw = match_to_toml_dict(self._spec("judge"))
+        roles = raw["contestant"][0]["engine"]["roles"]
+        assert "verifier" in roles and "judge" not in roles

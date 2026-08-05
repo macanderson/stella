@@ -76,6 +76,7 @@ pub mod graph;
 pub mod markdown;
 pub mod notice;
 pub mod palette;
+pub mod plan;
 pub mod progress;
 pub mod proof;
 pub mod resource;
