@@ -246,7 +246,21 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     assert_eq!(
         lock_is_held(&sidecar),
         Some(false),
-        "every holder of the lock — `sh` AND the `sleep` it spawned — must have exited"
+        "the run must actually be over"
+    );
+    // "Gone" is eventually-true, not instantly-true: the TERM'd `sleep` was
+    // orphaned when `sh` died, so it lingers as a zombie until PID 1 reaps
+    // it — and a zombie still answers a group probe. launchd reaps before
+    // the next statement on a laptop; a CI container's init can lose that
+    // race, which is a fact about reap latency, not about `stop`.
+    assert!(
+        eventually(Duration::from_secs(10), || {
+            // SAFETY: probing a group with signal 0 sends nothing. The
+            // parentheses are load-bearing: a bare `unsafe { … }` opening a
+            // statement ends the statement at the block, orphaning the `!=`.
+            (unsafe { libc::kill(-group, 0) }) != 0
+        }),
+        "the whole process group must be gone"
     );
 
     // Reap our own child so the test leaves no zombie of its own behind.
