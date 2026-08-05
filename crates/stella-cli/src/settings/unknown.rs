@@ -436,6 +436,10 @@ mod tests {
         assert_eq!(found, vec!["hooks.preToolUse".to_string()]);
     }
 
+    /// Order is structural, not alphabetical: [`scan_engine`] sweeps the agent
+    /// map for unknown NAMES in one pass before descending into the known ones,
+    /// so a misspelled agent is always reported ahead of any field typo inside
+    /// a correctly-spelled sibling — whatever the two happen to sort as.
     #[test]
     fn nested_engine_typos_carry_their_full_path() {
         let found = scan(
