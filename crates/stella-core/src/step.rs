@@ -360,7 +360,7 @@ impl TurnState {
             calibration_model: checkpoint.calibration_model,
             loop_steered: checkpoint
                 .loop_steered
-                .then(|| checkpoint.loop_steered_pattern),
+                .then_some(checkpoint.loop_steered_pattern),
             transcript_rewrites: checkpoint.transcript_rewrites,
             step: checkpoint.step,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
