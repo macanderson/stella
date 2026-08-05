@@ -142,6 +142,21 @@ export interface TaskRow {
   cells: Record<string, Cell | null | undefined>;
 }
 
+/**
+ * One monitor rule firing once, for one arm on one task — the agent monitor
+ * protocol's severity semantics: `critical` means the match's numbers are
+ * invalid and must not be published; the UI says so rather than tinting a
+ * cell.
+ */
+export interface Detection {
+  contestant: string;
+  task: string;
+  rule: string;
+  severity: string;
+  evidence: string;
+  data?: Record<string, unknown>;
+}
+
 export interface Snapshot {
   match: {
     id: string;
@@ -158,6 +173,7 @@ export interface Snapshot {
   contestants: ContestantSnap[];
   dimensions: Dimension[];
   leaders?: Record<string, string[]>;
+  detections?: Detection[];
 }
 
 export interface TranscriptEntry {
