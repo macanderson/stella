@@ -143,14 +143,14 @@ impl VertexProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::transport(e.to_string()))?;
 
         if !response.status().is_success() {
             return Err(classify_google_error("Vertex AI", response, &self.model).await);
         }
 
         let (text, tool_calls, usage, finish_reason) =
-            aggregate_gemini_stream("Vertex AI", response, observer).await?;
+            aggregate_gemini_stream("Vertex AI", response, observer, self.pricing.as_ref()).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -375,7 +375,7 @@ mod tests {
 
         let err = provider.complete(req).await.unwrap_err();
         assert!(
-            matches!(err, ProviderError::Transport(_)),
+            matches!(err, ProviderError::Transport { .. }),
             "expected Transport, got {err:?}"
         );
         assert!(err.is_retryable(), "a disconnect must be retryable");

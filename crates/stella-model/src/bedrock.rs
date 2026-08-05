@@ -728,11 +728,11 @@ impl Provider for BedrockProvider {
         let wire_path = self.wire_path();
         let url = format!("{base_url}{wire_path}");
         let host = sigv4::host_from_url(&url)
-            .ok_or_else(|| ProviderError::Transport(format!("unparseable Bedrock URL: {url}")))?;
+            .ok_or_else(|| ProviderError::transport(format!("unparseable Bedrock URL: {url}")))?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| ProviderError::Transport(e.to_string()))?
+            .map_err(|e| ProviderError::transport(e.to_string()))?
             .as_secs();
         let amz_date = sigv4::format_amz_date(now as i64);
 
