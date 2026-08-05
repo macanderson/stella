@@ -322,7 +322,11 @@ current_run_id() {
 }
 
 run_append() {
-  python3 - "$RUNS" "$@" <<'PY' || true
+  # NOT `|| true`. This append IS the run history; swallowing its failure loses
+  # the transition while the caller goes on to clear the live pointer, and the
+  # run then reads `crashed` to every reader forever. A lost record must be
+  # loud. (Found by a live fullauto cycle auditing this file.)
+  if ! python3 - "$RUNS" "$@" <<'PY'
 import json, socket, sys, time
 path = sys.argv[1]
 fields = {}
@@ -335,14 +339,22 @@ rec = {
     "host": socket.gethostname(),
 }
 for k, v in fields.items():
-    if v.isdigit():
+    # Ask for forgiveness, not permission. `str.isdigit()` is True for
+    # characters `int()` refuses — superscripts (`²`), and other Unicode digit
+    # forms — so a reason string of "²" raised ValueError here and took the
+    # whole record with it.
+    try:
         rec[k] = int(v)
-    else:
+    except ValueError:
         rec[k] = v
 with open(path, "a") as fh:
     fh.write(json.dumps(rec, sort_keys=True) + "\n")
 print(json.dumps(rec))
 PY
+  then
+    warn "FAILED to append the run record — the run history is now incomplete"
+    return 1
+  fi
 }
 
 cmd_run() {

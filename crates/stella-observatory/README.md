@@ -44,6 +44,7 @@ free one). This crate builds no binary —
 | [`src/db.rs`](src/db.rs) | Every query against `.stella/private/store.db` and `fleet.db`. Open it when a panel needs a new aggregate; the SQL deliberately mirrors `stella stats` semantics (resolved = outcome `completed`, `off-grid` = provider `local`). |
 | [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). |
 | [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain, exploration maps — plus `redact`, the credential scrubber. |
+| [`src/fullauto.rs`](src/fullauto.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/fullauto/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
 | [`src/codegraph.rs`](src/codegraph.rs) | `codegraph.db` flattened to `{nodes, edges, groups}` for the force-directed canvas, including the Rust module-path resolution the indexer doesn't do. |
 | [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. |
 | `src/assets/mark.svg`, `src/assets/wordmark.svg` | Favicon and header lockup, served from `/assets/`. |
