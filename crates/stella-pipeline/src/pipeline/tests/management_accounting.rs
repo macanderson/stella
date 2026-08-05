@@ -193,3 +193,181 @@ async fn triage_budget_crossing_aborts_before_a_second_provider_call() {
             .any(|event| matches!(event, AgentEvent::Complete { .. }))
     );
 }
+
+/// #1483: `Pipeline::verifier` and `verifier_guidance` used to dispatch with
+/// `RawCall.timeout: None`, so a hung verifier had nothing bounding the call
+/// short of the retry policy — it would sit waiting on the clock that scores
+/// the run (bench timeouts) rather than degrading onto the documented cheap
+/// fallback. Both now thread `EngineConfig::model_timeout` — the same
+/// posture-keyed ceiling the worker path got in #1211/#1277 — into the raw
+/// call, the same shape `triage_latency_ceiling` already gave triage.
+///
+/// A tiny `model_timeout` against a provider that answers well after it
+/// proves the call is abandoned at the ceiling: the verdict falls back to
+/// the deterministic heuristic (`Verdict::heuristic == true`) instead of the
+/// model's real "PASS verified" answer, and the abandonment is recorded as
+/// an explicit `UsageIncomplete { role: Verdict, reason: Timeout }` rather
+/// than silently waiting the call out.
+#[tokio::test]
+async fn late_verdict_is_abandoned_and_falls_back_to_the_heuristic() {
+    let provider = DelayedProvider {
+        result: TokioMutex::new(Some(text_result("PASS verified"))),
+        delay: Duration::from_millis(20),
+    };
+    let resolver = AnyProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            engine: EngineConfig {
+                model_timeout: Some(Duration::from_millis(1)),
+                ..EngineConfig::default()
+            },
+            ..PipelineConfig::default()
+        },
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let mut total = 0.0;
+    let prompt = ManagementPrompt {
+        instructions: "verdict?",
+        payload: "goal, diff, evidence".into(),
+    };
+    let inputs = LadderInputs {
+        touched_tests_passed: Some(true),
+        ..LadderInputs::default()
+    };
+
+    let verdict = pipeline
+        .verifier(prompt, &inputs, &mut budget, &mut total)
+        .await
+        .expect("a wedged verifier is never a run-ending failure");
+
+    assert!(
+        verdict.heuristic,
+        "the abandoned call must fall back to the deterministic heuristic, \
+         not wait out the model's real answer"
+    );
+    assert_eq!(total, 0.0, "nothing settled, so nothing is charged");
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::UsageIncomplete {
+                role: ModelCallRole::Verdict,
+                reason: stella_protocol::UsageIncompleteReason::Timeout,
+                ..
+            }
+        )),
+        "the missed deadline must surface as an explicit incomplete-usage record: {events:?}"
+    );
+}
+
+/// The distress-guidance sibling of the witness above: a hung guidance call
+/// now abandons onto its own documented best-effort fallback (`Ok(None)`,
+/// evidence-only revision) at the same `model_timeout` ceiling, instead of
+/// stalling the revision loop on a wedged verifier.
+#[tokio::test]
+async fn late_guidance_is_abandoned_and_reported_incomplete() {
+    let provider = DelayedProvider {
+        result: TokioMutex::new(Some(text_result("try a different approach"))),
+        delay: Duration::from_millis(20),
+    };
+    let resolver = AnyProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            engine: EngineConfig {
+                model_timeout: Some(Duration::from_millis(1)),
+                ..EngineConfig::default()
+            },
+            ..PipelineConfig::default()
+        },
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let mut total = 0.0;
+    let prompt = ManagementPrompt {
+        instructions: "guidance?",
+        payload: "goal, diff, evidence".into(),
+    };
+
+    let guidance = pipeline
+        .verifier_guidance(prompt, &mut budget, &mut total)
+        .await
+        .expect("a wedged guidance call is never a run-ending failure");
+
+    assert_eq!(
+        guidance, None,
+        "the abandoned call degrades to evidence-only revision, not the \
+         model's real (late) steering text"
+    );
+    assert_eq!(total, 0.0, "nothing settled, so nothing is charged");
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::UsageIncomplete {
+                role: ModelCallRole::DistressGuidance,
+                reason: stella_protocol::UsageIncompleteReason::Timeout,
+                ..
+            }
+        )),
+        "the missed deadline must surface as an explicit incomplete-usage record: {events:?}"
+    );
+}
