@@ -47,12 +47,20 @@ pub(crate) fn warn_audit_record_incomplete(
 /// failure and must be carried into execution closeout — callers fail
 /// closed on incomplete telemetry rather than silently treating a partial
 /// record as complete.
+/// Forward engine events into a deck lane.
+///
+/// `plan_board` is the lane's task board (`ToolRegistry::task_board`). When a
+/// `ScopeReview` goes past, the approved plan's steps are seeded onto it —
+/// see [`stella_core::tasks::TaskBoard::seed_from_plan`] for why the two used
+/// to be unconnected, and what that cost. `None` for lanes with no board of
+/// their own.
 pub(crate) fn spawn_forwarder(
     mut rx: UnboundedReceiver<AgentEvent>,
     execution: Option<(Arc<Store>, i64)>,
     provider_id: String,
     inbound: UnboundedSender<Inbound>,
     lane: String,
+    plan_board: Option<stella_tools::tasks::TaskBoardHandle>,
 ) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
         let mut seq = 0u64;
@@ -74,6 +82,17 @@ pub(crate) fn spawn_forwarder(
         );
         while let Some(event) = rx.recv().await {
             bridge.observe(&event);
+            // A plan that reached the gate is the plan whose progress the
+            // board records, so this is where it becomes one. Seeded on the
+            // proposal rather than on approval: the ids must already resolve
+            // when the first `task_start` arrives, and the gate's own outcome
+            // reaches this task only as the absence of further events.
+            // `seed_from_plan` is a no-op on a board that already has rows,
+            // so a declined or revised plan cannot clobber live work.
+            if let (AgentEvent::ScopeReview { proposal }, Some(board)) = (&event, &plan_board) {
+                let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
+                guard.seed_from_plan(&proposal.steps);
+            }
             if let Some((store, id)) = &execution {
                 let outcome = agent::persist_event_detailed(store, *id, seq, &event, &provider_id);
                 if !outcome.is_complete() {

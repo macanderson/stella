@@ -198,9 +198,9 @@ fn scoped_session(accessible: bool) -> (WorkspaceModel, DeckUi) {
     (model, deck_ui(DeckTab::Session, accessible))
 }
 
-/// The rail's own block title. Deliberately not the step counts — those also
-/// appear in the one-row strip, which accessible mode keeps.
-const RAIL_SCOPE: &str = " SCOPE ✓ ";
+/// The rail's own block title. Deliberately not the step counts — the stacked
+/// fallback accessible mode takes carries those too.
+const RAIL_PLAN: &str = " PLAN ";
 /// The transcript pane's block title, which sits on the same row as the rail's
 /// when the two are side by side.
 const TRANSCRIPT_TITLE: &str = " transcript · ";
@@ -215,12 +215,20 @@ fn the_session_tab_drops_the_side_rail_in_accessible_mode() {
         "the transcript still renders:\n{}",
         frame.join("\n")
     );
+    // The PANEL is still there — accessible mode stacks it — but it must never
+    // share a terminal row with the transcript, because read aloud that is one
+    // interleaved line.
     assert!(
-        !frame.iter().any(|r| r.contains(RAIL_SCOPE)),
+        frame.iter().any(|r| r.contains(RAIL_PLAN)),
+        "the plan is stacked, not dropped — a surface that disappears in \
+         accessible mode is a surface screen-reader users do not have:\n{}",
+        frame.join("\n")
+    );
+    assert!(
+        !shares_a_row(&frame, TRANSCRIPT_TITLE, RAIL_PLAN),
         "the rail is a column beside the transcript, so every row it occupies \
-         carries two panes; accessible mode takes the same path a narrow \
-         terminal already takes — the one-row strip, plus ⌃S for the whole \
-         thing:\n{}",
+         carries two panes; accessible mode stacks them into full-width bands \
+         instead:\n{}",
         frame.join("\n")
     );
 }
@@ -230,7 +238,7 @@ fn the_session_tab_still_raises_the_side_rail_on_a_wide_frame_by_default() {
     let (model, mut ui) = scoped_session(false);
     let frame = rows(&model, &mut ui, W, H);
     assert!(
-        shares_a_row(&frame, TRANSCRIPT_TITLE, RAIL_SCOPE),
+        shares_a_row(&frame, TRANSCRIPT_TITLE, RAIL_PLAN),
         "an ordinary wide session keeps the rail beside the transcript:\n{}",
         frame.join("\n")
     );

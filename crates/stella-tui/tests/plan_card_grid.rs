@@ -1,14 +1,13 @@
-//! Witness: the scope card v2 renders the run's scope as a labeled grid —
-//! repo (with `⎇ branch`), write/read globs, budget with its cap, the
-//! `think` / `work` / `verify` model slots, the shell policy, and the
-//! literal done-when contract — and flips to `locked at plan · e to edit`
+//! Witness: the plan card renders the plan's operating envelope as a labeled
+//! grid — repo (with `⎇ branch`), write/read globs, budget with its cap, the
+//! `think` / `work` / `verify` model slots, the shell policy, and the literal
+//! done-when contract — over the readable step list, and flips to `locked`
 //! once the gate has approved.
 //!
-//! Before D5 the scope surface was the approval card's summary + step list
-//! plus the SCOPE rail's counts: repo, globs, budget, routing and the shell
-//! policy arrived nowhere, and post-approval the scope could only be
-//! recalled through `⌃S`. These tests pin the grid's labels, the lock line,
-//! and the accessible labeled-record form.
+//! These rows used to be the `/scope` card's whole content, on a surface that
+//! showed the envelope and never the steps. The card now carries both; these
+//! tests pin the grid's labels, the lock line, the step list, and the
+//! accessible labeled-record form.
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -53,7 +52,7 @@ fn frame(model: &WorkspaceModel, accessible: bool) -> String {
     let mut ui = DeckUi::default();
     ui.splash.skip();
     ui.accessible = accessible;
-    ui.cards.raise(Card::Scope);
+    ui.cards.raise(Card::Plan);
     let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("TestBackend");
     terminal
         .draw(|f| render_deck(model, &mut ui, f))
@@ -89,7 +88,7 @@ fn the_grid_carries_every_labeled_row() {
         "allowlisted",
         "done when",
         "oracle flips red → green",
-        "(witness confirms from evidence)",
+        "(confirmed from evidence, not self-report)",
     ] {
         assert!(text.contains(needle), "grid missing {needle:?}:\n{text}");
     }
@@ -104,9 +103,26 @@ fn post_approval_the_card_reads_locked_with_the_edit_affordance() {
     );
     let locked = frame(&scoped_model(true), false);
     assert!(
-        locked.contains("locked at plan · e to edit"),
-        "an approved scope reads locked:\n{locked}"
+        locked.contains("locked"),
+        "an approved plan reads locked:\n{locked}"
     );
+    assert!(
+        locked.contains("e edit"),
+        "…and still offers the edit affordance:\n{locked}"
+    );
+}
+
+/// The card's other half, and the one the old `/scope` never had: the steps
+/// themselves, readable, with their status rings.
+#[test]
+fn the_card_lists_the_plan_steps_over_the_envelope() {
+    let text = frame(&scoped_model(true), false);
+    for needle in ["route", "guard", "wire the automations API", "approved 0/2"] {
+        assert!(
+            text.contains(needle),
+            "step list missing {needle:?}:\n{text}"
+        );
+    }
 }
 
 #[test]

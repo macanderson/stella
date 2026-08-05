@@ -341,9 +341,10 @@ fn only_the_load_bearing_cells_are_must_keep() {
 fn every_card_collapses_the_band_to_its_context_cells() {
     let model = running_model();
     for (card, expect) in [
-        (Card::Tasks, vec!["model", "stage", "turn"]),
-        (Card::Scope, vec!["model", "stage", "ctx", "spend"]),
-        (Card::Witness, vec!["model", "stage", "witness", "spend"]),
+        // `/plan` is one card where `/tasks`, `/scope` and `/witness` used to
+        // be three, and it carries what all three needed: the turn's cost and
+        // where the plan stands.
+        (Card::Plan, vec!["model", "stage", "turn", "plan"]),
         (Card::Models, vec!["model", "stage", "ctx", "spend"]),
         (Card::Budget, vec!["model", "stage", "ctx", "spend"]),
     ] {

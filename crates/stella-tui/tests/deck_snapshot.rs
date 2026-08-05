@@ -99,37 +99,30 @@ fn deck_renders_every_tab_with_real_content() {
 
     // Each floating card over the same scenario (D3–D6), with its
     // load-bearing copy.
-    let card_cases: [(stella_tui::deck_ui::cards::Card, &[&str]); 5] = [
+    // Each floating card over the same scenario, with its load-bearing copy.
+    // `/plan` is one case where there used to be three: `/tasks`, `/scope` and
+    // `/witness` all described the same plan and none of them could show a
+    // step's text. The verification records the witness panel carried are now
+    // the session frame's DONE VERIFICATION panel, not a card.
+    let card_cases: [(stella_tui::deck_ui::cards::Card, &[&str]); 3] = [
         (
-            stella_tui::deck_ui::cards::Card::Tasks,
-            // 5 of 7 done after the second board snapshot; the active row's
-            // live elapsed/cost readout rides the right edge.
-            &["tasks", "5 of 7 done", "Workflows canvas", "✓", "○"],
-        ),
-        (
-            stella_tui::deck_ui::cards::Card::Scope,
+            stella_tui::deck_ui::cards::Card::Plan,
             &[
-                "scope",
+                // the plan and its state
+                "plan",
+                "pending approval",
+                "Refactor the automations store",
+                // the steps, readable, with their rings
+                "extract types",
+                "○",
+                // …over the operating envelope
                 "repo",
                 "write",
                 "budget",
                 "think",
                 "verify",
                 "oracle flips red → green",
-                "(witness confirms from evidence)",
-            ],
-        ),
-        (
-            stella_tui::deck_ui::cards::Card::Witness,
-            &[
-                "witness",
-                "author",
-                "test built before the patch",
-                "execute",
-                "run 2 of 3",
-                "deterministic seed 7741",
-                "result",
-                "red ──▸ green",
+                "(confirmed from evidence, not self-report)",
             ],
         ),
         (
