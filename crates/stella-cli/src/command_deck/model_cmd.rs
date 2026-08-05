@@ -52,7 +52,7 @@ pub fn current_summary(cfg: &Config) -> String {
 }
 
 /// The pins this session is configured to run for triage / worker / verifier,
-/// for the deck's `MODELS` row.
+/// for the statline's MODEL cell and the `/models` dialog's standing column.
 ///
 /// The deck otherwise learns a role's pin only from that role's first
 /// `AgentEvent::StepUsage`, so before any turn it can say nothing, and a role
@@ -61,8 +61,8 @@ pub fn current_summary(cfg: &Config) -> String {
 /// configured" from "not yet used" — the driver is the only side that can,
 /// because settings precedence lives here.
 ///
-/// Marked `served: false`: this is intent, not evidence. The deck draws it dim
-/// and replaces it with whatever actually served.
+/// Marked `served: false`: this is intent, not evidence. The deck reads it as
+/// `configured` and replaces it with whatever actually served.
 pub fn configured_role_pins(
     cfg: &Config,
 ) -> Vec<(stella_tui::deck::PipelineRole, stella_tui::deck::RolePin)> {

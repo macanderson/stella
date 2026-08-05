@@ -1249,14 +1249,14 @@ mod tests {
 
     fn sample_state() -> EngineConfigState {
         EngineConfigState {
-            auto_mode: false,
-            effort_auto: false,
-            reasoning_auto: false,
             allowed_models: vec!["anthropic/claude-fable-5".into(), "openai/gpt-6".into()],
             providers: vec!["anthropic".into(), "openrouter".into()],
             catalog_models: vec!["zai/glm-5".into()],
-            model_efforts: Default::default(),
             agents: vec![EngineAgentState::default(); 4],
+            // The rest defaults empty: the three auto toggles, the per-model
+            // effort vocabularies, and the resolved `roles` that ride this
+            // snapshot for `/models` but that nothing this panel edits reads.
+            ..Default::default()
         }
     }
 

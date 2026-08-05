@@ -5,11 +5,10 @@
 //! The one-row zoned strip that briefly replaced this had to name each value
 //! inline (`ctx 91k/200k · cpu 73%`), which spends scarce horizontal columns
 //! on labels that vertical space gives away free — and left no room for the
-//! CPU/CONTEXT meters, the CACHE volumes or the MODELS pins. These tests pin
-//! the restored contract: every cell labels itself on the row above, the
-//! label and value columns stay aligned, CPU and CONTEXT lead with the `▮▯`
-//! meter, MODELS is never the row that got dropped, and `statline_items`
-//! remains the single decision function.
+//! CPU/CONTEXT meters or the CACHE volumes. These tests pin the restored
+//! contract: every cell labels itself on the row above, the label and value
+//! columns stay aligned, CPU and CONTEXT lead with the `▮▯` meter, and
+//! `statline_items` remains the single decision function.
 //!
 //! The band opens with MODEL and the stage box. The brand glyph, the agent
 //! id and the `● execute` dot that used to lead it are gone: two of the three
@@ -17,6 +16,11 @@
 //! stepper one row up. What replaced them both move — which pin is answering
 //! (named by the model's own vendor, not the gateway that proxied it) and
 //! how far through the task board the stage has gotten.
+//!
+//! A third row listing all three role pins as `T·… W·… J·…` used to sit under
+//! the pair, and [`the_band_is_exactly_two_rows`] is what keeps it from coming
+//! back: routing in full is `/models`, and permanent chrome that never changes
+//! during a session cannot justify a row on every frame.
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -41,11 +45,8 @@ fn running_model() -> WorkspaceModel {
     m
 }
 
-/// The statline band of a full-deck render at `w` columns, as plain text:
-/// `(labels, values, models)`. Located by finding the MODELS row rather than
-/// by a hardcoded offset, so a layout change fails loudly here instead of
-/// silently asserting against the wrong rows.
-fn statline_band(model: &WorkspaceModel, w: u16) -> (String, String, String) {
+/// Every row of a full-deck render at `w` columns, as plain text.
+fn deck_rows(model: &WorkspaceModel, w: u16) -> Vec<String> {
     let mut ui = DeckUi::default();
     ui.splash.skip();
     let mut terminal = Terminal::new(TestBackend::new(w, 24)).expect("TestBackend");
@@ -54,22 +55,39 @@ fn statline_band(model: &WorkspaceModel, w: u16) -> (String, String, String) {
         .expect("render_deck");
     let buf = terminal.backend().buffer();
     let area = *buf.area();
-    let row = |y: u16| -> String {
-        (0..area.width)
-            .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
-            .collect()
-    };
-    let models_y = (0..area.height)
-        .find(|&y| row(y).contains("MODELS"))
-        .unwrap_or_else(|| panic!("no MODELS row at {w} cols"));
-    assert!(models_y >= 2, "the label/value pair sits above MODELS");
-    (row(models_y - 2), row(models_y - 1), row(models_y))
+    (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect()
+        })
+        .collect()
+}
+
+/// The statline band of a full-deck render at `w` columns: `(labels, values)`.
+///
+/// Located by finding the MODEL label — a [`MUST_KEEP`] cell, and the one that
+/// *leads* the row, so it survives both the drop rule and the clip at the
+/// narrowest widths this exercises. Anchored rather than offset by a constant,
+/// so a layout change fails loudly here instead of silently asserting against
+/// the wrong rows.
+fn statline_band(model: &WorkspaceModel, w: u16) -> (String, String) {
+    let rows = deck_rows(model, w);
+    let labels_y = rows
+        .iter()
+        .rposition(|r| r.contains("MODEL"))
+        .unwrap_or_else(|| panic!("no statline label row at {w} cols"));
+    assert!(
+        labels_y + 1 < rows.len(),
+        "the value row sits under the labels at {w} cols"
+    );
+    (rows[labels_y].clone(), rows[labels_y + 1].clone())
 }
 
 #[test]
 fn the_band_is_a_label_row_over_a_value_row() {
     let model = running_model();
-    let (labels, values, _) = statline_band(&model, 200);
+    let (labels, values) = statline_band(&model, 200);
 
     // Every cell names itself on the row above. `EXECUTE` is the stage box's
     // label — the one label that is live state rather than a constant.
@@ -104,7 +122,7 @@ fn each_label_sits_in_the_same_column_as_its_value() {
     // Alignment is the whole point of two rows: a label that drifts off its
     // value turns the band back into a guessing game.
     let model = running_model();
-    let (labels, values, _) = statline_band(&model, 200);
+    let (labels, values) = statline_band(&model, 200);
     let l: Vec<char> = labels.chars().collect();
     let v: Vec<char> = values.chars().collect();
     let dividers: Vec<usize> = labels
@@ -179,24 +197,23 @@ fn model_serving_a_board() -> WorkspaceModel {
 #[test]
 fn the_model_cell_names_the_serving_role_and_its_vendor() {
     let model = model_serving_a_board();
-    let (labels, values, models) = statline_band(&model, 200);
+    let (labels, values) = statline_band(&model, 200);
     assert!(labels.contains("MODEL"), "{labels}");
     assert!(
         values.contains("worker: z-ai/glm-5.2"),
         "the role word and the vendor slug render:\n{values}"
     );
-    // The gateway that proxied the call is not the model's identity, on
-    // either surface.
+    // The gateway that proxied the call is not the model's identity.
     assert!(
-        !values.contains("openrouter") && !models.contains("openrouter"),
-        "the API gateway is stripped:\n{values}\n{models}"
+        !values.contains("openrouter"),
+        "the API gateway is stripped:\n{values}"
     );
 }
 
 #[test]
 fn the_stage_box_stacks_the_stage_name_over_the_board_position() {
     let model = model_serving_a_board();
-    let (labels, values, _) = statline_band(&model, 200);
+    let (labels, values) = statline_band(&model, 200);
     assert!(
         labels.contains("EXECUTE"),
         "the stage name heads its own cell:\n{labels}"
@@ -212,7 +229,7 @@ fn the_stage_box_stacks_the_stage_name_over_the_board_position() {
 #[test]
 fn a_session_with_no_task_board_invents_no_step() {
     let model = running_model(); // no TaskUpdate ever folded
-    let (labels, _, _) = statline_band(&model, 200);
+    let (labels, _) = statline_band(&model, 200);
     assert!(labels.contains("EXECUTE"), "the stage still names itself");
     // `statline_items` is the honest surface: no board, no step.
     let items = statline_items(&model, &DeckUi::default());
@@ -224,7 +241,7 @@ fn a_session_with_no_task_board_invents_no_step() {
 #[test]
 fn cpu_and_context_carry_a_six_cell_meter() {
     let model = running_model();
-    let (_, values, _) = statline_band(&model, 200);
+    let (_, values) = statline_band(&model, 200);
     let meters = values.matches('▯').count() + values.matches('▮').count();
     assert!(
         meters >= 12,
@@ -242,7 +259,7 @@ fn the_cache_cell_shows_its_read_write_volumes() {
     model.agents[0].tokens_in = 200_000;
     model.agents[0].cache_read_tokens = 150_000;
     model.agents[0].cache_write_tokens = 40_000;
-    let (_, values, _) = statline_band(&model, 200);
+    let (_, values) = statline_band(&model, 200);
     assert!(values.contains("75%"), "the hit rate renders:\n{values}");
     assert!(
         values.contains("rd ·") && values.contains("wr"),
@@ -250,19 +267,37 @@ fn the_cache_cell_shows_its_read_write_volumes() {
     );
 }
 
+/// The band is the label/value pair and nothing else.
+///
+/// A third row pinned all three role slugs as `T·… W·… J·…`, and it is gone:
+/// the slugs do not move during a session, so the row redrew a constant on
+/// every frame while the MODEL cell one row up already named the pin actually
+/// answering, and the single-letter prefixes had to be learned before the row
+/// could be read at all. Routing in full — every role, its effort, its
+/// thinking and the setting that chose each — is `/models`.
+///
+/// Asserted against the whole frame, not just the band, because the failure
+/// this guards against is the row coming back somewhere slightly different.
 #[test]
-fn models_is_never_the_row_that_got_dropped() {
-    // The pins a scored run is read against must survive every width the deck
-    // is usable at — the cell row could never hold three `provider/model`
-    // slugs, which is why they get their own row.
-    let model = running_model();
+fn the_band_is_exactly_two_rows() {
+    let model = model_serving_a_board();
     for w in [80u16, 120, 160, 200] {
-        let (_, _, models) = statline_band(&model, w);
-        assert!(models.contains("MODELS"), "MODELS survives {w} cols");
+        let rows = deck_rows(&model, w);
+        let labels_y = rows.iter().rposition(|r| r.contains("MODEL")).unwrap();
+        assert_eq!(
+            labels_y + 2,
+            rows.len(),
+            "the value row is the last row of the deck at {w} cols"
+        );
+        let frame = rows.join("\n");
+        assert!(
+            !frame.contains("MODELS"),
+            "the pins row came back at {w} cols:\n{frame}"
+        );
         for initial in ["T·", "W·", "J·"] {
             assert!(
-                models.contains(initial),
-                "{initial} pin renders at {w} cols:\n{models}"
+                !frame.contains(initial),
+                "the {initial} prefix came back at {w} cols:\n{frame}"
             );
         }
     }
@@ -273,7 +308,7 @@ fn cells_drop_whole_by_priority_as_the_row_narrows() {
     let model = running_model();
 
     // Wide: every cell renders.
-    let (labels, _, _) = statline_band(&model, 200);
+    let (labels, _) = statline_band(&model, 200);
     for label in ["MODEL", "CPU", "CACHE", "SAVED", "WARMTH", "PIPELINE"] {
         assert!(
             labels.contains(label),
@@ -285,7 +320,7 @@ fn cells_drop_whole_by_priority_as_the_row_narrows() {
     // whole. MODEL is must-keep, so it survives every width.
     let mut gone_at = std::collections::HashMap::new();
     for w in (24..=200u16).rev() {
-        let (labels, _, _) = statline_band(&model, w);
+        let (labels, _) = statline_band(&model, w);
         for label in ["PIPELINE", "CACHE", "CPU", "SPEND"] {
             if !labels.contains(label) {
                 gone_at.entry(label).or_insert(w);

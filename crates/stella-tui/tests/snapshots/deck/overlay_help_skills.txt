@@ -33,13 +33,13 @@
 │                                             │  >text         steer the running turn — lands at the next step bo│                                             │
 │                                             │  esc           soft-stop at the next step boundary — completed wo│                                             │
 │                                             │  esc esc       cancel NOW & hold — nothing runs until your next p│                                             │
-└─────────────────────────────────────────────│  ctrl-c        quit stella                                       │─────────────────────────────────────────────┘
- space on/off · ctrl+o preview · ctrl+x×2 dele│                                                                  │
-──────────────────────────────────────────────│  letter & arrow hotkeys apply while the prompt box is empty      │──────────────────────────────────────────────
- ▸ stage  Refactor the automations store into └──────────────────────────────────────────────────────────────────┘
+│                                             │  ctrl-c        quit stella                                       │                                             │
+└─────────────────────────────────────────────│                                                                  │─────────────────────────────────────────────┘
+ space on/off · ctrl+o preview · ctrl+x×2 dele│  letter & arrow hotkeys apply while the prompt box is empty      │
+──────────────────────────────────────────────└──────────────────────────────────────────────────────────────────┘──────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
  MODEL                   │ EXECUTE     │ CONTEXT          │ SPEND
  worker: zai/glm-5.2-air │ Step 6 of 7 │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50                                                                ↝ deterministic-first
- MODELS  T·—  W·zai/glm-5.2-air  J·—

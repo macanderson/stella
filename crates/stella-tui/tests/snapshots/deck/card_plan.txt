@@ -27,19 +27,19 @@
 │                                                   │▸ ○ 1  extract types                                  │                                                   │
 └───────────────────────────────────────────────────│  ○ 2  move hooks                                     │───────────────────────────────────────────────────┘
 ┌ transcript · 21 lines · following ────────────────│  ○ 3  update 9 imports                               │───────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│● read_file    apps/app/automations/page.tsx       │                                                      │           ││Refactor the automations store into a…│
-│  ⎿ 312 lines                                      │repo      macanderson/web-app ⎇ feat/automations-store│       42ms││○ 1 extract types                     │
-│                                                   │write     packages/automations/** · apps/app/automatio│           ││○ 2 move hooks                        │
-│☰  plan  5/7  ·  Workflows canvas                  │read      apps/** · packages/**  (2 globs)            │           ││○ 3 update 9 imports                  │
-│                                                   │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           │└────────────────────── /plan reads it ┘
-│⏸ plan  Refactor the automations store into a share│models    think — · work glm-5.2-air · verify —       │           │┌ DONE VERIFICATION ───────────────────┐
-│                                                   │shell     allowlisted                                 │           ││● flip ✓ red→green                    │
-└─────────────────────────────────────────── ↑ selec│done when oracle flips red → green                    │nd · /plan ┘└──────────────────────────────────────┘
-────────────────────────────────────────────────────│          (confirmed from evidence, not self-report)  │────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shar└──────────────────────────────────────────────────────┘
+│                                                   │                                                      │           ││Refactor the automations store into a…│
+│● read_file    apps/app/automations/page.tsx       │repo      macanderson/web-app ⎇ feat/automations-store│           ││○ 1 extract types                     │
+│  ⎿ 312 lines                                      │write     packages/automations/** · apps/app/automatio│       42ms││○ 2 move hooks                        │
+│                                                   │read      apps/** · packages/**  (2 globs)            │           ││○ 3 update 9 imports                  │
+│☰  plan  5/7  ·  Workflows canvas                  │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           ││                                      │
+│                                                   │models    think — · work glm-5.2-air · verify —       │           │└────────────────────── /plan reads it ┘
+│⏸ plan  Refactor the automations store into a share│shell     allowlisted                                 │           │┌ DONE VERIFICATION ───────────────────┐
+│                                                   │done when oracle flips red → green                    │           ││● flip ✓ red→green                    │
+└─────────────────────────────────────────── ↑ selec│          (confirmed from evidence, not self-report)  │nd · /plan ┘└──────────────────────────────────────┘
+────────────────────────────────────────────────────└──────────────────────────────────────────────────────┘────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shared workspace package
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
  MODEL                   │ EXECUTE     │ TURN  │ PLAN
  worker: zai/glm-5.2-air │ Step 6 of 7 │ $0.04 │ pending approval 0/3                                                                     ↝ deterministic-first
- MODELS  T·—  W·zai/glm-5.2-air  J·—

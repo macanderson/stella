@@ -586,6 +586,61 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
     ]
 }
 
+/// The demo engine snapshot, carrying the resolved per-role wiring the
+/// `/models` dialog prints.
+///
+/// The real deck holds one of these from session start, so without it every
+/// `/models` surface — the demo, the goldens — would pin the honest empty
+/// state instead of the dialog. Deliberately not four identical rows: the
+/// three ways a role gets its model (its own `agents.<role>.model`, a flat
+/// `pipeline_<role>_model`, the shared `default_model`) each appear once, and
+/// the verifier carries the `effort_auto` disclosure that is the longest and
+/// most easily-truncated line the dialog can draw.
+pub fn demo_engine_config() -> crate::envelope::EngineConfigState {
+    use crate::envelope::RoleWiringRow;
+    let row = |role: &str, model: &str, effort: &str, thinking: &str, source: &str| RoleWiringRow {
+        role: role.to_string(),
+        model: model.to_string(),
+        effort: effort.to_string(),
+        thinking: thinking.to_string(),
+        source: source.to_string(),
+    };
+    crate::envelope::EngineConfigState {
+        effort_auto: true,
+        roles: vec![
+            row(
+                "default",
+                "zai/glm-5.2-air",
+                "medium",
+                "thinking on",
+                "default_model",
+            ),
+            row(
+                "worker",
+                "zai/glm-5.2-air",
+                "medium",
+                "thinking on",
+                "default_model",
+            ),
+            row(
+                "verifier",
+                "anthropic/claude-opus-5",
+                "high  (effort_auto replaced \"max\")",
+                "thinking on",
+                "pipeline_verifier_model",
+            ),
+            row(
+                "triage",
+                "z-ai/glm-5.2",
+                "low",
+                "thinking off",
+                "agents.triage.model",
+            ),
+        ],
+        ..Default::default()
+    }
+}
+
 /// The demo task board: `tasks_done` rows completed, the next in progress,
 /// the rest pending — first snapshot 4 of 7 done (the exact fraction the
 /// task card's title advertises), second 5 of 7 after the triggers task

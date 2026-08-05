@@ -70,16 +70,15 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let text_w = (area.width as usize).saturating_sub(PROMPT_PREFIX_W + COMPOSER_GUTTER_W);
     let c_layout = composer_layout(&ui.composer, text_w.max(1));
     let composer_h = c_layout.rows.len().clamp(1, DECK_COMPOSER_MAX_ROWS) as u16;
-    // 2 rows (labels over values) + the always-on MODELS row, and a fourth
-    // only when the focused agent earned a low-hit-rate diagnosis (#267).
-    // MODELS is permanent by design: which pins served triage, worker and
-    // judge is what a scored run is read against — never the dropped row.
+    // 2 rows (labels over values), and a third only when the focused agent
+    // earned a low-hit-rate diagnosis (#267). The role-pin row that used to
+    // sit between them is gone: `/models` answers routing on demand, in full.
     let has_diagnosis = model
         .agents
         .get(ui.focused)
         .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
         .is_some();
-    let statline_h = if has_diagnosis { 4 } else { 3 };
+    let statline_h = if has_diagnosis { 3 } else { 2 };
     let bands = Layout::vertical([
         Constraint::Length(3),          // tab bar
         Constraint::Min(1),             // active view

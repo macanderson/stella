@@ -84,7 +84,6 @@ fn deck_renders_every_tab_with_real_content() {
         "CONTEXT",   // a micro-label on the statline's upper row…
         "/200k",     // …over its value on the lower row
         "SPEND",     // the session money cell
-        "MODELS",    // the always-on pins row beneath the pair
         "✓ plan",    // stepper: completed stage
         "▸ execute", // stepper: active stage beside the track
         "◆",         // a nested subagent's identity mark
@@ -138,6 +137,10 @@ fn deck_renders_every_tab_with_real_content() {
         let mut ui = DeckUi::default();
         ui.splash.skip();
         ui.graph = Some(demo_graph());
+        // `/models` renders the driver's resolved wiring, which the real deck
+        // holds from session start — without it the card would honestly say it
+        // has no answer yet, and this golden would pin the empty state.
+        ui.engine.pristine = Some(stella_tui::scenario::demo_engine_config());
         ui.cards.raise(card);
         let mut terminal = Terminal::new(TestBackend::new(190, 44)).unwrap();
         terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();

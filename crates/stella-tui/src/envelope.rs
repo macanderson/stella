@@ -184,10 +184,10 @@ pub enum Inbound {
     Pipeline(bool),
     /// The session's resolved triage / worker / verifier pins, sent once at
     /// startup by the driver — which is the only side that can call
-    /// `resolve_provider` — so the `MODELS` row can name all three before any
-    /// turn has run.
+    /// `resolve_provider` — so the statline's MODEL cell and the `/models`
+    /// dialog's standing column can name all three before any turn has run.
     ///
-    /// Without this the row stays empty until each role's first
+    /// Without this they stay empty until each role's first
     /// `AgentEvent::StepUsage`, because that is the only event carrying a
     /// role/provider/model triple. A verifier that has not been reached yet
     /// would then read as unconfigured rather than unused.
@@ -970,6 +970,40 @@ pub struct EngineAgentState {
     pub service_tier: Option<String>,
 }
 
+/// One engine role's **resolved** wiring — what that role will actually send,
+/// and the setting that decided it. The `/models` dialog's row type.
+///
+/// Every cell arrives pre-rendered from the driver, and deliberately so. The
+/// resolution is a precedence chain (`agents.<role>.model` over the flat
+/// `pipeline_<role>_model` over `default_model` over the session pin, with
+/// `--model` owning the worker and `effort_auto`/`reasoning_auto` able to
+/// replace a pin outright), it lives beside the request path in
+/// `stella-cli`'s `config_wiring`, and `stella config` already prints these
+/// exact cells. Re-deriving any of it here would give the deck a second
+/// answer that can drift from the engine's — and a routing report that can
+/// disagree with what runs is worse than no report at all.
+///
+/// This is why the fields are strings and not a typed mirror of the settings:
+/// the type carries a *rendering*, not a model to reason over.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoleWiringRow {
+    /// The settings key this role is spelled as (`default` / `worker` /
+    /// `verifier` / `triage`) — the word a user would type to change it.
+    pub role: String,
+    /// `provider/slug` exactly as it goes on the wire.
+    pub model: String,
+    /// The resolved reasoning effort, or `provider default`. Names the pinned
+    /// value `effort_auto` discarded when it discarded one.
+    pub effort: String,
+    /// `thinking on` / `thinking off` / `thinking default`, with the same
+    /// `reasoning_auto` disclosure.
+    pub thinking: String,
+    /// The settings key that decided `model`, as a path a user can edit:
+    /// `agents.verifier.model`, `pipeline_triage_model`, `default_model`,
+    /// `--model (this invocation)`, or `session default`.
+    pub source: String,
+}
+
 /// The full agent-engine configuration snapshot the ENGINE overlay renders
 /// and edits ([`Inbound::EngineConfig`] / [`WorkspaceInput::EngineConfigSave`]).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -999,6 +1033,15 @@ pub struct EngineConfigState {
     pub model_efforts: std::collections::HashMap<String, Vec<String>>,
     /// Exactly one entry per [`EngineRole::ALL`] slot, in that order.
     pub agents: Vec<EngineAgentState>,
+    /// What each role **resolves to**, which is a different question from
+    /// `agents` above: those are the raw overrides the ENGINE overlay edits,
+    /// where `None` means "inherit", and these are the answers after the
+    /// precedence chain and the auto-modes have run. The `/models` dialog
+    /// renders these; the overlay's editors never touch them.
+    ///
+    /// One row per role in [`EngineRole::ALL`] order, or empty on a driver
+    /// that sent no wiring — the dialog says so rather than inventing rows.
+    pub roles: Vec<RoleWiringRow>,
 }
 
 impl EngineConfigState {
