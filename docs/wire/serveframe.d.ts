@@ -2202,6 +2202,43 @@ export interface ProviderDeltaIn {
   request_id: string;
 }}
 
+// ── inbound: answering a scope review ───────────────────────────────────────
+//
+// The engine parks a turn on a `scope_review_request` frame when a plan needs
+// a human decision before it executes. The host answers by POSTing this body
+// to `POST /v1/turns/{id}/approve`, keyed by the frame's request_id.
+//
+// `decision` is an internally-tagged union: approve executes the plan as
+// proposed, trim executes only the listed step indices, and the note-carrying
+// arm re-plans with the reviewer's words folded in — an empty note reads as
+// abort, the same collapse the stdio gate makes for a bare "no".
+
+/**
+ * Wire mirror of [`stella_pipeline::ports::ScopeDecision`]. That type lives in
+ * `stella-pipeline` and is not itself `Serialize`/`Deserialize` — this crate
+ * owns the wire mapping, exactly as [`TurnOutcomeWire`] owns `TurnOutcome`'s.
+ */
+export type ScopeDecisionWire = {
+  decision: "approve";
+} | {
+  decision: "trim";
+  keep_steps: number[];
+} | {
+  decision: "revise";
+  note: string;
+} | {
+  decision: "abort";
+};
+
+/**
+ * Host → engine: the human's decision on a [`ServerFrame::ScopeReviewRequest`].
+ */
+export interface ScopeReviewResultIn {
+{
+  decision: ScopeDecisionWire;
+  request_id: string;
+}}
+
 // ── request-side: the optional `engine` object on POST /v1/turns ────────────
 //
 // Per-turn engine knobs (#1167), also accepted on
