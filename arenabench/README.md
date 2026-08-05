@@ -289,6 +289,59 @@ not allowed to break the benchmark.
 
 ---
 
+## When did it actually solve it
+
+A Terminal-Bench trial is graded **once**, after the agent is dead, against
+whatever the workspace looks like then. Nothing watches for the moment the tests
+start passing — so three things go unmeasured:
+
+- every step after that moment can only lose: it cannot raise a reward already
+  at 1.0, and it costs tokens and clock;
+- an agent can **destroy its own passing solution** and score 0,
+  indistinguishable from never solving it;
+- a trial killed by the wall clock can still pass — being interrupted is not
+  failing. (Measured: a Stella trial ended `AgentTimeoutError` at 900s and
+  scored a pass anyway.)
+
+Turn on capture, then replay afterwards:
+
+```toml
+[match]
+capture_snapshots = true
+snapshot_interval = 30.0   # the floor on how precisely a flip can be located
+```
+
+```bash
+arenabench flip <trial-dir>
+# flip at snapshot 6/23 (t+180s)
+# kept running 510s after it was already passing — 5 verifier runs, 0 unknown
+```
+
+**How capture stays invisible to the run.** Snapshots are taken with
+`git --git-dir` pointed *outside* the workspace and `--work-tree` pointed at it,
+so the workspace gets no `.git`, no index, and no ignore file. That is not
+fastidiousness: `fix-git` is a real task in this dataset whose whole subject is
+repository state, and a snapshotter that ran `git init` in the workspace would
+silently rewrite the task it was measuring.
+
+**Why the replay is afterwards, not during.** A task's verifier is a directory
+of tests that must be copied into the container to run. Doing that mid-trial
+would leave the answer key in the agent's own filesystem, readable. End-only
+grading is what keeps the oracle hidden, so the replay runs against fresh
+containers once the agent is gone and cannot learn from it.
+
+**Cost shapes the search.** One probe pays the verifier's full setup — ~142s for
+`sqlite-with-gcov`, mostly `apt-get` and a `uv` install. So the flip is found by
+bisection (`log2(n)` probes) plus a short backwards walk to catch an agent that
+solved the task, broke it, and fixed it again — the one case bisection cannot
+see. A probe that could not run at all counts as *unknown*, never as a failure:
+scoring it 0 would move the flip earlier than the truth.
+
+Capture is off by default and degrades to nothing — no Docker, or no `git` in
+the task image, yields a run with no snapshots and a warning.
+
+---
+
 ## Adding a benchmark
 
 One entry:

@@ -171,6 +171,8 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
             "concurrency": match_table.get("concurrency", 1),
             "record_video": match_table.get("record_video", False),
             "setup_timeout_multiplier": match_table.get("setup_timeout_multiplier", 1.0),
+            "capture_snapshots": match_table.get("capture_snapshots", False),
+            "snapshot_interval": match_table.get("snapshot_interval", 30.0),
         }
     )
     return replace(spec, contestants=tuple(contestants))
@@ -249,6 +251,8 @@ def match_to_toml_dict(spec: MatchSpec) -> dict[str, Any]:
             "concurrency": spec.concurrency,
             "record_video": spec.record_video,
             "setup_timeout_multiplier": spec.setup_timeout_multiplier,
+            "capture_snapshots": spec.capture_snapshots,
+            "snapshot_interval": spec.snapshot_interval,
         },
         "contestant": [
             {
@@ -310,6 +314,10 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
         "# Scales the agent-INSTALL budget. Agents that npm-install themselves",
         "# into an emulated container need >1 here or they never start.",
         _line("setup_timeout_multiplier", spec.setup_timeout_multiplier),
+        "# Periodic workspace snapshots, so `arenabench flip` can find the moment",
+        "# the tests started passing and how long the agent kept going afterwards.",
+        _line("capture_snapshots", spec.capture_snapshots),
+        _line("snapshot_interval", spec.snapshot_interval),
         "",
     ]
 

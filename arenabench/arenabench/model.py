@@ -443,6 +443,14 @@ class MatchSpec:
     setup_timeout_multiplier: float = 1.0
     #: Capture a real MP4 screen recording per trial (see :mod:`.recorder`).
     record_video: bool = False
+    #: Capture periodic workspace snapshots so `arenabench flip` can find the
+    #: moment the task started passing (see :mod:`.snapshot`). Off by default:
+    #: it costs a `docker exec` per interval per live trial, and it is only
+    #: useful if you intend to run the replay afterwards.
+    capture_snapshots: bool = False
+    #: Seconds between snapshots — the floor on how precisely a flip can be
+    #: located, traded against how much work each capture adds to the host.
+    snapshot_interval: float = 30.0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -455,6 +463,8 @@ class MatchSpec:
             "concurrency": self.concurrency,
             "setup_timeout_multiplier": self.setup_timeout_multiplier,
             "record_video": self.record_video,
+            "capture_snapshots": self.capture_snapshots,
+            "snapshot_interval": self.snapshot_interval,
         }
 
     @classmethod
@@ -477,6 +487,10 @@ class MatchSpec:
                 1.0, float(raw.get("setup_timeout_multiplier") or 1.0)
             ),
             record_video=bool(raw.get("record_video")),
+            capture_snapshots=bool(raw.get("capture_snapshots")),
+            # A zero or negative interval would spin the watcher; clamp rather
+            # than reject, so a typo degrades to "often" instead of failing a run.
+            snapshot_interval=max(1.0, float(raw.get("snapshot_interval") or 30.0)),
         )
 
     def validate(self) -> list[str]:

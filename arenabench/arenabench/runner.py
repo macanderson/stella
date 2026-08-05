@@ -45,6 +45,7 @@ from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .recorder import RecorderSupervisor
 from .registry import Dataset, Registry
+from .snapshot import SnapshotSupervisor
 from .telemetry import MetricsReader, TrialMetrics, aggregate, leaders
 
 __all__ = ["ContestantRun", "Match", "MatchRunner"]
@@ -142,6 +143,7 @@ class Match:
         self.status = "created"  # created | running | finished | cancelled | failed
         self.runs: dict[str, ContestantRun] = {}
         self.recorder: RecorderSupervisor | None = None
+        self.snapshots: SnapshotSupervisor | None = None
         self.note = ""
         self._metrics = MetricsReader()
         self._lock = threading.Lock()
@@ -213,6 +215,7 @@ class Match:
             ),
             "recording": self.recorder is not None,
             "recording_active": self.recorder.active_count if self.recorder else 0,
+            "snapshotting": self.snapshots is not None,
             "contestants": [
                 {
                     **contestant.redacted(),
@@ -313,6 +316,15 @@ class MatchRunner:
             )
             supervisor.start()
             match.recorder = supervisor
+
+        if match.spec.capture_snapshots:
+            snapshots = SnapshotSupervisor(
+                jobs_root=match.jobs_root,
+                jobs=[run.job_name for run in match.runs.values()],
+                interval=match.spec.snapshot_interval,
+            )
+            snapshots.start()
+            match.snapshots = snapshots
 
         threading.Thread(
             target=self._await_completion, args=(match,), daemon=True
@@ -518,6 +530,8 @@ class MatchRunner:
 
         if match.recorder is not None:
             match.recorder.stop()
+        if match.snapshots is not None:
+            match.snapshots.stop()
 
         match.finished_at = time.time()
         if match.status != "cancelled":
@@ -541,3 +555,5 @@ class MatchRunner:
                     process.terminate()
         if match.recorder is not None:
             match.recorder.stop()
+        if match.snapshots is not None:
+            match.snapshots.stop()
