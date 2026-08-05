@@ -40,7 +40,9 @@ next cycle    worth running — 2 P0 in the queue
 
 ## Reading the dry streak
 
-The streak is the only signal that says whether to keep going.
+The streak is the only signal that says whether to keep going. It counts
+consecutive dry cycles under the current lens only — advancing the aperture
+resets it to zero.
 
 | Streak | Meaning |
 |---|---|

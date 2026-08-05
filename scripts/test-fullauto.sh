@@ -96,6 +96,15 @@ check_eq "rubric" "$(fa ap aperture --current)" "one dry cycle is noise, not con
 fa ap cycle-end --cycle 3 --new 0 --outcome ok >/dev/null 2>&1
 check_eq "properties" "$(fa ap aperture --current)" "two dry cycles advance to the next lens"
 
+# The dry streak is per LENS, not a global tail count over the ledger. When it
+# was global, the two dry cycles that advanced rubric were still in the tail,
+# so `properties` — and every lens after it — advanced on a single dry audit,
+# collapsing the whole ladder at one cycle per lens.
+fa ap cycle-end --cycle 4 --new 0 --outcome ok >/dev/null 2>&1
+check_eq "properties" "$(fa ap aperture --current)" "a fresh lens does not inherit the dry tail that opened it"
+fa ap cycle-end --cycle 5 --new 0 --outcome ok >/dev/null 2>&1
+check_eq "invariants" "$(fa ap aperture --current)" "two dry cycles under the new lens advance again"
+
 # ---------------------------------------------------------------------------
 head_ "run lifecycle — running / completed / cancelled"
 

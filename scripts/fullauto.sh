@@ -1237,16 +1237,22 @@ cmd_state() {
   ensure_state
   case "${1:-}" in
     --dry-streak)
-      python3 - "$LEDGER" <<'PY'
+      # The streak is scoped to the CURRENT lens. A record from a different
+      # aperture ends the count, so a freshly opened lens starts at zero
+      # instead of inheriting the dry tail that advanced its predecessor —
+      # otherwise every lens after the first would advance on a single dry
+      # audit instead of DRY_STREAK_TARGET.
+      python3 - "$LEDGER" "$(cat "$APERTURE_FILE")" <<'PY'
 import json, sys
 streak = 0
+lens = sys.argv[2].strip()
 for line in reversed(open(sys.argv[1]).read().splitlines()):
     if not line.strip():
         continue
-    if json.loads(line).get("dry"):
-        streak += 1
-    else:
+    rec = json.loads(line)
+    if rec.get("aperture") != lens or not rec.get("dry"):
         break
+    streak += 1
 print(streak)
 PY
       ;;

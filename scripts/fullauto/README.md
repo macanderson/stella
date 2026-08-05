@@ -71,7 +71,9 @@ will never say so.
 Findings are hashed into a **content digest** (lowercased, whitespace-collapsed,
 line numbers normalized) and kept in `seen.txt`. A cycle is **dry** when it
 produced zero digests that were not already there; two consecutive dry cycles
-advances the aperture. Deduping on digests rather than issue numbers is what
+under the same lens advances the aperture — the streak starts at zero when a
+lens opens, never inheriting the dry tail that advanced its predecessor.
+Deduping on digests rather than issue numbers is what
 stops a `wontfix` finding reappearing every cycle and pinning the ladder forever.
 
 ## The governor

@@ -52,8 +52,10 @@ the streak forever. `seen` means *triaged*, not *fixed*.
 A cycle is **dry** when it produced zero unseen findings. Fixing twenty bugs does
 not make a cycle dry; **discovering nothing does.**
 
-Two consecutive dry cycles closes the current **aperture** and opens the next
-one. One is noise — an audit that happened to look in the same places twice.
+Two consecutive dry cycles under the same lens closes the current **aperture**
+and opens the next one. One is noise — an audit that happened to look in the
+same places twice. The streak is scoped to the lens: a freshly opened aperture
+starts at zero, so every lens earns its own two dry audits before it closes.
 
 The aperture is the point. "We found no defects" is only ever a statement about
 the lens you were looking through, and a lens that has never run cannot have
