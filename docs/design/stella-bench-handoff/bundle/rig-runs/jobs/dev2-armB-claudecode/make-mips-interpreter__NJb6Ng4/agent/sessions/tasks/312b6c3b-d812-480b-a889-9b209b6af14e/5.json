@@ -1,8 +1,0 @@
-{
-  "id": "5",
-  "subject": "Run and verify first frame is saved correctly",
-  "description": "Run node vm.js, ensure it boots doom, reads doom.wad, and saves the first frame to disk correctly.",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

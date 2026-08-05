@@ -18,7 +18,7 @@
 //! outstanding, and the blocker is not access: it is that the reference engine
 //! emits a different wire format (untyped stage labels, no tool `call_id`, a
 //! `result` terminator instead of `complete`). Recording it requires an adapter
-//! onto this protocol first. `docs/design/replay-golden-trajectories.md` specifies
+//! onto this protocol first. `docs/spec/replay-golden-trajectories.md` specifies
 //! that adapter contract, and `tests/reference_conformance.rs` pins it
 //! executably. The synthetic fixtures directly under `tests/fixtures/` remain
 //! what they always were: exercises for the invariants and the differ.

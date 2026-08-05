@@ -678,7 +678,7 @@ pub enum AgentEvent {
         frames: Vec<ContextFrameRef>,
         provider_mix: Vec<ProviderShare>,
         tokens: u32,
-        /// The CGP usage report for this recall (`docs/design/adaptive-context/context-reuse.md` §2):
+        /// The CGP usage report for this recall (`docs/spec/adaptive-context/context-reuse.md` §2):
         /// per-provider frame counts and token costs against the requested
         /// budget, so context cost is meterable rather than merely visible.
         /// Optional and defaulted — streams recorded before the report existed

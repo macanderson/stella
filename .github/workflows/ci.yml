@@ -100,6 +100,20 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-no-scratch.sh
 
+      # Toolchain-free, and first among equals: this repository is public, so a
+      # tracked key is disclosed the moment it is pushed and a later deletion
+      # does not undo it. .gitignore cannot cover a file added explicitly.
+      - name: no private key material is tracked
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-no-secrets.sh
+
+      # Also toolchain-free. The design scratchpad is work in flight and may be
+      # rewritten at any time, so a citation into it is a reference with no
+      # owner. Durable specs live in docs/spec.
+      - name: nothing outside the design scratchpad cites it
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-design-refs.sh
+
       # Also toolchain-free, so it runs before the Rust setup: a floating
       # `uses:` ref lets the action's owner change what runs with this job's
       # secrets. Pinning is only durable if something re-checks it (#648).

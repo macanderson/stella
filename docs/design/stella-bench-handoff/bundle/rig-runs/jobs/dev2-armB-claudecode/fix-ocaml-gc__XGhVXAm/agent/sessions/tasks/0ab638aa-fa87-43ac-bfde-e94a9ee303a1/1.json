@@ -1,8 +1,0 @@
-{
-  "id": "1",
-  "subject": "Understand the build process",
-  "description": "Read HACKING.adoc, BOOTSTRAP.adoc, and runtime/HACKING.adoc to understand how to build and bootstrap the compiler.",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

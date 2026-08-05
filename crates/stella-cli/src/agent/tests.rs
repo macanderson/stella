@@ -121,7 +121,7 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
 /// The scripts section rides the byte-stable prompt prefix: two
 /// assemblies over the same workspace must be byte-identical, the verb
 /// bindings must be present, and a scriptless workspace must add
-/// nothing (docs/design/scripts-index.md).
+/// nothing (docs/spec/scripts-index.md).
 #[test]
 fn assemble_system_prompt_carries_a_byte_stable_scripts_section() {
     let root = tempfile::tempdir().expect("tempdir");

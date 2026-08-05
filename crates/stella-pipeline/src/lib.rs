@@ -43,7 +43,7 @@
 //!   text crossing inbound (distress guidance, verifier reasoning) is scrubbed
 //!   against the sealed material first. The operator still sees the real
 //!   output; only the worker's prompt is redacted.
-//!   [`witness::airlock`]. Design: `docs/design/witness-protocol.md` §4.
+//!   [`witness::airlock`]. Design: `docs/spec/witness-protocol.md` §4.
 //! - **Proportionate verification** — escalate on evidence, never on a
 //!   prediction made before any work exists. Deterministic routes resolve
 //!   before the paid triage call rather than after it (a greeting no longer
@@ -52,7 +52,7 @@
 //!   test at all — recording a stated reason when it did not, the pipeline's
 //!   half of the contract contributors are held to. Fails closed: anything
 //!   mixed or unreadable buys the test. Design:
-//!   `docs/design/witness-protocol.md` §7.
+//!   `docs/spec/witness-protocol.md` §7.
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
 //! - **Distress guidance** — on the second consecutive deterministic
@@ -98,6 +98,7 @@ pub(crate) mod candidate_fanout;
 pub(crate) mod candidate_narration;
 pub(crate) mod candidate_steering;
 pub mod flip_halt;
+pub mod management_prompt;
 pub(crate) mod mcp_prefetch;
 pub mod oom;
 pub mod pipeline;

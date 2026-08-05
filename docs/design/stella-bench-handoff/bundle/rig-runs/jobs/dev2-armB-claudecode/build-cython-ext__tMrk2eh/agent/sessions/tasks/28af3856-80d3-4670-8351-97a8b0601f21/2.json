@@ -1,9 +1,0 @@
-{
-  "id": "2",
-  "subject": "Identify Numpy 2.x compatibility issues in Cython extensions",
-  "description": "Examine chelpers, ccomplexity, cinvariants Cython source for Numpy >=2.0 incompatibilities (deprecated C API, np.void access, etc.) and Python 3 issues.",
-  "activeForm": "Identifying Numpy 2.x compatibility issues",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

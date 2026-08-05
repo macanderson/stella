@@ -241,9 +241,9 @@ nothing rather than garbage.
 - [`../../AGENTS.md`](../../AGENTS.md) — "Workspace layout — where a change goes" for
   the crate boundary, and its "Gotchas" entry on `context.db` vs `codegraph.db`
   (they used to share one file; do not revert the split).
-- [`../../docs/design/storage-map.md`](../../docs/design/storage-map.md) — the spec
+- [`../../docs/spec/storage-map.md`](../../docs/spec/storage-map.md) — the spec
   the `storage` adapters and `manifest` implement (§3 model, §4a sources).
-- [`../../docs/design/schema-graph.md`](../../docs/design/schema-graph.md) — the
+- [`../../docs/spec/schema-graph.md`](../../docs/spec/schema-graph.md) — the
   earlier schema-aware design; its Phases 1–2 shipped here, the rest was
   absorbed into `storage-map.md`.
 - [`../../website/content/docs/context-engine.mdx`](../../website/content/docs/context-engine.mdx)

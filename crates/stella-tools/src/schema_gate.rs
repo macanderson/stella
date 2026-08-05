@@ -1,5 +1,5 @@
 //! The pre-write storage gate — makes duplicate or misplaced schema hard to
-//! write (`docs/design/storage-map.md` §8).
+//! write (`docs/spec/storage-map.md` §8).
 //!
 //! When `write_file` / `edit_file` targets a storage-definition file, the
 //! proposed content is parsed by the SAME adapter extraction the indexer

@@ -1,4 +1,4 @@
-//! The storage map's canonical model (`docs/design/storage-map.md` §3) and
+//! The storage map's canonical model (`docs/spec/storage-map.md` §3) and
 //! its source adapters: vendor-neutral entities (layer / namespace /
 //! relation / field), stable addresses, name normalization, and per-adapter
 //! structural extraction (spec §4a):

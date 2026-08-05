@@ -1,6 +1,6 @@
 //! Turning a TOML context record into the thing the shipped engine enforces.
 //!
-//! `docs/design/adaptive-context/context-pr.md` §11 maps the enforcement ladder onto a two-tier engine
+//! `docs/spec/adaptive-context/context-pr.md` §11 maps the enforcement ladder onto a two-tier engine
 //! that already exists: Tier 1 renders into the prompt, Tier 2 blocks at the tool
 //! boundary through [`evaluate_guards`][super::super::rules::evaluate_guards]. TOML
 //! records carry the same deny-shaped guard fields markdown rules do — and until

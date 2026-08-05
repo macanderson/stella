@@ -73,7 +73,7 @@
 //!   the turn-level verifier/delegation modes on top would be two competing
 //!   control loops. Refused with a named 400, not silently ignored.
 //! - **Cancellation is reverse-RPC-boundary, not step-boundary.** Exactly the
-//!   limitation `docs/design/serve-surface.md` already states for the plain
+//!   limitation `docs/spec/serve-surface.md` already states for the plain
 //!   engine driver ("does not interrupt CPU-bound work between reverse
 //!   requests") — a pipeline run has no CPU-bound stretch longer than the
 //!   engine's own, so this is the same bound, not a new one.

@@ -223,6 +223,14 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             Some(id) => obs.execution(id),
             None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
         },
+        // The transcript replay (#1461). `full=1` lifts the per-body clip —
+        // fetched on drawer-open only, never on the 5 s poll.
+        "/api/execution-journal" => {
+            match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
+                Some(id) => obs.execution_journal(id, query_param(query, "full").is_some()),
+                None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
+            }
+        }
         "/api/models" => obs.models(),
         "/api/tools" => obs.tools(),
         "/api/files" => obs.files(),

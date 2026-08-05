@@ -287,7 +287,7 @@ makes older binaries refuse the workspace.
 - [`../../AGENTS.md`](../../AGENTS.md) — "The `.stella/` directory (per-workspace
   state)" for where `context.db` sits and who else writes under `private/`, and
   the Gotchas entry on `context.db` vs `codegraph.db`.
-- [`../../docs/design/adaptive-context/context-reuse.md`](../../docs/design/adaptive-context/context-reuse.md) — the frame identity
+- [`../../docs/spec/adaptive-context/context-reuse.md`](../../docs/spec/adaptive-context/context-reuse.md) — the frame identity
   triple and the `context/verify` contract that `ContextProvider::verify`
   implements.
 - [`../../website/content/docs/context-engine.mdx`](../../website/content/docs/context-engine.mdx)

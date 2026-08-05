@@ -1,6 +1,6 @@
 //! `stella storage` and `stella observe` — the read-only doors onto this
 //! workspace's own storage: the storage map the pre-write gate enforces
-//! (`docs/design/storage-map.md`) and the local Observatory dashboard over
+//! (`docs/spec/storage-map.md`) and the local Observatory dashboard over
 //! the private telemetry stores. Both are offline and need no API key;
 //! `storage prune` is the alias onto `stella stats prune`, so retention has
 //! exactly one engine.
@@ -80,7 +80,7 @@ pub fn run_observe(port: u16, open: bool) -> Result<(), String> {
 }
 
 /// `stella storage <cmd>` — the human door to the storage map the pre-write
-/// gate enforces (docs/design/storage-map.md). Reads the persisted index +
+/// gate enforces (docs/spec/storage-map.md). Reads the persisted index +
 /// stella.storage.toml; empty output means `stella init` hasn't indexed any
 /// storage yet.
 pub(crate) fn load_storage_snapshot_checked(

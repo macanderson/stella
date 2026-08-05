@@ -259,7 +259,7 @@ sha_of() { awk -v f="${BIN}-${VERSION}-$1.tar.gz" '$2==f{print $1}' "$DIST/SHA25
 notes="$(mktemp)"
 {
   printf 'Release %s.\n\n## Changes since %s\n\n' "$VERSION" "${last:-the beginning}"
-  git log --no-merges --pretty='- %s' ${last:+${last}..HEAD} | head -n 100
+  git log --no-merges -n 100 --pretty='- %s' ${last:+${last}..HEAD}
   [ -n "$last" ] && printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$REPO" "$last" "$TAG"
 } > "$notes"
 

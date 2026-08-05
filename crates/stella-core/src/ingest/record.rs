@@ -1,6 +1,6 @@
 //! The TOML context-record surface — the shape `stella ingest` extracts into.
 //!
-//! These are the typed serde bodies behind `docs/design/adaptive-context/context-record-examples/*.toml`
+//! These are the typed serde bodies behind `docs/spec/adaptive-context/context-record-examples/*.toml`
 //! and the format decided by ADR 0011 (*context records are TOML*). Ingest never
 //! mints a published record directly: it mints [`Proposal`]s, each carrying the
 //! [`Record`] it would create, the evidence for it, and a refutation verdict, for

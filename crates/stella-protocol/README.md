@@ -327,10 +327,10 @@ knob, it also needs a row in `crates/stella-model/src/provider_parity.rs`.
   (invariants 1 and 4), and the "Glossary" table, which disambiguates
   `turn_instance` / `(step, call_seq)` from the store's `execution_id` and the
   fleet's `run_id`.
-- [`../../docs/design/session-telemetry-receipts-spec.md`](../../docs/design/session-telemetry-receipts-spec.md)
+- [`../../docs/spec/session-telemetry-receipts-spec.md`](../../docs/spec/session-telemetry-receipts-spec.md)
   — the spec `BlockRegistered`, `StepManifest`, `BlockKind`, and `CacheZone`
   implement (§4, §5, §6.2–6.4).
-- [`../../docs/design/adaptive-context/context-reuse.md`](../../docs/design/adaptive-context/context-reuse.md) — §2 defines
+- [`../../docs/spec/adaptive-context/context-reuse.md`](../../docs/spec/adaptive-context/context-reuse.md) — §2 defines
   `ContextUsage` / `ContextProviderUsage` and the arithmetic identity
   `is_consistent` checks.
 - [`../stella-model`](../stella-model) implements `Provider`;
