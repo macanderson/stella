@@ -61,14 +61,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
     missing: list[str] = []
     seated: list = []
     for contestant in spec.contestants:
+        candidates = needed.get(contestant.id, [])
         env = {
-            name: os.environ[name]
-            for name in needed.get(contestant.id, [])
-            if os.environ.get(name)
+            name: os.environ[name] for name in candidates if os.environ.get(name)
         }
-        absent = [n for n in needed.get(contestant.id, []) if n not in env]
-        if absent and not args.allow_missing_env:
-            missing.append(f"{contestant.name}: {', '.join(absent)}")
+        # The candidate names are alternatives, not a conjunction: a seat
+        # carrying any one of them is credentialled (a Claude subscription
+        # token authenticates a seat that has no ANTHROPIC_API_KEY at all).
+        if candidates and not env and not args.allow_missing_env:
+            missing.append(f"{contestant.name}: any of {', '.join(candidates)}")
         seated.append(replace(contestant, env=env))
     if missing:
         print("error: required environment variables are not set:", file=sys.stderr)

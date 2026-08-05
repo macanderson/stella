@@ -24,7 +24,7 @@ from arenabench.agents import (
     missing_credentials,
     resolve_agent,
 )
-from arenabench.config import match_from_toml, match_to_toml_dict
+from arenabench.config import match_from_toml, match_to_toml_dict, required_env
 from arenabench.harbor_agent import arena_posture
 from arenabench.model import (
     DIMENSIONS,
@@ -811,6 +811,22 @@ class TestSubscriptionCredential:
             "env": "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-x",
         })
         assert missing_credentials(seat) == []
+
+    def test_required_env_names_the_subscription_alternative(self):
+        """The CLI collects seat env against `required_env`. If that list
+        carries only the provider key, an OAuth-only seat aborts at preflight
+        and the token would never be forwarded — so the agent's own token
+        variables must appear as candidates alongside the provider's."""
+        spec = match_from_toml({
+            "match": {"dataset": "terminal-bench-2.1"},
+            "contestant": [{
+                "agent": "claude-code",
+                "engine": {"api": "anthropic", "model": "claude-fable-5"},
+            }],
+        })
+        candidates = required_env(spec)[spec.contestants[0].id]
+        assert "ANTHROPIC_API_KEY" in candidates
+        assert "CLAUDE_CODE_OAUTH_TOKEN" in candidates
 
     def test_a_subscription_token_is_never_written_to(self, tmp_path: Path):
         """It is not a provider bearer token. Aliasing a provider key into it
