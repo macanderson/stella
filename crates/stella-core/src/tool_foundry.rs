@@ -5,8 +5,9 @@
 //! This is the first slice of self-improvement issue #830 ("stella authors,
 //! tests, and installs its own tools at runtime"): the **gap detector only**,
 //! which *proposes* a tool spec and installs nothing. Authorship, witness
-//! proofs, and registry installation are later slices — the issue's explicit
-//! instruction is to "prove the detector before granting authorship."
+//! proofs, and adoption gating are the later slices, and they landed outside
+//! this crate (`stella-tools`' `foundry_author`/`foundry_witness`/
+//! `foundry_gate`, driven by `stella tools --adopt` / `--enable`).
 //!
 //! It is a sibling of [`crate::loop_detect`] and follows the same discipline:
 //! plain synchronous functions over owned data, no I/O, no provider SDK, no

@@ -7,9 +7,9 @@
 //!
 //! Split verbatim out of `main.rs` — no behavior change — to keep the CLI
 //! entry point under the file-size ratchet while later phases grow the
-//! subcommand surface. `main.rs` keeps the `Command::Storage` /
+//! subcommand surface. `cli.rs` keeps the `Command::Storage` /
 //! `Command::Observe` variants (clap needs them on the root enum) and
-//! dispatches into this module, the same shape `stats.rs` and
+//! `main.rs` dispatches into this module, the same shape `stats.rs` and
 //! `usage_cmd.rs` already use.
 
 use clap::Subcommand;

@@ -337,7 +337,7 @@ const DENIED_EXACT: &[&str] = &[
     // Helper programs ssh and anything opening a URL will exec.
     "SSH_ASKPASS",
     "BROWSER",
-    // Stella shells out to `rg` (stella-tools/src/grep.rs), and a ripgrep
+    // Stella shells out to `rg` (crates/stella-tools/src/grep.rs), and a ripgrep
     // config file may carry `--pre=<command>`, which rg then executes per file.
     "RIPGREP_CONFIG_PATH",
     // Interpreters that execute a path or flag string at startup, and the
