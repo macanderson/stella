@@ -1,9 +1,9 @@
 ---
 title: stella goal
-description: Work in judged rounds until a judge model confirms the goal is met.
+description: Work in judged rounds until a verifier model confirms the goal is met.
 ---
 
-Give Stella a goal and let it work in **judged rounds** until a judge model confirms, from evidence, that the goal has actually been met.
+Give Stella a goal and let it work in **judged rounds** until a verifier model confirms, from evidence, that the goal has actually been met.
 
 ## Synopsis
 
@@ -13,12 +13,12 @@ stella goal <goal> [--no-pipeline] [global flags]
 
 ## What it does
 
-`stella goal` works in rounds, each run through the [staged pipeline](/docs/inference-pipeline) by default — pass `--no-pipeline` for raw step-loop rounds instead. At the end of each round, a **judge model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration. The loop ends when the judge confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--budget` limit, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
+`stella goal` works in rounds, each run through the [staged pipeline](/docs/inference-pipeline) by default — pass `--no-pipeline` for raw step-loop rounds instead. At the end of each round, a **verifier model** independently assesses whether the goal is met — reading the changed files, tests, and CI with read-only tools, not just the worker's narration. The loop ends when the verifier confirms success, or when a backstop trips: a hard round cap (default **8** rounds), the `--budget` limit, or a worker-turn abort. Reaching a backstop ends the run reporting the goal as **not met**.
 
-Crucially, the judge is routed **cross-family** — it is a different model family than the worker, to avoid same-model bias. If only one provider family is configured, the worker doubles as its own judge.
+Crucially, the verifier is routed **cross-family** — it is a different model family than the worker, to avoid same-model bias. If only one provider family is configured, the worker doubles as its own verifier.
 
 <Callout type="info">
-For the full explanation of judged rounds, the cross-family judge, and the definition-of-done check, see [Goal mode](/docs/agent-modes#outcome-driven-goal-mode).
+For the full explanation of judged rounds, the cross-family verifier, and the definition-of-done check, see [Goal mode](/docs/agent-modes#outcome-driven-goal-mode).
 </Callout>
 
 ## Flags
@@ -31,7 +31,7 @@ For the full explanation of judged rounds, the cross-family judge, and the defin
     plan, witness, execute, verify). The pipeline is the default.
   </OptionCard>
   <OptionCard name="--model <provider/model_id>">
-    Pin the worker model. The judge is routed to a different family automatically when one
+    Pin the worker model. The verifier is routed to a different family automatically when one
     is available.
   </OptionCard>
   <OptionCard name="--budget <usd>">
@@ -44,12 +44,12 @@ For the full explanation of judged rounds, the cross-family judge, and the defin
 </Callout>
 
 <Callout type="warn">
-Configure at least two provider families if you want a truly independent judge. With a single family configured, the worker model judges its own work.
+Configure at least two provider families if you want a truly independent verifier. With a single family configured, the worker model judges its own work.
 </Callout>
 
 ## Examples
 
-Work toward a goal until the judge confirms it is met:
+Work toward a goal until the verifier confirms it is met:
 
 ```bash
 stella goal "Migrate the config loader to use serde and add tests"

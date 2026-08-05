@@ -100,7 +100,7 @@ fn a_correctly_spelled_settings_file_warns_about_nothing() {
              "ui": { "theme": "stella-dark" },
              "agent_engine_config": {
                "default_model": "zai/glm-5.2",
-               "agents": { "judge": { "params": { "temperature": 0.2 } } }
+               "agents": { "verifier": { "params": { "temperature": 0.2 } } }
              }
            }"#,
     );

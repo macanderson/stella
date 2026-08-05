@@ -283,7 +283,7 @@ impl ProviderRegistry {
     /// offered to every verify-capable provider and the **first definite**
     /// answer wins. `Unknown` is not definite: a provider that cannot judge an
     /// identity must not shadow one that can. An identity no provider can
-    /// judge stays `Unknown`, which the host treats as "do not reuse" (V2).
+    /// verifier stays `Unknown`, which the host treats as "do not reuse" (V2).
     pub async fn verify_all(
         &self,
         request: &VerifyRequest,
@@ -294,7 +294,7 @@ impl ProviderRegistry {
                 continue;
             }
             // Only ask about identities still unresolved, so a provider never
-            // re-judges a frame another already vouched for.
+            // re-verifiers a frame another already vouched for.
             let pending: Vec<_> = request
                 .frames
                 .iter()

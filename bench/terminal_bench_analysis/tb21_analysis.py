@@ -87,7 +87,7 @@ def canonical_engine_posture(model: str) -> tuple[dict[str, Any], str, str]:
                 "reasoning": "on",
                 "params": {"max_tokens": 64000},
             },
-            "judge": {
+            "verifier": {
                 "effort": "xhigh",
                 "reasoning": "on",
                 "params": {"max_tokens": 64000},
@@ -640,7 +640,7 @@ STUDY_MANIFEST_ENGINE_POSTURE_FIELDS = frozenset(
     }
 )
 STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES = frozenset(
-    {"default", "worker", "judge", "triage"}
+    {"default", "worker", "verifier", "triage"}
 )
 # Per-role field shapes: the outcome-bearing roles carry the raised output cap
 # (`params.max_tokens`); triage deliberately keeps the engine default, so its
@@ -648,7 +648,7 @@ STUDY_MANIFEST_ENGINE_POSTURE_AGENT_ROLES = frozenset(
 STUDY_MANIFEST_ENGINE_POSTURE_AGENT_FIELDS_BY_ROLE: dict[str, frozenset[str]] = {
     "default": frozenset({"effort", "reasoning", "params"}),
     "worker": frozenset({"effort", "reasoning", "params"}),
-    "judge": frozenset({"effort", "reasoning", "params"}),
+    "verifier": frozenset({"effort", "reasoning", "params"}),
     "triage": frozenset({"effort", "reasoning"}),
 }
 STUDY_MANIFEST_ENGINE_POSTURE_AGENT_PARAMS_FIELDS = frozenset({"max_tokens"})

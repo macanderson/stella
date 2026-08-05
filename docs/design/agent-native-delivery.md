@@ -81,7 +81,7 @@ meetings less unpleasant than reading a diff. Remove the humans from the
 | Sprint / iteration | People share a calendar and need a synchronization point | Nothing. A readiness queue drained continuously. The only clock is the merge queue's. |
 | Standup, status update | State lives in heads and must be spoken aloud | State lives in the tracker. Status is a **query**, never prose. |
 | Story points, estimation | Forecast human capacity, which is unmeasurable | Measured dollars and steps per issue class, calibrated from `store.db`. A forecast is a distribution over prior runs, not a guess. |
-| Code review as a meeting of minds | Knowledge transfer between people who cannot be interrogated later | Adversarial verification: judge ≠ worker, the flip oracle, tamper exclusion. Human review becomes an **audit sample**, not a per-diff gate. |
+| Code review as a meeting of minds | Knowledge transfer between people who cannot be interrogated later | Adversarial verification: verifier ≠ worker, the flip oracle, tamper exclusion. Human review becomes an **audit sample**, not a per-diff gate. |
 | "What" documentation | Humans read code slowly | Deleted. Agents read code faster than they read prose describing it. |
 | "Why" documentation | Intent is not recoverable from code, by anyone | **More** important, not less. Decisions become `knowledge/decision` records; a *declined* follow-up is itself a decision worth recording (§7). |
 | Design doc, read by the team | Shared understanding before building | A spec anchored at the epic and **resolved as context** by every child run (§5). Its readers are agents, so it must be resolvable, not merely readable. |
@@ -503,7 +503,7 @@ position and with the same shape as `witness::warrant`
 ([`witness-protocol.md`](witness-protocol.md) §7): last stage, one model call
 at most, fails closed.
 
-### 7.2 Detection: deterministic first, judge only on a hit
+### 7.2 Detection: deterministic first, verifier only on a hit
 
 **Pass 1 — lexical, free.** A versioned phrase set over the turn's own
 assistant text: *follow-up*, *future work*, *out of scope*, *should also*,
@@ -516,7 +516,7 @@ inspectable — it lives in `stella-core` as pure logic beside `loop_detect.rs`.
 test markers, and newly added `allow(dead_code)` on a symbol the diff created.
 A skipped test is residue with a file and a line number.
 
-**Pass 3 — judge, only if 1 or 2 hit.** One call, judge resolution (judge ≠
+**Pass 3 — verifier, only if 1 or 2 hit.** One call, verifier resolution (verifier ≠
 worker), converting candidates into typed items and discarding false
 positives — the sentence "this is out of scope for the *issue*" is not
 residue; "this is out of scope for *this change*" is.
@@ -755,7 +755,7 @@ P4 is the phase that pays for the document. P0–P3 are the substrate it needs.
 |---|---|
 | `Issue`, `IssueState`, `IssueClass`, `ResidueItem` | `stella-protocol` (wire types) |
 | Residue detection Pass 1 + Pass 2, policy evaluation, discharge rules | `stella-core` (pure, proptestable, no I/O) |
-| The gate stage, Pass 3's judge call | `stella-pipeline`, beside `verify` and `witness` |
+| The gate stage, Pass 3's verifier call | `stella-pipeline`, beside `verify` and `witness` |
 | Provider manifests, transports, the `exec` adapter | `stella-tools`, generalizing `issue_ops.rs` |
 | `[delivery]`, `.stella/issues/*.toml` discovery | `crates/stella-cli/src/settings` |
 | Issue claims | `stella-fleet` ledger |
@@ -774,7 +774,7 @@ P4 is the phase that pays for the document. P0–P3 are the substrate it needs.
    wins? Current lean: the repo wins and `stella doctor` reports the
    divergence — but that makes the tracker read-only for specs, which may not
    survive contact with a PM.
-3. **Residue judging cost.** Pass 3 uses the judge resolution. A dedicated
+3. **Residue judging cost.** Pass 3 uses the verifier resolution. A dedicated
    cheaper model would cut cost materially at some recall cost; the tradeoff
    needs measurement, not a guess.
 4. **Mid-run reclassification.** A human changes an issue's type from Bug to

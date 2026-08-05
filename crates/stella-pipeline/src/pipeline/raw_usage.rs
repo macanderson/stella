@@ -40,7 +40,7 @@ impl<'a> Pipeline<'a> {
         // Park BEFORE dispatch while a supervisor holds the pause gate — the
         // engines park at their own step boundaries, and this chokepoint is
         // what extends the same discipline to every management call (triage,
-        // judge, guidance, conversational). Pre-spend, never mid-call: the
+        // verifier, guidance, conversational). Pre-spend, never mid-call: the
         // boundary contract is the budget guard's (L-E6).
         if let Some(gate) = self.turn_gate {
             gate.wait_if_paused().await;

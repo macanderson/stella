@@ -34,14 +34,14 @@ fn fixture(relative: &str) -> String {
 /// Recordings that must conform. The first two are real trajectories recorded
 /// from this pipeline (`tests/fixtures/golden/`, gated by their manifests);
 /// the rest are the synthetic streams that hit edges a recording may not
-/// happen to contain — a judge escalation, a stream from a newer stella, a
+/// happen to contain — a verifier escalation, a stream from a newer stella, a
 /// writer that crashed mid-line.
 const CONFORMING: &[&str] = &[
     "golden/single_task_deterministic_flip.jsonl",
-    "golden/judge_escalation_without_a_test_command.jsonl",
+    "golden/verifier_escalation_without_a_test_command.jsonl",
     "single_task_flip.jsonl",
     "single_task_flip_reference.jsonl",
-    "judge_escalation.jsonl",
+    "verifier_escalation.jsonl",
     "from_a_newer_stella.jsonl",
     "from_a_newer_stella_baseline.jsonl",
     "torn_tail.jsonl",

@@ -127,7 +127,7 @@ resulting `git diff` as `model_patch`.
 
 ### Scoring
 
-`run_swebench.py` **only generates predictions** — it does not judge them.
+`run_swebench.py` **only generates predictions** — it does not verifier them.
 A validated resolve rate requires Docker and the official
 [`swebench`](https://github.com/princeton-nlp/SWE-bench) evaluation harness:
 

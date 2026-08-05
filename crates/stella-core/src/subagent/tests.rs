@@ -905,8 +905,8 @@ impl TurnGate for CountingGate {
 
 #[tokio::test]
 async fn a_child_polls_the_parents_pause_gate() {
-    // `assess` dropped the gate when it hand-rolled a judge engine, so a
-    // paused session kept spending inside the judge. Inheritance here is
+    // `assess` dropped the gate when it hand-rolled a verifier engine, so a
+    // paused session kept spending inside the verifier. Inheritance here is
     // what closes that.
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![

@@ -101,7 +101,7 @@ impl<'a> Pipeline<'a> {
     /// Both channels, for the same reason [`Self::unproven`] uses both. The
     /// warning is the prose account; the proof step is what keeps the rail's
     /// verdict row from reading `✓ passed` on a turn nothing observed — the
-    /// abstention still emits a `JudgeVerdict`, and its `passed: true` means
+    /// abstention still emits a `Verdict`, and its `passed: true` means
     /// only "nothing failed this", never "something proved it".
     pub(super) fn unverifiable(&self, reason: &str) {
         self.warn(format!("verification could not be performed: {reason}"));

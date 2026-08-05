@@ -121,7 +121,7 @@ id            = "my-vllm"
 #         `AgentEngineParams`; unknown.rs ENGINE_{ROOT,AGENT,PARAM}_FIELDS
 #
 # EXACTLY FOUR agents exist, and the set is closed (`AgentEngineAgents` is a
-# struct with four fields, not a map): default, worker, judge, triage.
+# struct with four fields, not a map): default, worker, verifier, triage.
 # `default` is the interactive/step-loop agent; the other three are the staged
 # pipeline's roles. `Role::Plan` rides the worker's settings.
 #
@@ -155,17 +155,17 @@ allowed = [
 # sent verbatim to THAT provider when the agent's `provider` field is set.
 default_model         = "anthropic/claude-fable-5"
 pipeline_worker_model = "zai/glm-5.2"
-pipeline_judge_model  = "openrouter/openai/gpt-5.5"
+pipeline_verifier_model  = "openrouter/openai/gpt-5.5"
 pipeline_triage_model = "deepseek/deepseek-chat"
 
 # on/off toggles. A dedicated enum, not a bool: a typo must be a loud parse
 # error, never a silently-false setting.
-auto_mode      = "off"  # on = pick the judge model automatically from
+auto_mode      = "off"  # on = pick the verifier model automatically from
                         # allowed_models, preferring a different family than
                         # the worker and ranking by catalog list price
-effort_auto    = "on"   # on = judge high, worker medium, triage low,
+effort_auto    = "on"   # on = verifier high, worker medium, triage low,
                         # default medium — overrides any per-agent `effort`
-reasoning_auto = "on"   # on = thinking on for judge/worker/default, off for
+reasoning_auto = "on"   # on = thinking on for verifier/worker/default, off for
                         # triage — overrides any per-agent `reasoning`
 
 # on = a headless run proceeds past scope review instead of stopping at
@@ -184,13 +184,13 @@ hunk_review = "off"
 
 # ---- per-agent overrides. Every field optional = "no opinion" ---------------
 #
-# The JSON nests these one level deeper (`agent_engine_config.agents.judge`).
-# Flattened here to `[agents.judge]` because the agent set is CLOSED — the
+# The JSON nests these one level deeper (`agent_engine_config.agents.verifier`).
+# Flattened here to `[agents.verifier]` because the agent set is CLOSED — the
 # four names are struct fields, not map keys — so a per-agent table can never
 # collide with a root field. If that set ever opens, this must go back to
 # `[agents.agents.<name>]`.
 
-[agents.judge]
+[agents.verifier]
 provider  = "openrouter"      # gateway id; when set, `model` is sent
 model     = "openai/gpt-5.5"  # verbatim as the slug to THIS provider
 effort    = "high"            # low|medium|high|xhigh|max (snake_case)
@@ -200,14 +200,14 @@ reasoning = "on"
 #
 # PRIVILEGED: a project scope's prompt is discarded and restored from the
 # trusted scopes unless managed `authority.project_prompts = "on"`.
-prompt    = "You are a strict code-review judge. Reject on any unproven claim."
+prompt    = "You are a strict code-review verifier. Reject on any unproven claim."
 
   # "Include checkbox" semantics: a present value goes on the wire where the
   # dialect supports it; absent leaves the provider default untouched.
   # temperature/max_tokens land on CompletionRequest directly; the rest ride
   # CompletionRequest::params. An adapter silently drops what its dialect
   # cannot express — a param must never fail a request.
-  [agents.judge.params]
+  [agents.verifier.params]
   temperature        = 0.2
   top_p              = 0.9
   top_k              = 40
@@ -528,19 +528,19 @@ theme = "stella-dark"   # stella-dark | stella-light
 # What a finished turn's verdict is worth when it becomes a training label
 # (#1043). Whole-block last-wins across scopes, like `[ui]`; carries no
 # credential or egress authority, so no trust restoration — a project setting a
-# weight is stating an opinion about its own judge, not borrowing permission.
+# weight is stating an opinion about its own verifier, not borrowing permission.
 #
-# WHY THIS IS CONFIGURABLE AT ALL: `judge_weight = 0.5` is an estimate of ONE
-# judge's accuracy — across an 89-task Terminal-Bench run the model judge
+# WHY THIS IS CONFIGURABLE AT ALL: `verifier_weight = 0.5` is an estimate of ONE
+# verifier's accuracy — across an 89-task Terminal-Bench run the model verifier
 # agreed with the benchmark's own grader 46% of the time. A workspace pointing
-# a weaker model at the judge role, or working in a domain where the judge
+# a weaker model at the verifier role, or working in a domain where the verifier
 # keeps reading house style as a defect, is entitled to trust it less.
 #
 # LOWER IS SUPPORTED. HIGHER THAN `deterministic_weight` IS REFUSED: above that
 # line a model's opinion outranks a test's observation, which inverts the
-# premise the verification ladder is built on. `judge_weight = 0.0` is legal and
-# means "do not train on this judge at all" — those turns are DISCARDED (with
-# the reason `judge_distrusted`), not scored as zero. A zero is a claim that a
+# premise the verification ladder is built on. `verifier_weight = 0.0` is legal and
+# means "do not train on this verifier at all" — those turns are DISCARDED (with
+# the reason `verifier_distrusted`), not scored as zero. A zero is a claim that a
 # neutral outcome was observed; a discard is the refusal to claim anything.
 #
 # UNLIKE `[context.retrieval]` ABOVE, AN OUT-OF-RANGE VALUE HERE IS REJECTED,
@@ -559,7 +559,7 @@ theme = "stella-dark"   # stella-dark | stella-light
 
 [reward]
 deterministic_weight = 1.0    # a fail->pass flip, or touched tests red
-judge_weight         = 0.5    # a model judge's opinion; 0.0 discards instead
+verifier_weight         = 0.5    # a model verifier's opinion; 0.0 discards instead
 per_step             = 0.02   # subtracted per model call
 per_usd              = 0.5    # subtracted per USD
 per_revision         = 0.1    # subtracted per verification round after the first

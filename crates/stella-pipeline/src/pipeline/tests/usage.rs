@@ -344,7 +344,7 @@ async fn distress_guidance_and_engine_revisions_keep_distinct_envelopes() {
 }
 
 #[tokio::test]
-async fn model_judge_call_is_metered_separately_from_worker() {
+async fn model_verdict_call_is_metered_separately_from_worker() {
     let provider = ScriptedProvider::new(vec![
         text_result("lookup"),
         text_result("done"),
@@ -393,5 +393,11 @@ async fn model_judge_call_is_metered_separately_from_worker() {
         .run("Look up the answer", &mut messages, &mut budget)
         .await
         .unwrap();
-    assert_eq!(usage_roles(&drain(&mut rx)), ["triage", "worker", "judge"]);
+    assert_eq!(
+        usage_roles(&drain(&mut rx)),
+        // `verdict` is the ModelCallRole — the job the call did. `verifier`
+        // is the Role, the model slot. Two enums, and the rename sweep
+        // conflated them here.
+        ["triage", "worker", "verdict"]
+    );
 }

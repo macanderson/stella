@@ -1,9 +1,9 @@
-//! Goal-driven turns: judged rounds until a judge confirms the goal is met.
+//! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
 //! `run_goal_cmd` drives either the staged pipeline (default) or the raw
-//! `Engine::run_goal` step-loop. The goal judge is independent of the worker
+//! `Engine::run_goal` step-loop. The goal verifier is independent of the worker
 //! model and answers "does the whole effort meet the goal?" — distinct from
-//! the pipeline's per-change verification judge.
+//! the pipeline's per-change verification verifier.
 
 use super::*;
 
@@ -188,17 +188,17 @@ pub(crate) async fn run_raw_one_shot(
 }
 
 /// Run a one-shot goal loop (non-interactive): work in judged rounds until
-/// a judge model assesses the goal as met (`stella goal "…"`, and `stella
-/// monitor` composed on top of it). The judge is routed by role: when a
+/// a verifier model assesses the goal as met (`stella goal "…"`, and `stella
+/// monitor` composed on top of it). The verifier is routed by role: when a
 /// second provider family is configured (BYOK), `run_goal_turn` builds a
-/// role `Router` and resolves `Role::Judge` to a DIFFERENT family than the
+/// role `Router` and resolves `Role::Verifier` to a DIFFERENT family than the
 /// worker for bias-resistant assessment; with a
 /// single family it stays the worker provider, identical to before. The
 /// worker turns get the full tool stack (MCP + custom + interactive +
 /// skills), same as `run_one_shot`.
 ///
 /// `use_pipeline` (the default) runs each working round through the staged
-/// pipeline (triage → recall → plan → witness → execute → verify → judge);
+/// pipeline (triage → recall → plan → witness → execute → verify → verdict);
 /// `false` falls back to the raw `Engine::run_goal` step-loop.
 pub async fn run_goal_cmd(
     cfg: &Config,
@@ -380,16 +380,16 @@ pub async fn run_goal_cmd(
 }
 
 /// Run one goal loop through `stella_core::Engine::run_goal`: working turns
-/// interleaved with judge assessments until the judge passes it (or a
+/// interleaved with verifier assessments until the verifier passes it (or a
 /// backstop — rounds, budget, abort — ends it with a named reason). The
 /// worker gets the full tool stack (MCP + custom + interactive + skills) and
-/// the judge a read-only view of that same stack.
+/// the verifier a read-only view of that same stack.
 ///
-/// The judge is routed by role (`resolve_cross_family_judge`): when a second
-/// provider family is configured and the `Router` selects it, the judge runs
+/// The verifier is routed by role (`resolve_cross_family_verifier`): when a second
+/// provider family is configured and the `Router` selects it, the verifier runs
 /// on a DIFFERENT model family than the worker (bias-resistant assessment)
 /// and a one-line notice is printed. With a single
-/// configured family — or on any discovery/build failure — the judge is the
+/// configured family — or on any discovery/build failure — the verifier is the
 /// worker provider itself, identical to before: no second provider is built
 /// and no extra cost is incurred. Text-mode rendering only — goal and
 /// monitor never take `--output-format`.
@@ -421,22 +421,23 @@ pub(crate) async fn run_goal_turn(
     }
     let files_before = registry.files_touched().len();
 
-    // Route the JUDGE role. `Some` only when a distinct-family judge was
+    // Route the VERIFIER role. `Some` only when a distinct-family verifier was
     // selected AND built; the boxed provider must outlive the `run_goal`
-    // call below, so it is bound here. `None` → the judge is the worker
+    // call below, so it is bound here. `None` → the verifier is the worker
     // provider (single-family/failure fallback — the v1 behavior).
     let configured = crate::config::discover_configured_providers();
-    let routed_judge = resolve_cross_family_judge(cfg.provider.id, &cfg.model_id, &configured);
-    if let Some((_, judge_id)) = &routed_judge {
+    let routed_verifier =
+        resolve_cross_family_verifier(cfg.provider.id, &cfg.model_id, &configured);
+    if let Some((_, verifier_id)) = &routed_verifier {
         println!(
-            "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
+            "  {} cross-family verifier: {} worker · {} verifier — independent, bias-resistant \
              assessment\n",
             "◆".bright_cyan(),
             cfg.provider.id.bright_magenta(),
-            judge_id.bright_green(),
+            verifier_id.bright_green(),
         );
     }
-    let judge: &dyn Provider = match &routed_judge {
+    let verifier: &dyn Provider = match &routed_verifier {
         Some((boxed, _)) => &**boxed,
         None => provider,
     };
@@ -473,7 +474,14 @@ pub(crate) async fn run_goal_turn(
             engine = engine.with_hooks(hooks, &hook_runner);
         }
         engine
-            .run_goal(judge, goal, messages, budget, &tx, &GoalConfig::default())
+            .run_goal(
+                verifier,
+                goal,
+                messages,
+                budget,
+                &tx,
+                &GoalConfig::default(),
+            )
             .await
     };
     drop(tx);
@@ -537,15 +545,15 @@ pub(crate) async fn run_goal_turn(
 }
 
 /// One staged-pipeline goal turn: keep running the pipeline (triage → recall →
-/// plan → witness → execute → verify → judge) until an independent goal judge
+/// plan → witness → execute → verify → verdict) until an independent goal verifier
 /// assesses the goal as met, or a backstop ends the loop. This is the pipeline
 /// analogue of [`run_goal_turn`] — same goal-loop structure, same judgment,
 /// but each working round goes through the staged pipeline instead of the raw
 /// `Engine::run_turn`.
 ///
-/// The goal-loop judge is distinct from the pipeline's verify judge: the verify
-/// judge (inside [`Pipeline::run`]) answers "did this change pass its tests?",
-/// while the goal judge here answers "does the whole effort meet the goal?".
+/// The goal-loop verifier is distinct from the pipeline's verify verifier: the verify
+/// verifier (inside [`Pipeline::run`]) answers "did this change pass its tests?",
+/// while the goal verifier here answers "does the whole effort meet the goal?".
 /// Both are independent of the worker model.
 #[allow(clippy::too_many_arguments)]
 async fn run_goal_pipeline_turn(
@@ -580,23 +588,23 @@ async fn run_goal_pipeline_turn(
     let files_before = registry.files_touched().len();
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 
-    // Role wiring from `agent_engine_config` — the pinned/auto judge (when
-    // configured) also serves as the goal loop's round judge below.
+    // Role wiring from `agent_engine_config` — the pinned/auto verifier (when
+    // configured) also serves as the goal loop's round verifier below.
     let configured = crate::config::discover_configured_providers();
     let wiring = resolve_engine_wiring(cfg, &model_ref, &configured);
     for notice in &wiring.notices {
         eprintln!("  ! {notice}");
     }
 
-    // Route the goal-loop judge. The pipeline's verify judge is the same role;
-    // both want independence from the worker. An engine-config judge pin
+    // Route the goal-loop verifier. The pipeline's verify verifier is the same role;
+    // both want independence from the worker. An engine-config verifier pin
     // (explicit or auto_mode) wins; otherwise the discovery-based
     // cross-family routing applies exactly as before. (`configured` from the
     // wiring block above is reused — same disk state, nothing mutates it
     // in between; issue #373, item 4.)
-    let engine_judge: Option<(&dyn Provider, String)> = wiring
+    let engine_verifier: Option<(&dyn Provider, String)> = wiring
         .pins
-        .get(Role::Judge)
+        .get(Role::Verifier)
         .and_then(|pinned| {
             wiring
                 .extra_providers
@@ -604,23 +612,24 @@ async fn run_goal_pipeline_turn(
                 .find(|(model_ref, _)| model_ref == pinned)
         })
         .map(|(model_ref, provider)| (&**provider, model_ref.provider.clone()));
-    let routed_judge = if engine_judge.is_none() {
-        resolve_cross_family_judge(cfg.provider.id, &cfg.model_id, &configured)
+    let routed_verifier = if engine_verifier.is_none() {
+        resolve_cross_family_verifier(cfg.provider.id, &cfg.model_id, &configured)
     } else {
         None
     };
-    let (judge, judge_id): (&dyn Provider, Option<String>) = match (&engine_judge, &routed_judge) {
-        (Some((provider, id)), _) => (*provider, Some(id.clone())),
-        (None, Some((boxed, id))) => (&**boxed, Some(id.clone())),
-        (None, None) => (provider, None),
-    };
-    if let Some(judge_id) = &judge_id {
+    let (verifier, verifier_id): (&dyn Provider, Option<String>) =
+        match (&engine_verifier, &routed_verifier) {
+            (Some((provider, id)), _) => (*provider, Some(id.clone())),
+            (None, Some((boxed, id))) => (&**boxed, Some(id.clone())),
+            (None, None) => (provider, None),
+        };
+    if let Some(verifier_id) = &verifier_id {
         println!(
-            "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
+            "  {} cross-family verifier: {} worker · {} verifier — independent, bias-resistant \
              assessment\n",
             "◆".bright_cyan(),
             cfg.provider.id.bright_magenta(),
-            judge_id.bright_green(),
+            verifier_id.bright_green(),
         );
     }
 
@@ -678,18 +687,18 @@ async fn run_goal_pipeline_turn(
         };
         let hook_runner = ShellHookRunner;
 
-        // The goal judge's provider/tool/config bundle. NOT reused across
+        // The goal verifier's provider/tool/config bundle. NOT reused across
         // rounds in any load-bearing way: `Engine::assess` constructs a
         // fresh inner engine (and re-wraps the tools in `ReadOnlyTools`) on
-        // every call — this outer engine only carries the judge provider,
-        // the read-only tool view, the judge tuning, and the session
-        // calibration (keyed per model, so a cross-family judge learns its
+        // every call — this outer engine only carries the verifier provider,
+        // the read-only tool view, the verifier tuning, and the session
+        // calibration (keyed per model, so a cross-family verifier learns its
         // own drift) into each assessment.
         let read_only = stella_core::ports::ReadOnlyTools::new(&tools);
-        let judge_engine = Engine::with_sleeper(
-            judge,
+        let verifier_engine = Engine::with_sleeper(
+            verifier,
             &read_only,
-            judge_engine_config_for(cfg),
+            verifier_engine_config_for(cfg),
             &TokioSleeper,
         )
         .with_calibration(calibration);
@@ -701,7 +710,7 @@ async fn run_goal_pipeline_turn(
         for round in 1..=goal_config.max_rounds {
             budget.begin_turn();
             // Each round is its own receipt turn: worker/pipeline calls take
-            // the even slot, the round's judge the odd slot beside it (the
+            // the even slot, the round's verifier the odd slot beside it (the
             // `+ 1` lives in `Engine::assess`). All rounds share one
             // execution_id, and receipts key on `(turn_instance, step,
             // call_seq)` with steps restarting per turn — the slot math is
@@ -774,27 +783,27 @@ async fn run_goal_pipeline_turn(
                 }
             }
 
-            // Goal assessment (same judge + read-only tools as the raw goal loop).
+            // Goal assessment (same verifier + read-only tools as the raw goal loop).
             let _ = tx.send(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Judge,
+                name: stella_protocol::StageKind::Verdict,
             });
-            let (verdict, judge_cost) = match judge_engine
+            let (verdict, verifier_cost) = match verifier_engine
                 .with_turn_instance(round_turn)
-                .assess(judge, goal, messages, budget, &tx, &goal_config)
+                .assess(verifier, goal, messages, budget, &tx, &goal_config)
                 .await
             {
                 Ok(pair) => pair,
                 Err(reason) => {
-                    result = Some(Err(format!("goal not met: judge unavailable: {reason}")));
+                    result = Some(Err(format!("goal not met: verifier unavailable: {reason}")));
                     break;
                 }
             };
-            total_cost_usd += judge_cost;
+            total_cost_usd += verifier_cost;
             let _ = tx.send(AgentEvent::GoalVerdict {
                 round,
                 met: verdict.met,
                 reasoning: verdict.reasoning.clone(),
-                cost_usd: judge_cost,
+                cost_usd: verifier_cost,
             });
 
             if verdict.met {
@@ -816,11 +825,11 @@ async fn run_goal_pipeline_turn(
             }
 
             messages.push(CompletionMessage::user(
-                stella_core::goal::judge_feedback_text(goal, &verdict),
+                stella_core::goal::verifier_feedback_text(goal, &verdict),
             ));
         }
 
-        // An explicit break result (abort/error/judge-down) stands. If the goal
+        // An explicit break result (abort/error/verifier-down) stands. If the goal
         // was met, success. Otherwise the round cap was reached unmet.
         match (result, goal_met) {
             (Some(r), _) => r,
@@ -841,8 +850,8 @@ async fn run_goal_pipeline_turn(
 
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
-    // The shared guard is the settled ledger, including a judge turn that
-    // aborted after spending and therefore returned no `judge_cost` value.
+    // The shared guard is the settled ledger, including a verifier turn that
+    // aborted after spending and therefore returned no `verifier_cost` value.
     let total_cost_usd = budget.session_spent_usd();
     let files = registry.files_touched();
     if let Some((store, id)) = &execution {

@@ -5,7 +5,7 @@
 //! thought of the result. Three are counted from rows the store already writes.
 //! The fourth is read from a pull request somebody merged or closed.
 //!
-//! No model judges anything here, which is the point. The store does carry a
+//! No model verifiers anything here, which is the point. The store does carry a
 //! rating field — `execution_reflection.self_rating` — and it is deliberately
 //! not used: it is the model grading its own homework.
 //!

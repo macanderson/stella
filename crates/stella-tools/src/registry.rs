@@ -248,7 +248,7 @@ pub struct ToolRegistry {
     /// host attaches its session channel with [`ToolRegistry::attach_events`],
     /// and `record_touch` sends there directly; a verifier that wraps the
     /// *engine's* sender to tally `FileChange`s therefore sees none of them and
-    /// concludes nothing was touched (#973 — the judge was told
+    /// concludes nothing was touched (#973 — the verifier was told
     /// `file_change_events=0` with six in the stream). A counter on the
     /// recorder is readable no matter which channel the events went down, and
     /// unlike the ledger's length it never falls back when a file is touched
@@ -913,7 +913,7 @@ impl ToolRegistry {
 
         // Storage gate (docs/design/storage-map.md §8): if the call targets
         // storage-definition files, parse each proposed post-write content
-        // with the SAME adapter extraction the indexer uses and judge it
+        // with the SAME adapter extraction the indexer uses and verifier it
         // against the live storage map before anything lands. Objects a
         // target file already defines on disk are exempt — rewriting an
         // existing migration in place is not a duplicate. `write_file` /
@@ -1871,7 +1871,7 @@ impl ToolRegistry {
         // `post` rides alongside the counts so the authored-change ledger can
         // keep BOTH images of this write. It costs nothing extra to produce —
         // every arm below already computes it to render its own diff — and it
-        // is the difference between a judge that can read the agent's change
+        // is the difference between a verifier that can read the agent's change
         // and one that is handed a filename (see [`crate::authored_diff`]).
         let (lines_added, lines_removed, diff, post) = match pending.op {
             FileOp::Read => (0, 0, None, None),

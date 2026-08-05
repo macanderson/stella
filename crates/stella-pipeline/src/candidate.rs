@@ -8,7 +8,7 @@
 //!
 //! Selection ranks candidates by the *strength of their verification
 //! evidence* — a deterministically-verified candidate always beats a
-//! judge-passed one, which beats an unverified one, which beats a failed one
+//! verifier-passed one, which beats an unverified one, which beats a failed one
 //! — with diff size as the tiebreak (smaller, all else equal, is better).
 
 /// How strongly a candidate execution was verified — the primary sort key for
@@ -16,13 +16,13 @@
 /// `max` pick the strongest evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CandidateScore {
-    /// Verification failed (touched tests red, or judge FAIL).
+    /// Verification failed (touched tests red, or verifier FAIL).
     Failed,
-    /// No verdict could be established (judge unavailable, no tests) — better
+    /// No verdict could be established (verifier unavailable, no tests) — better
     /// than an outright failure, worse than any pass.
     Unverified,
-    /// A model judge passed it (softer evidence than a deterministic flip).
-    JudgePass,
+    /// A model verifier passed it (softer evidence than a deterministic flip).
+    VerifierPass,
     /// The deterministic ladder passed it (flip + green + budget) — the
     /// strongest evidence.
     DeterministicPass,
@@ -59,8 +59,8 @@ pub struct CandidateSummary {
 /// given identical evidence). Returns `None` only for an empty slice.
 ///
 /// The refinement deliberately lives inside the rank comparison: the coarse
-/// `DeterministicPass > JudgePass > Unverified > Failed` ordering is
-/// untouched, so a warning-free judge-pass still never beats a warned
+/// `DeterministicPass > VerifierPass > Unverified > Failed` ordering is
+/// untouched, so a warning-free verifier-pass still never beats a warned
 /// deterministic pass.
 ///
 /// The earliest-index tiebreak matters for determinism: candidate 0 is the
@@ -106,13 +106,13 @@ pub fn select_best_candidate(candidates: &[CandidateSummary]) -> Option<usize> {
 /// best-of-N and the single-shot verdict never drift apart.
 pub fn score_from_verification(
     deterministic_pass: bool,
-    judge_passed: Option<bool>,
+    verifier_passed: Option<bool>,
 ) -> CandidateScore {
     if deterministic_pass {
         return CandidateScore::DeterministicPass;
     }
-    match judge_passed {
-        Some(true) => CandidateScore::JudgePass,
+    match verifier_passed {
+        Some(true) => CandidateScore::VerifierPass,
         Some(false) => CandidateScore::Failed,
         None => CandidateScore::Unverified,
     }
@@ -134,8 +134,8 @@ mod tests {
     #[test]
     fn score_ordering_is_worst_to_best() {
         assert!(CandidateScore::Failed < CandidateScore::Unverified);
-        assert!(CandidateScore::Unverified < CandidateScore::JudgePass);
-        assert!(CandidateScore::JudgePass < CandidateScore::DeterministicPass);
+        assert!(CandidateScore::Unverified < CandidateScore::VerifierPass);
+        assert!(CandidateScore::VerifierPass < CandidateScore::DeterministicPass);
     }
 
     #[test]
@@ -155,7 +155,7 @@ mod tests {
     fn strongest_evidence_wins_over_diff_size() {
         // Candidate 1 has a bigger diff but stronger evidence — it wins.
         let cands = [
-            c(CandidateScore::JudgePass, 5),
+            c(CandidateScore::VerifierPass, 5),
             c(CandidateScore::DeterministicPass, 500),
         ];
         assert_eq!(select_best_candidate(&cands), Some(1));
@@ -174,9 +174,9 @@ mod tests {
     #[test]
     fn all_equal_selects_the_earliest_index_for_reproducibility() {
         let cands = [
-            c(CandidateScore::JudgePass, 10),
-            c(CandidateScore::JudgePass, 10),
-            c(CandidateScore::JudgePass, 10),
+            c(CandidateScore::VerifierPass, 10),
+            c(CandidateScore::VerifierPass, 10),
+            c(CandidateScore::VerifierPass, 10),
         ];
         assert_eq!(
             select_best_candidate(&cands),
@@ -205,15 +205,15 @@ mod tests {
     }
 
     #[test]
-    fn score_from_verification_prefers_deterministic_then_judge() {
+    fn score_from_verification_prefers_deterministic_then_verifier() {
         assert_eq!(
             score_from_verification(true, Some(false)),
             CandidateScore::DeterministicPass,
-            "a deterministic pass wins even if a later judge disagreed"
+            "a deterministic pass wins even if a later verifier disagreed"
         );
         assert_eq!(
             score_from_verification(false, Some(true)),
-            CandidateScore::JudgePass
+            CandidateScore::VerifierPass
         );
         assert_eq!(
             score_from_verification(false, Some(false)),
@@ -270,13 +270,13 @@ mod tests {
         assert_eq!(select_best_candidate(&[unchecked, survived]), Some(1));
     }
 
-    /// The coarse rank ordering is untouched: a warning-free judge-pass
+    /// The coarse rank ordering is untouched: a warning-free verifier-pass
     /// still never beats a warned deterministic pass.
     #[test]
     fn the_refinement_never_crosses_ranks() {
         let cands = [
             cw(CandidateScore::DeterministicPass, 5, 500),
-            cw(CandidateScore::JudgePass, 0, 5),
+            cw(CandidateScore::VerifierPass, 0, 5),
         ];
         assert_eq!(select_best_candidate(&cands), Some(0));
     }

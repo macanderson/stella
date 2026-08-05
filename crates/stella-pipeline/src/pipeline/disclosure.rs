@@ -50,7 +50,7 @@ impl Pipeline<'_> {
 
     /// Let one model-authored text cross inbound to the worker, or drop it.
     ///
-    /// Distress guidance and judge reasoning are both written by a model that
+    /// Distress guidance and verifier reasoning are both written by a model that
     /// was shown the raw deterministic evidence, so either can quote the
     /// detector back at the worker. `None` means the scrubber rejected it; the
     /// emitted policy event carries a leak *token*, never the offending text.
@@ -83,11 +83,11 @@ impl Pipeline<'_> {
         state: &mut CandidateState,
         sealed: &SealedFailure<'_>,
         tail: &str,
-    ) -> (JudgeEvidence, FailureBrief) {
+    ) -> (VerdictEvidence, FailureBrief) {
         let fingerprint = sealed.fingerprint();
         let repeats = state.record_failure(fingerprint.clone());
         let brief = redact(sealed, grain_for_repeats(repeats));
-        let evidence = JudgeEvidence {
+        let evidence = VerdictEvidence {
             evidence_refs: brief.evidence_refs(&fingerprint),
             ladder: None,
             ..deterministic_fail_evidence(tail)
@@ -100,7 +100,7 @@ impl Pipeline<'_> {
     /// Reached only from the ladder's inconclusive arm, where "inconclusive"
     /// covers two very different things: a real change nothing proved, and a
     /// change with nothing to prove. The diff separates them; the prompt never
-    /// could. `None` means buy the judge call after all.
+    /// could. `None` means buy the verifier call after all.
     ///
     /// The verdict records *why* no test was written rather than leaving an
     /// unexplained absence — the pipeline's half of the contract contributors
@@ -114,52 +114,52 @@ impl Pipeline<'_> {
         &self,
         state: &CandidateState,
         snapshot: &stella_protocol::LadderSnapshot,
-    ) -> Option<JudgeEvidence> {
+    ) -> Option<VerdictEvidence> {
         let reason = warrant(&state.diff_text, state.file_changes).reason()?;
         if reason.warrants_independent_review() {
             return None;
         }
-        let evidence = JudgeEvidence {
+        let evidence = VerdictEvidence {
             summary: format!("no witness test warranted: {}", reason.sentence()),
             deterministic: true,
             evidence_refs: vec![format!("warrant:{reason:?}")],
             ladder: Some(Box::new(snapshot.with_rung(LadderRung::Waived))),
         };
-        self.emit(AgentEvent::JudgeVerdict {
+        self.emit(AgentEvent::Verdict {
             passed: true,
             evidence: evidence.clone(),
         });
         Some(evidence)
     }
 
-    /// The verdict for a judge waiver that stands: triage said `JUDGE: no`
-    /// and the warrant agrees ([`Pipeline::judge_waiver_stands`]). A pass
+    /// The verdict for a verifier waiver that stands: triage said `VERIFIER: no`
+    /// and the warrant agrees ([`Pipeline::verifier_waiver_stands`]). A pass
     /// carrying no independent evidence — the caller scores it `Unverified`,
     /// never `DeterministicPass`, so a review-waived candidate cannot tie a
     /// genuinely flip-verified sibling in best-of-N and then win the
     /// smaller-diff tiebreak. The summary states plainly what was not done:
-    /// falling through to `heuristic_fallback` instead would report "judge
-    /// unavailable", which describes a judge that broke, not one that was
+    /// falling through to `heuristic_fallback` instead would report "verifier
+    /// unavailable", which describes a verifier that broke, not one that was
     /// deliberately waived.
     pub(super) fn waived_completion(
         &self,
         snapshot: &stella_protocol::LadderSnapshot,
-    ) -> JudgeEvidence {
-        let evidence = JudgeEvidence {
+    ) -> VerdictEvidence {
+        let evidence = VerdictEvidence {
             summary: "model review waived by triage; no independent verification was performed"
                 .to_string(),
             deterministic: false,
             evidence_refs: vec![],
             ladder: Some(Box::new(snapshot.with_rung(LadderRung::Waived))),
         };
-        self.emit(AgentEvent::JudgeVerdict {
+        self.emit(AgentEvent::Verdict {
             passed: true,
             evidence: evidence.clone(),
         });
         evidence
     }
 
-    /// Whether triage's `JUDGE: no` waiver may stand, decided from the change
+    /// Whether triage's `VERIFIER: no` waiver may stand, decided from the change
     /// itself rather than the prompt.
     ///
     /// The waiver was answered before any work existed, and it is only ever
@@ -168,9 +168,9 @@ impl Pipeline<'_> {
     /// has been falsified. So the warrant gets the final word: the waiver
     /// stands only where the diff shows nothing an independent reviewer could
     /// catch (the same classes [`Pipeline::warranted_completion`] completes
-    /// without a judge). A behavioral diff, a deletion, or anything the diff
+    /// without a verifier). A behavioral diff, a deletion, or anything the diff
     /// machinery could not read keeps its reviewer, whatever triage guessed.
-    pub(super) fn judge_waiver_stands(state: &CandidateState) -> bool {
+    pub(super) fn verifier_waiver_stands(state: &CandidateState) -> bool {
         warrant(&state.diff_text, state.file_changes)
             .reason()
             .is_some_and(|reason| !reason.warrants_independent_review())

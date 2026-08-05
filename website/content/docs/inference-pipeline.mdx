@@ -1,12 +1,12 @@
 ---
 title: Inference Pipeline
-description: How Stella turns a prompt into verified work — the step loop, the staged pipeline from triage to judge, deterministic verification, and per-role routing.
+description: How Stella turns a prompt into verified work — the step loop, the staged pipeline from triage to verifier, deterministic verification, and per-role routing.
 ---
 
 Stella's answer to "did the agent actually do the work?" is structural, not
 rhetorical. Every prompt runs through an **inference pipeline** that separates
 *doing* the work from *verifying* it — with deterministic checks preferred
-over model opinion, and an independent judge preferred over self-assessment.
+over model opinion, and an independent verifier preferred over self-assessment.
 
 ## The foundation: the step loop
 
@@ -37,7 +37,7 @@ in stages:
 <PipelineFlowDiagram />
 
 In full: triage → recall → plan → scope review → execute → witness → verify
-→ judge, with a bounded revise loop. Recall runs concurrently with triage
+→ verifier, with a bounded revise loop. Recall runs concurrently with triage
 but emits after it; plan, scope review, and witness are conditional — a
 simple lookup skips them, scope review fires only above thresholds, and the
 witness is authored only without `--test-command`, on demand *after*
@@ -49,7 +49,7 @@ needs a test at all.
 A fast, cheap classification call decides how much process the task deserves —
 a **lookup** ("what does this function do?") skips planning entirely, a
 **single concrete change** gets a light path (one execute turn, still verified), a
-**genuinely multi-step** task gets the full plan → scope-review → execute → verify → judge
+**genuinely multi-step** task gets the full plan → scope-review → execute → verify → verdict
 pipeline. Triage runs under a hard latency ceiling (10 seconds); if the model
 doesn't answer in time, Stella falls through to the full path rather than
 waiting. Triage can run on its own [configured model](/docs/configuration/agent-engine-config) —
@@ -154,36 +154,36 @@ gathered first:
 - **The zero-diff guard.** A run that changed nothing (including untracked
   files) can never claim success.
 - **The diff budget.** A small diff (≤ 400 changed lines by default) backed by
-  deterministic evidence can submit without any model judge at all.
+  deterministic evidence can submit without any model verifier at all.
 
-From those, the ladder picks one of **four** outcomes — before any model judge
+From those, the ladder picks one of **four** outcomes — before any model verifier
 runs, and in this order:
 
 <CardGrid size="md">
   <OptionCard name="1 · Revise">
     Touched tests are **red**. That is already a deterministic failure, so the evidence
-    goes straight back into a revision turn. No judge call is spent confirming a
+    goes straight back into a revision turn. No verifier call is spent confirming a
     failure that is not in doubt.
   </OptionCard>
   <OptionCard name="2 · Unverifiable">
     **Every** channel was blind — no flip, no test result, an unreadable working tree,
-    and no recorded file touch. The ladder **abstains**: no judge call, and the run is
+    and no recorded file touch. The ladder **abstains**: no verifier call, and the run is
     scored as *unverified* rather than passed or failed.
   </OptionCard>
   <OptionCard name="3 · Submit fast">
     Flip achieved, touched tests green, diff within budget. The full deterministic
-    pass — the model judge is **skipped** entirely.
+    pass — the model verifier is **skipped** entirely.
   </OptionCard>
-  <OptionCard name="4 · Model judge">
+  <OptionCard name="4 · Model verifier">
     Genuinely inconclusive — no flip, or a diff over budget, or tests that could not
-    run — but at least one channel could still see something. Only here is a judge
+    run — but at least one channel could still see something. Only here is a verifier
     asked.
   </OptionCard>
 </CardGrid>
 
 <Callout type="info">
 The abstain rung is what keeps the ladder honest about its own reach. Before it
-existed, a turn nothing could observe fell through to the judge, which was handed
+existed, a turn nothing could observe fell through to the verifier, which was handed
 an empty record and answered with a confident `FAIL` naming a file that existed.
 Buying a model call to guess from no evidence is worse than saying *I could not
 tell* — so now it says that.
@@ -194,20 +194,20 @@ The same discipline is available to the agent as a tool:
 worktree at `git HEAD` — the test must fail there and pass on the change
 (**WITNESS CONFIRMED**). A green suite alone is never accepted as proof.
 
-### 7. Judge
+### 7. Verifier
 
-When a model verdict is needed, the **judge** — a separate model call, by
+When a model verdict is needed, the **verifier** — a separate model call, by
 preference from a *different model family* than the worker — reviews the goal,
 the diff, and the evidence summary, and answers with a leading `PASS` or
-`FAIL`. The judge never sees the worker's narration, only what actually
-changed. If the judge call fails, Stella falls back to a conservative
+`FAIL`. The verifier never sees the worker's narration, only what actually
+changed. If the verifier call fails, Stella falls back to a conservative
 heuristic verdict rather than hanging or guessing.
 
 ### 8. Revise
 
 A failed verification sends the worker back with the failure evidence — up to
 a bounded number of revision turns (2 by default). Once a revision has
-deterministically failed, Stella spends one judge call on **distress guidance**:
+deterministically failed, Stella spends one verifier call on **distress guidance**:
 a course-correction note that rides with the next revision prompt instead of
 letting the worker keep digging the same hole.
 
@@ -256,7 +256,7 @@ stella run --test-command "cargo test -p pager" "fix the off-by-one in the pager
   fail→pass flip. The change is real (the zero-diff guard sees a non-empty
   diff), the touched tests are green, and the diff — a handful of lines —
   is far inside the 400-line budget. The deterministic ladder answers
-  *submit fast*: the run finishes on evidence alone, **judge skipped**,
+  *submit fast*: the run finishes on evidence alone, **verifier skipped**,
   exit code 0. The recorded evidence reads
   `flip oracle: fail→pass of 'cargo test -p pager'; touched tests green; diff 6 lines within budget`.
 
@@ -266,14 +266,14 @@ pays more for it. The **witness** stage now spends an independent model call
 behavior, and that test's command arms the flip oracle instead. A clean flip
 on an untampered witness still submits deterministically — but when the
 evidence stays inconclusive (no flip, tests that couldn't run, a diff over
-the 400-line budget), verification **escalates to the model judge**: a
+the 400-line budget), verification **escalates to the model verifier**: a
 separate model, by preference from a different family, ruling `PASS`/`FAIL`
 on the diff and evidence summary. Same destination, more model calls at
 risk — the deterministic path is why `--test-command` is the strongest flag
 you can pass.
 
 You can read that distinction back out of any headless run. `verdict.deterministic`
-is `true` exactly when the ladder answered without a judge call:
+is `true` exactly when the ladder answered without a verifier call:
 
 ```bash
 stella --output-format json run --test-command "cargo test -p pager" \
@@ -300,9 +300,9 @@ that resolves each role also carries reliability machinery:
   a provider's breaker; routing skips it and reports the fallback visibly —
   never a silent mid-turn switch. After a cooldown, one trial call decides
   whether the breaker closes.
-- **Cross-family judging.** The judge prefers a healthy provider whose model
+- **Cross-family judging.** The verifier prefers a healthy provider whose model
   *family* differs from the worker's (Claude judging GLM's work, GPT judging
-  Claude's). With only one family configured, the judge degrades to the same
+  Claude's). With only one family configured, the verifier degrades to the same
   family — with a visible caveat, never an error.
 - **Soft degradation everywhere.** A configured role model whose provider has
   no credential falls back to the worker with a notice. Configuration can
@@ -337,7 +337,7 @@ stella --budget 1.50 run --test-command "cargo test -p stella-core" \
     default.
   </OptionCard>
   <OptionCard name="stella goal">
-    Pipeline rounds plus an independent goal judge by default;
+    Pipeline rounds plus an independent goal verifier by default;
     `--no-pipeline` makes the rounds raw. See
     [goal mode](/docs/agent-modes#outcome-driven-goal-mode).
   </OptionCard>
@@ -347,5 +347,5 @@ stella --budget 1.50 run --test-command "cargo test -p stella-core" \
   </OptionCard>
 </CardGrid>
 
-Pipeline goal rounds mean **double verification**: the pipeline's own judge
-checks each round's work, and the outer goal judge checks the objective.
+Pipeline goal rounds mean **double verification**: the pipeline's own verifier
+checks each round's work, and the outer goal verifier checks the objective.

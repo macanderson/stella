@@ -185,7 +185,7 @@ pub async fn run_accounted_call(
     // The context receipt for this call, emitted just before `StepUsage` so the
     // pair — what the model saw, what it cost — lands together at the settled
     // boundary, exactly as the engine's step loop does it. Every role routed
-    // through here (the overflow summarizer, and the pipeline's triage / judge /
+    // through here (the overflow summarizer, and the pipeline's triage / verifier /
     // plan / guidance / conversational roles) is otherwise reconstructable only
     // as a cost line: without this the prompt it actually sent is unrecoverable.
     // A fresh ledger per call is correct — these are one-shot contexts, so every
@@ -230,7 +230,7 @@ pub async fn run_accounted_call(
         retries: outcome.retries.len() as u32,
         tool_calls: result.tool_calls.len(),
         complete: result.usage.is_complete(),
-        // Management calls truncate too — a judge verdict or a plan cut off at
+        // Management calls truncate too — a verifier verdict or a plan cut off at
         // the ceiling is exactly the silent failure this field exists to name.
         finish_reason: result.finish_reason,
     });
@@ -425,7 +425,7 @@ mod tests {
     }
 
     /// The gap this closes: every role routed through here — the overflow
-    /// summarizer, the pipeline's triage/judge/plan/guidance — used to leave a
+    /// summarizer, the pipeline's triage/verifier/plan/guidance — used to leave a
     /// cost line and nothing else, so the prompt it sent was unrecoverable.
     /// A receipt context makes its system prefix a registered block carrying
     /// its own bytes, keyed apart from the worker call by `call_seq`.

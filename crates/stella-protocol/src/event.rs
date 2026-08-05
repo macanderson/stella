@@ -114,7 +114,7 @@ pub enum StageKind {
     /// The interactive approval gate a large plan passes through (L-E5).
     ScopeReview,
     /// Witness authoring: before the worker executes, an independent model
-    /// (the judge's resolution, never the worker's transcript) writes the
+    /// (the verifier's resolution, never the worker's transcript) writes the
     /// witness test — a test that FAILS on the current code and will pass
     /// once the goal is met — arming the deterministic flip oracle (L-E11).
     /// The witness is visible to the worker (iterating against a failing
@@ -127,9 +127,19 @@ pub enum StageKind {
     /// The deterministic verification ladder: the flip oracle, the touched
     /// tests, the diff budget.
     Verify,
-    /// The model judge, reached only when the deterministic ladder came back
-    /// inconclusive (L-E11).
-    Judge,
+    /// The verifier's verdict, reached only when the deterministic ladder came
+    /// back inconclusive (L-E11). Named for the output rather than the model:
+    /// a stage called `Verifier` sitting next to `Verify` hid which of the two
+    /// was proof and which was opinion.
+    ///
+    /// Aliased for the same reason as the other renames in this pass: the
+    /// stage shipped on the wire as `judge`, so every recorded session names
+    /// it that way. Reading them is not optional — replay, the observatory and
+    /// the golden fixtures all parse stored streams. `verifier` is aliased too
+    /// because it was this stage's name for the length of one commit on this
+    /// branch, and a stream recorded against that build must still read.
+    #[serde(alias = "judge", alias = "verifier")]
+    Verdict,
     /// Post-turn self-reflection: the agent reviews its own performance on
     /// the completed turn and records improvement memories into the context
     /// plane, tagged with the workspace's inferred domains, for recall on
@@ -220,8 +230,12 @@ pub enum ModelCallRole {
     Worker,
     /// Course-correction handed to a worker that is looping or stuck.
     DistressGuidance,
-    /// The model judge, reached only on inconclusive deterministic evidence.
-    Judge,
+    /// The verifier's verdict call, on inconclusive deterministic evidence.
+    ///
+    /// Aliased: this call role shipped as `judge`, so every recorded model
+    /// call in every stored session names it that way.
+    #[serde(alias = "judge")]
+    Verdict,
     /// Generating an agent definition.
     AgentAuthor,
     /// Generating a skill definition.
@@ -610,9 +624,9 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         partial: Option<crate::completion::PartialUsage>,
     },
-    /// A judge model's assessment of a goal-driven loop after one working
+    /// A verifier model's assessment of a goal-driven loop after one working
     /// round. `met == true` ends the loop; `met == false` feeds `reasoning`
-    /// back to the worker as course-correction. `cost_usd` is the judge
+    /// back to the worker as course-correction. `cost_usd` is the verifier
     /// call's own spend.
     GoalVerdict {
         round: usize,
@@ -758,7 +772,7 @@ pub enum AgentEvent {
         /// Disambiguates the several model calls that can share one
         /// `(turn_instance, step)`. The engine's own worker call is always 0;
         /// auxiliary calls that ride the same step — the overflow summarizer,
-        /// and the pipeline's triage/judge/plan/guidance roles — take 1, 2, …
+        /// and the pipeline's triage/verifier/plan/guidance roles — take 1, 2, …
         /// from a per-execution counter. Without it a summarizer receipt and
         /// the worker receipt it precedes collide on the primary key and the
         /// auxiliary one is silently replaced. `serde(default)` so manifests
@@ -808,11 +822,17 @@ pub enum AgentEvent {
     /// the verdict remains the authority on whether the work is verified.
     Proof { step: ProofStep },
     /// A verification verdict — from the deterministic ladder (flip oracle,
-    /// touched-tests-green) or the model judge (L-E11: deterministic-first;
-    /// model judges handle only inconclusive evidence).
-    JudgeVerdict {
+    /// touched-tests-green) or the model verifier (L-E11: deterministic-first;
+    /// model verifiers handle only inconclusive evidence).
+    ///
+    /// Aliased: this event shipped on the wire as `judge_verdict`. Without the
+    /// alias a stored stream's verdict line does not fail loudly — serde skips
+    /// to the next variant and the event simply *disappears*, which is how the
+    /// golden trajectories came to be one event short rather than unparseable.
+    #[serde(alias = "judge_verdict")]
+    Verdict {
         passed: bool,
-        evidence: JudgeEvidence,
+        evidence: VerdictEvidence,
     },
     /// Interactive gate before large plans execute (L-E5): the pipeline
     /// pauses on this event and waits for approval above configured
@@ -1007,7 +1027,7 @@ agent_event_tags! {
     BlockRegistered => "block_registered",
     StepManifest => "step_manifest",
     Proof => "proof",
-    JudgeVerdict => "judge_verdict",
+    Verdict => "verdict",
     ScopeReview => "scope_review",
     HunkReview => "hunk_review",
     AskUser => "ask_user",
@@ -1156,17 +1176,17 @@ impl FileChangeKind {
     }
 }
 
-/// Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the
-/// flip-oracle/tests ladder from a model judge's opinion — the two are
+/// Evidence backing a `Verdict`. `deterministic` distinguishes the
+/// flip-oracle/tests ladder from a model verifier's opinion — the two are
 /// never conflated (L-E11).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct JudgeEvidence {
+pub struct VerdictEvidence {
     /// One line naming what was checked and what it showed.
     pub summary: String,
     /// `true` when the verdict came from the deterministic ladder (a
     /// fail→pass flip of the same normalized test command, touched-tests
-    /// green, diff budget) rather than a model judge.
+    /// green, diff budget) rather than a model verifier.
     pub deterministic: bool,
     /// Pointers to the underlying artifacts (`trace:t1#verify`, a test
     /// command, a diff), so a reader can go check the summary rather than
@@ -1174,9 +1194,9 @@ pub struct JudgeEvidence {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_refs: Vec<String>,
     /// The full ladder input snapshot this verdict was decided from (#865).
-    /// `replay` answers "why did this run fast-submit / revise / judge?"
-    /// from here without re-deriving, and a judge escalation renders it into
-    /// the prompt (#864) so the judge sees *why* the ladder was inconclusive
+    /// `replay` answers "why did this run fast-submit / revise / verifier?"
+    /// from here without re-deriving, and a verifier escalation renders it into
+    /// the prompt (#864) so the verifier sees *why* the ladder was inconclusive
     /// rather than a diff cold. Absent on events recorded before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ladder: Option<Box<LadderSnapshot>>,
@@ -1207,8 +1227,14 @@ pub enum ProofStep {
     Assurance {
         /// Whether an independently authored witness test was called for.
         witness: bool,
-        /// Whether a model judge was called for on inconclusive evidence.
-        judge: bool,
+        /// Whether a model verifier was called for on inconclusive evidence.
+        ///
+        /// Aliased: this field shipped as `judge`, and every recorded session
+        /// and golden fixture spells it that way. Renaming it without the
+        /// alias makes those streams unparseable — which is exactly what the
+        /// golden fixtures caught.
+        #[serde(alias = "judge")]
+        verifier: bool,
     },
     /// The warrant read the diff and answered "does this change need a test".
     /// Emitted once per candidate, before any witness is bought — a change
@@ -1240,11 +1266,11 @@ pub enum ProofStep {
     /// probe could not read, and no recorded file change.
     ///
     /// Distinct from a failing verdict, and the distinction is the point. The
-    /// turn this exists for ended with a judge asserting a file "likely does
+    /// turn this exists for ended with a verifier asserting a file "likely does
     /// not exist" while the file sat in the container — a claim about the
     /// *instruments* delivered as a claim about the *work* (#973). Without a
     /// step of its own, an abstention reaches the rail as `✓ passed · model
-    /// judge`, which is the same silent outcome in the other direction.
+    /// verifier`, which is the same silent outcome in the other direction.
     VerificationUnavailable { reason: String },
     /// The flip oracle observed one run of the tracked command against one
     /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
@@ -1985,10 +2011,10 @@ mod tests {
     }
 
     #[test]
-    fn judge_verdict_distinguishes_deterministic_from_model_evidence() {
-        let event = AgentEvent::JudgeVerdict {
+    fn verdict_distinguishes_deterministic_from_model_evidence() {
+        let event = AgentEvent::Verdict {
             passed: true,
-            evidence: JudgeEvidence {
+            evidence: VerdictEvidence {
                 summary: "flip oracle: fail→pass on `cargo test -p x`".into(),
                 deterministic: true,
                 evidence_refs: vec!["trace:t1#verify".into()],
@@ -2002,7 +2028,7 @@ mod tests {
         );
         let back: AgentEvent = serde_json::from_str(&json).unwrap();
         match back {
-            AgentEvent::JudgeVerdict { evidence, .. } => assert!(evidence.deterministic),
+            AgentEvent::Verdict { evidence, .. } => assert!(evidence.deterministic),
             other => panic!("unexpected variant: {other:?}"),
         }
     }
@@ -2012,17 +2038,17 @@ mod tests {
     /// roundtrips with its oracle trace intact.
     #[test]
     fn ladder_snapshot_is_additive_and_roundtrips() {
-        let legacy = r#"{"type":"judge_verdict","passed":true,
+        let legacy = r#"{"type":"verdict","passed":true,
             "evidence":{"summary":"ok","deterministic":true}}"#;
         let back: AgentEvent = serde_json::from_str(legacy).unwrap();
         match back {
-            AgentEvent::JudgeVerdict { evidence, .. } => assert!(evidence.ladder.is_none()),
+            AgentEvent::Verdict { evidence, .. } => assert!(evidence.ladder.is_none()),
             other => panic!("unexpected variant: {other:?}"),
         }
 
-        let event = AgentEvent::JudgeVerdict {
+        let event = AgentEvent::Verdict {
             passed: true,
-            evidence: JudgeEvidence {
+            evidence: VerdictEvidence {
                 summary: "flip + confirmation".into(),
                 deterministic: true,
                 evidence_refs: vec![],
@@ -2060,7 +2086,7 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let back: AgentEvent = serde_json::from_str(&json).unwrap();
         match back {
-            AgentEvent::JudgeVerdict { evidence, .. } => {
+            AgentEvent::Verdict { evidence, .. } => {
                 let snapshot = evidence.ladder.expect("snapshot survives the wire");
                 assert_eq!(snapshot.oracle_trace.len(), 2);
                 assert!(snapshot.flip_achieved);
@@ -2433,7 +2459,11 @@ mod tests {
 
     #[test]
     fn usage_incomplete_is_a_closed_content_free_signal() {
-        let json = r#"{"type":"usage_incomplete","role":"judge","provider":"anthropic","model":"claude-sonnet-4-5","reason":"timeout","duration_ms":2500,"retries":null}"#;
+        // `verdict`, not `verifier`: this field is a `ModelCallRole` — the JOB
+        // the call was doing — and the rename mapped the old `judge` role to
+        // `Verdict`. `Verifier` is the `Role` (the model slot), a different
+        // enum; a blanket judge→verifier sweep conflated the two.
+        let json = r#"{"type":"usage_incomplete","role":"verdict","provider":"anthropic","model":"claude-sonnet-4-5","reason":"timeout","duration_ms":2500,"retries":null}"#;
         let event: AgentEvent = serde_json::from_str(json).unwrap();
         let roundtrip = serde_json::to_value(event).unwrap();
         assert_eq!(roundtrip["type"], "usage_incomplete");

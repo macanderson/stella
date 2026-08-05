@@ -88,7 +88,7 @@ impl<'a> Pipeline<'a> {
             }
             if record.error {
                 new_errors += 1;
-                // Token discipline: the judge gets at most three new-error
+                // Token discipline: the verifier gets at most three new-error
                 // lines, each capped — enough to see WHAT regressed without
                 // shipping a linter's whole opinion into the prompt.
                 if sample.lines().count() < 3 {
@@ -110,7 +110,7 @@ impl<'a> Pipeline<'a> {
     /// completion, `(None, "", None)` when there is nothing to run, and
     /// `(None, tail, Some(label))` when the run was infra noise (#860) — a
     /// timeout or spawn failure observed no assertion, so it is inconclusive
-    /// (judge), not a deterministic red (revise). The label reaches the judge
+    /// (verifier), not a deterministic red (revise). The label reaches the verifier
     /// evidence so "the suite timed out" is never read as "the suite failed".
     pub(super) async fn observe_touched_tests(
         &self,
@@ -166,14 +166,14 @@ impl<'a> Pipeline<'a> {
 
     /// The verdict-provenance snapshot (#865): everything the ladder decided
     /// from, frozen at decision time so `replay` answers "why fast-submit /
-    /// revise / judge?" without re-deriving — and so the judge prompt can
+    /// revise / verifier?" without re-deriving — and so the verifier prompt can
     /// carry it (#864). Pure assembly over already-gathered evidence: no
     /// probe runs here.
     ///
     /// `rung` is seeded with the ladder's own decision over the same `inputs`
     /// ([`ladder_decision`] is pure, so this cannot disagree with the arm the
     /// caller takes). The three arms that resolve *past* that decision — a
-    /// judge that answered, a judge that was unavailable, a review that was
+    /// verifier that answered, a verifier that was unavailable, a review that was
     /// waived — restamp it with [`LadderSnapshot::with_rung`] before attaching
     /// their evidence.
     pub(super) fn ladder_snapshot(

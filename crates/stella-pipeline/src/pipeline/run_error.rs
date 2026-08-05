@@ -56,11 +56,11 @@ impl PipelineRunError {
 }
 
 /// What [`super::Pipeline::witness_author_independence`] found. Three states,
-/// not a bool: "the judge is the worker" and "the worker itself will not
+/// not a bool: "the verifier is the worker" and "the worker itself will not
 /// resolve" are different facts with different owners, and collapsing them is
 /// how a routing failure starts reading as a witness verdict.
 pub(super) enum WitnessAuthorIndependence {
-    /// A judge distinct from the worker resolves — the author exists.
+    /// A verifier distinct from the worker resolves — the author exists.
     Independent,
     /// No author independent of the worker, with the reason to announce.
     Unavailable(String),

@@ -79,7 +79,7 @@ enum PortShape {
 /// The provider call sequence a scenario feeds every role.
 #[derive(Clone, Copy)]
 enum ProviderShape {
-    /// Enough responses for triage + a worker turn + a judge — a clean run.
+    /// Enough responses for triage + a worker turn + a verifier — a clean run.
     Healthy,
     /// Triage answers, then the worker call errors (script exhausts).
     WorkerErrors,
@@ -125,7 +125,7 @@ impl Scenario {
     fn provider_script(&self) -> Vec<Result<CompletionResult, ProviderError>> {
         // The first response is the triage classification (a bare token, so
         // it parses whatever the assurance flags do); the rest feed the
-        // worker/judge turns. `Healthy` gives generous headroom; the error
+        // worker/verifier turns. `Healthy` gives generous headroom; the error
         // shapes cut the script short at the intended point.
         let triage = || Ok(text_result(self.class));
         let done = || Ok(text_result("done"));
@@ -139,7 +139,7 @@ impl Scenario {
                 triage(),
                 done(),
                 pass(),
-                // Spare responses so a revise/repair/judge never exhausts the
+                // Spare responses so a revise/repair/verifier never exhausts the
                 // script by accident and masks a real invariant break.
                 done(),
                 pass(),
@@ -169,7 +169,7 @@ impl Scenario {
                     "chaos",
                     ModelRef::new("chaos", "worker"),
                     ModelRef::new("chaos", "triage"),
-                    ModelRef::new("chaos", "judge"),
+                    ModelRef::new("chaos", "verifier"),
                 )],
                 CircuitBreaker::new(Box::new(ZeroClock)),
             )

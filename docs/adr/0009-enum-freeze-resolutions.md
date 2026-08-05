@@ -37,7 +37,7 @@ co-equal evidence.
 | 2 | Directive origin arity (4 vs uniform-5) | **Resolved** (ADR 0001) | Uniform **5-value** `Origin` for all families; §8.6's four are illustrative |
 | 3 | Define "guarded" | **Ratified** 2026-07-24 | A directive carrying an `enforcer_ref` (executable guard), independent of enforcement level |
 | 4 | `constraint_effect` closed set | **Resolved** (lifecycle:501–506) | `{require, forbid}`; `allow` deliberately excluded. Flag's premise was false |
-| 5a | ContractValidation result `method` token | **Ratified** 2026-07-24 | `method ∈ {deterministic, semantic_judge}` |
+| 5a | ContractValidation result `method` token | **Ratified** 2026-07-24 | `method ∈ {deterministic, semantic_verifier}` |
 | 5b | `requirement_status` vs `validation_status` | **Resolved** (build-prompt:753–755) | Two distinct fields sharing `{passed, failed, error, skipped}` |
 | 6 | Procedure step `order` semantics | **Resolved** (plan:502) | Unique + sortable; contiguous `1..N` not required |
 | 7 | `retracted` vs `archived` semantics | **Resolved** (lifecycle:886, 2663, 2857) | retracted = deliberate revocation; archived = reversible efficacy/expiry retirement |
@@ -150,9 +150,9 @@ value is exercised.
 
 ## Decision 5 — ContractValidation enums
 
-**5a — the semantic-judge `method` token (RATIFIED 2026-07-24).** `semantic_judge`
+**5a — the semantic-verifier `method` token (RATIFIED 2026-07-24).** `semantic_verifier`
 is enumerated as a **requirement_kind**, not a result method (lifecycle:1673,
-:1689 `| semantic_judge | criterion, rubric_ref, judge_policy_ref | minimum_score |`).
+:1689 `| semantic_verifier | criterion, rubric_ref, verifier_policy_ref | minimum_score |`).
 Each per-requirement result carries a `method` field (build-prompt:514), but its
 value set is **never enumerated** — the only value that ever appears in any
 example is `"method": "deterministic"` (lifecycle:1731 ff.). The spec says
@@ -160,9 +160,9 @@ example is `"method": "deterministic"` (lifecycle:1731 ff.). The spec says
 semantic judges are "labeled inferred" (plan:1244, :1305), but never names the
 `method` token a semantic result carries.
 
-**Ratified: `method ∈ {deterministic, semantic_judge}`** — the two result methods
-mirror the two evaluation modes, and a `semantic_judge` result is qualified as
-`inferred` provenance. The `method` field reuses the `semantic_judge` token so
+**Ratified: `method ∈ {deterministic, semantic_verifier}`** — the two result methods
+mirror the two evaluation modes, and a `semantic_verifier` result is qualified as
+`inferred` provenance. The `method` field reuses the `semantic_verifier` token so
 requirement_kind and result method align. (Do not confuse `method` with
 `OutcomeAssessment.evaluation_method`, lifecycle:1960, a different field with its
 own seven-value set.)
@@ -226,5 +226,5 @@ not rely on inference.
 
 Resolved 2026-07-24: the repository owner ratified all three open decisions —
 `informational → advisory` (1), `guarded` = carries an `enforcer_ref` (3), and
-`method ∈ {deterministic, semantic_judge}` (5a). No item in #483 remains open;
+`method ∈ {deterministic, semantic_verifier}` (5a). No item in #483 remains open;
 the enums/validators may freeze in their installments.

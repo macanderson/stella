@@ -23,10 +23,10 @@
 //!
 //! - **`NotCovered`** — positive evidence that the test ran none of the
 //!   changed lines. Withholds the deterministic credit and sends the turn to
-//!   the judge, the same treatment a tautological witness gets (#870). The
+//!   the verifier, the same treatment a tautological witness gets (#870). The
 //!   pass is worth a second opinion, because something concrete is wrong with
 //!   the evidence.
-//! - **`Unmeasured`** — nobody could tell. Keeps the fast-submit (no judge
+//! - **`Unmeasured`** — nobody could tell. Keeps the fast-submit (no verifier
 //!   call, no extra turn) but scores the candidate `Unverified` rather than
 //!   `DeterministicPass`, and the verdict's summary leads with `UNPROVEN`.
 //!
@@ -40,7 +40,7 @@
 //! records: a gate whose condition holds on nearly every turn is not a gate,
 //! it is a tax. Most workspaces have no coverage tooling wired, so escalating
 //! `Unmeasured` would route almost every deterministic pass through a paid
-//! judge call to be told what the evidence already said.
+//! verifier call to be told what the evidence already said.
 //! `PipelineConfig::require_diff_coverage` turns that stricter reading on for
 //! an operator who has the tooling and wants the overlap *enforced* rather
 //! than merely scored.
@@ -92,7 +92,7 @@ impl DiffCoverage {
         }
     }
 
-    /// A sentence a judge (or a human reading a verdict) can act on. States
+    /// A sentence a verifier (or a human reading a verdict) can act on. States
     /// what was observed and what it does NOT mean — the unmeasured case in
     /// particular is a statement about the instrument, and the whole point of
     /// #973 is that those must never read as statements about the world.
@@ -116,7 +116,7 @@ impl DiffCoverage {
     }
 
     /// Whether this status may carry a deterministic fast-submit — that is,
-    /// whether the ladder may *skip the judge*.
+    /// whether the ladder may *skip the verifier*.
     ///
     /// Distinct from whether the result is *proven*: an `Unmeasured` overlap
     /// takes the fast-submit under the default setting but is still scored
@@ -195,7 +195,7 @@ pub fn changed_lines(diff: &str, excluded_paths: &[String]) -> BTreeMap<String, 
 ///
 /// Deliberately crude, and deliberately biased toward *excluding*: every line
 /// wrongly kept here can only produce a false `NotCovered`, which costs a
-/// judge call on honest work. Blank lines, closing braces, and comments are
+/// verifier call on honest work. Blank lines, closing braces, and comments are
 /// not emitted as coverable by lcov or coverage.py, so a change consisting
 /// only of those is `Unmeasured` (no coverable lines) rather than uncovered.
 fn is_executable_source(content: &str) -> bool {

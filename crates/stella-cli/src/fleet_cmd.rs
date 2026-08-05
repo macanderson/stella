@@ -646,7 +646,7 @@ async fn stop_or_abandoned(
 
 /// One worker turn in `root`, on the calling thread's runtime. When
 /// `use_pipeline` is true (the default), the turn runs through the staged
-/// pipeline (triage → recall → plan → witness → execute → verify → judge);
+/// pipeline (triage → recall → plan → witness → execute → verify → verdict);
 /// otherwise it falls back to the raw `Engine::run_turn` step-loop.
 #[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
 async fn run_task(
@@ -807,7 +807,7 @@ async fn run_task(
             };
             let model_ref = stella_protocol::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
             // Role wiring from `agent_engine_config` — fleet workers honor the
-            // same worker/triage/judge pins and per-role overrides as `stella run`.
+            // same worker/triage/verifier pins and per-role overrides as `stella run`.
             let configured = crate::config::discover_configured_providers();
             let wiring = agent::resolve_engine_wiring(&cfg, &model_ref, &configured);
             // Suppress stderr notices while the live grid owns the screen —

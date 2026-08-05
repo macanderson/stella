@@ -543,7 +543,7 @@ mod tests {
     use super::tests_support::*;
     use super::*;
     use crate::proof::ProofState;
-    use stella_protocol::{JudgeEvidence, ProofStep, ProofTree};
+    use stella_protocol::{ProofStep, ProofTree, VerdictEvidence};
 
     fn text_of(line: &Line<'static>) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
@@ -584,7 +584,7 @@ mod tests {
         ];
         sm.proof.apply(&ProofStep::Assurance {
             witness: false,
-            judge: false,
+            verifier: false,
         });
         let line = strip_line(&sm, 120).expect("a strip");
         assert_eq!(
@@ -623,7 +623,7 @@ mod tests {
         let mut sm = SessionModel::default();
         sm.proof.apply(&ProofStep::Assurance {
             witness: false,
-            judge: false,
+            verifier: false,
         });
         assert!(
             text_of(&strip_line(&sm, 120).unwrap()).contains("waived · nothing to prove"),
@@ -745,7 +745,7 @@ mod tests {
         let mut sm = SessionModel::default();
         sm.proof.apply(&ProofStep::Assurance {
             witness: false,
-            judge: false,
+            verifier: false,
         });
         let text = rendered(Rect::new(0, 0, 80, 24), |b| {
             render_overlay(&sm, 0, Rect::new(0, 0, 80, 24), b);
@@ -859,7 +859,7 @@ mod tests {
         let mut state = ProofState::default();
         state.apply_verdict(
             true,
-            &JudgeEvidence {
+            &VerdictEvidence {
                 summary: "ok".into(),
                 deterministic: true,
                 evidence_refs: vec![],
@@ -1005,7 +1005,7 @@ mod fitting_tests {
             .collect();
         sm.proof.apply(&ProofStep::Assurance {
             witness: false,
-            judge: false,
+            verifier: false,
         });
         let area = Rect::new(0, 0, 80, 24);
 

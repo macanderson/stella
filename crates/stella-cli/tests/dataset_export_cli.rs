@@ -11,7 +11,7 @@ use std::path::Path;
 use std::process::Command;
 
 use stella_protocol::{
-    AgentEvent, FileChangeKind, JudgeEvidence, ModelCallRole, ToolCall, ToolOutput,
+    AgentEvent, FileChangeKind, ModelCallRole, ToolCall, ToolOutput, VerdictEvidence,
 };
 use stella_store::Store;
 
@@ -79,9 +79,9 @@ fn seeded_workspace() -> (tempfile::TempDir, i64) {
             removed: 1,
             diff: Some("@@ -1 +1 @@\n-old\n+new\n".into()),
         },
-        AgentEvent::JudgeVerdict {
+        AgentEvent::Verdict {
             passed: true,
-            evidence: JudgeEvidence {
+            evidence: VerdictEvidence {
                 summary: "the touched tests are green".into(),
                 deterministic: true,
                 evidence_refs: Vec::new(),
@@ -288,7 +288,7 @@ fn the_date_window_and_require_verdict_are_reported_as_applied() {
     assert!(
         manifest["filter"]["acceptance_predicate"]
             .as_str()
-            .is_some_and(|p| p.contains("judge_verdict")),
+            .is_some_and(|p| p.contains("verdict")),
         "the tightened predicate is what the manifest states: {manifest}"
     );
 }

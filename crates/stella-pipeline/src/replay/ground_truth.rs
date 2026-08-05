@@ -1,4 +1,4 @@
-//! The judge's answer key (#1293): cases where we know for certain whether
+//! The verifier's answer key (#1293): cases where we know for certain whether
 //! the work was actually good, and the machinery that connects them back to
 //! the judgement made at the time.
 //!
@@ -7,7 +7,7 @@
 //! Part of Stella's verification is a model reading the work and saying
 //! whether it looks correct, and that judgement has been measured badly
 //! lenient — 46% agreement with a benchmark's own grader. Every threshold
-//! built on top of it (`judge_evidence_demand`, the escalation
+//! built on top of it (`verifier_evidence_demand`, the escalation
 //! rungs, the best-of-N ordering) is currently a guess, and it *stays* a guess
 //! until something independent says which verdicts were wrong. Tuning without
 //! that is not tuning; it is changing numbers.
@@ -18,8 +18,8 @@
 //! # Gap 1: reverts were not a source at all
 //!
 //! When a human reverts a commit, that is a person saying "this was wrong",
-//! usually long after a judge said it was fine — the exact ground truth the
-//! judge is missing. It was never collected. [`parse_revert_targets`] reads it
+//! usually long after a verifier said it was fine — the exact ground truth the
+//! verifier is missing. It was never collected. [`parse_revert_targets`] reads it
 //! out of git's own revert message.
 //!
 //! # Gap 2: reconciliation ended when the session did
@@ -62,9 +62,9 @@ pub struct PendingPass {
     /// The session stream this pass came from, for a caller reporting *which*
     /// records a late verdict settled.
     pub session: String,
-    /// Whether a model judge produced it (`false` = a deterministic ladder
+    /// Whether a model verifier produced it (`false` = a deterministic ladder
     /// pass, the comparison cohort).
-    pub judge: bool,
+    pub verifier: bool,
     /// Commit SHAs the session recorded after this pass.
     pub commits: Vec<String>,
     /// PR URLs the session recorded after this pass.
@@ -188,10 +188,10 @@ pub fn reconcile(
         settled += 1;
         let false_positive = u32::from(verdict.is_false_positive());
         let reverted = u32::from(verdict == Settled::Reverted);
-        if pass.judge {
-            report.judge_reconciled += 1;
-            report.judge_false_positives += false_positive;
-            report.judge_reverted += reverted;
+        if pass.verifier {
+            report.verifier_reconciled += 1;
+            report.verifier_false_positives += false_positive;
+            report.verifier_reverted += reverted;
         } else {
             report.deterministic_reconciled += 1;
             report.deterministic_false_positives += false_positive;
@@ -242,10 +242,10 @@ mod tests {
     use super::*;
     use stella_protocol::PrStatus;
 
-    fn pass(judge: bool, commits: &[&str], prs: &[&str]) -> PendingPass {
+    fn pass(verifier: bool, commits: &[&str], prs: &[&str]) -> PendingPass {
         PendingPass {
             session: "sess-1".into(),
-            judge,
+            verifier,
             commits: commits.iter().map(|s| (*s).to_string()).collect(),
             prs: prs.iter().map(|s| (*s).to_string()).collect(),
         }
@@ -297,9 +297,9 @@ commit dddd3333
         ];
         let truth = GroundTruth::default().with_reverts(["aaaa1111aaaa".to_string()]);
         assert_eq!(reconcile(&mut report, &pending, &truth), 1);
-        assert_eq!(report.judge_reconciled, 1);
-        assert_eq!(report.judge_false_positives, 1);
-        assert_eq!(report.judge_reverted, 1);
+        assert_eq!(report.verifier_reconciled, 1);
+        assert_eq!(report.verifier_false_positives, 1);
+        assert_eq!(report.verifier_reverted, 1);
         assert_eq!(
             report.deterministic_reconciled, 0,
             "an un-reverted commit settles nothing: absence of a revert is not a confirmation"
@@ -320,10 +320,10 @@ commit dddd3333
         let pending = vec![pass(true, &[], &["https://example.test/pr/7"])];
         let mut report = CalibrationReport::default();
         assert_eq!(reconcile(&mut report, &pending, &truth), 1);
-        assert_eq!(report.judge_reconciled, 1);
-        assert_eq!(report.judge_false_positives, 1);
+        assert_eq!(report.verifier_reconciled, 1);
+        assert_eq!(report.verifier_false_positives, 1);
         assert_eq!(
-            report.judge_reverted, 0,
+            report.verifier_reverted, 0,
             "CI failing is not a revert — the two are counted apart"
         );
     }
@@ -348,8 +348,8 @@ commit dddd3333
             &["https://example.test/pr/9"],
         )];
         assert_eq!(reconcile(&mut report, &pending, &truth), 1);
-        assert_eq!(report.judge_false_positives, 1);
-        assert_eq!(report.judge_reverted, 1);
+        assert_eq!(report.verifier_false_positives, 1);
+        assert_eq!(report.verifier_reverted, 1);
     }
 
     /// Non-terminal CI contributes nothing, and a pass with no artifact at
@@ -368,6 +368,6 @@ commit dddd3333
             pass(true, &[], &[]),
         ];
         assert_eq!(reconcile(&mut report, &pending, &truth), 0);
-        assert_eq!(report.judge_reconciled, 0);
+        assert_eq!(report.verifier_reconciled, 0);
     }
 }

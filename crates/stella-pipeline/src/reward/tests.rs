@@ -42,8 +42,8 @@ fn snapshot(rung: Option<LadderRung>) -> LadderSnapshot {
     }
 }
 
-fn evidence(summary: &str, rung: Option<LadderRung>) -> JudgeEvidence {
-    JudgeEvidence {
+fn evidence(summary: &str, rung: Option<LadderRung>) -> VerdictEvidence {
+    VerdictEvidence {
         summary: summary.to_string(),
         deterministic: false,
         evidence_refs: vec![summary.to_string()],
@@ -60,8 +60,8 @@ fn the_four_tiers_score_at_their_stated_weights() {
     for (rung, passed, expected) in [
         (LadderRung::SubmitFast, true, 1.0),
         (LadderRung::Revise, false, -1.0),
-        (LadderRung::ModelJudge, true, 0.5),
-        (LadderRung::ModelJudge, false, -0.5),
+        (LadderRung::ModelVerdict, true, 0.5),
+        (LadderRung::ModelVerdict, false, -0.5),
     ] {
         let label = label(settled(rung, passed), free, &policy);
         assert_eq!(label.rung, Some(rung));
@@ -142,7 +142,7 @@ fn the_abstain_rungs_are_discarded_not_punished() {
     }
 }
 
-/// A heuristic verdict describes the judge's availability, not the work, and a
+/// A heuristic verdict describes the verifier's availability, not the work, and a
 /// waived review determined nothing at all. Both are discarded — and the two
 /// reasons stay distinct, because they are different facts.
 #[test]
@@ -153,7 +153,7 @@ fn a_verdict_about_the_pipeline_is_not_a_verdict_about_the_work() {
         cost(3, 0.1, 0),
         &policy,
     );
-    assert_eq!(heuristic.discard, Some(DiscardReason::JudgeUnavailable));
+    assert_eq!(heuristic.discard, Some(DiscardReason::VerifierUnavailable));
     let waived = label(settled(LadderRung::Waived, true), cost(3, 0.1, 0), &policy);
     assert_eq!(waived.discard, Some(DiscardReason::ReviewWaived));
     assert_ne!(heuristic.discard, waived.discard);
@@ -218,7 +218,7 @@ fn a_non_finite_cost_withholds_the_scalar_only() {
     }
 }
 
-/// A policy with a helper for the common case: lower the judge, keep the rest.
+/// A policy with a helper for the common case: lower the verifier, keep the rest.
 fn distrusting(judged: f64) -> RewardPolicy {
     RewardPolicy {
         outcome: OutcomeWeights {
@@ -229,17 +229,17 @@ fn distrusting(judged: f64) -> RewardPolicy {
     }
 }
 
-/// The knob does what it says: a workspace that trusts its judge less scores
+/// The knob does what it says: a workspace that trusts its verifier less scores
 /// judged turns lower, and leaves the deterministic rungs untouched. That
 /// asymmetry is the whole point — the discount applies to the opinion, not to
 /// the observation.
 #[test]
-fn a_lowered_judge_weight_discounts_only_the_judged_rungs() {
+fn a_lowered_verifier_weight_discounts_only_the_judged_rungs() {
     let policy = distrusting(0.2);
     let free = cost(0, 0.0, 0);
     for (rung, passed, expected) in [
-        (LadderRung::ModelJudge, true, 0.2),
-        (LadderRung::ModelJudge, false, -0.2),
+        (LadderRung::ModelVerdict, true, 0.2),
+        (LadderRung::ModelVerdict, false, -0.2),
         (LadderRung::SubmitFast, true, 1.0),
         (LadderRung::Revise, false, -1.0),
     ] {
@@ -255,29 +255,29 @@ fn a_lowered_judge_weight_discounts_only_the_judged_rungs() {
 /// A judged weight of zero is a refusal to label, not a label of zero.
 ///
 /// The distinction is the module's founding rule applied to a knob: `0.0` is a
-/// claim that a neutral outcome was observed, and "I do not trust this judge"
+/// claim that a neutral outcome was observed, and "I do not trust this verifier"
 /// is the opposite of a claim. A trainer filtering on `is_scored()` must not
 /// see these rows at all.
 #[test]
-fn a_zero_judge_weight_discards_rather_than_scoring_zero() {
+fn a_zero_verifier_weight_discards_rather_than_scoring_zero() {
     let policy = distrusting(0.0);
     for passed in [true, false] {
         let label = label(
-            settled(LadderRung::ModelJudge, passed),
+            settled(LadderRung::ModelVerdict, passed),
             cost(3, 0.1, 0),
             &policy,
         );
-        assert_eq!(label.reward, None, "a distrusted judge scores nothing");
+        assert_eq!(label.reward, None, "a distrusted verifier scores nothing");
         assert_eq!(label.outcome, None);
-        assert_eq!(label.discard, Some(DiscardReason::JudgeDistrusted));
+        assert_eq!(label.discard, Some(DiscardReason::VerifierDistrusted));
         assert!(!label.is_scored());
         assert_eq!(
             label.rung,
-            Some(LadderRung::ModelJudge),
+            Some(LadderRung::ModelVerdict),
             "the rung survives so the row stays selectable"
         );
     }
-    // And the deterministic rungs are unaffected: distrusting the judge is not
+    // And the deterministic rungs are unaffected: distrusting the verifier is not
     // distrusting the tests.
     let deterministic = label(
         settled(LadderRung::SubmitFast, true),
@@ -291,7 +291,7 @@ fn a_zero_judge_weight_discards_rather_than_scoring_zero() {
 /// the places it can arrive. Above that line a model's opinion outranks a
 /// test's observation, which inverts the ladder.
 #[test]
-fn a_judge_weight_above_the_deterministic_one_is_refused() {
+fn a_verifier_weight_above_the_deterministic_one_is_refused() {
     let inverted = distrusting(1.5);
     assert_eq!(
         inverted.validate(),
@@ -300,7 +300,7 @@ fn a_judge_weight_above_the_deterministic_one_is_refused() {
     // ...and `label` refuses it too, rather than trusting that whoever built
     // the policy validated it first.
     let label = label(
-        settled(LadderRung::ModelJudge, true),
+        settled(LadderRung::ModelVerdict, true),
         cost(1, 0.0, 0),
         &inverted,
     );
@@ -308,19 +308,19 @@ fn a_judge_weight_above_the_deterministic_one_is_refused() {
     assert_eq!(label.discard, Some(DiscardReason::PolicyInvalid));
     assert_eq!(
         label.rung,
-        Some(LadderRung::ModelJudge),
+        Some(LadderRung::ModelVerdict),
         "the rung is still true even when the arithmetic is refused"
     );
 }
 
-/// Equal weights are legal — a workspace whose judge is as good as its tests is
+/// Equal weights are legal — a workspace whose verifier is as good as its tests is
 /// entitled to say so. The ceiling is `>`, not `>=`.
 #[test]
-fn a_judge_weight_equal_to_the_deterministic_one_is_allowed() {
+fn a_verifier_weight_equal_to_the_deterministic_one_is_allowed() {
     let policy = distrusting(1.0);
     assert_eq!(policy.validate(), Ok(()));
     let label = label(
-        settled(LadderRung::ModelJudge, true),
+        settled(LadderRung::ModelVerdict, true),
         cost(0, 0.0, 0),
         &policy,
     );
@@ -401,13 +401,13 @@ fn a_negative_shaping_price_cannot_pay_a_trajectory_to_spend_more() {
 fn every_label_carries_the_policy_it_was_computed_under() {
     let policy = distrusting(0.25);
     let scored = label(
-        settled(LadderRung::ModelJudge, true),
+        settled(LadderRung::ModelVerdict, true),
         cost(2, 0.1, 0),
         &policy,
     );
     assert_eq!(scored.policy, policy);
     // A discard carries it too — a reader pooling records has to tell a
-    // distrusted judge from a workspace that simply never reached one.
+    // distrusted verifier from a workspace that simply never reached one.
     for settlement in [
         settled(LadderRung::Unverifiable, true),
         Settlement::Absent,
@@ -419,12 +419,12 @@ fn every_label_carries_the_policy_it_was_computed_under() {
     }
 }
 
-/// Two workspaces, the same turn, different judge weights: the labels differ,
+/// Two workspaces, the same turn, different verifier weights: the labels differ,
 /// and each one carries the number that explains why. This is the property that
 /// makes per-workspace weights safe to pool.
 #[test]
 fn the_same_turn_under_two_policies_is_told_apart_by_its_stamp() {
-    let turn = || settled(LadderRung::ModelJudge, true);
+    let turn = || settled(LadderRung::ModelVerdict, true);
     let spent = cost(4, 0.1, 0);
     let trusting = label(turn(), spent, &RewardPolicy::default());
     let skeptical = label(turn(), spent, &distrusting(0.2));
@@ -440,7 +440,7 @@ fn the_same_turn_under_two_policies_is_told_apart_by_its_stamp() {
 }
 
 /// The airlock, stated structurally: a serialized label contains no string
-/// outside the closed enum vocabularies. Adding a `judge_reasoning: String`
+/// outside the closed enum vocabularies. Adding a `verifier_reasoning: String`
 /// field to `RewardLabel` fails here, which is the point.
 #[test]
 fn a_label_has_no_free_text_leaves() {
@@ -450,24 +450,24 @@ fn a_label_has_no_free_text_leaves() {
         "revise",
         "nothing_attempted",
         "unverifiable",
-        "model_judge",
+        "model_verdict",
         "heuristic_fallback",
         "waived",
         // DiscardReason
         "abstained",
-        "judge_unavailable",
+        "verifier_unavailable",
         "review_waived",
         "rung_unknown",
         "no_verdict",
         "cost_not_finite",
-        "judge_distrusted",
+        "verifier_distrusted",
         "policy_invalid",
     ];
     let mut leaves = Vec::new();
     for rung in [
         LadderRung::SubmitFast,
         LadderRung::Revise,
-        LadderRung::ModelJudge,
+        LadderRung::ModelVerdict,
         LadderRung::Unverifiable,
         LadderRung::NothingAttempted,
         LadderRung::HeuristicFallback,
@@ -515,7 +515,7 @@ fn collect_strings(value: &serde_json::Value, into: &mut Vec<String>) {
 #[test]
 fn a_label_round_trips() {
     let label = label(
-        settled(LadderRung::ModelJudge, false),
+        settled(LadderRung::ModelVerdict, false),
         cost(7, 0.33, 2),
         &RewardPolicy::default(),
     );
@@ -525,27 +525,27 @@ fn a_label_round_trips() {
 }
 
 proptest! {
-    /// The airlock as a property: however a judge phrases itself, and whatever
+    /// The airlock as a property: however a verifier phrases itself, and whatever
     /// rung the verdict carries, none of that prose reaches the label.
     #[test]
-    fn judge_prose_never_reaches_a_label(
+    fn verifier_prose_never_reaches_a_label(
         reasoning in "[A-Za-z ]{12,60}",
         passed in any::<bool>(),
         steps in 0u32..50,
         cost_usd in 0.0f64..5.0,
         revisions in 0u32..8,
     ) {
-        let evidence = evidence(&reasoning, Some(LadderRung::ModelJudge));
+        let evidence = evidence(&reasoning, Some(LadderRung::ModelVerdict));
         let settlement = Settlement::from_evidence(passed, &evidence);
         let label = label(settlement, cost(steps, cost_usd, revisions), &RewardPolicy::default());
         let json = serde_json::to_string(&label).unwrap();
         prop_assert!(
             !json.contains(reasoning.trim()),
-            "judge reasoning leaked into {json}"
+            "verifier reasoning leaked into {json}"
         );
         // And the label is still the right one — the airlock does not cost the
         // signal, only the prose.
-        prop_assert_eq!(label.rung, Some(LadderRung::ModelJudge));
+        prop_assert_eq!(label.rung, Some(LadderRung::ModelVerdict));
         prop_assert_eq!(label.outcome, Some(if passed { 0.5 } else { -0.5 }));
     }
 
@@ -575,7 +575,7 @@ proptest! {
             LadderRung::Revise,
             LadderRung::NothingAttempted,
             LadderRung::Unverifiable,
-            LadderRung::ModelJudge,
+            LadderRung::ModelVerdict,
             LadderRung::HeuristicFallback,
             LadderRung::Waived,
         ];
@@ -628,7 +628,7 @@ proptest! {
             shaping: RewardShaping { per_step, per_usd, per_revision },
         };
         prop_assume!(policy.validate().is_ok());
-        let rung = [LadderRung::SubmitFast, LadderRung::ModelJudge][which];
+        let rung = [LadderRung::SubmitFast, LadderRung::ModelVerdict][which];
         let label = label(
             settled(rung, passed),
             cost(steps, cost_usd, revisions),

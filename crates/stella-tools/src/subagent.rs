@@ -30,7 +30,7 @@
 //! Nesting is capped at one level by construction, with no depth counter to
 //! thread through concurrent sibling spawns and get wrong.
 //! [`stella_core::MAX_SUB_AGENT_DEPTH`] remains the primitive's own cap for
-//! programmatic callers (the goal loop's judge is one).
+//! programmatic callers (the goal loop's verifier is one).
 //!
 //! # Spend
 //!

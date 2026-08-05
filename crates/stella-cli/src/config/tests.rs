@@ -288,7 +288,7 @@ fn trusted_engine_json_replaces_adversarial_project_engine_settings() {
                 "agents": {
                     "default": {"provider": "anthropic", "model": "task-default"},
                     "worker": {"provider": "zai", "model": "task-worker"},
-                    "judge": {"provider": "openai", "model": "task-judge"},
+                    "verifier": {"provider": "openai", "model": "task-verifier"},
                     "triage": {"provider": "deepseek", "model": "task-triage"}
                 }
             }
@@ -303,7 +303,7 @@ fn trusted_engine_json_replaces_adversarial_project_engine_settings() {
         "agents":{
             "default":{"effort":"high","reasoning":"on"},
             "worker":{"effort":"high","reasoning":"on"},
-            "judge":{"effort":"high","reasoning":"on"},
+            "verifier":{"effort":"high","reasoning":"on"},
             "triage":{"effort":"low","reasoning":"off"}
         }
     }"#;
@@ -329,7 +329,7 @@ fn trusted_engine_json_replaces_adversarial_project_engine_settings() {
         Some("openrouter/deepseek/deepseek-v4-pro")
     );
     assert!(engine.pipeline_worker_model.is_none());
-    assert!(engine.pipeline_judge_model.is_none());
+    assert!(engine.pipeline_verifier_model.is_none());
     assert!(engine.pipeline_triage_model.is_none());
     assert!(!engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
@@ -456,7 +456,7 @@ fn a_configured_reward_policy_reaches_the_config() {
     // mutate the one field instead of restating the struct.
     let mut settings = crate::settings::Settings::default();
     settings.reward = Some(crate::settings::RewardSettings {
-        judge_weight: Some(0.2),
+        verifier_weight: Some(0.2),
         ..Default::default()
     });
     let cfg = Config::load_with_settings(
@@ -474,7 +474,7 @@ fn a_configured_reward_policy_reaches_the_config() {
     );
 }
 
-/// A judge weight that outranks a test fails the LAUNCH, by name — it does not
+/// A verifier weight that outranks a test fails the LAUNCH, by name — it does not
 /// get clamped to something legal and then quietly applied.
 ///
 /// This is the whole reason `reward_policy()` returns a `Result`. A substituted
@@ -488,7 +488,7 @@ fn an_impossible_reward_weight_fails_the_launch_instead_of_being_clamped() {
     // mutate the one field instead of restating the struct.
     let mut settings = crate::settings::Settings::default();
     settings.reward = Some(crate::settings::RewardSettings {
-        judge_weight: Some(3.0),
+        verifier_weight: Some(3.0),
         ..Default::default()
     });
     let error = Config::load_with_settings(
@@ -498,8 +498,8 @@ fn an_impossible_reward_weight_fails_the_launch_instead_of_being_clamped() {
         &settings,
         std::path::PathBuf::from("/tmp/ws"),
     )
-    .expect_err("a judge outranking a test must not launch");
-    assert!(error.contains("judge_weight"), "{error}");
+    .expect_err("a verifier outranking a test must not launch");
+    assert!(error.contains("verifier_weight"), "{error}");
     assert!(error.contains("deterministic_weight"), "{error}");
 }
 
@@ -845,7 +845,7 @@ fn discovery_style_resolution_accepts_the_settings_literal_key() {
     let _env = crate::test_env::lock();
     // resolve_provider_key with a settings literal and nothing else:
     // resolves non-interactively as SettingsJson — this is what puts
-    // config-defined providers into auto-detection and judge discovery.
+    // config-defined providers into auto-detection and verifier discovery.
     let provider = ProviderConfig {
         id: "settings-key-test",
         env_var: "STELLA_TEST_SETTINGS_KEY_UNSET",
@@ -956,7 +956,7 @@ fn the_benchmark_engine_posture_survives_the_trusted_launcher_seam() {
         "agents": {
             "default": {"effort": "high", "reasoning": "on"},
             "worker": {"effort": "high", "reasoning": "on"},
-            "judge": {"effort": "high", "reasoning": "on"},
+            "verifier": {"effort": "high", "reasoning": "on"},
             "triage": {"effort": "low", "reasoning": "off"},
         },
     });
@@ -974,17 +974,17 @@ fn the_benchmark_engine_posture_survives_the_trusted_launcher_seam() {
 
 /// The same seam, for the posture that turns the authored witness back on.
 ///
-/// The witness arm (#1007) pins a second model for the judge role, which is
+/// The witness arm (#1007) pins a second model for the verifier role, which is
 /// what the authored-witness tier resolves its independent author from. It
 /// reaches the CLI through this same fail-closed seam, so the field it uses
 /// must be part of the seam's vocabulary — and it must arrive as
-/// `pipeline_judge_model`, not as a new root key, because a descriptive key
+/// `pipeline_verifier_model`, not as a new root key, because a descriptive key
 /// would not mislabel the run, it would refuse it.
 #[test]
 fn the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam() {
     let posture = serde_json::json!({
         "default_model": "openrouter/z-ai/glm-5.1",
-        "pipeline_judge_model": "openrouter/deepseek/deepseek-v4-pro",
+        "pipeline_verifier_model": "openrouter/deepseek/deepseek-v4-pro",
         "allowed_models": [
             "openrouter/z-ai/glm-5.1",
             "openrouter/deepseek/deepseek-v4-pro",
@@ -996,7 +996,7 @@ fn the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam() {
         "agents": {
             "default": {"effort": "high", "reasoning": "on"},
             "worker": {"effort": "high", "reasoning": "on"},
-            "judge": {"effort": "high", "reasoning": "on"},
+            "verifier": {"effort": "high", "reasoning": "on"},
             "triage": {"effort": "low", "reasoning": "off"},
         },
     });
@@ -1007,9 +1007,9 @@ fn the_benchmark_witness_arm_posture_survives_the_trusted_launcher_seam() {
     let parsed: crate::settings::AgentEngineConfig =
         serde_json::from_value(posture).expect("and deserialize into the settings type");
     assert_eq!(
-        parsed.pipeline_judge_model.as_deref(),
+        parsed.pipeline_verifier_model.as_deref(),
         Some("openrouter/deepseek/deepseek-v4-pro"),
-        "the judge author must survive the round trip; dropping it here is a \
+        "the verifier author must survive the round trip; dropping it here is a \
          benchmark run that reports the witness on and measures it off"
     );
     assert!(parsed.headless_scope_bypass_on());
@@ -1037,7 +1037,7 @@ fn the_benchmark_attempt_count_posture_survives_the_trusted_launcher_seam() {
         "agents": {
             "default": {"effort": "xhigh", "reasoning": "on"},
             "worker": {"effort": "xhigh", "reasoning": "on"},
-            "judge": {"effort": "xhigh", "reasoning": "on"},
+            "verifier": {"effort": "xhigh", "reasoning": "on"},
             "triage": {"effort": "low", "reasoning": "off"},
         },
     });

@@ -37,7 +37,7 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     _benchmark_engine_posture,
     _stream_to_envelope,
     resolve_candidates,
-    resolve_judge_evidence_demand,
+    resolve_verifier_evidence_demand,
     resolve_max_revisions,
     resolve_model_timeout,
 )
@@ -68,7 +68,7 @@ class TestBenchmarkPosture:
 
         Stella refuses to let a worker author the test that verifies it, so the
         witness needs an author resolving to a different model. With no
-        ``witness_author`` every role inherits one ``default_model``, which is
+        ``verifier`` every role inherits one ``default_model``, which is
         exactly the condition under which no such author exists — so every
         number this arm produces is measured with the witness off (#973).
 
@@ -81,13 +81,13 @@ class TestBenchmarkPosture:
         posture, _normalized, _digest = _benchmark_engine_posture(model)
 
         roles = posture["agents"]
-        assert "judge" in roles, "the judge role must be stated, not implied"
+        assert "verifier" in roles, "the verifier role must be stated, not implied"
         resolved = {
             role: config.get("model", posture["default_model"])
             for role, config in roles.items()
         }
-        assert resolved["judge"] == resolved["worker"] == model
-        assert "pipeline_judge_model" not in posture
+        assert resolved["verifier"] == resolved["worker"] == model
+        assert "pipeline_verifier_model" not in posture
         assert posture["allowed_models"] == [model], (
             "one allowed model is what forbids a distinct witness author; "
             "widening it silently would be a measurement change, not a fix"
@@ -108,12 +108,12 @@ class TestBenchmarkPosture:
         author = "openrouter/deepseek/deepseek-v4-pro"
         control, _control_json, control_digest = _benchmark_engine_posture(worker)
         arm, arm_json, arm_digest = _benchmark_engine_posture(
-            worker, witness_author=author
+            worker, verifier=author
         )
 
         assert arm["default_model"] == worker
-        assert arm["pipeline_judge_model"] == author, (
-            "the judge role is what the authored-witness tier resolves its "
+        assert arm["pipeline_verifier_model"] == author, (
+            "the verifier role is what the authored-witness tier resolves its "
             "independent author from"
         )
         assert arm["allowed_models"] == [worker, author]
@@ -142,7 +142,7 @@ class TestBenchmarkPosture:
         """
         engine_root_fields = {
             "default_model",
-            "pipeline_judge_model",
+            "pipeline_verifier_model",
             "pipeline_worker_model",
             "pipeline_triage_model",
             "allowed_models",
@@ -152,29 +152,29 @@ class TestBenchmarkPosture:
             "headless_scope_bypass",
             "agents",
         }
-        for witness_author in (None, "openrouter/deepseek/deepseek-v4-pro"):
+        for verifier in (None, "openrouter/deepseek/deepseek-v4-pro"):
             posture, _json_text, _digest = _benchmark_engine_posture(
-                "openrouter/z-ai/glm-5.1", witness_author=witness_author
+                "openrouter/z-ai/glm-5.1", verifier=verifier
             )
             unknown = set(posture) - engine_root_fields
             assert not unknown, (
                 f"the trusted launcher seam would refuse this posture: {unknown}"
             )
 
-    def test_witness_author_must_be_independent_and_same_provider(self) -> None:
+    def test_verifier_must_be_independent_and_same_provider(self) -> None:
         """Both refusals exist so an arm cannot degrade into the other silently."""
         worker = "openrouter/z-ai/glm-5.1"
 
         with pytest.raises(ValueError, match="must differ from the worker model"):
-            _benchmark_engine_posture(worker, witness_author=worker)
+            _benchmark_engine_posture(worker, verifier=worker)
 
         # One credential reaches the container, resolved from the worker's
         # provider. A second provider would authenticate against nothing.
         with pytest.raises(ValueError, match="must share the worker's provider"):
-            _benchmark_engine_posture(worker, witness_author="anthropic/claude-fable-5")
+            _benchmark_engine_posture(worker, verifier="anthropic/claude-fable-5")
 
         with pytest.raises(ValueError, match="provider/model spec"):
-            _benchmark_engine_posture(worker, witness_author="not-a-spec")
+            _benchmark_engine_posture(worker, verifier="not-a-spec")
 
     def test_assurance_tiers_declare_the_arm_and_are_hashed(self) -> None:
         """A scored run declares a disabled tier instead of only logging it."""
@@ -184,9 +184,9 @@ class TestBenchmarkPosture:
         off, off_json, off_digest = _benchmark_assurance_tiers(worker)
         assert off["version"] == _ASSURANCE_TIERS_VERSION
         assert off["arm"] == "witness-off"
-        assert off["witness_author_model"] is None
+        assert off["verifier_model"] is None
         assert off["tiers"]["authored_witness"] == "off"
-        assert off["tiers"]["model_judge"] == "on-same-model-as-worker"
+        assert off["tiers"]["model_verdict"] == "on-same-model-as-worker"
         assert off["tiers"]["deterministic_verify"] == "on"
         assert (
             "no author independent of the worker"
@@ -195,12 +195,12 @@ class TestBenchmarkPosture:
         assert json.loads(off_json) == off
 
         on, _on_json, on_digest = _benchmark_assurance_tiers(
-            worker, witness_author=author
+            worker, verifier=author
         )
         assert on["arm"] == "witness-on"
-        assert on["witness_author_model"] == author
+        assert on["verifier_model"] == author
         assert on["tiers"]["authored_witness"] == "on"
-        assert on["tiers"]["model_judge"] == "on-independent-of-worker"
+        assert on["tiers"]["model_verdict"] == "on-independent-of-worker"
         assert on["authored_witness_off_reason"] is None
         assert on_digest != off_digest
 
@@ -243,7 +243,7 @@ class TestWorkerEffortAndTriageArms:
         # their own, and letting it track the worker would retune them as an
         # undeclared second variable inside a one-variable comparison.
         assert high["agents"]["default"]["effort"] == "xhigh"
-        assert high["agents"]["judge"]["effort"] == "xhigh"
+        assert high["agents"]["verifier"]["effort"] == "xhigh"
         assert high["agents"]["triage"] == xhigh["agents"]["triage"]
 
     def test_unrecognised_worker_effort_is_refused_not_defaulted(self) -> None:
@@ -289,19 +289,19 @@ class TestWorkerEffortAndTriageArms:
         """The full tuning posture must survive the fail-closed launcher seam.
 
         `config::trusted_engine_config_shape_is_strict` rejects any root key
-        outside `ENGINE_ROOT_FIELDS`, so a posture that names a judge *and* a
+        outside `ENGINE_ROOT_FIELDS`, so a posture that names a verifier *and* a
         triage author is the shape most likely to trip it — and it refuses the
         run outright rather than dropping the unknown key.
         """
         posture, _normalized, _digest = _benchmark_engine_posture(
             self._MODEL,
-            witness_author="openrouter/anthropic/claude-fable-5",
+            verifier="openrouter/anthropic/claude-fable-5",
             worker_effort="high",
             triage_model="openrouter/anthropic/claude-haiku-4.5",
         )
         allowed_roots = {
             "default_model",
-            "pipeline_judge_model",
+            "pipeline_verifier_model",
             "pipeline_worker_model",
             "pipeline_triage_model",
             "allowed_models",
@@ -312,9 +312,9 @@ class TestWorkerEffortAndTriageArms:
             "agents",
         }
         assert set(posture) <= allowed_roots
-        assert set(posture["agents"]) <= {"default", "worker", "judge", "triage"}
+        assert set(posture["agents"]) <= {"default", "worker", "verifier", "triage"}
         # Every pinned role is in the whitelist, or it cannot be resolved.
-        for role_key in ("pipeline_judge_model", "pipeline_triage_model"):
+        for role_key in ("pipeline_verifier_model", "pipeline_triage_model"):
             assert posture[role_key] in posture["allowed_models"]
 
 
@@ -360,7 +360,7 @@ class TestAttemptCountArms:
         _posture, _normalized, digest = _benchmark_engine_posture(
             "anthropic/claude-sonnet-5"
         )
-        assert digest.startswith("3c428a22")
+        assert digest.startswith("c8536200")
 
     def test_each_selector_moves_the_digest_and_only_its_own_key(self) -> None:
         """Two arms, two hashes — and neither disturbs the rest of the posture."""
@@ -393,17 +393,17 @@ class TestAttemptCountArms:
         """
         posture, _normalized, _digest = _benchmark_engine_posture(
             self._MODEL,
-            witness_author="openrouter/anthropic/claude-fable-5",
+            verifier="openrouter/anthropic/claude-fable-5",
             worker_effort="xhigh",
             triage_model="openrouter/anthropic/claude-haiku-4.5",
             max_revisions=4,
             candidates=2,
-            judge_evidence_demand=True,
+            verifier_evidence_demand=True,
             model_timeout_secs=1572,
         )
         allowed_roots = {
             "default_model",
-            "pipeline_judge_model",
+            "pipeline_verifier_model",
             "pipeline_worker_model",
             "pipeline_triage_model",
             "allowed_models",
@@ -413,7 +413,7 @@ class TestAttemptCountArms:
             "headless_scope_bypass",
             "pipeline_max_revisions",
             "pipeline_candidates",
-            "pipeline_judge_evidence_demand",
+            "pipeline_verifier_evidence_demand",
             "model_timeout_secs",
             "agents",
         }
@@ -460,25 +460,25 @@ class TestAttemptCountArms:
         guessed at: the CLI parses this key as a `Toggle`, so a JSON bool would
         be a run that dies at launch wearing a posture that claims it ran.
         """
-        assert resolve_judge_evidence_demand(None) is None
-        assert resolve_judge_evidence_demand("on") is True
-        assert resolve_judge_evidence_demand(" OFF ") is False
-        assert resolve_judge_evidence_demand("1") is True
-        assert resolve_judge_evidence_demand("0") is False
+        assert resolve_verifier_evidence_demand(None) is None
+        assert resolve_verifier_evidence_demand("on") is True
+        assert resolve_verifier_evidence_demand(" OFF ") is False
+        assert resolve_verifier_evidence_demand("1") is True
+        assert resolve_verifier_evidence_demand("0") is False
         for lost in ("", "   ", "true", "yes"):
             with pytest.raises(ValueError, match="must be one of on/off"):
-                resolve_judge_evidence_demand(lost)
+                resolve_verifier_evidence_demand(lost)
 
         unset, _unset_json, unset_digest = _benchmark_engine_posture(self._MODEL)
-        assert "pipeline_judge_evidence_demand" not in unset
+        assert "pipeline_verifier_evidence_demand" not in unset
         on, _on_json, on_digest = _benchmark_engine_posture(
-            self._MODEL, judge_evidence_demand=True
+            self._MODEL, verifier_evidence_demand=True
         )
         off, _off_json, off_digest = _benchmark_engine_posture(
-            self._MODEL, judge_evidence_demand=False
+            self._MODEL, verifier_evidence_demand=False
         )
-        assert on["pipeline_judge_evidence_demand"] == "on"
-        assert off["pipeline_judge_evidence_demand"] == "off"
+        assert on["pipeline_verifier_evidence_demand"] == "on"
+        assert off["pipeline_verifier_evidence_demand"] == "off"
         # Three distinct digests: the two arms cannot be confused with each
         # other, and neither can be confused with the historical posture that
         # never mentioned the key.
@@ -520,7 +520,7 @@ class TestModelTimeoutArm:
         # again from this arm's own test so a regression here cannot be read as
         # someone else's failure.
         assert _benchmark_engine_posture("anthropic/claude-sonnet-5")[2].startswith(
-            "3c428a22"
+            "c8536200"
         )
 
     def test_a_selected_timeout_lands_in_the_digest_and_moves_nothing_else(
@@ -590,7 +590,7 @@ class TestModelTimeoutArm:
             for role, agent in posture["agents"].items()
             if "params" in agent and "max_tokens" in agent["params"]
         ]
-        assert sorted(capped) == ["default", "judge", "worker"]
+        assert sorted(capped) == ["default", "verifier", "worker"]
 
 
 class TestFableCeilingSet:
@@ -608,7 +608,7 @@ class TestFableCeilingSet:
         posture, _normalized, _digest = _benchmark_engine_posture(
             "anthropic/claude-fable-5"
         )
-        for role in ("default", "worker", "judge"):
+        for role in ("default", "worker", "verifier"):
             assert posture["agents"][role]["params"]["max_tokens"] == 128_000
         assert posture["model_timeout_secs"] == 1_572
 
@@ -635,7 +635,7 @@ class TestFableCeilingSet:
 
         Its comparator stops at 64,000 — Claude Code landed steps on exactly
         that number twice and still emitted the tool call — so parity says
-        Sonnet stays. `3c428a22…` is registered in `bench/READINESS.md` and
+        Sonnet stays. `c8536200…` is registered in `bench/READINESS.md` and
         defaulted by `preflight_effort.sh`, so moving it would silently
         invalidate an already-published number.
         """
@@ -644,7 +644,7 @@ class TestFableCeilingSet:
         )
         assert posture["agents"]["worker"]["params"]["max_tokens"] == 64_000
         assert "model_timeout_secs" not in posture
-        assert digest.startswith("3c428a22")
+        assert digest.startswith("c8536200")
 
     def test_the_booking_route_is_not_a_model_property(self) -> None:
         """Direct and gateway reach the same model, so the ceilings match.
@@ -678,10 +678,10 @@ class TestFableCeilingSet:
         describes a configuration nobody registered.
         """
         assert _benchmark_engine_posture("anthropic/claude-fable-5")[2] == (
-            "5d42e2364755534c5632189ca988b892d108f54c30901d988fc88037407b2bfe"
+            "642746e411685b8c4018b6772e4def9478f1e2231713f315e6ecc90ceb1f276f"
         )
         assert _benchmark_engine_posture("openrouter/anthropic/claude-fable-5")[2] == (
-            "18a1ba22e2ffef7fb8634504a0d6aff39c3117a52e48dd0f22159693641fd572"
+            "e505909221f2da7aa41d5f9ea3b79761b38fb29cf4157e51629f517f66cc97a5"
         )
 
 
@@ -696,13 +696,13 @@ class TestWitnessStreamObservation:
         could not author it because no model was independent of the worker.
         """
         reason = (
-            "no author independent of the worker (judge and worker both "
+            "no author independent of the worker (verifier and worker both "
             "resolved to `openrouter/z-ai/glm-5.1`)"
         )
         events = [
             {
                 "type": "proof",
-                "step": {"kind": "assurance", "witness": True, "judge": True},
+                "step": {"kind": "assurance", "witness": True, "verifier": True},
             },
             {
                 "type": "proof",
@@ -775,7 +775,7 @@ class TestSelfVerdictStreamObservation:
     """What Stella claimed about its own work, beside what it was graded.
 
     The A/B in #1284 turns on comparing the two. Stella's claim is a
-    `judge_verdict` event and the grade is the verifier's reward, which the
+    `verdict` event and the grade is the verifier's reward, which the
     agent never sees — so a trial is the only place they meet, and the event
     stream is the only place the claim exists.
     """
@@ -791,13 +791,13 @@ class TestSelfVerdictStreamObservation:
     def test_a_model_opinion_and_a_flip_oracle_are_told_apart(self) -> None:
         """`deterministic` is the difference between two instruments.
 
-        #1284 measures the *judge's* agreement with the official grader.
+        #1284 measures the *verifier's* agreement with the official grader.
         Folding an oracle verdict in under the same name reports the ladder's
-        aggregate as the judge's reliability.
+        aggregate as the verifier's reliability.
         """
         opinion = self._stream(
             {
-                "type": "judge_verdict",
+                "type": "verdict",
                 "passed": True,
                 "evidence": {"summary": "looks right", "deterministic": False},
             },
@@ -809,7 +809,7 @@ class TestSelfVerdictStreamObservation:
 
         oracle = self._stream(
             {
-                "type": "judge_verdict",
+                "type": "verdict",
                 "passed": True,
                 "evidence": {
                     "summary": "flip oracle: fail→pass on `pytest -q`",
@@ -824,12 +824,12 @@ class TestSelfVerdictStreamObservation:
         """A revised candidate is judged again; the reward grades the last one."""
         stream = self._stream(
             {
-                "type": "judge_verdict",
+                "type": "verdict",
                 "passed": False,
                 "evidence": {"summary": "test still red", "deterministic": True},
             },
             {
-                "type": "judge_verdict",
+                "type": "verdict",
                 "passed": True,
                 "evidence": {"summary": "flip observed", "deterministic": True},
             },
@@ -916,7 +916,7 @@ class TestWitnessArmEndToEnd:
         agent._version = "stella 0.6.21"
 
         _posture, posture_json, posture_digest = _benchmark_engine_posture(
-            worker, witness_author=author
+            worker, verifier=author
         )
         seen: dict[str, str] = {}
 
@@ -937,11 +937,11 @@ class TestWitnessArmEndToEnd:
         )
 
         assert seen["posture"] == posture_json
-        assert json.loads(seen["posture"])["pipeline_judge_model"] == author
+        assert json.loads(seen["posture"])["pipeline_verifier_model"] == author
         assert agent._engine_posture_sha256 == posture_digest
 
         assert context.metadata["stella_assurance_arm"] == "witness-on"
-        assert context.metadata["stella_witness_author_model"] == author
+        assert context.metadata["stella_verifier_model"] == author
         assert context.metadata["stella_assurance_tiers_version"] == (
             _ASSURANCE_TIERS_VERSION
         )
@@ -963,7 +963,7 @@ class TestWitnessArmEndToEnd:
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.delenv(_WITNESS_AUTHOR_ENV, raising=False)
         reason = (
-            "no author independent of the worker (judge and worker both "
+            "no author independent of the worker (verifier and worker both "
             "resolved to `openrouter/z-ai/glm-5.1`)"
         )
         events = [
@@ -972,7 +972,7 @@ class TestWitnessArmEndToEnd:
                 "step": {"kind": "witness_unavailable", "reason": reason},
             },
             {
-                "type": "judge_verdict",
+                "type": "verdict",
                 "passed": True,
                 "evidence": {"summary": "reads correct", "deterministic": False},
             },
@@ -992,7 +992,7 @@ class TestWitnessArmEndToEnd:
             async def _stella_secure_exec_with_stdin(
                 self, *, command: list[str], env: dict[str, str], stdin: bytes
             ):
-                assert "pipeline_judge_model" not in env[_ENGINE_CONFIG_ENV]
+                assert "pipeline_verifier_model" not in env[_ENGINE_CONFIG_ENV]
                 return SimpleNamespace(stdout=None, stderr=None, return_code=0)
 
         context = AgentContext()
@@ -1001,14 +1001,14 @@ class TestWitnessArmEndToEnd:
         )
 
         assert context.metadata["stella_assurance_arm"] == "witness-off"
-        assert "stella_witness_author_model" not in context.metadata
+        assert "stella_verifier_model" not in context.metadata
         assert context.metadata["stella_witness_authored_state"] == "unavailable"
         assert context.metadata["stella_assurance_tiers"]["authored_witness_off_reason"]
         assert context.metadata["stella_stream"]["witness_unavailable_reasons"] == [
             reason
         ]
         # The control arm's whole shape, in one trial: no witness could be
-        # authored, and a model judge — the worker's own model — declared the
+        # authored, and a model verifier — the worker's own model — declared the
         # work done anyway. Whether the grader agreed is the comparison #1284
         # runs, and it needs this field to be a field.
         assert context.metadata["stella_self_verdict_state"] == "passed"

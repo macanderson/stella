@@ -203,17 +203,17 @@ fn agent_engine_config_parses_the_full_schema() {
         r#"{"agent_engine_config": {
             "default_model": "anthropic/claude-fable-5",
             "pipeline_worker_model": "zai/glm-5.2",
-            "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+            "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
             "pipeline_triage_model": "deepseek/deepseek-chat",
             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
             "auto_mode": "on",
             "effort_auto": "off",
             "reasoning_auto": "on",
             "agents": {
-                "judge": {
+                "verifier": {
                     "provider": "openrouter",
                     "model": "openai/gpt-5.5",
-                    "prompt": "You are a strict judge.",
+                    "prompt": "You are a strict verifier.",
                     "effort": "high",
                     "reasoning": "on",
                     "params": {
@@ -238,9 +238,9 @@ fn agent_engine_config_parses_the_full_schema() {
         engine.model_for(EngineAgentKind::Worker),
         Some("zai/glm-5.2")
     );
-    // The judge's per-agent model beats the flat pipeline_judge_model.
+    // The verifier's per-agent model beats the flat pipeline_verifier_model.
     assert_eq!(
-        engine.model_for(EngineAgentKind::Judge),
+        engine.model_for(EngineAgentKind::Verifier),
         Some("openai/gpt-5.5")
     );
     // No triage agent entry → the flat field answers.
@@ -256,11 +256,11 @@ fn agent_engine_config_parses_the_full_schema() {
     assert!(engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
     assert!(engine.reasoning_auto_on());
-    let judge = engine.agent(EngineAgentKind::Judge).expect("judge");
-    assert_eq!(judge.provider.as_deref(), Some("openrouter"));
-    assert_eq!(judge.effort, Some(ReasoningEffort::High));
-    assert_eq!(judge.reasoning, Some(Toggle::On));
-    let params = judge.params.expect("params");
+    let verifier = engine.agent(EngineAgentKind::Verifier).expect("verifier");
+    assert_eq!(verifier.provider.as_deref(), Some("openrouter"));
+    assert_eq!(verifier.effort, Some(ReasoningEffort::High));
+    assert_eq!(verifier.reasoning, Some(Toggle::On));
+    let params = verifier.params.expect("params");
     assert_eq!(params.top_k, Some(40));
     assert_eq!(params.verbosity, Some(Verbosity::Low));
     assert_eq!(params.service_tier, Some(ServiceTier::Priority));
@@ -282,7 +282,7 @@ fn agent_engine_config_overlays_per_field_and_per_agent() {
         dir.path(),
         "project.json",
         r#"{"agent_engine_config": {
-            "pipeline_judge_model": "anthropic/claude-fable-5",
+            "pipeline_verifier_model": "anthropic/claude-fable-5",
             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
             "agents": {"worker": {"params": {"top_p": 0.95}}}
         }}"#,
@@ -292,7 +292,7 @@ fn agent_engine_config_overlays_per_field_and_per_agent() {
     // Project wins where it speaks; user fields it left unset survive.
     assert_eq!(engine.default_model.as_deref(), Some("zai/glm-5.2"));
     assert_eq!(
-        engine.pipeline_judge_model.as_deref(),
+        engine.pipeline_verifier_model.as_deref(),
         Some("anthropic/claude-fable-5")
     );
     // allowed_models replaces wholesale (one vocabulary, not knobs).
@@ -316,7 +316,7 @@ fn agent_engine_config_save_preserves_other_keys_and_roundtrips() {
             "future_key": {"anything": true}}"#,
     );
     let engine = AgentEngineConfig {
-        pipeline_judge_model: Some("anthropic/claude-fable-5".to_string()),
+        pipeline_verifier_model: Some("anthropic/claude-fable-5".to_string()),
         auto_mode: Some(Toggle::Off),
         ..AgentEngineConfig::default()
     };
@@ -808,7 +808,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
         r#"{
           "tools": {"bash": "off", "web": "off"},
           "agent_engine_config": {
-            "agents": {"judge": {"prompt": "trusted prompt"}}
+            "agents": {"verifier": {"prompt": "trusted prompt"}}
           }
         }"#,
     );
@@ -818,7 +818,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
         r#"{
           "tools": {"bash": "on", "web": "on"},
           "agent_engine_config": {
-            "agents": {"judge": {"prompt": "untrusted prompt"}}
+            "agents": {"verifier": {"prompt": "untrusted prompt"}}
           }
         }"#,
     );
@@ -842,8 +842,8 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
         merged
             .agent_engine_config
             .as_ref()
-            .and_then(|engine| engine.agent(EngineAgentKind::Judge))
-            .and_then(|judge| judge.prompt.as_deref()),
+            .and_then(|engine| engine.agent(EngineAgentKind::Verifier))
+            .and_then(|verifier| verifier.prompt.as_deref()),
         Some("trusted prompt"),
         "untrusted project replaced a privileged agent prompt"
     );
@@ -925,7 +925,7 @@ fn managed_tool_denial_survives_explicit_project_trust() {
         r#"{
           "tools": {"bash": "on", "web": "on"},
           "agent_engine_config": {
-            "agents": {"judge": {"prompt": "project prompt"}}
+            "agents": {"verifier": {"prompt": "project prompt"}}
           }
         }"#,
     );
@@ -956,8 +956,8 @@ fn managed_tool_denial_survives_explicit_project_trust() {
         merged
             .agent_engine_config
             .as_ref()
-            .and_then(|engine| engine.agent(EngineAgentKind::Judge))
-            .and_then(|judge| judge.prompt.as_ref())
+            .and_then(|engine| engine.agent(EngineAgentKind::Verifier))
+            .and_then(|verifier| verifier.prompt.as_ref())
             .is_none(),
         "managed denial must remove the trusted project's prompt"
     );

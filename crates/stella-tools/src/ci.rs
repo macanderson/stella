@@ -1,5 +1,5 @@
 //! `ci_status` — read CI state for a branch, PR, or commit via the `gh`
-//! CLI, including failure log tails. Read-only, so judges can verify "CI
+//! CLI, including failure log tails. Read-only, so verifiers can verify "CI
 //! is green" claims themselves; combined with the goal loop it powers
 //! `stella monitor`: keep fixing until the checks pass.
 
@@ -184,7 +184,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_is_read_only_for_judge_use() {
+    fn schema_is_read_only_for_verifier_use() {
         assert!(CiStatus.schema().read_only);
     }
 

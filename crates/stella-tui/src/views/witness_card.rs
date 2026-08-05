@@ -1,6 +1,6 @@
 //! The witness panel (`/witness`): the deterministic proof, as three records
 //! in strict order — author → execute → result — exactly one active at a
-//! time, folded from the same `AgentEvent::Proof` / `JudgeVerdict` stream the
+//! time, folded from the same `AgentEvent::Proof` / `Verdict` stream the
 //! proof rail reads.
 //!
 //! ```text
@@ -21,7 +21,7 @@
 //! ## Copy law (D6)
 //!
 //! The framing is deterministic proof: author / execute / result, oracle,
-//! evidence, flip. The internal `judge` role identifier never reaches a
+//! evidence, flip. The internal `verifier` role identifier never reaches a
 //! string this panel renders. **Red appears in exactly one place in the
 //! deck** — the oracle's pre-flip state: the `red` token in the author line
 //! and the `red ──▸ green` result line, both in [`theme::ORACLE_PRE_FLIP`]
@@ -375,7 +375,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     // this panel's label for it is `verify`.
     let verify_model = model
         .role_pins
-        .get(&PipelineRole::Judge)
+        .get(&PipelineRole::Verifier)
         .map(|pin| pin.model.clone())
         .unwrap_or_else(|| "verify unassigned".to_string());
     let inner = cards::card_frame(

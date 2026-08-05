@@ -51,12 +51,12 @@ pub fn current_summary(cfg: &Config) -> String {
     )
 }
 
-/// The pins this session is configured to run for triage / worker / judge,
+/// The pins this session is configured to run for triage / worker / verifier,
 /// for the deck's `MODELS` row.
 ///
 /// The deck otherwise learns a role's pin only from that role's first
 /// `AgentEvent::StepUsage`, so before any turn it can say nothing, and a role
-/// that is never reached (a judge on a run with no inconclusive evidence)
+/// that is never reached (a verifier on a run with no inconclusive evidence)
 /// stays blank for the whole session. Sending this at startup separates "not
 /// configured" from "not yet used" — the driver is the only side that can,
 /// because settings precedence lives here.
@@ -76,7 +76,7 @@ pub fn configured_role_pins(
     [
         (PipelineRole::Triage, EngineAgentKind::Triage),
         (PipelineRole::Worker, EngineAgentKind::Worker),
-        (PipelineRole::Judge, EngineAgentKind::Judge),
+        (PipelineRole::Verifier, EngineAgentKind::Verifier),
     ]
     .into_iter()
     .map(|(slot, kind)| {
@@ -167,7 +167,7 @@ pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
     // view of user + managed + project. `save_to` replaces the whole
     // `agent_engine_config` block, so loading the merge and saving it here
     // would copy the project's and the org's opinions into the user file —
-    // turning one repo's judge pin, or an org-managed effort ceiling, into a
+    // turning one repo's verifier pin, or an org-managed effort ceiling, into a
     // machine-wide default that outlives the repo it came from. The same rule
     // `tool_switches::save_switches` already follows.
     let mut engine = crate::settings::user_engine_config_at(&path)
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn setting_the_default_model_does_not_copy_project_settings_into_user_scope() {
         // `save_to` replaces the whole `agent_engine_config` block, so reading
-        // `Settings::load`'s MERGED view here would write this repo's judge pin
+        // `Settings::load`'s MERGED view here would write this repo's verifier pin
         // into `~/.stella` — promoting one project's choice to a machine-wide
         // default that outlives the repo it came from.
         let (td, _guard) = scratch();
@@ -256,7 +256,7 @@ mod tests {
         std::fs::create_dir_all(workspace.join(".stella")).unwrap();
         std::fs::write(
             workspace.join(".stella/settings.json"),
-            r#"{"agent_engine_config": {"pipeline_judge_model": "openai/gpt-5.5"}}"#,
+            r#"{"agent_engine_config": {"pipeline_verifier_model": "openai/gpt-5.5"}}"#,
         )
         .unwrap();
 
@@ -275,8 +275,8 @@ mod tests {
             "the edit itself must land"
         );
         assert!(
-            engine.get("pipeline_judge_model").is_none(),
-            "the project's judge pin leaked into user scope: {engine}"
+            engine.get("pipeline_verifier_model").is_none(),
+            "the project's verifier pin leaked into user scope: {engine}"
         );
     }
 
@@ -291,7 +291,7 @@ mod tests {
             user_dir.join("settings.json"),
             r#"{"enable_recap": "on", "agent_engine_config": {
                  "pipeline_triage_model": "deepseek/deepseek-chat",
-                 "agents": {"judge": {"prompt": "You are a strict reviewer."}}
+                 "agents": {"verifier": {"prompt": "You are a strict reviewer."}}
                }}"#,
         )
         .unwrap();
@@ -314,7 +314,7 @@ mod tests {
         );
         assert_eq!(
             engine
-                .pointer("/agents/judge/prompt")
+                .pointer("/agents/verifier/prompt")
                 .and_then(|v| v.as_str()),
             Some("You are a strict reviewer.")
         );

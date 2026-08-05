@@ -2,7 +2,7 @@
 //! adapter port.
 //!
 //! arena-bench invokes an agent with `--task-dir/--journal/--state-dir/
-//! [--resume]`, SIGKILLs it mid-episode on purpose, re-invokes it, and judges
+//! [--resume]`, SIGKILLs it mid-episode on purpose, re-invokes it, and verifiers
 //! the [`contextgraph-trace`] journal it recorded with the Context Graph
 //! Protocol's replay oracles. This module is Stella's side of that contract:
 //!
@@ -99,7 +99,7 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         OutputFormat::StreamJson,
         !args.no_pipeline,
         args.test_command.as_deref(),
-        // The arena judges the task result, not the scaffolding that proved
+        // The arena verifiers the task result, not the scaffolding that proved
         // it — a witness left in the tree would show up as unexplained work.
         false,
     )
@@ -330,7 +330,7 @@ impl ArenaRecorder {
                         // Deliberately absent: the manifest is content-free,
                         // and a digest derived from the block-id sequence
                         // would make the deterministic-composition oracle
-                        // judge a tautology instead of the rendered bytes.
+                        // verifier a tautology instead of the rendered bytes.
                         composition_digest: None,
                         frames,
                     },

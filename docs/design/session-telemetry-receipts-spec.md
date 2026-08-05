@@ -135,7 +135,7 @@ coordinate of any model call is:
 ```
 session_id      "ses-<ms>-<pid>"     — the whole session (existing)
   └ execution_id  i64 AUTOINCREMENT   — one run/goal/turn row (existing)
-     └ stage       StageKind           — pipeline stage: Triage…Execute…Judge (existing)
+     └ stage       StageKind           — pipeline stage: Triage…Execute…Verifier (existing)
         └ turn_instance  u32           — NEW: monotonic per session; groups the
         │                                steps of one Engine::run_turn without
         │                                relying on event-order correlation
@@ -163,8 +163,8 @@ Existing ids reused unchanged: `session_id`, `execution_id`, `call_id`
 **Model identity.** `ModelRef { provider, model_id }` is the pin; `provider` on a
 receipt is always the provider that *actually served* the call (never the
 session default), consistent with `StepUsage.provider`. `role: Role`
-(Worker/Triage/Plan/Judge/…) is the routing tier; `call_role: ModelCallRole` is
-the fine purpose (Worker/Judge/Summarization/…). Both are retained on every
+(Worker/Triage/Plan/Verifier/…) is the routing tier; `call_role: ModelCallRole` is
+the fine purpose (Worker/Verifier/Summarization/…). Both are retained on every
 receipt so "which model, in which role, saw this block" is always answerable.
 
 ---
@@ -671,11 +671,11 @@ The inspector groups every receipt-derived metric by `(role, provider, model)`:
 | context it consumed: useful vs wasted tokens/$ | §8, filtered to steps this model served |
 | its outputs' citation/reference rate | did *its* outputs get referenced downstream |
 | memories *it* wrote and their payoff | §9 filtered to `MemoryWriteRef.origin_turn` served by this model |
-| its self-ratings vs judge verdicts | §11 vs `JudgeVerdict`/`GoalVerdict` |
+| its self-ratings vs verifier verdicts | §11 vs `VerifierVerdict`/`GoalVerdict` |
 
 This is the Stella-specific shape a generic OpenTelemetry export cannot produce:
 not just "model X cost $Y," but "the triage model's recalled context was 70%
-wasted while the worker's was 20%," and "the judge and worker disagree on the
+wasted while the worker's was 20%," and "the verifier and worker disagree on the
 worker's self-rating." That comparison is only possible because usefulness and
 self-rating are attributed per model-call coordinate (invariant §6).
 
@@ -688,7 +688,7 @@ receipt makes this *grounded*: the model reflects by **consuming its own receipt
 (§13 read API) and emits critique referencing `block_id`s and step coordinates —
 not a free-floating scalar. This builds on the existing reflection loop
 (`reflect_and_record`, the `reflections` / `execution_reflection` tables,
-`GoalVerdict`, `JudgeVerdict`), not a parallel path.
+`GoalVerdict`, `VerifierVerdict`), not a parallel path.
 
 ```rust
 AgentEvent::SelfAssessment {
@@ -725,8 +725,8 @@ Two properties make this trustworthy rather than a hallucinated scorecard:
    in the turn's manifest; the inspector rejects notes that anchor to nonexistent
    blocks. A model cannot rate context it did not actually see.
 2. **Adjudicated.** `SelfAssessment` scores are stored alongside the independent
-   `JudgeVerdict` / `GoalVerdict`, so self-rating is always presentable *against*
-   an external verdict. Calibration = `self.goal_progress` vs `judge.verdict`;
+   `VerifierVerdict` / `GoalVerdict`, so self-rating is always presentable *against*
+   an external verdict. Calibration = `self.goal_progress` vs `verifier.verdict`;
    systematic self-overrating per model is a first-class, sliceable metric (§10.2).
 
 `SelfNote.usefulness_score` feeds the `SelfReported` signal in §8 at low
@@ -850,7 +850,7 @@ they reference by `(execution_id, …)` and `memory_id`/`block_id`.
 
 **Cross-project rollups.** The user-tier `usage.db` gains a per-model
 `context_efficiency_rollup(project_id, provider, model, useful_usd, wasted_usd,
-mean_self_rating, mean_judge_delta)` so "which model wastes the most context across
+mean_self_rating, mean_verifier_delta)` so "which model wastes the most context across
 all my repos" is one query — mirroring the existing `execution_rollup` /
 `tool_usage_rollup` one-way `store.db → usage.db` derivation.
 
@@ -964,8 +964,8 @@ to Tier B only where the receipts show the inferred layer would change a decisio
   coverage? If `Cited` + exact-echo already explain usefulness, the fuzzy detector
   is redundant risk.
 - **Calibration feasibility.** Tier A gives you `SelfAssessment`-shaped slots next
-  to `JudgeVerdict`. Run self-rating in *shadow* first (§11 emitted, not
-  surfaced), and productize only if self-scores correlate with judge verdicts per
+  to `VerifierVerdict`. Run self-rating in *shadow* first (§11 emitted, not
+  surfaced), and productize only if self-scores correlate with verifier verdicts per
   model. If they do not, self-rating is theater — keep it as a research signal,
   not a product surface.
 
@@ -985,7 +985,7 @@ injection log (§9.2). Promote/quarantine reuse existing thresholds; "dead weigh
 (recalled repeatedly, real carry cost, never cited) is the new, data-dependent
 verdict only computable once A3 exists.
 
-**B3. Self-rating + per-model self-vs-judge rollups (§11, §10.2, §12
+**B3. Self-rating + per-model self-vs-verifier rollups (§11, §10.2, §12
 `context_efficiency_rollup`).** The lowest-provability, highest-uncertainty layer,
 and the one the original ask led with. Shadow-measure calibration first;
 productize per model only where it holds.
@@ -1021,8 +1021,8 @@ or acting on it — the gate governs the latter.
 
 | User ask | Delivered by | Tier |
 | --- | --- | --- |
-| Optimal shape for one session, many models | §3 coordinate model + §6 invariant (every record carries the model coord) + §10 | A (coordinate + roster); comparative self-vs-judge is B |
-| LLM self-reflect and rate own performance | §11 (receipt-grounded, adjudicated against JudgeVerdict) | **B — gated on calibration** |
+| Optimal shape for one session, many models | §3 coordinate model + §6 invariant (every record carries the model coord) + §10 | A (coordinate + roster); comparative self-vs-verifier is B |
+| LLM self-reflect and rate own performance | §11 (receipt-grounded, adjudicated against VerifierVerdict) | **B — gated on calibration** |
 | Capture memory writes + subsequent citations | §9 (`nod_…` join key: `ContextWrite.written` ↔ `memory_citations`) + §9.2 every injection | A (write/inject/cite join); "dead weight" verdict is B |
 | Tokens kept in context — useful vs unuseful | §8 cost-of-carry + labeled usefulness signals; §7 cache economics underneath | A (cost-of-carry + provable signals); inferred labels B |
 | Inspect turn-loop state at any point (mutations / cached / added / compacted / removed) | §5 manifest + §6 mutations & compaction identities + §7 cache + §13 inspection API | A |

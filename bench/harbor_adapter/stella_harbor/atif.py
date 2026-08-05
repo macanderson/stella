@@ -478,7 +478,7 @@ def envelope_to_trajectory(
     assurance_tiers: dict[str, Any] | None = None,
     assurance_tiers_json: str | None = None,
     assurance_tiers_sha256: str | None = None,
-    witness_author_model: str | None = None,
+    verifier_model: str | None = None,
     witness_authored_state: str | None = None,
     workspace_git_baseline: dict[str, str] | None = None,
 ) -> Trajectory:
@@ -646,8 +646,8 @@ def envelope_to_trajectory(
         agent_extra["assurance_tiers_json"] = assurance_tiers_json
     if assurance_tiers_sha256:
         agent_extra["assurance_tiers_sha256"] = assurance_tiers_sha256
-    if witness_author_model:
-        agent_extra["witness_author_model"] = witness_author_model
+    if verifier_model:
+        agent_extra["verifier_model"] = verifier_model
     # Written unconditionally, unlike its neighbours: "not_reported" is a
     # result. An absent key here would be indistinguishable from an adapter too
     # old to record it, which is the ambiguity this field exists to remove.

@@ -41,7 +41,7 @@ stage execute  -> 0 to 2 tool calls
 stage verify   -> proof {kind: warrant, required: true, diff_lines: 0}
                -> proof {kind: verification_unavailable, reason: "UNVERIFIABLE ...
                          file-change events recorded = 0"}
-judge_verdict  -> {"passed": true}          <-- the core defect
+verdict  -> {"passed": true}          <-- the core defect
 stage complete -> turn ends reporting success
 ```
 
@@ -50,10 +50,10 @@ completing. The model thought hard and then acted on nothing.
 
 Two distinct problems, and they are independent:
 
-**A. The judge passes an unverifiable, zero-work turn.** The ladder correctly
+**A. The verifier passes an unverifiable, zero-work turn.** The ladder correctly
 emits `UNVERIFIABLE` — it names every dead channel: "flip oracle not armed (no
 test command); touched tests not run; the diff probe could not read the working
-tree; file-change events recorded = 0". Then `judge_verdict` returns
+tree; file-change events recorded = 0". Then `verdict` returns
 `passed: true`. A turn with `diff_lines: 0`, zero `FileChange` events, and no
 verification channel should not be able to report success. This is the abstain
 rung failing open where it should fail closed. **This is the primary bug.**
@@ -79,9 +79,9 @@ posture.
 
 1. Reproduce (A) locally. You do not need Terminal-Bench or an EC2 box — you
    need a turn where the working tree is unreadable / no tests run / zero file
-   changes, and then to observe what the judge returns. A unit or property test
+   changes, and then to observe what the verifier returns. A unit or property test
    at the verification-ladder seam is the right level.
-2. Find where `UNVERIFIABLE` is converted into `judge_verdict.passed`. Decide
+2. Find where `UNVERIFIABLE` is converted into `verdict.passed`. Decide
    what the correct behaviour is — abstain is not success, and it is also not
    necessarily failure. Whatever you choose, a turn that changed nothing must
    not report completion as though it had.
@@ -106,7 +106,7 @@ posture.
 
 A PR fixing (A) with a regression test, plus a clear written verdict on (B):
 reproduces under committed posture, or was an artifact of the max-effort patch.
-If you conclude the judge behaviour is intentional, say so and explain what a
+If you conclude the verifier behaviour is intentional, say so and explain what a
 zero-work turn is supposed to report instead — but the eleven trials in the
 bundle are Stella declaring success on tasks it did not touch, and Harbor scored
 every one of them 0.0, so something in that chain is wrong.

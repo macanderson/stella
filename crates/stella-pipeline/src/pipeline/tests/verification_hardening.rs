@@ -9,12 +9,12 @@ use crate::LineMutation;
 
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
-/// must escalate to the model judge, never credit `DeterministicPass`. Before
+/// must escalate to the model verifier, never credit `DeterministicPass`. Before
 /// the typed outcome, the timeout's non-zero exit locked the oracle onto a
 /// phantom `Failing` and the faster candidate "flipped" it.
 #[tokio::test]
 async fn a_timed_out_baseline_never_manufactures_a_flip() {
-    // triage → "single"; worker → final text; judge → verdict (the ladder
+    // triage → "single"; worker → final text; verifier → verdict (the ladder
     // escalates because no flip evidence exists).
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
@@ -79,15 +79,15 @@ async fn a_timed_out_baseline_never_manufactures_a_flip() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "no flip evidence exists, so the ladder must escalate to the judge"
+        stages(&events).contains(&StageKind::Verdict),
+        "no flip evidence exists, so the ladder must escalate to the verifier"
     );
 }
 
 /// #860 acceptance, candidate side: a suite that times out AFTER the change
-/// is inconclusive (judge), not a deterministic red (revise). Spending a
+/// is inconclusive (verifier), not a deterministic red (revise). Spending a
 /// revision turn "fixing" a timeout the change may not have caused burned a
-/// full worker call on infra noise; the judge sees `test_run=timed_out` and
+/// full worker call on infra noise; the verifier sees `test_run=timed_out` and
 /// reasons about it instead.
 #[tokio::test]
 async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
@@ -116,9 +116,9 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         // The subject here is which rung an unobservable candidate suite lands
         // on. The #1295 corroboration ask fires strictly *after* that, on the
-        // judge's pass, and would spend a revision this scenario is not about
-        // — `tests/judge_evidence_demand.rs` covers that behaviour directly.
-        judge_evidence_demand: false,
+        // verifier's pass, and would spend a revision this scenario is not about
+        // — `tests/verifier_evidence_demand.rs` covers that behaviour directly.
+        verifier_evidence_demand: false,
         ..PipelineConfig::default()
     };
     let pipeline = Pipeline::new(
@@ -155,15 +155,15 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
 
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "an unobservable suite is inconclusive — judge, not revise"
+        stages(&events).contains(&StageKind::Verdict),
+        "an unobservable suite is inconclusive — verifier, not revise"
     );
     // No deterministic red verdict may be emitted for infra noise: every
-    // deterministic JudgeVerdict{passed:false} is the revise path's badge.
+    // deterministic Verdict{passed:false} is the revise path's badge.
     assert!(
         !events.iter().any(|e| matches!(
             e,
-            AgentEvent::JudgeVerdict {
+            AgentEvent::Verdict {
                 passed: false,
                 evidence
             } if evidence.deterministic
@@ -177,7 +177,7 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
 /// #859 acceptance: a flaky flip — fail on the baseline, pass on the
 /// candidate, fail again on the confirmation re-run — must not fast-submit.
 /// The pre-submit audit demotes the oracle to `Unstable` and the ladder
-/// escalates to the judge with `unstable_flip=true` in its evidence.
+/// escalates to the verifier with `unstable_flip=true` in its evidence.
 #[tokio::test]
 async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
     let provider = ScriptedProvider::new(vec![
@@ -244,13 +244,13 @@ async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "the unconfirmed flip escalates to the judge instead of fast-submitting"
+        stages(&events).contains(&StageKind::Verdict),
+        "the unconfirmed flip escalates to the verifier instead of fast-submitting"
     );
     assert!(
         !events.iter().any(|e| matches!(
             e,
-            AgentEvent::JudgeVerdict {
+            AgentEvent::Verdict {
                 passed: true,
                 evidence
             } if evidence.deterministic
@@ -295,7 +295,7 @@ pub(super) fn lint_error(file: &str, message: &str) -> LintRecord {
 
 /// #861 acceptance: a candidate that flips its witness AND introduces a
 /// fresh type error must not fast-submit — the regression veto routes it to
-/// the judge with the diagnostics delta in evidence. Lint stays excluded
+/// the verifier with the diagnostics delta in evidence. Lint stays excluded
 /// from the oracle: it vetoes the submit, it never becomes the verification.
 #[tokio::test]
 async fn a_fresh_diagnostic_error_vetoes_the_fast_submit() {
@@ -365,13 +365,13 @@ async fn a_fresh_diagnostic_error_vetoes_the_fast_submit() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "the regression veto must escalate to the judge"
+        stages(&events).contains(&StageKind::Verdict),
+        "the regression veto must escalate to the verifier"
     );
     assert!(
         !events.iter().any(|e| matches!(
             e,
-            AgentEvent::JudgeVerdict {
+            AgentEvent::Verdict {
                 passed: true,
                 evidence
             } if evidence.deterministic
@@ -469,7 +469,7 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
         ),
         Ok(1.0)
     );
-    let why = crate::replay::verdict_provenance(&stella_protocol::JudgeEvidence {
+    let why = crate::replay::verdict_provenance(&stella_protocol::VerdictEvidence {
         summary: verdict.summary.clone(),
         deterministic: verdict.deterministic,
         evidence_refs: vec![],
@@ -480,7 +480,7 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
     assert!(why.contains("flip=achieved"), "got: {why}");
     assert!(why.contains("baseline:fail → candidate:pass"), "got: {why}");
     let events = drain(&mut rx);
-    assert!(!stages(&events).contains(&StageKind::Judge));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
 }
 
 /// A scripted mutation probe (#870): every mutant gets the same outcome,
@@ -527,10 +527,10 @@ const MUTABLE_DIFF: &str = "--- a/src/fix.rs\n\
 /// #870 acceptance: an authored witness that stays green under EVERY trivial
 /// mutation of the changed lines is tautological — it reacts to the change
 /// without constraining it. The flip stands as an observation, but the
-/// deterministic credit is withheld and the judge decides with
+/// deterministic credit is withheld and the verifier decides with
 /// `witness_tautological=true` in evidence.
 #[tokio::test]
-async fn a_tautological_witness_is_downgraded_to_the_judge() {
+async fn a_tautological_witness_is_downgraded_to_the_verifier() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
@@ -573,8 +573,8 @@ async fn a_tautological_witness_is_downgraded_to_the_judge() {
         "both proposed mutants ran (none was killed, so no early exit)"
     );
     assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "the downgrade escalates to the judge"
+        stages(&events).contains(&StageKind::Verdict),
+        "the downgrade escalates to the verifier"
     );
     let snapshot = verdict
         .ladder
@@ -628,7 +628,7 @@ async fn a_witness_that_kills_a_mutant_keeps_its_deterministic_pass() {
         1,
         "the first killed mutant proves the witness; the second is never paid for"
     );
-    assert!(!stages(&events).contains(&StageKind::Judge));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
     let snapshot = verdict
         .ladder
         .as_deref()
@@ -717,8 +717,8 @@ async fn an_out_of_memory_test_run_is_retried_instead_of_revised() {
     );
     let events = drain(&mut rx);
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
-        "a deterministic flip needs no judge"
+        !stages(&events).contains(&StageKind::Verdict),
+        "a deterministic flip needs no verifier"
     );
     let snapshot = verdict
         .ladder
@@ -733,7 +733,7 @@ async fn an_out_of_memory_test_run_is_retried_instead_of_revised() {
 /// #1294 acceptance, the honesty half: a suite that is killed for memory
 /// *again* on its retry still reports `out_of_memory` — never a deterministic
 /// red. The whole point of the outcome is that nothing was learned about the
-/// code, so the run escalates to the judge (which is told which of the two
+/// code, so the run escalates to the verifier (which is told which of the two
 /// happened) instead of spending a revision "fixing" work no test ever saw.
 #[tokio::test]
 async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
@@ -765,9 +765,9 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         // Same reason as the scenario above: the subject is that a memory
         // kill is reported as `out_of_memory` rather than as a red suite. The
-        // #1295 ask fires after that, on the judge's pass, and would spend a
+        // #1295 ask fires after that, on the verifier's pass, and would spend a
         // revision this scenario neither scripts nor is about.
-        judge_evidence_demand: false,
+        verifier_evidence_demand: false,
         ..PipelineConfig::default()
     };
     let pipeline = Pipeline::new(
@@ -806,7 +806,7 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
     assert!(
         !events.iter().any(|e| matches!(
             e,
-            AgentEvent::JudgeVerdict {
+            AgentEvent::Verdict {
                 passed: false,
                 evidence
             } if evidence.deterministic
@@ -814,8 +814,8 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
         "a memory kill must never be reported as a deterministic test failure"
     );
     assert!(
-        stages(&events).contains(&StageKind::Judge),
-        "an unobservable suite is inconclusive — judge, not revise"
+        stages(&events).contains(&StageKind::Verdict),
+        "an unobservable suite is inconclusive — verifier, not revise"
     );
     let verdict = outcome.verdict.expect("a verdict was produced");
     let snapshot = verdict
@@ -944,7 +944,7 @@ async fn run_with_coverage(
 /// #1291 acceptance: a flip whose test never executed the changed lines is a
 /// coincidence, not evidence. The deterministic credit is withheld and the
 /// turn escalates — **unproven**, and never a failure: no deterministic red
-/// is emitted, and the judge is told in so many words that this is not a
+/// is emitted, and the verifier is told in so many words that this is not a
 /// finding that the change is wrong.
 #[tokio::test]
 async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() {
@@ -959,13 +959,13 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
 
     assert_eq!(probe.calls(), 1, "the probe runs once, in the audit");
     assert!(
-        stages(&events).contains(&StageKind::Judge),
+        stages(&events).contains(&StageKind::Verdict),
         "a coincidental pass must be escalated, not fast-submitted"
     );
     assert!(
         !events.iter().any(|e| matches!(
             e,
-            AgentEvent::JudgeVerdict {
+            AgentEvent::Verdict {
                 passed: false,
                 evidence
             } if evidence.deterministic
@@ -973,7 +973,7 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
         "no-overlap is 'unproven', never a deterministic failure"
     );
     let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(verdict.passed, "the judge's PASS still stands");
+    assert!(verdict.passed, "the verifier's PASS still stands");
     assert!(
         !verdict.deterministic,
         "what it lost is the DETERMINISTIC credit"
@@ -993,12 +993,12 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
         .any(|prompt| prompt.contains("not a finding that the change is wrong"));
     assert!(
         asked,
-        "the judge must be told this is an unproven overlap, not a defect"
+        "the verifier must be told this is an unproven overlap, not a defect"
     );
 }
 
 /// #1291, the honest-degradation half: a workspace with no coverage tooling
-/// pays no judge call — the alternative taxes every run to be told what the
+/// pays no verifier call — the alternative taxes every run to be told what the
 /// evidence already said — but the run is scored **UNVERIFIED**, not as a
 /// deterministic pass. "A test passed and nobody could check it touched this
 /// change" is unproven, and the score is where the system makes its claim, so
@@ -1006,7 +1006,7 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
 /// Flipping `require_diff_coverage` on additionally turns it into an
 /// escalation.
 #[tokio::test]
-async fn an_unmeasurable_overlap_is_scored_unproven_without_costing_a_judge_call() {
+async fn an_unmeasurable_overlap_is_scored_unproven_without_costing_a_verifier_call() {
     let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
     let probe = ScriptedCoverage::unavailable();
     let (outcome, events) = run_with_coverage(&probe, false, &provider).await;
@@ -1014,7 +1014,7 @@ async fn an_unmeasurable_overlap_is_scored_unproven_without_costing_a_judge_call
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed, "an unproven run is not a failed run");
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
+        !stages(&events).contains(&StageKind::Verdict),
         "being honest about an unmeasured overlap must not cost a reviewer"
     );
     assert_eq!(
@@ -1053,7 +1053,7 @@ async fn an_unmeasurable_overlap_is_scored_unproven_without_costing_a_judge_call
     let (strict_outcome, strict_events) =
         run_with_coverage(&strict_probe, true, &strict_provider).await;
     assert!(
-        stages(&strict_events).contains(&StageKind::Judge),
+        stages(&strict_events).contains(&StageKind::Verdict),
         "strict mode turns 'unmeasured' into an escalation"
     );
     let strict_verdict = strict_outcome.verdict.expect("a verdict was produced");
@@ -1076,7 +1076,7 @@ async fn a_measured_overlap_still_earns_the_deterministic_badge() {
 
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed && verdict.deterministic);
-    assert!(!stages(&events).contains(&StageKind::Judge));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
     assert_eq!(
         outcome.score,
         Some(crate::candidate::CandidateScore::DeterministicPass),

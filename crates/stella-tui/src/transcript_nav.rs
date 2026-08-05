@@ -19,7 +19,7 @@ use crate::model::TranscriptEntry;
 
 /// Whether an entry represents something that went wrong.
 ///
-/// Deliberately broader than "a tool returned non-zero": a judge that rejected
+/// Deliberately broader than "a tool returned non-zero": a verifier that rejected
 /// the work, a goal that went unmet, and a hard error are all things a reader
 /// jumping through failures wants to land on. [`TranscriptEntry::Retry`] is
 /// **not** included — a retry that eventually succeeded is noise on this path,
@@ -32,7 +32,7 @@ pub fn is_failure(entry: &TranscriptEntry) -> bool {
         entry,
         E::ToolResult { ok: false, .. }
             | E::Error { .. }
-            | E::JudgeVerdict { passed: false, .. }
+            | E::Verdict { passed: false, .. }
             | E::GoalVerdict { met: false, .. }
     )
 }
@@ -105,7 +105,7 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
         E::ContextRecall { labels, .. } => labels.iter().map(String::as_str).collect(),
         E::ContextWrite { provider, .. } => vec![provider],
         E::MediaComplete { label, path, .. } => vec![label, path],
-        E::JudgeVerdict { summary, .. } | E::ScopeReview { summary, .. } => vec![summary],
+        E::Verdict { summary, .. } | E::ScopeReview { summary, .. } => vec![summary],
         E::GoalVerdict { reasoning, .. } => vec![reasoning],
         // The child's id and task are the searchable part; its summary never
         // reaches the transcript, by design.
@@ -396,12 +396,12 @@ mod tests {
             attempt: 2,
             reason: "rate limited".into(),
         }));
-        assert!(is_failure(&TranscriptEntry::JudgeVerdict {
+        assert!(is_failure(&TranscriptEntry::Verdict {
             passed: false,
             summary: "no".into(),
             deterministic: true,
         }));
-        assert!(!is_failure(&TranscriptEntry::JudgeVerdict {
+        assert!(!is_failure(&TranscriptEntry::Verdict {
             passed: true,
             summary: "ok".into(),
             deterministic: true,

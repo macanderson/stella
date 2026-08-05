@@ -279,7 +279,7 @@ impl Ranked {
 pub enum SelectionReason {
     /// The goal named this file verbatim, so the graph expansion anchored on
     /// it. **Required**: the user pointed at it, and no ranking heuristic is a
-    /// better judge of relevance than that.
+    /// better verifier of relevance than that.
     Anchored,
     /// It won the hybrid ranking — vector similarity fused with recency and
     /// graph adjacency, then diversified. The ordinary path.
