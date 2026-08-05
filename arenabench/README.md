@@ -422,8 +422,8 @@ arenabench/
                    monitor protocol (`arenabench watch`)
   recorder.py      MP4 sidecar supervisor
   server.py        stdlib HTTP + SSE
-  web/             the arena UI, BUILT — generated from ui/, committed so
-                   `pip install arenabench` needs no Node. Do not edit.
+  web/             the arena UI, BUILT — generated from ui/ by `npm run
+                   build`, gitignored. Do not edit.
 ui/                the arena UI, SOURCE — Next.js App Router, Tailwind v4,
                    shadcn-style components on Base UI, dark/light themes
 recorder/          Dockerfile + record.sh + render.py
@@ -442,8 +442,11 @@ cd ui && npm install && npm run dev  # live-reload dev server on :3900,
 npm run build                        # export + sync into arenabench/web/
 ```
 
-Commit the regenerated `web/` together with the `ui/` change that produced
-it — the committed export is what pip users run.
+The export is generated output and stays out of git — `npm run build`
+regenerates it from `ui/`, and packaging a wheel picks it up via the hatch
+`artifacts` entry in `pyproject.toml`. Build the UI before packaging;
+without a build, `arenabench serve` still runs the API and answers every
+`/api` route, it just 404s the client assets.
 
 **Everything displayed is read from files the run already writes.** Nothing
 talks to a container, an agent, or a provider. That is why the same code
