@@ -217,6 +217,9 @@ fn the_console_is_replayable_and_the_two_streams_stay_apart() {
 /// that never writes a terminal status leaves a run the operator ended by hand
 /// to be presented, forever, as a crash.
 #[test]
+#[ignore = "the group-gone probe counts zombies: kill(-pgid, 0) succeeds while \
+            CI's PID 1 leaves the orphaned sleep unreaped, so this fails \
+            deterministically on Actions and only there — see #1609"]
 fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     let (dir, registry) = temp_registry("stop");
     // A child with a child: `sh` waits on `sleep`, so a signal that reaches
