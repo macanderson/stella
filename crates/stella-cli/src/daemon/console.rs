@@ -253,11 +253,11 @@ impl Index {
         let total_of = |records: &[IndexRecord], stream: Stream| {
             records
                 .iter()
-                .filter_map(|r| match r {
+                .rev()
+                .find_map(|r| match r {
                     IndexRecord::Write { s, c, n, .. } if *s == stream => Some(c + n),
                     _ => None,
                 })
-                .last()
                 .unwrap_or(0)
         };
         let out_total = total_of(&self.entries, Stream::Stdout);
