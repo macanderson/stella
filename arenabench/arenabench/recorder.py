@@ -39,7 +39,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ["IMAGE_TAG", "RecorderSupervisor", "build_image", "docker_available", "image_present"]
+__all__ = [
+    "IMAGE_TAG",
+    "RecorderSupervisor",
+    "build_image",
+    "docker_available",
+    "image_present",
+]
 
 log = logging.getLogger("arenabench.recorder")
 

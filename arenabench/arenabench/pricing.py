@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-__all__ = ["Price", "PRICES", "price_for", "trial_cost", "load_overrides"]
+__all__ = ["PRICES", "Price", "load_overrides", "price_for", "trial_cost"]
 
 
 @dataclass(frozen=True)
@@ -131,7 +131,9 @@ def load_overrides(path: str | Path | None = None) -> int:
                     float(entry["cache_read"]) if entry.get("cache_read") is not None else None
                 ),
                 cache_write=(
-                    float(entry["cache_write"]) if entry.get("cache_write") is not None else None
+                    float(entry["cache_write"])
+                    if entry.get("cache_write") is not None
+                    else None
                 ),
             )
             applied += 1

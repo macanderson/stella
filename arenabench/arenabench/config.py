@@ -187,7 +187,9 @@ def load_match(path: Path, *, match_id: str | None = None) -> MatchSpec:
     return match_from_toml(data, match_id=match_id)
 
 
-def required_env(spec: MatchSpec, declared: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+def required_env(
+    spec: MatchSpec, declared: dict[str, list[str]] | None = None
+) -> dict[str, list[str]]:
     """Environment variables each seat needs, by contestant id.
 
     Derived from each seat's provider unless the template declared its own

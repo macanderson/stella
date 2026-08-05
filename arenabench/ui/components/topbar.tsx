@@ -63,7 +63,7 @@ export function Topbar({
             className={cn(
               "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
               "hover:bg-panel hover:text-foreground",
-              "data-[selected]:bg-gold data-[selected]:font-semibold data-[selected]:text-ink",
+              "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
             )}
           >
             Setup
@@ -74,7 +74,7 @@ export function Topbar({
             className={cn(
               "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
               "hover:bg-panel hover:text-foreground",
-              "data-[selected]:bg-gold data-[selected]:font-semibold data-[selected]:text-ink",
+              "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
               "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-35",
             )}
           >
