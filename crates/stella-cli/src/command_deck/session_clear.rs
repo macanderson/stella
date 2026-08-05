@@ -48,10 +48,8 @@ mod tests {
     /// never painted "waiting" over a transcript that is about to vanish.
     #[test]
     fn reset_lead_rewinds_history_and_blanks_the_deck_in_order() {
-        let dir = std::env::temp_dir().join(format!(
-            "stella-session-clear-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("stella-session-clear-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut messages = vec![
             CompletionMessage::system("SYSTEM".to_string()),

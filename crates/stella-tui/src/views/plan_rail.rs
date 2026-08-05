@@ -63,7 +63,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::model::SessionModel;
-use crate::plan::{Plan, PlanState, PlanStepState};
+use crate::plan::{Plan, PlanState};
 use crate::proof::ProofState;
 use crate::render::truncate_spans;
 use crate::textline::Tone;
@@ -572,8 +572,7 @@ mod tests {
         assert_eq!(working.spans[0].content.as_ref(), "●");
         assert_eq!(working.spans[0].style.fg, Some(theme::TEXT_PRIMARY));
         assert_eq!(
-            working.spans[2].style.fg,
-            working.spans[3].style.fg,
+            working.spans[2].style.fg, working.spans[3].style.fg,
             "the number carries the working tone with the title"
         );
 
@@ -651,7 +650,10 @@ mod tests {
 
     #[test]
     fn an_empty_plan_says_so_rather_than_rendering_nothing() {
-        let text: Vec<String> = plan_rows(&Plan::default(), 8, 0, false).iter().map(text_of).collect();
+        let text: Vec<String> = plan_rows(&Plan::default(), 8, 0, false)
+            .iter()
+            .map(text_of)
+            .collect();
         assert!(text.iter().any(|r| r.contains("no plan yet")), "{text:?}");
     }
 
@@ -728,7 +730,7 @@ mod tests {
             .propose(&proposal(&["read the layout", "fold the rail"]));
         sm.plan.approve();
         let area = Rect::new(0, 0, 34, 20);
-        let text = rendered(area, |b| render(&sm, area, b));
+        let text = rendered(area, |b| render(&sm, 0, false, area, b));
         let plan_at = text.find("PLAN").expect("a PLAN panel");
         let verify_at = text
             .find("DONE VERIFICATION")
@@ -748,7 +750,7 @@ mod tests {
         ]));
         sm.plan.approve();
         let area = Rect::new(0, 0, 30, 20);
-        let text = rendered(area, |b| render(&sm, area, b));
+        let text = rendered(area, |b| render(&sm, 0, false, area, b));
         assert!(text.contains('…'), "no ellipsis marks the cut:\n{text}");
     }
 
@@ -762,7 +764,7 @@ mod tests {
         sm.plan.propose(&proposal(&["one", "two", "three"]));
         sm.plan.approve();
         let area = Rect::new(0, 0, 34, 9);
-        let text = rendered(area, |b| render(&sm, area, b));
+        let text = rendered(area, |b| render(&sm, 0, false, area, b));
         assert!(
             text.contains("PLAN"),
             "the plan survives the squeeze:\n{text}"
@@ -787,7 +789,7 @@ mod tests {
         let sm = SessionModel::default();
         for h in 0..8u16 {
             let area = Rect::new(0, 0, 30, h);
-            rendered(area, |b| render(&sm, area, b));
+            rendered(area, |b| render(&sm, 0, false, area, b));
         }
     }
 
@@ -796,7 +798,7 @@ mod tests {
         let sm = SessionModel::default();
         for w in 0..6u16 {
             let area = Rect::new(0, 0, w, 20);
-            rendered(area, |b| render(&sm, area, b));
+            rendered(area, |b| render(&sm, 0, false, area, b));
         }
     }
 
@@ -809,7 +811,7 @@ mod tests {
             let mut sm = SessionModel::default();
             sm.plan.propose(&proposal(steps));
             sm.plan.approve();
-            let text = rendered(area, |b| render(&sm, area, b));
+            let text = rendered(area, |b| render(&sm, 0, false, area, b));
             text.lines()
                 .position(|l| l.contains("warrant"))
                 .expect("a warrant row")

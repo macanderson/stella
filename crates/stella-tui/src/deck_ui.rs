@@ -1526,11 +1526,11 @@ mod gates;
 pub use gates::HunkMarks;
 mod nav;
 mod queue_editor;
-use queue_editor::handle_queue_key;
 pub use dispatch::{AskBeforeSpawn, DispatchRoute, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
+use queue_editor::handle_queue_key;
 
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     // Accessible mode announces where a key MOVED the session — a tab change,

@@ -718,14 +718,17 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
 
+        // The ask-user gate renders as its band here; the scope gate renders
+        // as the deck-level plan-review dialog — pending simultaneously, so
+        // neither surface hides the other.
         let text = buffer_text(&buf);
-        assert!(
-            text.contains("plan review"),
-            "scope-review card visible:\n{text}"
-        );
         assert!(
             text.contains("Which database should the cache use?"),
             "ask-user card visible alongside the plan review:\n{text}"
+        );
+        assert!(
+            crate::views::scope_dialog::pending(&model, &ui).is_some(),
+            "the plan-review dialog is up over the deck at the same time"
         );
     }
 
@@ -766,12 +769,8 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("decision sent — awaiting engine…"),
-            "scope card reads answered:\n{text}"
-        );
-        assert!(
-            !text.contains("[a]"),
-            "the decision legend is withdrawn once sent:\n{text}"
+            crate::views::scope_dialog::pending(&model, &ui).is_none(),
+            "the answered plan-review dialog drops, so its keys stop firing"
         );
         assert!(
             text.contains("answer sent — awaiting engine…"),

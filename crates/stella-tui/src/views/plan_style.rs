@@ -195,7 +195,11 @@ mod tests {
         let v = step_visual(PlanStepState::Complete, 0, true);
         assert_eq!(v.glyph, "✓");
         assert_eq!(v.ring.bg, Some(theme::OK), "the indicator cell is green");
-        assert_eq!(v.text.fg, Some(theme::TEXT_PRIMARY), "the text stays bright");
+        assert_eq!(
+            v.text.fg,
+            Some(theme::TEXT_PRIMARY),
+            "the text stays bright"
+        );
         assert!(v.text.add_modifier.contains(Modifier::CROSSED_OUT));
         assert!(v.num.add_modifier.contains(Modifier::CROSSED_OUT));
     }

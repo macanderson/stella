@@ -77,7 +77,10 @@ fn r_opens_the_refine_input_and_enter_sends_the_note() {
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
 
-    assert_eq!(handle_deck_key(ch('r'), &model, &mut ui), DeckAction::Handled);
+    assert_eq!(
+        handle_deck_key(ch('r'), &model, &mut ui),
+        DeckAction::Handled
+    );
     assert_eq!(ui.scope_note.as_deref(), Some(""));
     type_str("only the dialog", &model, &mut ui);
     assert_eq!(ui.scope_note.as_deref(), Some("only the dialog"));
@@ -217,7 +220,11 @@ fn a_second_keypress_cannot_double_send_the_decision() {
         ),
         "the latch must absorb the second press"
     );
-    assert_eq!(ui.composer.buffer(), "a", "the key is ordinary typing again");
+    assert_eq!(
+        ui.composer.buffer(),
+        "a",
+        "the key is ordinary typing again"
+    );
 }
 
 /// With no dialog pending, a submission is still a prompt — the sidecar path

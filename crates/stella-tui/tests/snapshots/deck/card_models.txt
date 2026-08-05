@@ -17,24 +17,24 @@
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│Refactor the automations store into a shared workspace package                                                                                                │
-│3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
-│type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
-│                                                                                                                                                              │
-│                                           ┌ models  resolved routing ───────────────────────────────── esc close ┐                                           │
-│                                           │session   glm-5.2                                                     │                                           │
-└───────────────────────────────────────────│auto      model off · effort on · thinking off                        │───────────────────────────────────────────┘
-┌ transcript · 21 lines · following ────────│                                                                      │───┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                           │lead      zai/glm-5.2-air                                             │   ││Refactor the automations store into a…│
-│● read_file    apps/app/automations/page.ts│          medium · thinking on · from default_model                   │   ││○ 1 extract types                     │
-│  ⎿ 312 lines                              │think     z-ai/glm-5.2                                    unassigned  │2ms││○ 2 move hooks                        │
-│                                           │          low · thinking off · from agents.triage.model               │   ││○ 3 update 9 imports                  │
-│☰  plan  5/7  ·  Workflows canvas          │work      zai/glm-5.2-air                                     served  │   ││                                      │
-│                                           │          medium · thinking on · from default_model                   │   │└────────────────────── /plan reads it ┘
-│⏸ plan  Refactor the automations store into│verify    anthropic/claude-opus-5                         unassigned  │   │┌ DONE VERIFICATION ───────────────────┐
-│                                           │          high  (effort_auto replaced "max") · thinking on            │   ││● flip ✓ red→green                    │
+└──────────────────────────────────────────┌ plan review ───────────────────────────────────────────────────────────┐──────────────────────────────────────────┘
+┌ transcript · 21 lines · following ───────│Refactor the automations store into a shared workspace package          │──┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│                                          │                                                                        │  ││Refactor the automations store into a…│
+│  Planning the automations cluster: list, │ ○  1. extract types                                                    │  ││○ 1. extract types                    │
+│                                          │ ○  2. move hooks                                                       │  ││○ 2. move hooks                       │
+│☰  plan  4/7  ·  Wire the triggers API    │ ○  3. update 9 imports                                                 │  ││○ 3. update 9 imports                 │
+│                                          │┌ models  resolved routing ───────────────────────────────── esc close ┐│  ││                                      │
+│── WITNESS ───────────────────────────────││session   glm-5.2                                                     ││──││                                      │
+│                                          ││auto      model off · effort on · thinking off                        ││  ││                                      │
+│── EXECUTE ───────────────────────────────││                                                                      ││──││                                      │
+│                                          └│lead      zai/glm-5.2-air                                             │┘  ││                                      │
+│● read_file    apps/app/automations/page.ts│          medium · thinking on · from default_model                   │   │└────────────────────── /plan reads it ┘
+│  ⎿ 312 lines                              │think     z-ai/glm-5.2                                    unassigned  │2ms│┌ DONE VERIFICATION ───────────────────┐
+│                                           │          low · thinking off · from agents.triage.model               │   ││○ warrant  pending                    │
+│☰  plan  5/7  ·  Workflows canvas          │work      zai/glm-5.2-air                                     served  │   ││● witness  authored  apps/app/automat…│
+│                                           │          medium · thinking on · from default_model                   │   ││● oracle   ✗ fails on base → ✓ passes…│
+│⏸ plan  Refactor the automations store into│verify    anthropic/claude-opus-5                         unassigned  │   ││○ tamper   pinned  sha256:9f3c1d2e4…  │
+│                                           │          high  (effort_auto replaced "max") · thinking on            │   ││○ verdict  pending                    │
 └───────────────────────────────────────────│          from pipeline_verifier_model                                │an ┘└──────────────────────────────────────┘
 ────────────────────────────────────────────└──────────────────────────────────────────────────────────────────────┘────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package

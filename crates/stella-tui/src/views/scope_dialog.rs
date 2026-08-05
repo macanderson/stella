@@ -94,10 +94,7 @@ pub(crate) fn render(proposal: &ScopeProposal, note: Option<&str>, area: Rect, b
         lines.push(Line::from(vec![
             Span::styled(format!(" {glyph} ", glyph = v.glyph), v.ring),
             Span::styled(format!("{:>2}. ", i + 1), v.num),
-            Span::styled(
-                truncate_cols(step, inner_w.saturating_sub(8)),
-                v.text,
-            ),
+            Span::styled(truncate_cols(step, inner_w.saturating_sub(8)), v.text),
         ]));
     }
     if folded > 0 {
@@ -125,8 +122,7 @@ pub(crate) fn render(proposal: &ScopeProposal, note: Option<&str>, area: Rect, b
             let key = |k: &'static str, color| {
                 Span::styled(k, Style::new().fg(color).add_modifier(Modifier::BOLD))
             };
-            let word =
-                |t: &'static str| Span::styled(t, Style::new().fg(theme::TEXT_SECONDARY));
+            let word = |t: &'static str| Span::styled(t, Style::new().fg(theme::TEXT_SECONDARY));
             lines.push(Line::from(vec![
                 key("a", theme::OK),
                 word(" approve    "),
@@ -187,9 +183,7 @@ pub(crate) fn render(proposal: &ScopeProposal, note: Option<&str>, area: Rect, b
             ))
             .right_aligned(),
         );
-    Paragraph::new(lines)
-        .block(block)
-        .render(popup, buf);
+    Paragraph::new(lines).block(block).render(popup, buf);
 }
 
 #[cfg(test)]

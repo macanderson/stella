@@ -7,7 +7,11 @@ use super::*;
 
 /// One key while the editor popup is open. Modal: the popup owns the keyboard
 /// until Esc (or emptiness) closes it.
-pub(super) fn handle_queue_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
+pub(super) fn handle_queue_key(
+    key: KeyEvent,
+    model: &WorkspaceModel,
+    ui: &mut DeckUi,
+) -> DeckAction {
     let count = model.queue.pending();
     if count == 0 {
         // Nothing left to edit — any key just closes the popup.

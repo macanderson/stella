@@ -345,14 +345,14 @@ fn run_deck_paints_folds_resizes_and_restores_under_a_real_pty() {
     deck.wait_for("a repaint after resize", |d| d.raw_len() > before);
 
     // The scenario's LAST event is a scope review on the focused agent, and
-    // a pending gate owns the submit — anything typed before it is answered
-    // would be swallowed as the gate's answer. Wait for the card, answer it:
+    // the plan-review dialog owns the keyboard while it is pending. Wait for
+    // the dialog, answer it with the single keypress it advertises:
     // submissions channel → demo reactor → `scope decision: Approve` echoed
     // back over the inbound lane. The full user→engine→user round trip.
-    deck.wait_for("the scope-review gate", |d| {
+    deck.wait_for("the plan-review dialog", |d| {
         d.painted().contains("Refactortheautomationsstore")
     });
-    deck.send(b"approve\r");
+    deck.send(b"a");
     deck.wait_for("the gate answer round trip", |d| {
         d.painted().contains("scopedecision:Approve")
     });
@@ -447,12 +447,12 @@ fn the_accessible_deck_runs_inline_answers_input_and_never_takes_the_screen() {
     deck.wait_for("a repaint after resize", |d| d.raw_len() > before);
 
     // Input still round-trips: the scenario's last event is a scope-review
-    // gate, and answering it goes composer → submissions → demo reactor →
-    // inbound lane → fold → paint.
-    deck.wait_for("the scope-review gate", |d| {
+    // gate, and its one-keypress answer goes key → submissions → demo
+    // reactor → inbound lane → fold → paint.
+    deck.wait_for("the plan-review dialog", |d| {
         d.painted().contains("Refactortheautomationsstore")
     });
-    deck.send(b"approve\r");
+    deck.send(b"a");
     deck.wait_for("the gate answer round trip", |d| {
         d.painted().contains("scopedecision:Approve")
     });

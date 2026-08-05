@@ -174,6 +174,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             render_inspect_overlay(ui, area, b)
         });
     }
+    // The plan-review dialog: modal while the focused agent's scope gate is
+    // pending and unanswered — it is the surface that halts the session.
+    // Below the cards on purpose: raising `/plan` over it is how a reviewer
+    // reads the envelope detail before deciding (Esc lowers the card and the
+    // dialog is back on top).
+    if let Some(proposal) = views::scope_dialog::pending(model, ui) {
+        guarded_overlay(buf, area, "plan review", |b| {
+            views::scope_dialog::render(proposal, ui.scope_note.as_deref(), area, b)
+        });
+    }
     // The floating cards (`/plan` · `/models` · `/budget`): at most one is up
     // (`CardState::raise` lowers the rest); help and the startup notice still
     // win the top of the stack below.
@@ -193,15 +203,6 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
-
-    // The plan-review dialog: modal while the focused agent's scope gate is
-    // pending and unanswered. Above the cards (it is the surface that halts
-    // the session), below the notice and help.
-    if let Some(proposal) = views::scope_dialog::pending(model, ui) {
-        guarded_overlay(buf, area, "plan review", |b| {
-            views::scope_dialog::render(proposal, ui.scope_note.as_deref(), area, b)
-        });
-    }
 
     // Startup system notifications: a transient dialog over the deck, drawn
     // last but one so help — which the user asked for — still wins the top.
@@ -1349,19 +1350,18 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ("←", "SESSIONS overlay — every session on this machine"),
             ("→", "CONTEXT overlay — active skills + MCP servers"),
             ("ctrl-g", "INSPECT — the context sent on any recorded call"),
-            // The overlay had no row for answering a card at all, while the
-            // global `⏎` row below promised the prompt would "run as its own
-            // agent" — so a reviewer typing at a scope card had every reason to
-            // expect the sidecar they got. Both halves are documented now.
             (
                 "a / t / x",
-                "scope card: approve · trim · abort — type it, then ⏎",
+                "plan review: approve · trim · abort — one keypress decides",
             ),
             (
-                "text ⏎",
-                "scope card: what to change — the plan is re-planned from it",
+                "r",
+                "plan review: refine — type what to change, ⏎ re-plans from it",
             ),
-            ("esc", "scope card: abort it (the one key that acts alone)"),
+            (
+                "esc",
+                "plan review: abort (from the refine input: back out)",
+            ),
         ],
         DeckTab::Agents => &[
             ("← →", "switch panes — executions / installed"),

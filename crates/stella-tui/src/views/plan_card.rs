@@ -39,7 +39,7 @@ use stella_protocol::ScopeProposal;
 
 use crate::deck::{AgentEntry, PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
-use crate::plan::{Plan, PlanState, PlanStepState};
+use crate::plan::{Plan, PlanState};
 use crate::theme;
 use crate::views::cards;
 
