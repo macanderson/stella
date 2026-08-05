@@ -51,6 +51,12 @@ pub(crate) const TOOL_CALL_SCAN_WINDOW: usize = 10_000;
 /// the stream enormous.
 pub(crate) const MAX_RUNNING_CALLS: usize = 200;
 
+/// Char cap on one transcript body in the default
+/// [`Observatory::execution_journal`] payload. A single `read_file` result
+/// can be megabytes; the drawer needs the shape of the turn, not the bytes,
+/// and `?full=1` is the escape hatch for the reader who wants them.
+pub(crate) const JOURNAL_BODY_CLIP: usize = 4_000;
+
 /// Everything that can go wrong serving observatory data.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -348,6 +354,52 @@ impl Observatory {
             reflection
         };
         Ok(out)
+    }
+
+    /// One execution's transcript, replayed from its slice of the `events`
+    /// journal (#1461): the answer text, reasoning and tool traffic the
+    /// telemetry projections deliberately do not carry.
+    ///
+    /// This is the second sanctioned read of `events` (after
+    /// [`recall_timings`]) and it obeys the same bargain: the filter is
+    /// `execution_id`-first, which the store's `UNIQUE (execution_id, seq)`
+    /// index serves directly, and the route is fetched once on drawer-open —
+    /// never on the 5 s poll. A cross-execution transcript view would need a
+    /// projection, not a wider `WHERE`.
+    ///
+    /// `text_delta` rows never appear: the journal's `text` event is the
+    /// authoritative full answer and the deltas are a live-preview artifact.
+    /// Most stores hold none (the journal drops them at write time), but the
+    /// filter is contract, not assumption. Bodies are clipped to
+    /// [`JOURNAL_BODY_CLIP`] chars unless `full`; a clipped entry says so
+    /// (`truncated: true`) instead of presenting the elision as the data.
+    pub fn execution_journal(&self, id: i64, full: bool) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(Value::Array(Vec::new()));
+        };
+        let rows = collect_rows_for(
+            &conn,
+            id,
+            "SELECT seq, ts, event_type, payload
+             FROM events
+             WHERE execution_id = ?1
+               AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
+                                  'tool_result', 'speculation_discarded')
+             ORDER BY seq ASC",
+            |r| {
+                Ok(json!({
+                    "seq": r.get::<_, i64>(0)?,
+                    "ts": r.get::<_, String>(1)?,
+                    "type": r.get::<_, String>(2)?,
+                    "payload": r.get::<_, String>(3)?,
+                }))
+            },
+        )?;
+        Ok(Value::Array(
+            rows.into_iter()
+                .map(|row| journal_entry(row, full))
+                .collect(),
+        ))
     }
 
     /// Per-(provider, model) usage — the same rows `stella stats` prints,
@@ -942,6 +994,76 @@ fn recall_timings(conn: &Connection, execution_id: i64) -> Result<Vec<Value>, Db
             }))
         },
     )
+}
+
+/// Shape one raw `events` row into the transcript entry the drawer renders.
+///
+/// The payload is the internally-tagged `AgentEvent` JSON the store
+/// persisted (`{"type":"text","delta":…}`). Only the fields the transcript
+/// needs are lifted out, keyed by the row's own `event_type` column. A
+/// payload that no longer parses (a hand-edited store, a variant this binary
+/// predates) keeps its seq/type header with no body rather than erroring —
+/// one unreadable row must not blank the transcript around it.
+fn journal_entry(row: Value, full: bool) -> Value {
+    let ty = row["type"].as_str().unwrap_or("").to_owned();
+    let payload: Value = row["payload"]
+        .as_str()
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or(Value::Null);
+    let mut out = json!({
+        "seq": row["seq"],
+        "ts": row["ts"],
+        "type": ty,
+    });
+    if payload.is_null() {
+        return out;
+    }
+    match ty.as_str() {
+        "stage" => {
+            out["label"] = payload["name"].clone();
+        }
+        "text" | "reasoning" => {
+            set_journal_body(&mut out, payload["delta"].as_str().unwrap_or(""), full);
+        }
+        "tool_start" => {
+            out["call_id"] = payload["call"]["call_id"].clone();
+            out["name"] = payload["call"]["name"].clone();
+            let args = serde_json::to_string_pretty(&payload["call"]["input"]).unwrap_or_default();
+            set_journal_body(&mut out, &args, full);
+        }
+        "tool_result" => {
+            out["call_id"] = payload["call_id"].clone();
+            out["duration_ms"] = payload["duration_ms"].clone();
+            out["speculated"] = json!(payload["speculated"].as_bool().unwrap_or(false));
+            // `ToolOutput` is externally tagged: `{"ok":{"content":…}}` or
+            // `{"error":{"message":…}}` — the tag is the ok/failed verdict.
+            out["ok"] = json!(!payload["output"]["ok"].is_null());
+            let body = payload["output"]["ok"]["content"]
+                .as_str()
+                .or_else(|| payload["output"]["error"]["message"].as_str())
+                .unwrap_or("");
+            set_journal_body(&mut out, body, full);
+        }
+        "speculation_discarded" => {
+            out["call_id"] = payload["call_id"].clone();
+            out["name"] = payload["name"].clone();
+            out["reason"] = payload["reason"].clone();
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Attach `body` to a transcript entry, clipped to [`JOURNAL_BODY_CLIP`]
+/// unless `full`, and record which of the two happened.
+fn set_journal_body(entry: &mut Value, body: &str, full: bool) {
+    let clipped = !full && body.chars().count() > JOURNAL_BODY_CLIP;
+    entry["body"] = if clipped {
+        json!(truncate(body.to_owned(), JOURNAL_BODY_CLIP))
+    } else {
+        json!(body)
+    };
+    entry["truncated"] = json!(clipped);
 }
 
 /// The promoted-rules query, shared by [`Observatory::rules`] and

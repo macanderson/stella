@@ -88,6 +88,7 @@ use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::coverage::DiffCoverage;
+use crate::verify::diff_render::DiffContext;
 use crate::verify::{
     FlipOracle, LadderDecision, LadderInputs, Verdict as ModelVerifierVerdict,
     deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
@@ -1385,7 +1386,7 @@ impl<'a> Pipeline<'a> {
                 RawCall {
                     role: ModelCallRole::Triage,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(triage_prompt(goal))],
+                    messages: triage_prompt(goal).into_messages(),
                     policy: RetryPolicy::deterministic(),
                     overrides: &self.config.role_overrides.triage,
                     timeout: Some(self.config.triage_latency_ceiling),
@@ -2664,6 +2665,14 @@ impl<'a> Pipeline<'a> {
                                 goal,
                                 &stripped.diff,
                                 &evidence.summary,
+                                // Guidance never carries a delta baseline: its
+                                // render is already evidence-scoped (#1432),
+                                // and "unchanged since a verdict round" is a
+                                // verdict-shaped claim.
+                                &DiffContext {
+                                    witness_paths: &witness_paths,
+                                    previous: None,
+                                },
                                 budget,
                                 total,
                             )
@@ -2869,6 +2878,13 @@ impl<'a> Pipeline<'a> {
                             }
                         },
                     };
+                    if !verdict.heuristic {
+                        // The delta-framing baseline (#1431) advances only on
+                        // a verdict a model actually answered: a heuristic
+                        // fallback read nothing, and must not let the next
+                        // round stat-line text no model ever saw.
+                        state.last_verdict_diff = Some(state.diff_text.clone());
+                    }
                     let mut evidence = model_verdict_evidence(&verdict);
                     evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));
                     self.emit(AgentEvent::Verdict {
