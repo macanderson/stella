@@ -1,6 +1,6 @@
 # scripts/experiments — settle a claim instead of arguing it
 
-These exist because `docs/design/file-budget.md` shipped with several confident
+These exist because `docs/spec/file-budget.md` shipped with several confident
 mechanism claims that nobody had measured. When they were measured, **two of the
 most confidently stated ones turned out to be wrong** while the document's
 conclusion survived. That is the pattern these scripts exist to make cheap:
@@ -69,7 +69,7 @@ method, confounds handled, usage — then make the verdict a function of the dat
 with an explicit underpowered branch. If you cannot write down what result would
 change your mind, the experiment is not ready to write.
 
-The open one is in `docs/design/file-budget.md` §12.2: **does file size actually
+The open one is in `docs/spec/file-budget.md` §12.2: **does file size actually
 cause merge conflicts?** Git merges by hunk, not by file, so two agents editing
 distant regions of one 4,000-line file may never collide — in which case §1.3 is
 wrong and should be deleted rather than defended.

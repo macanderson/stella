@@ -1,3 +1,9 @@
+---
+id: file-budget
+title: "File budget, module boundaries, and test placement — a limit an agent cannot quietly exceed"
+status: proposed
+---
+
 # File budget, module boundaries, and test placement — a limit an agent cannot quietly exceed
 
 **Status:** **Proposed.** Supersedes the ratchet in `scripts/check-file-size.sh`

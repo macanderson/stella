@@ -2,7 +2,7 @@
 """EXP-3 — Do files grow monotonically, and do large files grow FASTER?
 
 WHY THIS EXPERIMENT EXISTS: EXP-2 refuted the stated mechanism in
-docs/design/file-budget.md §1.4 ("agents append"). Edits are spread roughly
+docs/spec/file-budget.md §1.4 ("agents append"). Edits are spread roughly
 uniformly through the file. But files clearly DID get large, so some mechanism
 produced that. This measures the growth process directly instead of inferring
 it.

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """EXP-1 — What does an edit actually COST, as a function of file size?
 
-This is the experiment that should set the budget numbers. docs/design/
-file-budget.md §5.2 picked 400/600/800 by reasoning about token cost; §12.1
-admitted they were argued rather than measured. This measures them.
+This is the experiment that should set the budget numbers.
+docs/spec/file-budget.md §5.2 picked 400/600/800 by reasoning about token
+cost; §12.1 admitted they were argued rather than measured. This measures them.
 
 CLAIM (§1.1): "An agent changing three lines in command_deck.rs must first read
 command_deck.rs: roughly 60,000 tokens to change three lines."

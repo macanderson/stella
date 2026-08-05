@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """EXP-2 — Do agents append?
 
-CLAIM (docs/design/file-budget.md §1.4): "Asked to add a feature, an agent adds
+CLAIM (docs/spec/file-budget.md §1.4): "Asked to add a feature, an agent adds
 code at the end. It will not restructure." If true, unbounded growth is the
 DEFAULT trajectory of agent-authored code rather than an accident — which is the
 whole argument for a mechanical forcing function instead of a guideline.
