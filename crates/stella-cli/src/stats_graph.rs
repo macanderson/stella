@@ -44,14 +44,15 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::stats::StatsFormat;
+use crate::query_format::{StatsFormat, Versioned};
 use stella_store::Store;
 
 /// Flags for `stella stats graph`.
 #[derive(clap::Args, Debug, Clone)]
 pub struct GraphArgs {
-    /// Output format: table (default), json, or csv
-    #[arg(long, value_enum, default_value = "table")]
+    /// Output format: text (aligned table, default), json under the
+    /// versioned query envelope, or csv
+    #[arg(long, value_enum, default_value = "text")]
     pub format: StatsFormat,
 
     /// How many recent graph_query answers to classify, per workspace
@@ -837,10 +838,10 @@ pub fn run_stats_graph(args: &GraphArgs) -> Result<(), String> {
     let baseline = read_baseline(baseline_path)?;
     let cmp = compare(&baseline, &health);
     match args.format {
-        StatsFormat::Table => print!("{}", render_comparison_table(&cmp)),
+        StatsFormat::Text => print!("{}", render_comparison_table(&cmp)),
         StatsFormat::Json => println!(
             "{}",
-            serde_json::to_string_pretty(&cmp).map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&Versioned::new(&cmp)).map_err(|e| e.to_string())?
         ),
         StatsFormat::Csv => print!("{}", render_comparison_csv(&cmp)),
     }
@@ -856,7 +857,7 @@ pub fn run_stats_graph(args: &GraphArgs) -> Result<(), String> {
 
 fn render_report(format: StatsFormat, health: &GraphHealth) -> Result<(), String> {
     match format {
-        StatsFormat::Table => {
+        StatsFormat::Text => {
             if health.total.calls == 0 {
                 println!(
                     "no graph_query calls recorded in {} yet — adoption is {} of {} \
@@ -875,7 +876,7 @@ fn render_report(format: StatsFormat, health: &GraphHealth) -> Result<(), String
         }
         StatsFormat::Json => println!(
             "{}",
-            serde_json::to_string_pretty(health).map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&Versioned::new(health)).map_err(|e| e.to_string())?
         ),
         StatsFormat::Csv => print!("{}", render_graph_csv(health)),
     }

@@ -556,7 +556,7 @@ fn an_explicit_workspace_without_telemetry_is_an_error_not_a_zero() {
     std::fs::create_dir_all(&empty).unwrap();
 
     let args = GraphArgs {
-        format: StatsFormat::Table,
+        format: StatsFormat::Text,
         limit: 500,
         workspace: vec![empty.clone()],
         scan: None,
@@ -583,7 +583,7 @@ fn an_explicit_workspace_without_telemetry_is_an_error_not_a_zero() {
 fn scanning_a_tree_with_no_workspaces_is_an_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     let args = GraphArgs {
-        format: StatsFormat::Table,
+        format: StatsFormat::Text,
         limit: 500,
         workspace: vec![],
         scan: Some(dir.path().to_path_buf()),

@@ -153,6 +153,28 @@ stella run --output-format json "…" | jq -e '
 
 Key order is not part of the contract — read by key, never by position.
 
+### Query commands version their JSON too
+
+The read-only query commands — `stats`, `stats graph`, `usage report`, `inspect`,
+`calibration`, `memory list`, `context list|validate` — take `--format json` (their
+human rendering is `--format text`, the default) and wrap their JSON in the **query
+envelope**: `schema_version` first, then the payload. Array reports put their rows
+under a `rows` key; object reports keep their own keys after the version. It is **1**
+today, versions independently of the turn envelope above, and bumps by the same rules
+(never for an added key).
+
+```bash
+# Rows ride under `rows`
+stella stats --format json | jq '.rows[] | {model, total_cost_usd}'
+
+# Object reports keep their keys — the version is just the first one
+stella inspect 42 --step 3 --format json | jq '{schema_version, verified}'
+```
+
+The one exemption is `stella scripts list --format json`: its frame is shared
+byte-for-byte with the `list_scripts` tool and carries its own `schema_version`,
+pinned by the scripts-index spec.
+
 ## Configure via environment
 
 Every core global flag has an environment variable, so a CI job can be configured without

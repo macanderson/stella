@@ -78,6 +78,7 @@ mod profile;
 // Phase 3 (#714): the adaptive-context proposal review surface.
 mod prompt_source;
 mod proposals_cmd;
+mod query_format;
 mod rules;
 mod runtime;
 mod scripts_cmd;

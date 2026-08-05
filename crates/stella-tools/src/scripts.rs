@@ -365,7 +365,7 @@ impl ScriptIndex {
         s.trim_end().to_string()
     }
 
-    /// The machine frame (`stella scripts list --json`), schema_version 2
+    /// The machine frame (`stella scripts list --format json`), schema_version 2
     /// (2 = the `check` verb joined the set) — shape pinned by
     /// `docs/spec/scripts-index.md`.
     pub fn to_json(&self) -> Value {

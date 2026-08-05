@@ -157,9 +157,10 @@ cap and re-run, or see [Work within a budget](/docs/guides/budget).
 
 ## Confirming it, afterwards
 
-`monitor` renders human-readable text and does **not** honor
-`--output-format` — it is an interactive mode. So the confirmation is the same
-one anybody else on your team would use:
+`monitor` renders human-readable text and does **not** take
+`--output-format` (it is an interactive mode; passing the flag is a parse
+error). So the confirmation is the same one anybody else on your team would
+use:
 
 ```bash
 gh pr checks 128
@@ -168,7 +169,7 @@ gh pr checks 128
 Then read what it cost you:
 
 ```bash
-stella stats --format table
+stella stats --format text
 ```
 
 <Callout type="info">

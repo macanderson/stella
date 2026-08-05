@@ -77,6 +77,8 @@ use stella_store::{Reconstruction, RecordedCall, Store};
 
 use diff::{Diff, Op};
 
+use crate::query_format::{QueryFormat, Rows, Versioned};
+
 /// How much of a message body the text format prints before eliding. The whole
 /// point of this command is seeing the real bytes, so the cap is generous and
 /// `--full` removes it entirely.
@@ -84,14 +86,6 @@ const DEFAULT_BODY_LIMIT: usize = 4_000;
 
 /// Prompt preview width in the execution index.
 const PROMPT_PREVIEW: usize = 68;
-
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum InspectFormat {
-    /// Human-readable, role-delimited transcript.
-    Text,
-    /// The reconstructed messages plus the verification verdict, as JSON.
-    Json,
-}
 
 /// Which earlier state `--diff` compares this call against. See the module
 /// docs for why `Prev` is same-role and why `Prompt` is the right answer for a
@@ -152,7 +146,7 @@ pub(crate) struct InspectArgs {
     pub(crate) turn: u32,
     pub(crate) step: Option<u64>,
     pub(crate) call_seq: u64,
-    pub(crate) format: InspectFormat,
+    pub(crate) format: QueryFormat,
     pub(crate) full: bool,
     pub(crate) diff: Option<DiffBase>,
     pub(crate) context: usize,
@@ -197,7 +191,7 @@ pub(crate) fn run_inspect(args: &InspectArgs) -> Result<(), String> {
 ///    still reaches it), plus the reverts in the git history (a human saying
 ///    "this was wrong", the source #1293 added).
 /// 3. Settle what the key can reach, and leave the rest unreconciled.
-pub(crate) fn run_calibration(format: InspectFormat) -> Result<(), String> {
+pub(crate) fn run_calibration(format: QueryFormat) -> Result<(), String> {
     use stella_pipeline::replay::ground_truth::{GroundTruth, reconcile};
 
     let store = open_readonly_store()?;
@@ -224,8 +218,8 @@ pub(crate) fn run_calibration(format: InspectFormat) -> Result<(), String> {
         truth = truth.with_stream(&events);
     }
     let settled_late = reconcile(&mut total, &pending, &truth);
-    if matches!(format, InspectFormat::Json) {
-        return print_json(&serde_json::json!({
+    if matches!(format, QueryFormat::Json) {
+        return print_json(&Versioned::new(serde_json::json!({
             "sessions": sessions.len(),
             "verifier_passes": total.verifier_passes,
             "verifier_reconciled": total.verifier_reconciled,
@@ -249,7 +243,7 @@ pub(crate) fn run_calibration(format: InspectFormat) -> Result<(), String> {
             "unreconciled_passes": pending.len() as u32 - settled_late,
             "verifier_reverted": total.verifier_reverted,
             "deterministic_reverted": total.deterministic_reverted,
-        }));
+        })));
     }
     println!(
         "{} session(s) with recorded events\n{}\n  \
@@ -312,12 +306,13 @@ fn open_readonly_store() -> Result<Store, String> {
     Store::open(&workspace_root).map_err(|e| format!("cannot open local store: {e}"))
 }
 
-fn list_executions(store: &Store, format: InspectFormat) -> Result<(), String> {
+fn list_executions(store: &Store, format: QueryFormat) -> Result<(), String> {
     let rows = store
         .inspectable_executions(40)
         .map_err(|e| format!("cannot read receipts: {e}"))?;
-    if matches!(format, InspectFormat::Json) {
-        return print_json(&rows.iter().map(execution_json).collect::<Vec<_>>());
+    if matches!(format, QueryFormat::Json) {
+        let rows: Vec<_> = rows.iter().map(execution_json).collect();
+        return print_json(&Rows::new(&rows));
     }
     if rows.is_empty() {
         println!(
@@ -341,12 +336,13 @@ fn list_executions(store: &Store, format: InspectFormat) -> Result<(), String> {
     Ok(())
 }
 
-fn list_calls(store: &Store, execution_id: i64, format: InspectFormat) -> Result<(), String> {
+fn list_calls(store: &Store, execution_id: i64, format: QueryFormat) -> Result<(), String> {
     let calls = store
         .recorded_calls(execution_id)
         .map_err(|e| format!("cannot read receipts: {e}"))?;
-    if matches!(format, InspectFormat::Json) {
-        return print_json(&calls.iter().map(call_json).collect::<Vec<_>>());
+    if matches!(format, QueryFormat::Json) {
+        let rows: Vec<_> = calls.iter().map(call_json).collect();
+        return print_json(&Rows::new(&rows));
     }
     if calls.is_empty() {
         println!("Execution {execution_id} has no recorded receipts.");
@@ -397,7 +393,7 @@ fn show_call(
     turn: u32,
     step: u64,
     call_seq: u64,
-    format: InspectFormat,
+    format: QueryFormat,
     full: bool,
 ) -> Result<(), String> {
     let recon = store
@@ -410,8 +406,8 @@ fn show_call(
         ));
     }
     match format {
-        InspectFormat::Json => print_json(&reconstruction_json(&recon)),
-        InspectFormat::Text => {
+        QueryFormat::Json => print_json(&Versioned::new(reconstruction_json(&recon))),
+        QueryFormat::Text => {
             print_reconstruction(&recon, execution_id, turn, step, call_seq, full);
             Ok(())
         }
@@ -528,8 +524,13 @@ fn show_diff(
 
     let target_label = target.label(execution_id);
     match args.format {
-        InspectFormat::Json => print_json(&diff_json(&computed, &baseline, &target_label, args)),
-        InspectFormat::Text => {
+        QueryFormat::Json => print_json(&Versioned::new(diff_json(
+            &computed,
+            &baseline,
+            &target_label,
+            args,
+        ))),
+        QueryFormat::Text => {
             print_diff(&computed, &baseline, &target_label, args);
             Ok(())
         }

@@ -20,8 +20,8 @@ stella context review [--all]
 stella context keep <candidate> [--enforce]
 stella context edit <candidate> --statement <text> [--enforce]
 stella context ignore <candidate> [--reason <why>] [--cooldown <ISO-8601>]
-stella context list [--json]
-stella context validate [--json]
+stella context list [--format <text|json>]
+stella context validate [--format <text|json>]
 stella context explain <rule>
 stella context propose <rule> [--commit]
 ```
@@ -80,7 +80,7 @@ again.
 Supply `--reason`. A decline with no reason is evidence nobody can act on later,
 including you.
 
-### `stella context list [--json]`
+### `stella context list [--format <text|json>]`
 
 What currently steers this workspace: every loaded record, its handle, its
 force, and whether it actually blocks anything.
@@ -120,7 +120,7 @@ by relevance.
   </OptionCard>
 </CardGrid>
 
-### `stella context validate [--json]`
+### `stella context validate [--format <text|json>]`
 
 Re-run every claim's truth probe now and report the result, plus every
 validation finding and every equal-precedence conflict. It **exits non-zero when

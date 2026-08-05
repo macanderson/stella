@@ -175,7 +175,7 @@ export DEEPSEEK_API_KEY="sk-..."   # worker and triage
 export ZAI_API_KEY="..."           # verifier
 
 stella --budget 0.25 run "add docstrings to every public function in src/api/"
-stella stats --format table
+stella stats --format text
 ```
 
 DeepSeek and Z.ai both drop `effort` on the wire, so the `effort` lines above record
