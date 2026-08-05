@@ -25,6 +25,14 @@ labelled as such rather than presented as an invoice.
 lesson of the paragraph above: a plausible wrong figure populates a column,
 sorts against the other arm, and crowns a winner on a dimension nobody
 measured. Missing is strictly better than wrong here.
+
+**A recorded model id cannot say which route served it.** The same model is
+launched under different spellings depending on how the seat is routed
+(``agents.launch_model`` hands a directly-routed seat the bare id and every
+other seat the qualified one), so route attribution comes only from the launch
+record the runner writes beside each job — :func:`price_for_route` — and every
+id read back from a trajectory or event stream collapses to one bare id and
+one gateway rate.
 """
 
 from __future__ import annotations
@@ -35,7 +43,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-__all__ = ["PRICES", "Price", "load_overrides", "price_for", "trial_cost"]
+__all__ = [
+    "PRICES",
+    "Price",
+    "load_overrides",
+    "price_for",
+    "price_for_route",
+    "trial_cost",
+]
 
 
 @dataclass(frozen=True)
@@ -59,29 +74,40 @@ class Price:
         }
 
 
-#: Published list prices, USD per million tokens.
+#: Published list prices, USD per million tokens, keyed two ways.
 #:
-#: Keyed by the provider's own model id with any routing prefix removed, so
-#: ``openrouter/z-ai/glm-5.2``, ``z-ai/glm-5.2`` and ``glm-5.2`` all resolve to
-#: one entry. Verified against OpenRouter's ``/models`` on 2026-08-04; that
-#: endpoint is the source of truth for these numbers and re-checking it is the
-#: way to refresh them.
+#: **Bare ids carry the gateway rate.** ``openrouter/z-ai/glm-5.2``,
+#: ``z-ai/glm-5.2`` and ``glm-5.2`` all resolve to the one ``glm-5.2`` entry,
+#: priced as OpenRouter publishes it (verified against its ``/models`` on
+#: 2026-08-04; that endpoint is the source of truth for the bare tier and
+#: re-checking it is the way to refresh it). The collapse is deliberate: a
+#: model id read back from a trial's artifacts cannot say which route served
+#: it, because a routed seat is launched with the bare model id and an
+#: unrouted one keeps its ``provider/`` prefix — inferring the route from the
+#: spelling would cost Claude Code at z.ai's rate and Stella at OpenRouter's
+#: in a match where both call the identical endpoint. Comparability is the
+#: whole product here, so an id of unknown route means one rate, and it is the
+#: higher published rate rather than a number that flatters whichever seat
+#: happened to be routed.
 #:
-#: **These are gateway rates, and the collapse is deliberate.** A model bought
-#: through OpenRouter and the same model bought from its own provider are two
-#: different rates: GLM-5.2 lists here at 0.76 in / 2.42 out / 0.14 cached, and
-#: at 0.60 / 2.20 / 0.11 direct from z.ai. Keying on the route would price the
-#: *seats of one match* differently, because a routed seat is launched with the
-#: bare model id and an unrouted one keeps its ``provider/`` prefix — Claude
-#: Code would be costed at z.ai's rate and Stella at OpenRouter's, in a match
-#: where both call the identical endpoint. Comparability is the whole product
-#: here, so one id means one rate, and the rate is the higher of the two rather
-#: than a number that flatters whichever seat happened to be routed.
+#: **Route-qualified ids carry a provider's own first-party rate** where it
+#: differs from the gateway's — GLM-5.2 is 0.60 in / 2.20 out / 0.11 cached
+#: direct from z.ai against 0.76 / 2.42 / 0.14 through OpenRouter. These rows
+#: are reachable only through :func:`price_for_route`, with the route the
+#: *seat recorded at launch* (the runner's ``<job>.seat.json``) — never by
+#: parsing a recorded model string, for the reason above. A seat that recorded
+#: no route prices at the bare tier, which errs against the seat rather than
+#: for it (#1498).
 #:
 #: Deliberately small. This is not a price oracle — it covers the models people
 #: actually seat here, and anything else reports no cost rather than a guess.
 PRICES: dict[str, Price] = {
     "glm-5.2": Price(input=0.76, output=2.42, cache_read=0.14),
+    # z.ai's own metered rate for the same model, as its pricing page and the
+    # Stella seed catalog (`crates/stella-model/src/catalog.rs`, the `zai`
+    # row) both carry it. The only family member with a distinct first-party
+    # rate: glm-5.1 and glm-4.5-air publish the same numbers on both routes.
+    "zai/glm-5.2": Price(input=0.60, output=2.20, cache_read=0.11),
     "glm-5.1": Price(input=0.966, output=3.036, cache_read=0.1794),
     "glm-5": Price(input=0.95, output=2.55, cache_read=0.20),
     "glm-5-turbo": Price(input=1.20, output=4.00, cache_read=0.24),
@@ -120,6 +146,12 @@ def load_overrides(path: str | Path | None = None) -> int:
     editing its source is one that quietly goes stale. The file is a flat
     ``{"model": {"input": 1.0, "output": 2.0, ...}}`` in USD per million
     tokens. Returns how many entries were applied.
+
+    A key lands on the tier it names, case aside: a bare id (``glm-5.2``)
+    overrides the gateway rate every recorded string falls to, and a
+    route-qualified id (``zai/glm-5.2``) overrides that route alone. No prefix
+    is stripped — with two tiers in one table, rewriting the operator's key
+    would silently move the override onto the wrong row.
     """
     target = Path(path) if path else Path(
         os.environ.get("ARENABENCH_PRICES", "") or Path.home() / ".arenabench" / "prices.json"
@@ -135,7 +167,7 @@ def load_overrides(path: str | Path | None = None) -> int:
         if not isinstance(entry, dict):
             continue
         try:
-            PRICES[_normalise(str(model))] = Price(
+            PRICES[str(model).strip().lower()] = Price(
                 input=float(entry["input"]),
                 output=float(entry["output"]),
                 cache_read=(
@@ -154,10 +186,35 @@ def load_overrides(path: str | Path | None = None) -> int:
 
 
 def price_for(model: str) -> Price | None:
-    """The published price for a model, or ``None`` if it is not known."""
+    """The published price for a recorded model id, or ``None`` if unknown.
+
+    Route-blind on purpose: the id collapses to its bare form and prices at
+    the gateway tier, however it was spelled. This is the right lookup for
+    every model string read back from a trial's artifacts — see the module
+    docstring for why those strings cannot carry route.
+    """
     if not model:
         return None
     return PRICES.get(_normalise(model))
+
+
+def price_for_route(qualified_model: str) -> Price | None:
+    """The price for a model on the route a seat *recorded at launch*.
+
+    ``qualified_model`` is the seat's own ``api/model`` string from the launch
+    record the runner writes beside each job — the one place the route is a
+    fact rather than an inference. An exact row for that route wins; a route
+    with no row of its own prices like any recorded id, at the gateway tier.
+
+    Never call this with a model string read back from a trajectory or event
+    stream: its spelling depends on how the seat was launched, not on which
+    endpoint served it, and pricing on it would cost the two seats of one
+    match from two different rows.
+    """
+    if not qualified_model:
+        return None
+    exact = PRICES.get(qualified_model.strip().lower())
+    return exact if exact is not None else price_for(qualified_model)
 
 
 def trial_cost(

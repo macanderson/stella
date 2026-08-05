@@ -23,6 +23,7 @@ from arenabench.telemetry import (
     TranscriptReader,
     TrialMetrics,
     aggregate,
+    seat_manifest_path,
 )
 
 # --------------------------------------------------------------------------
@@ -208,6 +209,81 @@ class TestMetrics:
         write_events(trial / "agent" / "stella-events.jsonl", [usage(cost_usd=1.0)])
         second = reader.read(trial, "fix-git")
         assert second.total_cost > first.total_cost
+
+    @staticmethod
+    def _seat_on_zai(tmp_path: Path, job: str, recorded_model: str) -> Path:
+        """A finished trial whose seat launched against z.ai first-party.
+
+        `recorded_model` is what Harbor wrote down, which differs by routing:
+        a directly-routed seat is launched (and recorded) as the bare id, an
+        unrouted one as the qualified id. The launch record beside the job
+        says what both spellings cannot — which route served the trial.
+        """
+        trial_dir = tmp_path / job / "t__1"
+        (trial_dir / "agent").mkdir(parents=True)
+        (trial_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "config": {"agent": {"model_name": recorded_model}},
+                    "verifier_result": {"reward": 1.0},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (trial_dir / "agent" / "trajectory.json").write_text(
+            json.dumps(
+                {
+                    "final_metrics": {
+                        "total_prompt_tokens": 1_000_000,
+                        "total_completion_tokens": 0,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        seat_manifest_path(trial_dir.parent).write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "contestant": job,
+                    "api": "zai",
+                    "model": "glm-5.2",
+                    "qualified_model": "zai/glm-5.2",
+                    "launch_model": recorded_model,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return trial_dir
+
+    def test_the_seats_launch_record_prices_the_route_it_actually_used(
+        self, tmp_path: Path
+    ):
+        """Two seats on the identical z.ai endpoint record different model
+        spellings — a directly-routed seat is launched with the bare id, an
+        unrouted one with the qualified id — so the recorded strings cannot
+        carry route, and pricing them route-blind billed a first-party seat
+        at the gateway's ~27%-higher rate (#1498). With the launch record,
+        both seats price at the rate of the endpoint they actually called,
+        and at the *same* rate as each other."""
+        routed = MetricsReader().read(self._seat_on_zai(tmp_path, "cc", "glm-5.2"), "t")
+        unrouted = MetricsReader().read(
+            self._seat_on_zai(tmp_path, "stella", "zai/glm-5.2"), "t"
+        )
+        # 1M uncached input tokens at z.ai's own 0.60/Mtok, not OpenRouter's 0.76.
+        assert routed.priced_cost == pytest.approx(0.60)
+        assert unrouted.priced_cost == pytest.approx(0.60)
+
+    def test_an_unpriced_route_falls_back_to_the_recorded_model(self, trial: Path):
+        """A launch record whose route has no price of its own must not slam
+        the door: the trial prices exactly as an archive without a record
+        does — from the recorded model ids, at the gateway tier."""
+        seat_manifest_path(trial.parent).write_text(
+            json.dumps({"schema": 1, "api": "acme", "qualified_model": "acme/mystery-1"}),
+            encoding="utf-8",
+        )
+        metrics = MetricsReader().read(trial, "fix-git")
+        assert metrics.priced_cost == pytest.approx(0.004538)
 
 
 

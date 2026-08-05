@@ -20,6 +20,13 @@ Per trial, Harbor and the agent leave:
     ATIF and *current* rather than final, so it is preferred wherever both
     speak — it is what makes a live transcript possible at all.
 
+Beside the trials, the *runner* leaves one artifact of its own per job:
+``<job>.seat.json``, the seat's launch record — which provider api and
+route-qualified model the job was actually launched against. It exists because
+no model id the agent or Harbor records can carry that fact (the launch
+spelling differs by route), and pricing needs it (#1498). A job without one —
+every archive predating the record — is read exactly as before.
+
 Two readers sit on top. :class:`MetricsReader` reduces a trial to the seven
 scoreboard dimensions and re-parses a file only when its size changes, so an
 idle dashboard costs ``stat()`` calls. :class:`TranscriptReader` keeps a byte
@@ -37,7 +44,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .pricing import price_for, trial_cost
+from .pricing import price_for, price_for_route, trial_cost
 
 __all__ = [
     "EVENTS_NAME",
@@ -48,11 +55,24 @@ __all__ = [
     "TrialMetrics",
     "aggregate",
     "leaders",
+    "seat_manifest_path",
 ]
 
 EVENTS_NAME = "agent/stella-events.jsonl"
 TRAJECTORY_NAME = "agent/trajectory.json"
 RESULT_NAME = "result.json"
+SEAT_MANIFEST_SUFFIX = ".seat.json"
+
+
+def seat_manifest_path(job_dir: Path) -> Path:
+    """Where the runner records a job's seat launch data.
+
+    A sibling of the job directory rather than a file inside it: Harbor owns
+    that tree's creation, and the record exists before Harbor has made
+    anything. Defined here, next to the reader, so the writer in ``runner.py``
+    and :class:`MetricsReader` can never disagree about the location.
+    """
+    return job_dir.with_name(job_dir.name + SEAT_MANIFEST_SUFFIX)
 
 #: A step that spent its entire output allowance and called no tool is the
 #: signature of output-cap truncation — the "zero-tool" failure class. Matched
@@ -284,6 +304,24 @@ class MetricsReader:
 
     def __init__(self) -> None:
         self._events: dict[Path, tuple[int, dict[str, Any]]] = {}
+        self._seats: dict[Path, dict[str, Any] | None] = {}
+
+    def _seat_route(self, trial_dir: Path) -> str:
+        """The route-qualified model this trial's seat was launched with.
+
+        ``""`` when the job has no launch record — every archive predating
+        it. Cached without invalidation: the record is written once, before
+        the job's first trial exists, so by the time this reader has a trial
+        directory to ask about, the record's presence and content are final.
+        """
+        try:
+            path = seat_manifest_path(trial_dir.parent)
+        except ValueError:
+            return ""
+        if path not in self._seats:
+            self._seats[path] = _load_json(path)
+        seat = self._seats[path]
+        return str(seat.get("qualified_model") or "") if seat else ""
 
     def _events_summary(self, path: Path) -> tuple[dict[str, Any] | None, float | None]:
         try:
@@ -390,21 +428,29 @@ class MetricsReader:
                 metrics.models = (*metrics.models, configured)
 
         # One table, both seats. See pricing.py for why self-reported cost is
-        # recorded but never compared. The configured seat model is tried first:
-        # a single process can log several roles' `step_usage` (verifier, triage)
+        # recorded but never compared. The seat's launch record outranks every
+        # model id read back from the artifacts: launch spelling varies with
+        # routing (a directly-routed seat is launched with the bare id), so
+        # only the record can say which route served the trial, and every
+        # recorded string prices route-blind at the gateway tier (#1498).
+        # Among the recorded ids the configured seat model is tried first: a
+        # single process can log several roles' `step_usage` (verifier, triage)
         # into one stream, so the stream's first-seen model may name a role
         # rather than the seat — pricing on that would mis-cost the whole trial.
-        for name in (configured, *metrics.models, ""):
-            price = price_for(name)
-            if price is not None:
-                metrics.priced_cost = trial_cost(
-                    price,
-                    tokens_in=metrics.tokens_in,
-                    tokens_out=metrics.tokens_out,
-                    cache_read=metrics.cache_read,
-                    cache_write=metrics.cache_write,
-                )
-                break
+        price = price_for_route(self._seat_route(trial_dir))
+        if price is None:
+            for name in (configured, *metrics.models):
+                price = price_for(name)
+                if price is not None:
+                    break
+        if price is not None:
+            metrics.priced_cost = trial_cost(
+                price,
+                tokens_in=metrics.tokens_in,
+                tokens_out=metrics.tokens_out,
+                cache_read=metrics.cache_read,
+                cache_write=metrics.cache_write,
+            )
 
         # A running trial has no finish timestamp, so wall clock has to come
         # from the events file's own span rather than from Harbor.

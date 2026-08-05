@@ -42,6 +42,7 @@ from arenabench.model import (
 )
 from arenabench.registry import DEFAULT_REGISTRY, Task, sample_tasks
 from arenabench.runner import ContestantRun, MatchRunner, _base_environment
+from arenabench.telemetry import seat_manifest_path
 
 # --------------------------------------------------------------------------
 # model
@@ -681,6 +682,56 @@ class TestOfflineTaskSource:
         command = self._launched_command(tmp_path, monkeypatch, export=False)
         assert "--dataset" in command and "--path" not in command
         assert command[command.index("--include-task-name") + 1] == "terminal-bench/alpha"
+
+
+class TestSeatLaunchRecord:
+    """`_launch` leaves the one artifact that can say which route a job used.
+
+    A directly-routed seat is launched with the bare model id, so nothing
+    Harbor records for it can be told apart from a gateway seat by spelling —
+    the record beside the job directory is what pricing reads instead (#1498).
+    """
+
+    def test_the_route_is_recorded_beside_the_job_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+
+        class _Fake:
+            def __init__(self, command, **kwargs):
+                self.returncode = None
+
+            def poll(self):
+                return None
+
+        monkeypatch.setattr("arenabench.runner.subprocess.Popen", _Fake)
+        spec = MatchSpec.from_json(
+            {
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["alpha"],
+                "contestants": [
+                    {
+                        "name": "cc",
+                        "agent": "claude-code",
+                        "engine": {
+                            "api": "zai",
+                            "model": "glm-5.2",
+                            "base_url": "https://api.z.ai/api/anthropic",
+                        },
+                    }
+                ],
+            }
+        )
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(spec)
+        run = runner._launch(match, spec.contestants[0])
+
+        record = json.loads(seat_manifest_path(run.job_dir).read_text(encoding="utf-8"))
+        # The two spellings genuinely diverge for this seat — that divergence
+        # is why the record has to exist at all.
+        assert record["launch_model"] == "glm-5.2"
+        assert record["qualified_model"] == "zai/glm-5.2"
+        assert record["api"] == "zai"
 
 
 class TestMatchTemplateRoles:

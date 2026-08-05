@@ -46,7 +46,13 @@ from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .recorder import RecorderSupervisor
 from .registry import Dataset, Registry
 from .snapshot import SnapshotSupervisor
-from .telemetry import MetricsReader, TrialMetrics, aggregate, leaders
+from .telemetry import (
+    MetricsReader,
+    TrialMetrics,
+    aggregate,
+    leaders,
+    seat_manifest_path,
+)
 
 __all__ = ["ContestantRun", "Match", "MatchRunner"]
 
@@ -418,6 +424,33 @@ class MatchRunner:
         env = _base_environment()
         env.update(seat_env)
         env.update(self._agent_environment(contestant, run))
+
+        # The seat's launch record — the only artifact that can say which
+        # route this job's trials were actually served by. `launch_model`
+        # hands a directly-routed seat the bare model id and every other seat
+        # the qualified one, so the ids Harbor and the event streams record
+        # cannot be told apart by route; pricing reads this instead (#1498).
+        # Best-effort by design: a seat that cannot record its route still
+        # runs, warns, and prices at the route-blind gateway rate.
+        record = {
+            "schema": 1,
+            "contestant": contestant.id,
+            "agent": contestant.agent,
+            "api": contestant.engine.api,
+            "model": contestant.engine.model,
+            "qualified_model": contestant.engine.qualified_model,
+            "launch_model": launch_model(contestant),
+            "base_url": contestant.engine.base_url,
+        }
+        try:
+            seat_manifest_path(job_dir).write_text(
+                json.dumps(record, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            run.warnings.append(
+                f"could not record the seat's route ({exc}); trials will "
+                "price at the route-blind gateway rate"
+            )
 
         log.info(
             "launching %s: %s (%d tasks)",
