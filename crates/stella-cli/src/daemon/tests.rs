@@ -236,7 +236,7 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     assert!(
         eventually(Duration::from_secs(10), || {
             // SAFETY: probing a group with signal 0 sends nothing.
-            unsafe { libc::kill(-group, 0) } != 0
+            (unsafe { libc::kill(-group, 0) }) != 0
         }),
         "the whole process group must be gone"
     );

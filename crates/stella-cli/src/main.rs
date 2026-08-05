@@ -778,7 +778,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Some(Command::Fullauto { cmd }) => {
             // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
             // of the defect queue) — works with zero API keys.
-            return fullauto_cmd::run(cmd);
+            return fullauto_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
@@ -998,9 +998,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &prompt),
-                    prompt.as_bytes(),
-                    scope_review_lost,
-                ).map_err(failure::CliFailure::from);
+                    prompt.as_bytes(),                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1049,9 +1047,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &goal),
-                    goal.as_bytes(),
-                    scope_review_lost,
-                ).map_err(failure::CliFailure::from);
+                    goal.as_bytes(),                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1079,9 +1075,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                             None => format!("fleet ({} tasks)", tasks.len()),
                         },
                     ),
-                    &[],
-                    scope_review_lost,
-                ).map_err(failure::CliFailure::from);
+                    &[],                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1106,9 +1100,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &format!("monitor {target}")),
-                    &[],
-                    scope_review_lost,
-                ).map_err(failure::CliFailure::from);
+                    &[],                ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status
             // itself) ends the loop only on a fully green latest run.

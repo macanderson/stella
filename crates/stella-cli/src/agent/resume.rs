@@ -213,7 +213,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
             );
             Ok(())
         }
-        TurnOutcome::Aborted { reason, cost_usd } => {
+        TurnOutcome::Aborted {
+            reason, cost_usd, ..
+        } => {
             tui::cost_summary(
                 cost_usd,
                 &format!("{}/{}", cfg.provider.id, cfg.model_id),
@@ -261,6 +263,7 @@ pub(crate) async fn drive_resumed_turn(
             engine.discard_checkpoint();
             return TurnOutcome::Aborted {
                 reason,
+                kind: stella_core::step::AbortKind::DeliberateStop,
                 cost_usd: state.total_cost_usd(),
             };
         }
@@ -270,9 +273,17 @@ pub(crate) async fn drive_resumed_turn(
                 engine.discard_checkpoint();
                 return TurnOutcome::Completed { text, cost_usd };
             }
-            StepOutcome::Aborted { reason, cost_usd } => {
+            StepOutcome::Aborted {
+                reason,
+                kind,
+                cost_usd,
+            } => {
                 engine.discard_checkpoint();
-                return TurnOutcome::Aborted { reason, cost_usd };
+                return TurnOutcome::Aborted {
+                    reason,
+                    kind,
+                    cost_usd,
+                };
             }
         }
     }
@@ -399,6 +410,7 @@ mod tests {
             total_cost_usd: 0.0,
             calibration_model: None,
             loop_steered: false,
+            loop_steered_pattern: Vec::new(),
             transcript_rewrites: 0,
         }
     }
