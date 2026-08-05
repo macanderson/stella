@@ -778,7 +778,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Some(Command::Fullauto { cmd }) => {
             // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
             // of the defect queue) — works with zero API keys.
-            return fullauto_cmd::run(cmd);
+            return fullauto_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
@@ -903,7 +903,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 // provider resolution, its cwd already pinned to the
                 // record's workspace by the parent's launch.
                 DaemonCmd::Resume { id } if !cli.globals.foreground => {
-                    return daemon::resume_supervised(rt()?, id.as_deref());
+                    return daemon::resume_supervised(rt()?, id.as_deref())
+                        .map_err(failure::CliFailure::from);
                 }
                 DaemonCmd::Resume { .. } => {}
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
