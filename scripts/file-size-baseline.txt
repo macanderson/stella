@@ -18,7 +18,7 @@
 2271 crates/stella-cli/src/agent.rs
 1750 crates/stella-cli/src/agent_tests.rs
 1585 crates/stella-cli/src/candidate_ws.rs
-4754 crates/stella-cli/src/command_deck.rs
+4757 crates/stella-cli/src/command_deck.rs
 1506 crates/stella-cli/src/fleet_cmd.rs
 2129 crates/stella-core/src/bus.rs
 2765 crates/stella-core/src/driver.rs
@@ -37,7 +37,7 @@
 2326 crates/stella-tools/src/registry.rs
 1839 crates/stella-tools/src/scripts.rs
 1528 crates/stella-tui/src/deck.rs
-1600 crates/stella-tui/src/deck_render.rs
-4068 crates/stella-tui/src/deck_ui.rs
+1570 crates/stella-tui/src/deck_render.rs
+4028 crates/stella-tui/src/deck_ui.rs
 1665 crates/stella-tui/src/views/engine.rs
 1621 crates/stella-tui/src/views/session.rs
