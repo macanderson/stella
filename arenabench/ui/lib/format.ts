@@ -32,10 +32,21 @@ export function fmtPct(value: unknown): string {
   return (Number(value) || 0).toFixed(0) + "%";
 }
 
+// The verifier grades on [0, 1] and partial credit is the whole point of
+// showing the mean — two decimals keep 0.60 and 0.66 apart, where fmtPct
+// would round the distinction away.
+export function fmtReward(value: unknown): string {
+  if (value == null) return "—";
+  return (Number(value) || 0).toFixed(2);
+}
+
 export function fmtDim(key: string, value: unknown): string {
   switch (key) {
     case "solve_rate":
+    case "cache_hit_rate":
       return fmtPct(value);
+    case "mean_reward":
+      return fmtReward(value);
     case "clock_time":
     case "wasted_time":
       return fmtClock(value);

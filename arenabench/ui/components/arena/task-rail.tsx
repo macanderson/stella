@@ -44,22 +44,46 @@ export function TaskRail({
             <div className="mt-[5px] flex gap-[3px]">
               {snapshot.contestants.map((c) => {
                 const cell = row.cells[c.id];
+                // A voided trial (harness/host fault) is violet, never red:
+                // red publishes a loss for a contest that never happened. A
+                // partial score is amber — the verifier said "some", and a
+                // strip that can only say yes/no would erase it.
+                const partial =
+                  cell?.resolved === false && cell.reward != null && cell.reward > 0;
+                const verdict = !cell
+                  ? "pending"
+                  : cell.status === "running"
+                    ? "running"
+                    : cell.infrastructure
+                      ? `void — ${cell.failure || "harness/host"}`
+                      : cell.resolved === true
+                        ? "solved"
+                        : partial
+                          ? `partial ${cell.reward}`
+                          : cell.resolved === false
+                            ? "failed"
+                            : "awaiting verdict";
                 return (
                   <span
                     key={c.id}
-                    title={c.name}
+                    title={`${c.name} — ${verdict}`}
                     style={seatStyle(c.color)}
                     className={cn(
                       "h-1 flex-1 rounded-sm",
                       !cell && "bg-line",
                       cell?.status === "running" &&
                         "animate-[cell-pulse_1.5s_ease-in-out_infinite] bg-(--seat)",
-                      cell && cell.status !== "running" && cell.resolved === true && "bg-ok",
-                      cell && cell.status !== "running" && cell.resolved === false && "bg-bad",
                       cell &&
                         cell.status !== "running" &&
-                        cell.resolved == null &&
-                        "bg-line",
+                        (cell.infrastructure
+                          ? "bg-acc-violet"
+                          : cell.resolved === true
+                            ? "bg-ok"
+                            : partial
+                              ? "bg-warn"
+                              : cell.resolved === false
+                                ? "bg-bad"
+                                : "bg-line"),
                     )}
                   />
                 );

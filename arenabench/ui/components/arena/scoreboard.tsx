@@ -1,9 +1,73 @@
 "use client";
 
 import * as React from "react";
-import type { Snapshot } from "@/lib/types";
-import { fmtClock, fmtMoney, fmtPct, fmtTokens } from "@/lib/format";
+import type { EngineInfo, Snapshot } from "@/lib/types";
+import { fmtClock, fmtMoney, fmtPct, fmtReward, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
+import { Disclosure } from "@/components/ui/collapsible";
+
+/**
+ * The full engine pinning behind the one-line label — what a tuner is
+ * actually A/B testing, rendered from the same redacted spec the server
+ * launched from. A role's unset field says "inherit" in so many words: the
+ * spec records inheritance honestly (a posture never claims to pin what it
+ * left open), and this panel must not flatten that back out.
+ */
+function PosturePanel({ engine, envKeys }: { engine: EngineInfo; envKeys?: string[] }) {
+  const roles = Object.entries(engine.roles || {});
+  const line = (label: string, value: React.ReactNode) => (
+    <div className="flex items-baseline gap-2.5">
+      <span className="w-[74px] flex-none text-[9.5px] lowercase tracking-[0.05em] text-dim">
+        {label}
+      </span>
+      <span className="min-w-0 break-all font-mono text-[11px] text-muted">{value}</span>
+    </div>
+  );
+  const inherit = <span className="text-dim">inherit</span>;
+  return (
+    <div className="grid gap-[5px] pb-1 pt-0.5">
+      {line("engine", `${engine.api} · ${engine.qualified_model || engine.model || "unset"}`)}
+      {line(
+        "reasoning",
+        engine.reasoning ? `on · ${engine.effort}` : "off",
+      )}
+      {(engine.max_tokens != null || engine.budget_usd != null) &&
+        line(
+          "limits",
+          [
+            engine.max_tokens != null ? `${fmtTokens(engine.max_tokens)} tok/step` : null,
+            engine.budget_usd != null ? `${fmtMoney(engine.budget_usd)}/task` : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        )}
+      {engine.base_url && line("routed at", engine.base_url)}
+      {(envKeys || []).length > 0 && line("env", envKeys!.join(", "))}
+      {roles.length > 0 && (
+        <div className="mt-1 overflow-x-auto">
+          <div className="grid min-w-[320px] gap-y-[3px] [grid-template-columns:74px_1fr_64px_64px_64px] font-mono text-[10.5px]">
+            <span className="text-[9.5px] lowercase tracking-[0.05em] text-dim">role</span>
+            <span className="text-[9.5px] lowercase tracking-[0.05em] text-dim">model</span>
+            <span className="text-[9.5px] lowercase tracking-[0.05em] text-dim">effort</span>
+            <span className="text-[9.5px] lowercase tracking-[0.05em] text-dim">reason</span>
+            <span className="text-[9.5px] lowercase tracking-[0.05em] text-dim">cap</span>
+            {roles.map(([name, role]) => (
+              <React.Fragment key={name}>
+                <span className="text-muted">{name}</span>
+                <span className="truncate text-foreground" title={role.model ?? undefined}>
+                  {role.model ? role.model : inherit}
+                </span>
+                <span>{role.effort ? role.effort : inherit}</span>
+                <span>{role.reasoning == null ? inherit : role.reasoning ? "on" : "off"}</span>
+                <span>{role.max_tokens != null ? fmtTokens(role.max_tokens) : inherit}</span>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
   const leaders = snapshot.leaders || {};
@@ -118,6 +182,15 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
               </span>
               <span className="font-mono text-xs text-muted">
                 {t.passed} / {t.judged || 0} solved
+                {/* Partial credit beside the pass/fail rate: two seats at 50%
+                    where one averages 0.8 and the other 0.5 did not perform
+                    equally, and only this number can say so. */}
+                {t.mean_reward != null && (
+                  <span title="average verifier score over judged trials — partial credit">
+                    {" "}
+                    · avg {fmtReward(t.mean_reward)}
+                  </span>
+                )}
               </span>
             </div>
             <div className="mb-3.5 mt-2.5 h-1 overflow-hidden rounded-sm bg-line">
@@ -146,7 +219,28 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
               {stat("tokens_out", "tok out", fmtTokens(t.tokens_out))}
               {stat("cache_read", "cache r", fmtTokens(t.cache_read))}
               {stat("cache_write", "cache w", fmtTokens(t.cache_write))}
+              {/* The rate beside the raw counts: the counts reward sheer
+                  prompt volume, the rate grades prompt-cache discipline —
+                  the number a tuner actually turns. */}
+              {t.cache_hit_rate != null && stat("cache_hit_rate", "cache hit", fmtPct(t.cache_hit_rate))}
+              {/* Steps and tools are a design fingerprint, not an efficiency
+                  score — reported for the divergence, crowning nobody. */}
+              {stat("steps", "steps", fmtTokens(t.steps))}
+              {stat("tools", "tools", fmtTokens(t.tools))}
             </div>
+            {/* Output-cap truncations: the classic mis-tune — reasoning that
+                cannot fit an answer — named where the tuner is looking. */}
+            {t.cap_hits ? (
+              <div className="mt-2 font-mono text-[11px] text-warn">
+                ⚠ {t.cap_hits} output-cap truncation{t.cap_hits === 1 ? "" : "s"} — raise max
+                output tokens or lower effort
+              </div>
+            ) : null}
+            {c.engine && (
+              <Disclosure className="mt-1.5" summary="engine posture">
+                <PosturePanel engine={c.engine} envKeys={c.env_keys} />
+              </Disclosure>
+            )}
             {warned.length > 0 && (
               <div className="mt-[11px]">
                 <span

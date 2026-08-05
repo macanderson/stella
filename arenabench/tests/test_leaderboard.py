@@ -48,6 +48,24 @@ class TestDimensions:
         assert dim.direction == "neutral"
         assert not dim.better(1, 2) and not dim.better(2, 1)
 
+    def test_the_cache_crown_is_the_rate_not_only_the_count(self):
+        """The raw read count rewards sheer prompt volume: send twice the
+        context, read twice the cache, pay more in absolute terms. The rate
+        asks what tuning actually asks — of everything put in front of the
+        model, how much avoided full price. Fails on `main`, where the
+        dimension does not exist."""
+        assert DIMENSIONS_BY_KEY["cache_hit_rate"].direction == "higher"
+        assert DIMENSIONS_BY_KEY["cache_hit_rate"].better(91.0, 40.0)
+
+    def test_step_and_tool_counts_are_fingerprints_not_rankings(self):
+        """How an agent decomposes work is a design fact the tuner reads, not
+        a score: fewer steps is not better any more than fewer functions makes
+        a program better. Raced for the divergence, crowned never."""
+        for key in ("steps", "tools", "mean_reward"):
+            dim = DIMENSIONS_BY_KEY[key]
+            assert dim.direction == "neutral", key
+            assert not dim.better(1, 2) and not dim.better(2, 1)
+
 
 class TestLeaders:
     def test_a_contestant_with_no_judged_trial_cannot_lead(self):

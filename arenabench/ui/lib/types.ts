@@ -91,7 +91,39 @@ export interface Totals {
   wasted_time?: number | null;
   /** How many trials the wasted-time sum covers (`arenabench flip` runs). */
   flip_trials?: number;
+  /** Verifier scores averaged over judged trials that have one — partial
+   *  credit. `null` = no judged trial was scored. */
+  mean_reward?: number | null;
+  /** Share of prompt tokens served from cache, 0–100. `null` = no tokens. */
+  cache_hit_rate?: number | null;
+  steps?: number;
+  tools?: number;
+  cap_hits?: number;
   [key: string]: number | null | undefined;
+}
+
+/** One pipeline role's overrides as `Engine.to_json` sends them: `null` on a
+ *  field means the role inherits the engine baseline, and the posture panel
+ *  says "inherit" rather than repeating the baseline as if it were pinned. */
+export interface RoleInfo {
+  model?: string | null;
+  reasoning?: boolean | null;
+  effort?: string | null;
+  max_tokens?: number | null;
+}
+
+/** The full engine posture a seat was pinned to — what a tuner is A/B
+ *  testing, and therefore what the scoreboard must be able to show. */
+export interface EngineInfo {
+  api: string;
+  model: string;
+  qualified_model?: string;
+  reasoning: boolean;
+  effort: string;
+  base_url?: string | null;
+  budget_usd?: number | null;
+  max_tokens?: number | null;
+  roles?: Record<string, RoleInfo>;
 }
 
 export interface ContestantSnap {
@@ -100,6 +132,9 @@ export interface ContestantSnap {
   agent: string;
   color: string;
   engine_label: string;
+  engine?: EngineInfo;
+  /** Env variable names this seat carried (values never leave the server). */
+  env_keys?: string[];
   state: string;
   totals: Totals;
   warnings?: string[];
@@ -135,6 +170,25 @@ export interface Cell {
   flip_elapsed?: number | null;
   /** Seconds the trial kept running after it was already passing. */
   wasted_elapsed?: number | null;
+  /** The verifier's raw score. 0.6 is a different result from 0, and the
+   *  pass/fail bit alone would erase the difference. */
+  reward?: number | null;
+  /** `true` = the failure names a harness/host fault: the agent never got a
+   *  fair attempt, the trial is unjudged, and it must not read as a loss. */
+  infrastructure?: boolean;
+  /** Share of this trial's prompt tokens served from cache, 0–100. */
+  cache_hit_rate?: number | null;
+  /** Model ids the trial's event stream actually named, in first-seen order —
+   *  a pipeline seat's role split made visible. */
+  models?: string[];
+  /** The agent's own event stream said `complete` — it *claimed* to finish.
+   *  Only a streaming arm can say this; absence proves nothing for the rest. */
+  declared_complete?: boolean;
+  /** Model calls whose usage never reached the totals — every spend figure on
+   *  this trial is a floor, not a measurement. */
+  usage_incomplete?: number;
+  /** The run's final word, when that word was an error. */
+  late_error?: string;
 }
 
 export interface TaskRow {

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { Cell, ContestantSnap, TranscriptEntry } from "@/lib/types";
-import { fmtClock, fmtMoney, fmtTokens } from "@/lib/format";
+import { fmtClock, fmtMoney, fmtPct, fmtReward, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
 import { Disclosure } from "@/components/ui/collapsible";
 
@@ -60,6 +60,12 @@ const KIND_TONE: Record<string, string> = {
   verdict: "font-semibold text-ok",
   complete: "text-ok",
   usage: "text-dim",
+  // A tripped loop detector is the single strongest "tune me" signal a
+  // transcript carries — it must not render in body text.
+  loop_detected: "font-semibold text-bad",
+  file_change: "text-muted",
+  commit: "text-acc-cyan",
+  task_update: "text-dim",
 };
 
 function entryBody(entry: TranscriptEntry): string {
@@ -114,9 +120,29 @@ export function Lane({
   let verdictText = "queued";
   if (cell) {
     if (cell.status === "done") {
-      const pass = cell.resolved === true;
-      verdictTone = pass ? "text-ok" : "text-bad";
-      verdictText = pass ? "✓ SOLVED" : cell.failure || "✗ failed";
+      if (cell.infrastructure) {
+        // The harness or host broke, so the agent never got a fair attempt.
+        // Violet, matching the scoreboard's "never started" line — painting
+        // this red would publish a loss for a contest that never happened.
+        verdictTone = "text-acc-violet";
+        verdictText = `void · ${cell.failure || "harness/host"} — not judged`;
+      } else if (cell.resolved === true) {
+        verdictTone = "text-ok";
+        verdictText = "✓ SOLVED";
+      } else if (cell.resolved === false) {
+        const partial = cell.reward != null && cell.reward > 0;
+        verdictTone = partial ? "text-warn" : "text-bad";
+        verdictText = partial
+          ? `◐ partial ${fmtReward(cell.reward)}`
+          : cell.failure || "✗ failed";
+        // The premature-complete signature: the agent itself said it was
+        // finished, and the verifier disagreed. The opposite tuning problem
+        // from a timeout, and unlabelled the two read identically.
+        if (cell.declared_complete) verdictText += " · claimed done";
+      } else {
+        verdictTone = "text-accent";
+        verdictText = "done · awaiting verdict";
+      }
     } else {
       verdictTone = "text-accent";
       verdictText = cell.status + (cell.age_s != null ? ` ${Math.round(cell.age_s)}s` : "");
@@ -151,6 +177,19 @@ export function Lane({
               {fmtTokens(cell.cache_read)}/{fmtTokens(cell.cache_write)}
             </b>
           </span>
+          {cell.cache_hit_rate != null && (
+            <span title="share of prompt tokens served from cache">
+              hit <b className="font-medium text-foreground">{fmtPct(cell.cache_hit_rate)}</b>
+            </span>
+          )}
+          {/* A pipeline seat fans one trial across several models; the count
+              expands to the roster on hover, so a mis-routed role is one
+              glance away instead of a grep through the event stream. */}
+          {(cell.models || []).length > 1 && (
+            <span title={cell.models!.join("\n")}>
+              <b className="font-medium text-foreground">{cell.models!.length}</b> models
+            </span>
+          )}
           <span>
             cost <b className="font-medium text-foreground">{fmtMoney(cell.priced_cost)}</b>
           </span>
@@ -171,6 +210,17 @@ export function Lane({
             </span>
           ) : null}
           {cell.cap_hits ? <span className="text-warn">⚠ {cell.cap_hits} output-cap</span> : null}
+          {/* Model calls whose usage never reached the totals: every spend
+              figure on this trial is a floor, and saying so beside the cost
+              is what keeps the floor from being quoted as a measurement. */}
+          {cell.usage_incomplete ? (
+            <span className="text-warn">⚠ {cell.usage_incomplete} uncounted — cost is a floor</span>
+          ) : null}
+          {cell.late_error ? (
+            <span className="text-bad" title={cell.late_error}>
+              ⚠ ended on an error
+            </span>
+          ) : null}
         </div>
       )}
 

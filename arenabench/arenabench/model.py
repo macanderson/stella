@@ -99,6 +99,23 @@ class Dimension:
 #: the leaderboard already reads as "no number, no crown". That is load-bearing:
 #: a dimension nobody measured must crown nobody, because the alternative is
 #: crowning whichever seat happens to spell "unmeasured" as zero.
+#:
+#: ``mean_reward`` is the verifier's raw score averaged over the judged trials
+#: that have one — the only quality signal finer than the pass/fail bit. It is
+#: ``neutral`` because it measures the same axis ``solve_rate`` already crowns;
+#: two crowns for one judgment would double-weight it in the leader count.
+#:
+#: ``steps`` and ``tools`` are ``neutral`` by conviction, not caution: a step
+#: count is a *design fingerprint* — how an agent decomposes work — and fewer
+#: steps is not better any more than fewer functions makes a program better.
+#: They are raced because the person tuning an agent reads the divergence, and
+#: they crown nobody because the divergence is not a ranking.
+#:
+#: ``cache_hit_rate`` crowns, where the raw ``cache_read`` count could not do it
+#: alone: the count rewards sheer prompt volume, while the rate asks the tuning
+#: question — of everything this agent put in front of the model, how much did
+#: it avoid paying full price for. Byte-stable prompt discipline is what moves
+#: it, so it is the one scoreboard number that directly grades harness caching.
 DIMENSIONS: tuple[Dimension, ...] = (
     Dimension(
         "solve_rate",
@@ -106,6 +123,13 @@ DIMENSIONS: tuple[Dimension, ...] = (
         "higher",
         "%",
         "verifier rewards / trials completed",
+    ),
+    Dimension(
+        "mean_reward",
+        "Mean Reward",
+        "neutral",
+        "",
+        "average verifier score over judged trials — partial credit made visible",
     ),
     Dimension("clock_time", "Clock Time", "lower", "s", "wall-clock across all trials"),
     Dimension(
@@ -133,6 +157,27 @@ DIMENSIONS: tuple[Dimension, ...] = (
     Dimension("tokens_out", "Tokens Out", "lower", "tok", "completion tokens billed"),
     Dimension("cache_read", "Cache Read", "higher", "tok", "prompt tokens served from cache"),
     Dimension("cache_write", "Cache Write", "neutral", "tok", "prompt tokens written to cache"),
+    Dimension(
+        "cache_hit_rate",
+        "Cache Hit",
+        "higher",
+        "%",
+        "share of prompt tokens served from cache — grades prompt-cache discipline",
+    ),
+    Dimension(
+        "steps",
+        "Steps",
+        "neutral",
+        "",
+        "model calls taken — a design fingerprint, not an efficiency score",
+    ),
+    Dimension(
+        "tools",
+        "Tool Calls",
+        "neutral",
+        "",
+        "tool invocations — a design fingerprint, not an efficiency score",
+    ),
 )
 
 DIMENSIONS_BY_KEY: dict[str, Dimension] = {d.key: d for d in DIMENSIONS}

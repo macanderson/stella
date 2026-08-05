@@ -433,6 +433,35 @@ class TestAggregate:
         trials = [TrialMetrics("a", "a__1", resolved=True, total_cost=9.0)]
         assert aggregate(trials)["priced_cost"] is None
 
+    def test_mean_reward_averages_partial_credit_over_the_scored_trials(self):
+        """A task graded 0.6 is a different result from one graded 0, and the
+        pass/fail bit throws that away. The mean carries what the solve rate
+        cannot: two seats at 50% solve rate where one averages 0.8 and the
+        other 0.5 did not perform equally. Fails on `main`, where the key
+        does not exist."""
+        trials = [
+            TrialMetrics("a", "a__1", resolved=True, reward=1.0),
+            TrialMetrics("b", "b__1", resolved=False, reward=0.6),
+            TrialMetrics("c", "c__1", resolved=False, reward=0.0),
+        ]
+        assert aggregate(trials)["mean_reward"] == pytest.approx(1.6 / 3)
+
+    def test_a_judged_trial_without_a_score_stays_out_of_the_mean(self):
+        """A trial judged through an exception path is resolved but carries no
+        verifier score. Reading it as 0 would punish an agent for the shape of
+        its failure record, not its work."""
+        trials = [
+            TrialMetrics("a", "a__1", resolved=True, reward=1.0),
+            TrialMetrics("b", "b__1", resolved=False, reward=None),
+        ]
+        assert aggregate(trials)["mean_reward"] == pytest.approx(1.0)
+
+    def test_no_scored_trial_means_no_mean_reward_at_all(self):
+        """`None`, not 0.0 — an unmeasured column must draw as absent, and on
+        the leaderboard it must crown nobody."""
+        trials = [TrialMetrics("a", "a__1", resolved=False, reward=None)]
+        assert aggregate(trials)["mean_reward"] is None
+
 
 class TestFlip:
     """`arenabench flip` writes `arena/flip.json`; the scoreboard reads it.

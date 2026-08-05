@@ -705,6 +705,18 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         "judged": len(judged),
         "passed": len(passed),
         "solve_rate": (len(passed) / len(judged) * 100.0) if judged else 0.0,
+        # The verifier's raw scores averaged over the judged trials that have
+        # one. A trial judged through an exception path carries no score, and
+        # older bundles carry none at all — those are held out of the
+        # denominator rather than read as zero, and `None` (not 0.0) when no
+        # judged trial was scored, so an unmeasured column crowns nobody and
+        # draws as absent.
+        "mean_reward": (
+            sum(t.reward for t in judged if t.reward is not None)
+            / sum(1 for t in judged if t.reward is not None)
+            if any(t.reward is not None for t in judged)
+            else None
+        ),
         "clock_time": sum(t.clock_time for t in trials),
         "tokens_in": sum(t.tokens_in for t in trials),
         "tokens_out": sum(t.tokens_out for t in trials),
