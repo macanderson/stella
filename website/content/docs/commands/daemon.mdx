@@ -20,6 +20,8 @@ stella daemon list                          # every session, detached runs marke
 stella daemon attach <id|pid>               # stream its output (Ctrl-C detaches)
 stella daemon stop <id|pid>                 # SIGTERM, then SIGKILL after a grace period
 stella daemon logs <id|pid>                 # print the log file's path
+stella daemon install [--label NAME] [--keep-alive] -- <stella args…>
+stella daemon uninstall <label>             # unload it and delete the definition
 ```
 
 ## What it does
@@ -51,6 +53,69 @@ credential prompt — must be answerable headlessly or the run will fail rather
 than wait forever. A prompt piped on stdin is handed to the detached run as a
 process argument, which makes it visible in `ps` exactly as an inline
 `stella run "…"` prompt already is.
+
+A detached run also cannot outlive **a reboot** — nothing a process arranges
+for itself can — and on a machine configured to reap user processes at
+logout, nothing keeps it registered either. Crossing those boundaries is the
+OS service manager's job, and `install` is the explicit handshake with it.
+
+## `install` / `uninstall`
+
+`install` registers **one stella invocation you explicitly choose** with the
+platform's per-user service manager:
+
+```bash
+stella daemon install -- monitor --interval 300
+stella daemon install --label night-fleet --keep-alive -- fleet watch
+stella daemon uninstall night-fleet
+```
+
+On **macOS** it writes a launchd agent
+(`~/Library/LaunchAgents/sh.oxagen.stella.<label>.plist`) and loads it with
+`launchctl bootstrap`; the command starts at every login, including the login
+after a reboot. On **Linux** it writes a `systemd --user` unit
+(`~/.config/systemd/user/stella-<label>.service`), enables it, and turns on
+lingering (`loginctl enable-linger`) so the command starts at boot and keeps
+running through logout. When a `launchctl`/`systemctl` call fails, the
+definition is still written and the exact command to load it by hand is
+printed.
+
+**This is service registration, not resume.** The registered command starts
+from scratch each time, because re-launching a half-finished agent turn is a
+fresh spend of the same budget, not a continuation. Register standing verbs —
+a monitor, a fleet watch, a deliberately perpetual run — and let ordinary
+one-shot runs stay merely detached. Nothing is ever registered implicitly,
+and a registered command may not itself say `--detach`: the service manager
+is already the detacher, and a child that detaches again reads to the manager
+as an instant exit.
+
+Two defaults keep a broken service from spending money unattended:
+
+- **A command that exits stays down** until the next boot. `--keep-alive`
+  opts into restart-on-exit, throttled to once a minute, and on systemd
+  additionally start-limited (five starts in ten minutes parks the unit in
+  the failed state).
+- **The binary is resolved at load, loudly.** The service execs through a
+  `/bin/sh` shim that tries the path recorded at install time, falls back to
+  `PATH` (plus the usual Homebrew and cargo prefixes) — so a `brew upgrade`
+  that moves the binary does not strand the service — and otherwise writes
+  one line naming what is missing to the service console and exits 127.
+
+The service runs in the directory `install` was typed in, and its console is
+`~/.stella/services/<label>.log` (both streams, owner-only directory). The
+run announces itself in the session registry like any headless run, so it
+shows up in `stella daemon list`; the service itself is queried with the
+platform's own tools:
+
+```bash
+launchctl print gui/$(id -u)/sh.oxagen.stella.<label>   # macOS
+systemctl --user status stella-<label>                  # Linux
+```
+
+`uninstall` unloads the service and deletes the definition — the queries
+above then report it gone. Uninstalling something already removed reports
+that and succeeds. On Linux, lingering is left as you set it, since other
+user services may depend on it.
 
 ## Examples
 
