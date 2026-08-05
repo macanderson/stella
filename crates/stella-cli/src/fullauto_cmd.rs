@@ -23,6 +23,7 @@ use clap::Subcommand;
 use serde_json::Value;
 use stella_core::fullauto::{self, CycleOutcome, CycleRecord, Demand, Tooling};
 
+use crate::query_format::{QueryFormat, Rows};
 use crate::timefmt::{now_unix, rfc3339_utc_now};
 use state::LoopState;
 
@@ -48,9 +49,15 @@ pub(crate) enum FullautoCmd {
         #[arg(long)]
         dry_streak: bool,
 
-        /// Print the raw ledger (one JSON record per line).
-        #[arg(long, conflicts_with = "dry_streak")]
-        json: bool,
+        /// Output format: the human summary, or the ledger's records under
+        /// the versioned query envelope (#1568).
+        #[arg(
+            long,
+            value_enum,
+            default_value = "text",
+            conflicts_with = "dry_streak"
+        )]
+        format: QueryFormat,
     },
 
     /// Allocate a cycle or append its ledger record.
@@ -130,9 +137,10 @@ pub(crate) enum FullautoCmd {
         #[arg(long, default_value_t = 20)]
         limit: usize,
 
-        /// Print the picked issues as JSON instead of a table.
-        #[arg(long)]
-        json: bool,
+        /// Output format: the ranked table, or the picked issues under the
+        /// versioned query envelope (#1568).
+        #[arg(long, value_enum, default_value = "text")]
+        format: QueryFormat,
     },
 
     /// Run lifecycle — a RUN spans many cycles and is the unit a person
@@ -250,7 +258,7 @@ pub(crate) fn run(cmd: &FullautoCmd) -> Result<(), String> {
     let st = LoopState::open()?;
     match cmd {
         FullautoCmd::Plan { explain } => plan(&st, *explain),
-        FullautoCmd::State { dry_streak, json } => cmd_state(&st, *dry_streak, *json),
+        FullautoCmd::State { dry_streak, format } => cmd_state(&st, *dry_streak, *format),
         FullautoCmd::Cycle { cmd } => match cmd {
             CycleCmd::Begin => cycle_begin(&st),
             CycleCmd::End {
@@ -299,7 +307,7 @@ pub(crate) fn run(cmd: &FullautoCmd) -> Result<(), String> {
             resource_fail,
             show,
         } => calibrate_cmd(&st, *ok, *resource_fail, *show),
-        FullautoCmd::Queue { limit, json } => queue(&st, *limit, *json),
+        FullautoCmd::Queue { limit, format } => queue(&st, *limit, *format),
         FullautoCmd::Run { cmd } => match cmd {
             RunCmd::Start => run_start(&st),
             RunCmd::End { status, reason } => run_end(&st, status, reason),
@@ -445,21 +453,21 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
 // state / cycle
 // ---------------------------------------------------------------------------
 
-fn cmd_state(st: &LoopState, dry_streak: bool, json: bool) -> Result<(), String> {
+fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<(), String> {
     if dry_streak {
         let streak = fullauto::dry_streak(&st.cycles(), &st.aperture());
         println!("{streak}");
         return Ok(());
     }
-    if json {
-        print!(
+    let cycles = st.cycles();
+    if format == QueryFormat::Json {
+        println!(
             "{}",
-            std::fs::read_to_string(st.ledger_path()).unwrap_or_default()
+            serde_json::to_string_pretty(&Rows::new(&cycles)).map_err(|e| e.to_string())?
         );
         return Ok(());
     }
 
-    let cycles = st.cycles();
     say(&format!("fullauto state — {}", st.dir.display()));
     println!("  cycle           {}", st.cycle_counter());
     println!(
@@ -831,7 +839,7 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
     Ok(())
 }
 
-fn queue(_st: &LoopState, limit: usize, json: bool) -> Result<(), String> {
+fn queue(_st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
     let raw = gh_plain(&[
         "issue",
         "list",
@@ -850,10 +858,10 @@ fn queue(_st: &LoopState, limit: usize, json: bool) -> Result<(), String> {
     let defects = fullauto::rank_defects(issues);
     let picked = &defects[..limit.min(defects.len())];
 
-    if json {
+    if format == QueryFormat::Json {
         println!(
             "{}",
-            serde_json::to_string_pretty(picked).map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&Rows::new(picked)).map_err(|e| e.to_string())?
         );
         return Ok(());
     }
