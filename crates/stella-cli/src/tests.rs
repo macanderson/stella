@@ -13,7 +13,10 @@ use super::build_info::{
 use super::term_policy::{
     PlainReason, accessible_env, animation_disabled, deck_decision, dumb_terminal,
 };
-use super::{AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json};
+use super::{
+    AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json,
+    resolve_output_format,
+};
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
 /// report otherwise costs a round trip. Both must agree about the version
@@ -433,6 +436,53 @@ fn session_flags_parse_before_subcommand() {
     .expect("session flags before the subcommand must keep parsing");
     assert_eq!(cli.globals.budget, Some(2.5));
     assert_eq!(cli.globals.output_format, OutputFormat::Json);
+}
+
+/// #1493: `--output-format` steers exactly the subcommands that render turn
+/// output. Before this resolver, 34 of 36 subcommands parsed the flag and
+/// silently swallowed it — a scripted `stella stats --output-format json`
+/// got human-coloured stdout with a JSON error envelope appended on failure,
+/// unparseable by any consumer.
+#[test]
+fn output_format_is_honoured_refused_or_defused_by_command() {
+    let parse = |argv: &[&str]| Cli::try_parse_from(argv).expect("parses");
+
+    // The honouring commands get exactly what was asked, flag or env alike.
+    let run = parse(&["stella", "run", "hi", "--output-format", "json"]);
+    assert_eq!(
+        resolve_output_format(run.command.as_ref(), run.globals.output_format, true),
+        Ok(OutputFormat::Json)
+    );
+    let fleet = parse(&["stella", "fleet", "t", "--output-format", "stream-json"]);
+    assert_eq!(
+        resolve_output_format(fleet.command.as_ref(), fleet.globals.output_format, false),
+        Ok(OutputFormat::StreamJson)
+    );
+
+    // An explicitly typed machine format on a command that renders its own
+    // shape is an error naming where the flag applies — loud beats swallowed.
+    let stats = parse(&["stella", "stats", "--output-format", "json"]);
+    let err = resolve_output_format(stats.command.as_ref(), stats.globals.output_format, true)
+        .expect_err("an explicit flag the command would swallow must refuse");
+    assert!(err.contains("`stella run` and `stella fleet`"), "{err}");
+    // The bare default command is chat, which renders a terminal UI.
+    let chat = parse(&["stella", "--output-format", "json"]);
+    assert!(
+        resolve_output_format(chat.command.as_ref(), chat.globals.output_format, true).is_err()
+    );
+
+    // The same value arriving from a session-wide STELLA_OUTPUT_FORMAT
+    // export is a preference, not a demand on this command: it resolves to
+    // text instead of failing every non-rendering command in the session.
+    assert_eq!(
+        resolve_output_format(stats.command.as_ref(), OutputFormat::Json, false),
+        Ok(OutputFormat::Text)
+    );
+    // And an explicit `--output-format text` is a harmless no-op anywhere.
+    assert_eq!(
+        resolve_output_format(stats.command.as_ref(), OutputFormat::Text, true),
+        Ok(OutputFormat::Text)
+    );
 }
 
 /// `--budget`'s value parser still guards after a subcommand: a

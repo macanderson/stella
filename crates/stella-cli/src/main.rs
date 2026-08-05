@@ -293,6 +293,50 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
     }
 }
 
+/// What `--output-format` means for this invocation (#1493).
+///
+/// The flag renders *turn output*, and exactly the subcommands listed in
+/// [`honors_output_format`] produce any — for every other command the flag
+/// used to parse and then be silently swallowed, handing a scripted caller
+/// human-coloured stdout it asked to receive as json. Now:
+///
+/// - a command that honors the flag gets the requested format, whichever of
+///   the flag or `STELLA_OUTPUT_FORMAT` supplied it;
+/// - an **explicitly typed** flag on a command that cannot answer in that
+///   shape is an error naming the commands that can — loud beats swallowed;
+/// - an **environment-supplied** value on such a command resolves to `Text`:
+///   the env var is a session-wide "machine output where possible"
+///   preference, and erroring on it would break every other command for the
+///   rest of the session.
+fn resolve_output_format(
+    command: Option<&Command>,
+    requested: OutputFormat,
+    explicit_flag: bool,
+) -> Result<OutputFormat, String> {
+    if honors_output_format(command) {
+        return Ok(requested);
+    }
+    if explicit_flag && requested != OutputFormat::Text {
+        return Err(
+            "--output-format applies to `stella run` and `stella fleet`; this subcommand \
+             renders its own output shape (see its --help for any machine format it offers)"
+                .to_string(),
+        );
+    }
+    Ok(OutputFormat::Text)
+}
+
+/// The subcommands whose turn output `--output-format` actually renders.
+/// Destructured by variant so the honoring set is a fact checked against the
+/// real dispatch (`run` hands it to `agent::run_one_shot`, `fleet` to
+/// `fleet_cmd::run_fleet`) rather than a string list that can drift.
+fn honors_output_format(command: Option<&Command>) -> bool {
+    matches!(
+        command,
+        Some(Command::Run { .. }) | Some(Command::Fleet { .. })
+    )
+}
+
 // The argument tree itself lives in `cli.rs`; re-exported at the crate root so
 // the per-command modules keep addressing their own subcommand enum as
 // `crate::AuthCmd`, `crate::McpCmd`, … regardless of which file defines it.
@@ -431,18 +475,35 @@ fn main() -> ExitCode {
     // Not `Cli::parse()`: the root help is grouped by `cli::help::command()`,
     // and clap renders `--help` from whichever `Command` does the parsing. The
     // derived `Cli` on the other side is byte-for-byte the same value.
-    let cli = match Cli::from_arg_matches(&cli::help::command().get_matches()) {
+    let matches = cli::help::command().get_matches();
+    let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(err) => err.exit(),
+    };
+
+    // `--output-format` steers exactly the subcommands that render turn
+    // output (#1493); resolve what it means for THIS invocation before
+    // anything keys off it, and refuse an explicit flag the resolved command
+    // would silently swallow. `value_source` is what tells a typed flag (the
+    // user asked this command for json — an error if it cannot answer) from
+    // a session-wide `STELLA_OUTPUT_FORMAT` export (a preference, honored
+    // where it applies).
+    let output_format = match resolve_output_format(
+        cli.command.as_ref(),
+        cli.globals.output_format,
+        matches.value_source("output_format") == Some(clap::parser::ValueSource::CommandLine),
+    ) {
+        Ok(format) => format,
+        Err(msg) => {
+            eprintln!("{} {}", "stella:".red().bold(), msg);
+            return ExitCode::from(2);
+        }
     };
 
     // A machine-readable run has nobody to answer a masked password prompt,
     // and its caller is blocked reading stdout for an object that would never
     // come. Decided here, once, while the requested format is in hand.
-    if matches!(
-        cli.globals.output_format,
-        OutputFormat::Json | OutputFormat::StreamJson
-    ) {
+    if matches!(output_format, OutputFormat::Json | OutputFormat::StreamJson) {
         config::forbid_interactive_credentials();
     }
 
@@ -473,11 +534,7 @@ fn main() -> ExitCode {
 
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
     // a human output format so it never pollutes json/stream-json.
-    env_files::announce(&loaded_env, cli.globals.output_format);
-
-    // Captured before `cli` moves into `run`: the catch-all below needs the
-    // requested format to honour the machine-readable error contract.
-    let output_format = cli.globals.output_format;
+    env_files::announce(&loaded_env, output_format);
 
     match run(cli, &loaded_env) {
         Ok(()) => ExitCode::SUCCESS,

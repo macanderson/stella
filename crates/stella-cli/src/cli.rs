@@ -107,7 +107,14 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, env = "STELLA_BASE_URL", hide_short_help = true)]
     pub(crate) base_url: Option<String>,
 
-    /// Output shape: text, json, or stream-json
+    /// Output shape for `run` and `fleet`: text, json, or stream-json
+    ///
+    /// Those are the subcommands that render turn output, so they are the
+    /// ones this steers (#1493). Typing the flag on any other subcommand is
+    /// an error rather than a silently swallowed promise; a session-wide
+    /// STELLA_OUTPUT_FORMAT export applies where honoured and resolves to
+    /// text everywhere else. Machine formats also make credential prompts
+    /// impossible and shape the on-failure error envelope.
     #[arg(
         long,
         global = true,
@@ -303,7 +310,9 @@ pub(crate) enum Command {
     /// while recording a contextgraph-trace journal the arena runner verifiers
     /// with the protocol's replay oracles. Speaks the adapter contract
     /// (--task-dir/--journal/--state-dir/--resume); see
-    /// <https://github.com/macanderson/arena-bench>.
+    /// <https://github.com/macanderson/arena-bench>. Output is one stream-json
+    /// line per event by that contract — the runner owns the rendering, which
+    /// is why `--output-format` does not apply here.
     Arena {
         /// The episode workspace; the prompt is read from TASK.md inside it.
         #[arg(long)]
