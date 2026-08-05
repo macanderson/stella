@@ -9,7 +9,7 @@ is small, none of them depend on each other, and doing them one at a time is an
 afternoon of watching a progress bar.
 
 This is what [`stella fleet`](/docs/commands/fleet) is for: many tasks at once,
-each handled by a full Stella worker, coordinated so they don't overwrite each
+each handled by a full stella worker, coordinated so they don't overwrite each
 other.
 
 ## The whole thing, first
@@ -173,7 +173,7 @@ dependents — they end the run as `skipped`, which is a distinct outcome from
 "failed" and means the work was never attempted.
 
 Start with the ledger, `.stella/private/fleet.db` — local SQLite, like all
-[Stella telemetry](/docs/telemetry):
+[stella telemetry](/docs/telemetry):
 
 ```bash
 # What failed in the most recent run, and what the worker said about it.

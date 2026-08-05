@@ -1,9 +1,9 @@
 ---
 title: Providers & models
-description: The full provider matrix, how to select a model, the credential chain, and pointing Stella at a local OpenAI-compatible server.
+description: The full provider matrix, how to select a model, the credential chain, and pointing stella at a local OpenAI-compatible server.
 ---
 
-Stella is model-agnostic. It speaks each provider's native wire dialect and auto-detects
+stella is model-agnostic. It speaks each provider's native wire dialect and auto-detects
 which provider to use from the API keys you have set.
 
 This page is the quick reference. For per-provider deep dives — setup walkthroughs,
@@ -14,7 +14,7 @@ and for choosing between models (pricing, release dates, what each is best at) s
 ## Supported providers
 
 Each card carries what you need to start: the provider id you put before the `/` in
-`--model`, the env var Stella reads, the model you get if you name none, and the wire
+`--model`, the env var stella reads, the model you get if you name none, and the wire
 dialect it speaks. Click through for setup and provider-specific configuration.
 
 <ProviderGrid />
@@ -41,7 +41,7 @@ stella --model zai/glm-5.2 run "fix the failing test"
 export STELLA_MODEL=anthropic/claude-fable-5
 ```
 
-With no `--model`, Stella **auto-detects**: it selects the first provider that has a
+With no `--model`, stella **auto-detects**: it selects the first provider that has a
 resolvable credential, in preference order — `zai`, `anthropic`, `openai`, `xai`,
 `deepseek`, `gemini`, `openrouter`, then `vertex` and `bedrock` **last**.
 
@@ -54,7 +54,7 @@ resolvable credential, in preference order — `zai`, `anthropic`, `openai`, `xa
 
 ## The credential chain
 
-For the selected provider, Stella resolves the API key in this order — **first hit wins**:
+For the selected provider, stella resolves the API key in this order — **first hit wins**:
 
 1. `--api-key` flag (needs an explicit `--model provider/...`)
 2. The provider's env var (and aliases, e.g. `GOOGLE_API_KEY` for Gemini)
@@ -64,7 +64,7 @@ For the selected provider, Stella resolves the API key in this order — **first
    are only prompted once
 
 <Callout type="info">
-  Before the env-var step (2) runs, Stella first loads project **dotenv files** into the
+  Before the env-var step (2) runs, stella first loads project **dotenv files** into the
   environment: `.env.<mode>.local` → `.env.local` → `.env`, most-specific first, and
   **nearest-scope-wins** — confined to the enclosing git repository (never the home
   directory or above). It never loads `.env.example` or a committed `.env.<mode>`, an

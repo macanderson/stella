@@ -1,6 +1,6 @@
 ---
 title: stella scripts
-description: List and run the project's package-manager scripts through Stella's canonical-verb index — the same frames the agent sees.
+description: List and run the project's package-manager scripts through stella's canonical-verb index — the same frames the agent sees.
 ---
 
 `stella scripts` lists and runs the project's package-manager scripts. Detection is deterministic static parsing of your manifests (cargo, npm/pnpm/yarn, uv, go, make, just, …), mapped onto canonical verbs — `install`, `build`, `check`, `start`, `test`, `lint`, `format`. It mirrors the [`list_scripts` and `run_script` tools](/docs/agent-tools) one-for-one, so a human at the CLI and the model inside a turn see the same script index. Offline: manifest parsing plus a local subprocess, no API key.
@@ -14,7 +14,7 @@ stella scripts run <script> [--dir <path>] [--timeout-secs <n>] [-- <args...>]
 
 ## What it does
 
-Instead of guessing that a repo uses `pnpm test` versus `cargo test` versus `make check`, Stella reads the manifests and presents one normalized index. The agent draws its verbs from exactly this index, which is why a run and a review agree on what "run the tests" means in your repo.
+Instead of guessing that a repo uses `pnpm test` versus `cargo test` versus `make check`, stella reads the manifests and presents one normalized index. The agent draws its verbs from exactly this index, which is why a run and a review agree on what "run the tests" means in your repo.
 
 ### `stella scripts list`
 

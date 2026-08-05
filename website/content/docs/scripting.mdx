@@ -1,9 +1,9 @@
 ---
 title: Scripting & automation
-description: Run Stella headlessly in CI with JSON and streaming-JSON output, environment-variable configuration, and enforced budgets.
+description: Run stella headlessly in CI with JSON and streaming-JSON output, environment-variable configuration, and enforced budgets.
 ---
 
-Stella is built to run unattended. The `--output-format` flag switches from the
+stella is built to run unattended. The `--output-format` flag switches from the
 human-oriented terminal rendering to machine-readable output, and every important flag has
 an environment-variable equivalent for CI.
 
@@ -32,11 +32,11 @@ values:
   </OptionCard>
 </CardGrid>
 
-`stream-json` is a line-per-event serialization of Stella's internal event enum — a stable
+`stream-json` is a line-per-event serialization of stella's internal event enum — a stable
 machine interface you can parse incrementally. Each line is one event object tagged
 `"type"` in snake_case (`stage`, `text`, `reasoning`, `tool_start`, `tool_result`, …).
 The vocabulary is additive-only: skip lines whose `type` you don't recognize, and a
-client that does so keeps working across Stella upgrades without changes. Note the
+client that does so keeps working across stella upgrades without changes. Note the
 converse — a `type` you *do* recognize carrying a body that doesn't fit is a real error,
 not something to skip. See
 [Event stream compatibility](/docs/event-stream-compatibility) for the full contract and
@@ -201,7 +201,7 @@ export STELLA_BUDGET=5
 stella run "update the changelog for the pending release"
 ```
 
-Stella also loads project dotenv files into the environment before any of this
+stella also loads project dotenv files into the environment before any of this
 resolves — `.env.<mode>.local`, then `.env.local`, then `.env`, most-specific
 first, confined to the enclosing git repository. An exported shell value always
 beats a file value, `.env.example` and committed `.env.<mode>` files are never
@@ -220,7 +220,7 @@ stella run --output-format json "generate release notes from the diff since the 
 ```
 
 <Callout type="warn">
-  With no resolvable key and no TTY, Stella fails fast with a clear error rather than
+  With no resolvable key and no TTY, stella fails fast with a clear error rather than
   hanging on a prompt that can never be answered. Make sure a key is in the environment
   before the run.
 </Callout>

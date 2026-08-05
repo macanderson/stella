@@ -1,9 +1,9 @@
 ---
 title: Introduction
-description: Stella is a fast, bring-your-own-key, model-agnostic terminal coding agent. Point it at any provider, give it a goal, and let a verifier decide when done.
+description: stella is a fast, bring-your-own-key, model-agnostic terminal coding agent. Point it at any provider, give it a goal, and let a verifier decide when done.
 ---
 
-Stella is a model-agnostic coding agent that runs in your terminal. It is
+stella is a model-agnostic coding agent that runs in your terminal. It is
 bring-your-own-key: Community/default use has no account and no sign-up, runs on provider
 credentials you already have, records locally, and sends telemetry nowhere unless you
 [configure it to](/docs/telemetry).
@@ -25,7 +25,7 @@ stella run "add a --json flag to the export command and update the tests"
 
 ## Bring your own provider
 
-Stella speaks each provider's native wire dialect rather than funnelling everything
+stella speaks each provider's native wire dialect rather than funnelling everything
 through one OpenAI-shaped adapter, so provider features — Anthropic's thinking blocks,
 Gemini's thinking levels, Bedrock's Converse shape — are native rather than emulated.
 
@@ -35,7 +35,7 @@ Gemini's thinking levels, Bedrock's Converse shape — are native rather than em
 
 <HeroFlowDiagram />
 
-Stella sends your prompt to the model you selected, lets the model call tools to read and
+stella sends your prompt to the model you selected, lets the model call tools to read and
 change your workspace, feeds the results back, and repeats until the task is done. Inside
 the box: the tool registry, MCP servers from `.stella/mcp.toml`, and the memory and
 code-graph context engine. In [goal mode](/docs/agent-modes#outcome-driven-goal-mode) a
@@ -80,10 +80,10 @@ install, one key, `stella init`, first verified change. Something not working?
 | **Understand** | How the [pipeline](/docs/inference-pipeline) proves work, the [engine's one loop](/docs/agent-engine-paths), how the [context engine](/docs/context-engine) makes recall cheap, the [modes](/docs/agent-modes) you drive it with, and [where telemetry goes](/docs/telemetry). |
 | **Configure** | [`settings.json`](/docs/configuration), [providers](/docs/api-providers), [tools and permissions](/docs/agent-tools), and ready-made [recipes](/docs/examples). |
 | **Reference** | Every [command and flag](/docs/commands), the [event bus](/docs/extensions), and [release notes](/docs/release-notes). |
-| **Project** | The [showcase](/docs/showcase), and [supporting Stella](/docs/donate). |
+| **Project** | The [showcase](/docs/showcase), and [supporting stella](/docs/donate). |
 
 <Callout type="info">
-  Stella never proxies model traffic through a hosted service — your keys call your
+  stella never proxies model traffic through a hosted service — your keys call your
   provider directly. Community/default telemetry stays local; only an explicitly enrolled
   Oxagen Enterprise seat can send the documented minimal operational envelope to its exact
   allowlisted HTTPS sink. See [Telemetry](/docs/telemetry).

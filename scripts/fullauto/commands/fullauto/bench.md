@@ -67,8 +67,9 @@ number anyone quotes.
 `--rig` drives the EC2 host instead:
 
 - Instance `stella-vs-cc-rig`, `us-east-1`, 32 vCPU / 123 GB.
-- Key at `docs/design/stella-bench-handoff/tb909-key.pem`, user `ubuntu`. The
-  public IP changes across stop/start — always read it from AWS, never hardcode.
+- Key at `~/.stella/keys/tb909-key.pem` (override with `FULLAUTO_RIG_KEY`),
+  user `ubuntu`. The public IP changes across stop/start — always read it from
+  AWS, never hardcode.
 - **It bills $1.90/hr and $45.56/day.** Left idle from one run it alone pushed a
   ~$68/month account to a $1,006 forecast and tripped the budget alarm. The
   script stops it on exit, interrupt, and failure — but check `aws ec2
