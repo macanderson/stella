@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1069,9 +1070,34 @@ def _parse_output_ceilings(source: str) -> dict[str, int]:
     return ceilings
 
 
+def _read_catalog_source() -> str:
+    """`_CATALOG_RS`'s text, or a reason instead of a bare `OSError`.
+
+    `_CATALOG_RS` is a literal assembled here, and the file it names lives in
+    the Rust tree — so a crate move retargets it with nothing on the Rust side
+    able to notice. That is not hypothetical: the move under `crates/` left
+    this pointing one segment short, and the two tests that read the catalog
+    without asserting on it first died with a bare `FileNotFoundError`. The
+    traceback named the stale path but not the thing a reader has to know,
+    which is that the path is hand-written *in this file* and is fixed here.
+
+    Raising `AssertionError` rather than letting the `OSError` through is what
+    makes all three failures legible: pytest renders it as a failed assertion
+    with the message, not as an unexpected exception in a `pathlib` frame.
+    """
+    try:
+        return _CATALOG_RS.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AssertionError(
+            f"cannot read the model catalog at {_CATALOG_RS}: {exc.strerror}. "
+            "That path is a literal in this file, not a resolved crate "
+            "location — if the crate moved, update `_CATALOG_RS` to match."
+        ) from exc
+
+
 def _seeded_output_ceilings() -> dict[str, int]:
     """`_parse_output_ceilings` over the real catalog this repo ships."""
-    return _parse_output_ceilings(_CATALOG_RS.read_text(encoding="utf-8"))
+    return _parse_output_ceilings(_read_catalog_source())
 
 
 class TestCatalogCeilingParser:
@@ -1202,6 +1228,28 @@ class TestOutputCeilingParity:
         # which is how a ratchet becomes decoration.
         assert _CATALOG_RS.is_file(), f"{_CATALOG_RS} is missing"
         assert _seeded_output_ceilings(), "no seeded ceiling was parsed"
+
+    def test_a_moved_catalog_says_where_the_path_is_fixed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A missing catalog must name the path *and* where to correct it.
+
+        The test above asserts `is_file()` and so fails legibly on its own;
+        the two below read the catalog through `_seeded_output_ceilings` and
+        used to surface a bare `FileNotFoundError` from inside `pathlib`. All
+        three now share one guarded read, and this pins that: the failure has
+        to point at `_CATALOG_RS` as the thing to edit, because the last time
+        this broke, the cause was a Rust crate move and the fix was a literal
+        in this file that no Rust check could have flagged.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__], "_CATALOG_RS", tmp_path / "gone" / "catalog.rs"
+        )
+        with pytest.raises(AssertionError) as caught:
+            _seeded_output_ceilings()
+        message = str(caught.value)
+        assert "catalog.rs" in message
+        assert "_CATALOG_RS" in message
 
     def test_every_bookable_model_has_a_seeded_ceiling(self) -> None:
         """An arm can only book a model the catalog has a ceiling for.
