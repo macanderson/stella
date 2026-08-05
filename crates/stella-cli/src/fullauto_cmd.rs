@@ -303,9 +303,11 @@ pub(crate) fn run(cmd: &FullautoCmd) -> Result<(), String> {
         FullautoCmd::Run { cmd } => match cmd {
             RunCmd::Start => run_start(&st),
             RunCmd::End { status, reason } => run_end(&st, status, reason),
-            RunCmd::Cancel { reason } => {
-                run_end_as(&st, "cancelled", reason.as_deref().unwrap_or("stopped by hand"))
-            }
+            RunCmd::Cancel { reason } => run_end_as(
+                &st,
+                "cancelled",
+                reason.as_deref().unwrap_or("stopped by hand"),
+            ),
             RunCmd::List => runs_report(&st),
             RunCmd::StampCyclePid { pid } => {
                 st.update_run_doc(|doc| match pid {
@@ -560,9 +562,7 @@ fn cycle_end(
             .collect(),
         tier: tier.to_string(),
         aperture: aperture.clone(),
-        lens_tool: Some(
-            lens_tool.map_or_else(|| declared_tool(&aperture), str::to_string),
-        ),
+        lens_tool: Some(lens_tool.map_or_else(|| declared_tool(&aperture), str::to_string)),
         outcome: outcome.as_str().to_string(),
         minutes,
         dry: new_findings == 0,
@@ -806,12 +806,7 @@ fn seen(
     Ok(())
 }
 
-fn calibrate_cmd(
-    st: &LoopState,
-    ok: bool,
-    resource_fail: bool,
-    show: bool,
-) -> Result<(), String> {
+fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> Result<(), String> {
     if show {
         let cal = st.calibration();
         println!(

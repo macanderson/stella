@@ -75,7 +75,12 @@ pub(crate) fn floors() -> Floors {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn git(root: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(root).args(args).output().ok()?;
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -177,7 +182,9 @@ impl LoopState {
     fn record_workspace_root(&self) {
         let path = self.dir.join("workspace.json");
         let mut doc = read_json(&path).unwrap_or_else(|| Value::Object(Map::new()));
-        let Some(obj) = doc.as_object_mut() else { return };
+        let Some(obj) = doc.as_object_mut() else {
+            return;
+        };
         let root = self.repo_root.to_string_lossy().into_owned();
         let mut roots: Vec<String> = obj
             .get("roots")
@@ -324,8 +331,7 @@ impl LoopState {
     /// of cycle 12".
     pub fn run_write(&self, phase: &str, cycle: Option<u64>, tier: Option<&str>) {
         let aperture = self.aperture();
-        let driver =
-            std::env::var("FULLAUTO_DRIVER").unwrap_or_else(|_| "interactive".to_string());
+        let driver = std::env::var("FULLAUTO_DRIVER").unwrap_or_else(|_| "interactive".to_string());
         let now = rfc3339_utc_now();
         self.update_run_doc(|doc| {
             if let Some(c) = cycle {
@@ -351,10 +357,7 @@ impl LoopState {
     /// Append one run state transition. NOT best-effort: this append IS the
     /// run history, and swallowing its failure while the caller clears the
     /// live pointer leaves the run reading `crashed` to every reader forever.
-    pub fn append_run_record(
-        &self,
-        fields: BTreeMap<String, Value>,
-    ) -> Result<Value, String> {
+    pub fn append_run_record(&self, fields: BTreeMap<String, Value>) -> Result<Value, String> {
         let mut rec = BTreeMap::new();
         rec.insert("at".to_string(), Value::String(rfc3339_utc_now()));
         rec.insert("at_unix".to_string(), now_unix().into());
@@ -426,7 +429,9 @@ impl LoopState {
 /// overwrite: if both exist the new home wins and the legacy directory is
 /// left untouched for the user to inspect.
 fn migrate_legacy_state(new_dir: &Path, slug: &str) {
-    let Some(home) = std::env::var_os("HOME") else { return };
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
     let legacy = Path::new(&home).join(".fullauto").join(slug);
     if !legacy.is_dir() || new_dir.exists() {
         return;

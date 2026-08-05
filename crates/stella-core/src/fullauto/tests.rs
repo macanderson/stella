@@ -246,7 +246,11 @@ fn a_discovering_cycle_between_two_dry_ones_resets_the_streak() {
         cycle(2, "rubric", false),
         cycle(3, "rubric", true),
     ];
-    assert_eq!(dry_streak(&rows, "rubric"), 1, "dry-noise-dry never advances");
+    assert_eq!(
+        dry_streak(&rows, "rubric"),
+        1,
+        "dry-noise-dry never advances"
+    );
 }
 
 proptest! {
@@ -318,7 +322,11 @@ fn assert_plan(supply: Supply, demand: Demand, want: (&str, bool, u32, &str, &st
 #[test]
 fn the_supply_rungs_decide_the_tier() {
     let d = Demand::default();
-    assert_plan(base_supply(), d, ("normal", true, 2, "impacted", "loop", 20, "deep"));
+    assert_plan(
+        base_supply(),
+        d,
+        ("normal", true, 2, "impacted", "loop", 20, "deep"),
+    );
 
     let big = Supply {
         mem_total_gb: 64,
@@ -334,33 +342,51 @@ fn the_supply_rungs_decide_the_tier() {
     );
 
     assert_plan(
-        Supply { disk_free_gb: 5, ..base_supply() },
+        Supply {
+            disk_free_gb: 5,
+            ..base_supply()
+        },
         d,
         ("light", false, 2, "ci", "off", 5, "deep"),
     );
     // The floor outranks heavy-class hardware — the first rung wins.
     assert_plan(
-        Supply { disk_free_gb: 5, ..big },
+        Supply {
+            disk_free_gb: 5,
+            ..big
+        },
         d,
         ("light", false, 2, "ci", "off", 5, "deep"),
     );
     assert_plan(
-        Supply { busy: true, ..base_supply() },
+        Supply {
+            busy: true,
+            ..base_supply()
+        },
         d,
         ("light", false, 1, "ci", "off", 5, "deep"),
     );
     assert_plan(
-        Supply { mem_free_gb: 2, ..base_supply() },
+        Supply {
+            mem_free_gb: 2,
+            ..base_supply()
+        },
         d,
         ("light", false, 1, "ci", "off", 5, "deep"),
     );
     assert_plan(
-        Supply { on_battery: true, ..base_supply() },
+        Supply {
+            on_battery: true,
+            ..base_supply()
+        },
         d,
         ("light", true, 1, "impacted", "off", 5, "deep"),
     );
     assert_plan(
-        Supply { load1: 8, ..base_supply() },
+        Supply {
+            load1: 8,
+            ..base_supply()
+        },
         d,
         ("light", true, 1, "impacted", "loop", 5, "deep"),
     );
@@ -370,25 +396,43 @@ fn the_supply_rungs_decide_the_tier() {
 fn demand_shrinks_the_batch_and_a_p0_rescues_a_light_cycle() {
     assert_plan(
         base_supply(),
-        Demand { open_defects: 3, p0: 0 },
+        Demand {
+            open_defects: 3,
+            p0: 0,
+        },
         ("normal", true, 2, "impacted", "loop", 3, "deep"),
     );
     // A P0 on a light tier buys a minimal fast cycle, not a skipped one.
     assert_plan(
-        Supply { on_battery: true, ..base_supply() },
-        Demand { open_defects: 3, p0: 2 },
+        Supply {
+            on_battery: true,
+            ..base_supply()
+        },
+        Demand {
+            open_defects: 3,
+            p0: 2,
+        },
         ("light", true, 1, "impacted", "off", 2, "fast"),
     );
     // A P0 on a healthy box changes nothing — the rescue is light-only.
     assert_plan(
         base_supply(),
-        Demand { open_defects: 3, p0: 2 },
+        Demand {
+            open_defects: 3,
+            p0: 2,
+        },
         ("normal", true, 2, "impacted", "loop", 3, "deep"),
     );
     // The light tier caps the batch at 5 whatever the queue holds.
     assert_plan(
-        Supply { on_battery: true, ..base_supply() },
-        Demand { open_defects: 9, p0: 0 },
+        Supply {
+            on_battery: true,
+            ..base_supply()
+        },
+        Demand {
+            open_defects: 9,
+            p0: 0,
+        },
         ("light", true, 1, "impacted", "off", 5, "deep"),
     );
 }
@@ -446,7 +490,11 @@ fn three_zero_fix_cycles_raise_stuck_and_a_healthy_loop_raises_nothing() {
 
     let healthy: Vec<CycleRecord> = (1..=6).map(|i| ledger_row(i, 4, 1, 2, "green")).collect();
     let m = metrics(&healthy);
-    assert!(m.signals.is_empty(), "a dashboard that always warns teaches the reader to ignore it: {:?}", m.signals);
+    assert!(
+        m.signals.is_empty(),
+        "a dashboard that always warns teaches the reader to ignore it: {:?}",
+        m.signals
+    );
     assert_eq!(m.fixed, 24);
 }
 
@@ -564,7 +612,9 @@ fn last_write_wins_and_cycles_aggregate_into_their_run() {
     assert_eq!(r1.status, "completed", "last write wins");
     assert_eq!((r1.cycles, r1.fixed), (2, 6));
     assert_eq!(
-        rows.iter().find(|r| r.run_id == "r-2").map(|r| r.status.as_str()),
+        rows.iter()
+            .find(|r| r.run_id == "r-2")
+            .map(|r| r.status.as_str()),
         Some("cancelled")
     );
 }

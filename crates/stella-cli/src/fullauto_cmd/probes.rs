@@ -107,8 +107,7 @@ fn mem_free_gb() -> u64 {
                     || line.starts_with("Pages inactive")
                     || line.starts_with("Pages speculative")
                 {
-                    let digits: String =
-                        line.chars().filter(char::is_ascii_digit).collect();
+                    let digits: String = line.chars().filter(char::is_ascii_digit).collect();
                     pages += digits.parse::<u64>().unwrap_or(0);
                 }
             }
@@ -168,13 +167,16 @@ fn contention() -> bool {
     // A running container is real work even when no host process names it —
     // but EXISTENCE is not activity: a finished match leaves recorder
     // sidecars up for hours. Ask what the containers are DOING.
-    run("docker", &["stats", "--no-stream", "--format", "{{.CPUPerc}}"])
-        .map(|text| {
-            text.lines()
-                .filter_map(|l| l.trim().trim_end_matches('%').parse::<f64>().ok())
-                .any(|cpu| cpu > 20.0)
-        })
-        .unwrap_or(false)
+    run(
+        "docker",
+        &["stats", "--no-stream", "--format", "{{.CPUPerc}}"],
+    )
+    .map(|text| {
+        text.lines()
+            .filter_map(|l| l.trim().trim_end_matches('%').parse::<f64>().ok())
+            .any(|cpu| cpu > 20.0)
+    })
+    .unwrap_or(false)
 }
 
 /// One `pgrep -fl` line names real work when a workload command+verb pair
@@ -182,11 +184,11 @@ fn contention() -> bool {
 /// wrapper mentioning the work without doing it.
 fn is_real_work(line: &str) -> bool {
     let tokens: Vec<&str> = line.split_whitespace().collect();
-    let is_cmd = |token: &str, name: &str| {
-        token == name || token.ends_with(&format!("/{name}"))
-    };
+    let is_cmd = |token: &str, name: &str| token == name || token.ends_with(&format!("/{name}"));
 
-    for watcher in ["tail", "grep", "less", "watch", "pgrep", "ps", "awk", "sed", "tee"] {
+    for watcher in [
+        "tail", "grep", "less", "watch", "pgrep", "ps", "awk", "sed", "tee",
+    ] {
         if tokens.iter().any(|t| is_cmd(t, watcher)) {
             return false;
         }
@@ -212,10 +214,7 @@ fn is_real_work(line: &str) -> bool {
     ];
     tokens.iter().enumerate().any(|(i, t)| {
         pairs.iter().any(|(cmd, verbs)| {
-            is_cmd(t, cmd)
-                && tokens
-                    .get(i + 1)
-                    .is_some_and(|next| verbs.contains(next))
+            is_cmd(t, cmd) && tokens.get(i + 1).is_some_and(|next| verbs.contains(next))
         })
     })
 }

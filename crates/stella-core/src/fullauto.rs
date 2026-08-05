@@ -589,7 +589,9 @@ pub fn plan_cycle(
             "load {} at or above {} cores — the box is already saturated",
             supply.load1, supply.cpu
         );
-    } else if supply.mem_total_gb >= 32 && supply.disk_free_gb >= 100 && supply.load1 < supply.cpu / 2
+    } else if supply.mem_total_gb >= 32
+        && supply.disk_free_gb >= 100
+        && supply.load1 < supply.cpu / 2
     {
         tier = Tier::Heavy;
         scope = BuildScope::Workspace;

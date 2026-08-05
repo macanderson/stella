@@ -37,7 +37,10 @@ const GROUPS: &[(&str, &[&str])] = &[
         "Run the agent",
         &["run", "chat", "goal", "resume", "daemon", "init"],
     ),
-    ("Run many at once", &["fleet", "monitor", "fullauto", "arena"]),
+    (
+        "Run many at once",
+        &["fleet", "monitor", "fullauto", "arena"],
+    ),
     (
         "Ask about this workspace",
         &["graph", "storage", "scripts", "tools", "commands"],

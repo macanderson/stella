@@ -45,7 +45,11 @@ fn seen_digest_prints_the_shell_pipelines_bytes() {
             "crates/stella-core/src/driver.rs:812 retry counter never reset",
         ],
     );
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(stdout(&out).trim(), "a9efcba568ece91c");
 }
 
@@ -59,9 +63,22 @@ fn two_dry_cycles_advance_the_lens_and_the_fresh_lens_starts_at_zero() {
         let out = stella(
             tmp.path(),
             &state,
-            &["cycle", "end", "--cycle", n, "--new", new, "--outcome", "ok"],
+            &[
+                "cycle",
+                "end",
+                "--cycle",
+                n,
+                "--new",
+                new,
+                "--outcome",
+                "ok",
+            ],
         );
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
     let current = || {
         stdout(&stella(tmp.path(), &state, &["aperture", "--current"]))
@@ -70,9 +87,17 @@ fn two_dry_cycles_advance_the_lens_and_the_fresh_lens_starts_at_zero() {
     };
 
     end("1", "1");
-    assert_eq!(current(), "rubric", "a discovering cycle holds the lens open");
+    assert_eq!(
+        current(),
+        "rubric",
+        "a discovering cycle holds the lens open"
+    );
     end("2", "0");
-    assert_eq!(current(), "rubric", "one dry cycle is noise, not convergence");
+    assert_eq!(
+        current(),
+        "rubric",
+        "one dry cycle is noise, not convergence"
+    );
     end("3", "0");
     assert_eq!(current(), "properties", "two dry cycles open the next lens");
 
@@ -104,7 +129,11 @@ fn plan_emits_the_evalable_decision_for_a_pinned_machine() {
         .args(["fullauto", "plan"])
         .output()
         .expect("spawn stella");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = stdout(&out);
     for expected in [
         "FULLAUTO_TIER=normal",
@@ -139,14 +168,21 @@ fn a_run_starts_running_and_ends_with_its_terminal_status() {
     );
 
     let listed = stdout(&stella(tmp.path(), &state, &["runs"]));
-    assert!(listed.contains("running"), "expected a running run:\n{listed}");
+    assert!(
+        listed.contains("running"),
+        "expected a running run:\n{listed}"
+    );
 
     let end = stella(
         tmp.path(),
         &state,
         &["run", "end", "--status", "completed", "--reason", "done"],
     );
-    assert!(end.status.success(), "{}", String::from_utf8_lossy(&end.stderr));
+    assert!(
+        end.status.success(),
+        "{}",
+        String::from_utf8_lossy(&end.stderr)
+    );
 
     let listed = stdout(&stella(tmp.path(), &state, &["runs"]));
     assert!(
@@ -160,8 +196,15 @@ fn a_run_starts_running_and_ends_with_its_terminal_status() {
 #[test]
 fn aperture_list_names_the_tooling_and_admits_the_model_only_lenses() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let text = stdout(&stella(tmp.path(), &tmp.path().join("state"), &["aperture", "--list"]));
-    assert!(text.contains("* rubric"), "the open lens is marked:\n{text}");
+    let text = stdout(&stella(
+        tmp.path(),
+        &tmp.path().join("state"),
+        &["aperture", "--list"],
+    ));
+    assert!(
+        text.contains("* rubric"),
+        "the open lens is marked:\n{text}"
+    );
     assert!(text.contains("make supply-chain"), "{text}");
     assert!(text.contains("model-only"), "{text}");
     assert!(text.contains("[heavy tier]"), "{text}");
