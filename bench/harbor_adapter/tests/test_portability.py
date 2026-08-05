@@ -19,10 +19,19 @@ binary that broke the run (rejected, max ``GLIBC_2.34``) and a genuine
 ``cargo zigbuild --target x86_64-unknown-linux-gnu.2.17`` build (accepted, max
 ``GLIBC_2.17``). Those cannot be committed — one is 32 MiB — so they are
 exercised through the opt-in fixture test at the bottom.
+
+``stella_harbor/portability.py`` is loaded by path, the same way
+``test_git_baseline.py`` loads its subject: the module is stdlib-only on
+purpose — ``env.sh`` invokes it by file path on a host that is only building
+the SUT — and importing it through the package would pull in the adapter
+root, and with it ``harbor``. A module that houses
+``test_runs_without_importing_the_adapter_package`` must not itself be
+uncollectable without the package.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import struct
 import subprocess
 import sys
@@ -30,21 +39,28 @@ from pathlib import Path
 
 import pytest
 
-from stella_harbor.portability import (
-    DEFAULT_GLIBC_FLOOR,
-    LibcProfile,
-    MalformedElfError,
-    NotAnElfError,
-    check_portability,
-    classify_loader_failure,
-    libc_profile_from_bytes,
-    parse_glibc_floor,
-    read_libc_profile,
-)
-
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CHECKER = _REPO_ROOT / "bench" / "harbor_adapter" / "stella_harbor" / "portability.py"
 _ENV_SH = _REPO_ROOT / "bench" / "evidence" / "run" / "env.sh"
+
+_spec = importlib.util.spec_from_file_location("stella_harbor_portability", _CHECKER)
+assert _spec is not None and _spec.loader is not None
+_portability = importlib.util.module_from_spec(_spec)
+# Registered before execution: `@dataclass` resolves a class's own module out
+# of `sys.modules` while the decorator runs, and a module that is not there
+# yet fails the whole load.
+sys.modules[_spec.name] = _portability
+_spec.loader.exec_module(_portability)
+
+DEFAULT_GLIBC_FLOOR = _portability.DEFAULT_GLIBC_FLOOR
+LibcProfile = _portability.LibcProfile
+MalformedElfError = _portability.MalformedElfError
+NotAnElfError = _portability.NotAnElfError
+check_portability = _portability.check_portability
+classify_loader_failure = _portability.classify_loader_failure
+libc_profile_from_bytes = _portability.libc_profile_from_bytes
+parse_glibc_floor = _portability.parse_glibc_floor
+read_libc_profile = _portability.read_libc_profile
 
 _EM_X86_64 = 62
 _EM_AARCH64 = 183

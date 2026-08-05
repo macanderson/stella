@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import pytest
 
-from stella_harbor.turn_budget import (
+pytest.importorskip("harbor", reason="Harbor is required to import the adapter")
+
+from stella_harbor.turn_budget import (  # noqa: E402 - after importorskip by design
     TEARDOWN_SEC,
     coerce_timeout_seconds,
     resolve_turn_budget,
 )
 
-from .test_adapter import _bare_agent
+from .test_adapter import _bare_agent  # noqa: E402 - after importorskip by design
 
 
 class TestTurnBudgetReachesTheEngine:
