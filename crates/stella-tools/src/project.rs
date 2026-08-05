@@ -2,7 +2,7 @@
 //! toolchain-aware build/test/lint/format execution.
 //!
 //! All four are thin verb shortcuts over the project scripts index
-//! (`crate::scripts`, spec: `docs/design/scripts-index.md`): detection is
+//! (`crate::scripts`, spec: `docs/spec/scripts-index.md`): detection is
 //! the index's one code path. `build_project` runs the `build` verb
 //! binding; `run_tests` layers its `kind` (unit / e2e / all) and `filter`
 //! semantics on top — mapped to the runner's native filtering flag, or to

@@ -1,7 +1,7 @@
 //! The feedback airlock at the pipeline seam: the operator sees the runner's
 //! real failure, the worker sees only what the disclosure grain allows.
 //!
-//! Design: [`docs/design/witness-protocol.md`](../../../../../docs/design/witness-protocol.md) §4.
+//! Design: [`docs/spec/witness-protocol.md`](../../../../../docs/spec/witness-protocol.md) §4.
 
 use super::*;
 

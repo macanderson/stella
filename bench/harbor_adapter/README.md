@@ -500,9 +500,13 @@ Every result exposes manifest-ready metadata keys:
   closed made no claim, which is not the same datum as claiming failure.
 - `stella_workspace_git_baseline` — what the adapter did to the workspace
   before Stella started: `{"state": "created", "commit": <sha>}`,
-  `preexisting`, `unavailable`, `failed`, `error`, or `not_attempted`. Also in
-  ATIF `agent.extra.workspace_git_baseline`, unconditionally, so a trajectory
+  `preexisting`, `skipped` (over the size cap), `disabled`, `unavailable`,
+  `failed`, `error`, `unreported`, or `not_attempted`. Also in ATIF
+  `agent.extra.workspace_git_baseline`, unconditionally, so a trajectory
   reviewer sees the in-container baseline action (or its absence) first-hand.
+  Exactly one step may create a repository here, which is what lets
+  `preexisting` mean *the task owned this repository and the adapter left it
+  alone* rather than *something earlier in this same install created it*.
 
 ## Configuration
 

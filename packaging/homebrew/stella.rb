@@ -27,7 +27,7 @@ class Stella < Formula
     # manifests in the release commit the tag points at), so no version
     # rewrite is needed before building — and `--locked` holds, because the
     # tagged lockfile is synced to the same version.
-    system "cargo", "install", "--locked", "--root", prefix, "--path", "stella-cli"
+    system "cargo", "install", "--locked", "--root", prefix, "--path", "crates/stella-cli"
   end
 
   test do

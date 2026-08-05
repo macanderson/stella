@@ -1,9 +1,0 @@
-{
-  "id": "2",
-  "subject": "Drive serial console to configure SSH",
-  "description": "Connect to the QEMU serial socket, log in as root (no password), bring up networking, install/enable openssh, set root password to password123, configure sshd to PermitRootLogin yes, generate host keys, start sshd.",
-  "activeForm": "Configuring SSH over serial console",
-  "status": "in_progress",
-  "blocks": [],
-  "blockedBy": []
-}

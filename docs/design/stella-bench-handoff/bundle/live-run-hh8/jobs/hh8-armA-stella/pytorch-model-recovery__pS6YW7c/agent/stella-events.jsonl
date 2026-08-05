@@ -1,7 +1,0 @@
-error: unexpected argument '- ' found
-
-  tip: to pass '- ' as a value, use '-- - '
-
-Usage: stella run [OPTIONS] <PROMPT>
-
-For more information, try '--help'.

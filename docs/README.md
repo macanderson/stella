@@ -18,16 +18,24 @@ exception: [`why-stella.md`](why-stella.md) is written for an evaluator rather
 than a contributor but stays in the repo so it renders on GitHub without a
 round trip to the site.
 
+**`spec/` is durable; `design/` is not.** A document that code cites lives in
+[`spec/`](spec/), and `make design-refs` fails the build if anything outside
+`docs/design/` names a path inside it. That is what makes `design/` usable as a
+scratchpad: rewrite, rename and delete in there freely, because no comment,
+test or script is allowed to depend on it. When a design lands, promote it —
+`git mv docs/design/<doc>.md docs/spec/<doc>.md` — and cite it by `doc:<id>`.
+
 | Path | What it is |
 |---|---|
 | [`adr/`](adr/README.md) | Architecture Decision Records for the adaptive-context work — the ratified answers the specs below are built on. |
-| [`design/`](design/) | Design specifications and RFCs: the context frame, directive schema, storage map, Context PR workflow, telemetry receipts, the serve surface, [adaptive context](design/adaptive-context.md), [remote sandboxes](design/remote-sandboxes.md), [agent-native delivery](design/agent-native-delivery.md), and the [website information architecture](design/website-information-architecture.md). |
+| [`spec/`](spec/) | The specifications code depends on: the diagnostic plane, storage map, serve surface, witness protocol, adaptive context, telemetry receipts, the threat model, and the rest. Cited from rustdoc and enforced by `make design-refs`. |
+| [`design/`](design/) | **Work in flight — nothing outside this directory may cite it.** Proposals and RFCs that have not landed: the directive schema, agent-native delivery, the website information architecture, the pipeline journey. Churn freely. |
 | [`papers/`](papers/README.md) | The research notes behind Stella's design: [The Deterministic Engine](papers/deterministic-engine.md) and [Stella's Defensible Position](papers/stella-defensible-position.md). The live site links to these at their exact paths — don't move or rename them. |
 | [`brand/`](brand/README.md) | Logo, mark, wordmark, and icon assets, plus the design tokens under `tokens/`. The UI palette itself is not generated from here: `crates/stella-tui/src/palette.rs` is the hand-maintained normative source, mirrored by `website/src/app/tokens.css` — edit the two together. |
-| [`design/adaptive-context/context-reuse.md`](design/adaptive-context/context-reuse.md) | **Vendored, do not edit.** The Context Graph Protocol's normative contract for context identity, usage reports, consent, and verification — the document 46 rustdoc citations point at. Re-sync from upstream rather than patching it. |
+| [`spec/adaptive-context/context-reuse.md`](spec/adaptive-context/context-reuse.md) | **Vendored, do not edit.** The Context Graph Protocol's normative contract for context identity, usage reports, consent, and verification — the document 46 rustdoc citations point at. Re-sync from upstream rather than patching it. |
 | [`why-stella.md`](why-stella.md) | The technical overview, written for someone evaluating Stella rather than contributing to it. |
-| [`design/adaptive-context/context-pr.md`](design/adaptive-context/context-pr.md) | The canonical Context PR specification: how durable steering is proposed, reviewed, published, and retired through Git. |
-| [`design/replay-golden-trajectories.md`](design/replay-golden-trajectories.md) | How the golden-trajectory replay fixtures are recorded and refreshed. |
+| [`spec/adaptive-context/context-pr.md`](spec/adaptive-context/context-pr.md) | The canonical Context PR specification: how durable steering is proposed, reviewed, published, and retired through Git. |
+| [`spec/replay-golden-trajectories.md`](spec/replay-golden-trajectories.md) | How the golden-trajectory replay fixtures are recorded and refreshed. |
 
 ### How to cite a document
 

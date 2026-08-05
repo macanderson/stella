@@ -1015,13 +1015,9 @@ class TestWitnessArmEndToEnd:
         assert context.metadata["stella_stream"]["self_verdict_deterministic"] is False
 
 
-_CATALOG_RS = (
-    Path(__file__).resolve().parents[3]
-    / "crates"
-    / "stella-model"
-    / "src"
-    / "catalog.rs"
-)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_CATALOG_RS = _REPO_ROOT / "crates" / "stella-model" / "src" / "catalog.rs"
+_BENCH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "bench.yml"
 
 
 def _parse_output_ceilings(source: str) -> dict[str, int]:
@@ -1250,6 +1246,28 @@ class TestOutputCeilingParity:
         message = str(caught.value)
         assert "catalog.rs" in message
         assert "_CATALOG_RS" in message
+
+    def test_the_bench_workflow_runs_when_the_catalog_changes(self) -> None:
+        """A ratchet that reads a file must be triggered by that file.
+
+        The suite's expensive half is gated on a path filter, and every
+        pattern in it names something under `bench/` or `arenabench/`. This
+        class reads a file in the Rust tree, so a PR that only raises a
+        model's ceiling used to set `changed=false` and skip the whole suite —
+        the parity check guaranteed not to run on the one class of change it
+        exists to catch. The path is a hand-written literal on both sides,
+        which is how the last crate move broke it with Rust CI all-green, so
+        the two literals are compared here rather than trusted to stay in step.
+        """
+        relative = _CATALOG_RS.relative_to(_REPO_ROOT).as_posix()
+        # The filter is a POSIX ERE, so the literal is written with its dot
+        # escaped; compare against the unescaped text.
+        workflow = _BENCH_WORKFLOW.read_text(encoding="utf-8").replace("\\", "")
+        assert relative in workflow, (
+            f"{_BENCH_WORKFLOW.name}'s change filter does not name {relative}, "
+            "so a PR touching only that file skips this suite — including the "
+            "ceiling parity check below, whose only input is that file."
+        )
 
     def test_every_bookable_model_has_a_seeded_ceiling(self) -> None:
         """An arm can only book a model the catalog has a ceiling for.

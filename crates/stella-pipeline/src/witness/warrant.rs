@@ -1,6 +1,6 @@
 //! Does *this change* warrant a witness test, and if not, why not.
 //!
-//! Design: [`docs/design/witness-protocol.md`](../../../../docs/design/witness-protocol.md) §7.
+//! Design: [`docs/spec/witness-protocol.md`](../../../../docs/spec/witness-protocol.md) §7.
 //!
 //! # Escalate on evidence, do not predict up front
 //!

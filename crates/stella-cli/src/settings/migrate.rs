@@ -129,7 +129,7 @@ fn header(scope: ConfigScope) -> String {
          # The original settings.json was NOT deleted. Check this file, then\n\
          # remove the JSON — until you do, stella reads this one and says so.\n\
          #\n\
-         # Full reference: docs/design/config-system/stella.today.toml\n\n"
+         # Full reference: docs/spec/config-system/stella.today.toml\n\n"
     )
 }
 

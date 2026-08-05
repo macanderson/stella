@@ -53,7 +53,7 @@ pub(crate) fn spawn_renderer(
         let mut usage_warned = false;
         let mut store_warned = false;
         let mut stream_terminal = None;
-        // The diagnostic timeline (docs/design/diagnostics/diagnostics.md §8). Built on the
+        // The diagnostic timeline (docs/spec/diagnostics.md §8). Built on the
         // RECEIVING side: a bridge holding an `EventSender` clone would keep the
         // channel open and hang close-out, which is the whole point of
         // `close_event_stream` above.

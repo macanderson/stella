@@ -145,7 +145,7 @@ fn index_bytes(store: &ContextStore) -> (CentroidRows, AssignmentRows) {
 
 // Determinism
 
-/// §5.3 of `docs/design/adaptive-context/adaptive-context.md` requires identical inputs to
+/// §5.3 of `docs/spec/adaptive-context/adaptive-context.md` requires identical inputs to
 /// produce identical output. For an index built by k-means that is not a
 /// formality: the textbook algorithm seeds its centroids at random, and a
 /// randomly-seeded index would make "which memories can this workspace recall"

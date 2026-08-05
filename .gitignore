@@ -189,4 +189,17 @@ docs/brand/__pycache__/
 # Benchmark evidence handoffs: raw trial traces (100s of MB) plus rig
 # credentials (*.pem). Never committed — a bare `git add .` must not be able
 # to publish an SSH key.
-/docs/stella-bench-handoff/
+#
+# Unanchored on purpose: this rule was once anchored at the repository root
+# while the bundle actually sat one directory deeper, so it matched nothing and
+# a rig key reached a public remote. Match the directory wherever it lands.
+stella-bench-handoff/
+
+# Private key material, anywhere in the tree. scripts/check-no-secrets.sh
+# enforces the same rule against what is already tracked, since .gitignore has
+# no opinion about a file that is staged explicitly.
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519

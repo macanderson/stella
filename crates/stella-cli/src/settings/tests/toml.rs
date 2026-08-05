@@ -583,7 +583,7 @@ fn parse_accepts_an_entirely_empty_document() {
 fn the_shipped_reference_config_loads_with_no_unrecognized_keys() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("docs/design/config-system/stella.today.toml");
+        .join("docs/spec/config-system/stella.today.toml");
     assert!(
         path.exists(),
         "reference config missing at {}",

@@ -57,8 +57,18 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # `crates/stella-model/src/catalog.rs` is in scope because the bench
+          # suites READ it: `test_posture.py::TestOutputCeilingParity` parses
+          # the shipping models' output ceilings out of that file to prove the
+          # frozen posture never caps a model below its own ceiling. A PR that
+          # touches only the catalog is exactly the change that ratchet exists
+          # to catch, and without this pattern it was the one change that
+          # skipped the suite entirely. `test_posture.py` asserts this pattern
+          # still names the file it reads, so a crate move cannot silently
+          # drop it (the last one left the test's own path literal one segment
+          # short with Rust CI all-green).
           if git diff --name-only "$BASE_SHA"...HEAD \
-            | grep -Eq '^(bench/harbor_adapter/|bench/terminal_bench_analysis/|bench/telemetry_store/|bench/evidence/|arenabench/|\.github/workflows/bench\.yml$)'; then
+            | grep -Eq '^(bench/harbor_adapter/|bench/terminal_bench_analysis/|bench/telemetry_store/|bench/evidence/|arenabench/|crates/stella-model/src/catalog\.rs$|\.github/workflows/bench\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

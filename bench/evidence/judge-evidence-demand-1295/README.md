@@ -68,8 +68,8 @@ the issue reports, and it is a property of the posture, not of the workload.
 
 ### 2.2 The event corpus cannot answer the rate question, and says so
 
-34 trial streams under `docs/design/stella-bench-handoff/bundle/rig-runs/`
-yield 14 `judge_verdict` events (21 of 34 trials emitted none at all — they
+34 trial streams from the TB2.1 handoff bundle's `rig-runs/` (untracked: raw
+trial traces and rig credentials never land in git) yield 14 `judge_verdict` events (21 of 34 trials emitted none at all — they
 died before verification). Of those 14: 12 passes, **0 deterministic**.
 
 None carries a `ladder` snapshot — they predate #865/#1043 — so
@@ -86,7 +86,8 @@ on the `Unverifiable` rung — every evidence channel blind. Consistent with
 Reproduce:
 
 ```bash
-for j in docs/design/stella-bench-handoff/bundle/rig-runs/jobs/*/; do
+# BUNDLE is wherever the handoff bundle was unpacked locally.
+for j in "$BUNDLE"/rig-runs/jobs/*/; do
   python3 analyze.py extract "$j" --arm "$(basename "$j")" -o /tmp/$(basename "$j").jsonl
 done
 python3 analyze.py report /tmp/*.jsonl

@@ -84,7 +84,7 @@ The flag reported that the directive schema enumerates origin as four values
 > 5-value enum in Phase 1.
 
 Corroborated by lifecycle:628 ("Portable Origin values are user, system,
-observed, inferred, and imported") and `docs/design/adaptive-context/context-frame-spec.md` §4.
+observed, inferred, and imported") and `docs/spec/adaptive-context/context-frame-spec.md` §4.
 The code already implements the 5-value set
 (`crates/stella-core/src/context_record/kind.rs:147-155`). The four-value list in
 `docs/design/directive-schema.md` § Type definition is on the *superseded*
@@ -176,7 +176,7 @@ distinct fields sharing one value set**, not one-vs-two enums:
 
 `validation_status` is contract-level (lifecycle:1726), `requirement_status` is
 per-result (lifecycle:1730); "Validation statuses are passed, failed, error, and
-skipped" (lifecycle:1828). Ignore `docs/design/adaptive-context/context-frame-spec.md` §16, whose
+skipped" (lifecycle:1828). Ignore `docs/spec/adaptive-context/context-frame-spec.md` §16, whose
 `needs_review`/`not_run` tokens are stale.
 
 ## Decision 6 — Procedure step `order` semantics (RESOLVED by plan:502)

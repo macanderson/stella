@@ -1,9 +1,0 @@
-{
-  "id": "3",
-  "subject": "Verify ssh -p 2222 root@localhost works",
-  "description": "From the host, verify that ssh to port 2222 with password password123 drops into a root shell on the Alpine VM.",
-  "activeForm": "Verifying SSH access",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

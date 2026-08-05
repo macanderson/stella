@@ -7,9 +7,7 @@ use stella_protocol::event::BudgetMode; // no longer re-exported via `super::*` 
 #[test]
 fn one_shot_reflection_defaults_on_for_every_output_format() {
     let _env = crate::test_env::lock();
-    // SAFETY: the shared test env lock serializes every Stella test that
-    // mutates or reads process environment state.
-    unsafe { std::env::remove_var(DISABLE_REFLECTION_ENV) };
+    let _restore = crate::test_env::EnvRestore::capture(&[DISABLE_REFLECTION_ENV]);
 
     assert!(one_shot_reflection_enabled(OutputFormat::Text));
     assert!(one_shot_reflection_enabled(OutputFormat::Json));
@@ -19,16 +17,12 @@ fn one_shot_reflection_defaults_on_for_every_output_format() {
 #[test]
 fn explicit_reflection_opt_out_suppresses_every_one_shot_format() {
     let _env = crate::test_env::lock();
-    // SAFETY: the shared test env lock serializes every Stella test that
-    // mutates or reads process environment state.
+    let _restore = crate::test_env::EnvRestore::capture(&[DISABLE_REFLECTION_ENV]);
     unsafe { std::env::set_var(DISABLE_REFLECTION_ENV, "  YeS  ") };
 
     assert!(!one_shot_reflection_enabled(OutputFormat::Text));
     assert!(!one_shot_reflection_enabled(OutputFormat::Json));
     assert!(!one_shot_reflection_enabled(OutputFormat::StreamJson));
-
-    // SAFETY: still inside the shared test env critical section.
-    unsafe { std::env::remove_var(DISABLE_REFLECTION_ENV) };
 }
 
 #[test]
@@ -121,7 +115,7 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
 /// The scripts section rides the byte-stable prompt prefix: two
 /// assemblies over the same workspace must be byte-identical, the verb
 /// bindings must be present, and a scriptless workspace must add
-/// nothing (docs/design/scripts-index.md).
+/// nothing (docs/spec/scripts-index.md).
 #[test]
 fn assemble_system_prompt_carries_a_byte_stable_scripts_section() {
     let root = tempfile::tempdir().expect("tempdir");
@@ -1200,6 +1194,11 @@ fn vertex_and_bedrock_route_to_their_native_adapters_not_a_fallthrough() {
     // mutate-read-cleanup window; the missing-project error case shares
     // this test so the set/remove stays serialized.
     let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[
+        "VERTEX_PROJECT_ID",
+        "GOOGLE_CLOUD_PROJECT",
+        "AWS_SECRET_ACCESS_KEY",
+    ]);
     unsafe {
         std::env::set_var("VERTEX_PROJECT_ID", "test-project");
         std::env::set_var("AWS_SECRET_ACCESS_KEY", "test-secret");
@@ -1230,10 +1229,6 @@ fn vertex_and_bedrock_route_to_their_native_adapters_not_a_fallthrough() {
         err.contains("VERTEX_PROJECT_ID"),
         "expected a named VERTEX_PROJECT_ID error, got: {err}"
     );
-
-    unsafe {
-        std::env::remove_var("AWS_SECRET_ACCESS_KEY");
-    }
 }
 
 /// A `ConfiguredProvider` for `provider_id` at its default model with a

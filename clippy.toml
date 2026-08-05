@@ -2,7 +2,7 @@
 #
 # `disallowed-methods` here backs a type-system guarantee that would otherwise
 # have a one-token hole in it. `stella-diag` makes runtime content in a log a
-# COMPILE error (docs/design/diagnostics.md §5.2): a field value is buildable
+# COMPILE error (docs/spec/diagnostics.md §5.2): a field value is buildable
 # only from things that cannot carry content, and `&'static str` is on that
 # list because a string that lives in the binary cannot hold a user's path or a
 # model's output.
@@ -25,7 +25,7 @@
 # the sanctioned escape hatch, it is counted, and it records WHY in the log
 # itself.
 disallowed-methods = [
-  { path = "std::boxed::Box::leak", reason = "leaking turns runtime data into &'static str, defeating stella-diag's compile-time content guarantee (docs/design/diagnostics.md §5.2). To log a runtime string, use Redacted::reviewed with a justification (§5.5). If the leak is genuinely an interner, #[allow] it with a comment saying so." },
-  { path = "std::string::String::leak", reason = "same as Box::leak: it manufactures a &'static str from runtime data. See docs/design/diagnostics.md §5.2." },
-  { path = "std::vec::Vec::leak", reason = "same as Box::leak: it manufactures a &'static slice from runtime data. See docs/design/diagnostics.md §5.2." },
+  { path = "std::boxed::Box::leak", reason = "leaking turns runtime data into &'static str, defeating stella-diag's compile-time content guarantee (docs/spec/diagnostics.md §5.2). To log a runtime string, use Redacted::reviewed with a justification (§5.5). If the leak is genuinely an interner, #[allow] it with a comment saying so." },
+  { path = "std::string::String::leak", reason = "same as Box::leak: it manufactures a &'static str from runtime data. See docs/spec/diagnostics.md §5.2." },
+  { path = "std::vec::Vec::leak", reason = "same as Box::leak: it manufactures a &'static slice from runtime data. See docs/spec/diagnostics.md §5.2." },
 ]

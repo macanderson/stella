@@ -149,22 +149,11 @@ _TRAJECTORY_NAME = "trajectory.json"
 # zero bytes lost), which trained readers to ignore it.
 _TELEMETRY_INCOMPLETE = "stella-adapter: TELEMETRY-INCOMPLETE"
 
-# Workspace git baseline (#1211 §6 item 4; blindness documented in #973).
-# Terminal-Bench task images are plain directories, so on exactly this
-# benchmark the diff probe can never read a tree, candidate isolation is
-# unavailable, the witness author has nothing to snapshot, and the mutation
-# audit cannot restore. One repository with one commit, created before Stella
-# starts, turns all of those channels on. The marker line is the whole
-# contract between the in-container script and the host-side parser; the
-# parsed report is disclosed verbatim in trial metadata and the public ATIF
-# trajectory, so a reviewer sees exactly what the adapter did to the
-# workspace. A workspace that is already a repository is left untouched —
-# committing on top of task-owned history would change the task.
-_GIT_BASELINE_MARKER = "stella-git-baseline:"
-_GIT_BASELINE_TIMEOUT_SEC = 180
-_GIT_BASELINE_COMMIT_MESSAGE = "stella-harbor: task workspace baseline"
-_GIT_BASELINE_IDENT = "stella-harbor"
-_GIT_BASELINE_EMAIL = "stella-harbor@bench.invalid"
+# The CLI's generic failure status, which a completed turn also exits with
+# when its own verification verdict is red (`pipeline_status_result` returns
+# `Err("verification failed: …")` and `main` maps that to `ExitCode::FAILURE`).
+# See `_is_self_reported_verification_failure`.
+_VERIFICATION_FAILED_EXIT_CODE = 1
 
 # Defaults when neither Harbor nor the environment specify a value.
 _DEFAULT_MODEL = "anthropic/claude-fable-5"
@@ -1185,84 +1174,44 @@ def _stream_to_envelope(
     }
 
 
-def _git_baseline_script(workdir: str | None) -> str:
-    """Build the POSIX-sh script that establishes the workspace git baseline.
+class SelfReportedVerificationFailureError(NonZeroAgentExitCodeError):
+    """Stella ran the task to a verdict and its own verdict said "not verified".
 
-    Always exits 0 and reports through one greppable marker line, because an
-    evidence-channel setup step must never be able to fail a trial — a
-    workspace it could not baseline runs exactly as every published number
-    did (diff-blind), it just says so in metadata instead of silently.
+    A ``VerificationFailed`` pipeline status is a completed turn: the agent
+    worked, the ladder closed, and the run reported honestly that the work did
+    not verify. The CLI surfaces that as exit 1, which is also what a crash
+    exits with — so under one exception class a truthful self-report and a
+    process that died are the same row in a results table, exactly the
+    conflation :mod:`stella_harbor.portability` was written to end for loader
+    failures.
 
-    Branch order is load-bearing:
-
-    - ``[ -e .git ]`` runs before ``rev-parse`` so a repository git refuses
-      to read (dubious ownership) still reads as *preexisting* rather than
-      falling through to ``git init`` — reinitializing and committing inside
-      a task-owned repository would rewrite task state.
-    - ``rev-parse`` runs under ``safe.directory='*'`` for the same reason:
-      a false "not a repository" is the one probe result that must not
-      happen, and it covers the workspace-nested-inside-a-parent-repo case
-      ``[ -e .git ]`` cannot see.
-    - ``.stella/`` is excluded via ``.git/info/exclude``, never a tracked
-      ``.gitignore`` — the exclude file lives inside ``.git``, so the
-      baseline adds zero entries to the tree a verifier might enumerate.
-    - ``--allow-empty`` guarantees a baseline commit exists even for an
-      empty task directory, so "repository with no HEAD" is not a state the
-      diff probe can encounter.
+    Deliberately a *subclass* of the official error rather than a sibling:
+    Harbor records ``type(exc).__name__`` in ``result.json``, so the name is
+    all analysis needs, while every ``except NonZeroAgentExitCodeError`` in
+    Harbor and in this adapter keeps behaving exactly as before — the trial is
+    still scored, and the benchmark verifier still runs.
     """
-    prologue = ""
-    if workdir:
-        prologue = (
-            f"cd {shlex.quote(workdir)} || {{ "
-            f"echo '{_GIT_BASELINE_MARKER} state=error detail=workdir-unavailable'; "
-            "exit 0; }; "
-        )
-    ident = (
-        f"-c user.name={shlex.quote(_GIT_BASELINE_IDENT)} "
-        f"-c user.email={shlex.quote(_GIT_BASELINE_EMAIL)}"
-    )
-    return (
-        f"{prologue}"
-        "if ! command -v git >/dev/null 2>&1; then "
-        f"echo '{_GIT_BASELINE_MARKER} state=unavailable detail=git-not-installed'; "
-        "elif [ -e .git ] || git -c safe.directory='*' rev-parse "
-        "--is-inside-work-tree >/dev/null 2>&1; then "
-        f"echo '{_GIT_BASELINE_MARKER} state=preexisting'; "
-        "elif git init -q >/dev/null 2>&1 "
-        "&& mkdir -p .git/info "
-        "&& printf '%s\\n' '.stella/' >> .git/info/exclude "
-        "&& git add -A >/dev/null 2>&1 "
-        f"&& git {ident} commit -q --allow-empty --no-verify "
-        f"-m {shlex.quote(_GIT_BASELINE_COMMIT_MESSAGE)} >/dev/null 2>&1; then "
-        f'echo "{_GIT_BASELINE_MARKER} state=created '
-        'commit=$(git rev-parse HEAD 2>/dev/null)"; '
-        "else "
-        f"echo '{_GIT_BASELINE_MARKER} state=failed detail=git-command-failed'; "
-        "fi"
-    )
 
 
-def _parse_git_baseline_report(stdout: str | None) -> dict[str, str]:
-    """Parse the marker line into a report; absence is itself a finding.
+def _is_self_reported_verification_failure(
+    return_code: int | None, envelope: dict[str, Any] | None
+) -> bool:
+    """Is this nonzero exit Stella's own failed verdict rather than a crash?
 
-    The last marker line wins (a retried step reports its final state), and
-    only non-empty ``key=value`` tokens are kept, so a failed
-    ``git rev-parse HEAD`` yields no ``commit`` key rather than an empty one.
+    The discriminator is the trial's own proof stream, not the exit code: exit
+    1 is the CLI's generic failure status, but a ``verdict`` event stating
+    ``passed: false`` is a claim only a turn that reached the end of the
+    ladder can make (`posture.fold_witness_observations` folds the last one,
+    which is the claim the trial ends on). A stream that never reached a
+    verdict stays unclassified — "not measured" must never read as "measured
+    and failed".
     """
-    if stdout:
-        for line in reversed(stdout.splitlines()):
-            stripped = line.strip()
-            if not stripped.startswith(_GIT_BASELINE_MARKER):
-                continue
-            report: dict[str, str] = {}
-            for token in stripped[len(_GIT_BASELINE_MARKER) :].split():
-                key, sep, value = token.partition("=")
-                if sep and key and value:
-                    report[key] = value
-            if report.get("state"):
-                return report
-            break
-    return {"state": "unreported"}
+    if return_code != _VERIFICATION_FAILED_EXIT_CODE or envelope is None:
+        return False
+    stream = envelope.get("_stella_stream")
+    if not isinstance(stream, dict):
+        return False
+    return stream.get("self_verdict_state") == "failed"
 
 
 class StellaAgent(BaseInstalledAgent):
@@ -1430,9 +1379,10 @@ class StellaAgent(BaseInstalledAgent):
 
         # Baseline before the code graph, so `.stella/` is excluded before
         # `stella init` writes its DB into the workspace (see git_baseline).
-        await run_git_baseline(self, environment)
+        # The returned report is what trial metadata and the ATIF trajectory
+        # disclose, so it has to be the report of the step that actually ran.
+        self._workspace_git_baseline = await run_git_baseline(self, environment)
         await self._build_code_graph(environment)
-        await self._establish_workspace_git_baseline(environment)
 
     async def _build_code_graph(self, environment: BaseEnvironment) -> None:
         """Index the task workspace so ``graph_query`` is offered at all.
@@ -1464,37 +1414,6 @@ class StellaAgent(BaseInstalledAgent):
             if "code graph:" in line:
                 self._code_graph_summary = line.strip()
                 break
-
-    async def _establish_workspace_git_baseline(
-        self, environment: BaseEnvironment
-    ) -> None:
-        """Give the task workspace a git baseline before Stella starts.
-
-        Runs once per task environment, after ``stella init`` (whose
-        ``.stella/`` state directory the script excludes from the baseline),
-        as the same in-container user the turn runs as — so the repository
-        the diff probe later reads is owned by the user reading it.
-        Best-effort by construction: every outcome, including "could not
-        even exec", lands in ``self._workspace_git_baseline`` and from there
-        in trial metadata and the ATIF trajectory, never in a raised error.
-        """
-        task_env_config = getattr(environment, "task_env_config", None)
-        cwd = getattr(task_env_config, "workdir", None)
-        script = _git_baseline_script(str(cwd) if cwd else None)
-        try:
-            result = await self.exec_as_agent(
-                environment, command=script, timeout_sec=_GIT_BASELINE_TIMEOUT_SEC
-            )
-        except Exception as exc:  # noqa: BLE001 - evidence setup, never fatal
-            self._workspace_git_baseline = {"state": "error", "detail": str(exc)}
-            print(
-                f"stella-adapter: workspace git baseline unavailable: {exc}",
-                file=sys.stderr,
-            )
-            return
-        self._workspace_git_baseline = _parse_git_baseline_report(
-            getattr(result, "stdout", None)
-        )
 
     @with_prompt_template
     async def run(
@@ -1639,6 +1558,16 @@ class StellaAgent(BaseInstalledAgent):
                         f"verdict: {report['verdict']} ({report['detail']}) — "
                         f"evidence in {EXIT_CAUSE_LOG_NAME}."
                     )
+            if _is_self_reported_verification_failure(
+                self._return_code, self._envelope
+            ):
+                raise SelfReportedVerificationFailureError(
+                    f"Stella exited with code {self._return_code} carrying its own "
+                    "failed verification verdict: the turn ran to a verdict and "
+                    "the agent reported the work unverified. Stream telemetry was "
+                    f"preserved in {_STREAM_EVENTS_PATH}. stderr: "
+                    f"{self._truncate_output(stderr)}"
+                )
             raise NonZeroAgentExitCodeError(
                 f"Stella exited with code {self._return_code}; stream telemetry "
                 f"was preserved in {_STREAM_EVENTS_PATH}.{exit_cause_note} stderr: "

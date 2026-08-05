@@ -122,7 +122,7 @@ pub const DEFAULT_MMR_CANDIDATE_MULTIPLE: usize = 4;
 /// **`false`, and that is the decision, not a placeholder.** An approximate
 /// index changes which frames a turn recalls, and making that the silent default
 /// would contradict the honesty posture the rest of this module is built on
-/// (`docs/design/adaptive-context/adaptive-context.md` §5.5). The exact full scan stays the
+/// (`docs/spec/adaptive-context/adaptive-context.md` §5.5). The exact full scan stays the
 /// default path and therefore stays the tested one; a workspace that wants
 /// sublinear recall turns it on in `context.retrieval` and gets a
 /// [`RecallResult::used_ann_index`] flag saying when it fired.
@@ -1215,7 +1215,7 @@ pub(crate) fn frame_from_node(
         // no tolerance — the title is NOT part of the inline content, so it is
         // not counted here. `pack_to_budget` packs against this same value.
         token_cost: contextgraph_types::budget_tokens(&node.content),
-        // `docs/design/adaptive-context/context-reuse.md` §1: the frame's identity triple is
+        // `docs/spec/adaptive-context/context-reuse.md` §1: the frame's identity triple is
         // `(provider id, frame id, content digest)`, and a frame that declares
         // no digest is *not verifiable* — a host must re-query it rather than
         // reuse it (D4). `node.content_hash` is already the sha256 of exactly
