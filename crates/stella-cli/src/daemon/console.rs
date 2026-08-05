@@ -253,11 +253,11 @@ impl Index {
         let total_of = |records: &[IndexRecord], stream: Stream| {
             records
                 .iter()
-                .filter_map(|r| match r {
+                .rev()
+                .find_map(|r| match r {
                     IndexRecord::Write { s, c, n, .. } if *s == stream => Some(c + n),
                     _ => None,
                 })
-                .last()
                 .unwrap_or(0)
         };
         let out_total = total_of(&self.entries, Stream::Stdout);
@@ -955,23 +955,27 @@ pub(crate) fn replay_logs(
         }
     }
 
-    // `-n`: each stream keeps its newest `lines` lines, order preserved.
+    // `-n`: each stream keeps its newest `lines` lines. The skips are
+    // computed per stream but the emission is ONE pass over `ordered` — a
+    // per-stream emission loop would print all of stdout and then all of
+    // stderr, un-interleaving exactly the order this whole function exists
+    // to reconstruct (the witness test caught that emission shape).
+    let mut skips: std::collections::HashMap<Stream, usize> = std::collections::HashMap::new();
     for stream in [Stream::Stdout, Stream::Stderr] {
         let total_lines: usize = ordered
             .iter()
             .filter(|(s, _)| *s == stream)
             .map(|(_, b)| bytecount_lines(b))
             .sum();
-        let mut skip = total_lines.saturating_sub(lines);
-        for (s, bytes) in &ordered {
-            if *s != stream {
-                continue;
-            }
-            let sink: &mut dyn Write = match stream {
-                Stream::Stdout => out,
-                Stream::Stderr => err,
-            };
-            emit_after_skipping(bytes, &mut skip, sink);
+        skips.insert(stream, total_lines.saturating_sub(lines));
+    }
+    for (s, bytes) in &ordered {
+        let sink: &mut dyn Write = match s {
+            Stream::Stdout => out,
+            Stream::Stderr => err,
+        };
+        if let Some(skip) = skips.get_mut(s) {
+            emit_after_skipping(bytes, skip, sink);
         }
     }
     let _ = out.flush();
