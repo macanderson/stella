@@ -456,7 +456,7 @@ struct OpenAiInputTokensDetails {
 /// rejects" posture as the other adapters. (Offering the finer tiers would
 /// require per-model capability gating the picker vocabulary does not yet
 /// carry.)
-fn map_reasoning_effort(effort: ReasoningEffort) -> &'static str {
+pub(crate) fn map_reasoning_effort(effort: ReasoningEffort) -> &'static str {
     match effort {
         ReasoningEffort::Low => "low",
         ReasoningEffort::Medium => "medium",
