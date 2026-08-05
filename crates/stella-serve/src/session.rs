@@ -544,6 +544,7 @@ pub(crate) async fn drive_turn(
             engine.discard_checkpoint();
             break TurnOutcome::Aborted {
                 reason,
+                kind: stella_core::AbortKind::DeliberateStop,
                 cost_usd: state.total_cost_usd(),
             };
         }
@@ -569,6 +570,7 @@ pub(crate) async fn drive_turn(
                 // down a session thread.
                 break TurnOutcome::Aborted {
                     reason: "engine step returned no outcome".to_string(),
+                    kind: stella_core::AbortKind::Failure,
                     cost_usd: state.total_cost_usd(),
                 };
             }

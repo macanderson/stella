@@ -125,13 +125,19 @@ pub(crate) async fn drive_goal(
         .await;
         messages = driven.messages;
         budget = driven.budget;
-        if let TurnOutcome::Aborted { reason, cost_usd } = driven.outcome {
+        if let TurnOutcome::Aborted {
+            reason,
+            kind,
+            cost_usd,
+        } = driven.outcome
+        {
             // Includes cancellation: the completed rounds' work stays in the
             // transcript that settles below, and the reason names what ended
             // the run rather than pretending the goal was assessed.
             return DrivenTurn {
                 outcome: TurnOutcome::Aborted {
                     reason: format!("goal not met — working round {round} ended: {reason}"),
+                    kind,
                     cost_usd,
                 },
                 messages,
@@ -158,6 +164,7 @@ pub(crate) async fn drive_goal(
                 return DrivenTurn {
                     outcome: TurnOutcome::Aborted {
                         reason: format!("goal not met — verifier unavailable: {reason}"),
+                        kind: stella_core::AbortKind::Failure,
                         cost_usd: budget.session_spent_usd(),
                     },
                     messages,
@@ -196,6 +203,7 @@ pub(crate) async fn drive_goal(
                 "goal not met — round cap ({}) reached without a passing verdict",
                 run.config.max_rounds
             ),
+            kind: stella_core::AbortKind::DeliberateStop,
             cost_usd: budget.session_spent_usd(),
         },
         messages,

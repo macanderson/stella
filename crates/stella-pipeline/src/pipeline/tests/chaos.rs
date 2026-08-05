@@ -310,7 +310,7 @@ fn assert_loop_invariant(
 
     // A non-empty reason on every abort.
     if let Ok(o) = outcome
-        && let PipelineStatus::Aborted { reason } = &o.status
+        && let PipelineStatus::Aborted { reason, .. } = &o.status
     {
         assert!(
             !reason.trim().is_empty(),
@@ -365,7 +365,7 @@ fn assert_loop_invariant(
                 // be a lookup that the class routed to zero execution, which
                 // is still a *named* completion, not a death.
                 PipelineStatus::Completed | PipelineStatus::VerificationFailed { .. } => {}
-                PipelineStatus::Aborted { reason } => {
+                PipelineStatus::Aborted { reason, .. } => {
                     let r = reason.to_ascii_lowercase();
                     let legitimate = r.contains("budget")
                         || r.contains("scope review")

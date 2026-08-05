@@ -38,6 +38,13 @@ arenabench = "arenabench.cli:main"
 Homepage = "https://arenabench.org"
 Source = "https://github.com/macanderson/arenabench"
 
+[tool.hatch.build]
+# The built client (arenabench/web/, generated from ui/ by `npm run build`)
+# is gitignored, and hatchling skips VCS-ignored files unless they are
+# declared artifacts. Build the UI before packaging or the wheel ships
+# without it.
+artifacts = ["arenabench/web/"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["arenabench"]
 

@@ -1,6 +1,6 @@
 ---
 title: stella daemon
-description: Find, watch, and stop runs that outlived the terminal they were started from.
+description: Find, watch, answer, resume, and stop runs that outlived the terminal they were started from.
 ---
 
 A long-running verb started from a terminal — [`run`](/docs/commands/run), [`goal`](/docs/commands/goal), [`monitor`](/docs/commands/monitor), [`fleet`](/docs/commands/fleet) — is handed to a **supervisor**. The work becomes a detached process that survives the window closing, an `ssh` disconnect, and a logout; the terminal you started it in stays only to stream its output. `stella daemon` is how you find that process again afterwards.
@@ -12,6 +12,7 @@ stella daemon list
 stella daemon attach [id]
 stella daemon logs [id] [-n LINES]
 stella daemon stop <id>
+stella daemon resume [id]
 ```
 
 ## Why runs are supervised
@@ -35,9 +36,11 @@ ses-1785956826121-25167      Running      stella: migrate the config loader to s
 $ stella daemon attach ses-1785956826121
 ```
 
-## What supervision does and does not survive
+## What supervision survives
 
-It survives **the terminal**: a closed window, a dropped `ssh` session, a logout. It does not survive **the process**: a supervised run that is killed, or a machine that loses power, loses the turn it was in — only the fact of the run is recorded. Durable resume across a killed process is a different mechanism, and for interactive sessions [`stella resume`](/docs/commands/resume) is the one that exists today.
+It survives **the terminal**: a closed window, a dropped `ssh` session, a logout — the run never notices, because it left that terminal's session before it began.
+
+A killed **process** — OOM, `kill -9`, a reboot — is the stronger failure, and it is recoverable too: every turn checkpoints into the workspace's durable work journal at each committed step boundary, so a run killed mid-turn leaves a resume point where a closed window never needed one. [`resume`](#resume) picks it up. (For interactive deck sessions, [`stella resume`](/docs/commands/resume) remains the verb — it reopens a conversation; `daemon resume` continues a headless run's interrupted turn.)
 
 ## Which invocations are supervised
 
@@ -53,19 +56,21 @@ Only ones with a controlling terminal to lose. A terminal is exactly what can cl
 
 `--foreground` (or `STELLA_FOREGROUND=1`) opts any invocation out.
 
-<Callout type="warn">
-A supervised run is **headless**: its stdin is a file and its console is a log, so there is nobody to answer a scope-review prompt. A plan that expands scope stops with a named error instead of asking. The banner says so when it applies. Use `--foreground` to keep the interactive prompt, or set `headless_scope_bypass = "on"` in settings for a workspace where the tree is disposable.
-</Callout>
+## Scope review while supervised
+
+A supervised run's stdin is a file and its console is a log, so a scope-review prompt cannot use them — but supervision does not cost you the answer. When a `stella run` plan crosses the scope thresholds, the run **parks**: the proposal is written into the session's sidecar, `stella daemon list` shows the run as `Needs Input`, and whichever terminal is attached asks the question — the terminal that launched it, if it is still open, or any later `stella daemon attach`. The prompt rides the attached terminal's stderr, so `--output-format json` stdout stays parseable, and the same typed answers apply as at the foreground prompt: `y` approves, `n` (or an empty line) aborts, anything else is a revision note the planner re-plans from.
+
+A parked run holds its budget and its workspace until somebody answers; it is visible in `list` the whole time, and `stella daemon stop` (or any `SIGTERM`) unparks it as a clean abort. `headless_scope_bypass = "on"` still skips the gate entirely for a workspace whose tree is disposable, and other supervised verbs (`goal`, `fleet`, `monitor`) keep their deliberate headless posture.
 
 ## `list`
 
 Every supervised run on this machine, newest first. Local reads only — no API key, and no provider needs to resolve, so a run whose model configuration has since broken is still findable and stoppable.
 
-`STATUS` is answered by a lock the run holds for its whole life rather than by its pid, because the kernel releases that lock when the process dies — crash, kill and power loss included. A run whose process is gone without recording an outcome reads as `Crashed`.
+`STATUS` is answered by a lock the run holds for its whole life rather than by its pid, because the kernel releases that lock when the process dies — crash, kill and power loss included. A run whose process is gone without recording an outcome reads as `Crashed`, and one that left a resume point is marked `Crashed ↩` with the `resume` invocation named under the table. A run parked on a scope review reads `Needs Input`.
 
 ## `attach`
 
-Streams the run's output into this terminal, from the beginning, and stays until the run ends. A run that has already finished prints in full and exits. The id can be any unique prefix; omit it for the most recently started run.
+Streams the run's output into this terminal, from the beginning, and stays until the run ends. A run that has already finished prints in full and exits. The id can be any unique prefix; omit it for the most recently started run. If the run is parked on a scope review, attach renders the proposal and delivers your answer.
 
 Detaching again — `Ctrl-C` — leaves the run alone. `stella daemon stop` is what stops it.
 
@@ -73,7 +78,9 @@ Detaching again — `Ctrl-C` — leaves the run alone. `stella daemon stop` is w
 
 The tail of a finished or running console, without following it. `-n` sets how many lines back to start (default 40).
 
-stdout and stderr are kept in two files and replayed onto the two streams they were written from, so `stella run --output-format json` stays parseable through a supervisor. One consequence is visible here: `logs` prints the stdout tail and then the stderr tail as separate blocks rather than interleaving them chronologically. `attach` on a live run interleaves naturally, because it follows both as they are written.
+stdout and stderr are kept in two files and replayed onto the two streams they were written from, so `stella run --output-format json` stays parseable through a supervisor. The console carries a small write index beside it, and `logs` uses it to replay the two streams **in the order they were written** rather than as two blocks. Only sessions recorded before the index existed fall back to the old shape — stdout tail, then stderr tail — because raw byte files carry no ordering to reconstruct.
+
+Each console is **bounded** (8 MiB per stream by default; `STELLA_CONSOLE_CAP_BYTES` overrides it). A run that outgrows the bound keeps the first eighth — how the run started — and the newest bytes, ring-buffered; the reclaimed middle is announced with a marker on stderr, never spliced into the stream bytes themselves. A run killed outright (`SIGKILL`, power loss) can additionally lose up to one pipe buffer (~64 KiB) of its very last output — the cost of enforcing the bound while the run is alive.
 
 ## `stop`
 
@@ -81,6 +88,25 @@ Asks the run to stop the way `Ctrl-C` would: the signal reaches the whole proces
 
 A run that has not stopped after 8 seconds is killed. Either way the stop is recorded as **cancelled**, deliberately: a run stopped by hand that recorded nothing would age into the registry indistinguishable from one that crashed.
 
+## `resume`
+
+Continues a killed run's interrupted turn from its last completed step. Every turn checkpoints at each committed step boundary — the one moment the transcript is guaranteed well-paired — and every turn that *ends* (completes, aborts, or is stopped) discards its checkpoint on the way out. A surviving resume point therefore means exactly one thing: the process died mid-turn.
+
+```bash
+$ stella daemon list
+ID                           STATUS       WHAT
+ses-1785956826121-25167      Crashed ↩    stella: migrate the config loader to serde
+
+↩ killed mid-turn with a resume point — stella daemon resume <id> continues it
+
+$ stella daemon resume ses-1785956826121
+▸ resuming ses-1785956826121-25167 — continuing its interrupted turn at step 14
+```
+
+The relaunch continues the **same session** — same id, same sidecar, the crashed attempt's console preserved — as a fresh supervised child. Completed steps are already in the checkpointed transcript, tool results included, so nothing re-runs and no tool effect is applied twice; the no-clobber staleness map rides the same checkpoint, so a file something else edited while the run was dead is refused rather than overwritten. A run that ended cleanly has nothing to resume, and `resume` says so instead of restarting it.
+
+Two honest limits: a turn that was mid-*pipeline* resumes as a plain engine turn (the verify stages that would have followed do not re-run), and a turn that was executing in a candidate worktree resumes in the workspace — the candidate died with the process.
+
 ## Where the state lives
 
-Beside the session registry, under the user-level stella home (`~/.stella/sessions/<id>/`, `STELLA_DATA_DIR` overrides): `stdout.log` and `stderr.log` are the console, `stdin` is the prompt the supervisor staged for the run, and `supervisor.lock` is the liveness lock. All owner-only. The prompt travels as a file rather than as an argument so it is not visible to every user on the machine in `ps`.
+Beside the session registry, under the user-level stella home (`~/.stella/sessions/<id>/`, `STELLA_DATA_DIR` overrides): `stdout.log` and `stderr.log` are the console, `console-index.jsonl` is the write index that bounds and orders them, `stdin` is the prompt the supervisor staged for the run, `supervisor.lock` is the liveness lock, and `approval-request.json` / `approval-answer.json` appear only while a scope review is parked. All owner-only. The prompt travels as a file rather than as an argument so it is not visible to every user on the machine in `ps`. The resume point itself is not here — it lives in the workspace's work journal, the same commit graph as the file changes it is a resume point for.
