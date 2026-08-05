@@ -79,6 +79,11 @@ use stella_store::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo
 
 use crate::DaemonCmd;
 
+/// `install` / `uninstall`: the service-manager half (#1587) — what makes a
+/// registered invocation come back after the logout and reboot that
+/// supervision alone cannot cross.
+mod service;
+
 pub(crate) mod approval;
 pub(crate) mod console;
 
@@ -947,6 +952,12 @@ pub(crate) fn run(cmd: &DaemonCmd) -> Result<(), String> {
         // `--foreground` child half needs the provider resolution this
         // registry-only dispatcher exists to run before.
         DaemonCmd::Resume { .. } => unreachable!("daemon resume is dispatched in main"),
+        DaemonCmd::Install {
+            label,
+            keep_alive,
+            command,
+        } => service::install(label.as_deref(), *keep_alive, command),
+        DaemonCmd::Uninstall { label } => service::uninstall(label),
     }
 }
 
