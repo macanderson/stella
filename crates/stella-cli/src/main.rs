@@ -429,6 +429,12 @@ fn main() -> ExitCode {
     // loading, clap, a runtime, or any model/repository-controlled process.
     // The raw key is retained only in the credential module's in-memory slot;
     // it is never installed into this process's environment.
+    // Same window, same reason: if this is a supervised child, take its
+    // session id out of the environment before anything can inherit it. A
+    // tool subprocess that still saw it would be one `stella` invocation away
+    // from stamping a terminal status on its parent's live record (#1552).
+    daemon::consume_supervised_env(&startup);
+
     if let Err(error) = credential_handoff::consume_at_startup(&startup) {
         eprintln!(
             "{} secure credential handoff failed: {error}",
@@ -778,7 +784,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Some(Command::Fullauto { cmd }) => {
             // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
             // of the defect queue) — works with zero API keys.
-            return fullauto_cmd::run(cmd);
+            return fullauto_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
@@ -903,7 +909,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 // provider resolution, its cwd already pinned to the
                 // record's workspace by the parent's launch.
                 DaemonCmd::Resume { id } if !cli.globals.foreground => {
-                    return daemon::resume_supervised(rt()?, id.as_deref());
+                    return daemon::resume_supervised(rt()?, id.as_deref())
+                        .map_err(failure::CliFailure::from);
                 }
                 DaemonCmd::Resume { .. } => {}
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
@@ -999,7 +1006,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &prompt),
                     prompt.as_bytes(),
-                    scope_review_lost,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1050,7 +1056,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &goal),
                     goal.as_bytes(),
-                    scope_review_lost,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1080,7 +1085,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         },
                     ),
                     &[],
-                    scope_review_lost,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1107,7 +1111,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &format!("monitor {target}")),
                     &[],
-                    scope_review_lost,
                 ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status
