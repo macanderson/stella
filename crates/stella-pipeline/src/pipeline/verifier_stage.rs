@@ -21,6 +21,7 @@ impl<'a> Pipeline<'a> {
         goal: &str,
         diff: &str,
         evidence_summary: &str,
+        diff_ctx: &DiffContext<'_>,
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<Option<String>, PipelineBudgetAbort> {
@@ -35,7 +36,7 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Verdict,
         });
-        let prompt = guidance_prompt(goal, diff, evidence_summary);
+        let prompt = guidance_prompt(goal, diff, evidence_summary, diff_ctx);
         match self
             .metered_raw_call(
                 RawCall {
@@ -69,6 +70,7 @@ impl<'a> Pipeline<'a> {
         goal: &str,
         diff: &str,
         evidence_summary: &str,
+        diff_ctx: &DiffContext<'_>,
         inputs: &LadderInputs,
         budget: &mut BudgetGuard,
         total: &mut f64,
@@ -92,7 +94,7 @@ impl<'a> Pipeline<'a> {
         }
         self.warn_verifier_caveat(&resolved);
 
-        let prompt = verifier_prompt(goal, diff, evidence_summary);
+        let prompt = verifier_prompt(goal, diff, evidence_summary, diff_ctx);
         // Deterministic policy: a verifier call that fails must not hang; it falls
         // back to the heuristic verdict rather than retrying.
         match self

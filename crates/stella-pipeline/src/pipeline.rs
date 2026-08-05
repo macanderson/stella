@@ -88,6 +88,7 @@ use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::coverage::DiffCoverage;
+use crate::verify::diff_render::DiffContext;
 use crate::verify::{
     FlipOracle, LadderDecision, LadderInputs, Verdict as ModelVerifierVerdict,
     deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
@@ -820,6 +821,14 @@ struct CandidateState {
     /// progress and hit something new" — the signal that decides how much the
     /// next revision is told (`witness::airlock`).
     failures: Vec<FailureFingerprint>,
+    /// The joined diff text as it stood when the model verifier last answered
+    /// a verdict on this candidate — the delta-framing baseline (#1431). The
+    /// next escalated round renders file sections byte-identical to this as
+    /// stat lines instead of re-buying their bodies. `None` until a model
+    /// verdict has been bought, and never set by a heuristic fallback: a
+    /// verdict no model read must not let the next round claim its diff was
+    /// already reviewed.
+    last_verdict_diff: Option<String>,
 }
 
 impl CandidateState {
@@ -2128,6 +2137,7 @@ impl<'a> Pipeline<'a> {
             evidence_demands: 0,
             witness_paths: Vec::new(),
             failures: Vec::new(),
+            last_verdict_diff: None,
         };
 
         if let Err(reason) = self
@@ -2652,6 +2662,14 @@ impl<'a> Pipeline<'a> {
                                 goal,
                                 &state.diff_text,
                                 &evidence.summary,
+                                // Guidance never carries a delta baseline: its
+                                // render is already evidence-scoped (#1432),
+                                // and "unchanged since a verdict round" is a
+                                // verdict-shaped claim.
+                                &DiffContext {
+                                    witness_paths: &witness_paths,
+                                    previous: None,
+                                },
                                 budget,
                                 total,
                             )
@@ -2799,11 +2817,16 @@ impl<'a> Pipeline<'a> {
                         // witness it is weighing is the authored one.
                         evidence_summary.push_str("; witness_tamper_check=intact");
                     }
+                    let diff_ctx = DiffContext {
+                        witness_paths: &witness_paths,
+                        previous: state.last_verdict_diff.as_deref(),
+                    };
                     let verdict = match self
                         .verifier(
                             goal,
                             &state.diff_text,
                             &evidence_summary,
+                            &diff_ctx,
                             &inputs,
                             budget,
                             total,
@@ -2815,6 +2838,13 @@ impl<'a> Pipeline<'a> {
                             return CandidateResult::aborted(state.messages, abort.reason);
                         }
                     };
+                    if !verdict.heuristic {
+                        // The delta-framing baseline (#1431) advances only on
+                        // a verdict a model actually answered: a heuristic
+                        // fallback read nothing, and must not let the next
+                        // round stat-line text no model ever saw.
+                        state.last_verdict_diff = Some(state.diff_text.clone());
+                    }
                     let mut evidence = model_verdict_evidence(&verdict);
                     evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));
                     self.emit(AgentEvent::Verdict {
