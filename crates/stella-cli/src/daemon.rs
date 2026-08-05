@@ -625,10 +625,16 @@ pub(crate) fn hold_liveness_lock(registry: &SessionRegistry, id: &str) {
     #[cfg(unix)]
     {
         use std::os::unix::io::AsRawFd;
-        let sidecar = registry.sidecar_dir(id);
-        if lock_is_held(&sidecar) != Some(false) {
+        // Only a lock somebody already holds is a reason to stop. `None` — no
+        // lock file, no sidecar — is not that: it is precisely the state a
+        // child spawned outside `spawn` starts in, and returning on it would
+        // make this whole function a no-op in the one case it exists for.
+        if lock_is_held(&registry.sidecar_dir(id)) == Some(true) {
             return;
         }
+        let Ok(sidecar) = registry.prepare_sidecar(id) else {
+            return;
+        };
         let Ok(file) = std::fs::OpenOptions::new()
             .read(true)
             .write(true)

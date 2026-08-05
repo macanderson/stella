@@ -292,6 +292,34 @@ fn a_late_stop_does_not_relabel_a_run_that_already_finished_cleanly() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The fallback exists for a child that did NOT come through [`spawn`] — one
+/// started by hand with the env var set, or by a future launchd/systemd unit.
+/// Such a child starts with no sidecar and no lock file at all, so an
+/// implementation that treats "no lock file" as a reason to do nothing is a
+/// no-op in exactly the case it was written for.
+#[test]
+fn the_liveness_fallback_takes_a_lock_that_does_not_exist_yet() {
+    let (dir, registry) = temp_registry("fallback-lock");
+    let record = SessionRecord::new("/w", "hand-started");
+    registry.upsert(&record).unwrap();
+    let sidecar = registry.sidecar_dir(&record.id);
+    assert_eq!(
+        lock_is_held(&sidecar),
+        None,
+        "precondition: nothing has created a lock file yet"
+    );
+
+    hold_liveness_lock(&registry, &record.id);
+
+    assert_eq!(
+        lock_is_held(&sidecar),
+        Some(true),
+        "the fallback must leave this process holding the lock"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn ids_resolve_by_unique_prefix_and_refuse_an_ambiguous_one() {
     let (dir, registry) = temp_registry("resolve");
