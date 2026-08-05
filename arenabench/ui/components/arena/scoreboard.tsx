@@ -90,6 +90,15 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
             </div>
             <div className="grid grid-cols-2 gap-x-3.5 gap-y-[7px]">
               {stat("clock_time", "clock", fmtClock(t.clock_time))}
+              {/* Exists only when someone ran `arenabench flip`. The label
+                  carries the denominator because a sum over an unknown number
+                  of replayed trials reads as a measurement of the whole run. */}
+              {t.wasted_time != null &&
+                stat(
+                  "wasted_time",
+                  `wasted (${t.flip_trials ?? 0} replayed)`,
+                  fmtClock(t.wasted_time),
+                )}
               {/* The comparable figure carries the label; what the agent said
                   it spent sits beside it, named, and crowns nobody — the two
                   come from different price tables. */}
