@@ -46,6 +46,71 @@ async fn exhausted_worker_call_emits_one_content_free_incompleteness_event() {
     assert!(!wire.contains("private upstream body"));
 }
 
+/// The salvaged accounting has to reach the *event stream*, not just the
+/// error: `retry.rs` returns history only for calls that COMMIT, so the
+/// per-attempt observer is the sole path by which a doomed attempt's usage can
+/// ever be recorded. If it drops the partial, the fix stops at the adapter
+/// boundary and nothing downstream is any wiser.
+#[tokio::test]
+async fn a_failed_attempts_recovered_usage_reaches_the_event_stream() {
+    let recovered = stella_protocol::PartialUsage {
+        usage: stella_protocol::CompletionUsage {
+            input_tokens: 14_000,
+            cached_input_tokens: 12_000,
+            output_tokens: 130,
+            ..Default::default()
+        },
+        cost_usd: 0.0213,
+        input_reported: true,
+    };
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Err(ProviderError::transport(
+            "connection closed mid-response",
+        )
+        .with_partial(recovered))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("work"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let _ = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let incomplete = events
+        .iter()
+        .find(|event| matches!(event, AgentEvent::UsageIncomplete { .. }))
+        .expect("a failed attempt emits an incompleteness envelope");
+    let AgentEvent::UsageIncomplete { partial, .. } = incomplete else {
+        unreachable!("filtered above")
+    };
+    let partial = partial
+        .as_ref()
+        .expect("the attempt's recovered usage rides its UsageIncomplete event");
+    assert_eq!(partial.usage.input_tokens, 14_000);
+    assert_eq!(partial.usage.cached_input_tokens, 12_000);
+    assert_eq!(partial.cost_usd, 0.0213);
+
+    // The event stays content-free while carrying the numbers: token counts
+    // cross the wire, the adapter's prose does not. (The turn's separate
+    // `Error` event is where the message belongs and is deliberately not
+    // covered by this assertion.)
+    let wire = serde_json::to_string(incomplete).unwrap();
+    assert!(
+        !wire.contains("connection closed mid-response"),
+        "prose leaked into a content-free event: {wire}"
+    );
+    assert!(wire.contains("14000"), "the numbers do cross: {wire}");
+}
+
 #[tokio::test]
 async fn exhausted_retries_emit_typed_reasons_before_the_error() {
     // Receipts spec §6.3 (#364 gap 3): `Retry` events only flush for steps
@@ -56,8 +121,8 @@ async fn exhausted_retries_emit_typed_reasons_before_the_error() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![
-            Err(ProviderError::Transport("first drop".into())),
-            Err(ProviderError::Transport("second drop".into())),
+            Err(ProviderError::transport("first drop")),
+            Err(ProviderError::transport("second drop")),
             Err(ProviderError::Terminal("gave up".into())),
         ]),
         calls: Arc::new(AtomicU32::new(0)),
@@ -172,7 +237,7 @@ async fn successful_retry_keeps_the_failed_attempt_usage_incomplete() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![
-            Err(ProviderError::Transport("private failed attempt".into())),
+            Err(ProviderError::transport("private failed attempt")),
             Ok(text_result("done")),
         ]),
         calls: Arc::new(AtomicU32::new(0)),
