@@ -15,8 +15,8 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, daemon, dataset_cmd,
-    fullauto_cmd, ingest_cmd, inspect, memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fullauto_cmd,
+    ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats, storage_cmd,
     tune_cmd, usage_cmd,
 };
 
@@ -373,15 +373,6 @@ pub(crate) enum Command {
         /// Pass this to promote it to a real test you can commit.
         #[arg(long)]
         keep_witness: bool,
-
-        /// Run detached: supervised in the background, surviving this
-        /// terminal. Prints the session id; `stella daemon attach <id>`
-        /// streams the run, `stella daemon stop <id>` ends it. The run's
-        /// stdin is closed, so anything interactive must be answerable
-        /// headlessly. A prompt piped on stdin is passed to the detached run
-        /// as an argument (visible in `ps`, like an inline prompt).
-        #[arg(long)]
-        detach: bool,
 
         /// Output shape: text, json, or stream-json
         ///
@@ -828,18 +819,6 @@ pub(crate) enum Command {
     Usage {
         #[command(subcommand)]
         cmd: Option<usage_cmd::UsageCmd>,
-    },
-
-    /// Supervise detached runs: list, attach, stop, logs
-    ///
-    /// Supervise runs started with `stella run --detach`: list this
-    /// machine's sessions, stream a detached run's output, stop one
-    /// gracefully, or print its log path. A detached run lives in its own
-    /// process group, so closing the terminal that launched it never kills
-    /// the work.
-    Daemon {
-        #[command(subcommand)]
-        cmd: daemon::DaemonCmd,
     },
 
     /// Cloud account registration (stub)
