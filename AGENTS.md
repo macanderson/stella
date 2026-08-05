@@ -339,13 +339,13 @@ governs:
 
 | Crate | God files (ceiling) |
 |---|---|
-| `stella-cli` | `src/command_deck.rs` (4754), `src/agent.rs` (2270), `src/agent/tests.rs` (1747), `src/candidate_ws.rs` (1585), `src/fleet_cmd.rs` (1506) |
-| `stella-core` | `src/driver/tests.rs` (3672), `src/driver.rs` (2765), `src/bus.rs` (2129) |
-| `stella-model` | `src/openai.rs` (2072), `src/zai/tests.rs` (1815), `src/anthropic/tests.rs` (1677), `src/zai.rs` (1533) |
+| `stella-cli` | `src/command_deck.rs` (4754), `src/agent.rs` (2270), `src/agent/tests.rs` (1747), `src/candidate_ws.rs` (1629), `src/fleet_cmd.rs` (1506) |
+| `stella-core` | `src/driver/tests.rs` (3675), `src/driver.rs` (2770), `src/bus.rs` (2129) |
+| `stella-model` | `src/openai.rs` (2076), `src/zai/tests.rs` (1815), `src/anthropic/tests.rs` (1773), `src/zai.rs` (1542) |
 | `stella-pipeline` | `src/pipeline.rs` (3691), `src/pipeline/tests.rs` (2621) |
-| `stella-protocol` | `src/event.rs` (2906) |
-| `stella-store` | `src/tests.rs` (2264), `src/lib.rs` (2080), `src/usage.rs` (1916) |
-| `stella-tools` | `src/registry.rs` (2326), `src/scripts.rs` (1839), `src/media.rs` (1569) |
+| `stella-protocol` | `src/event.rs` (2920) |
+| `stella-store` | `src/tests.rs` (2268), `src/lib.rs` (2074), `src/usage.rs` (1916) |
+| `stella-tools` | `src/registry.rs` (2327), `src/scripts.rs` (1839), `src/media.rs` (1569) |
 | `stella-tui` | `src/deck_ui.rs` (4068), `src/views/engine.rs` (1665), `src/views/session.rs` (1621), `src/deck_render.rs` (1600), `src/deck.rs` (1528) |
 
 The other twelve crates carry no god files — keep it that way. Each crate's
