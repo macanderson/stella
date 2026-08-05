@@ -89,6 +89,7 @@ use crate::compaction::compact_measured;
 use crate::receipts::TranscriptRevision;
 use lifecycle::{step_outcome_label, turn_outcome_payload};
 
+mod confident_zero;
 pub mod lifecycle;
 mod loop_evidence;
 mod truncation;
@@ -105,10 +106,7 @@ use crate::step::{
     StreamProgress, SummarizerHealth, TurnState, bounded_generation,
 };
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
-use truncation::{
-    ContinuationBudget, ContinuationPlan, MAX_LENGTH_CONTINUATIONS, TIME_EXHAUSTED_PARTIAL,
-    plan_continuation,
-};
+use truncation::{ContinuationBudget, ContinuationPlan, TIME_EXHAUSTED_PARTIAL, plan_continuation};
 // Named only by the tests that pin the nudge's exact body; the production path
 // reaches it through `Continuation::into_parts`.
 #[cfg(test)]
@@ -2247,8 +2245,8 @@ impl<'a> Engine<'a> {
     ///
     /// A tool-less step that ended at the output-token limit is the one
     /// no-tool shape that does NOT finish the turn (up to
-    /// [`MAX_LENGTH_CONTINUATIONS`] times): the model was cut off, not done,
-    /// so the step is recorded and the turn continues with
+    /// `driver::truncation::MAX_LENGTH_CONTINUATIONS` times): the model was
+    /// cut off, not done, so the step is recorded and the turn continues with
     /// [`LENGTH_CONTINUATION_NUDGE`]. `length_continuations` is the turn's
     /// running count ([`TurnState`]'s, threaded rather than owned so the
     /// bound survives across steps).
@@ -2318,41 +2316,20 @@ impl<'a> Engine<'a> {
                     ContinuationPlan::AllowanceSpent => {}
                 }
             }
-            // A turn that produced neither a tool call NOR any visible text is
-            // never a real completion: the model was cut off at its output
-            // limit (usually mid-reasoning) or returned nothing at all.
-            // Recording it as `Completed` shows the user a silent, blank turn
-            // (the "turn ends with no feedback" defect). Surface why and abort
-            // cleanly so the caller can retry instead of swallowing it.
-            //
-            // Except out of time, which is a deliberate stop rather than a
-            // failure to produce anything: it substitutes a truthful stand-in
-            // below and ends as an ordinary result.
-            if result.text.trim().is_empty() && !out_of_time {
-                let reason = match result.finish_reason {
-                    // Advised `/compact` until #712; no such command exists,
-                    // and compaction is automatic every step anyway.
-                    Some(FinishReason::Length) => format!(
-                        "The model reached its output-token limit ({} tokens) before producing \
-                         any visible response — its budget was spent on reasoning — and did so \
-                         on every one of its {MAX_LENGTH_CONTINUATIONS} continuations. Retry \
-                         or raise the output cap; context compacts automatically each step.",
-                        result.usage.output_tokens
-                    ),
-                    _ => format!(
-                        "The model returned an empty response this turn — no text and no tool \
-                         call ({} output tokens). Retry, or switch to a different model.",
-                        result.usage.output_tokens
-                    ),
-                };
-                let _ = events.send(AgentEvent::Error {
-                    message: reason.clone(),
-                    retryable: true,
-                });
-                return Some(TurnOutcome::Aborted {
-                    reason,
-                    cost_usd: total_cost_usd,
-                });
+            // The tool-less-completion legitimacy gate: empty-response abort
+            // and the #1477 confident-zero check, in order — see
+            // `confident_zero::check`.
+            if let Some(outcome) = confident_zero::check(
+                messages,
+                &read_only_tools,
+                &result.text,
+                result.finish_reason,
+                result.usage.output_tokens,
+                out_of_time,
+                total_cost_usd,
+                events,
+            ) {
+                return Some(outcome);
             }
             // A non-empty answer truncated with the continuation allowance
             // spent: keep the partial answer (already emitted above) but tell

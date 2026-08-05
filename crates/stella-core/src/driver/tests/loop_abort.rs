@@ -8,6 +8,22 @@
 //! then falls into a second loop on a different tool. The turn's steer is
 //! already spent at that point, so the very next detection is supposed to be
 //! the kill.
+//!
+//! # Confident-zero tests (#1477) live in this file too
+//!
+//! The tests below `stuck_loop_...` and its siblings are unrelated to loop
+//! detection — they cover `driver::confident_zero` (#1477): a turn that
+//! investigates read-only and then trails off with no artifact must abort
+//! rather than report `Completed`. They landed here, reusing this file's
+//! `ConstantTools` as a read-only tool executor, rather than in their own
+//! `driver/tests/confident_zero.rs` submodule, because both `driver.rs` and
+//! `driver/tests.rs` sit exactly at their file-size ratchet ceiling (see
+//! `scripts/file-size-baseline.txt`) — a new top-level test submodule costs
+//! `driver/tests.rs` one `mod` line it has no room for, the same constraint
+//! `driver::settlement`'s budget-check split and this PR's own
+//! `driver::confident_zero` extraction out of `dispatch_completion` exist to
+//! satisfy. Reusing an already-registered submodule is the same trade PR
+//! #1504 made for `driver/tests/budget_boundaries.rs`.
 
 use super::*;
 
@@ -240,4 +256,169 @@ async fn a_tool_answering_identically_to_every_new_argument_is_steered_then_kill
         calls <= 16,
         "must die within a couple of thresholds, not grind to the cap: {calls} calls"
     );
+}
+
+/// THE reported shape (issue #1477's ArenaBench trace): two read-only tool
+/// calls, then a short line with no terminal punctuation standing in for a
+/// result. This must never reach `Completed`.
+#[tokio::test]
+async fn a_confident_zero_never_reports_as_completed() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(call_of(
+                "c1",
+                "read_file",
+                serde_json::json!({"path": "a.rs"}),
+            )),
+            Ok(grep_call()),
+            Ok(text_result("I'm working with a checksum file")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = ConstantTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("check the gcov coverage"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    match outcome {
+        TurnOutcome::Aborted { reason, .. } => {
+            assert!(
+                reason.contains("abandoned attempt"),
+                "reason should name the confident-zero pattern: {reason}"
+            );
+            assert!(
+                reason.contains('2'),
+                "reason should cite the tool-call tally: {reason}"
+            );
+        }
+        other => panic!("a confident zero must not report Completed: {other:?}"),
+    }
+    // Never a silent abort — the caller sees why, same as every other abort
+    // path in `dispatch_completion`.
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error {
+                retryable: true,
+                ..
+            }
+        )),
+        "confident-zero abort must surface a retryable error: {events:?}"
+    );
+}
+
+/// Zero tool calls this turn must never trip the check, however short or
+/// unterminated the answer — a task answerable without investigation at all
+/// is an ordinary short completion, not an abstain.
+#[tokio::test]
+async fn a_direct_zero_tool_answer_still_completes() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("4"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("what's 2+2"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "a direct answer with no investigation must not be gated: {outcome:?}"
+    );
+    drain_events(&mut rx);
+}
+
+/// A turn that actually changed the workspace completes normally even when
+/// its closing line is a bare fragment — real work happened, whatever the
+/// last line says. `CountingTools` (shared by other driver tests, declared
+/// in the parent `tests.rs`) declares its one tool, `bash`, as NOT
+/// read-only.
+#[tokio::test]
+async fn a_turn_that_did_mutating_work_still_completes_despite_a_bare_closing_line() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(tool_call_result("c1", "bash")),
+            Ok(text_result("done")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("run the build"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "a turn with real workspace-changing work must not be gated: {outcome:?}"
+    );
+    drain_events(&mut rx);
+}
+
+/// A properly terminated short answer following read-only investigation is
+/// not a confident zero — only an UNTERMINATED, orientation-shaped line
+/// trips the check.
+#[tokio::test]
+async fn a_terminated_short_answer_after_investigation_still_completes() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(call_of(
+                "c1",
+                "read_file",
+                serde_json::json!({"path": "config.toml"}),
+            )),
+            Ok(text_result("No, it does not exist.")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = ConstantTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("does config.toml exist?"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "a stated, punctuated result must not be gated: {outcome:?}"
+    );
+    drain_events(&mut rx);
 }
