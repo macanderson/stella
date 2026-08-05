@@ -686,6 +686,10 @@ pub struct DeckUi {
     /// fresh `ScopeReview` — the per-agent mirror of the single-session
     /// shell's `scope_answered` (see `crate::ui`).
     pub scope_answered: std::collections::HashSet<String>,
+    /// The plan-review dialog's refine input: `Some` while `r` has switched
+    /// the dialog into note-entry, holding the note as typed. View state,
+    /// like [`Self::hunk_marks`] — a half-written note is not session state.
+    pub scope_note: Option<String>,
     /// The same latch for a pending `ask_user` question (cleared on a fresh
     /// `AskUser`).
     pub ask_answered: std::collections::HashSet<String>,
@@ -844,6 +848,7 @@ impl Default for DeckUi {
             esc_armed_at: None,
             dispatch_held: false,
             scope_answered: std::collections::HashSet::new(),
+            scope_note: None,
             ask_answered: std::collections::HashSet::new(),
             hunk_answered: std::collections::HashSet::new(),
             hunk_marks: std::collections::HashMap::new(),
@@ -918,6 +923,14 @@ impl DeckUi {
                 | InstalledMode::PickVersion
                 | InstalledMode::Browse => {}
             }
+            return;
+        }
+
+        // 1a. The plan-review dialog's refine input is modal while open — a
+        //     pasted "don't touch the tests" belongs to the note, not to the
+        //     composer hidden behind the dialog.
+        if let Some(note) = self.scope_note.as_mut() {
+            push_single_line(note, text);
             return;
         }
 
@@ -1371,6 +1384,9 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
         match event {
             stella_protocol::AgentEvent::ScopeReview { .. } => {
                 ui.scope_answered.remove(agent);
+                // A fresh proposal opens the dialog on its options, never on
+                // a stale half-typed note from the last one.
+                ui.scope_note = None;
             }
             stella_protocol::AgentEvent::AskUser { .. } => {
                 ui.ask_answered.remove(agent);
@@ -1484,7 +1500,8 @@ pub mod cards;
 /// 2. help overlay open — Esc/`q`/`?` close it; other keys scroll it
 /// 3. queue editor open — Esc closes the editor
 /// 4. slash popup active — Esc dismisses the popup (clears the composer)
-/// 5. scope-review gate pending — Esc aborts the plan (claimed even with a note typed)
+/// 5. plan-review dialog pending — Esc aborts the plan (from its refine
+///    input, the first Esc only backs out to the options)
 /// 6. Files tab with the diff open — Esc closes the diff
 /// 7. Session tab with a message highlighted — Esc clears the highlight
 /// 8. Session tab with the ctrl+o expand-ALL overlay on — Esc collapses it
@@ -1508,10 +1525,12 @@ pub mod dispatch;
 mod gates;
 pub use gates::HunkMarks;
 mod nav;
+mod queue_editor;
 pub use dispatch::{AskBeforeSpawn, DispatchRoute, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
+use queue_editor::handle_queue_key;
 
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     // Accessible mode announces where a key MOVED the session — a tab change,
@@ -1988,6 +2007,14 @@ fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 /// where it belongs. A held dispatch skips the card: the double-Esc already
 /// *was* the user saying "run mine next".
 fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckAction {
+    // `/clear` never queues — not behind a running turn, not behind a held
+    // dispatch. It leaves as [`WorkspaceInput::SessionClear`], which resets
+    // the session NOW (the driver cancels an in-flight turn first); watching
+    // `/clear` sit in the queue popup as "pending" is the reported bug.
+    if text.trim() == "/clear" {
+        ui.dispatch_held = false;
+        return DeckAction::Send(WorkspaceInput::SessionClear);
+    }
     if ui.dispatch_held {
         ui.dispatch_held = false;
         return DeckAction::Send(WorkspaceInput::EnqueueFront { text });
@@ -2107,60 +2134,8 @@ fn handle_slash_key(
     }
 }
 
-/// The queue editor's modal keys. Everything the design doc promises for the
-/// queue-as-a-list: per-item delete, pull-back-to-edit, and an explicit
-/// two-press clear-all.
-fn handle_queue_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
-    let count = model.queue.pending();
-    if count == 0 {
-        // Nothing left to edit — any key just closes the popup.
-        ui.queue_open = false;
-        ui.queue_confirm_clear = false;
-        return DeckAction::Handled;
-    }
-    ui.queue_sel = ui.queue_sel.min(count - 1);
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Char('d') if ctrl => {
-            if ui.queue_confirm_clear {
-                ui.queue_confirm_clear = false;
-                ui.queue_open = false;
-                return DeckAction::Send(WorkspaceInput::QueueClear);
-            }
-            ui.queue_confirm_clear = true;
-            return DeckAction::Handled;
-        }
-        _ => ui.queue_confirm_clear = false,
-    }
-    match key.code {
-        KeyCode::Up => {
-            ui.queue_sel = ui.queue_sel.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            ui.queue_sel = (ui.queue_sel + 1).min(count - 1);
-            DeckAction::Handled
-        }
-        KeyCode::Char('x') if ctrl => DeckAction::Send(WorkspaceInput::QueueRemove {
-            index: ui.queue_sel,
-        }),
-        KeyCode::Enter => {
-            // Pull the prompt out of the queue and into the composer to edit —
-            // it is *removed*, not duplicated; re-submitting re-enqueues it.
-            let index = ui.queue_sel;
-            if let Some(item) = model.queue.items.get(index) {
-                ui.composer.load(item.text.clone());
-            }
-            ui.queue_open = false;
-            DeckAction::Send(WorkspaceInput::QueueRemove { index })
-        }
-        KeyCode::Esc => {
-            ui.queue_open = false;
-            DeckAction::Handled
-        }
-        _ => DeckAction::Ignored,
-    }
-}
+// The queue editor's modal keys live in `queue_editor` (split out beside
+// `nav`/`gates` under the god-file rule).
 
 /// Open the SESSIONS overlay (empty-prompt `←`, `/sessions`) and ask the
 /// driver for a fresh registry snapshot.

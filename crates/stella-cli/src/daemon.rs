@@ -101,6 +101,11 @@ use stella_store::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo
 
 use crate::DaemonCmd;
 
+/// `install` / `uninstall`: the service-manager half (#1587) — what makes a
+/// registered invocation come back after the logout and reboot that
+/// supervision alone cannot cross.
+mod service;
+
 pub(crate) mod approval;
 pub(crate) mod console;
 
@@ -925,10 +930,19 @@ fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
 
     let lock = std::fs::metadata(lock_path).ok()?;
     for fd in 3..LOCK_FD_SCAN_LIMIT {
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: `fstat` writes only into `stat`, and reports EBADF for a
-        // descriptor that is not open rather than doing anything with it.
-        if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        // The identity is read through `MetadataExt`, not a raw `libc::stat`,
+        // because `dev_t` is unsigned on Linux and signed on macOS: no single
+        // conversion of `st_dev` compiles on both, while `dev()`/`ino()` are
+        // declared `u64` on every Unix.
+        //
+        // SAFETY: the descriptor is borrowed, never owned — `ManuallyDrop`
+        // keeps `File`'s destructor from closing an fd this only looks at.
+        // `metadata` is an `fstat`, which reports EBADF for a descriptor that
+        // is not open rather than doing anything with it.
+        let probe = std::mem::ManuallyDrop::new(unsafe {
+            <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd)
+        });
+        let Ok(stat) = probe.metadata() else {
             continue;
         }
         // SAFETY: `fstat` returned success, so it initialized the struct.
@@ -1021,11 +1035,11 @@ pub(crate) fn resume_supervised(
     let checkpoint = resume_point(&record)?;
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to resume with: {e}"))?;
-    let args = vec![
-        "daemon".to_string(),
-        "resume".to_string(),
-        record.id.clone(),
-        "--foreground".to_string(),
+    let args: Vec<std::ffi::OsString> = vec![
+        "daemon".into(),
+        "resume".into(),
+        record.id.clone().into(),
+        "--foreground".into(),
     ];
     let id = record.id.clone();
     let run = launch(
@@ -1195,6 +1209,12 @@ pub(crate) fn run(cmd: &DaemonCmd) -> Result<(), String> {
         // `--foreground` child half needs the provider resolution this
         // registry-only dispatcher exists to run before.
         DaemonCmd::Resume { .. } => unreachable!("daemon resume is dispatched in main"),
+        DaemonCmd::Install {
+            label,
+            keep_alive,
+            command,
+        } => service::install(label.as_deref(), *keep_alive, command),
+        DaemonCmd::Uninstall { label } => service::uninstall(label),
     }
 }
 
@@ -1223,7 +1243,18 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
         let (label, paint): (&str, fn(&str) -> ColoredString) = match (live, run.status) {
             (true, status) if status.is_live() => (status.label(), |s| s.green()),
             (true, _) => ("Running", |s| s.green()),
-            (false, status) if status.is_live() => ("Crashed", |s| s.red()),
+            // Probed only on this rare arm: a crashed run holding a resume
+            // point is exactly the row `daemon resume` exists for (#1586),
+            // and a killed run's journal already exists, so the probe opens
+            // rather than creates.
+            (false, status) if status.is_live() => {
+                if has_resume_point(&run) {
+                    any_resumable = true;
+                    ("Crashed ↩", |s| s.red())
+                } else {
+                    ("Crashed", |s| s.red())
+                }
+            }
             (false, status) => (status.label(), |s| s.normal()),
         };
         // A crashed run earns the resume hint only if it actually left a
