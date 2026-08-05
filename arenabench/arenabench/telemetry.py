@@ -45,6 +45,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from stat import S_ISDIR
 from typing import Any
 
 from .pricing import price_for, price_for_route, trial_cost
@@ -52,6 +53,7 @@ from .pricing import price_for, price_for_route, trial_cost
 __all__ = [
     "EVENTS_NAME",
     "INFRASTRUCTURE_FAILURES",
+    "LIVENESS_NAMES",
     "TRAJECTORY_NAME",
     "MetricsReader",
     "TranscriptReader",
@@ -65,6 +67,20 @@ EVENTS_NAME = "agent/stella-events.jsonl"
 TRAJECTORY_NAME = "agent/trajectory.json"
 RESULT_NAME = "result.json"
 SEAT_MANIFEST_SUFFIX = ".seat.json"
+
+#: Per-trial paths written incrementally *while the agent runs*, probed —
+#: never read — for liveness. Stella appends its event stream per event;
+#: Harbor appends ``trial.log`` as the trial progresses; a Claude Code arm
+#: tees its stdout to ``claude-code.txt`` and appends session transcripts
+#: under ``sessions/``. Deliberately an allowlist rather than the directory
+#: tree: the verifier and the arena write into the same trial directory, and
+#: their activity must not read as the agent's pulse (#1571).
+LIVENESS_NAMES: tuple[str, ...] = (
+    EVENTS_NAME,
+    "trial.log",
+    "agent/claude-code.txt",
+    "agent/sessions",
+)
 
 
 def seat_manifest_path(job_dir: Path) -> Path:
@@ -100,6 +116,38 @@ def _iso_seconds(started: Any, finished: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return max(0.0, delta.total_seconds())
+
+
+def _liveness_age(trial_dir: Path) -> float | None:
+    """Seconds since the trial last wrote any :data:`LIVENESS_NAMES` artifact.
+
+    The freshest mtime across the allowlist wins, and a directory entry is
+    probed recursively: appending to a transcript under ``agent/sessions/``
+    touches only that file's mtime, never a directory's. Before #1571 this
+    was the event stream's mtime alone, which made every trajectory-only arm
+    — i.e. every non-Stella contestant — silent by construction: a hung
+    Claude Code trial could burn its whole time allowance without the stall
+    rule ever seeing it. ``None`` when no artifact exists yet — a trial that
+    has not started has no liveness to be stale.
+    """
+    freshest: float | None = None
+    for name in LIVENESS_NAMES:
+        root = trial_dir / name
+        try:
+            probe = root.stat()
+        except OSError:
+            continue
+        mtime = probe.st_mtime
+        if S_ISDIR(probe.st_mode):
+            for child in root.rglob("*"):
+                try:
+                    mtime = max(mtime, child.stat().st_mtime)
+                except OSError:
+                    continue
+        freshest = mtime if freshest is None else max(freshest, mtime)
+    if freshest is None:
+        return None
+    return max(0.0, time.time() - freshest)
 
 
 # --------------------------------------------------------------------------
@@ -191,7 +239,8 @@ class TrialMetrics:
     #: shared table. ``None`` when the model is unpriced — missing beats wrong.
     priced_cost: float | None = None
     clock_time: float = 0.0
-    #: Seconds since the trial last wrote anything — its liveness.
+    #: Seconds since the trial last wrote any :data:`LIVENESS_NAMES`
+    #: artifact — its liveness, whichever files this arm happens to write.
     age_s: float | None = None
     cap_hits: int = 0
     models: tuple[str, ...] = ()
@@ -351,25 +400,24 @@ class MetricsReader:
         seat = self._seats[path]
         return str(seat.get("qualified_model") or "") if seat else ""
 
-    def _events_summary(self, path: Path) -> tuple[dict[str, Any] | None, float | None]:
+    def _events_summary(self, path: Path) -> dict[str, Any] | None:
         try:
             stat = path.stat()
         except OSError:
-            return None, None
+            return None
         cached = self._events.get(path)
         if cached is not None and cached[0] == stat.st_size:
-            summary: dict[str, Any] | None = cached[1]
-        else:
-            summary = _reduce_events(path)
-            if summary is not None:
-                self._events[path] = (stat.st_size, summary)
-        age = max(0.0, time.time() - stat.st_mtime)
-        return summary, age
+            return cached[1]
+        summary = _reduce_events(path)
+        if summary is not None:
+            self._events[path] = (stat.st_size, summary)
+        return summary
 
     def read(self, trial_dir: Path, task: str) -> TrialMetrics:
         """Everything knowable about one trial, from its artifacts alone."""
         metrics = TrialMetrics(task=task, trial=trial_dir.name)
-        events, age = self._events_summary(trial_dir / EVENTS_NAME)
+        events = self._events_summary(trial_dir / EVENTS_NAME)
+        metrics.age_s = _liveness_age(trial_dir)
 
         # ATIF first: portable across agents, but written once at the end.
         trajectory = _load_json(trial_dir / TRAJECTORY_NAME)
@@ -410,11 +458,18 @@ class MetricsReader:
             metrics.total_cost = events["total_cost"] or metrics.total_cost
             metrics.cap_hits = events["cap_hits"]
             metrics.models = tuple(events["models"])
-            metrics.age_s = age
             metrics.status = "done" if events["complete"] else "running"
             metrics.declared_complete = events["complete"]
             metrics.usage_incomplete = events["usage_incomplete"]
             metrics.late_error = events["late_error"]
+        elif metrics.age_s is not None:
+            # Liveness artifacts and no verdict yet mean the trial is in
+            # flight even though nothing streams — every trajectory-only arm
+            # mid-run looks like this. Without it the stall rule could never
+            # see such an arm hang: a "pending" trial is not expected to be
+            # writing, so its silence would never be suspicious (#1571).
+            # `result.json` below still forces "done" once Harbor concludes.
+            metrics.status = "running"
 
         configured = ""
         result = _load_json(trial_dir / RESULT_NAME)
@@ -505,15 +560,22 @@ class MetricsReader:
             )
 
         # A running trial has no finish timestamp, so wall clock has to come
-        # from the events file's own span rather than from Harbor.
+        # from its artifacts' own span rather than from Harbor. The earliest
+        # liveness artifact stands in for the start — for a streaming arm the
+        # event file's creation, as before #1571; for a trajectory-only arm
+        # the tee of its stdout, without which a trial this change surfaces
+        # as "running" would show a clock frozen at zero.
         if metrics.status == "running" and metrics.clock_time == 0.0:
-            events_path = trial_dir / EVENTS_NAME
-            try:
-                stat = events_path.stat()
+            started = None
+            for name in LIVENESS_NAMES:
+                try:
+                    stat = (trial_dir / name).stat()
+                except OSError:
+                    continue
                 created = getattr(stat, "st_birthtime", stat.st_ctime)
-                metrics.clock_time = max(0.0, time.time() - created)
-            except OSError:
-                pass
+                started = created if started is None else min(started, created)
+            if started is not None:
+                metrics.clock_time = max(0.0, time.time() - started)
 
         metrics.has_video = (trial_dir / "arena" / "recording.mp4").exists()
         return metrics
