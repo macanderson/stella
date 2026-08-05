@@ -71,11 +71,9 @@ belongs on the one dispatch path (see Key concepts), but as a helper module `exe
 with only the call site landing in `registry.rs` — and code you touch in any of the three is a
 candidate to extract.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/media.rs`](src/media.rs) | 1569 |
-| [`src/registry.rs`](src/registry.rs) | 2326 |
-| [`src/scripts.rs`](src/scripts.rs) | 1839 |
+- [`src/media.rs`](src/media.rs)
+- [`src/registry.rs`](src/registry.rs)
+- [`src/scripts.rs`](src/scripts.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a reviewable baseline diff
 justified like any other change — treat it as an escape hatch for an irreducible line (a new

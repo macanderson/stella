@@ -85,13 +85,11 @@ beside [`src/command_deck.rs`](src/command_deck.rs),
 [`src/candidate_ws.rs`](src/candidate_ws.rs) — and code you touch in a god
 file is a candidate to extract into one.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/agent.rs`](src/agent.rs) | 2270 |
-| [`src/agent/tests.rs`](src/agent/tests.rs) | 1747 |
-| [`src/candidate_ws.rs`](src/candidate_ws.rs) | 1629 |
-| [`src/command_deck.rs`](src/command_deck.rs) | 4754 |
-| [`src/fleet_cmd.rs`](src/fleet_cmd.rs) | 1506 |
+- [`src/agent.rs`](src/agent.rs)
+- [`src/agent/tests.rs`](src/agent/tests.rs)
+- [`src/candidate_ws.rs`](src/candidate_ws.rs)
+- [`src/command_deck.rs`](src/command_deck.rs)
+- [`src/fleet_cmd.rs`](src/fleet_cmd.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

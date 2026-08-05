@@ -83,12 +83,10 @@ visible in files `adapter_sources()`
 moves witnesses into a new file fails the witness checks until that list gains
 the file.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/anthropic/tests.rs`](src/anthropic/tests.rs) | 1677 |
-| [`src/openai.rs`](src/openai.rs) | 2072 |
-| [`src/zai.rs`](src/zai.rs) | 1572 |
-| [`src/zai/tests.rs`](src/zai/tests.rs) | 1843 |
+- [`src/anthropic/tests.rs`](src/anthropic/tests.rs)
+- [`src/openai.rs`](src/openai.rs)
+- [`src/zai.rs`](src/zai.rs)
+- [`src/zai/tests.rs`](src/zai/tests.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an
