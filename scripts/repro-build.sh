@@ -34,6 +34,13 @@
 #     absolute `OUT_DIR` into generated code would leak one silently, and the
 #     two rebuild arms in release.yml deliberately check out at different paths.
 #
+# All three of those are rustc flags, and rustc compiles only part of this
+# binary. The C that dependencies ship (tree-sitter) is compiled by cc/clang,
+# which never sees RUSTFLAGS, so the same two prefixes are applied a second time
+# as `-ffile-prefix-map` in CFLAGS/CXXFLAGS. Missing that half is what kept the
+# `verify-reproducible` gate red from v0.6.75 to v0.6.106; the long comment at
+# the C block below has the detail.
+#
 # The flags live HERE and not in `.cargo/config.toml` or `[build] rustflags`,
 # for three independent reasons:
 #
@@ -160,6 +167,48 @@ if [ -n "${RUSTFLAGS:-}" ]; then
 fi
 export RUSTFLAGS="${remap}${RUSTFLAGS:+ ${RUSTFLAGS}}"
 
+# ── The same remap, for the C the binary also contains ──────────────────────
+# `--remap-path-prefix` is a rustc flag, and rustc is not the only compiler in
+# this build. Several dependencies ship C that the `cc` crate compiles and links
+# in, and those paths are emitted by cc/clang, which never sees RUSTFLAGS. So
+# the remap above covered the Rust half of the binary and none of the C half.
+#
+# That is not hypothetical: `strings` on the published v0.6.105 x86_64 artifact
+# still found absolute builder paths, all of one shape —
+#
+#   $CARGO_HOME/registry/src/index.crates.io-<hash>/tree-sitter-0.26.11/src/./query.c
+#
+# sitting inside `__assert_fail` call sites, i.e. `__FILE__` expansions from
+# tree-sitter's own `assert()`s. Ten of them are enough: two builders with
+# different $CARGO_HOME produce different bytes, which is precisely what the
+# `verify-reproducible` arm in release.yml has been reporting on every tag since
+# the gate landed (#1247) — v0.6.75 through v0.6.106 all failed here, and none
+# of them published.
+#
+# `-ffile-prefix-map` is the C-side equivalent and closes both halves at once:
+# it implies `-fdebug-prefix-map` (DWARF) and `-fmacro-prefix-map` (`__FILE__`,
+# where these came from). GCC has had it since 8, clang since 10, and the
+# `--glibc` path's `zig cc` is clang — every compiler this script can reach
+# supports it, so it is set unconditionally rather than probed. A probe that
+# silently skipped the flag would hand back a non-reproducible binary that looks
+# exactly like a good one, which is the failure mode this whole file exists to
+# prevent.
+#
+# There is no C counterpart to the sysroot remap: std's sources are Rust.
+cmap="-ffile-prefix-map=${repo_root}=/stella"
+cmap="${cmap} -ffile-prefix-map=${cargo_home}=/cargo"
+
+if [ -n "${CFLAGS:-}" ] || [ -n "${CXXFLAGS:-}" ]; then
+  echo "repro-build: warning: CFLAGS/CXXFLAGS were already set (${CFLAGS:-} ${CXXFLAGS:-})." >&2
+  echo "repro-build: warning: the resulting binary is NOT the canonical reproducible artifact." >&2
+fi
+# The bare names, not `TARGET_CFLAGS`: cc-rs looks up `CFLAGS_<triple>`, then
+# `{HOST,TARGET}_CFLAGS`, then plain `CFLAGS`, and falls through to the last of
+# those for both the cross-compiled artifact and the host build scripts. Setting
+# the bare name is the one spelling that reaches every compile.
+export CFLAGS="${cmap}${CFLAGS:+ ${CFLAGS}}"
+export CXXFLAGS="${cmap}${CXXFLAGS:+ ${CXXFLAGS}}"
+
 # ── SOURCE_DATE_EPOCH ───────────────────────────────────────────────────────
 # Honestly: rustc consumes nothing from this — it is not a determinism input for
 # the binary. It is exported here because the packaging step downstream of this
@@ -180,6 +229,7 @@ out_dir="${target_root}/${target}/release"
 echo "repro-build: ${stem}"
 echo "  toolchain          ${rustc_release} (rust-toolchain.toml pin), commit ${rustc_hash}"
 echo "  RUSTFLAGS          ${RUSTFLAGS}"
+echo "  CFLAGS             ${CFLAGS}"
 echo "  SOURCE_DATE_EPOCH  ${SOURCE_DATE_EPOCH}"
 
 if [ -n "$glibc" ]; then
