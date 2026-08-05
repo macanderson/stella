@@ -13,8 +13,15 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
   }
   const top = Math.max(0, ...Object.values(crowns));
   // Neutral dimensions are reported but crown nobody, so they are not part of
-  // the denominator a seat is being scored out of.
-  const crownable = snapshot.dimensions.filter((d) => d.direction !== "neutral").length;
+  // the denominator a seat is being scored out of. Neither is a dimension
+  // nobody has a number for — wasted time in a match nobody replayed with
+  // `arenabench flip` can crown nobody, and counting it would score every
+  // seat out of a total that includes an unwinnable column.
+  const crownable = snapshot.dimensions.filter(
+    (d) =>
+      d.direction !== "neutral" &&
+      snapshot.contestants.some((c) => c.totals[d.key] != null),
+  ).length;
 
   return (
     <section className="mb-2 grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(230px,1fr))]">
