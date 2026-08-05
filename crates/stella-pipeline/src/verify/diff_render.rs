@@ -313,9 +313,9 @@ fn stat_line(seg: &Segment, reason: StatReason) -> String {
             "# {path}: unchanged since the previous verdict round (+{added}/-{removed} lines) — \
              body omitted; a prior round reviewed it in full"
         ),
-        StatReason::OverBudget => format!(
-            "# {path}: +{added}/-{removed} line(s) elided under the diff token budget"
-        ),
+        StatReason::OverBudget => {
+            format!("# {path}: +{added}/-{removed} line(s) elided under the diff token budget")
+        }
         StatReason::OutOfScope => format!(
             "# {path}: +{added}/-{removed} line(s) omitted — not named in the failing evidence"
         ),
@@ -486,7 +486,8 @@ mod tests {
     use super::*;
 
     fn file_segment(path: &str, body_lines: usize) -> String {
-        let mut text = format!("--- a/{path}\n+++ b/{path}\n@@ -1,{body_lines} +1,{body_lines} @@\n");
+        let mut text =
+            format!("--- a/{path}\n+++ b/{path}\n@@ -1,{body_lines} +1,{body_lines} @@\n");
         for i in 0..body_lines {
             text.push_str(&format!("+line {i} of {path}\n"));
         }
@@ -502,8 +503,13 @@ mod tests {
     #[test]
     fn a_small_diff_rides_verbatim() {
         let diff = file_segment("src/lib.rs", 5);
-        let rendered =
-            bounded_worker_diff(&diff, "", &ctx(), VERIFIER_DIFF_BUDGET_TOKENS, DiffScope::Budgeted);
+        let rendered = bounded_worker_diff(
+            &diff,
+            "",
+            &ctx(),
+            VERIFIER_DIFF_BUDGET_TOKENS,
+            DiffScope::Budgeted,
+        );
         assert_eq!(rendered, diff);
     }
 
@@ -549,9 +555,8 @@ mod tests {
     fn delta_framing_keeps_only_what_moved() {
         let stable = file_segment("src/stable.rs", 6);
         let before = format!("{stable}{}", file_segment("src/hot.rs", 4));
-        let after = format!(
-            "{stable}--- a/src/hot.rs\n+++ b/src/hot.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n"
-        );
+        let after =
+            format!("{stable}--- a/src/hot.rs\n+++ b/src/hot.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n");
         let rendered = bounded_worker_diff(
             &after,
             "",
@@ -567,7 +572,10 @@ mod tests {
             "{rendered}"
         );
         assert!(!rendered.contains("+line 2 of src/stable.rs"), "{rendered}");
-        assert!(rendered.contains("+new"), "the moved hunk must survive: {rendered}");
+        assert!(
+            rendered.contains("+new"),
+            "the moved hunk must survive: {rendered}"
+        );
     }
 
     /// #1431 option 1: a diff byte-identical to the previous round reduces to
@@ -658,7 +666,10 @@ mod tests {
             rendered.contains("bytes elided from the middle of this section"),
             "{rendered}"
         );
-        assert!(rendered.contains("+line 0 of src/only.rs"), "the head survives: {rendered}");
+        assert!(
+            rendered.contains("+line 0 of src/only.rs"),
+            "the head survives: {rendered}"
+        );
         assert!(
             rendered.contains("+line 2999 of src/only.rs"),
             "the tail survives: {rendered}"
@@ -690,7 +701,8 @@ mod tests {
         assert!(rendered.contains("+line 1 of src/named.rs"), "{rendered}");
         assert!(!rendered.contains("+line 1 of src/other.rs"), "{rendered}");
         assert!(
-            rendered.contains("# src/other.rs:") && rendered.contains("not named in the failing evidence"),
+            rendered.contains("# src/other.rs:")
+                && rendered.contains("not named in the failing evidence"),
             "{rendered}"
         );
     }
@@ -715,8 +727,13 @@ mod tests {
     #[test]
     fn a_prose_only_diff_rides_whole() {
         let marker = "[the diff probe failed; the working tree could not be read.]";
-        let rendered =
-            bounded_worker_diff(marker, "", &ctx(), VERIFIER_DIFF_BUDGET_TOKENS, DiffScope::Budgeted);
+        let rendered = bounded_worker_diff(
+            marker,
+            "",
+            &ctx(),
+            VERIFIER_DIFF_BUDGET_TOKENS,
+            DiffScope::Budgeted,
+        );
         assert_eq!(rendered, marker);
     }
 
@@ -743,7 +760,10 @@ mod tests {
         );
         assert!(rendered.contains(header), "{rendered}");
         assert!(rendered.contains("+print('x')"), "{rendered}");
-        assert!(rendered.contains("# src/lib.rs: pipeline-authored witness artifact"), "{rendered}");
+        assert!(
+            rendered.contains("# src/lib.rs: pipeline-authored witness artifact"),
+            "{rendered}"
+        );
     }
 
     /// Segment splitting handles the authored channel's bare header pairs —

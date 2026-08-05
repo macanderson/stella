@@ -792,8 +792,7 @@ pub fn model_verdict_evidence(verdict: &Verdict) -> VerdictEvidence {
 /// because the instruction text is exactly the part of these prompts that
 /// must stay byte-stable across calls (the management-call caching work,
 /// #1434, depends on that stability).
-const DIFF_STAT_LINE_NOTE: &str =
-    "Inside the diff, a line beginning with `#` is a rendering note from the pipeline, not \
+const DIFF_STAT_LINE_NOTE: &str = "Inside the diff, a line beginning with `#` is a rendering note from the pipeline, not \
      part of the change: a file section may be reduced to one such stat line when it is \
      unchanged since a previous review round of this same candidate (a prior round read its \
      full text), when it is the pipeline's own witness test rather than the worker's change, \
