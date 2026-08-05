@@ -5,6 +5,7 @@ use super::*;
 use stella_core::records::{Channel, Decision, decision};
 
 use crate::context_records::{PROPOSALS_DIR, RULES_DIR, load_registry, read_decisions};
+use crate::query_format::QueryFormat;
 
 /// Two proposals as `stella ingest CLAUDE.md` would write them: one the tree
 /// supports, one it refutes.
@@ -541,13 +542,13 @@ fn explain_on_an_unknown_rule_lists_what_is_loaded() {
 fn validate_passes_a_clean_workspace_and_fails_a_refuted_one() {
     let root = workspace();
     review::run_keep(root.path(), "pkg-manager", None, false).expect("keep succeeds");
-    validate::run_validate(root.path(), false).expect("a supported record validates");
-    validate::run_validate(root.path(), true).expect("and in json");
+    validate::run_validate(root.path(), QueryFormat::Text).expect("a supported record validates");
+    validate::run_validate(root.path(), QueryFormat::Json).expect("and in json");
 
     // Publishing the claim the tree refutes must make validation fail, so it can be
     // a CI check rather than a report nobody acts on.
     review::run_keep(root.path(), "node-version", None, false).expect("keep succeeds");
-    let err = validate::run_validate(root.path(), false).unwrap_err();
+    let err = validate::run_validate(root.path(), QueryFormat::Text).unwrap_err();
     assert!(err.contains("must not steer"), "{err}");
 }
 
@@ -573,16 +574,16 @@ fn list_does_not_label_a_dropped_record_as_being_in_a_channel() {
         Some("must"),
         "and it still declares `must` — which is exactly the trap"
     );
-    validate::run_list(root.path(), false).expect("list succeeds");
+    validate::run_list(root.path(), QueryFormat::Text).expect("list succeeds");
 }
 
 #[test]
 fn list_reports_what_steers_and_survives_an_empty_workspace() {
     let root = workspace();
-    validate::run_list(root.path(), false).expect("empty list is fine");
+    validate::run_list(root.path(), QueryFormat::Text).expect("empty list is fine");
     review::run_keep(root.path(), "pkg-manager", None, false).expect("keep succeeds");
-    validate::run_list(root.path(), false).expect("list succeeds");
-    validate::run_list(root.path(), true).expect("list --json succeeds");
+    validate::run_list(root.path(), QueryFormat::Text).expect("list succeeds");
+    validate::run_list(root.path(), QueryFormat::Json).expect("list --format json succeeds");
 }
 
 // #894 — propose
@@ -832,7 +833,7 @@ fn a_tampered_promotion_ledger_fails_validate() {
     let text = std::fs::read_to_string(&path).unwrap();
     std::fs::write(&path, text.replace("measured advisory precision", "edited")).unwrap();
 
-    let err = validate::run_validate(root.path(), false).unwrap_err();
+    let err = validate::run_validate(root.path(), QueryFormat::Text).unwrap_err();
     assert!(
         err.contains("promotion ledger failed verification"),
         "got: {err}"

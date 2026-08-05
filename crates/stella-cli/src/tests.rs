@@ -468,6 +468,56 @@ fn run_and_fleet_declare_output_format() {
     assert_eq!(chat.output_format(), OutputFormat::Text);
 }
 
+/// #1568's fence: the query-command machine-output idiom is ONE idiom.
+/// Walk the whole tree and assert that (a) no `--json` boolean survives —
+/// the spelling this convergence replaced — and (b) every `--format` flag
+/// draws its visible values from the shared vocabulary and offers `json`.
+/// `stella dataset export --format` is the one named exemption: it selects
+/// a training-record FILE encoding (`jsonl`), not a report rendering.
+#[test]
+fn query_commands_share_one_format_idiom() {
+    fn walk(cmd: &clap::Command, path: &str, failures: &mut Vec<String>) {
+        for arg in cmd.get_arguments() {
+            let id = arg.get_id().as_str();
+            if id == "json" {
+                failures.push(format!(
+                    "`{path}` declares a --json boolean; declare \
+                     `--format` with query_format::QueryFormat instead"
+                ));
+            }
+            if id == "format" && path != "stella dataset export" {
+                let values: Vec<String> = arg
+                    .get_possible_values()
+                    .iter()
+                    .map(|v| v.get_name().to_string())
+                    .collect();
+                if !values.iter().any(|v| v == "json") {
+                    failures.push(format!("`{path} --format` offers no `json` value"));
+                }
+                for value in &values {
+                    if !matches!(value.as_str(), "text" | "json" | "csv") {
+                        failures.push(format!(
+                            "`{path} --format` offers `{value}`, outside the shared \
+                             text|json|csv vocabulary (query_format.rs)"
+                        ));
+                    }
+                }
+            }
+        }
+        for sub in cmd.get_subcommands() {
+            walk(sub, &format!("{path} {}", sub.get_name()), failures);
+        }
+    }
+    let mut failures = Vec::new();
+    let cmd = Cli::command();
+    walk(&cmd, "stella", &mut failures);
+    assert!(
+        failures.is_empty(),
+        "query-format idiom violations:\n  {}",
+        failures.join("\n  ")
+    );
+}
+
 /// `arena` output is the adapter contract, not a choice: there is no flag
 /// to promise otherwise (`--output-format text` used to parse and silently
 /// yield stream-json), and the effective format — what gates interactive

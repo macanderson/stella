@@ -51,7 +51,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use clap::{Subcommand, ValueEnum};
+use clap::Subcommand;
 use colored::Colorize as _;
 use serde::Serialize;
 use stella_model::cache_economics::{
@@ -64,6 +64,7 @@ use stella_store::identity::replication_project_id;
 use stella_store::usage::UsageStore;
 use stella_store::{CacheCallGap, Store, StorePrunePolicy, StorePruneReport, UsageStatsRow};
 
+use crate::query_format::{Rows, StatsFormat};
 use crate::stats_graph::GraphArgs;
 use crate::usage_cmd::parse_age_window;
 
@@ -122,19 +123,6 @@ pub struct PruneArgs {
     /// Report what would be pruned without deleting anything
     #[arg(long)]
     pub dry_run: bool,
-}
-
-/// Output format, shared by `stella stats` and `stella stats graph` — the two
-/// reports differ in their rows, not in how a row is rendered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum StatsFormat {
-    /// Aligned human-readable columns with a TOTAL row (default).
-    Table,
-    /// Pretty-printed JSON: per-(provider, model) rows for the cost report,
-    /// one health object for `stats graph`.
-    Json,
-    /// RFC-4180-style CSV with a header row.
-    Csv,
 }
 
 /// One display row: [`UsageStatsRow`] — the store's raw per-(provider,
@@ -481,10 +469,14 @@ pub fn run_stats(format: StatsFormat, provider: Option<&str>) -> Result<(), Stri
             empty_message(provider)
         };
         match format {
-            StatsFormat::Table => println!("{message}"),
+            StatsFormat::Text => println!("{message}"),
             StatsFormat::Json => {
                 eprintln!("{message}");
-                println!("[]");
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&Rows::<StatsRow>::new(&[]))
+                        .map_err(|e| format!("serialize: {e}"))?
+                );
             }
             StatsFormat::Csv => {
                 eprintln!("{message}");
@@ -495,16 +487,18 @@ pub fn run_stats(format: StatsFormat, provider: Option<&str>) -> Result<(), Stri
     }
 
     match format {
-        // The session trend is table-only: json/csv keep the stable
-        // array-of-StatsRow contract (`Store::session_cache_trend`'s own
-        // shape has no natural row to fold it into).
-        StatsFormat::Table => {
+        // The session trend is text-only: json rides the versioned query
+        // envelope with the StatsRow array under `rows`, and csv keeps the
+        // bare row body (`Store::session_cache_trend`'s own shape has no
+        // natural row to fold it into either surface).
+        StatsFormat::Text => {
             print!("{}", render_table(&rows));
             print!("{}", render_session_trend(&sessions, 10, &max_idle_gaps));
         }
         StatsFormat::Json => println!(
             "{}",
-            serde_json::to_string_pretty(&rows).map_err(|e| format!("serialize: {e}"))?
+            serde_json::to_string_pretty(&Rows::new(&rows))
+                .map_err(|e| format!("serialize: {e}"))?
         ),
         StatsFormat::Csv => print!("{}", render_csv(&rows)),
     }
