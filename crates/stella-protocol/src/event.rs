@@ -129,6 +129,12 @@ pub enum StageKind {
     Verify,
     /// The model verifier, reached only when the deterministic ladder came back
     /// inconclusive (L-E11).
+    ///
+    /// Aliased for the same reason as the other two renames in this pass: the
+    /// stage shipped on the wire as `judge`, so every recorded session names
+    /// it that way. Reading them is not optional — replay, the observatory and
+    /// the golden fixtures all parse stored streams.
+    #[serde(alias = "judge")]
     Verifier,
     /// Post-turn self-reflection: the agent reviews its own performance on
     /// the completed turn and records improvement memories into the context
@@ -221,6 +227,10 @@ pub enum ModelCallRole {
     /// Course-correction handed to a worker that is looping or stuck.
     DistressGuidance,
     /// The verifier's verdict call, on inconclusive deterministic evidence.
+    ///
+    /// Aliased: this call role shipped as `judge`, so every recorded model
+    /// call in every stored session names it that way.
+    #[serde(alias = "judge")]
     Verdict,
     /// Generating an agent definition.
     AgentAuthor,
@@ -797,6 +807,12 @@ pub enum AgentEvent {
     /// A verification verdict — from the deterministic ladder (flip oracle,
     /// touched-tests-green) or the model verifier (L-E11: deterministic-first;
     /// model verifiers handle only inconclusive evidence).
+    ///
+    /// Aliased: this event shipped on the wire as `judge_verdict`. Without the
+    /// alias a stored stream's verdict line does not fail loudly — serde skips
+    /// to the next variant and the event simply *disappears*, which is how the
+    /// golden trajectories came to be one event short rather than unparseable.
+    #[serde(alias = "judge_verdict")]
     Verdict {
         passed: bool,
         evidence: VerdictEvidence,
@@ -1195,6 +1211,12 @@ pub enum ProofStep {
         /// Whether an independently authored witness test was called for.
         witness: bool,
         /// Whether a model verifier was called for on inconclusive evidence.
+        ///
+        /// Aliased: this field shipped as `judge`, and every recorded session
+        /// and golden fixture spells it that way. Renaming it without the
+        /// alias makes those streams unparseable — which is exactly what the
+        /// golden fixtures caught.
+        #[serde(alias = "judge")]
         verifier: bool,
     },
     /// The warrant read the diff and answered "does this change need a test".
@@ -2420,6 +2442,10 @@ mod tests {
 
     #[test]
     fn usage_incomplete_is_a_closed_content_free_signal() {
+        // `verdict`, not `verifier`: this field is a `ModelCallRole` — the JOB
+        // the call was doing — and the rename mapped the old `judge` role to
+        // `Verdict`. `Verifier` is the `Role` (the model slot), a different
+        // enum; a blanket judge→verifier sweep conflated the two.
         let json = r#"{"type":"usage_incomplete","role":"verdict","provider":"anthropic","model":"claude-sonnet-4-5","reason":"timeout","duration_ms":2500,"retries":null}"#;
         let event: AgentEvent = serde_json::from_str(json).unwrap();
         let roundtrip = serde_json::to_value(event).unwrap();

@@ -30,6 +30,11 @@ pub enum Role {
     /// This is the *only* slot for a non-worker capable model. Call sites name
     /// the job (`ModelCallRole::WitnessAuthor`, `::Verdict`), never a second
     /// model identity: there is no separate "witness model" or "verifier model".
+    ///
+    /// Aliased: this role shipped on the wire as `judge`, and it is persisted
+    /// in settings and role pins as well as in recorded streams. A bare rename
+    /// would silently orphan every existing pin.
+    #[serde(alias = "judge")]
     Verifier,
     /// Context-plane embeddings.
     Embed,
@@ -99,5 +104,30 @@ mod tests {
         // construct a "auto" ModelRef — the absence of Some(_) *is* auto.
         let auto: Option<ModelRef> = None;
         assert!(auto.is_none());
+    }
+}
+
+#[cfg(test)]
+mod rename_compat_tests {
+    use super::*;
+
+    /// **The rename's load-bearing property.** `Role::Verifier` shipped on the
+    /// wire as `judge`, and it is persisted in settings and role pins as well
+    /// as in recorded streams. Reading the old token is not a nicety — without
+    /// it every existing pin silently orphans and every stored session fails
+    /// to parse.
+    ///
+    /// Asserted in both directions: old data reads, and new data writes the
+    /// new name (an alias that quietly became the *output* name would leave
+    /// the rename half-done).
+    #[test]
+    fn the_old_wire_token_still_reads_and_the_new_one_is_what_we_write() {
+        let from_old: Role = serde_json::from_str("\"judge\"").expect("old streams still parse");
+        assert_eq!(from_old, Role::Verifier);
+        assert_eq!(
+            serde_json::to_string(&Role::Verifier).unwrap(),
+            "\"verifier\"",
+            "new writes use the new name"
+        );
     }
 }

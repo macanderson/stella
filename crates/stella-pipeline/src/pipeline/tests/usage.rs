@@ -395,6 +395,9 @@ async fn model_verdict_call_is_metered_separately_from_worker() {
         .unwrap();
     assert_eq!(
         usage_roles(&drain(&mut rx)),
+        // `verdict` is the ModelCallRole — the job the call did. `verifier`
+        // is the Role, the model slot. Two enums, and the rename sweep
+        // conflated them here.
         ["triage", "worker", "verdict"]
     );
 }

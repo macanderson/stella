@@ -557,6 +557,11 @@ export type ProofStep = {
   kind: "assurance";
   /**
    * Whether a model verifier was called for on inconclusive evidence.
+   *
+   * Aliased: this field shipped as `judge`, and every recorded session
+   * and golden fixture spells it that way. Renaming it without the
+   * alias makes those streams unparseable — which is exactly what the
+   * golden fixtures caught.
    */
   verifier: boolean;
   /**

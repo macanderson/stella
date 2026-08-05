@@ -66,6 +66,14 @@ pub enum LadderRung {
     /// the *evidence class* — a model's opinion — not for the model: it is
     /// deliberately not called `ModelVerifier`, because the whole ladder is
     /// verification and this is the one rung that is only an opinion.
+    ///
+    /// The alias is what keeps this rename additive. This rung shipped as
+    /// `model_judge`, so every session already on disk spells it that way; a
+    /// bare rename would make those streams fail to parse — and this enum's
+    /// own contract is that an unknown rung fails the event rather than being
+    /// laundered, so the failure would be loud and total. New writes use
+    /// `model_verdict`; old reads still land.
+    #[serde(alias = "model_judge")]
     ModelVerdict,
     /// The verdict call itself failed or returned something unparseable, and
     /// the conservative heuristic verdict stood in for it. A verdict about the
