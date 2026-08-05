@@ -575,7 +575,11 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
   connection loses whatever was streamed while it was down.
 - **Reverse RPC (host → engine):** the engine emits a dedicated
   `ServerFrame::ToolRequest` / `ServerFrame::ProviderRequest` carrying a
-  `request_id` (a per-turn counter — `tool-0`, `prov-0`, …); the host runs the
+  `request_id` (`<port>-<instance>-<counter>` — `tool-0-0`, `prov-1-3`, …:
+  one turn can hold several ports of a kind, so the instance tag is what keeps
+  a sub-agent's requests from colliding with the parent's in the turn's
+  registry. The id is **opaque to the host** — echo it back, never parse it);
+  the host runs the
   governed work and POSTs the result back to
   `/v1/turns/{id}/{tool-result,provider-result}` with that `request_id`. The
   engine's `RemoteToolExecutor::execute` awaits a per-`request_id` oneshot.

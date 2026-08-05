@@ -102,6 +102,27 @@ pub(crate) const DEFAULT_REVERSE_REQUEST_TIMEOUT: Duration = Duration::from_secs
 /// an allocator through every construction site.
 static PROVIDER_INSTANCES: AtomicU64 = AtomicU64::new(0);
 
+/// Mints [`RemoteToolExecutor`] instance tags, for the same reason and on the
+/// same terms as [`PROVIDER_INSTANCES`] (#1496).
+///
+/// The tool port needs this exactly as much as the provider port does, and for
+/// longer than anyone noticed: `run_session` builds two executors over one
+/// [`Pending`] registry — the parent's and the sub-agent view's — so two
+/// zero-based counters both mint `tool-0`. `Pending::register_tool` inserts
+/// through `HashMap::insert`, which *replaces* on collision, so the displaced
+/// oneshot sender drops, its waiter wakes with "serve host dropped the tool
+/// call without answering", and the host's single answer for `tool-0` resolves
+/// whichever request happened to register last. A sub-agent could therefore be
+/// handed the parent's tool result.
+static TOOL_INSTANCES: AtomicU64 = AtomicU64::new(0);
+
+/// Mints [`RemoteApprovalGate`] instance tags (#1496).
+///
+/// Carried for the same structural reason even though `pipeline_run` builds
+/// exactly one gate per run: "unique because only one exists" is a property of
+/// the call sites, and call sites are what changed underneath the tool port.
+static SCOPE_INSTANCES: AtomicU64 = AtomicU64::new(0);
+
 /// Hand one streamed fragment to the engine's observer, on the channel that
 /// keeps answer text and thinking apart. A `None` observer (the plain
 /// `complete_ref` path) drops the fragment: the aggregated result is
@@ -339,6 +360,10 @@ impl Provider for RemoteProvider {
 /// [`ServerFrame::ToolRequest`] and blocks on the host's answer.
 pub(crate) struct RemoteToolExecutor {
     schemas: Vec<ToolSchema>,
+    /// Disambiguates this executor's request ids from every other executor
+    /// sharing the turn's [`Pending`] registry (#1496) — the same guarantee,
+    /// and the same mechanism, as [`RemoteProvider::instance`].
+    instance: u64,
     frames: crate::backlog::FrameSink,
     pending: Pending,
     counter: AtomicU64,
@@ -364,6 +389,7 @@ impl RemoteToolExecutor {
     ) -> Self {
         Self {
             schemas,
+            instance: TOOL_INSTANCES.fetch_add(1, Ordering::Relaxed),
             frames,
             pending,
             counter: AtomicU64::new(0),
@@ -503,7 +529,11 @@ impl RemoteToolExecutor {
     /// and the caller is what brackets this with the hook plane's
     /// `started`/outcome pair.
     async fn dispatch(&self, name: &str, input: &Value) -> ToolOutput {
-        let request_id = format!("tool-{}", self.counter.fetch_add(1, Ordering::Relaxed));
+        let request_id = format!(
+            "tool-{}-{}",
+            self.instance,
+            self.counter.fetch_add(1, Ordering::Relaxed)
+        );
         let (tx, rx) = oneshot::channel();
         // Same refused-registration handling as the provider port: a cancel
         // landing between the check above and this call must not park the step
@@ -568,6 +598,12 @@ impl RemoteToolExecutor {
 pub(crate) struct RemoteApprovalGate {
     frames: crate::backlog::FrameSink,
     pending: Pending,
+    /// As on the provider and tool ports (#1496). Only one approval gate is
+    /// built per pipeline run today, so this cannot collide yet — which is
+    /// exactly the state the tool port was in before a sub-agent grew it a
+    /// second executor. Carrying the tag makes the id unique because of how it
+    /// is constructed rather than because of how many callers happen to exist.
+    instance: u64,
     counter: AtomicU64,
     timeout: Duration,
 }
@@ -581,6 +617,7 @@ impl RemoteApprovalGate {
         Self {
             frames,
             pending,
+            instance: SCOPE_INSTANCES.fetch_add(1, Ordering::Relaxed),
             counter: AtomicU64::new(0),
             timeout,
         }
@@ -598,7 +635,11 @@ impl ApprovalGate for RemoteApprovalGate {
         if self.pending.is_cancelled() {
             return ScopeDecision::Abort;
         }
-        let request_id = format!("scope-{}", self.counter.fetch_add(1, Ordering::Relaxed));
+        let request_id = format!(
+            "scope-{}-{}",
+            self.instance,
+            self.counter.fetch_add(1, Ordering::Relaxed)
+        );
         let (tx, rx) = oneshot::channel();
         if !self.pending.register_scope_review(request_id.clone(), tx) {
             return ScopeDecision::Abort;
@@ -992,6 +1033,87 @@ mod tests {
             TurnRef::new("turn-remotetest"),
         );
         (sink, rx, pending)
+    }
+
+    /// The parent's tool port and a sub-agent's, over one turn's registry,
+    /// must not mint the same request id (#1496).
+    ///
+    /// `run_session` builds exactly this pair — `session.rs` constructs one
+    /// executor for the turn and a second for the sub-agent view, both over
+    /// the same [`Pending`]. With a bare per-instance counter both start at
+    /// zero, `register_tool`'s `HashMap::insert` replaces the first entry, and
+    /// the host's answer for `tool-0` resolves whichever registered last while
+    /// the displaced waiter wakes to a dropped sender. The assertion that
+    /// fails first on the old code is the id inequality; the two that follow
+    /// are the consequence worth naming — each caller gets *its own* answer,
+    /// not the other's.
+    #[tokio::test]
+    async fn two_tool_ports_sharing_a_turn_do_not_collide_on_request_ids() {
+        let (sink, mut rx, pending) = live_channel();
+        let parent = RemoteToolExecutor::new(
+            Vec::new(),
+            sink.clone(),
+            pending.clone(),
+            Duration::from_secs(5),
+            None,
+        );
+        let child = RemoteToolExecutor::new(
+            Vec::new(),
+            sink,
+            pending.clone(),
+            Duration::from_secs(5),
+            None,
+        );
+
+        let parent_call =
+            tokio::spawn(async move { parent.execute("echo", &serde_json::json!({})).await });
+        let ServerFrame::ToolRequest {
+            request_id: first, ..
+        } = rx.recv().await.unwrap()
+        else {
+            panic!("expected the parent's tool request frame");
+        };
+        let child_call =
+            tokio::spawn(async move { child.execute("echo", &serde_json::json!({})).await });
+        let ServerFrame::ToolRequest {
+            request_id: second, ..
+        } = rx.recv().await.unwrap()
+        else {
+            panic!("expected the sub-agent's tool request frame");
+        };
+
+        assert_ne!(
+            first, second,
+            "two executors over one Pending minted the same request id, so one \
+             registration silently replaced the other"
+        );
+
+        // Answer each by its own id, distinguishably.
+        pending
+            .resolve_tool(
+                &first,
+                ToolOutput::Ok {
+                    content: "for-the-parent".to_string(),
+                },
+            )
+            .expect("the parent's request is still registered");
+        pending
+            .resolve_tool(
+                &second,
+                ToolOutput::Ok {
+                    content: "for-the-sub-agent".to_string(),
+                },
+            )
+            .expect("the sub-agent's request is still registered");
+
+        assert!(
+            matches!(parent_call.await.unwrap(), ToolOutput::Ok { content } if content == "for-the-parent"),
+            "the parent must receive the answer addressed to the parent"
+        );
+        assert!(
+            matches!(child_call.await.unwrap(), ToolOutput::Ok { content } if content == "for-the-sub-agent"),
+            "the sub-agent must receive the answer addressed to the sub-agent"
+        );
     }
 
     /// A scope review the host approves round-trips into
