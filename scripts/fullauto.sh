@@ -160,13 +160,18 @@ ensure_state_dir() {
 # subcommand", which reads like a bug in this script rather than a stale
 # install. NEVER suggest bare `brew install stella`: homebrew-core's `stella`
 # is an Atari 2600 emulator, and installing it exits 0.
+STELLA_FULLAUTO_OK=""
 require_stella() {
+  # Memoized: the daemon loop delegates several times per cycle, and the
+  # probe is a whole extra binary spawn each time otherwise.
+  [ "$STELLA_FULLAUTO_OK" = "1" ] && return 0
   have stella || die "this verb lives in \`stella fullauto\` and needs stella on PATH.
    Install:  brew install macanderson/stella/stella
    Dev:      cargo build --release -p stella-cli  (then target/release/stella)"
   if ! stella fullauto --help >/dev/null 2>&1; then
     die "the stella on PATH ($(command -v stella)) predates \`stella fullauto\` — upgrade it (see \`$0 upgrade\`)"
   fi
+  STELLA_FULLAUTO_OK=1
 }
 
 # The daemon's internal calls into the ported verbs go through here, so its
