@@ -224,10 +224,16 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
         },
         // The transcript replay (#1461). `full=1` lifts the per-body clip —
-        // fetched on drawer-open only, never on the 5 s poll.
+        // fetched whole on drawer-open. `after_seq=<n>` (#1476) narrows to
+        // rows newer than the drawer's last-seen `seq`, for the incremental
+        // poll a still-running execution's transcript gets instead.
         "/api/execution-journal" => {
             match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
-                Some(id) => obs.execution_journal(id, query_param(query, "full").is_some()),
+                Some(id) => obs.execution_journal(
+                    id,
+                    query_param(query, "full").is_some(),
+                    query_param(query, "after_seq").and_then(|v| v.parse::<i64>().ok()),
+                ),
                 None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
             }
         }
