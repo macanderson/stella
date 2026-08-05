@@ -1,16 +1,16 @@
 ---
 title: Self-improvement
-description: The track where Stella makes Stella measurably more capable — seven components, their dependency order, what's built today, and the guardrails on each.
+description: The track where stella makes stella measurably more capable — seven components, their dependency order, what's built today, and the guardrails on each.
 ---
 
-Most of what gets called agent "self-improvement" is recall: a note file the agent writes to and reads back. That is useful, and Stella does it — see [Memory](/docs/context-engine). It is also not the same thing as getting *better*.
+Most of what gets called agent "self-improvement" is recall: a note file the agent writes to and reads back. That is useful, and stella does it — see [Memory](/docs/context-engine). It is also not the same thing as getting *better*.
 
-This track is the other thing. Each component below changes what Stella can do, not just what it remembers, and each one carries a **success metric and a guardrail** so that "improvement" is something proven rather than asserted.
+This track is the other thing. Each component below changes what stella can do, not just what it remembers, and each one carries a **success metric and a guardrail** so that "improvement" is something proven rather than asserted.
 
 <Callout type="warn">
 **This page describes a direction, most of which is not built.** One first slice has shipped
 ([`stella tune`](/docs/commands/tune)). Everything else is a design under active discussion in the
-issue tracker, and the details will change. Read it as a map of where Stella is heading, and check
+issue tracker, and the details will change. Read it as a map of where stella is heading, and check
 the linked issue for the current state of any one component.
 </Callout>
 
@@ -24,17 +24,17 @@ So the pattern repeats. A candidate change is generated cheaply, evaluated again
 
 <CardGrid size="md">
   <SpecCard title="Tool Foundry (#830)">
-    Stella authors, tests, and installs its own tools at runtime. When it hits a capability gap
+    stella authors, tests, and installs its own tools at runtime. When it hits a capability gap
     — the same shell incantation reconstructed three times — it synthesizes a typed tool, proves
     it with a witness test, and registers it. Expands the *action space*, not just memory.
   </SpecCard>
   <SpecCard title="Eval-driven self-tuning (#831)">
-    A bandit over Stella's own prompts, policies, and model routing. Variants run A/B on real
+    A bandit over stella's own prompts, policies, and model routing. Variants run A/B on real
     tasks, scored from receipts; the winner is promoted. Optimizes the *policy that acts on
     facts* rather than the facts.
   </SpecCard>
   <SpecCard title="stella-maintains-stella (#832)">
-    The most literal version: Stella audits its own source, opens gated draft PRs against
+    The most literal version: stella audits its own source, opens gated draft PRs against
     itself, drives them through the witness gate, and lands verified improvements behind a
     human merge gate.
   </SpecCard>
@@ -44,7 +44,7 @@ So the pattern repeats. A candidate change is generated cheaply, evaluated again
     promoted only on measured lift.
   </SpecCard>
   <SpecCard title="Causal self-model (#834)">
-    A model of Stella's own failure modes — wrong-model pick, tool-choice error, loop, budget
+    A model of stella's own failure modes — wrong-model pick, tool-choice error, loop, budget
     blow-out — that predicts the likely failure of the *current* plan and intervenes before it
     costs a turn.
   </SpecCard>
@@ -109,7 +109,7 @@ The load-bearing edge is **dataset → eval**. #836's own stated first slice is 
   <SpecCard title="Exists, not wired — loop-bench">
     `bench/loop-bench` works from the command line and is what `stella tune` scores. It does
     **not** run in CI — the bench workflow runs the Python analysis tooling's pytest suite and
-    never runs Stella against a task. That gap is #873.
+    never runs stella against a task. That gap is #873.
   </SpecCard>
   <SpecCard title="Not built — the dataset">
     There is no `stella dataset export`. `stella export` dumps raw, unredacted session

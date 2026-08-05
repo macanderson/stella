@@ -1,9 +1,9 @@
 ---
 title: Permissions
-description: How Stella's per-tool permission model separates read-only tools from mutating and shell tools, and how PreToolUse hooks can gate or block tool calls.
+description: How stella's per-tool permission model separates read-only tools from mutating and shell tools, and how PreToolUse hooks can gate or block tool calls.
 ---
 
-Every tool the agent can call — built-in, [custom](/docs/agent-tools/custom-tools), or provided by an [MCP server](/docs/agent-tools/mcp) — has a per-tool permission model. This is what lets Stella treat a harmless file read differently from a shell command that can change your system.
+Every tool the agent can call — built-in, [custom](/docs/agent-tools/custom-tools), or provided by an [MCP server](/docs/agent-tools/mcp) — has a per-tool permission model. This is what lets stella treat a harmless file read differently from a shell command that can change your system.
 
 <PermissionGateDiagram />
 
@@ -31,7 +31,7 @@ The permission model is enforced ahead of each tool call, and it can be extended
 This gives you a programmable gate in front of any tool. A `PreToolUse` hook's matcher is a glob over the tool name, so you can target a single tool (for example, `bash`) or a family of tools.
 
 <Callout type="info">
-For blocking by pattern without a hook script, Stella also has native workspace-rule guards enforced at the tool boundary: `guard-tool` (deny a tool), `guard-deny-command` (a glob over the `bash` command), and `guard-deny-path` (a glob over a file tool's path). A rule such as `guard-deny-command: "git push --force*"` is hard-enforced per invocation.
+For blocking by pattern without a hook script, stella also has native workspace-rule guards enforced at the tool boundary: `guard-tool` (deny a tool), `guard-deny-command` (a glob over the `bash` command), and `guard-deny-path` (a glob over a file tool's path). A rule such as `guard-deny-command: "git push --force*"` is hard-enforced per invocation.
 </Callout>
 
 ```json title="~/.stella/settings.json"
@@ -55,11 +55,11 @@ For blocking by pattern without a hook script, Stella also has native workspace-
 
 For the full hook model — events, matchers, timeouts, and the JSON payload delivered on stdin — see [Hooks](/docs/agent-tools/hooks).
 
-## Containment: run Stella in a container
+## Containment: run stella in a container
 
 Hooks and guard rules decide *whether* a command runs. Containment bounds what it can reach once it does — the difference that matters when instructions hidden in a file the agent read steer the model into running something you never asked for.
 
-**Stella has no per-command sandbox.** Earlier versions had one: `STELLA_BASH_SANDBOX=workspace-write|restricted` wrapped the [`bash`](/docs/agent-tools#shell) tool in `sandbox-exec` (Seatbelt) on macOS or `bwrap` (bubblewrap) on Linux. It was removed, and the variable now does nothing.
+**stella has no per-command sandbox.** Earlier versions had one: `STELLA_BASH_SANDBOX=workspace-write|restricted` wrapped the [`bash`](/docs/agent-tools#shell) tool in `sandbox-exec` (Seatbelt) on macOS or `bwrap` (bubblewrap) on Linux. It was removed, and the variable now does nothing.
 
 <Callout type="warn">
 If you set `STELLA_BASH_SANDBOX` in a shell profile, a CI job, or a service unit, it is inert — nothing reads it and nothing warns you. Remove it, and if you were relying on it for containment, replace it with a container.
@@ -67,7 +67,7 @@ If you set `STELLA_BASH_SANDBOX` in a shell profile, a CI job, or a service unit
 
 The reason it went is that it covered `bash` and nothing else. `build_project` and `run_tests` take a `command` override, `verify_done` a `test_cmd`, `run_script` composes a line from the scripts index, `start_process` takes an argv whose `argv[0]` may be an interpreter, and the `repo_*`, `ci_status`, custom-manifest, and hook paths all spawn on their own — every one of them ran unconfined while the setting said "sandbox: on". A boundary you can step around by starting a process a different way is not a boundary, and one that people believe in is worse than a clearly absent one.
 
-Run the whole Stella process inside a container instead — Docker, Podman, or a remote sandbox. The boundary then sits *outside* every spawn path rather than on one of them, so no tool can route around it, and it holds for file writes, network, and process execution alike.
+Run the whole stella process inside a container instead — Docker, Podman, or a remote sandbox. The boundary then sits *outside* every spawn path rather than on one of them, so no tool can route around it, and it holds for file writes, network, and process execution alike.
 
 No official CLI image ships today, so build one that puts `stella` on `PATH` (the [install script](/docs/getting-started/installation) works inside a `debian:bookworm-slim` stage), then mount only the repository you want the agent to touch:
 
