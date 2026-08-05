@@ -159,7 +159,7 @@ fn split_segments(diff: &str) -> Vec<Segment> {
             let old_path = rest.strip_prefix("a/").unwrap_or(rest).trim();
             let starts_new_file = current
                 .as_ref()
-                .map_or(true, |seg| !seg.is_file || seg.has_old_header);
+                .is_none_or(|seg| !seg.is_file || seg.has_old_header);
             if starts_new_file {
                 segments.extend(current.take());
                 current = Some(Segment::file(raw));
@@ -189,7 +189,7 @@ fn split_segments(diff: &str) -> Vec<Segment> {
             }
             continue;
         }
-        if line.starts_with('#') && current.as_ref().map_or(true, |seg| seg.is_file) {
+        if line.starts_with('#') && current.as_ref().is_none_or(|seg| seg.is_file) {
             // A joining marker between segments (the authored-section
             // header). Flush the file it closed; the marker itself is prose.
             segments.extend(current.take());

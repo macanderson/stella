@@ -207,4 +207,100 @@ impl<'a> Pipeline<'a> {
             diff_coverage: Some(inputs.diff_coverage.as_str().to_string()),
         }
     }
+
+    /// The textual evidence summary handed to the escalated model verifier —
+    /// every deterministic signal the ladder collected before deciding
+    /// "inconclusive, ask a model" (#859, #860, #861, #864, #867, #870,
+    /// #1291). Split out alongside [`Self::ladder_snapshot`] for the same
+    /// reason: pure assembly over the same probe results, not orchestration.
+    pub(super) fn model_verdict_evidence_summary(
+        &self,
+        inputs: &LadderInputs,
+        state: &CandidateState,
+        test_infra: Option<&'static str>,
+        lint_sample: &str,
+        snapshot: &LadderSnapshot,
+    ) -> String {
+        let mut evidence_summary = format!(
+            "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {}); \
+             file_change_events={}",
+            inputs.flip_achieved,
+            inputs.touched_tests_passed,
+            state.diff_lines,
+            self.config.diff_budget_lines,
+            state.file_changes,
+        );
+        if let Some(label) = test_infra {
+            // #860: the run ended without observing an assertion. Named so
+            // the verifier reads "the suite timed out", not "the suite
+            // failed".
+            evidence_summary.push_str(&format!("; test_run={label} (no assertion observed)"));
+        }
+        if state.oracle.is_unstable() {
+            // #859: a fail→pass flip WAS observed but could not be
+            // reproduced on the same tree — a different fact from "the test
+            // never passed", and one the verifier should weigh explicitly.
+            evidence_summary
+                .push_str("; unstable_flip=true (the flip's confirmation re-run did not pass)");
+        }
+        if inputs.diff_coverage != DiffCoverage::Unmeasured {
+            // #1291: stated only when it was actually measured. An
+            // `unmeasured` line here would be pure noise in a verifier
+            // prompt — the ladder already escalated for some other reason,
+            // and "nobody looked" adds nothing to reason from. It stays on
+            // the snapshot either way.
+            evidence_summary.push_str("; ");
+            evidence_summary.push_str(inputs.diff_coverage.explain());
+        }
+        if state.witness_mutation == Some(false) {
+            // #870: the witness reacted to the change without constraining
+            // it — it stayed green while the changed lines were
+            // deliberately broken.
+            evidence_summary.push_str(
+                "; witness_tautological=true (the witness stayed green under every trivial \
+                 mutation of the changed lines)",
+            );
+        }
+        if state.oracle.refused_different_failure() {
+            // #867: the suite passed, but its own complete test listing did
+            // not contain the baseline's failing tests — the observed
+            // failure was not fixed, it disappeared. The verifier should
+            // treat the passing exit code accordingly.
+            evidence_summary.push_str(
+                "; flip_refused=the passing run's test listing does not contain the test(s) \
+                 that failed on the baseline (fixed a different failure, or the failing test \
+                 was removed)",
+            );
+        }
+        if inputs.new_diag_errors > 0 || inputs.new_diag_warnings > 0 {
+            // #861: the regression the veto saw, capped to a 3-line sample
+            // so the verifier reads the delta, not the linter's whole
+            // opinion.
+            evidence_summary.push_str(&format!(
+                "; new_diagnostics={} error(s), {} warning(s) vs baseline",
+                inputs.new_diag_errors, inputs.new_diag_warnings
+            ));
+            if !lint_sample.is_empty() {
+                evidence_summary.push('\n');
+                evidence_summary.push_str(lint_sample.trim_end());
+            }
+        }
+        if !snapshot.oracle_trace.is_empty() {
+            // #864: the oracle trace, rendered compactly. The verifier sees
+            // WHY the ladder was inconclusive — which runs happened, in
+            // order, and what each observed — instead of a diff cold.
+            evidence_summary.push_str(&format!(
+                "; oracle_trace=[{}]",
+                crate::replay::render_oracle_trace(&snapshot.oracle_trace)
+            ));
+        }
+        if snapshot.witness_intact == Some(true) {
+            // #864: the tamper-exclusion result, stated. A tampered witness
+            // never reaches a verifier, so what the verifier learns here is
+            // that the check RAN and the witness it is weighing is the
+            // authored one.
+            evidence_summary.push_str("; witness_tamper_check=intact");
+        }
+        evidence_summary
+    }
 }

@@ -361,7 +361,7 @@ impl Observatory {
     /// telemetry projections deliberately do not carry.
     ///
     /// This is the second sanctioned read of `events` (after
-    /// [`recall_timings`]) and it obeys the same bargain: the filter is
+    /// `recall_timings`) and it obeys the same bargain: the filter is
     /// `execution_id`-first, which the store's `UNIQUE (execution_id, seq)`
     /// index serves directly, and the route is fetched once on drawer-open —
     /// never on the 5 s poll. A cross-execution transcript view would need a
@@ -371,7 +371,7 @@ impl Observatory {
     /// authoritative full answer and the deltas are a live-preview artifact.
     /// Most stores hold none (the journal drops them at write time), but the
     /// filter is contract, not assumption. Bodies are clipped to
-    /// [`JOURNAL_BODY_CLIP`] chars unless `full`; a clipped entry says so
+    /// `JOURNAL_BODY_CLIP` chars unless `full`; a clipped entry says so
     /// (`truncated: true`) instead of presenting the elision as the data.
     pub fn execution_journal(&self, id: i64, full: bool) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
