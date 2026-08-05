@@ -605,6 +605,43 @@ fn short(fingerprint: &str) -> String {
     }
 }
 
+/// One-line trace summary of a [`stella_protocol::ProofStep`] for the traces
+/// view — the scrolling counterpart to the rail this module folds: the rail
+/// answers "is this run proving what it is doing *now*", a trace row records
+/// what each step said when it happened.
+pub(crate) fn proof_trace(step: &stella_protocol::ProofStep) -> String {
+    use stella_protocol::{ProofStep, ProofTree};
+    match step {
+        ProofStep::Assurance { witness, verifier } => format!(
+            "assurance: witness {}, verifier {}",
+            if *witness { "on" } else { "waived" },
+            if *verifier { "on" } else { "waived" }
+        ),
+        ProofStep::Warrant {
+            required: true,
+            diff_lines,
+            ..
+        } => format!("warrant: required ({diff_lines} lines)"),
+        ProofStep::Warrant { reason, .. } => format!(
+            "warrant: {}",
+            reason.as_deref().unwrap_or("no test warranted")
+        ),
+        ProofStep::WitnessAuthored { path, .. } => format!("witness authored: {path}"),
+        ProofStep::WitnessUnavailable { reason } => format!("witness unavailable: {reason}"),
+        ProofStep::VerificationUnavailable { reason } => {
+            format!("verification unavailable: {reason}")
+        }
+        ProofStep::Oracle { passed, tree, .. } => format!(
+            "oracle: {} on {}",
+            if *passed { "pass" } else { "fail" },
+            match tree {
+                ProofTree::Baseline => "base",
+                ProofTree::Candidate => "new",
+            }
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

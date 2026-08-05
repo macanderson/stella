@@ -17,6 +17,11 @@ use crate::{Result, Store};
 /// recorded call (nothing to have gone cold yet).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheCallGap {
+    /// The session the gap was measured within — the partition key of the
+    /// `LAG` below, surfaced so a consumer can fold per-session facts (the
+    /// max idle gap behind `stella stats`' `IdleBeyondTtl` diagnosis, #1525)
+    /// without re-deriving the chaining.
+    pub session_id: String,
     pub provider: String,
     pub model: String,
     pub cache_write_tokens: i64,
@@ -40,6 +45,7 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT
+               e.session_id,
                e.provider,
                e.model,
                t.cache_write_tokens,
@@ -55,10 +61,11 @@ impl Store {
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(CacheCallGap {
-                provider: row.get(0)?,
-                model: row.get(1)?,
-                cache_write_tokens: row.get(2)?,
-                gap_secs: row.get(3)?,
+                session_id: row.get(0)?,
+                provider: row.get(1)?,
+                model: row.get(2)?,
+                cache_write_tokens: row.get(3)?,
+                gap_secs: row.get(4)?,
             })
         })?;
         let mut out = Vec::new();
@@ -108,6 +115,8 @@ mod tests {
 
         let gaps = store.cache_call_gaps().unwrap();
         assert_eq!(gaps.len(), 2, "the session-less run is excluded: {gaps:?}");
+        assert_eq!(gaps[0].session_id, "s1");
+        assert_eq!(gaps[1].session_id, "s1");
         assert_eq!(gaps[0].provider, "anthropic");
         assert_eq!(gaps[0].cache_write_tokens, 500);
         assert_eq!(
