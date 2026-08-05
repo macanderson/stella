@@ -1124,3 +1124,219 @@ fn restoring_a_session_replaces_rather_than_inherits() {
         "a file only the departing session read must not guard the arriving one"
     );
 }
+
+/// A windowed read is still a read the guard watched, so the file it looked at
+/// must stay guarded.
+///
+/// `read_file` renders at most 2000 lines, so on a file above that ceiling
+/// EVERY read is partial. Grading a partial read as "no belief at all" left
+/// exactly those files — the big ones, the ones several agents are most likely
+/// to be in at once — outside the no-clobber guarantee entirely: no entry in
+/// the staleness map means `clobbered_paths` has nothing to compare and the
+/// overwrite lands with no refusal.
+#[tokio::test]
+async fn a_windowed_read_still_guards_against_a_concurrent_edit() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("big.txt");
+    let original: String = (1..=50).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&file, &original).unwrap();
+
+    let agent_a = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let agent_b = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    // A reads a WINDOW — what every read of an over-ceiling file looks like.
+    let read = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({
+                "path": "big.txt", "offset": 1, "limit": 10, "reason": "reading the head",
+            }),
+        )
+        .await;
+    assert!(!read.is_error(), "A's windowed read: {read:?}");
+
+    // B appends work A was never shown.
+    let mut edited = original.clone();
+    edited.push_str("B's careful work\n");
+    let b_wrote = agent_b
+        .execute(
+            "write_file",
+            &serde_json::json!({ "path": "big.txt", "content": edited, "reason": "B does its job" }),
+        )
+        .await;
+    assert!(!b_wrote.is_error(), "B's write lands: {b_wrote:?}");
+
+    let a_wrote = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({ "path": "big.txt", "content": "A's stale work\n", "reason": "A does its job" }),
+        )
+        .await;
+    match &a_wrote {
+        ToolOutput::Error { message } => assert!(
+            message.contains("big.txt"),
+            "the refusal names the file: {message}"
+        ),
+        other => panic!("a write over an unseen edit must be refused, got {other:?}"),
+    }
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("B's careful work"),
+        "B's work survives — a windowed reader is still a guarded one"
+    );
+}
+
+/// The other direction: a partial read must not overwrite a whole-file belief.
+///
+/// A saw the file whole, B edited a region A never looked at again, and A's
+/// `read_symbol` span learns nothing about B's edit. Refreshing the belief on
+/// that span would compare B's content against itself and wave A's write
+/// through — the laundering this grade exists to prevent.
+#[tokio::test]
+async fn a_span_read_cannot_launder_a_whole_file_belief() {
+    // `target_fn` is lines 5-8 in both versions; only `alpha`'s body differs,
+    // so the span A re-reads is byte-identical and tells it nothing.
+    const BEFORE: &str = "fn alpha() {\n    let a = 1;\n}\n\nfn target_fn() {\n    let x = 1;\n    let y = 2;\n}\n\nfn omega() {}\n";
+    const AFTER: &str = "fn alpha() {\n    let a = 999;\n}\n\nfn target_fn() {\n    let x = 1;\n    let y = 2;\n}\n\nfn omega() {}\n";
+
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("lib.rs");
+    std::fs::write(&file, BEFORE).unwrap();
+    let db = crate::graph::graph_db_path(root.path());
+    std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+    let graph = stella_graph::CodeGraph::open(root.path(), &db).unwrap();
+    graph.index_all().unwrap();
+    graph.shutdown();
+
+    let agent_a = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let agent_b = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    let read = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "lib.rs", "reason": "reading it whole" }),
+        )
+        .await;
+    assert!(!read.is_error(), "A's whole-file read: {read:?}");
+
+    let b_wrote = agent_b
+        .execute(
+            "write_file",
+            &serde_json::json!({ "path": "lib.rs", "content": AFTER, "reason": "B edits alpha" }),
+        )
+        .await;
+    assert!(!b_wrote.is_error(), "B's write lands: {b_wrote:?}");
+
+    let span = agent_a
+        .execute(
+            "read_symbol",
+            &serde_json::json!({ "name": "target_fn", "reason": "peeking at one symbol" }),
+        )
+        .await;
+    assert!(!span.is_error(), "A's span read: {span:?}");
+
+    let a_wrote = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({ "path": "lib.rs", "content": "A's stale work\n", "reason": "A does its job" }),
+        )
+        .await;
+    assert!(
+        a_wrote.is_error(),
+        "a span read must not refresh a whole-file belief, got {a_wrote:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        AFTER,
+        "B's edit survives the peek"
+    );
+}
+
+/// The refusal has to be recoverable on a file too big to read whole.
+///
+/// Above `read_file`'s 2000-line ceiling a whole-file read is unreachable, so
+/// a rule of "only a whole-file read may refresh" would refuse the write, then
+/// refuse every re-read's attempt to clear it — the agent could never write
+/// the file again. A partial belief is refreshable by the partial reads that
+/// are all such a file can offer.
+#[tokio::test]
+async fn a_windowed_re_read_recovers_a_file_too_big_to_read_whole() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("huge.txt");
+    let original: String = (1..=2_100).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&file, &original).unwrap();
+
+    let agent_a = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+    let agent_b = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    let read = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "huge.txt", "reason": "first look" }),
+        )
+        .await;
+    assert!(!read.is_error(), "A's read: {read:?}");
+
+    let mut edited = original.clone();
+    edited.push_str("B's careful work\n");
+    let b_wrote = agent_b
+        .execute(
+            "write_file",
+            &serde_json::json!({ "path": "huge.txt", "content": edited, "reason": "B does its job" }),
+        )
+        .await;
+    assert!(!b_wrote.is_error(), "B's write lands: {b_wrote:?}");
+
+    let refused = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({ "path": "huge.txt", "content": "A's stale work\n", "reason": "A does its job" }),
+        )
+        .await;
+    assert!(refused.is_error(), "the file is guarded: {refused:?}");
+
+    // The recovery the refusal asks for — the only one this file can give.
+    let reread = agent_a
+        .execute(
+            "read_file",
+            &serde_json::json!({ "path": "huge.txt", "reason": "re-reading after the refusal" }),
+        )
+        .await;
+    assert!(!reread.is_error(), "A re-reads: {reread:?}");
+
+    let retry = agent_a
+        .execute(
+            "write_file",
+            &serde_json::json!({ "path": "huge.txt", "content": "A's work, rebased\n", "reason": "redone" }),
+        )
+        .await;
+    assert!(
+        !retry.is_error(),
+        "after re-reading, A writes normally — no deadlock: {retry:?}"
+    );
+}
+
+/// The coverage grade has to survive a crash, or a resumed session silently
+/// regains the power to launder the belief it restored.
+#[test]
+fn a_beliefs_coverage_survives_the_snapshot_round_trip() {
+    let root = tempfile::tempdir().unwrap();
+    let reg = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    let stored = serde_json::json!({ "whole.rs": "aaa", "windowed.rs": "partial:bbb" }).to_string();
+    assert_eq!(reg.restore_observed(&stored), 2);
+
+    let json = reg.observed_snapshot().expect("a snapshot");
+    let observed: std::collections::HashMap<String, String> = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        observed.get("whole.rs").map(String::as_str),
+        Some("aaa"),
+        "a whole-file belief stays a bare digest — the pre-coverage format, unchanged"
+    );
+    assert_eq!(
+        observed.get("windowed.rs").map(String::as_str),
+        Some("partial:bbb"),
+        "a partial belief is still partial after a resume"
+    );
+}
