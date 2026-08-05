@@ -109,7 +109,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/telemetry.rs`](src/telemetry.rs) | `TelemetryRow`, the per-call write path, and the execution-level accounting boundary. |
 | [`src/forget.rs`](src/forget.rs) | The tombstone surfaces (`ContextSurface`) and the token-set restatement check that keeps a re-mined paraphrase from walking back in. The `forgotten` table's write/read surface lives on `Store` in `lib.rs`. |
 | [`src/cache_gaps.rs`](src/cache_gaps.rs), [`src/cache_trend.rs`](src/cache_trend.rs) | Read-only folds over `telemetry` + `executions` — per-call cache gaps and per-session cache totals. Facts only; the TTL/pricing policy is the caller's. |
-| `src/tests.rs`, `src/forget_tests.rs`, `src/private_state_tests.rs`, `src/quarantine_tests.rs`, `src/usage_completeness_tests.rs` | `#[cfg(test)]` modules; the last four are named witnesses for tombstone behaviour, private-state permissions, quarantine behaviour, and fail-closed accounting. |
+| `src/tests.rs` (+ `src/tests/`), `src/forget/tests.rs`, `src/tool_calls/tests.rs` | `#[cfg(test)]` modules, each beside the code it covers. `src/tests/` holds the crate-wide witnesses for private-state permissions, quarantine behaviour, and fail-closed accounting. |
 
 ## Key concepts
 
@@ -243,7 +243,7 @@ durability bug; the fsync window is the tail risk that remains.
   `finish_execution_accounted(.., true)` rollupable — otherwise
   `Store::execution_rollup` returns `None`, so a turn whose accounting never
   closed out cannot become an operational event, and v8 → v9 backfills every
-  legacy row to *not* complete. Witnesses: `src/usage_completeness_tests.rs`.
+  legacy row to *not* complete. Witnesses: `src/tests/usage_completeness.rs`.
 - The `UNIQUE (execution_id, seq)` / `(execution_id, step)` keys on `events`,
   `telemetry`, `mcp_usage`, and `tool_calls` are **double-write guards, not
   dedup**. The writers own monotonic counters, so a collision means one logical

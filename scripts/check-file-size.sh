@@ -83,7 +83,7 @@ if [ "${1:-}" = "--update" ]; then
     echo "# review like any other change."
     # LC_ALL=C: byte-order collation, so the baseline regenerates identically
     # on every machine. A UTF-8 locale sorts punctuation differently (macOS
-    # orders agent_tests.rs before agent.rs), which reshuffles untouched lines
+    # orders agent/tests.rs before agent.rs), which reshuffles untouched lines
     # and buries the one ceiling that actually moved.
     current_sizes | awk -v limit="$LIMIT" '$1 > limit' | LC_ALL=C sort -k2
   } >"$baseline.tmp"

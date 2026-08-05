@@ -2,8 +2,8 @@
 //! read-only/speculation-safe schema claims, and per-tool dispatch.
 //!
 //! Split out of `registry.rs` so the module that ships the tools is not
-//! dominated by the module that checks them, joining the four sibling test
-//! files already here. No test changed in the move.
+//! dominated by the module that checks them. The submodules below cover one
+//! seam each and share this module's fixtures through `use super::*`.
 
 use super::*;
 
@@ -756,7 +756,7 @@ fn read_only_flags_partition_the_registry_correctly() {
 
 /// A baseline snapshot with the given tables in the implicit `sql`
 /// layer, `default` namespace — the shape `stella init` would seed.
-/// `pub(super)` so the batch-gate witnesses (`gate_batch_tests`) reuse
+/// `pub(super)` so the batch-gate witnesses (`gate_batch`) reuse
 /// the same fixture instead of growing a drifting copy.
 pub(super) fn seeded_snapshot(tables: &[&str]) -> stella_graph::StorageSnapshot {
     stella_graph::StorageSnapshot {
@@ -805,6 +805,11 @@ async fn exec_ok(reg: &ToolRegistry, name: &str, input: serde_json::Value) {
 }
 
 mod chain;
+mod fence;
+mod file_change;
+mod gate_batch;
+#[cfg(unix)]
+mod private_state;
 mod schema_gate;
 mod touch;
 

@@ -2301,26 +2301,5 @@ impl ToolExecutor for ToolRegistry {
     }
 }
 
-#[cfg(all(test, unix))]
-#[path = "registry/private_state_tests.rs"]
-mod private_state_tests;
-
-#[cfg(test)]
-#[path = "registry/fence_tests.rs"]
-mod fence_tests;
-
-#[cfg(test)]
-#[path = "registry/gate_batch_tests.rs"]
-mod gate_batch_tests;
-
-#[cfg(test)]
-#[path = "registry/file_change_tests.rs"]
-mod file_change_tests;
-
-// No `#[path]` here, unlike the four single-file siblings above: this one has
-// child modules of its own (`registry/tests/*.rs`), and an explicit `#[path]`
-// on the parent makes rustc resolve those children against `registry/` rather
-// than `registry/tests/`. Plain `mod tests;` resolves to `registry/tests.rs`
-// and its children to `registry/tests/`, which is what the layout wants.
 #[cfg(test)]
 mod tests;

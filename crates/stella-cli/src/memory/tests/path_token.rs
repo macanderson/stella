@@ -3,7 +3,7 @@
 //! `goal_path_anchors` consults the workspace on disk; `turn_path_tokens`
 //! deliberately does not — both dialects are pinned here.
 
-use super::*;
+use crate::memory::*;
 
 #[test]
 fn goal_path_anchors_extracts_only_real_workspace_files() {

@@ -290,5 +290,4 @@ fn append<T: Serialize>(workspace_root: &Path, file: &str, value: &T) {
 }
 
 #[cfg(test)]
-#[path = "appraisals/tests.rs"]
 mod tests;

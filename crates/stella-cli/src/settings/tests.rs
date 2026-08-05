@@ -6,6 +6,9 @@
 //! and only grandfathers files that predate the guard. `use super::*` resolves
 //! to `crate::settings` exactly as it did inline, so this is a pure move.
 
+mod private_state;
+mod toml;
+
 use super::*;
 
 fn write(dir: &Path, name: &str, json: &str) -> PathBuf {

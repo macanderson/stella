@@ -731,5 +731,4 @@ pub struct ToolCallAnswer {
 }
 
 #[cfg(test)]
-#[path = "tool_calls_tests.rs"]
-mod tool_calls_tests;
+mod tests;

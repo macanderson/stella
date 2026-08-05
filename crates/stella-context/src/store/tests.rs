@@ -2,6 +2,8 @@
 //! #712 split the store along the seams it already had. The assertions are
 //! unchanged; only the imports the enclosing module used to supply are new.
 
+mod edge_id;
+
 use std::sync::atomic::Ordering;
 
 use super::embedding::{blob_to_vector, vector_to_blob};

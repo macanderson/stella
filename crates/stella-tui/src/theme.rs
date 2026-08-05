@@ -948,5 +948,4 @@ pub fn trace_kind_color(kind: TraceKind) -> Color {
 }
 
 #[cfg(test)]
-#[path = "theme/tests.rs"]
 mod tests;
