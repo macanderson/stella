@@ -69,20 +69,27 @@ A red gate is an automatic "not yet":
 ```bash
 ./scripts/check-no-scratch.sh
 ./scripts/check-action-pins.sh
+./scripts/check-cargo-install-pins.sh
+./scripts/check-license-allowlist-parity.sh
+./scripts/check-repro-wiring.sh
+shellcheck install.sh scripts/*.sh .githooks/*
 ./scripts/check-invariants.sh
 python3 ./scripts/check-doc-links.py check
+./scripts/check-command-docs.sh
 ./scripts/check-file-size.sh
+./scripts/check-wire-schema.sh
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Or just `make gate`, which is the nine of them in order.
+Or just `make gate`, which is the fifteen of them in order.
 
 CI enforces the same steps, split across `ci.yml` (plus a release smoke build)
-and `docs-guards.yml`, which runs the two prose guards on their own because they
-trigger on the `docs/**` and `*.md` paths that `ci.yml` deliberately ignores.
+and `docs-guards.yml`, which runs the prose guards — `invariants`, `doc-links`,
+and `command-docs` — on their own because they trigger on the `docs/**` and
+`*.md` paths that `ci.yml` deliberately ignores.
 
 **Cite a document by its id, not its path.** `doc:context-reuse §4` resolves no
 matter where the file moves; a document with no frontmatter `id` is not citable
