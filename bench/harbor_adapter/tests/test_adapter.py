@@ -1415,13 +1415,8 @@ class TestRun:
                 self, *, command: list[str], env: dict[str, str], stdin: bytes
             ):
                 assert command[0] == _INSTALL_PATH
-                assert command[-5:] == [
-                    "run",
-                    "--output-format",
-                    "stream-json",
-                    "--",
-                    "Fix the task.",
-                ]
+                tail = ["run", "--output-format", "stream-json", "--", "Fix the task."]
+                assert command[-5:] == tail
                 assert command[command.index("--base-url") + 1] == (
                     "https://openrouter.ai/api/v1"
                 )
