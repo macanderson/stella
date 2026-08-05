@@ -366,7 +366,9 @@ fn detach_before_exec(command: &mut std::process::Command, lock_path: PathBuf) {
                 return Err(std::io::Error::last_os_error());
             }
             if lock.as_bytes().is_empty() {
-                return Err(std::io::Error::other("supervisor lock path is not a C string"));
+                return Err(std::io::Error::other(
+                    "supervisor lock path is not a C string",
+                ));
             }
             // Deliberately NOT `O_CLOEXEC`, and deliberately never closed: the
             // lock has to outlive both this function and the `exec` that

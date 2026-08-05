@@ -165,7 +165,8 @@ fn the_liveness_lock_is_held_while_the_run_lives_and_free_once_it_ends() {
     );
     let _ = run.child.wait();
     assert!(
-        eventually(Duration::from_secs(10), || lock_is_held(&sidecar) == Some(false)),
+        eventually(Duration::from_secs(10), || lock_is_held(&sidecar)
+            == Some(false)),
         "the kernel must release the lock when the process exits"
     );
 
