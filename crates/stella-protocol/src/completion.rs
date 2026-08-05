@@ -366,6 +366,24 @@ pub struct CompletionUsage {
     /// still parse.
     #[serde(default)]
     pub cache_write_tokens: u64,
+    /// The subset of `output_tokens` the model spent on reasoning, when the
+    /// provider breaks it out (`completion_tokens_details.reasoning_tokens`
+    /// on the OpenAI-compatible dialects, `output_tokens_details` on the
+    /// Responses API).
+    ///
+    /// `None` means NOT REPORTED, and is not the same fact as `Some(0)`.
+    /// Anthropic's Messages API folds thinking into `output_tokens` with no
+    /// breakdown at all, so every anthropic.rs call records `None` — while a
+    /// reasoning-capable model that genuinely did no thinking on a call
+    /// records `Some(0)`. Collapsing the two would report "this model never
+    /// thinks" for the entire Anthropic-direct route, which is the same class
+    /// of error as reading an unfilled placeholder column as a measured zero.
+    ///
+    /// Already inside `output_tokens` for billing on every provider that
+    /// reports it, so it is a diagnostic breakdown and never its own cost
+    /// line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
 }
 
 impl CompletionUsage {
@@ -504,6 +522,7 @@ mod tests {
                 output_tokens: 20,
                 cached_input_tokens: 0,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
             },
             model: "glm-5.2".into(),
             cost_usd: 0.0012,
@@ -527,6 +546,7 @@ mod tests {
             output_tokens: 50,
             cached_input_tokens: 400,
             cache_write_tokens: 600,
+            reasoning_tokens: None,
         };
         let json = serde_json::to_string(&usage).expect("serialize");
         assert!(json.contains("\"cache_write_tokens\":600"), "{json}");

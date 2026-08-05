@@ -282,6 +282,7 @@ pub async fn run_accounted_call(
         output_tokens: result.usage.output_tokens,
         cached_input_tokens: result.usage.cached_input_tokens,
         cache_write_tokens: result.usage.cache_write_tokens,
+        reasoning_tokens: result.usage.reasoning_tokens,
         estimated_input_tokens: call.estimated_input_tokens,
         cost_usd: result.cost_usd,
         duration_ms: started.elapsed().as_millis() as u64,

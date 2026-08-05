@@ -437,12 +437,24 @@ struct OpenAiUsage {
     output_tokens: u64,
     #[serde(default)]
     input_tokens_details: Option<OpenAiInputTokensDetails>,
+    /// The Responses API's reasoning breakdown — the same fact the
+    /// chat-completions dialect spells `completion_tokens_details`. Absent
+    /// means never reported, which is not a reported zero.
+    #[serde(default)]
+    output_tokens_details: Option<OpenAiOutputTokensDetails>,
 }
 
 #[derive(Deserialize, Debug, Default)]
 struct OpenAiInputTokensDetails {
     #[serde(default)]
     cached_tokens: u64,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct OpenAiOutputTokensDetails {
+    /// Tokens spent thinking, already counted inside `output_tokens`.
+    #[serde(default)]
+    reasoning_tokens: Option<u64>,
 }
 
 /// Map the engine's one `ReasoningEffort` enum to the Responses API's
@@ -789,6 +801,8 @@ async fn aggregate_openai_stream(
                         usage.output_tokens = u.output_tokens;
                         usage.cached_input_tokens =
                             u.input_tokens_details.map(|d| d.cached_tokens).unwrap_or(0);
+                        usage.reasoning_tokens =
+                            u.output_tokens_details.and_then(|d| d.reasoning_tokens);
                     }
                 }
                 // A mid-stream failure/incompletion/error aborts the turn with
@@ -812,6 +826,8 @@ async fn aggregate_openai_stream(
                         usage.output_tokens = u.output_tokens;
                         usage.cached_input_tokens =
                             u.input_tokens_details.map(|d| d.cached_tokens).unwrap_or(0);
+                        usage.reasoning_tokens =
+                            u.output_tokens_details.and_then(|d| d.reasoning_tokens);
                     }
                     let reason = response
                         .incomplete_details
@@ -1570,6 +1586,7 @@ mod tests {
                 output_tokens: 500,
                 cached_input_tokens: 200,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
             });
         assert!(result.cost_usd > 0.0, "cost must be non-zero");
         assert_eq!(result.cost_usd, expected);
