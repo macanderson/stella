@@ -357,6 +357,61 @@ class TestInfrastructureFailuresAreNotLosses:
         killed = self._trial(tmp_path, "CancelledError")
         assert aggregate([*solved, killed])["solve_rate"] == 100.0
 
+    def test_zero_observed_spend_reclassifies_a_loss_as_a_void(self, tmp_path: Path):
+        """The #1480 signature: some agents swallow their own 401/429 and exit
+        nonzero, so Harbor says `NonZeroAgentExitCodeError` — an agent failure
+        by design — and the credential guard never fires. Steps with zero
+        observed spend means the arm never made a model call; scoring that as
+        a loss publishes an inverted conclusion. Classified on observed spend
+        because the exception name is exactly what lied."""
+        trial = tmp_path / "t__1"
+        (trial / "agent").mkdir(parents=True)
+        (trial / "agent" / "trajectory.json").write_text(
+            json.dumps({"steps": [{}, {}]}), encoding="utf-8"
+        )
+        (trial / "result.json").write_text(
+            json.dumps(
+                {"exception_info": {"exception_type": "NonZeroAgentExitCodeError"}}
+            ),
+            encoding="utf-8",
+        )
+        m = MetricsReader().read(trial, "task")
+        assert m.infrastructure is True
+        assert m.resolved is None, "an infrastructure void, not a loss"
+
+    def test_a_failure_with_observed_spend_is_still_a_loss(self, tmp_path: Path):
+        """The reclassification must not leak: an agent that spent real tokens
+        and then died had its fair attempt."""
+        trial = tmp_path / "t__1"
+        write_events(
+            trial / "agent" / "stella-events.jsonl", [usage(input_tokens=50_000)]
+        )
+        (trial / "result.json").write_text(
+            json.dumps({"exception_info": {"exception_type": "AgentTimeoutError"}}),
+            encoding="utf-8",
+        )
+        m = MetricsReader().read(trial, "task")
+        assert m.infrastructure is False
+        assert m.resolved is False
+
+    def test_a_failure_with_no_steps_at_all_keeps_its_classification(
+        self, tmp_path: Path
+    ):
+        """Zero steps means no telemetry was published, not that a run was
+        observed spending nothing — reclassifying on absence would turn every
+        bare exception into a void and un-judge real failures."""
+        trial = tmp_path / "t__1"
+        trial.mkdir(parents=True)
+        (trial / "result.json").write_text(
+            json.dumps(
+                {"exception_info": {"exception_type": "NonZeroAgentExitCodeError"}}
+            ),
+            encoding="utf-8",
+        )
+        m = MetricsReader().read(trial, "task")
+        assert m.infrastructure is False
+        assert m.resolved is False
+
     def test_infrastructure_trials_leave_the_solve_rate_alone(self, tmp_path: Path):
         """Eight of ten never started; the arm won both it actually ran. The
         rate must say 100% of 2 judged, and the count of the missing eight must

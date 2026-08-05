@@ -37,6 +37,11 @@
       "status": "living",
       "title": "Adaptive Context"
     },
+    "agent-monitor-protocol": {
+      "path": "docs/spec/agent-monitor-protocol.md",
+      "status": "living",
+      "title": "The agent monitor protocol"
+    },
     "audit/2026-08-ultraudit-round-3": {
       "path": "docs/audit/2026-08-04-ultraudit-round-3.md",
       "status": "living",

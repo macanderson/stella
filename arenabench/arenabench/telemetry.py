@@ -25,6 +25,9 @@ scoreboard dimensions and re-parses a file only when its size changes, so an
 idle dashboard costs ``stat()`` calls. :class:`TranscriptReader` keeps a byte
 offset per file and yields only what is new, which is what the SSE endpoint
 streams.
+
+:mod:`arenabench.monitor` reduces the same metrics one step further, to
+failure detections a supervising process can act on while the match runs.
 """
 
 from __future__ import annotations

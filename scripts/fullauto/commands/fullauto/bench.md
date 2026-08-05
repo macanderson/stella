@@ -74,6 +74,31 @@ number anyone quotes.
   script stops it on exit, interrupt, and failure — but check `aws ec2
   describe-instances` afterwards anyway.
 
+### Subscribe to the match while it runs
+
+Do not wait 110 minutes to learn an arm was dead from minute one. Alongside
+the match (same host, read-only), run the watcher and react to what it emits:
+
+```bash
+arenabench watch <match-id> --follow --format jsonl   # agent monitor protocol
+```
+
+One JSON object per line (`docs/spec/agent-monitor-protocol.md`), any agent,
+any arm. What the phase does with each rule:
+
+- `zero-token` (**critical**) — the arm never made a model call
+  (credential/rate-limit failure scored as a loss). The match's numbers are
+  **void for that arm**: relaunch under a new name or drop the arm. Never
+  publish, never let it into a denominator.
+- `stall` — a trial has gone silent; check the seat before its whole time
+  allowance burns.
+- `premature-complete` / `late-verdict` — quality signals about the losing
+  trial; keep them for the postmortem, they do not void anything.
+
+A one-shot `arenabench watch <match-id>` at match end belongs in the phase
+regardless: exit code `3` means the scoreboard must not be recorded in the
+ledger as a result.
+
 ## Reading the result — three traps
 
 **1. The reward is nested.** Per trial, it is
@@ -92,6 +117,11 @@ evidence about either agent — they must never land in a denominator:
 | `exception_info.exception_type` set with `None` reward | the trial errored, the agent did not fail |
 
 Relaunch under a new run name, or drop the arm. Never quietly count it.
+
+The first row no longer needs eyes: the scoreboard classifies steps-with-zero-
+observed-spend as an infrastructure void (unjudged, out of every denominator),
+and `arenabench watch` flags it `critical` while the match is still running.
+The other rows still need a human reading.
 
 **3. Local telemetry lags and disagrees.** `~/.stella/bench.db` and
 `~/stella-bench/bench.db` hold different, partly-voided subsets. **The rig's job
