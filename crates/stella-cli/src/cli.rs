@@ -15,8 +15,9 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, ingest_cmd,
-    inspect, memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd, usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, daemon, dataset_cmd,
+    ingest_cmd, inspect, memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd,
+    usage_cmd,
 };
 
 #[derive(Parser)]
@@ -273,6 +274,62 @@ pub(crate) struct GlobalArgs {
     /// failed run, and `stella doctor --last-failure` prints the newest.
     #[arg(long, global = true, value_name = "PATH", hide_short_help = true)]
     pub(crate) log_file: Option<std::path::PathBuf>,
+
+    /// Own this terminal instead of surviving it
+    ///
+    /// A long-running verb started from a terminal (`run`, `goal`, `monitor`,
+    /// `fleet`) is normally handed to a supervisor: the work becomes a
+    /// detached process that keeps going when the window closes, and this
+    /// terminal only streams it. `stella daemon list` finds it afterwards;
+    /// `stella daemon attach <id>` picks the stream back up.
+    ///
+    /// This flag runs the work in this process instead, exactly as older
+    /// releases did — closing the terminal kills it, and in exchange the run
+    /// can ask you to approve an expanded scope, which a supervised run has
+    /// nobody to ask. Invocations with no terminal to lose (a pipe, CI, a
+    /// container) are never supervised and are unaffected either way.
+    /// Env: STELLA_FOREGROUND.
+    #[arg(long, global = true, env = "STELLA_FOREGROUND", hide_short_help = true)]
+    pub(crate) foreground: bool,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum DaemonCmd {
+    /// List supervised runs on this machine
+    List,
+
+    /// Stream a supervised run's output into this terminal
+    ///
+    /// Picks the stream up live and stays until the run ends; a run that has
+    /// already finished prints in full and exits. Detaching again (Ctrl-C)
+    /// leaves the run alone — `stella daemon stop` is what stops it.
+    Attach {
+        /// Run to attach to. A unique prefix of the id is enough. Omitted:
+        /// the most recently started supervised run.
+        id: Option<String>,
+    },
+
+    /// Print the tail of a supervised run's output and exit
+    Logs {
+        /// Run to read. A unique prefix of the id is enough. Omitted: the
+        /// most recently started supervised run.
+        id: Option<String>,
+
+        /// How many lines back to start from.
+        #[arg(short = 'n', long, default_value_t = 40)]
+        lines: usize,
+    },
+
+    /// Stop a supervised run
+    ///
+    /// Asks it to stop the way Ctrl-C would — the engine finishes the tool it
+    /// is running and aborts at the next safe boundary, never mid-tool. A run
+    /// that has not stopped after the grace period is killed, and either way
+    /// the stop is recorded as deliberate rather than left to read as a crash.
+    Stop {
+        /// Run to stop. A unique prefix of the id is enough.
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -316,6 +373,15 @@ pub(crate) enum Command {
         /// Pass this to promote it to a real test you can commit.
         #[arg(long)]
         keep_witness: bool,
+
+        /// Run detached: supervised in the background, surviving this
+        /// terminal. Prints the session id; `stella daemon attach <id>`
+        /// streams the run, `stella daemon stop <id>` ends it. The run's
+        /// stdin is closed, so anything interactive must be answerable
+        /// headlessly. A prompt piped on stdin is passed to the detached run
+        /// as an argument (visible in `ps`, like an inline prompt).
+        #[arg(long)]
+        detach: bool,
 
         /// Output shape: text, json, or stream-json
         ///
@@ -407,6 +473,22 @@ pub(crate) enum Command {
         /// List this machine's sessions (resumable ones marked) and exit.
         #[arg(long)]
         list: bool,
+    },
+
+    /// Find, watch, and stop runs that outlived their terminal
+    ///
+    /// A long-running verb started from a terminal is handed to a supervisor:
+    /// the work runs as a detached process that survives the window closing,
+    /// an `ssh` disconnect, and a logout. These are the commands for finding
+    /// one again afterwards. `--foreground` on the original invocation opts
+    /// out; an invocation with no terminal (a pipe, CI, a container) is never
+    /// supervised and never appears here.
+    ///
+    /// Supervision survives the terminal, not the process: a supervised run
+    /// that is killed loses its turn, and only the fact of it is recorded.
+    Daemon {
+        #[command(subcommand)]
+        cmd: DaemonCmd,
     },
 
     /// Analyze this workspace: domain taxonomy and code graph
@@ -661,9 +743,9 @@ pub(crate) enum Command {
         #[arg(long = "call-seq", default_value_t = 0)]
         call_seq: u64,
 
-        /// Output format
+        /// Output format: text, or json under the versioned query envelope
         #[arg(long, value_enum, default_value = "text")]
-        format: inspect::InspectFormat,
+        format: query_format::QueryFormat,
 
         /// Print message bodies in full instead of eliding long ones
         #[arg(long)]
@@ -698,9 +780,9 @@ pub(crate) enum Command {
     /// Reads .stella/private/store.db only; needs no API key and never
     /// writes.
     Calibration {
-        /// Output format
+        /// Output format: text, or json under the versioned query envelope
         #[arg(long, value_enum, default_value = "text")]
-        format: inspect::InspectFormat,
+        format: query_format::QueryFormat,
     },
 
     /// Cost, tokens, and resolve rate per provider and model
@@ -709,9 +791,10 @@ pub(crate) enum Command {
     /// local telemetry (.stella/private/store.db) — $/resolved-task receipts.
     /// `stella stats prune` bounds that store's growth
     Stats {
-        /// Output format: table (aligned, with TOTAL row), json, or csv
-        #[arg(long, value_enum, default_value = "table")]
-        format: stats::StatsFormat,
+        /// Output format: text (aligned table with TOTAL row), json under
+        /// the versioned query envelope, or csv
+        #[arg(long, value_enum, default_value = "text")]
+        format: query_format::StatsFormat,
 
         /// Only show executions for this provider id (e.g. zai, anthropic,
         /// local)
@@ -729,6 +812,18 @@ pub(crate) enum Command {
     Usage {
         #[command(subcommand)]
         cmd: Option<usage_cmd::UsageCmd>,
+    },
+
+    /// Supervise detached runs: list, attach, stop, logs
+    ///
+    /// Supervise runs started with `stella run --detach`: list this
+    /// machine's sessions, stream a detached run's output, stop one
+    /// gracefully, or print its log path. A detached run lives in its own
+    /// process group, so closing the terminal that launched it never kills
+    /// the work.
+    Daemon {
+        #[command(subcommand)]
+        cmd: daemon::DaemonCmd,
     },
 
     /// Cloud account registration (stub)

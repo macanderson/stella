@@ -42,7 +42,9 @@ mod context_records;
 mod contextgraph;
 mod credential_handoff;
 mod credential_status;
+mod daemon;
 // #872, the first slice of #836: the redacted training-trajectory exporter.
+mod daemon;
 mod dataset_cmd;
 mod deck_mcp;
 mod diag_boot;
@@ -78,6 +80,7 @@ mod profile;
 // Phase 3 (#714): the adaptive-context proposal review surface.
 mod prompt_source;
 mod proposals_cmd;
+mod query_format;
 mod rules;
 mod runtime;
 mod scripts_cmd;
@@ -297,8 +300,57 @@ fn emit_error_summary(format: OutputFormat, msg: &str) {
 // the per-command modules keep addressing their own subcommand enum as
 // `crate::AuthCmd`, `crate::McpCmd`, … regardless of which file defines it.
 pub(crate) use cli::{
-    AuthCmd, Cli, Command, ConnectCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
+    AuthCmd, Cli, Command, ConnectCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
 };
+
+/// Whether this invocation is handed to the supervisor (#1552), and what
+/// supervising it costs.
+///
+/// `None` runs the work in this process, exactly as every release before
+/// supervision existed. `Some(scope_review_lost)` supervises, and the flag
+/// says whether that took away an interactive scope-review answer this
+/// invocation would otherwise have had — see
+/// [`daemon::loses_interactive_scope_review`].
+///
+/// Computed here, once, because it is the only place the parsed flags, the
+/// resolved config, and the real terminal handles are all in hand; each
+/// long-running arm then asks one question instead of re-deriving three.
+fn supervision(
+    globals: &cli::GlobalArgs,
+    output_format: OutputFormat,
+    cfg: &config::Config,
+) -> Option<bool> {
+    if !daemon::should_supervise(
+        globals.foreground,
+        daemon::supervised_id().is_some(),
+        daemon::has_controlling_terminal(),
+    ) {
+        return None;
+    }
+    let approval = agent::approval_capability_for(
+        matches!(output_format, OutputFormat::Text),
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    );
+    Some(daemon::loses_interactive_scope_review(
+        approval == agent::PipelineApprovalCapability::Stdio,
+        cfg.engine_settings
+            .as_ref()
+            .is_some_and(|engine| engine.headless_scope_bypass_on()),
+    ))
+}
+
+/// The registry title for a supervised run: the same
+/// `<workspace>: <prompt…>` shape a session announces for itself, so a run
+/// reads identically in `stella daemon list` and in the deck's SESSIONS view.
+fn supervised_title(cfg: &config::Config, what: &str) -> String {
+    let name = cfg
+        .workspace_root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| cfg.workspace_root.display().to_string());
+    format!("{name}: {}", command_deck::prompt_line(what, 48))
+}
 
 /// `stella resume --list`: every session in the machine-wide registry,
 /// newest activity first, with the rows resumable from THIS directory
@@ -482,8 +534,18 @@ fn main() -> ExitCode {
     let output_format = cli.output_format();
 
     match run(cli, &loaded_env) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => {
+            daemon::record_outcome_if_supervised(true);
+            // A supervisor's own exit code says only whether it managed to
+            // stream a log. What a script wrapping `stella run` is asking
+            // about is the run, so the child's code is forwarded verbatim.
+            match daemon::forwarded_exit_code() {
+                Some(code) => ExitCode::from(code),
+                None => ExitCode::SUCCESS,
+            }
+        }
         Err(e) => {
+            daemon::record_outcome_if_supervised(false);
             eprintln!("{} {}", "stella:".red().bold(), e);
             emit_error_summary(output_format, &e);
             // §7.4's second trigger, and the one that fires more often: most
@@ -524,6 +586,15 @@ fn deck_presentation(globals: &cli::GlobalArgs) -> term_policy::DeckPresentation
 }
 
 fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
+    // A supervised child holds its liveness lock from `pre_exec` onwards; this
+    // is the backstop for a child started some other way (by hand with
+    // STELLA_SUPERVISED set, or by a future launchd/systemd unit). Without it
+    // such a run reads as already-finished to every other process from the
+    // moment it starts.
+    if let Some(id) = daemon::supervised_id() {
+        daemon::hold_liveness_lock(&stella_store::SessionRegistry::open_default(), &id);
+    }
+
     // Models and Version don't need a configured provider/key.
     match &cli.command {
         Some(Command::Models { cmd }) => {
@@ -790,6 +861,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Listing reads the local registry only — no provider required.
             return run_resume_list();
         }
+        Some(Command::Daemon { .. }) => {
+            // Finding, watching and stopping supervised runs is the local
+            // registry, two console files and a signal. Deliberately before
+            // provider resolution: a run whose model config has since been
+            // broken (a rotated key, a removed provider) is exactly the one an
+            // operator needs to be able to find and stop.
+            let Some(Command::Daemon { cmd }) = &cli.command else {
+                unreachable!("matched Command::Daemon")
+            };
+            return daemon::run(cmd);
+        }
         _ => {}
     }
 
@@ -871,13 +953,21 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             no_pipeline,
             test_command,
             keep_witness,
+            detach,
             output_format,
         } => {
+            // Whether the prompt is already in this argv — decided BEFORE
+            // resolution, because a detached child cannot re-read stdin and
+            // must be handed the resolved text explicitly.
+            let prompt_was_inline = prompt.as_deref().is_some_and(|p| p != "-");
             let prompt = prompt_source::resolve(
                 prompt,
                 std::io::stdin().is_terminal(),
                 prompt_source::read_stdin_to_string,
             )?;
+            if detach {
+                return daemon::detach_run(&prompt, prompt_was_inline);
+            }
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_one_shot(
@@ -890,6 +980,9 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     keep_witness,
                 ),
             )?;
+        }
+        Command::Daemon { cmd } => {
+            daemon::run(cmd)?;
         }
         Command::Arena {
             task_dir,
@@ -920,6 +1013,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 std::io::stdin().is_terminal(),
                 prompt_source::read_stdin_to_string,
             )?;
+            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
+                return daemon::supervise_this_invocation(
+                    rt()?,
+                    &cfg.workspace_root,
+                    &supervised_title(&cfg, &goal),
+                    goal.as_bytes(),
+                    scope_review_lost,
+                );
+            }
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_goal_cmd(&cfg, &goal, cli.globals.budget, !no_pipeline),
@@ -935,6 +1037,21 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             task_timeout,
             output_format,
         } => {
+            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
+                return daemon::supervise_this_invocation(
+                    rt()?,
+                    &cfg.workspace_root,
+                    &supervised_title(
+                        &cfg,
+                        &match plan.as_deref() {
+                            Some(file) => format!("fleet {}", file.display()),
+                            None => format!("fleet ({} tasks)", tasks.len()),
+                        },
+                    ),
+                    &[],
+                    scope_review_lost,
+                );
+            }
             signals::block_on_interruptible(
                 rt()?,
                 fleet_cmd::run_fleet(
@@ -953,6 +1070,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         }
         Command::Monitor { target } => {
             let target = target.unwrap_or_else(|| "main".to_string());
+            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
+                return daemon::supervise_this_invocation(
+                    rt()?,
+                    &cfg.workspace_root,
+                    &supervised_title(&cfg, &format!("monitor {target}")),
+                    &[],
+                    scope_review_lost,
+                );
+            }
             // Monitoring IS a goal: the verifier (who can call ci_status
             // itself) ends the loop only on a fully green latest run.
             let goal = format!(
@@ -1035,6 +1161,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         // top of `run` before a provider is resolved; Init is handled by the
         // caller. Reaching any of them here is impossible.
         Command::Init
+        | Command::Daemon { .. }
         | Command::Tools { .. }
         | Command::Graph { .. }
         | Command::Scripts { .. }

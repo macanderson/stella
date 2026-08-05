@@ -17,7 +17,13 @@ export function Race({ snapshot }: { snapshot: Snapshot }) {
   return (
     <section className="mb-2 rounded-[10px] border border-line bg-panel px-3 py-2">
       {snapshot.dimensions.map((dim) => {
-        const values = snapshot.contestants.map((c) => Number(c.totals[dim.key]) || 0);
+        // A dimension nobody has a number for has nothing to race: wasted
+        // time without a single `arenabench flip` replay, cost without a
+        // priced model. Drawing it would show every seat at zero — and zero
+        // is the best score on a lower-is-better dimension, not an absence.
+        const raw = snapshot.contestants.map((c) => c.totals[dim.key]);
+        if (raw.length > 0 && raw.every((v) => v == null)) return null;
+        const values = raw.map((v) => Number(v) || 0);
         const max = Math.max(...values, 0);
         const positives = values.filter((v) => v > 0);
         const min = positives.length ? Math.min(...positives) : 0;

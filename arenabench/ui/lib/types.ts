@@ -86,6 +86,11 @@ export interface Totals {
   cache_read: number;
   cache_write: number;
   infrastructure?: number;
+  /** Seconds still running after the solution already passed, summed over the
+   *  replayed trials. `null` = no trial was replayed — unmeasured, not zero. */
+  wasted_time?: number | null;
+  /** How many trials the wasted-time sum covers (`arenabench flip` runs). */
+  flip_trials?: number;
   [key: string]: number | null | undefined;
 }
 
@@ -125,6 +130,11 @@ export interface Cell {
   clock_time: number;
   cap_hits?: number;
   has_video?: boolean;
+  /** When the verifier first passed, seconds from the first snapshot.
+   *  Only `arenabench flip` can know this; `null`/absent = never replayed. */
+  flip_elapsed?: number | null;
+  /** Seconds the trial kept running after it was already passing. */
+  wasted_elapsed?: number | null;
 }
 
 export interface TaskRow {
