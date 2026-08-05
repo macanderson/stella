@@ -47,7 +47,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .pricing import price_for, price_for_route, trial_cost
+from .pricing import Price, price_for, price_for_route, price_on_route, trial_cost
 
 __all__ = [
     "EVENTS_NAME",
@@ -274,6 +274,11 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
         "complete": False,
         "verifier_passed": None,
         "models": [],
+        # Token subtotals per model id as the stream spelled it, `""` for a
+        # step that named none. A pipeline seat runs several models at
+        # different rates, so pricing needs the split — the grand totals
+        # above cannot be un-summed (#1566).
+        "by_model": {},
         "usage_incomplete": 0,
         "late_error": "",
     }
@@ -305,6 +310,19 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
                     if model and model not in seen_models:
                         seen_models.add(model)
                         totals["models"].append(model)
+                    bucket = totals["by_model"].setdefault(
+                        model,
+                        {
+                            "tokens_in": 0,
+                            "tokens_out": 0,
+                            "cache_read": 0,
+                            "cache_write": 0,
+                        },
+                    )
+                    bucket["tokens_in"] += int(event.get("input_tokens") or 0)
+                    bucket["tokens_out"] += out
+                    bucket["cache_read"] += int(event.get("cached_input_tokens") or 0)
+                    bucket["cache_write"] += int(event.get("cache_write_tokens") or 0)
                     # A step after an error means the agent kept working, so
                     # that error was not the run's last word.
                     totals["late_error"] = ""
@@ -334,10 +352,10 @@ class MetricsReader:
         self._events: dict[Path, tuple[int, dict[str, Any]]] = {}
         self._seats: dict[Path, dict[str, Any] | None] = {}
 
-    def _seat_route(self, trial_dir: Path) -> str:
-        """The route-qualified model this trial's seat was launched with.
+    def _seat_record(self, trial_dir: Path) -> dict[str, Any] | None:
+        """The launch record of this trial's seat, or ``None``.
 
-        ``""`` when the job has no launch record — every archive predating
+        ``None`` when the job has no launch record — every archive predating
         it. Cached without invalidation: the record is written once, before
         the job's first trial exists, so by the time this reader has a trial
         directory to ask about, the record's presence and content are final.
@@ -345,11 +363,10 @@ class MetricsReader:
         try:
             path = seat_manifest_path(trial_dir.parent)
         except ValueError:
-            return ""
+            return None
         if path not in self._seats:
             self._seats[path] = _load_json(path)
-        seat = self._seats[path]
-        return str(seat.get("qualified_model") or "") if seat else ""
+        return self._seats[path]
 
     def _events_summary(self, path: Path) -> tuple[dict[str, Any] | None, float | None]:
         try:
@@ -485,24 +502,66 @@ class MetricsReader:
         # routing (a directly-routed seat is launched with the bare id), so
         # only the record can say which route served the trial, and every
         # recorded string prices route-blind at the gateway tier (#1498).
-        # Among the recorded ids the configured seat model is tried first: a
-        # single process can log several roles' `step_usage` (verifier, triage)
-        # into one stream, so the stream's first-seen model may name a role
-        # rather than the seat — pricing on that would mis-cost the whole trial.
-        price = price_for_route(self._seat_route(trial_dir))
-        if price is None:
-            for name in (configured, *metrics.models):
-                price = price_for(name)
-                if price is not None:
+        record = self._seat_record(trial_dir)
+        qualified = ""
+        route_api = ""
+        if record:
+            qualified = str(record.get("qualified_model") or "")
+            route_api = str(record.get("api") or "") or qualified.split("/", 1)[0]
+
+        def single_rate() -> Price | None:
+            """The one-rate fallback for tokens no stream model accounts for.
+
+            The configured seat model is tried before the stream's ids: a
+            single process can log several roles' `step_usage` into one
+            stream, so the stream's first-seen model may name a role rather
+            than the seat — pricing every token on that would mis-cost the
+            whole trial.
+            """
+            price = price_for_route(qualified)
+            if price is None:
+                for name in (configured, *metrics.models):
+                    price = price_for(name)
+                    if price is not None:
+                        break
+            return price
+
+        # A pipeline seat runs several models at several rates — worker,
+        # verifier, triage — so where the stream says which model each step
+        # used, each model's subtotal is priced at its own rate and the trial
+        # costs their sum (#1566). Roles ride the seat's provider (a role
+        # config carries no api of its own), so the launch record's api
+        # qualifies every stream model, never the string's own spelling. One
+        # unpriced subtotal blanks the whole trial: summing only the priced
+        # share would publish a cost that is confidently short, and missing
+        # beats wrong here.
+        by_model = (events or {}).get("by_model") or {}
+        if any(model for model in by_model):
+            total = 0.0
+            for model, bucket in by_model.items():
+                if not model:
+                    price = single_rate()  # steps that named no model
+                elif record:
+                    price = price_on_route(route_api, model)
+                else:
+                    price = price_for(model)  # no route fact: gateway tier
+                if price is None:
+                    total = None
                     break
-        if price is not None:
-            metrics.priced_cost = trial_cost(
-                price,
-                tokens_in=metrics.tokens_in,
-                tokens_out=metrics.tokens_out,
-                cache_read=metrics.cache_read,
-                cache_write=metrics.cache_write,
-            )
+                total += trial_cost(price, **bucket)
+            metrics.priced_cost = total
+        else:
+            # ATIF-only trials publish grand totals and a single model; a
+            # stream that never named one is priced the same way.
+            price = single_rate()
+            if price is not None:
+                metrics.priced_cost = trial_cost(
+                    price,
+                    tokens_in=metrics.tokens_in,
+                    tokens_out=metrics.tokens_out,
+                    cache_read=metrics.cache_read,
+                    cache_write=metrics.cache_write,
+                )
 
         # A running trial has no finish timestamp, so wall clock has to come
         # from the events file's own span rather than from Harbor.
