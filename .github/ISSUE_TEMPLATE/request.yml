@@ -1,0 +1,11 @@
+name: Request
+description: Report a bug, propose a feature, ask a question — one form for everything. It gets triaged and typed from there.
+labels: ["triage"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, or what do you want? Commands, logs, and sketches all welcome — please redact API keys from pasted output.
+    validations:
+      required: true
