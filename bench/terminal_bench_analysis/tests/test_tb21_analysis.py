@@ -532,6 +532,33 @@ assert _POSTURE_SHA256 == (
 )
 
 
+def test_the_readme_digests_match_the_postures_printed_beside_them() -> None:
+    """Every posture block in README.md hashes to its own stated digest.
+
+    The rename (#1394) rewrote the ``agents`` key *inside* these blocks and left
+    the digests under them alone, so the document printed a posture body next to
+    a hash of a different posture — in four places. Nothing caught it: the blocks
+    are prose to every test here, and a reader recomputing one had no way to tell
+    which half was stale. Reading the pairs back out of the file is the only
+    check that scales to however many the README grows.
+    """
+    import re
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    pairs = re.findall(
+        r'"default_model":\s*"([^"]+)".*?"(?:engine_posture_)?sha256":\s*"([0-9a-f]{64})"',
+        readme,
+        re.S,
+    )
+    assert pairs, "no posture/digest pairs found — did the README format change?"
+    for model, printed in pairs:
+        _, _, actual = analysis_module.canonical_engine_posture(model)
+        assert actual == printed, (
+            f"README prints {printed[:8]}… for {model}, but that posture hashes "
+            f"to {actual[:8]}…"
+        )
+
+
 def test_posture_matches_the_adapters() -> None:
     """The analyzer's posture copy is byte-identical to the adapter's.
 
