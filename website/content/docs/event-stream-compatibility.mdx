@@ -1,13 +1,13 @@
 ---
 title: Event stream compatibility
-description: The versioning contract behind Stella's event stream — what stays stable, what may change, and what a client must do to keep working across upgrades.
+description: The versioning contract behind stella's event stream — what stays stable, what may change, and what a client must do to keep working across upgrades.
 ---
 
-Every machine-readable surface Stella exposes carries the same event objects:
+Every machine-readable surface stella exposes carries the same event objects:
 
 - [`--output-format stream-json`](/docs/scripting) — one event per line on stdout
 - `--output-format json` — the same objects, batched under an `events` key
-- the session journal Stella writes to `.stella/private/` and replays on `stella resume`
+- the session journal stella writes to `.stella/private/` and replays on `stella resume`
 
 So there is one compatibility contract to learn, and it applies everywhere. This
 page is that contract, stated for someone writing a client in a language other
@@ -15,8 +15,8 @@ than Rust.
 
 ## The guarantee
 
-**A client written against one version of Stella keeps working against later
-versions, without changes.** Concretely, upgrading Stella will not make your
+**A client written against one version of stella keeps working against later
+versions, without changes.** Concretely, upgrading stella will not make your
 parser fail on a stream it used to handle.
 
 That holds in both directions:
@@ -58,14 +58,14 @@ Growth is by addition.
 ## The two rules that matter
 
 Everything above reduces to a single distinction that your client should mirror,
-because Stella's own reader enforces it exactly:
+because stella's own reader enforces it exactly:
 
 <EventContractDiagram />
 
 **1. An event `type` you do not recognize is normal. Skip it and keep going.**
 
-It means the stream came from a newer Stella than your client knows about. It is
-not an error, and it is not a reason to stop reading. Stella's own decoder
+It means the stream came from a newer stella than your client knows about. It is
+not an error, and it is not a reason to stop reading. stella's own decoder
 preserves such events whole rather than failing the line.
 
 **2. A `type` you *do* recognize, carrying a body that does not fit, is a real
@@ -130,7 +130,7 @@ for (const line of stream) {
 
 ## Unrecognized events in practice
 
-Suppose a future Stella adds a `spline_reticulated` event. A client built before
+Suppose a future stella adds a `spline_reticulated` event. A client built before
 it existed sees:
 
 ```json
@@ -162,7 +162,7 @@ it next, which may be a newer client that would have understood them.
   step text, and you must *replace* accumulated deltas with it rather than append
   (a retried model call re-streams its deltas from the start). See
   [Scripting & automation](/docs/scripting).
-- **Internal lifecycle events.** Stella's adaptive-context machinery emits its own
+- **Internal lifecycle events.** stella's adaptive-context machinery emits its own
   versioned envelope, deliberately kept off this stream. Do not build on it.
 - **Byte-level stability.** Whitespace and key order may vary.
 
@@ -180,14 +180,14 @@ that parses it end to end, reports two unrecognized events, and reconstructs the
 run from the rest is forward compatible. A client that throws is not — however
 well it handles today's vocabulary.
 
-If you maintain a Stella client, run it against that file in CI. It is the
+If you maintain a stella client, run it against that file in CI. It is the
 cheapest possible guard against the failure mode this contract exists to
 prevent, and it costs one test.
 
 ## Detecting a version gap
 
-You do not need to know Stella's version to consume the stream correctly — that
+You do not need to know stella's version to consume the stream correctly — that
 is the point of rule 1. But if you want to *report* a gap ("this run used
 features your dashboard cannot display"), count unrecognized types and surface
-the count. Stella's Rust decoder exposes the same information through the
+the count. stella's Rust decoder exposes the same information through the
 `KNOWN_TYPE_TAGS` list in `stella-protocol`.

@@ -3,7 +3,7 @@ title: stella.toml
 description: The comment-preserving, schema-versioned TOML config format — where each scope's file lives, what moved from settings.json, what stays identical, and what is not built yet.
 ---
 
-`stella.toml` is Stella's config file in TOML instead of JSON. It reads across the same
+`stella.toml` is stella's config file in TOML instead of JSON. It reads across the same
 three scopes as [`settings.json`](/docs/configuration/settings), merges by the same rules,
 and is gated by the same [project trust boundary](/docs/configuration/settings#the-project-trust-boundary)
 — the file format changed, nothing about who is trusted did. What TOML adds is what JSON
@@ -74,7 +74,7 @@ says what you meant. Full walkthrough: [`stella migrate`](/docs/commands/migrate
 
 ## TOML and settings.json are never merged
 
-If both files exist at a scope, Stella reads the TOML **whole** and ignores the JSON —
+If both files exist at a scope, stella reads the TOML **whole** and ignores the JSON —
 never a field-by-field composite of the two. A composite would make "which file configures
 this?" unanswerable from either file alone; the actual failure mode that guards against is
 someone editing the JSON, seeing no effect, and having nothing to look at.

@@ -1,6 +1,6 @@
 ---
 title: Custom Tools
-description: Extend the Stella agent with your own script tools by dropping a TOML manifest into your workspace or user config directory.
+description: Extend the stella agent with your own script tools by dropping a TOML manifest into your workspace or user config directory.
 ---
 
 Beyond the [built-in tools](/docs/agent-tools), you can give the agent your own developer-defined script tools. A custom tool is described by a small TOML manifest; once discovered, it appears alongside the built-ins and can be called by the agent like any other tool.
@@ -107,7 +107,7 @@ The `timeout_ms` default is **30 seconds** — half of the 60-second default tha
 
 ## How input reaches your script
 
-When the agent calls a custom tool, Stella spawns `command` **directly** from the argv array — never through a shell, so the tool's input has no injection surface — with the working directory set to the workspace root. The model's input JSON is then delivered **two ways**, so trivial scripts need no JSON parser:
+When the agent calls a custom tool, stella spawns `command` **directly** from the argv array — never through a shell, so the tool's input has no injection surface — with the working directory set to the workspace root. The model's input JSON is then delivered **two ways**, so trivial scripts need no JSON parser:
 
 1. The whole input object is written to the script's **stdin** as one JSON document, then stdin is closed — your script sees EOF.
 2. Each top-level **scalar** property (string, number, bool) is exported as `STELLA_INPUT_<UPPER_SNAKE_KEY>` — `path` becomes `STELLA_INPUT_PATH`, `dry_run` becomes `STELLA_INPUT_DRY_RUN`. Nested objects and arrays are delivered on stdin only.
@@ -115,7 +115,7 @@ When the agent calls a custom tool, Stella spawns `command` **directly** from th
 The manifest's `[env]` table is applied on top of the inherited environment, before the `STELLA_INPUT_*` exports. Input keys come from the model but are namespaced under `STELLA_INPUT_`, so they can never clobber `PATH` or your `[env]` values.
 
 <Callout type="warn">
-The child's environment is **credential-scrubbed last**, after both the inherited environment and the manifest's `[env]`. A custom tool never sees Stella's provider keys (`ANTHROPIC_API_KEY`, `ZAI_API_KEY`, …) or repository/AWS tokens, and a manifest cannot reintroduce one by naming it in `[env]` — that entry is removed too. Ordinary task configuration in `[env]` survives untouched. If your script genuinely needs a credential, pass it as a tool *input* or have the script fetch it from your own secret store.
+The child's environment is **credential-scrubbed last**, after both the inherited environment and the manifest's `[env]`. A custom tool never sees stella's provider keys (`ANTHROPIC_API_KEY`, `ZAI_API_KEY`, …) or repository/AWS tokens, and a manifest cannot reintroduce one by naming it in `[env]` — that entry is removed too. Ordinary task configuration in `[env]` survives untouched. If your script genuinely needs a credential, pass it as a tool *input* or have the script fetch it from your own secret store.
 </Callout>
 
 A script consuming both channels:

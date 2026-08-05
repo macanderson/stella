@@ -78,7 +78,7 @@ stella commands convert .claude/commands --force
 
 ## Why conversion is deliberate, and never part of `init`
 
-[`stella init`](/docs/commands/init) **symlinks** `.claude/commands/` rather than copying it. That link is the point: commands you maintain for another agent tool stay live, and editing them there updates what Stella offers with no second step.
+[`stella init`](/docs/commands/init) **symlinks** `.claude/commands/` rather than copying it. That link is the point: commands you maintain for another agent tool stay live, and editing them there updates what stella offers with no second step.
 
 A converted copy trades that live link for two things TOML does better — a typed `allowed-tools` list, and a delimiter-free `prompt` (no frontmatter fence to escape inside a prompt that itself contains markdown). Both are real wins, and neither is worth taking your live link away without being asked. So conversion is a command you run, not something `init` does to you.
 

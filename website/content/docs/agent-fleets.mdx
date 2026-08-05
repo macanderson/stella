@@ -4,7 +4,7 @@ description: Fan a dependency-ordered task DAG out to parallel workers in one sh
 ---
 
 `stella fleet` runs **many tasks at once** — each task handled by a full
-Stella worker. By default the workers share **one tree**: every worker runs
+stella worker. By default the workers share **one tree**: every worker runs
 in the repository root, coordinated by cooperative file claims, so conflicts
 surface at write time with the rival named, commits interleave on one
 branch, and the build cache stays warm. A task marked
@@ -51,7 +51,7 @@ stella fleet \
    instead of the staged pipeline.
 5. **Record.** Every attempt, commit, and dollar lands in the fleet ledger
    at `.stella/private/fleet.db` — local SQLite, like all
-   [Stella telemetry](/docs/telemetry), with `runs`, `tasks`, `attempts`,
+   [stella telemetry](/docs/telemetry), with `runs`, `tasks`, `attempts`,
    and `commits` tables you can query directly. Past runs also surface on
    the **Fleet runs** card of the
    [Observatory dashboard](/docs/telemetry/dashboard).
@@ -113,7 +113,7 @@ Every task field, in the shape the plan parser accepts:
     `tasks` row. Never interpreted.
   </OptionCard>
   <OptionCard name="prompt" required>
-    What the worker is asked to do — a full Stella prompt.
+    What the worker is asked to do — a full stella prompt.
   </OptionCard>
   <OptionCard name="depends_on" defaultValue="[]">
     Ids that must succeed before this task dispatches; this is what orders the

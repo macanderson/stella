@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Install Stella, set a provider key, initialize your repo, and run your first verified change — in under five minutes.
+description: Install stella, set a provider key, initialize your repo, and run your first verified change — in under five minutes.
 ---
 
 This walks you from zero to a verified change:
@@ -29,16 +29,16 @@ stella run "explain what this repository does, then list the riskiest files"
 
 ## 1. Set an API key
 
-Stella is bring-your-own-key. Export a key for any one provider — Stella auto-detects it:
+stella is bring-your-own-key. Export a key for any one provider — stella auto-detects it:
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here   # or OPENAI_API_KEY, GEMINI_API_KEY, ZAI_API_KEY, …
 ```
 
-No key handy? Point Stella at a local OpenAI-compatible server instead — see
+No key handy? Point stella at a local OpenAI-compatible server instead — see
 [Providers &amp; models](/docs/getting-started/providers#local--any-openai-compatible-server).
 
-Confirm what Stella resolved:
+Confirm what stella resolved:
 
 ```bash
 stella config    # provider, model, redacted key, base URL, workspace
@@ -107,7 +107,7 @@ See [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) for how the verifier
 
 ## 6. Pin a specific model (optional)
 
-By default Stella auto-detects the provider. Pin one explicitly with `--model`:
+By default stella auto-detects the provider. Pin one explicitly with `--model`:
 
 ```bash
 stella --model anthropic/claude-fable-5 run "refactor the database layer"
@@ -140,4 +140,4 @@ Then, when you want the underlying account:
 - **[The inference pipeline](/docs/inference-pipeline)** — how work gets verified, not just done.
 - **[Agent modes](/docs/agent-modes)** — deck, run, goal, monitor, fleet: which to use when.
 - **[Configuration](/docs/configuration)** — settings.json, per-agent models, credentials.
-- **[Scripting](/docs/scripting)** — run Stella headlessly in CI with JSON output.
+- **[Scripting](/docs/scripting)** — run stella headlessly in CI with JSON output.
