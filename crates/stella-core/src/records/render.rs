@@ -1,6 +1,6 @@
 //! The projection: the bytes the model actually receives.
 //!
-//! Governance artifacts are large — `docs/design/adaptive-context/context-record-examples/07-agent-projection.md`
+//! Governance artifacts are large — `docs/spec/adaptive-context/context-record-examples/07-agent-projection.md`
 //! measures the ten live example records at 627 bytes each, and their projection at
 //! 101. The agent sees about 16% of a record, and this module decides which 16%.
 //!

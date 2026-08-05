@@ -42,7 +42,7 @@
 //! before the process exits.
 //!
 //! `--version` and `--help` exist for host integrations rather than for people.
-//! A host that embeds this server (Oxagen — see `docs/design/serve-surface.md`)
+//! A host that embeds this server (Oxagen — see `docs/spec/serve-surface.md`)
 //! records which release it has verified its wire contract against, and pinning
 //! is only possible if the binary will state its own version. Without it the
 //! only way to identify a build was the filename, which is not a fact about the
@@ -104,8 +104,8 @@ One of STELLA_SERVE_TOKEN_FILE / STELLA_SERVE_TOKEN is required.
 The server exposes GET /healthz and GET /readyz unauthenticated, and GET /v1/metrics,
 POST /v1/turns, GET /v1/turns/{id}/events,
 POST /v1/turns/{id}/{provider-result,provider-delta,tool-result,cancel} behind
-the bearer token. See docs/design/serve-surface.md and
-docs/design/serve-observability.md.
+the bearer token. See docs/spec/serve-surface.md and
+docs/spec/serve-observability.md.
 ";
 
 /// `stella-serve <version>` — the line `--version` prints.

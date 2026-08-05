@@ -2704,7 +2704,7 @@ impl<'a> Pipeline<'a> {
                     // diff tells them apart, and the prompt never could — so
                     // ask it before buying a verifier call to confirm the absence
                     // of a test that was never warranted
-                    // (docs/design/witness-protocol.md §7).
+                    // (docs/spec/witness-protocol.md §7).
                     if let Some(evidence) = self.warranted_completion(&state, &snapshot) {
                         return state.into_verified(
                             true,

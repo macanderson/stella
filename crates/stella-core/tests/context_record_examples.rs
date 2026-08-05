@@ -39,7 +39,7 @@ const RECORD_SCHEMA: &str = "context-record/v0.1";
 
 fn examples_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/design/adaptive-context/context-record-examples")
+        .join("../../docs/spec/adaptive-context/context-record-examples")
 }
 
 /// Every example `.toml`, as `(name, contents, schema tag)`. Each must at

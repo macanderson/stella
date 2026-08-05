@@ -367,7 +367,7 @@ mod tests {
 
     /// The host parses these tags and field names by hand, in another
     /// language. Nothing else in this crate pins them, so a rename that reads
-    /// as a refactor here silently breaks every client — and `docs/design/
+    /// as a refactor here silently breaks every client — and `docs/spec/
     /// serve-surface.md` names exactly this ("the single most dangerous drift
     /// in this document"). Assert the wire shape, not the Rust shape.
     #[test]

@@ -6,7 +6,7 @@
 //! [`AgentEvent`] is the wire format for three surfaces at once — the TUI
 //! folds it, `--output-format stream-json` prints it, and `stella-serve`
 //! streams it over SSE — and until this module existed nothing proved that a
-//! change to it was additive. `docs/design/serve-surface.md` says so about
+//! change to it was additive. `docs/spec/serve-surface.md` says so about
 //! itself: it opens with a hand-maintained table of routes and calls that
 //! prose "the single most dangerous drift in this document". A hand-written
 //! schema would be a second copy of the same problem. These artifacts are

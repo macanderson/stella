@@ -1,5 +1,5 @@
 //! The session exploration store — shared codebase maps under
-//! `.stella/explorations/` (`docs/design/exploration-sharing.md`).
+//! `.stella/explorations/` (`docs/spec/exploration-sharing.md`).
 //!
 //! An "exploration" is a high-fidelity, end-to-end map of one slice of a
 //! codebase (a module, a subsystem, a data flow) produced by an agent while
@@ -54,7 +54,7 @@ const EXPLORATIONS_DIR: &str = ".stella/explorations";
 const MAX_MANIFEST_FILES: usize = 200;
 
 /// Internal input key the registry uses to pass the session's file-touch
-/// read paths into a save (`docs/design/exploration-sharing.md` §3d). Not
+/// read paths into a save (`docs/spec/exploration-sharing.md` §3d). Not
 /// advertised in the tool schema — the model never authors it.
 pub const LEDGER_FILES_KEY: &str = "_session_read_files";
 

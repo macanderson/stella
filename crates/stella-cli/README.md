@@ -293,6 +293,6 @@ unrecognized value is a hard parse error, never a silent fallback.
   [`../../website/content/docs/configuration/settings.mdx`](../../website/content/docs/configuration/settings.mdx),
   [`../../website/content/docs/inference-pipeline.mdx`](../../website/content/docs/inference-pipeline.mdx)
   — the published docs this crate's surfaces must stay honest to.
-- [`../../docs/design/scripts-index.md`](../../docs/design/scripts-index.md),
-  [`../../docs/design/storage-map.md`](../../docs/design/storage-map.md) — the contracts
+- [`../../docs/spec/scripts-index.md`](../../docs/spec/scripts-index.md),
+  [`../../docs/spec/storage-map.md`](../../docs/spec/storage-map.md) — the contracts
   behind `stella scripts` and `stella storage`.

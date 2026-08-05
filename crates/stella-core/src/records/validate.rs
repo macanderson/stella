@@ -1,4 +1,4 @@
-//! The checks every publication runs (`docs/design/adaptive-context/context-pr.md` §12).
+//! The checks every publication runs (`docs/spec/adaptive-context/context-pr.md` §12).
 //!
 //! Ingest has a safety gate. Publication did not — so a record that passed
 //! extraction could be hand-edited into an unparseable guard, a secret, or a

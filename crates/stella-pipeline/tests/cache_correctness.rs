@@ -11,7 +11,7 @@
 //!
 //! This gate reads that record and fails when the shape drifts. It is the
 //! structural half of the correctness story in
-//! `docs/design/session-telemetry-receipts-spec.md` §7 — the half that needs
+//! `docs/spec/session-telemetry-receipts-spec.md` §7 — the half that needs
 //! no new events. The other half (reconciling predicted zone tokens against
 //! the provider's reported `cached_input_tokens`, and naming the block that
 //! broke the prefix) is `AgentEvent::CacheAttribution`, specced at §7 and

@@ -815,7 +815,7 @@ fn bounded_worker_diff(diff: &str) -> String {
 }
 
 /// The one framing under which worker-authored text may enter a verifier-facing
-/// prompt (witness-protocol D5, `docs/design/witness-protocol.md` §2): the
+/// prompt (witness-protocol D5, `docs/spec/witness-protocol.md` §2): the
 /// diff is the *subject* of the review, authored by the party under review,
 /// so it must arrive as delimited data — never as undelimited prose the model
 /// reads with the same authority as the pipeline's own instructions.

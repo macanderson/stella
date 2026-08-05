@@ -112,7 +112,7 @@ including closed-source software, with no involvement from us. Stella is the
 reference *implementation*, and that is where the reciprocity applies.
 
 That permissive grant travels with the CGP material vendored into this
-repository, notably [`docs/design/adaptive-context/context-reuse.md`](docs/design/adaptive-context/context-reuse.md): it is
+repository, notably [`docs/spec/adaptive-context/context-reuse.md`](docs/spec/adaptive-context/context-reuse.md): it is
 CGP's document under CGP's terms, not this workspace's AGPL.
 
 Depending on CGP does **not** put your project under the AGPL.

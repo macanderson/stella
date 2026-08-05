@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The escape hatch, made expensive on purpose — `docs/design/diagnostics/diagnostics.md`
+//! The escape hatch, made expensive on purpose — `docs/spec/diagnostics.md`
 //! §5.5.
 //!
 //! §5.2 makes runtime content a compile error. Some runtime strings are
