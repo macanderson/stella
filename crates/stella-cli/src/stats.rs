@@ -37,8 +37,9 @@
 //! Table format also appends a "recent sessions" trend
 //! ([`Store::session_cache_trend`]), each carrying a probable-cause
 //! diagnosis line when its own turn count and hit rate warrant one
-//! ([`diagnose_cache`] against [`LOW_HIT_RATE_THRESHOLD`], the same
-//! selection logic and [`stella_protocol::CacheCause::hint`] wording the deck would use).
+//! ([`diagnose_cache_with_idle`] against [`LOW_HIT_RATE_THRESHOLD`] and the
+//! session's longest idle gap, the same selection logic and
+//! [`stella_protocol::CacheCause::hint`] wording the deck would use).
 //! Deliberately **per-session**, not per-(provider, model): `StatsRow::runs`
 //! aggregates executions across every session sharing a provider/model, so
 //! twenty independent one-shot `stella run`s (each turn 1 — nothing to
@@ -54,7 +55,7 @@ use clap::{Subcommand, ValueEnum};
 use colored::Colorize as _;
 use serde::Serialize;
 use stella_model::cache_economics::{
-    diagnose_cache, hit_rate, is_cache_expired_rewrite, provider_cache_ttl_secs,
+    diagnose_cache_with_idle, hit_rate, is_cache_expired_rewrite, provider_cache_ttl_secs,
 };
 use stella_model::catalog::Catalog;
 use stella_protocol::CompletionUsage;
@@ -252,21 +253,44 @@ fn to_stats_rows(rows: Vec<UsageStatsRow>, gaps: &[CacheCallGap]) -> Vec<StatsRo
         .collect()
 }
 
+/// Each session's longest observed idle gap between recorded calls, folded
+/// from the raw per-call [`CacheCallGap`]s — the wall-clock fact
+/// [`diagnose_cache_with_idle`] needs to tell an expired prefix from a
+/// churning one (#1525). The store surfaces facts, the model tier owns the
+/// TTL policy, and this join is the one place the two meet.
+fn session_max_idle_gaps(gaps: &[CacheCallGap]) -> HashMap<String, u64> {
+    let mut max_gaps: HashMap<String, u64> = HashMap::new();
+    for gap in gaps {
+        let Some(gap_secs) = gap.gap_secs.filter(|g| *g >= 0) else {
+            continue;
+        };
+        let entry = max_gaps.entry(gap.session_id.clone()).or_insert(0);
+        *entry = (*entry).max(gap_secs as u64);
+    }
+    max_gaps
+}
+
 /// One line per session carrying a diagnosis, `session <id>: <hint>` —
-/// [`diagnose_cache`] against the session's OWN turn count and hit rate
-/// (see the module docs for why this must be per-session, not the
-/// per-provider/model `StatsRow` aggregate).
-fn session_diagnosis_lines(sessions: &[SessionCacheTrendRow]) -> Vec<String> {
+/// [`diagnose_cache_with_idle`] against the session's OWN turn count, hit
+/// rate, and longest idle gap (see the module docs for why this must be
+/// per-session, not the per-provider/model `StatsRow` aggregate). A session
+/// absent from `max_idle_gaps` diagnoses clock-blind, exactly as before the
+/// gap channel existed.
+fn session_diagnosis_lines(
+    sessions: &[SessionCacheTrendRow],
+    max_idle_gaps: &HashMap<String, u64>,
+) -> Vec<String> {
     sessions
         .iter()
         .filter_map(|s| {
-            diagnose_cache(
+            diagnose_cache_with_idle(
                 &s.provider,
                 s.turns.max(0) as u64,
                 s.input_tokens.max(0) as u64,
                 s.cache_read_tokens.max(0) as u64,
                 s.cache_write_tokens.max(0) as u64,
                 LOW_HIT_RATE_THRESHOLD,
+                max_idle_gaps.get(&s.session_id).copied(),
             )
             .map(|cause| format!("session {}: {}", s.session_id, cause.hint()))
         })
@@ -423,7 +447,7 @@ pub fn run_stats(format: StatsFormat, provider: Option<&str>) -> Result<(), Stri
     // side effect, so bail out politely when there's nothing to read.
     let db_path = stella_store::existing_workspace_private_sqlite_path(&workspace_root, "store.db")
         .map_err(|e| format!("cannot resolve local store: {e}"))?;
-    let (rows, sessions) = if db_path.is_some() {
+    let (rows, sessions, max_idle_gaps) = if db_path.is_some() {
         let store =
             Store::open(&workspace_root).map_err(|e| format!("cannot open local store: {e}"))?;
         let mut rows = store
@@ -438,9 +462,10 @@ pub fn run_stats(format: StatsFormat, provider: Option<&str>) -> Result<(), Stri
         let sessions = store
             .session_cache_trend()
             .map_err(|e| format!("cannot read session cache trend: {e}"))?;
-        (to_stats_rows(rows, &gaps), sessions)
+        let max_idle_gaps = session_max_idle_gaps(&gaps);
+        (to_stats_rows(rows, &gaps), sessions, max_idle_gaps)
     } else {
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), HashMap::new())
     };
 
     if rows.is_empty() {
@@ -475,7 +500,7 @@ pub fn run_stats(format: StatsFormat, provider: Option<&str>) -> Result<(), Stri
         // shape has no natural row to fold it into).
         StatsFormat::Table => {
             print!("{}", render_table(&rows));
-            print!("{}", render_session_trend(&sessions, 10));
+            print!("{}", render_session_trend(&sessions, 10, &max_idle_gaps));
         }
         StatsFormat::Json => println!(
             "{}",
@@ -667,7 +692,11 @@ fn render_table(rows: &[StatsRow]) -> String {
 /// those sessions that earns one ([`session_diagnosis_lines`] — per-session,
 /// using the session's own turn count, see the module docs). Empty input
 /// renders nothing (no session has ever been registered — nothing to trend).
-fn render_session_trend(sessions: &[SessionCacheTrendRow], limit: usize) -> String {
+fn render_session_trend(
+    sessions: &[SessionCacheTrendRow],
+    limit: usize,
+    max_idle_gaps: &HashMap<String, u64>,
+) -> String {
     if sessions.is_empty() {
         return String::new();
     }
@@ -687,7 +716,7 @@ fn render_session_trend(sessions: &[SessionCacheTrendRow], limit: usize) -> Stri
             pct
         ));
     }
-    let hints = session_diagnosis_lines(shown);
+    let hints = session_diagnosis_lines(shown, max_idle_gaps);
     if !hints.is_empty() {
         out.push_str("\n  Low-hit-rate diagnosis:\n");
         for hint in hints {
@@ -971,7 +1000,7 @@ mod tests {
         // cache on an opt-in provider (a SINGLE session's own turn count,
         // not runs aggregated across sessions) — the marker never engaged.
         let sessions = vec![trend_row("s1", "anthropic", 6, 120_000, 0, 0)];
-        let lines = session_diagnosis_lines(&sessions);
+        let lines = session_diagnosis_lines(&sessions, &HashMap::new());
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with("session s1: "), "{}", lines[0]);
         assert!(
@@ -992,23 +1021,62 @@ mod tests {
         let many_one_shots: Vec<SessionCacheTrendRow> = (0..20)
             .map(|i| trend_row(&format!("s{i}"), "anthropic", 1, 6_000, 0, 0))
             .collect();
-        assert!(session_diagnosis_lines(&many_one_shots).is_empty());
+        assert!(session_diagnosis_lines(&many_one_shots, &HashMap::new()).is_empty());
 
         // A genuine multi-turn session with the same symptoms DOES fire.
         let real_session = vec![trend_row("s-real", "anthropic", 6, 120_000, 0, 0)];
-        assert_eq!(session_diagnosis_lines(&real_session).len(), 1);
+        assert_eq!(
+            session_diagnosis_lines(&real_session, &HashMap::new()).len(),
+            1
+        );
+    }
+
+    /// The #1525 witness: a user who steps away past the provider TTL and
+    /// comes back must be told their cache expired — not sent hunting for a
+    /// prefix-nondeterminism bug that does not exist.
+    #[test]
+    fn an_idle_session_is_diagnosed_as_expired_not_unstable() {
+        // Anthropic, 6 turns, writes but few reads — the token shape that
+        // used to read as PrefixInstability no matter what the clock said.
+        let sessions = vec![trend_row("s-idle", "anthropic", 6, 120_000, 1_000, 90_000)];
+
+        // With a 6-minute idle gap on record (TTL is 300s), the diagnosis
+        // names the idle, in `CacheCause::IdleBeyondTtl`'s own wording.
+        let gaps = HashMap::from([("s-idle".to_string(), 360_u64)]);
+        let lines = session_diagnosis_lines(&sessions, &gaps);
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("idle gaps exceeded the provider cache TTL"),
+            "{}",
+            lines[0]
+        );
+
+        // The same session with only back-to-back turns keeps the honest
+        // instability answer.
+        let busy = HashMap::from([("s-idle".to_string(), 30_u64)]);
+        let lines = session_diagnosis_lines(&sessions, &busy);
+        assert!(lines[0].contains("prefix"), "{}", lines[0]);
+
+        // And the rendered trend block carries the idle hint through.
+        let out = render_session_trend(&sessions, 10, &gaps);
+        assert!(
+            out.contains("idle gaps exceeded the provider cache TTL"),
+            "{out}"
+        );
     }
 
     #[test]
     fn diagnosis_is_quiet_for_a_healthy_hit_rate_and_appears_in_the_trend_block() {
         // Healthy hit rate: no diagnosis, no section in the rendered trend.
         let healthy = vec![trend_row("s1", "anthropic", 10, 100_000, 50_000, 10_000)];
-        assert!(session_diagnosis_lines(&healthy).is_empty());
-        assert!(!render_session_trend(&healthy, 10).contains("Low-hit-rate diagnosis"));
+        assert!(session_diagnosis_lines(&healthy, &HashMap::new()).is_empty());
+        assert!(
+            !render_session_trend(&healthy, 10, &HashMap::new()).contains("Low-hit-rate diagnosis")
+        );
 
         // A diagnosed session's hint reaches the rendered trend block too.
         let sick = vec![trend_row("s-sick", "anthropic", 6, 120_000, 0, 0)];
-        let out = render_session_trend(&sick, 10);
+        let out = render_session_trend(&sick, 10, &HashMap::new());
         assert!(out.contains("Low-hit-rate diagnosis:"), "{out}");
         assert!(out.contains("session s-sick:"), "{out}");
     }
@@ -1019,7 +1087,7 @@ mod tests {
             trend_row("s2", "anthropic", 3, 1_000, 500, 0),
             trend_row("s1", "anthropic", 6, 2_000, 200, 0),
         ];
-        let out = render_session_trend(&sessions, 10);
+        let out = render_session_trend(&sessions, 10, &HashMap::new());
         let s2_pos = out.find("s2").unwrap();
         let s1_pos = out.find("s1").unwrap();
         assert!(
@@ -1032,11 +1100,11 @@ mod tests {
 
     #[test]
     fn session_trend_is_capped_and_empty_input_renders_nothing() {
-        assert_eq!(render_session_trend(&[], 10), "");
+        assert_eq!(render_session_trend(&[], 10, &HashMap::new()), "");
         let many: Vec<SessionCacheTrendRow> = (0..15)
             .map(|i| trend_row(&format!("s{i}"), "anthropic", 1, 100, 10, 0))
             .collect();
-        let out = render_session_trend(&many, 5);
+        let out = render_session_trend(&many, 5, &HashMap::new());
         // Leading blank line (the block's own `\n` separator) + title +
         // column header + 5 capped rows (each 1-turn -> no diagnosis lines).
         assert_eq!(out.lines().count(), 3 + 5, "header lines + capped rows");

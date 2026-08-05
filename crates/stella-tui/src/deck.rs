@@ -143,6 +143,13 @@ pub struct AgentEntry {
     /// `StepUsage`) — the anchor the cache-warmth countdown measures idle from.
     /// `None` before any call has landed.
     pub last_provider_call_ms: Option<u64>,
+    /// Longest observed idle between two metered calls, in seconds — folded
+    /// where `last_provider_call_ms` moves. Lets
+    /// [`Self::cache_diagnosis`] tell a prefix that expired while the
+    /// session sat idle (`CacheCause::IdleBeyondTtl`) from one that churns
+    /// between back-to-back turns, mirroring
+    /// `stella_model::cache_economics::diagnose_cache_with_idle` (#1525).
+    pub max_idle_gap_secs: u64,
     /// The **current** context-window occupancy: the `input_tokens` of the most
     /// recent `StepUsage` (the prompt size the last call actually sent), NOT the
     /// running sum. This is what the Ctx% gauge divides by the window — using
@@ -230,6 +237,7 @@ impl AgentEntry {
             cache_is_opt_in_provider: false,
             cache_call_count: 0,
             last_provider_call_ms: None,
+            max_idle_gap_secs: 0,
             context_tokens: 0,
             cost_usd: 0.0,
             budget_ticked: false,
@@ -651,6 +659,7 @@ impl WorkspaceModel {
                     entry.cache_is_opt_in_provider = false;
                     entry.cache_call_count = 0;
                     entry.last_provider_call_ms = None;
+                    entry.max_idle_gap_secs = 0;
                     entry.context_tokens = 0;
                     entry.cost_usd = 0.0;
                     entry.budget_ticked = false;
@@ -776,8 +785,14 @@ impl WorkspaceModel {
                     entry.cache_read_tokens += cached_input_tokens;
                     entry.cache_write_tokens += cache_write_tokens;
                     entry.cache_call_count += 1;
-                    // A metered call just landed — anchor the cache-warmth
-                    // countdown here (the prefix is warmest right now).
+                    // A metered call just landed — fold the idle it closes
+                    // (the gap the diagnosis reads), then anchor the
+                    // cache-warmth countdown here (the prefix is warmest
+                    // right now).
+                    if let Some(last) = entry.last_provider_call_ms {
+                        entry.max_idle_gap_secs =
+                            entry.max_idle_gap_secs.max(now.saturating_sub(last) / 1000);
+                    }
                     entry.last_provider_call_ms = Some(now);
                     // Occupancy is the LATEST call's prompt size, not the sum.
                     entry.context_tokens = *input_tokens;
@@ -1292,39 +1307,6 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
 /// One trace line for a proof step — the same facts the rail folds, in the
 /// order they were observed, for the reader who wants the history the rail
 /// deliberately discards.
-fn proof_trace(step: &stella_protocol::ProofStep) -> String {
-    use stella_protocol::{ProofStep, ProofTree};
-    match step {
-        ProofStep::Assurance { witness, verifier } => format!(
-            "assurance: witness {}, verifier {}",
-            if *witness { "on" } else { "waived" },
-            if *verifier { "on" } else { "waived" }
-        ),
-        ProofStep::Warrant {
-            required: true,
-            diff_lines,
-            ..
-        } => format!("warrant: required ({diff_lines} lines)"),
-        ProofStep::Warrant { reason, .. } => format!(
-            "warrant: {}",
-            reason.as_deref().unwrap_or("no test warranted")
-        ),
-        ProofStep::WitnessAuthored { path, .. } => format!("witness authored: {path}"),
-        ProofStep::WitnessUnavailable { reason } => format!("witness unavailable: {reason}"),
-        ProofStep::VerificationUnavailable { reason } => {
-            format!("verification unavailable: {reason}")
-        }
-        ProofStep::Oracle { passed, tree, .. } => format!(
-            "oracle: {} on {}",
-            if *passed { "pass" } else { "fail" },
-            match tree {
-                ProofTree::Baseline => "base",
-                ProofTree::Candidate => "new",
-            }
-        ),
-    }
-}
-
 fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
     use stella_protocol::ToolOutput;
     match ev {
@@ -1430,7 +1412,7 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         // Traced under Verdict, the kind that already means "what this run
         // established": the steps and the verdict are one story, and the trace
         // log is where a reader reconstructs how the rail got where it is.
-        AgentEvent::Proof { step } => (TraceKind::Verdict, proof_trace(step)),
+        AgentEvent::Proof { step } => (TraceKind::Verdict, crate::proof::proof_trace(step)),
         AgentEvent::Verdict { passed, .. } => (
             TraceKind::Verdict,
             if *passed {

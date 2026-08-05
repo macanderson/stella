@@ -46,8 +46,8 @@ impl AgentEntry {
     /// `None` when there's nothing to diagnose (too few calls yet, or a
     /// healthy hit rate) — the motivating incident is a session sitting at
     /// CACHE 0% with no hint anywhere on screen. Mirrors
-    /// `stella_model::cache_economics::diagnose_cache`'s selection logic
-    /// rather than calling it (the deck cannot link that model-tier crate),
+    /// `stella_model::cache_economics::diagnose_cache_with_idle`'s selection
+    /// logic rather than calling it (the deck cannot link that model-tier crate),
     /// using only locally-tracked aggregates plus
     /// [`Self::cache_is_opt_in_provider`], which the pricing-aware CLI
     /// producer resolves once from the provider's cache-posture table and
@@ -83,6 +83,16 @@ impl AgentEntry {
             && self.cache_read_tokens == 0
         {
             return Some(CacheCause::OptInNeverEngaged);
+        }
+        // The clock-aware refinement (#1525), mirroring
+        // `diagnose_cache_with_idle`: an idle gap that reached the provider
+        // TTL means the prefix *expired* — that is what a 5-minute cache
+        // does — and reporting it as instability sends the reader hunting
+        // for a nondeterminism bug that does not exist. `>=` is the same
+        // conservative boundary the warmth countdown uses. A provider with
+        // no TTL (`0`) has no window to have outlived.
+        if self.cache_ttl_secs > 0 && self.max_idle_gap_secs >= self.cache_ttl_secs {
+            return Some(CacheCause::IdleBeyondTtl);
         }
         Some(CacheCause::PrefixInstability)
     }
@@ -275,6 +285,53 @@ mod tests {
             entry(96_000, 9_600, 0, 5, true).cache_diagnosis(0.20),
             Some(CacheCause::PrefixInstability),
             "a cache read is proof the cache engaged"
+        );
+    }
+
+    /// The TUI twin of `cache_economics`'s
+    /// `an_idle_gap_at_or_past_the_ttl_names_idle_beyond_ttl_not_instability`
+    /// — the two hand-mirrored gates must pin the same #1525 case, or the
+    /// deck and `stella stats` disagree on the same session.
+    #[test]
+    fn an_idle_gap_at_or_past_the_ttl_names_idle_beyond_ttl_not_instability() {
+        // Writes happened, reads stayed low — the token shape that reads as
+        // PrefixInstability whatever the clock did.
+        let with_gap = |gap_secs: u64| {
+            let mut a = entry(120_000, 1_000, 90_000, 6, true);
+            a.cache_ttl_secs = 300;
+            a.max_idle_gap_secs = gap_secs;
+            a
+        };
+        // An idle at or past the TTL explains the low rate: the prefix
+        // expired, it did not churn.
+        assert_eq!(
+            with_gap(360).cache_diagnosis(0.20),
+            Some(CacheCause::IdleBeyondTtl)
+        );
+        assert_eq!(
+            with_gap(300).cache_diagnosis(0.20),
+            Some(CacheCause::IdleBeyondTtl),
+            "the boundary is expired — the warmth countdown's own reading"
+        );
+        // Back-to-back turns keep the honest instability answer.
+        assert_eq!(
+            with_gap(299).cache_diagnosis(0.20),
+            Some(CacheCause::PrefixInstability)
+        );
+        // A marker that never engaged is not explained by idling.
+        let mut never = entry(30_000, 0, 0, 5, true);
+        never.cache_ttl_secs = 300;
+        never.max_idle_gap_secs = 600;
+        assert_eq!(
+            never.cache_diagnosis(0.20),
+            Some(CacheCause::OptInNeverEngaged)
+        );
+        // No TTL (implicit-cache provider): no window to have outlived.
+        let mut no_ttl = entry(120_000, 1_000, 0, 6, false);
+        no_ttl.max_idle_gap_secs = 6_000;
+        assert_eq!(
+            no_ttl.cache_diagnosis(0.20),
+            Some(CacheCause::PrefixInstability)
         );
     }
 

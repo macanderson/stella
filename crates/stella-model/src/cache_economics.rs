@@ -15,11 +15,14 @@
 //! One honest caveat on "canonical": the *diagnosis* half is not reached by
 //! the deck. `stella-tui`'s `AgentEntry::cache_diagnosis` re-derives
 //! [`diagnose_cache`]'s gate (`MIN_TURNS`, the threshold compare, the
-//! write-token discriminator) by hand, because the TUI cannot depend on this
+//! write-token discriminator) by hand — and, since #1525, the
+//! [`diagnose_cache_with_idle`] gap-vs-TTL refinement too, off its own
+//! locally-folded max idle gap — because the TUI cannot depend on this
 //! model-tier crate; the CLI producer folds in the one piece of real domain
-//! knowledge, the opt-in flag. Nothing cross-checks the two, so a change to
-//! the constants or the discriminator here must be mirrored there in the same
-//! change — the deck will not fail if it isn't, it will simply disagree.
+//! knowledge, the opt-in flag and TTL. Nothing cross-checks the two, so a
+//! change to the constants or a discriminator here must be mirrored there in
+//! the same change — the deck will not fail if it isn't, it will simply
+//! disagree.
 //!
 //! The **write premium** (what a cache write costs *over* the base input rate)
 //! is provider policy, not arithmetic: today only the opt-in providers
@@ -143,9 +146,11 @@ pub fn hit_rate(input_tokens: u64, cached_input_tokens: u64) -> f64 {
 /// different turns, so zero writes alone is the ordinary shape of a warm
 /// cache — see the inline note at the discriminator.
 ///
-/// `IdleBeyondTtl` is a refinement the live scheduler surfaces from actual
-/// idle gaps; this token-only diagnosis cannot see wall-clock gaps, so it
-/// never returns it (it stays reachable for the TTL-aware scheduler path).
+/// This token-only form cannot see wall-clock gaps, so it never returns
+/// [`CacheCause::IdleBeyondTtl`] — a caller that has the session's idle gaps
+/// (`stella-store`'s `cache_call_gaps` surfaces them) should reach it through
+/// [`diagnose_cache_with_idle`], which refines the answer with the one fact
+/// this function is blind to.
 #[must_use]
 pub fn diagnose_cache(
     provider: &str,
@@ -188,6 +193,47 @@ pub fn diagnose_cache(
         return Some(CacheCause::OptInNeverEngaged);
     }
     Some(CacheCause::PrefixInstability)
+}
+
+/// [`diagnose_cache`] refined with the session's longest idle gap between
+/// calls — the clock-blind half #1525 named: a prefix that expired while the
+/// session sat idle and one that churns between back-to-back turns produce
+/// the same token counts, and only the wall clock can tell them apart.
+///
+/// `PrefixInstability` becomes [`CacheCause::IdleBeyondTtl`] when the gap
+/// reaches the provider's TTL ([`provider_cache_ttl_secs`]) — `>=`, the same
+/// conservative boundary [`CacheWarmth::from_elapsed`] and
+/// [`is_cache_expired_rewrite`] already share. Every other answer passes
+/// through untouched: an `OptInNeverEngaged` marker bug is not explained by
+/// idling, a healthy session has nothing to refine, and a provider with no
+/// documented TTL (`None`) has no window to have outlived. `None` for
+/// `max_idle_gap_secs` means the caller could not measure gaps (no session
+/// chain), which honestly leaves the token-only answer.
+#[must_use]
+pub fn diagnose_cache_with_idle(
+    provider: &str,
+    turns: u64,
+    input_tokens: u64,
+    cached_input_tokens: u64,
+    cache_write_tokens: u64,
+    threshold: f64,
+    max_idle_gap_secs: Option<u64>,
+) -> Option<CacheCause> {
+    let cause = diagnose_cache(
+        provider,
+        turns,
+        input_tokens,
+        cached_input_tokens,
+        cache_write_tokens,
+        threshold,
+    )?;
+    if cause == CacheCause::PrefixInstability
+        && let (Some(gap), Some(ttl)) = (max_idle_gap_secs, provider_cache_ttl_secs(provider))
+        && gap >= ttl
+    {
+        return Some(CacheCause::IdleBeyondTtl);
+    }
+    Some(cause)
 }
 
 /// Per-provider prompt-cache TTL in seconds — how long a written prefix stays
@@ -419,6 +465,47 @@ mod tests {
         // (always zero) write count.
         let cause = diagnose_cache("zai", 8, 200_000, 5_000, 0, 0.20);
         assert_eq!(cause, Some(CacheCause::PrefixInstability));
+    }
+
+    /// Issue #1525's verify table: the wall-clock gap is what separates "your
+    /// prompt prefix is unstable — hunt for nondeterminism" from "you stepped
+    /// away past the TTL — that is what a 5-minute cache does". The second
+    /// case was reported as the first, confidently and wrongly.
+    #[test]
+    fn an_idle_gap_at_or_past_the_ttl_names_idle_beyond_ttl_not_instability() {
+        // Anthropic TTL is 300s. Writes happened, reads stayed low.
+        let diagnose = |gap: Option<u64>| {
+            diagnose_cache_with_idle("anthropic", 6, 120_000, 1_000, 90_000, 0.20, gap)
+        };
+        // gap >= ttl, writes > 0, low reads → the idle explains it.
+        assert_eq!(diagnose(Some(360)), Some(CacheCause::IdleBeyondTtl));
+        assert_eq!(
+            diagnose(Some(300)),
+            Some(CacheCause::IdleBeyondTtl),
+            "the boundary is expired — the same conservative read as \
+             CacheWarmth and is_cache_expired_rewrite"
+        );
+        // gap < ttl → the prefix really is churning.
+        assert_eq!(diagnose(Some(299)), Some(CacheCause::PrefixInstability));
+        // No gap data (no session chain) → the token-only answer stands.
+        assert_eq!(diagnose(None), Some(CacheCause::PrefixInstability));
+
+        // A marker that never engaged is not explained by idling: the
+        // opt-in diagnosis passes through whatever the gap says.
+        assert_eq!(
+            diagnose_cache_with_idle("anthropic", 6, 120_000, 0, 0, 0.20, Some(600)),
+            Some(CacheCause::OptInNeverEngaged)
+        );
+        // A provider with no documented TTL has no window to have outlived.
+        assert_eq!(
+            diagnose_cache_with_idle("zai", 8, 200_000, 5_000, 0, 0.20, Some(6_000)),
+            Some(CacheCause::PrefixInstability)
+        );
+        // And a healthy session has nothing to refine.
+        assert_eq!(
+            diagnose_cache_with_idle("anthropic", 10, 100_000, 50_000, 10_000, 0.20, Some(600)),
+            None
+        );
     }
 
     #[test]
