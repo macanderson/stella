@@ -1,4 +1,20 @@
-# Match `dd52a57a6f49` — the witness artifacts for `arenabench watch`
+# Fixture matches — the witness artifacts for `arenabench watch`
+
+Each match here is tracked as **one archive** (`<match-id>.zip`), never as a
+tree of individual result files. `tests/conftest.py` unpacks every archive
+next to itself before a session, so tests address
+`fixtures/matches/<match-id>/…` exactly as if the tree were tracked; the
+extracted trees are gitignored. To change a fixture: run pytest once (which
+extracts), edit the extracted files, then repack deterministically:
+
+```bash
+python tests/fixtures/matches/repack.py tests/fixtures/matches/<match-id>
+```
+
+An unchanged tree repacks to an identical artifact, so the diff you commit
+is exactly the content you edited.
+
+## Match `dd52a57a6f49`
 
 A real Terminal-Bench 2.1 head-to-head run on 2026-08-04: Claude Code vs the
 Stella pipeline, both on Fable 5, six tasks each. The match that motivated
@@ -15,10 +31,10 @@ artifacts, `arenabench watch` must report, with the default rules, exactly:
 | stella-fable-5-pipeline | large-scale-text-editing | late-verdict |
 | stella-fable-5-pipeline | sqlite-with-gcov | premature-complete |
 
-— and nothing else. The seven healthy trials are committed for exactly that
+— and nothing else. The seven healthy trials are kept for exactly that
 reason: a watcher that cannot stay silent on them is worse than none.
 
-## What was kept, per trial
+### What was kept, per trial
 
 - `result.json` — **verbatim.** Harbor's verdict, timestamps, and
   `exception_info`.
@@ -35,4 +51,4 @@ reason: a watcher that cannot stay silent on them is worse than none.
 
 Everything else in a trial directory (`config.json`, logs, verifier output,
 recordings) is read by nothing in the telemetry or monitor path and was not
-committed.
+kept.
