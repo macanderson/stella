@@ -113,9 +113,16 @@
 #![forbid(unsafe_code)]
 
 // ── the step-scoped API ───────────────────────────────────────────────────
+//
+// `CheckpointSink` is here rather than only on `EngineConfig` because a
+// durable host — the audience named in this crate's first paragraph — has to
+// *implement* it, and `EngineConfig::checkpoint_sink` is an
+// `Option<Arc<dyn CheckpointSink>>`. Re-exporting the config while withholding
+// the trait it holds left the field unfillable through the facade (#1494);
+// `stella-serve` reached around it with `use stella_core::step::CheckpointSink`.
 pub use stella_core::step::{
     BudgetSnapshot, CANCELLED_REASON, CHECKPOINT_VERSION, CancelToken, Checkpoint, CheckpointError,
-    StepOutcome, TurnState,
+    CheckpointSink, StepOutcome, TurnState,
 };
 
 // ── the engine those steps run on ─────────────────────────────────────────
@@ -129,9 +136,19 @@ pub use stella_core::event_sender::{EventSendError, EventSender};
 pub use stella_core::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
 pub use stella_core::ports::{ToolExecutor, TurnGate, TurnSteering};
 pub use stella_core::retry::{RetryPolicy, Sleeper};
+// The closure rule for this block: if a type appears in the public signature
+// of a port the host implements, the host must be able to *name* it here.
+// `Provider` alone was not enough — `complete_ref` takes a
+// `CompletionRequestRef` and returns a `CompletionResult`, whose `usage` and
+// `finish_reason` are a `CompletionUsage` and a `FinishReason`, and
+// `complete_ref_observed` takes a `&dyn ToolCallObserver`. Without those, Mode-A
+// embedding (docs/spec/engine-embedding.md) required linking `stella-protocol`
+// as well, which is the thing the facade exists to avoid — and this crate's own
+// tests proved it by importing them straight from `stella_protocol` (#1494).
 pub use stella_protocol::{
-    AgentEvent, BudgetMode, CompletionMessage, MessageRole, Provider, ProviderError, ToolCall,
-    ToolOutput, ToolResult, ToolSchema,
+    AgentEvent, BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult,
+    CompletionUsage, FinishReason, MessageRole, Provider, ProviderError, ToolCall,
+    ToolCallObserver, ToolOutput, ToolResult, ToolSchema,
 };
 
 /// Encode a checkpoint for durable storage.
