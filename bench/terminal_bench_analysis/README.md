@@ -209,7 +209,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
-        "sha256": "9d7ad135db12e32d4519f893b8d8ed9d918b0ef54c7a4e4d22d1398b0015785b"
+        "sha256": "0d732c3e42a394a059be359de78ed153eb840477b946f167b8a0f3048023ff84"
       },
       "openrouter/z-ai/glm-5.2": {
         "version": "stella-tb21-engine-posture-v1",
@@ -225,7 +225,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
-        "sha256": "7e9da63355a399025c537e6d26528a0500a533b096e4f1eda1b88a3e3c51c0b4"
+        "sha256": "41f9be3b5f290529b10a94fcd87e3ad87b4798bdd4dd605bb7e678ecaa5d227d"
       },
       "openrouter/x-ai/grok-4.5": {
         "version": "stella-tb21-engine-posture-v1",
@@ -241,7 +241,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
-        "sha256": "19c4d3454de88a1fe5560d17bdf9a063be1d1720190a90a5dc1bdcb2159c9f15"
+        "sha256": "4505a9f8a582b25872c7c93bf1c63f3d6a335bac02e474ee5231e240f485802f"
       }
     },
     "job_name": "stella-tb21-calibration-20260721",
