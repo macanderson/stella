@@ -786,7 +786,7 @@
                   "type": "null"
                 }
               ],
-              "description": "The CGP usage report for this recall (`docs/design/adaptive-context/context-reuse.md` §2):\nper-provider frame counts and token costs against the requested\nbudget, so context cost is meterable rather than merely visible.\nOptional and defaulted — streams recorded before the report existed\nstill deserialize (the additive contract), and a recall path with\nno CGP host behind it has none to report."
+              "description": "The CGP usage report for this recall (`docs/spec/adaptive-context/context-reuse.md` §2):\nper-provider frame counts and token costs against the requested\nbudget, so context cost is meterable rather than merely visible.\nOptional and defaulted — streams recorded before the report existed\nstill deserialize (the additive contract), and a recall path with\nno CGP host behind it has none to report."
             },
             "used_ann_index": {
               "description": "Whether the IVF approximate-nearest-neighbour accelerator fired,\nor `None` when the recall path did not report it. Latency alone\ncannot be acted on: a slow recall with a cold index is a different\nproblem, with a different fix, from one that used the index and\nwas still slow.\n\nTri-state on purpose. `stella-context` knows the answer, but the\nCGP host fan-out production recall goes through does not carry it\nacross the provider-result boundary — closing that is a change to\nthe provider contract, not to this event. A plain `bool` would\nreport `false` on every real turn, which reads as \"the index never\nfires\" rather than \"nobody said\". `None` says what is true.",
@@ -1328,7 +1328,7 @@
       ]
     },
     "BlockKind": {
-      "description": "The semantic kind of one context block — one durable, individually\nattributable unit that can enter the model's prompt. Finer-grained than a\n`CompletionMessage`: a tool message holding several results decomposes into\none `ToolResult` block per `call_id`. See the session-telemetry-receipts\nspec (`docs/design/session-telemetry-receipts-spec.md`, §4). Forward-compat:\nan unknown kind read from a newer emitter deserializes to [`BlockKind::Other`]\nrather than failing the whole event.",
+      "description": "The semantic kind of one context block — one durable, individually\nattributable unit that can enter the model's prompt. Finer-grained than a\n`CompletionMessage`: a tool message holding several results decomposes into\none `ToolResult` block per `call_id`. See the session-telemetry-receipts\nspec (`docs/spec/session-telemetry-receipts-spec.md`, §4). Forward-compat:\nan unknown kind read from a newer emitter deserializes to [`BlockKind::Other`]\nrather than failing the whole event.",
       "oneOf": [
         {
           "const": "system_prefix",
@@ -1738,7 +1738,7 @@
       "type": "object"
     },
     "ContextProviderUsage": {
-      "description": "One provider's contribution to a recall's cost, as the CGP usage report\ndefines it (`docs/design/adaptive-context/context-reuse.md` §2 `ProviderUsage`).\n\nDistinct from [`ProviderShare`], which counts only the frames that *won*\nfusion and reached the prompt. This counts what the provider **served to\nthe host** and what the host **rejected** (a budget lie, a consent gate, a\nfailed leg), with the token cost behind each — the difference between \"what\ndid the model see?\" and \"what did this turn cost, and who drove it?\".\n\nContent-free by construction: a provider id, three numbers. No frame\ntitles, bodies, URIs, or query text ever enter this type.",
+      "description": "One provider's contribution to a recall's cost, as the CGP usage report\ndefines it (`docs/spec/adaptive-context/context-reuse.md` §2 `ProviderUsage`).\n\nDistinct from [`ProviderShare`], which counts only the frames that *won*\nfusion and reached the prompt. This counts what the provider **served to\nthe host** and what the host **rejected** (a budget lie, a consent gate, a\nfailed leg), with the token cost behind each — the difference between \"what\ndid the model see?\" and \"what did this turn cost, and who drove it?\".\n\nContent-free by construction: a provider id, three numbers. No frame\ntitles, bodies, URIs, or query text ever enter this type.",
       "properties": {
         "frames_rejected": {
           "description": "Frames the host dropped whole, e.g. a provider that misdeclared cost.",
@@ -1772,7 +1772,7 @@
       "type": "object"
     },
     "ContextUsage": {
-      "description": "The per-request roll-up of what one context recall cost\n(`docs/design/adaptive-context/context-reuse.md` §2 `UsageReport`) — the envelope a metering\npipeline bills from, and the answer to \"what did this turn's context cost,\nand which sources drove it?\".\n\nDeliberately **content-free**: budget scalars, an accounting timestamp, and\nper-provider counts and costs. The spec's `served_frames` drill-down is\n*not* duplicated here — the sibling `frames: Vec<ContextFrameRef>` on the\nsame [`crate::event::AgentEvent::ContextRecall`] already records the frame-granular\nidentities locally, so an auditor still walks from a total to its frames\nwithout this type ever carrying one.",
+      "description": "The per-request roll-up of what one context recall cost\n(`docs/spec/adaptive-context/context-reuse.md` §2 `UsageReport`) — the envelope a metering\npipeline bills from, and the answer to \"what did this turn's context cost,\nand which sources drove it?\".\n\nDeliberately **content-free**: budget scalars, an accounting timestamp, and\nper-provider counts and costs. The spec's `served_frames` drill-down is\n*not* duplicated here — the sibling `frames: Vec<ContextFrameRef>` on the\nsame [`crate::event::AgentEvent::ContextRecall`] already records the frame-granular\nidentities locally, so an auditor still walks from a total to its frames\nwithout this type ever carrying one.",
       "properties": {
         "as_of": {
           "description": "The report's accounting snapshot (RFC 3339), stamped by the host. This\nis the *accounting event* time, never the query's bi-temporal `as_of`\nretrieval pin — two different clocks.",

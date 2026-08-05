@@ -10,7 +10,7 @@
 //!
 //! The port is the whole point. Emission is typed and every site talks to
 //! [`Observer`], so adopting `tracing` later is one more impl in this file and
-//! **no emit site changes** — see `docs/design/serve-observability.md` §9 for
+//! **no emit site changes** — see `docs/spec/serve-observability.md` §9 for
 //! why that deferral is a decision with an expiry rather than an omission.
 
 use std::io::Write as _;

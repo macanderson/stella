@@ -87,7 +87,9 @@ use stella_core::driver::TurnHalt;
 use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
+use crate::management_prompt::ManagementPrompt;
 use crate::verify::coverage::DiffCoverage;
+use crate::verify::diff_render::DiffContext;
 use crate::verify::{
     FlipOracle, LadderDecision, LadderInputs, Verdict as ModelVerifierVerdict,
     deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
@@ -820,6 +822,21 @@ struct CandidateState {
     /// progress and hit something new" — the signal that decides how much the
     /// next revision is told (`witness::airlock`).
     failures: Vec<FailureFingerprint>,
+    /// The last model verdict this candidate bought, keyed by a digest of the
+    /// exact inputs that produced it (#1431). A revision that changed nothing
+    /// the verdict depends on reuses the opinion instead of re-buying it —
+    /// the verifier is stateless across rounds, so identical inputs are the
+    /// same question, and paying twice buys only sampling noise.
+    last_verdict: Option<(u64, crate::verify::Verdict)>,
+    /// The stripped diff text the model verifier last read on this candidate
+    /// — the delta-framing baseline (#1431), distinct from the whole-verdict
+    /// reuse pin above: reuse fires only on byte-identical *inputs*, while
+    /// this lets a round whose diff partially moved render the unchanged file
+    /// sections as stat lines instead of re-buying their bodies. `None` until
+    /// a model verdict has been bought, and never set by a heuristic
+    /// fallback: a verdict no model read must not let the next round claim
+    /// its diff was already reviewed.
+    last_verdict_diff: Option<String>,
 }
 
 impl CandidateState {
@@ -1379,7 +1396,7 @@ impl<'a> Pipeline<'a> {
                 RawCall {
                     role: ModelCallRole::Triage,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(triage_prompt(goal))],
+                    messages: triage_prompt(goal).into_messages(),
                     policy: RetryPolicy::deterministic(),
                     overrides: &self.config.role_overrides.triage,
                     timeout: Some(self.config.triage_latency_ceiling),
@@ -2128,6 +2145,8 @@ impl<'a> Pipeline<'a> {
             evidence_demands: 0,
             witness_paths: Vec::new(),
             failures: Vec::new(),
+            last_verdict: None,
+            last_verdict_diff: None,
         };
 
         if let Err(reason) = self
@@ -2647,16 +2666,25 @@ impl<'a> Pipeline<'a> {
                     // telling the verifier the agent had "failed twice in a row".
                     let mut reason = brief.message();
                     if self.config.distress_guidance && state.failures.len() >= 2 {
-                        match self
-                            .verifier_guidance(
-                                goal,
-                                &state.diff_text,
-                                &evidence.summary,
-                                budget,
-                                total,
-                            )
-                            .await
-                        {
+                        // Same witness exclusion as the verdict call (#1433):
+                        // guidance reads the change under correction, and the
+                        // verifier's own test is not part of it.
+                        let stripped =
+                            crate::verify::strip_witness_hunks(&state.diff_text, &witness_paths);
+                        let prompt = guidance_prompt(
+                            goal,
+                            &stripped.diff,
+                            &evidence.summary,
+                            // Guidance never carries a delta baseline: its
+                            // render is already evidence-scoped (#1432), and
+                            // "unchanged since a verdict round" is a
+                            // verdict-shaped claim.
+                            &DiffContext {
+                                witness_paths: &witness_paths,
+                                previous: None,
+                            },
+                        );
+                        match self.verifier_guidance(prompt, budget, total).await {
                             Ok(Some(guidance)) => {
                                 if let Some(text) =
                                     self.airlock_forward(&guidance, "distress_guidance", &sealed)
@@ -2704,7 +2732,7 @@ impl<'a> Pipeline<'a> {
                     // diff tells them apart, and the prompt never could — so
                     // ask it before buying a verifier call to confirm the absence
                     // of a test that was never warranted
-                    // (docs/design/witness-protocol.md §7).
+                    // (docs/spec/witness-protocol.md §7).
                     if let Some(evidence) = self.warranted_completion(&state, &snapshot) {
                         return state.into_verified(
                             true,
@@ -2799,22 +2827,92 @@ impl<'a> Pipeline<'a> {
                         // witness it is weighing is the authored one.
                         evidence_summary.push_str("; witness_tamper_check=intact");
                     }
-                    let verdict = match self
-                        .verifier(
-                            goal,
-                            &state.diff_text,
-                            &evidence_summary,
-                            &inputs,
-                            budget,
-                            total,
-                        )
-                        .await
-                    {
-                        Ok(verdict) => verdict,
-                        Err(abort) => {
-                            return CandidateResult::aborted(state.messages, abort.reason);
+                    // The witness's own chunks never ride into the paid prompt
+                    // as "worker-authored data" (#1433): they are the
+                    // verifier's own artifact, and everything the verdict needs
+                    // to know about the witness is already in the trusted
+                    // evidence above. The omission is named HERE — the trusted
+                    // zone — never in-band in the diff, where the framing says
+                    // every byte is forgeable worker data.
+                    let stripped =
+                        crate::verify::strip_witness_hunks(&state.diff_text, &witness_paths);
+                    if !stripped.omitted.is_empty() {
+                        evidence_summary.push_str(&format!(
+                            "; witness_files_omitted_from_diff=[{}] (verifier-authored test, \
+                             not part of the change under review)",
+                            stripped.omitted.join(", ")
+                        ));
+                    }
+                    // Reuse before re-buying (#1431): a revision that changed
+                    // nothing the verdict depends on — same goal, same diff,
+                    // same evidence, byte for byte — would re-ask the same
+                    // question and pay full price for sampling noise. The
+                    // cached verdict is the same opinion at zero cost, and the
+                    // appended note steers the worker better than a fresh
+                    // reading of an unchanged tree ever did.
+                    let inputs_digest =
+                        verdict_inputs_digest(goal, &stripped.diff, &evidence_summary);
+                    let cached = state
+                        .last_verdict
+                        .as_ref()
+                        .filter(|(digest, _)| *digest == inputs_digest)
+                        .map(|(_, verdict)| verdict.clone());
+                    let verdict = match cached {
+                        Some(mut verdict) => {
+                            verdict.reasoning.push_str(
+                                "\n(verdict reused: the goal, diff, and evidence are unchanged \
+                                 since the previous review round — no new model call was made)",
+                            );
+                            verdict
+                        }
+                        None => {
+                            // Delta framing (#1431) rides the render context:
+                            // file sections byte-identical to what the
+                            // previous verdict read arrive as stat lines.
+                            // `previous` holds that round's STRIPPED diff —
+                            // the text a verdict actually read — so both
+                            // sides of the comparison are the same shape.
+                            let prompt = verifier_prompt(
+                                goal,
+                                &stripped.diff,
+                                &evidence_summary,
+                                &DiffContext {
+                                    witness_paths: &witness_paths,
+                                    previous: state.last_verdict_diff.as_deref(),
+                                },
+                            );
+                            match self.verifier(prompt, &inputs, budget, total).await {
+                                Ok(verdict) => {
+                                    // Only pin a real model verdict for reuse. A
+                                    // heuristic fallback is a transient-outage
+                                    // stand-in (unresolvable provider, unparseable
+                                    // response, failed/timed-out call), not the
+                                    // opinion this candidate bought: caching it
+                                    // would suppress recovery on the next round
+                                    // (the verifier may have come back) and graft
+                                    // the "no new model call was made" reuse note
+                                    // onto a fallback that never made one.
+                                    if !verdict.heuristic {
+                                        state.last_verdict = Some((inputs_digest, verdict.clone()));
+                                    }
+                                    verdict
+                                }
+                                Err(abort) => {
+                                    return CandidateResult::aborted(state.messages, abort.reason);
+                                }
+                            }
                         }
                     };
+                    if !verdict.heuristic {
+                        // The delta-framing baseline (#1431) advances only on
+                        // a verdict a model actually answered: a heuristic
+                        // fallback read nothing, and must not let the next
+                        // round stat-line text no model ever saw. It records
+                        // the STRIPPED diff — what the verdict actually read —
+                        // so the next round's per-section comparison holds
+                        // stripped text against stripped text.
+                        state.last_verdict_diff = Some(stripped.diff.clone());
+                    }
                     let mut evidence = model_verdict_evidence(&verdict);
                     evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));
                     self.emit(AgentEvent::Verdict {
@@ -3729,6 +3827,20 @@ fn assemble_user_message(
         VerificationContract::None => {}
     }
     s
+}
+
+/// One digest over everything a model verdict depends on — goal, the (witness
+/// -stripped) diff, and the evidence summary. Byte-identical inputs are the
+/// same question; the ModelVerdict arm reuses its previous answer rather than
+/// paying for sampling noise (#1431). Within-run only, so the std hasher's
+/// stability across versions is irrelevant.
+fn verdict_inputs_digest(goal: &str, diff: &str, evidence_summary: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    goal.hash(&mut hasher);
+    diff.hash(&mut hasher);
+    evidence_summary.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The instruction appended to a revision turn, carrying the failing

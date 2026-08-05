@@ -3,7 +3,7 @@
 
 //! Owner-only files, the way the rest of the workspace already writes them.
 //!
-//! `docs/design/diagnostics/diagnostics.md` §7.4 puts the crash ring at
+//! `docs/spec/diagnostics.md` §7.4 puts the crash ring at
 //! `.stella/private/crash-<ts>.jsonl` — "the 0700 directory `trace.rs` already
 //! establishes, 0600 file". This module is that idiom, factored out so the log
 //! file (§6) and the crash file get identical treatment rather than two

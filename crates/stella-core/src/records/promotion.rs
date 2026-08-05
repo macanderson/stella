@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// The governance mode a repository's context records operate under
-/// (`docs/design/adaptive-context/context-pr.md` §5). Stored in `.stella/rules/governance.toml` so
+/// (`docs/spec/adaptive-context/context-pr.md` §5). Stored in `.stella/rules/governance.toml` so
 /// the mode itself is repository-visible and reviewed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

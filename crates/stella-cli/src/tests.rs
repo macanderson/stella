@@ -285,16 +285,9 @@ fn every_plain_fallback_names_a_reason_and_a_real_terminal_gets_the_deck() {
 #[test]
 fn the_env_signals_no_anim_advertises_actually_force_it() {
     let _env = crate::test_env::lock();
-    let restore = |name: &str, prior: Option<std::ffi::OsString>| unsafe {
-        match prior {
-            Some(v) => std::env::set_var(name, v),
-            None => std::env::remove_var(name),
-        }
-    };
-    let prior_anim = std::env::var_os("STELLA_NO_ANIM");
-    let prior_color = std::env::var_os("NO_COLOR");
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_NO_ANIM", "NO_COLOR"]);
     // SAFETY: serialized behind the binary-wide env lock, and both names are
-    // restored below whatever the assertions do.
+    // restored by the EnvRestore guard regardless of assertions.
     unsafe {
         std::env::remove_var("STELLA_NO_ANIM");
         std::env::remove_var("NO_COLOR");
@@ -316,9 +309,6 @@ fn the_env_signals_no_anim_advertises_actually_force_it() {
     // NO_COLOR's published rule: present *and non-empty*.
     unsafe { std::env::set_var("NO_COLOR", "") };
     assert!(!animation_disabled(false));
-
-    restore("STELLA_NO_ANIM", prior_anim);
-    restore("NO_COLOR", prior_color);
 }
 
 /// clap's own consistency audit (conflicting ids, broken defaults,
@@ -344,7 +334,7 @@ fn telemetry_status_remains_a_distinct_top_level_command() {
 
 /// `doctor` runs on local state alone, so it must parse (and dispatch) without
 /// a provider or key — bare, with the opt-in repair, and with the crash-dump
-/// reader `--last-failure` (docs/design/diagnostics/diagnostics.md §7.4), which is the one
+/// reader `--last-failure` (docs/spec/diagnostics.md §7.4), which is the one
 /// subcommand a user reaches for precisely when nothing else works.
 #[test]
 fn doctor_parses_bare_and_with_repair() {

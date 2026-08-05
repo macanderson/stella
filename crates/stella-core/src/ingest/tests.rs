@@ -33,7 +33,7 @@ fn excluded_segments_match_whole_segments_only() {
     // `targeting/` and `buildkite/` are ordinary project directories.
     assert!(!is_excluded_segment("targeting/README.md"));
     assert!(!is_excluded_segment("buildkite/README.md"));
-    assert!(!is_excluded_segment("docs/design/x.md"));
+    assert!(!is_excluded_segment("docs/spec/x.md"));
 }
 
 // ── supersession, and its direction ─────────────────────────────────────────
@@ -54,7 +54,7 @@ fn a_document_that_supersedes_others_is_not_itself_superseded() {
     assert_eq!(supersession_marker(canonical), None);
 
     let retired =
-        "# Context PRs — draft\n\n> Superseded by docs/design/adaptive-context/context-pr.md\n";
+        "# Context PRs — draft\n\n> Superseded by docs/spec/adaptive-context/context-pr.md\n";
     assert!(supersession_marker(retired).is_some());
 }
 
@@ -145,7 +145,11 @@ fn instructional_by_directory_regardless_of_filename() {
 
 #[test]
 fn ordinary_docs_are_descriptive_not_instructional() {
-    for path in ["README.md", "docs/design/storage.md", "docs/adr/0001-x.md"] {
+    for path in [
+        "README.md",
+        "docs/spec/storage-map.md",
+        "docs/adr/0001-x.md",
+    ] {
         let c = classify(path, "# Title\n\nThis describes the system.\n");
         assert_eq!(c.tier, Tier::Descriptive, "{path}");
         assert!(!c.is_offered_by_default(), "{path}");

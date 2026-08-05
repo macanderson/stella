@@ -240,7 +240,7 @@ ran. Execution aborts (budget, loop, step-cap) keep their stop — the worker di
   auto-approve.
 - **`docs/*.md` paths cited from rustdoc here are gated.** `make doc-citations` fails if a
   cited path — or a cited `§N` — does not resolve; `src/replay.rs` and
-  `src/replay/golden.rs` both cite `docs/design/replay-golden-trajectories.md`.
+  `src/replay/golden.rs` both cite `docs/spec/replay-golden-trajectories.md`.
 
 ## Testing
 
@@ -316,6 +316,6 @@ contract.
   no-I/O and byte-stable-prompt rules.
 - [`../../website/content/docs/inference-pipeline.mdx`](../../website/content/docs/inference-pipeline.mdx)
   — the full stage flow, the distress-triggered guidance loop, and the `/pipeline` deck toggle.
-- [`../../docs/design/replay-golden-trajectories.md`](../../docs/design/replay-golden-trajectories.md) — the
+- [`../../docs/spec/replay-golden-trajectories.md`](../../docs/spec/replay-golden-trajectories.md) — the
   recording procedure and the reference-engine adapter contract.
 - [`../stella-core`](../stella-core) — `Engine::run_turn`, the loop this crate composes.

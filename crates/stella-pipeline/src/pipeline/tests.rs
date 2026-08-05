@@ -211,18 +211,28 @@ struct ScriptedProvider {
     /// Every prompt this provider was asked to complete, in order — so a test
     /// can assert what actually reached the model, not just what came back.
     seen: std::sync::Mutex<Vec<String>>,
+    /// The same requests with per-message roles preserved, so a test can
+    /// assert the system/user split of a management call (#1434) — the joined
+    /// text above cannot show which half a sentence landed in.
+    shapes: std::sync::Mutex<Vec<Vec<(stella_protocol::MessageRole, String)>>>,
 }
 impl ScriptedProvider {
     fn new(results: Vec<CompletionResult>) -> Self {
         Self {
             script: TokioMutex::new(results.into_iter().collect()),
             seen: std::sync::Mutex::new(Vec::new()),
+            shapes: std::sync::Mutex::new(Vec::new()),
         }
     }
 
     /// The message text of each request, one joined string per call.
     fn prompts(&self) -> Vec<String> {
         self.seen.lock().unwrap().clone()
+    }
+
+    /// Each request's messages as `(role, content)` pairs, in call order.
+    fn shapes(&self) -> Vec<Vec<(stella_protocol::MessageRole, String)>> {
+        self.shapes.lock().unwrap().clone()
     }
 }
 #[async_trait]
@@ -240,6 +250,12 @@ impl Provider for ScriptedProvider {
                 .map(|m| m.content.as_str())
                 .collect::<Vec<_>>()
                 .join("\n"),
+        );
+        self.shapes.lock().unwrap().push(
+            req.messages
+                .iter()
+                .map(|m| (m.role, m.content.clone()))
+                .collect(),
         );
         let mut q = self.script.lock().await;
         q.pop_front()

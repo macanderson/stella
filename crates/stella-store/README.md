@@ -309,9 +309,9 @@ from `NotYetBuilt` to `Guarded`. `every_registered_encoder_is_content_free` and
 - [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions"
   (invariant #3), "The `.stella/` directory", and the glossary of look-alike
   identifiers (session vs execution vs run vs task).
-- [`../../docs/design/session-telemetry-receipts-spec.md`](../../docs/design/session-telemetry-receipts-spec.md)
+- [`../../docs/spec/session-telemetry-receipts-spec.md`](../../docs/spec/session-telemetry-receipts-spec.md)
   — the spec behind `context_blocks` / `step_manifest` / `step_receipt`.
-- [`../../docs/design/enterprise-authority-telemetry.md`](../../docs/design/enterprise-authority-telemetry.md)
+- [`../../docs/spec/enterprise-authority-telemetry.md`](../../docs/spec/enterprise-authority-telemetry.md)
   — the enrolled-seat operational rollup this crate spools.
 - [`../stella-protocol`](../stella-protocol) — `AgentEvent`, whose full stream
   this crate persists.

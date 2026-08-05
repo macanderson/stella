@@ -303,5 +303,5 @@ built the mid-tool abort this crate exists to prevent.
   — every caller that drives `run_turn`;
   [`../../website/content/docs/configuration/agent-engine-config.mdx`](../../website/content/docs/configuration/agent-engine-config.mdx)
   — the user-facing knobs behind `EngineConfig`.
-- [`../../docs/design/session-telemetry-receipts-spec.md`](../../docs/design/session-telemetry-receipts-spec.md)
+- [`../../docs/spec/session-telemetry-receipts-spec.md`](../../docs/spec/session-telemetry-receipts-spec.md)
   — the receipt schema [`src/receipts.rs`](src/receipts.rs) emits.

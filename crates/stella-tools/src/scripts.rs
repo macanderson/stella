@@ -2,7 +2,7 @@
 //! package-manager scripts across ecosystems, mapped onto seven canonical
 //! verbs (`install`, `build`, `check`, `start`, `test`, `lint`, `format`).
 //!
-//! Spec: `docs/design/scripts-index.md`. Three surfaces share this module:
+//! Spec: `docs/spec/scripts-index.md`. Three surfaces share this module:
 //! the byte-stable `## Project scripts` prompt section, the
 //! `list_scripts`/`run_script` tools, and the `stella scripts` subcommand.
 //! Detection never invokes a package-manager binary and persists nothing —
@@ -367,7 +367,7 @@ impl ScriptIndex {
 
     /// The machine frame (`stella scripts list --json`), schema_version 2
     /// (2 = the `check` verb joined the set) — shape pinned by
-    /// `docs/design/scripts-index.md`.
+    /// `docs/spec/scripts-index.md`.
     pub fn to_json(&self) -> Value {
         serde_json::json!({
             "schema_version": 2,

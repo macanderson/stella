@@ -1,6 +1,6 @@
 [package]
 name = "stella-diag"
-description = "The diagnostic plane: a workspace-wide structured log whose field values cannot carry runtime content. One envelope, per-crate facets, a real target filter, and a crash ring that is safe to ask a stranger to attach. Design: docs/design/diagnostics.md."
+description = "The diagnostic plane: a workspace-wide structured log whose field values cannot carry runtime content. One envelope, per-crate facets, a real target filter, and a crash ring that is safe to ask a stranger to attach. Design: docs/spec/diagnostics.md."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,7 @@ publish.workspace = true
 
 # A LEAF crate, deliberately. It depends on `serde`/`serde_json` and nothing
 # else in this workspace, which is the property that lets all seventeen crates
-# depend on it without a cycle (docs/design/diagnostics.md §5.1). Adding a
+# depend on it without a cycle (docs/spec/diagnostics.md §5.1). Adding a
 # `stella-*` path dependency here forecloses that for whichever crate it names.
 [dependencies]
 serde.workspace = true

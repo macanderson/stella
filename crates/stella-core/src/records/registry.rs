@@ -1,6 +1,6 @@
 //! One precedence order over both substrates.
 //!
-//! `docs/design/adaptive-context/context-pr.md` §13 asks for a single merge: *"store-published and
+//! `docs/spec/adaptive-context/context-pr.md` §13 asks for a single merge: *"store-published and
 //! Git-published rules merge under one precedence order"* — and ADR 0011 adds a
 //! second format to that same order. So the registry takes the [`RuleFile`]s a
 //! [`RuleSource`][src] produced, in directory-precedence order, and resolves both
