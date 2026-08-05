@@ -159,6 +159,16 @@ async fn race<F: Future>(
 /// error type would touch every `?` in it.
 static INTERRUPTED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
+/// Record that a signal cut this process short.
+///
+/// [`block_on_interruptible`] is the usual caller. The supervisor
+/// ([`crate::daemon`]) is the other: it cannot use that wrapper, because a
+/// signal there must stop the *child* and keep streaming rather than drop the
+/// work — but the exit code it owes the shell is the same one.
+pub(crate) fn note_interrupt(signal: Interrupt) {
+    INTERRUPTED.store(signal.exit_code(), std::sync::atomic::Ordering::SeqCst);
+}
+
 /// The exit code to use, if a signal cut this process short.
 pub(crate) fn interrupted_exit_code() -> Option<u8> {
     match INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
@@ -192,7 +202,7 @@ where
             inner
         }
         Err(signal) => {
-            INTERRUPTED.store(signal.exit_code(), std::sync::atomic::Ordering::SeqCst);
+            note_interrupt(signal);
             rt.shutdown_timeout(std::time::Duration::from_secs(2));
             Err(signal.reason().to_string())
         }

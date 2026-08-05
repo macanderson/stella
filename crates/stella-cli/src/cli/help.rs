@@ -33,7 +33,10 @@ use super::Cli;
 /// is an editorial judgement about what the command is *for*, which cannot be
 /// inferred from its type.
 const GROUPS: &[(&str, &[&str])] = &[
-    ("Run the agent", &["run", "chat", "goal", "resume", "init"]),
+    (
+        "Run the agent",
+        &["run", "chat", "goal", "resume", "daemon", "init"],
+    ),
     ("Run many at once", &["fleet", "monitor", "arena"]),
     (
         "Ask about this workspace",
