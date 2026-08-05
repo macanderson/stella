@@ -34,10 +34,14 @@ minimumReleaseAgeExclude:
   - baseline-browser-mapping
 
 # Next 16.2.11 pulls in postcss@8.4.31 (path traversal + XSS, patched at
-# 8.5.10/8.5.18) and sharp@0.34.5 (patched at 0.35.0) through its own
-# dependency tree — not through anything this package depends on directly, so
-# there's no version bump here that fixes it. `pnpm audit` clears once these
-# are forced across every resolution.
+# 8.5.10/8.5.18; GHSA-fxqj-rqcc-2cmp then found the sourceMappingURL fix
+# incomplete, re-patched at 8.5.23) and sharp@0.34.5 (patched at 0.35.0)
+# through its own dependency tree — not through anything this package depends
+# on directly, so there's no version bump here that fixes it. `pnpm audit`
+# clears once these are forced across every resolution. NOTE: with an override
+# in force, `pnpm install --frozen-lockfile` (docs.yml) checks the importer
+# specifiers against the override-applied range — keep this floor and the
+# direct `postcss` devDependency in `package.json` moving together.
 overrides:
-  postcss: ">=8.5.18"
+  postcss: ">=8.5.23"
   sharp: ">=0.35.0"
