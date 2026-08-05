@@ -37,12 +37,13 @@ impl<'a> Pipeline<'a> {
             name: StageKind::Verdict,
         });
         let prompt = guidance_prompt(goal, diff, evidence_summary, diff_ctx);
+        let messages = prompt.into_messages();
         match self
             .metered_raw_call(
                 RawCall {
                     role: ModelCallRole::DistressGuidance,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(prompt)],
+                    messages,
                     policy: RetryPolicy::deterministic(),
                     overrides: &self.config.role_overrides.verifier,
                     timeout: None,
@@ -95,6 +96,7 @@ impl<'a> Pipeline<'a> {
         self.warn_verifier_caveat(&resolved);
 
         let prompt = verifier_prompt(goal, diff, evidence_summary, diff_ctx);
+        let messages = prompt.into_messages();
         // Deterministic policy: a verifier call that fails must not hang; it falls
         // back to the heuristic verdict rather than retrying.
         match self
@@ -102,7 +104,7 @@ impl<'a> Pipeline<'a> {
                 RawCall {
                     role: ModelCallRole::Verdict,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(prompt)],
+                    messages,
                     policy: RetryPolicy::deterministic(),
                     overrides: &self.config.role_overrides.verifier,
                     timeout: None,
