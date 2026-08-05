@@ -119,7 +119,8 @@ fn an_overflowing_console_keeps_its_head_and_tail_within_the_cap() {
         "the head must survive an overflow: {:?}",
         &out[..16.min(out.len())]
     );
-    let expected_last: u8 = b'A' + 4 + (39 % 3);
+    // The generator's last byte: i=4, j=39, and 39 % 3 == 0.
+    let expected_last: u8 = b'A' + 4;
     assert_eq!(
         out.last().copied(),
         Some(expected_last),
@@ -131,11 +132,14 @@ fn an_overflowing_console_keeps_its_head_and_tail_within_the_cap() {
     );
 }
 
+/// What the recorder accumulates: each contiguous burst, tagged by stream.
+type RecordedBursts = Arc<Mutex<Vec<(Stream, Vec<u8>)>>>;
+
 /// Two sinks that share one recorder, so a test can observe the ORDER writes
 /// reached the pair — the thing `daemon logs` could never reconstruct before
 /// the index existed.
 #[derive(Clone, Default)]
-struct Recorder(Arc<Mutex<Vec<(Stream, Vec<u8>)>>>);
+struct Recorder(RecordedBursts);
 
 struct RecorderSink(Recorder, Stream);
 
