@@ -828,6 +828,15 @@ struct CandidateState {
     /// the verifier is stateless across rounds, so identical inputs are the
     /// same question, and paying twice buys only sampling noise.
     last_verdict: Option<(u64, crate::verify::Verdict)>,
+    /// The stripped diff text the model verifier last read on this candidate
+    /// — the delta-framing baseline (#1431), distinct from the whole-verdict
+    /// reuse pin above: reuse fires only on byte-identical *inputs*, while
+    /// this lets a round whose diff partially moved render the unchanged file
+    /// sections as stat lines instead of re-buying their bodies. `None` until
+    /// a model verdict has been bought, and never set by a heuristic
+    /// fallback: a verdict no model read must not let the next round claim
+    /// its diff was already reviewed.
+    last_verdict_diff: Option<String>,
 }
 
 impl CandidateState {
@@ -2137,6 +2146,7 @@ impl<'a> Pipeline<'a> {
             witness_paths: Vec::new(),
             failures: Vec::new(),
             last_verdict: None,
+            last_verdict_diff: None,
         };
 
         if let Err(reason) = self

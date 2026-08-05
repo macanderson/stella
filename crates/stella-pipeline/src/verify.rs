@@ -909,6 +909,22 @@ fn bounded_worker_diff(diff: &str) -> String {
     )
 }
 
+/// The fixed sentence both verifier-facing prompts carry to explain the
+/// renderer's `#` stat lines ([`diff_render`]). One constant, for the same
+/// reason [`UNTRUSTED_DIFF_HEADING_SUFFIX`] is one: prompts and tests must
+/// read the same spelling or the guard outlives the thing it guards.
+///
+/// Unconditional — present even when the render happened to reduce nothing —
+/// because the instruction text is exactly the part of these prompts that
+/// must stay byte-stable across calls (the management-call caching work,
+/// #1434, depends on that stability).
+const DIFF_STAT_LINE_NOTE: &str = "Inside the diff, a line beginning with `#` is a rendering note from the pipeline, not \
+     part of the change: a file section may be reduced to one such stat line when it is \
+     unchanged since a previous review round of this same candidate (a prior round read its \
+     full text), when it is the pipeline's own witness test rather than the worker's change, \
+     or when the diff exceeds its token budget. A summarized file is still part of the \
+     change — weigh what its stat line states.";
+
 /// The one framing under which worker-authored text may enter a verifier-facing
 /// prompt (witness-protocol D5, `docs/design/witness-protocol.md` §2): the
 /// diff is the *subject* of the review, authored by the party under review,
