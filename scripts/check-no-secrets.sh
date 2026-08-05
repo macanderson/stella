@@ -5,8 +5,8 @@
 # .gitignore cannot do this job on its own. It is advisory about files that are
 # not yet tracked and silent about a file added explicitly or added before the
 # rule existed -- which is exactly how an EC2 rig key (tb909-key.pem) came to be
-# committed under docs/design/stella-bench-handoff/ while a .gitignore rule
-# written to prevent it sat one path segment away, matching nothing.
+# committed inside a bench handoff bundle while the .gitignore rule written to
+# prevent it sat one path segment away, matching nothing.
 #
 # This guard reads what git actually tracks, so it cannot be fooled that way.
 # A repository is public: a key that lands here is compromised the moment it is

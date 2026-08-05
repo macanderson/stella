@@ -39,9 +39,9 @@
 //! to redact them, matching the [`crate::config::McpTransport`] convention.
 //!
 //! This file holds the tokens, their store, the runtime source, and [`login`]
-//! itself; the three seams the flow passes through are their own modules —
-//! [`discovery`] (who authorizes this server, and where), [`grant`] (client
-//! registration and the token endpoint), and [`callback`] (the loopback
+//! itself; the three seams the flow passes through are their own private
+//! modules — `discovery` (who authorizes this server, and where), `grant`
+//! (client registration and the token endpoint), and `callback` (the loopback
 //! listener the browser is redirected back to).
 
 mod callback;
