@@ -61,7 +61,11 @@ readonly SHADOW_PATH_LINE='export PATH="$HOME/Projects/stella/target/release:$PA
 readonly RIG_INSTANCE="${FULLAUTO_RIG_INSTANCE:-i-07d46341dcc9a31b3}"
 readonly RIG_REGION="${FULLAUTO_RIG_REGION:-us-east-1}"
 readonly RIG_USER="ubuntu"
-readonly RIG_KEY="docs/design/stella-bench-handoff/tb909-key.pem"
+# A credential is not a document: the key lives under the stella home, not in
+# the repository. Its old home was the docs/design scratchpad, which
+# check-design-refs forbids citing — and a key that sits in a docs tree is one
+# `git add -A` away from being published.
+readonly RIG_KEY="${FULLAUTO_RIG_KEY:-${STELLA_HOME:-$HOME/.stella}/keys/tb909-key.pem}"
 
 # The head-to-head match: Claude Code vs Stella on Terminal-Bench 2.1, same
 # model on both arms so the agent architecture is the variable under test.
@@ -594,7 +598,7 @@ probe_disk_free_gb() {
   [ -n "${FULLAUTO_PROBE_DISK_FREE_GB:-}" ] && { echo "$FULLAUTO_PROBE_DISK_FREE_GB"; return 0; }
   # -P forces POSIX single-line output; without it a long device name wraps and
   # the field offsets silently shift.
-  df -Pk "${1:-$REPO_ROOT}" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}' || echo 0
+  df -Pk "$REPO_ROOT" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}' || echo 0
 }
 
 probe_on_battery() {
@@ -1629,8 +1633,8 @@ bench_h2h() {
   fi
 
   have aws || die "bench h2h --rig needs the aws CLI"
-  [ -f "$REPO_ROOT/$RIG_KEY" ] || die "rig key not found at $RIG_KEY"
-  chmod 600 "$REPO_ROOT/$RIG_KEY" 2>/dev/null || true
+  [ -f "$RIG_KEY" ] || die "rig key not found at $RIG_KEY (place it there, or point FULLAUTO_RIG_KEY at it)"
+  chmod 600 "$RIG_KEY" 2>/dev/null || true
 
   # The rig bills by the hour. Stopping it is the only step in this script that
   # MUST happen even on failure, interrupt, or a dropped SSH connection.
@@ -1654,14 +1658,14 @@ bench_h2h() {
   local ip
   ip="$(aws ec2 describe-instances --region "$RIG_REGION" --instance-ids "$RIG_INSTANCE" \
         --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
-  [ -n "$ip" ] && [ "$ip" != "None" ] || die "rig has no public IP"
+  if [ -z "$ip" ] || [ "$ip" = "None" ]; then die "rig has no public IP"; fi
   pass "rig at $ip (IP changes across stop/start — never hardcode it)"
 
   # SSH can be refused for a minute after instance-running; poll rather than
   # racing it.
   local tries=0
   until ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
-        -i "$REPO_ROOT/$RIG_KEY" "$RIG_USER@$ip" true 2>/dev/null; do
+        -i "$RIG_KEY" "$RIG_USER@$ip" true 2>/dev/null; do
     tries=$((tries + 1))
     [ "$tries" -gt 20 ] && die "rig unreachable over ssh after 20 tries"
     sleep 10
@@ -1669,12 +1673,12 @@ bench_h2h() {
   pass "ssh up"
 
   say "running the head-to-head on the rig"
-  ssh -o StrictHostKeyChecking=accept-new -i "$REPO_ROOT/$RIG_KEY" "$RIG_USER@$ip" \
+  ssh -o StrictHostKeyChecking=accept-new -i "$RIG_KEY" "$RIG_USER@$ip" \
     "set -e; cd ~/stella && git fetch --quiet && git checkout --quiet origin/main -- . || true; \
      DOCKER_DEFAULT_PLATFORM=linux/amd64 arenabench run $H2H_MATCH --progress --results /tmp/h2h.json" \
     || warn "the match returned nonzero — read the results before calling it a loss"
 
-  if scp -o StrictHostKeyChecking=accept-new -i "$REPO_ROOT/$RIG_KEY" \
+  if scp -o StrictHostKeyChecking=accept-new -i "$RIG_KEY" \
        "$RIG_USER@$ip:/tmp/h2h.json" "$out" 2>/dev/null; then
     pass "results -> $out"
   else
