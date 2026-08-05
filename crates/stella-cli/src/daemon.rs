@@ -202,9 +202,7 @@ pub(crate) fn supervise_this_invocation(
             // would. The work is not on this stack to drop.
             crate::signals::note_interrupt(signal);
             let drained = rt.block_on(run.interrupt_and_drain());
-            if let Some(record) = registry.get(&run.id) {
-                mark_stopped(&registry, &record);
-            }
+            mark_stopped(&registry, &run.id);
             rt.shutdown_timeout(Duration::from_secs(2));
             drained?;
             Err(signal.reason().to_string())
@@ -693,7 +691,7 @@ pub(crate) fn stop(registry: &SessionRegistry, id: &str) -> Result<(), String> {
         // Already over. Still record the transition: a run whose terminal
         // status was never written reads as a crash, and "the operator
         // stopped it" is the one thing we know for certain here.
-        mark_stopped(registry, &record);
+        mark_stopped(registry, &record.id);
         println!("{} {} was already finished", "▸".dimmed(), record.id);
         return Ok(());
     }
@@ -702,7 +700,7 @@ pub(crate) fn stop(registry: &SessionRegistry, id: &str) -> Result<(), String> {
     let deadline = Instant::now() + STOP_GRACE;
     while Instant::now() < deadline {
         if lock_is_held(&sidecar) != Some(true) {
-            mark_stopped(registry, &record);
+            mark_stopped(registry, &record.id);
             println!("{} stopped {}", "✓".green(), record.id);
             return Ok(());
         }
@@ -718,19 +716,27 @@ pub(crate) fn stop(registry: &SessionRegistry, id: &str) -> Result<(), String> {
     signal_group(supervisor.pgid, libc::SIGKILL);
     // Written here as well as on the graceful path, because on this one the
     // child's own shutdown never ran and nothing else will write it.
-    mark_stopped(registry, &record);
+    mark_stopped(registry, &record.id);
     println!("{} killed {}", "✓".green(), record.id);
     Ok(())
 }
 
 /// Record a stop as deliberate.
 ///
-/// Only from a live status: a run that already recorded how it ended — it
-/// completed a second before the stop landed — must keep its own answer rather
-/// than be relabelled by the process that arrived too late to change it.
-fn mark_stopped(registry: &SessionRegistry, record: &SessionRecord) {
-    if record.status.is_live() {
-        let _ = registry.set_status(&record.id, SessionStatus::Cancelled);
+/// Only where the run never recorded an answer of its own: one that completed
+/// a second before the stop landed must keep its own, rather than be
+/// relabelled by the process that arrived too late to change it.
+///
+/// Read through [`SessionRegistry::get`], never from a record that came out of
+/// `list`. `list` presents a live status whose pid is gone as `Error`, so a
+/// guard reading that value sees "it already has an answer" for the one case
+/// that most needs writing — a supervised run whose child is over but whose
+/// status was never replaced. The stored status is the only one that says
+/// whether anybody wrote anything.
+fn mark_stopped(registry: &SessionRegistry, id: &str) {
+    let stored_status = registry.get(id).map(|record| record.status);
+    if stored_status.is_some_and(|status| status.is_live()) {
+        let _ = registry.set_status(id, SessionStatus::Cancelled);
     }
 }
 
@@ -753,18 +759,22 @@ fn resolve(registry: &SessionRegistry, id: Option<&str>) -> Result<SessionRecord
             .ok_or_else(|| "no supervised runs on this machine".to_string());
     };
 
-    let mut matches = supervised_runs
-        .into_iter()
-        .filter(|r| r.id == id || r.id.starts_with(id));
+    // An exact hit is never ambiguous, however many ids extend it — and it is
+    // tested for across the whole set rather than on whichever candidate came
+    // out first, because the list is ordered by start time and has no reason
+    // to put the exact match anywhere in particular.
+    if let Some(exact) = supervised_runs.iter().find(|r| r.id == id) {
+        return Ok(exact.clone());
+    }
+
+    let mut matches = supervised_runs.into_iter().filter(|r| r.id.starts_with(id));
     let Some(first) = matches.next() else {
         return Err(format!(
             "no supervised run matches `{id}` — `stella daemon list` shows what there is"
         ));
     };
     match matches.next() {
-        // An exact hit is never ambiguous, however many ids extend it.
         None => Ok(first),
-        Some(_) if first.id == id => Ok(first),
         Some(second) => Err(format!(
             "`{id}` matches more than one run ({} and {}) — use more of the id",
             first.id, second.id
