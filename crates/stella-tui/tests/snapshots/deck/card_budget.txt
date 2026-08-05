@@ -18,7 +18,7 @@
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ scope review ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Refactor the automations store into a shared workspace package                                                                                                │
 │3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
 │type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
@@ -26,15 +26,15 @@
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ☑ 5/7 ▸ Workflows canvas    ⚖ flip ✓ red→green
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────────────┐┌ TASKS 5/7 ───────────────────┐
-│  ⎿ 312 lines                                                                                                             42ms││ ▸ #6 Workflows canvas (lead) │
-│                                                                                                                              ││ ☐ #7 Verify: witness suite g…│
-│☰  tasks  5/7  ·  Workflows canvas                                                                                            ││… +5 done                     │
-│                                                                                                                              ││                              │
-│⏸ scope  Refactor the automations store into a shar┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐                   ││                              │
-│                                                   │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │                   ││                              │
-└──────────────────────────────────────────────── ↑ │new cap $                                             │ expand · ⌃S state ┘└──────────────────────────────┘
+┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│● read_file    apps/app/automations/page.tsx                                                                          ││Refactor the automations store into a…│
+│  ⎿ 312 lines                                                                                                     42ms││○ 1 extract types                     │
+│                                                                                                                      ││○ 2 move hooks                        │
+│☰  plan  5/7  ·  Workflows canvas                                                                                     ││○ 3 update 9 imports                  │
+│                                                                                                                      │└────────────────────── /plan reads it ┘
+│⏸ plan  Refactor the automations store into a share┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐           │┌ DONE VERIFICATION ───────────────────┐
+│                                                   │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │           ││● flip ✓ red→green                    │
+└─────────────────────────────────────────── ↑ selec│new cap $                                             │nd · /plan ┘└──────────────────────────────────────┘
 ────────────────────────────────────────────────────│the cap applies when the driver's budget stream folds │────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shar└──────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify

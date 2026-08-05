@@ -59,11 +59,10 @@ fn tiny_terminals_with_overlays_never_panic() {
                     4 => ui.inbox_open = true,
                     5 => ui.context_open = true,
                     6 => ui.inspect_open = true,
-                    7 => ui.state_open = true,
                     // The floating cards (D3–D6).
-                    8 => ui.cards.raise(Card::Tasks),
-                    9 => ui.cards.raise(Card::Scope),
-                    10 => ui.cards.raise(Card::Witness),
+                    8 => ui.cards.raise(Card::Plan),
+                    9 => ui.cards.raise(Card::Plan),
+                    10 => ui.cards.raise(Card::Plan),
                     11 => ui.cards.raise(Card::Models),
                     12 => {
                         ui.cards.raise(Card::Budget);
@@ -189,9 +188,7 @@ fn nasty_unicode_cards_never_panic_at_any_width() {
         }
         for card in [
             None,
-            Some(Card::Tasks),
-            Some(Card::Scope),
-            Some(Card::Witness),
+            Some(Card::Plan),
             Some(Card::Models),
             Some(Card::Budget),
         ] {
@@ -201,7 +198,7 @@ fn nasty_unicode_cards_never_panic_at_any_width() {
                     ui.splash.skip();
                     if let Some(card) = card {
                         ui.cards.raise(card);
-                        ui.cards.tasks_expanded = true;
+                        ui.cards.plan_expanded = true;
                     }
                     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

@@ -39,7 +39,7 @@
 //! 2. **Scroll and cursor clamps.** `ui.graph_cursor`, `ui.context_scroll`,
 //!    `ui.inspect_scroll`, the skills preview's `scroll`, the MCP inspector's
 //!    `scroll`, the installed panel's `created_scroll`, and the task card's
-//!    `ui.cards.tasks_sel` (`views::task_card`). Every one is
+//!    `ui.cards.plan_sel` (`views::plan_card`). Every one is
 //!    `x = x.min(max_measured_this_frame)` — idempotent, and re-applied on
 //!    every frame the owning panel is drawn. A missed clamp leaves an offset
 //!    that is at worst too large for one frame; `Paragraph::scroll` saturates

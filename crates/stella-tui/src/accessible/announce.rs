@@ -32,7 +32,6 @@ use crate::deck_ui::DeckUi;
 fn overlay(ui: &DeckUi) -> Option<&'static str> {
     let candidates = [
         (ui.help_open, "help"),
-        (ui.state_open, "state"),
         (ui.queue_open, "queue editor"),
         (ui.sessions_open, "sessions"),
         (ui.context_open, "context"),

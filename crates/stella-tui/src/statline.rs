@@ -53,10 +53,10 @@
 //! ## Collapse: a card on top gets a quiet floor
 //!
 //! When any overlay/card is open the band collapses to at most four cells
-//! chosen for that context (the task card keeps `TURN` + tok/s, the scope
-//! card keeps `CONTEXT` + `SPEND`, the witness panel keeps its phase).
-//! [`statline_items`] is the single decision function, unit-testable without
-//! a buffer.
+//! chosen for that context (the plan card keeps `TURN` + where the plan
+//! stands; every other card, and every non-card overlay, keeps `CONTEXT` +
+//! `SPEND`). [`statline_items`] is the single decision function,
+//! unit-testable without a buffer.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -181,7 +181,10 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
     if let Some(context) = open_surface(ui) {
         let mut items = vec![model_cell, stage];
         match context {
-            Card::Tasks => {
+            // `/plan` is one card where `/tasks`, `/scope` and `/witness` used
+            // to be three, so it gets one arm carrying what all three needed:
+            // the turn's cost and where the plan stands.
+            Some(Card::Plan) => {
                 let turn_cost = focused.map_or(0.0, |a| a.model.hud.turn_spent_usd());
                 items.push(StatItem::new(
                     "turn",
@@ -189,35 +192,21 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
                     6,
                     vec![Span::styled(format!("${turn_cost:.2}"), ok)],
                 ));
-                let (rate, contributors) = model.combined_tok_per_s();
-                if let Some(rate) = rate {
-                    let text = if contributors > 1 {
-                        format!("{rate} tok/s combined")
-                    } else {
-                        format!("{rate} tok/s")
-                    };
-                    items.push(StatItem::new(
-                        "toks",
-                        "RATE",
-                        4,
-                        vec![Span::styled(text, val)],
-                    ));
-                }
-            }
-            Card::Witness => {
-                let phase = focused
-                    .map(|a| crate::views::witness_card::phase_label(&a.model.proof))
-                    .unwrap_or_else(|| "witness".to_string());
+                let progress = focused
+                    .map(|a| {
+                        let (done, total) = a.model.plan.progress();
+                        format!("{} {done}/{total}", a.model.plan.state.label())
+                    })
+                    .unwrap_or_else(|| "no plan".to_string());
                 items.push(StatItem::new(
-                    "witness",
-                    "WITNESS",
+                    "plan",
+                    "PLAN",
                     MUST_KEEP,
-                    vec![Span::styled(phase, theme::accent())],
+                    vec![Span::styled(progress, theme::accent())],
                 ));
-                items.push(spend);
             }
-            // The scope card — and every other overlay — keeps the context
-            // meter and the session spend: the quiet floor.
+            // Every other card — and every non-card overlay — keeps the
+            // context meter and the session spend: the quiet floor.
             _ => {
                 items.push(ctx_item(model, ui, val));
                 items.push(spend);
@@ -391,14 +380,15 @@ fn model_spans(model: &WorkspaceModel, dim: Style, val: Style) -> Vec<Span<'stat
 
 /// The pipeline role as the deck says it out loud: triage / worker / verify.
 ///
-/// `Judge` reads "verify" because that is the stage word the stepper and the
-/// witness panel already use for the same step; "judge" is the internal role
-/// name, and two words for one thing is one too many on a glanceable row.
+/// `Verifier` reads "verify" because that is the stage word the stepper and
+/// the rail's DONE VERIFICATION panel already use for the same step;
+/// `Verifier` names the model, and two words for one thing is one too many on
+/// a glanceable row.
 fn role_word(role: PipelineRole) -> &'static str {
     match role {
         PipelineRole::Triage => "triage",
         PipelineRole::Worker => "worker",
-        PipelineRole::Judge => "verify",
+        PipelineRole::Verifier => "verify",
     }
 }
 
@@ -432,7 +422,7 @@ fn stage_label_upper(stage: Option<stella_protocol::StageKind>) -> &'static str 
         Some(S::Witness) => "WITNESS",
         Some(S::Execute) => "EXECUTE",
         Some(S::Verify) => "VERIFY",
-        Some(S::Judge) => "JUDGE",
+        Some(S::Verdict) => "VERDICT",
         Some(S::Reflect) => "REFLECT",
         Some(S::ContextWrite) => "CONTEXT WRITE",
         Some(S::Complete) => "COMPLETE",
@@ -596,11 +586,11 @@ fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
 }
 
 /// Which card/overlay is on top, for the collapse rule — the card enum for
-/// the three named contexts, `Card::Scope` standing in for "some other
+/// the named contexts, with `None` standing in for "some other
 /// overlay" too (they share the quiet floor).
-fn open_surface(ui: &DeckUi) -> Option<Card> {
+fn open_surface(ui: &DeckUi) -> Option<Option<Card>> {
     if let Some(card) = ui.cards.open {
-        return Some(card);
+        return Some(Some(card));
     }
     let other_overlay = ui.help_open
         || ui.queue_open
@@ -608,9 +598,8 @@ fn open_surface(ui: &DeckUi) -> Option<Card> {
         || ui.sessions_open
         || ui.inbox_open
         || ui.context_open
-        || ui.inspect_open
-        || ui.state_open;
-    other_overlay.then_some(Card::Scope)
+        || ui.inspect_open;
+    other_overlay.then_some(None)
 }
 
 /// Render the statline band: the label row over the value row, the always-on
@@ -942,7 +931,7 @@ mod tests {
         assert_eq!(role_word(PipelineRole::Triage), "triage");
         assert_eq!(role_word(PipelineRole::Worker), "worker");
         // `Judge` reads "verify" — the stage word the stepper already uses.
-        assert_eq!(role_word(PipelineRole::Judge), "verify");
+        assert_eq!(role_word(PipelineRole::Verifier), "verify");
     }
 
     #[test]
@@ -1001,13 +990,7 @@ mod tests {
     fn each_card_collapses_the_band_to_at_most_four_cells() {
         use crate::deck_ui::cards::Card;
         let model = running_model();
-        for card in [
-            Card::Tasks,
-            Card::Scope,
-            Card::Witness,
-            Card::Models,
-            Card::Budget,
-        ] {
+        for card in [Card::Plan, Card::Models, Card::Budget] {
             let mut ui = DeckUi::default();
             ui.cards.raise(card);
             let items = statline_items(&model, &ui);
@@ -1025,20 +1008,24 @@ mod tests {
         use crate::deck_ui::cards::Card;
         let model = running_model();
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Tasks);
+        ui.cards.raise(Card::Plan);
         let items = statline_items(&model, &ui);
         assert!(keys(&items).contains(&"turn"), "{:?}", keys(&items));
     }
 
+    /// The plan card's collapse names where the plan stands. This used to be
+    /// three assertions across three cards; `/plan` is one card now, and the
+    /// verification phase it also carried lives permanently in the rail's
+    /// DONE VERIFICATION panel rather than in a collapsed statline cell.
     #[test]
-    fn the_witness_collapse_names_the_phase() {
+    fn the_plan_collapse_names_where_the_plan_stands() {
         use crate::deck_ui::cards::Card;
         let model = running_model();
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Witness);
+        ui.cards.raise(Card::Plan);
         let items = statline_items(&model, &ui);
-        assert!(keys(&items).contains(&"witness"), "{:?}", keys(&items));
-        assert!(keys(&items).contains(&"spend"), "{:?}", keys(&items));
+        assert!(keys(&items).contains(&"plan"), "{:?}", keys(&items));
+        assert!(keys(&items).contains(&"turn"), "{:?}", keys(&items));
     }
 
     #[test]
