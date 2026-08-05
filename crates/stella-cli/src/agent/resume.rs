@@ -213,7 +213,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
             );
             Ok(())
         }
-        TurnOutcome::Aborted { reason, cost_usd } => {
+        // `kind` stops here: `run_resume` answers with a `String`, so the
+        // deliberate-stop/failure split cannot reach the exit code on this
+        // path until the resume surface is retyped over `CliFailure` (#1637).
+        TurnOutcome::Aborted {
+            reason, cost_usd, ..
+        } => {
             tui::cost_summary(
                 cost_usd,
                 &format!("{}/{}", cfg.provider.id, cfg.model_id),
@@ -261,6 +266,9 @@ pub(crate) async fn drive_resumed_turn(
             engine.discard_checkpoint();
             return TurnOutcome::Aborted {
                 reason,
+                // The engine's own escalation, same as the in-turn cap: the
+                // run stopped by policy, it did not fall over (#1524).
+                kind: stella_core::AbortKind::DeliberateStop,
                 cost_usd: state.total_cost_usd(),
             };
         }
@@ -270,9 +278,17 @@ pub(crate) async fn drive_resumed_turn(
                 engine.discard_checkpoint();
                 return TurnOutcome::Completed { text, cost_usd };
             }
-            StepOutcome::Aborted { reason, cost_usd } => {
+            StepOutcome::Aborted {
+                reason,
+                kind,
+                cost_usd,
+            } => {
                 engine.discard_checkpoint();
-                return TurnOutcome::Aborted { reason, cost_usd };
+                return TurnOutcome::Aborted {
+                    reason,
+                    kind,
+                    cost_usd,
+                };
             }
         }
     }
@@ -399,6 +415,7 @@ mod tests {
             total_cost_usd: 0.0,
             calibration_model: None,
             loop_steered: false,
+            loop_steered_pattern: Vec::new(),
             transcript_rewrites: 0,
         }
     }
