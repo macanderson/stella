@@ -902,6 +902,10 @@ impl Drop for CancelUsageGuard {
             reason: stella_protocol::UsageIncompleteReason::Cancelled,
             duration_ms: self.started.elapsed().as_millis() as u64,
             retries: None,
+            // A hard cancel drops the call future mid-flight, so no adapter
+            // ever returned an error to salvage from. The server-side cost of
+            // an abandoned call stays genuinely unknowable.
+            partial: None,
         });
     }
 }

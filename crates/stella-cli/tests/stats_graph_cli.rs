@@ -7,7 +7,7 @@
 //! pool a run's workspaces into one number, persist it, and diff a later run
 //! against it with a verdict that refuses to call a health regression a win.
 //!
-//! The unit tests in `stats_graph_tests.rs` cover the arithmetic and the
+//! The unit tests in `stats_graph/tests.rs` cover the arithmetic and the
 //! grading rule. These cover the parts only the binary has: flag parsing,
 //! the pooled report, baseline files surviving a process boundary, and the
 //! exit code a benchmark job would gate on.

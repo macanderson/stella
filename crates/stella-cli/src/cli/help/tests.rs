@@ -123,7 +123,7 @@ fn session_flag_summaries_stay_one_line() {
 fn the_long_help_opens_with_the_product_not_the_source() {
     let help = long_help();
     for leak in [
-        "main_tests.rs",
+        "src/tests.rs",
         "global = true",
         "every_root_flag_is_global",
         "no_subcommand_flag_reuses_a_global_name",

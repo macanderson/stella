@@ -6,8 +6,8 @@
 //! If that test can be made to pass only by weakening it, the port has changed
 //! behavior and the migration is no longer safe to run unattended.
 
-use super::toml_config::{ConfigScope, TomlConfig, load_toml_scope};
-use super::*;
+use crate::settings::toml_config::{ConfigScope, TomlConfig, load_toml_scope};
+use crate::settings::*;
 
 fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);

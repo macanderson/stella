@@ -129,6 +129,7 @@ async function boot() {
 function wireChrome() {
   $$('.tab').forEach((tab) => tab.addEventListener('click', () => showView(tab.dataset.view)));
   $('#add-contestant').addEventListener('click', () => addSeat('stella'));
+  wireTemplates();
   $('#launch').addEventListener('click', launch);
   $('#cancel-match').addEventListener('click', cancelMatch);
   $('#select-all').addEventListener('click', () => { State.tasks.forEach((t) => State.selected.add(t.name)); renderTasks(); });
@@ -455,10 +456,11 @@ function seatPayload(seat) {
   return { id: seat.id, name: seat.name, agent: seat.agent, color: seat.color, engine, env: seat.env };
 }
 
-async function launch() {
-  const errors = $('#launch-errors');
-  errors.hidden = true;
-  const payload = {
+/* The single source of truth for "what match is currently configured".
+   Both launching and downloading a template read this, so a saved .toml can
+   never describe something other than what the Start button would run. */
+function currentMatchPayload() {
+  return {
     name: $('#match-name').value.trim() || undefined,
     dataset: State.dataset?.key,
     tasks: [...State.selected],
@@ -468,6 +470,12 @@ async function launch() {
     setup_timeout_multiplier: Number($('#setup-timeout').value) || 1,
     record_video: $('#record-video').checked,
   };
+}
+
+async function launch() {
+  const errors = $('#launch-errors');
+  errors.hidden = true;
+  const payload = currentMatchPayload();
   if (!payload.tasks.length) {
     errors.hidden = false;
     errors.textContent = 'Select at least one task.';
@@ -715,7 +723,7 @@ function renderLaneHeads(snapshot) {
       verdict.className = 'lane-verdict v-run';
       verdict.textContent = cell.status + (cell.age_s != null ? ` ${Math.round(cell.age_s)}s` : '');
     }
-    $('.lane-metrics', lane).replaceChildren(
+    $('.lane-metrics', lane).replaceChildren(...[
       el('span', {}, 'steps ', el('b', {}, String(cell.steps))),
       el('span', {}, 'tools ', el('b', {}, String(cell.tools))),
       el('span', {}, 'in ', el('b', {}, fmt.tokens(cell.tokens_in))),
@@ -723,8 +731,10 @@ function renderLaneHeads(snapshot) {
       el('span', {}, 'cache ', el('b', {}, `${fmt.tokens(cell.cache_read)}/${fmt.tokens(cell.cache_write)}`)),
       el('span', {}, 'cost ', el('b', {}, fmt.money(cell.total_cost))),
       el('span', {}, fmt.clock(cell.clock_time)),
+      // `.filter(Boolean)`: replaceChildren() stringifies a bare null into the
+      // literal text "null", which is how a metrics row read `32:10 null`.
       cell.cap_hits ? el('span', { style: 'color:var(--warn)' }, `⚠ ${cell.cap_hits} output-cap`) : null,
-    );
+    ].filter(Boolean));
 
     const videoBox = $('.lane-video', lane);
     if (cell.has_video && videoBox.hidden) {
@@ -798,3 +808,139 @@ function entryNode(entry) {
 // ---------------------------------------------------------------------- go
 
 document.addEventListener('DOMContentLoaded', boot);
+
+
+// ============================================================== templates
+//
+// A match is a document. These three controls are the whole contract:
+// design it here and take the file away, or bring a file and skip the
+// wizard entirely. The same file is what `arenabench run` executes in CI,
+// so a match designed in a browser and a match run on a schedule are not
+// two different things that have to be kept in sync.
+
+function wireTemplates() {
+  $('#start-scratch').addEventListener('click', () => {
+    $$('.start-card').forEach((c) => c.classList.remove('is-on'));
+    $('#start-scratch').classList.add('is-on');
+    $('#template-ok').hidden = true;
+    $('#template-errors').hidden = true;
+  });
+
+  $('#template-file').addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await applyTemplate(await file.text(), file.name);
+    event.target.value = '';           // let the same file be re-picked
+  });
+
+  $('#start-download').addEventListener('click', downloadTemplate);
+}
+
+async function applyTemplate(text, filename) {
+  const errors = $('#template-errors');
+  const ok = $('#template-ok');
+  errors.hidden = true; ok.hidden = true;
+  try {
+    const res = await api('/api/templates/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toml: text }),
+    });
+    if (!res.ok) {
+      errors.hidden = false;
+      errors.replaceChildren(
+        el('div', {}, `${filename} has problems:`),
+        ...res.problems.map((p) => el('div', {}, `• ${p}`)));
+      return;
+    }
+    await loadMatchIntoWizard(res.match, res.required_env);
+    $$('.start-card').forEach((c) => c.classList.remove('is-on'));
+    $('#start-upload').classList.add('is-on');
+    ok.hidden = false;
+    const needed = Object.values(res.required_env || {}).flat();
+    ok.replaceChildren(
+      el('div', {}, `loaded ${filename} — ${res.match.contestants.length} contestants, ` +
+                     `${res.match.tasks.length || 'all'} tasks`),
+      el('div', { class: 'muted', style: 'margin-top:4px' },
+         needed.length
+           ? `paste credentials for: ${[...new Set(needed)].join(', ')} — templates carry no secrets`
+           : 'no credentials declared'));
+  } catch (error) {
+    errors.hidden = false;
+    errors.textContent = String(error);
+  }
+}
+
+/* Restore a parsed template into the wizard controls, so an uploaded file is
+   a starting point you can still edit rather than an opaque blob. */
+async function loadMatchIntoWizard(match, requiredEnv) {
+  const dataset = State.datasets.find((d) => d.key === match.dataset);
+  if (dataset) await pickDataset(dataset);
+
+  State.selected = new Set(match.tasks || []);
+  renderTasks();
+
+  State.seats = (match.contestants || []).map((c, index) => {
+    const roles = {};
+    for (const [name, cfg] of Object.entries(c.engine.roles || {})) {
+      roles[name] = {
+        model: cfg.model || '',
+        effort: cfg.effort || '',
+        reasoning: cfg.reasoning === null || cfg.reasoning === undefined
+          ? '' : (cfg.reasoning ? 'on' : 'off'),
+        max_tokens: cfg.max_tokens || '',
+      };
+    }
+    return {
+      id: c.id || `seat-${index + 1}`,
+      name: c.name,
+      agent: c.agent,
+      color: c.color,
+      engine: {
+        api: c.engine.api, model: c.engine.model,
+        reasoning: c.engine.reasoning, effort: c.engine.effort,
+        base_url: c.engine.base_url || '',
+        budget_usd: c.engine.budget_usd ?? '',
+        max_tokens: c.engine.max_tokens ?? '',
+        roles,
+      },
+      env: '',                       // never from a file
+    };
+  });
+  renderSeats();
+
+  $('#match-name').value = match.name || '';
+  $('#attempts').value = match.attempts || 1;
+  $('#concurrency').value = match.concurrency || 1;
+  $('#record-video').checked = !!match.record_video;
+  const setup = $('#setup-timeout');
+  if (setup) setup.value = match.setup_timeout_multiplier || 1;
+
+  $('#step-tasks').hidden = false;
+  $('#step-contestants').hidden = false;
+  $('#step-launch').hidden = false;
+}
+
+async function downloadTemplate() {
+  const errors = $('#template-errors');
+  errors.hidden = true;
+  try {
+    const { toml } = await api('/api/templates/render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(currentMatchPayload()),
+    });
+    const blob = new Blob([toml], { type: 'application/toml' });
+    const url = URL.createObjectURL(blob);
+    const a = el('a', {
+      href: url,
+      download: `${(($('#match-name').value || 'match').trim() || 'match')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}.toml`,
+    });
+    document.body.append(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    errors.hidden = false;
+    errors.textContent = String(error);
+  }
+}

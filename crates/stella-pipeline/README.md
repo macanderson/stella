@@ -75,10 +75,8 @@ module under [`src/pipeline/tests/`](src/pipeline/tests) rather than in
 [`src/pipeline/tests.rs`](src/pipeline/tests.rs), which keeps only the shared fakes;
 and code you touch in either file is a candidate to extract.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/pipeline.rs`](src/pipeline.rs) | 3691 |
-| [`src/pipeline/tests.rs`](src/pipeline/tests.rs) | 2621 |
+- [`src/pipeline.rs`](src/pipeline.rs)
+- [`src/pipeline/tests.rs`](src/pipeline/tests.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a reviewable
 baseline diff justified like any other change — treat it as an escape hatch for an

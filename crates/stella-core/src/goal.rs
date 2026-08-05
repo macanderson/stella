@@ -510,7 +510,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let mut script = self.script.lock().unwrap();
             if script.is_empty() {
-                return Err(ProviderError::Transport("script exhausted".into()));
+                return Err(ProviderError::transport("script exhausted"));
             }
             script.remove(0)
         }

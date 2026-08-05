@@ -795,5 +795,4 @@ fn report(
 }
 
 #[cfg(test)]
-#[path = "dataset_cmd/tests.rs"]
 mod tests;

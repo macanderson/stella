@@ -883,5 +883,4 @@ fn render_report(format: StatsFormat, health: &GraphHealth) -> Result<(), String
 }
 
 #[cfg(test)]
-#[path = "stats_graph_tests.rs"]
-mod stats_graph_tests;
+mod tests;

@@ -211,5 +211,4 @@ fn keep_reason_label(reason: &KeepReason) -> String {
 }
 
 #[cfg(test)]
-#[path = "compare/tests.rs"]
 mod tests;

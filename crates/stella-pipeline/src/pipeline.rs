@@ -64,7 +64,7 @@ use crate::candidate::{
 };
 use crate::candidate_fanout::fan_out_width;
 use crate::candidate_narration::{
-    candidate_fanout_notice, candidate_start_notice, candidate_winner_notice,
+    self, candidate_fanout_notice, candidate_start_notice, candidate_winner_notice,
 };
 use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
@@ -2080,7 +2080,7 @@ impl<'a> Pipeline<'a> {
         let untracked_before = surface.repo_status.untracked_fingerprints().await;
 
         let mut state = CandidateState {
-            messages: crate::candidate_narration::messages_rooted_at(base_messages, surface.cwd),
+            messages: candidate_narration::messages_rooted_at(base_messages, surface.workspace),
             final_text: String::new(),
             file_changes: 0,
             mutating_actions: 0,

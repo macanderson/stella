@@ -1,3 +1,7 @@
+mod private_state;
+mod quarantine;
+mod usage_completeness;
+
 use super::*;
 
 #[test]

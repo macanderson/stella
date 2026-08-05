@@ -1939,6 +1939,11 @@ impl<'a> Engine<'a> {
                     reason: stella_protocol::UsageIncompleteReason::ProviderError,
                     duration_ms: attempt_duration.as_millis() as u64,
                     retries: Some(attempt.saturating_sub(1)),
+                    // Whatever the adapter salvaged from the dying stream.
+                    // This observer is the only place it can be read: retry.rs
+                    // returns history only for calls that COMMIT, so a doomed
+                    // attempt's accounting reaches the wire here or nowhere.
+                    partial: error.partial_usage().copied(),
                 });
             },
         )

@@ -43,14 +43,8 @@ mod managed;
 mod merge;
 pub(crate) mod migrate;
 mod private;
-#[cfg(test)]
-#[path = "settings/private_state_tests.rs"]
-mod private_state_tests;
 mod toml_config;
 mod toml_io;
-#[cfg(test)]
-#[path = "settings/toml_tests.rs"]
-mod toml_tests;
 mod unknown;
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 pub use toml_config::ConfigScope;

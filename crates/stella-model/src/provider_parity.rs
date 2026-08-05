@@ -250,10 +250,13 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
     (
         "zai",
         ReasoningPosture::Controllable {
-            mechanism: "GLM thinking object ({type: enabled|disabled}) — an on/off switch, so \
-                        `reasoning` is honored but `effort` has no dial (effort_levels returns \
-                        empty for zai)",
-            witness: "zai_identity_maps_reasoning_to_glm_thinking_object",
+            mechanism: "GLM thinking object ({type: enabled|disabled}) for on/off, PLUS the \
+                        top-level reasoning_effort (low/medium/high) for depth — verified \
+                        accepted and honored by glm-5.2 on 2026-08-04. `minimal` is reachable \
+                        only via the off switch, never from an effort tier: it returns zero \
+                        reasoning tokens. A caller who pins no effort still sends no field, so \
+                        the model keeps its own default depth",
+            witness: "zai_identity_maps_pinned_effort_to_reasoning_effort",
         },
     ),
     (
@@ -307,7 +310,7 @@ mod tests {
     /// is a false alarm rather than the rotted proof it exists to catch. The
     /// parent `tests.rs` is over the file-size ratchet, so those splits keep
     /// happening — the list has to follow them.
-    fn adapter_sources() -> [&'static str; 12] {
+    fn adapter_sources() -> [&'static str; 13] {
         [
             include_str!("anthropic/tests.rs"),
             include_str!("anthropic/tests/thinking.rs"),
@@ -316,11 +319,12 @@ mod tests {
             include_str!("gemini/tests.rs"),
             include_str!("vertex.rs"),
             include_str!("zai/tests.rs"),
-            include_str!("zai/tests/error_classify_tests.rs"),
-            include_str!("zai/tests/openrouter_effort_tests.rs"),
-            include_str!("zai/tests/openrouter_stream_tests.rs"),
-            include_str!("zai/tests/stream_frame_tests.rs"),
-            include_str!("zai/vision_tests.rs"),
+            include_str!("zai/tests/error_classify.rs"),
+            include_str!("zai/tests/openrouter_effort.rs"),
+            include_str!("zai/tests/openrouter_stream.rs"),
+            include_str!("zai/tests/stream_frame.rs"),
+            include_str!("zai/tests/vision.rs"),
+            include_str!("zai/tests/zai_effort.rs"),
         ]
     }
 

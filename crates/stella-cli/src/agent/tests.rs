@@ -1473,13 +1473,10 @@ fn remaining_budget_tracks_session_headroom() {
     assert_eq!(remaining_budget(&build_budget_guard(None)), None);
 }
 
-#[path = "agent_tests/usage_completeness.rs"]
 mod usage_completeness;
 
-#[path = "agent_tests/engine_wiring.rs"]
 mod engine_wiring;
 
-#[path = "agent_tests/code_graph.rs"]
 mod code_graph;
 
 /// Issue #644: the machine-readable envelope declares its contract version, and

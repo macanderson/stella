@@ -1,7 +1,7 @@
 //! The code-graph build cluster's reporting surface: what `stella init`'s
 //! summary line says about the files the indexer left out.
 //!
-//! Split out of `agent_tests.rs` when it grew past its file-size ceiling
+//! Split out of `agent/tests.rs` when it grew past its file-size ceiling
 //! (#629) — the guard's rule is that new code goes in its own module rather
 //! than onto the end of an already-oversized file, and the issue #940
 //! size-limit tests below were the growth that tripped it. The whole

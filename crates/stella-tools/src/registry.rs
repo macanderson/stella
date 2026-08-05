@@ -17,7 +17,10 @@ use crate::file_touch::{
     normalize_workspace_path,
 };
 
+mod belief;
 mod process_tools;
+
+use belief::{Belief, Coverage};
 
 /// One tool the agent can call. Input arrives as the model-produced JSON;
 /// output is always a typed `ToolOutput` (never a bare string).
@@ -105,7 +108,11 @@ pub struct ToolRegistry {
     /// just changed using a plan A's content no longer justifies. Waiting is
     /// also the wrong cost model for an agent — being told "that moved, read
     /// it again" is a cheap retry, where blocking burns a turn.
-    observed: std::sync::Mutex<HashMap<String, String>>,
+    ///
+    /// Each entry also carries HOW MUCH of that content the agent actually
+    /// saw ([`Coverage`]), which decides what a later partial read is allowed
+    /// to do to it — see [`Self::remember_observed`].
+    observed: std::sync::Mutex<HashMap<String, Belief>>,
     /// The session's durable record, once a host attaches one. Absent — the
     /// default — leaves every existing caller behaving exactly as before.
     ///
@@ -124,6 +131,12 @@ pub struct ToolRegistry {
     /// mid-execution, so [`ToolRegistry::classify_file_op`] cannot see it in
     /// the input the way it sees `read_file`'s `path`.
     span_reads: crate::read_symbol::SpanReadLedger,
+    /// The read-state ledger shared with `read_file`/`read_symbol`/`edit_file`/
+    /// `write_file`, held here for one question only: did a read actually show
+    /// the model the whole file? That answer is the [`Coverage`] grade
+    /// [`Self::record_touch`] hands to [`Self::remember_observed`], which
+    /// decides what the read may do to an existing belief.
+    read_ledger: Arc<crate::read::ReadLedger>,
     /// The workspace before-image for the turn in flight, when one was taken
     /// ([`ToolRegistry::begin_workspace_probe`]). `None` before the first
     /// bracket, and `None` for every host that never brackets one — which is
@@ -524,6 +537,7 @@ impl ToolRegistry {
             observed: std::sync::Mutex::new(HashMap::new()),
             work_journal: std::sync::RwLock::new(None),
             span_reads,
+            read_ledger,
             workspace_probe: std::sync::Mutex::new(None),
             authored: std::sync::Mutex::new(crate::authored_diff::AuthoredDiffLedger::default()),
             turn_bracketing: std::sync::atomic::AtomicBool::new(false),
@@ -1662,25 +1676,6 @@ impl ToolRegistry {
         Some(PendingTouch { path, op })
     }
 
-    /// Record what this session now knows `path` to hold, hashed from disk.
-    ///
-    /// Called for every successful touch, reads included: a read is how an
-    /// agent acquires the belief a later write acts on, so it is exactly as
-    /// load-bearing here as a write. A path that no longer exists drops its
-    /// entry — after a delete there is nothing left to clobber, and the next
-    /// agent to create the file is starting fresh rather than overwriting.
-    fn remember_observed(&self, path: &str) {
-        let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
-        match crate::rootfd::read_confined_bytes(&self.root, path) {
-            Some(bytes) => {
-                observed.insert(path.to_string(), crate::staleness::hex_sha256(&bytes));
-            }
-            None => {
-                observed.remove(path);
-            }
-        }
-    }
-
     /// This session's staleness map as JSON, for a durable host to persist.
     ///
     /// `BTreeMap`, so the bytes are a pure function of the contents: this is
@@ -1696,9 +1691,9 @@ impl ToolRegistry {
         if observed.is_empty() {
             return None;
         }
-        let ordered: std::collections::BTreeMap<&str, &str> = observed
+        let ordered: std::collections::BTreeMap<&str, String> = observed
             .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .map(|(k, v)| (k.as_str(), v.encode()))
             .collect();
         serde_json::to_string(&ordered).ok()
     }
@@ -1720,6 +1715,10 @@ impl ToolRegistry {
         let Ok(restored) = serde_json::from_str::<HashMap<String, String>>(json) else {
             return 0;
         };
+        let restored: HashMap<String, Belief> = restored
+            .into_iter()
+            .map(|(path, encoded)| (path, Belief::decode(&encoded)))
+            .collect();
         let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
         // REPLACE, never merge. The restored map is this session's complete
         // belief about the tree, and the deck reuses one registry across a
@@ -1755,7 +1754,7 @@ impl ToolRegistry {
             .filter(|p| {
                 observed.get(&p.path).is_some_and(|seen| {
                     crate::rootfd::read_confined_bytes(&self.root, &p.path)
-                        .is_some_and(|bytes| crate::staleness::hex_sha256(&bytes) != *seen)
+                        .is_some_and(|bytes| crate::staleness::hex_sha256(&bytes) != seen.sha256)
                 })
             })
             .map(|p| p.path.clone())
@@ -1839,7 +1838,21 @@ impl ToolRegistry {
         // here can fail or return early: the ledger is telemetry, but this is
         // the guarantee, and a touch whose digest went unrecorded would leave
         // the NEXT write to this path unguarded.
-        self.remember_observed(&pending.path);
+        //
+        // A read earns the WHOLE-file grade only if it showed the model every
+        // line: `read_file` defaults to a 2000-line window and `read_symbol`
+        // reads a span, so the partial case is the common one. A mutation
+        // always earns it — the agent authored what it just wrote, so there is
+        // no unseen remainder to be wrong about. What a partial read may then
+        // do to an existing belief is `remember_observed`'s rule.
+        let coverage = if !matches!(pending.op, FileOp::Read)
+            || self.read_ledger.saw_whole_file(&self.root, &pending.path)
+        {
+            Coverage::Whole
+        } else {
+            Coverage::Partial
+        };
+        self.remember_observed(&pending.path, coverage);
         let reason = input
             .get("reason")
             .and_then(|v| v.as_str())
@@ -2301,26 +2314,5 @@ impl ToolExecutor for ToolRegistry {
     }
 }
 
-#[cfg(all(test, unix))]
-#[path = "registry/private_state_tests.rs"]
-mod private_state_tests;
-
-#[cfg(test)]
-#[path = "registry/fence_tests.rs"]
-mod fence_tests;
-
-#[cfg(test)]
-#[path = "registry/gate_batch_tests.rs"]
-mod gate_batch_tests;
-
-#[cfg(test)]
-#[path = "registry/file_change_tests.rs"]
-mod file_change_tests;
-
-// No `#[path]` here, unlike the four single-file siblings above: this one has
-// child modules of its own (`registry/tests/*.rs`), and an explicit `#[path]`
-// on the parent makes rustc resolve those children against `registry/` rather
-// than `registry/tests/`. Plain `mod tests;` resolves to `registry/tests.rs`
-// and its children to `registry/tests/`, which is what the layout wants.
 #[cfg(test)]
 mod tests;

@@ -83,12 +83,10 @@ visible in files `adapter_sources()`
 moves witnesses into a new file fails the witness checks until that list gains
 the file.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/anthropic/tests.rs`](src/anthropic/tests.rs) | 1677 |
-| [`src/openai.rs`](src/openai.rs) | 2072 |
-| [`src/zai.rs`](src/zai.rs) | 1572 |
-| [`src/zai/tests.rs`](src/zai/tests.rs) | 1843 |
+- [`src/anthropic/tests.rs`](src/anthropic/tests.rs)
+- [`src/openai.rs`](src/openai.rs)
+- [`src/zai.rs`](src/zai.rs)
+- [`src/zai/tests.rs`](src/zai/tests.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an
@@ -101,7 +99,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate map (read this first) and the public re-exports: `Provider`, `Catalog`, `ApiKey`, the cache-economics helpers. |
 | [`src/provider.rs`](src/provider.rs) | Two-line re-export of the port. Open it to be reminded where the trait actually lives. |
-| [`src/zai.rs`](src/zai.rs) (+ [`src/zai/tests.rs`](src/zai/tests.rs), [`src/zai/tests/error_classify_tests.rs`](src/zai/tests/error_classify_tests.rs)) | The shared OpenAI Chat Completions adapter. One adapter serving Z.ai/GLM, xAI, DeepSeek, OpenRouter, `local`, and settings-defined gateways; per-identity behavior (OpenRouter's root `cache_control` + sticky `session_id`, GLM's `thinking`, xAI's `reasoning_effort`) is gated on `self.id` inside it. |
+| [`src/zai.rs`](src/zai.rs) (+ [`src/zai/tests.rs`](src/zai/tests.rs), [`src/zai/tests/error_classify.rs`](src/zai/tests/error_classify.rs)) | The shared OpenAI Chat Completions adapter. One adapter serving Z.ai/GLM, xAI, DeepSeek, OpenRouter, `local`, and settings-defined gateways; per-identity behavior (OpenRouter's root `cache_control` + sticky `session_id`, GLM's `thinking`, xAI's `reasoning_effort`) is gated on `self.id` inside it. |
 | [`src/anthropic.rs`](src/anthropic.rs) (+ [`src/anthropic/tests.rs`](src/anthropic/tests.rs)), [`src/openai.rs`](src/openai.rs), [`src/gemini.rs`](src/gemini.rs), [`src/vertex.rs`](src/vertex.rs), [`src/bedrock.rs`](src/bedrock.rs) | One adapter per structurally distinct wire dialect: Messages API, Responses API, `generateContent` (direct and Vertex's project-scoped enterprise path, sharing wire types and the stream aggregator), Bedrock Converse. All follow the same shape — `new(ApiKey, model)` capturing catalog pricing, `with_base_url`, `http::client()`, `SseDecoder`, `http::classify_http_status`, `impl Provider` (plus `complete_observed`, the mid-stream tool-call announcement the engine speculates on — every streaming adapter implements it; Bedrock inherits the no-op default). Open the one whose vendor you are debugging. |
 | [`src/catalog.rs`](src/catalog.rs) | `Catalog`, `CatalogEntry`, `Pricing`, `ToolDialect`, and the compile-time seed. The only sanctioned slug → model resolution. |
 | [`src/credential.rs`](src/credential.rs) (+ [`src/credential/aux.rs`](src/credential/aux.rs)) | `ApiKey` (the non-`Display` secret wrapper), the flag → env → file → prompt chain, `CredentialsFile` (keys *and* the `[credential_fields.<provider>]` companions), the multi-variable resolvers `VertexAddressing` / `BedrockCredentials`, and `AuxCredentials` — the redacting, zeroizing set a host uses to carry the values a provider needs beyond one key (Bedrock's secret access key, session token, and region). |

@@ -2,8 +2,8 @@
 //! index already knows about is refused unless the caller declares intent.
 //!
 //! Shares `seeded_snapshot` with the parent module, which also lends it to
-//! `registry::gate_batch_tests` — so the fixture stays there and this module
-//! reaches it through `use super::*`.
+//! the sibling `gate_batch` — so the fixture stays there and both modules
+//! reach it through `use super::*`.
 
 use super::*;
 

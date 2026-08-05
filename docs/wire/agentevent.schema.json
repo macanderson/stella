@@ -194,6 +194,47 @@
       ],
       "type": "object"
     },
+    "CompletionUsage": {
+      "description": "Token accounting for a single completion, normalized across providers\ninto one envelope: normalization lives in the adapter, not the caller.",
+      "properties": {
+        "cache_write_tokens": {
+          "default": 0,
+          "description": "Tokens WRITTEN to the provider's prompt cache by this call\n(Anthropic `cache_creation_input_tokens`, Bedrock\n`cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a\nsubset of `input_tokens` — providers report writes separately, and\nfolding them into `input_tokens` would change cost accounting\n(`Pricing::cost_usd` bills them on their own line at the catalog's\n`cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers\nthat never report cache writes (the OpenAI-compatible dialects).\n`serde(default)` so envelopes serialized before this field existed\nstill parse.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cached_input_tokens": {
+          "default": 0,
+          "description": "The subset of `input_tokens` served from the provider's prompt cache\n— billed at the cache-read rate, not the input rate. 0 for providers\nthat never report a cache hit.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "input_tokens": {
+          "description": "Tokens the prompt cost, cache hits included.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_tokens": {
+          "description": "Tokens the model generated.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reported": {
+          "default": false,
+          "description": "The adapter observed the provider's authoritative usage-bearing\nterminal response. This is explicit because a legitimate call can\nreport all zero counters, while a missing usage frame can accompany\nnon-empty streamed text. Legacy envelopes fail closed.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens"
+      ],
+      "type": "object"
+    },
     "ContextFrameRef": {
       "description": "A context frame as cited in a `ContextRecall` event. `citation_label`\nis mandatory and human-readable; the raw `id` (when the frame is\nmaterialized at all) belongs only in inspectable detail views, never as\nthe primary identifier (L-C4).",
       "properties": {
@@ -819,6 +860,30 @@
       "required": [
         "tree",
         "passed"
+      ],
+      "type": "object"
+    },
+    "PartialUsage": {
+      "description": "The accounting an adapter had already observed when an attempt died before\nits terminal usage frame arrived.\n\nA mid-stream disconnect is not a total loss of accounting. The\nAnthropic-shaped dialects report the prompt's cost in `message_start`,\ninside the first few hundred bytes of the response, so a stream cut during\ngeneration has *already* delivered exact input, cache-read and cache-write\ncounts. Before this type existed those numbers travelled exactly as far as\nthe adapter's stack frame: [`crate::error::ProviderError`] carried a\n`String` and nothing else, the `?` on the next chunk dropped the whole\nenvelope, and the turn was recorded as though the attempt had cost nothing.\nA user watching a dropped connection was told their accounting was\n\"incomplete\" for numbers the process had been holding a moment earlier.\n\nEvery field is a LOWER BOUND, and that is the point: it is a floor under\nreal spend, never a substitute for a provider-attested total. `reported`\non the inner [`CompletionUsage`] is therefore always `false`, which keeps a\npartial structurally unable to pass [`CompletionUsage::is_complete`] and so\nout of the settled-accounting path no matter how complete it looks.",
+      "properties": {
+        "cost_usd": {
+          "description": "`usage` priced at the serving model's catalog rates, or `0.0` when the\nadapter had no pricing row for the model. Never provider-attested.",
+          "format": "double",
+          "type": "number"
+        },
+        "input_reported": {
+          "default": false,
+          "description": "Whether the input-side counts came from the provider's own frame\nrather than a local estimate. `true` is the common case for\nAnthropic-shaped streams and `false` for the OpenAI-shaped ones, which\nsend usage only at the end — the distinction a reader needs before\ntreating `usage.input_tokens` as fact.",
+          "type": "boolean"
+        },
+        "usage": {
+          "$ref": "#/$defs/CompletionUsage",
+          "description": "Counts observed before the failure. Input-side figures are the\nprovider's own when the dialect front-loads them; `output_tokens` is\nwhatever the last usage frame stated, or an estimate over the text\nthat actually arrived when no such frame did."
+        }
+      },
+      "required": [
+        "usage",
+        "cost_usd"
       ],
       "type": "object"
     },
@@ -2164,6 +2229,17 @@
         },
         "model": {
           "type": "string"
+        },
+        "partial": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Accounting the adapter had already observed when the attempt died.\n\n\"Incomplete\" is not the same as \"unknown\", and this field is the\ndifference. A stream cut mid-answer has usually already been told\nwhat the prompt cost, so `Some` here turns a bare warning into a\nnumber: how much of this attempt we can actually account for.\n`None` is the honest answer for a failure that learned nothing —\na connect timeout, a cancelled call, a 5xx with no stream.\n\nToken counts are content-free, so carrying them keeps this event\ninside its no-prompts-no-bodies contract."
         },
         "provider": {
           "type": "string"

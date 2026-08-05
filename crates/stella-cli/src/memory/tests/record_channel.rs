@@ -5,7 +5,7 @@
 //! different seam — not what recall *renders*, but which sessions are wired to
 //! receive it at all. That distinction is the whole bug these pin (epic #897).
 
-use super::*;
+use crate::memory::*;
 
 /// A `may` record planted in the workspace, on the volatile channel by force.
 fn plant_volatile_record(root: &std::path::Path) {

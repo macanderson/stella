@@ -66,7 +66,8 @@ pub use attachment::{
 pub use cache::CacheCause;
 pub use completion::{
     CompletionMessage, CompletionRequest, CompletionRequestRef, CompletionResult, CompletionUsage,
-    FinishReason, GenerationParams, MessageRole, ReasoningEffort, ServiceTier, Verbosity,
+    FinishReason, GenerationParams, MessageRole, PartialUsage, ReasoningEffort, ServiceTier,
+    Verbosity,
 };
 pub use context_event::{CompiledContextFrameBuilt, LifecycleEvent, LifecycleEventEnvelope};
 pub use error::ProviderError;

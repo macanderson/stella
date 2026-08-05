@@ -20,6 +20,134 @@ Zero Python dependencies. No build step. The whole client is three files.
 
 ---
 
+## Commands
+
+Everything below is `arenabench <verb>`. `serve` is for exploring; `run` is how
+a match becomes repeatable.
+
+### Kick off a match from the browser
+
+```bash
+arenabench serve                    # -> http://127.0.0.1:8900
+arenabench serve --port 8930 --no-browser
+```
+
+Then: **new run → set up from scratch** (or load a template) → pick the
+benchmark → check tasks → seat contestants → **start the match**.
+
+### Kick off a match from a file (CI)
+
+```bash
+arenabench template -o matches/glm-headtohead.toml   # starter file to edit
+arenabench run matches/glm-headtohead.toml           # run it, no browser
+arenabench run matches/glm-headtohead.toml --progress --results out.json
+```
+
+`run` reads each seat's credentials from the **process environment** against
+the `required` list the template declares, and refuses to start if one is
+missing — an unauthenticated arm scores zero, and a zero is indistinguishable
+from a real result on a scoreboard. Override with `--allow-missing-env` if you
+genuinely mean it.
+
+```yaml
+# .github/workflows/bench.yml
+- run: arenabench run matches/nightly.toml --results results.json
+  env:
+    OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+### Prepare the host
+
+```bash
+arenabench datasets                             # what's registered / fetched
+harbor download terminal-bench/terminal-bench-2-1@sha256:7d7bdc...
+arenabench tasks terminal-bench-2.1             # list them
+arenabench tasks terminal-bench-2.1 --random 5 --exclude-heavy
+arenabench agents                               # who can compete
+arenabench build-recorder                       # one-time, for MP4 capture
+./scripts/setup-terminal-bench.sh               # all of the above, checked
+```
+
+### Free smoke test — no key, no spend
+
+Seat `oracle` (applies the reference solution — a 100% ceiling) against `nop`
+(does nothing — a 0% floor). Neither makes a model call, so the whole arena
+works end to end for $0.
+
+---
+
+## `arenabench.toml` — a match as a document
+
+A match is otherwise something you assemble in a browser and lose. The TOML
+form makes it readable, diffable, committable, and runnable without a UI.
+
+Download one from the setup screen (**download this match**), or generate a
+starter with `arenabench template`. Upload one to skip the wizard entirely.
+
+```toml
+[match]
+name = "glm5.2 head-to-head"
+dataset = "terminal-bench-2.1"
+tasks = ["fix-git", "regex-log"]     # empty = the whole dataset
+attempts = 1
+concurrency = 1                      # trials PER CONTESTANT (~2GB each)
+record_video = true
+setup_timeout_multiplier = 6.0       # agents that npm-install need > 1
+
+[[contestant]]
+id = "stella"
+name = "Stella"
+agent = "stella"
+
+  [contestant.engine]
+  api = "openrouter"
+  model = "z-ai/glm-5.2"
+  effort = "medium"
+  max_tokens = 128000
+  budget_usd = 6.0
+
+    [contestant.engine.roles.verifier]     # checks the worker's output
+    model = "openai/gpt-5.5"               # a different family = independent
+    effort = "xhigh"
+
+    [contestant.engine.roles.triage]
+    model = "z-ai/glm-4.7-flash"
+    effort = "low"
+
+  [contestant.env]
+  required = ["OPENROUTER_API_KEY"]        # NAMES only — never values
+
+[[contestant]]
+id = "claude-code"
+name = "Claude Code"
+agent = "claude-code"
+
+  [contestant.engine]
+  api = "openrouter"
+  model = "z-ai/glm-5.2"                   # same worker model as Stella
+  effort = "medium"
+  base_url = "https://openrouter.ai/api/v1"   # Anthropic-shaped endpoint
+
+  [contestant.env]
+  required = ["OPENROUTER_API_KEY"]
+```
+
+**Templates never contain secrets.** A seat declares the variables it needs by
+name; values arrive from the environment at launch. That is what makes the file
+safe to commit.
+
+**`verifier` here is Stella's internal judge role** — the one that checks its
+own work. It is *not* the benchmark's verifier, which is Harbor's and decides
+the reward. The file uses `verifier`; the Stella wire key stays
+`pipeline_judge_model`.
+
+**Seating one agent on another vendor's model.** Set `base_url` and the runner
+routes that seat there — Claude Code reads `ANTHROPIC_BASE_URL`, and because
+OpenRouter serves an Anthropic-shaped `/v1/messages`, both arms above hit one
+endpoint with one key. Same provider, same quota, no routing confound.
+
+---
+
 ## What it does
 
 **One benchmark run, N contestants.** A *contestant* is an agent plus an engine

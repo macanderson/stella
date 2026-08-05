@@ -36,10 +36,10 @@ use stella_core::skills::{self, SelectionConfig, Skill};
 
 use crate::domains::Domains;
 
-// Reached only through `use super::*` in the sibling test modules
-// (`memory/tests.rs`, `memory/quarantine_tests.rs`): the code that used
-// these moved to `memory/recall.rs` and `memory/learning.rs`, the tests
-// deliberately did not.
+// Reached only through the glob import in the test modules
+// (`memory/tests.rs` and its children): the code that used these moved to
+// `memory/recall.rs` and `memory/learning.rs`, the tests deliberately did
+// not.
 #[cfg(test)]
 use stella_context::MemoryInput;
 #[cfg(test)]
@@ -47,10 +47,6 @@ use stella_pipeline::{ContextRecallPort, RecalledFrame};
 #[cfg(test)]
 use stella_protocol::{CompletionMessage, MessageRole};
 
-// #1221: the A/B recall control — its durable schedule, what a control turn
-// suppresses, and the attribution that separates the arms afterwards.
-#[cfg(test)]
-mod ab_control_tests;
 // Which files a memory is about — shared by the reflection write path and by
 // `stella memory validate`, which must agree on what counts as an anchor.
 pub(crate) mod anchors;
@@ -70,18 +66,11 @@ pub(crate) mod observations;
 mod private_state;
 mod projection;
 pub(crate) mod proposals;
-#[cfg(test)]
-mod quarantine_tests;
 mod recall;
-// Which sessions actually receive the volatile record channel — a separate
-// question from what recall renders, and the one that went unasked (epic #897).
-#[cfg(test)]
-mod record_channel_tests;
 // Phase 4 (#715): reversible retirement of context that stops helping.
 pub(crate) mod retirement;
 pub(crate) mod rules_mining;
 pub(crate) mod self_tuning;
-#[path = "memory/skills.rs"]
 mod skill_files;
 mod suppression;
 pub(crate) mod tuning;
@@ -663,7 +652,5 @@ pub(crate) fn unix_now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-#[cfg(test)]
-mod path_token_tests;
 #[cfg(test)]
 mod tests;

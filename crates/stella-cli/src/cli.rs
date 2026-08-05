@@ -63,14 +63,14 @@ pub(crate) struct Cli {
 // naturally type it (`stella fleet … --budget 5` dies with "unexpected
 // argument"). `global = true` registers the flag with every subcommand,
 // making both positions valid. The invariant is machine-enforced by
-// `every_root_flag_is_global` in main_tests.rs — a new field without the
+// `every_root_flag_is_global` in src/tests.rs — a new field without the
 // attribute fails the suite, not a user's shell.
 //
 // The names here are reserved CLI-wide: a subcommand flag reusing one
 // does not shadow cleanly — clap propagates the global's value slot into
 // every subcommand, and the id collision panics at match time in debug
 // builds and misbinds in release. `no_subcommand_flag_reuses_a_global_name`
-// in main_tests.rs enforces uniqueness (it is why `connect linear` pastes
+// in src/tests.rs enforces uniqueness (it is why `connect linear` pastes
 // a key via `--paste-key`, not `--api-key`).
 /// Session-wide flags shared by every subcommand — model routing,
 /// credentials, output shape, spend limit, UI toggles.

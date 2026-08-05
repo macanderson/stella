@@ -610,6 +610,19 @@ pub enum AgentEvent {
         duration_ms: u64,
         /// Number of retries completed before the failure, when known.
         retries: Option<u32>,
+        /// Accounting the adapter had already observed when the attempt died.
+        ///
+        /// "Incomplete" is not the same as "unknown", and this field is the
+        /// difference. A stream cut mid-answer has usually already been told
+        /// what the prompt cost, so `Some` here turns a bare warning into a
+        /// number: how much of this attempt we can actually account for.
+        /// `None` is the honest answer for a failure that learned nothing —
+        /// a connect timeout, a cancelled call, a 5xx with no stream.
+        ///
+        /// Token counts are content-free, so carrying them keeps this event
+        /// inside its no-prompts-no-bodies contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        partial: Option<crate::completion::PartialUsage>,
     },
     /// A verifier model's assessment of a goal-driven loop after one working
     /// round. `met == true` ends the loop; `met == false` feeds `reasoning`
@@ -2727,6 +2740,7 @@ mod tests {
                 reason: UsageIncompleteReason::Timeout,
                 duration_ms: 1,
                 retries: None,
+                partial: None,
             },
             AgentEvent::GoalVerdict {
                 round: 1,

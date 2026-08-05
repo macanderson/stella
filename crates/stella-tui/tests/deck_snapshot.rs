@@ -76,13 +76,15 @@ fn deck_renders_every_tab_with_real_content() {
     }
 
     // The redesigned chrome, on the same scripted session (D1/D2/D5): the
-    // four-zone statline, the unified stage stepper, and the nested
+    // two-row labeled statline, the unified stage stepper, and the nested
     // subagent rows under the lead's header.
     let session = render_tab(&model, DeckTab::Session, 190, 44);
     for needle in [
-        "✦",         // statline zone A brand glyph
-        "ctx ",      // zone B resource meter
-        "run $",     // zone C money
+        "MODEL",     // the statline's leading cell
+        "CONTEXT",   // a micro-label on the statline's upper row…
+        "/200k",     // …over its value on the lower row
+        "SPEND",     // the session money cell
+        "MODELS",    // the always-on pins row beneath the pair
         "✓ plan",    // stepper: completed stage
         "▸ execute", // stepper: active stage beside the track
         "◆",         // a nested subagent's identity mark
