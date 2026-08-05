@@ -445,13 +445,17 @@ earlier revision of this table mislabeled the `max`-era digests as the
 `xhigh`/32000 ones for three models; both prior generations are shown below,
 each re-verified by recomputing the exact posture variant.)
 
+Model strings are exact, for the reason 8.4.4 spells out: the digest hashes the
+string, so four of these rows are `openrouter/`-prefixed and the fifth is not,
+and an abbreviated label makes a row impossible to recompute.
+
 | model | was (`max`, uncapped) | was (`xhigh`, 32000) | now (`xhigh`, 64000) |
 |---|---|---|---|
-| deepseek-v4-pro | `0de2116f…` | `4249a1f9…` | `9d7ad135…` |
-| z-ai/glm-5.2 | `a0ab8a75…` | `b906090c…` | `7e9da633…` |
-| x-ai/grok-4.5 | `ff61cb06…` | `a1b0df58…` | `19c4d345…` |
-| z-ai/glm-5.1 | `f15536e5…` | `b80a9d06…` | `8530a36f…` |
-| anthropic/claude-sonnet-5 | `5176b46b…` | `55c6ef4c…` | `3c428a22…` |
+| `openrouter/deepseek/deepseek-v4-pro` | `0de2116f…` | `4249a1f9…` | `9d7ad135…` |
+| `openrouter/z-ai/glm-5.2` | `a0ab8a75…` | `b906090c…` | `7e9da633…` |
+| `openrouter/x-ai/grok-4.5` | `ff61cb06…` | `a1b0df58…` | `19c4d345…` |
+| `openrouter/z-ai/glm-5.1` | `f15536e5…` | `b80a9d06…` | `8530a36f…` |
+| `anthropic/claude-sonnet-5` | `5176b46b…` | `55c6ef4c…` | `3c428a22…` |
 
 Runs published under the 32000 posture remain described by the 8.4.1 table.
 The registered tables in the protocol and the analyzer README carry the new
