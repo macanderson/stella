@@ -684,6 +684,22 @@ impl Follower {
         Ok(moved)
     }
 
+    /// Relay everything currently written, however many pumps that takes.
+    ///
+    /// This is what every *terminal* read must use — the raw-sweep half of
+    /// [`Self::pump`] is bounded by [`super::Tail::pump`]'s chunk, so a single
+    /// pump where the run has just ended can show the first chunk of what is
+    /// left and silently drop the rest. And the rest, at that moment, is the
+    /// run's answer.
+    pub(crate) fn drain(
+        &mut self,
+        out: &mut impl Write,
+        err: &mut impl Write,
+    ) -> Result<(), String> {
+        while self.pump(out, err)? > 0 {}
+        Ok(())
+    }
+
     fn stream_mut(&mut self, stream: Stream) -> &mut FollowedStream {
         match stream {
             Stream::Stdout => &mut self.out,

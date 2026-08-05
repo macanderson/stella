@@ -234,18 +234,16 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
         "every holder of the lock — `sh` AND the `sleep` it spawned — must be gone"
     );
 
-    // Reap the leader before probing the group. An exited-but-unreaped child
+    // Reap the leader before probing the group: an exited-but-unreaped child
     // is a zombie, and a zombie stays IN its process group until it is reaped
     // — on Linux `kill(-pgid, 0)` on a group containing only a zombie returns
     // success, so this assertion would fail there while passing on macOS,
-    // whose `killpg` skips zombies. Nothing about the code under test differs
-    // between the two; only whether this test tells the truth.
+    // whose `killpg` skips zombies.
     let _ = run.child.wait();
-    // The TERM'd `sleep` is out of that wait's reach: it was orphaned when
-    // `sh` died, so only PID 1 can reap it — and until it does, it still
-    // answers a group probe. launchd reaps before the next statement on a
-    // laptop; a CI container's init can lose that race, which is a fact
-    // about reap latency, not about `stop`.
+    // The orphaned `sleep` is init's to reap, not ours, so "gone" is
+    // eventually-true rather than instantly-true: launchd reaps before the
+    // next statement on a laptop; a CI container's init can lose that race,
+    // which is a fact about reap latency, not about `stop`.
     assert!(
         eventually(Duration::from_secs(10), || {
             // SAFETY: probing a group with signal 0 sends nothing. The
