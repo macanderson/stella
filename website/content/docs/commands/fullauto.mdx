@@ -9,7 +9,7 @@ Drive the perpetual delivery loop: plan, cycle, audit, watch.
 
 ```bash
 stella fullauto plan [--explain]
-stella fullauto state [--dry-streak | --json]
+stella fullauto state [--dry-streak | --format text|json]
 stella fullauto cycle begin
 stella fullauto cycle end --cycle <N> [--fixed N] [--filed N] [--new N] [--bench S] [--gate S] [--prs S] [--tier S] [--minutes N] [--outcome ok|resource-fail] [--lens-tool S]
 stella fullauto watch
@@ -17,7 +17,7 @@ stella fullauto metrics
 stella fullauto aperture (--current | --advance | --reset | --list)
 stella fullauto seen (--digest TEXT… | --new DIGEST… | --add DIGEST… | --count)
 stella fullauto calibrate (--ok | --resource-fail | --show)
-stella fullauto queue [--limit N] [--json]
+stella fullauto queue [--limit N] [--format text|json]
 stella fullauto run (start | end [--status S] [--reason S] | cancel [reason] | list | stamp-cycle-pid [PID])
 stella fullauto runs
 stella fullauto phase <name>

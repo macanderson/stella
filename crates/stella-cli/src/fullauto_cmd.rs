@@ -48,9 +48,15 @@ pub(crate) enum FullautoCmd {
         #[arg(long)]
         dry_streak: bool,
 
-        /// Print the raw ledger (one JSON record per line).
-        #[arg(long, conflicts_with = "dry_streak")]
-        json: bool,
+        /// Output format: text, or the ledger's records as json under the
+        /// versioned query envelope.
+        #[arg(
+            long,
+            value_enum,
+            default_value = "text",
+            conflicts_with = "dry_streak"
+        )]
+        format: crate::query_format::QueryFormat,
     },
 
     /// Allocate a cycle or append its ledger record.
@@ -130,9 +136,10 @@ pub(crate) enum FullautoCmd {
         #[arg(long, default_value_t = 20)]
         limit: usize,
 
-        /// Print the picked issues as JSON instead of a table.
-        #[arg(long)]
-        json: bool,
+        /// Output format: text, or the picked issues as json under the
+        /// versioned query envelope.
+        #[arg(long, value_enum, default_value = "text")]
+        format: crate::query_format::QueryFormat,
     },
 
     /// Run lifecycle — a RUN spans many cycles and is the unit a person
@@ -250,7 +257,7 @@ pub(crate) fn run(cmd: &FullautoCmd) -> Result<(), String> {
     let st = LoopState::open()?;
     match cmd {
         FullautoCmd::Plan { explain } => plan(&st, *explain),
-        FullautoCmd::State { dry_streak, json } => cmd_state(&st, *dry_streak, *json),
+        FullautoCmd::State { dry_streak, format } => cmd_state(&st, *dry_streak, *format),
         FullautoCmd::Cycle { cmd } => match cmd {
             CycleCmd::Begin => cycle_begin(&st),
             CycleCmd::End {
@@ -299,7 +306,7 @@ pub(crate) fn run(cmd: &FullautoCmd) -> Result<(), String> {
             resource_fail,
             show,
         } => calibrate_cmd(&st, *ok, *resource_fail, *show),
-        FullautoCmd::Queue { limit, json } => queue(&st, *limit, *json),
+        FullautoCmd::Queue { limit, format } => queue(&st, *limit, *format),
         FullautoCmd::Run { cmd } => match cmd {
             RunCmd::Start => run_start(&st),
             RunCmd::End { status, reason } => run_end(&st, status, reason),
@@ -445,16 +452,22 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
 // state / cycle
 // ---------------------------------------------------------------------------
 
-fn cmd_state(st: &LoopState, dry_streak: bool, json: bool) -> Result<(), String> {
+fn cmd_state(
+    st: &LoopState,
+    dry_streak: bool,
+    format: crate::query_format::QueryFormat,
+) -> Result<(), String> {
     if dry_streak {
         let streak = fullauto::dry_streak(&st.cycles(), &st.aperture());
         println!("{streak}");
         return Ok(());
     }
-    if json {
-        print!(
+    if format == crate::query_format::QueryFormat::Json {
+        let cycles = st.cycles();
+        println!(
             "{}",
-            std::fs::read_to_string(st.ledger_path()).unwrap_or_default()
+            serde_json::to_string_pretty(&crate::query_format::Rows::new(&cycles))
+                .map_err(|e| e.to_string())?
         );
         return Ok(());
     }
@@ -831,7 +844,11 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
     Ok(())
 }
 
-fn queue(_st: &LoopState, limit: usize, json: bool) -> Result<(), String> {
+fn queue(
+    _st: &LoopState,
+    limit: usize,
+    format: crate::query_format::QueryFormat,
+) -> Result<(), String> {
     let raw = gh_plain(&[
         "issue",
         "list",
@@ -850,10 +867,11 @@ fn queue(_st: &LoopState, limit: usize, json: bool) -> Result<(), String> {
     let defects = fullauto::rank_defects(issues);
     let picked = &defects[..limit.min(defects.len())];
 
-    if json {
+    if format == crate::query_format::QueryFormat::Json {
         println!(
             "{}",
-            serde_json::to_string_pretty(picked).map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&crate::query_format::Rows::new(picked))
+                .map_err(|e| e.to_string())?
         );
         return Ok(());
     }
