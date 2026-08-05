@@ -72,7 +72,8 @@ impl<'a> Pipeline<'a> {
         // hardcoded zero recorded "estimated 0, actual N" against every
         // management call — poisoning calibration and hiding a 10k-token
         // verifier prompt from anything reading the estimate.
-        let estimated_input_tokens = stella_core::estimator::estimate_conversation_tokens(&messages);
+        let estimated_input_tokens =
+            stella_core::estimator::estimate_conversation_tokens(&messages);
         let req = CompletionRequest {
             messages,
             max_output_tokens: overrides.max_output_tokens.or(engine.max_output_tokens),

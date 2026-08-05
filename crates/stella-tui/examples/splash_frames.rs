@@ -27,7 +27,10 @@ fn main() {
                 stella_tui::splash::render(&state, Some("glm-4.6"), area, f.buffer_mut());
             })
             .unwrap();
-        println!("── t={ms}ms · {label} {}", "─".repeat(40_usize.saturating_sub(label.len())));
+        println!(
+            "── t={ms}ms · {label} {}",
+            "─".repeat(40_usize.saturating_sub(label.len()))
+        );
         let buf = terminal.backend().buffer();
         let area = *buf.area();
         for y in 0..area.height {

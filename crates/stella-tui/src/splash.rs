@@ -287,7 +287,13 @@ fn mark_rows_for(area: Rect) -> Option<u16> {
 
 /// The assembled comet: star art over a typed-on wordmark over the detail
 /// line, all centred as one composition.
-fn render_large(state: &SplashState, model: Option<&str>, mark_rows: u16, area: Rect, buf: &mut Buffer) {
+fn render_large(
+    state: &SplashState,
+    model: Option<&str>,
+    mark_rows: u16,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     let t = state.anim_ms();
     let px_per_unit = f64::from(2 * mark_rows) / CANVAS_H;
     let art_w = ((CANVAS_W * px_per_unit).ceil() as u16).min(area.width);
@@ -312,7 +318,11 @@ fn render_large(state: &SplashState, model: Option<&str>, mark_rows: u16, area: 
         for cx in 0..art_w {
             let x = art_x + cx;
             let upper = sample(t, canvas_x(cx, px_per_unit), canvas_y(2 * cy, px_per_unit));
-            let lower = sample(t, canvas_x(cx, px_per_unit), canvas_y(2 * cy + 1, px_per_unit));
+            let lower = sample(
+                t,
+                canvas_x(cx, px_per_unit),
+                canvas_y(2 * cy + 1, px_per_unit),
+            );
             let Some(cell) = buf.cell_mut((x, y)) else {
                 continue;
             };
@@ -391,8 +401,10 @@ fn render_large(state: &SplashState, model: Option<&str>, mark_rows: u16, area: 
             width: area.width,
             height: 1,
         };
-        Paragraph::new(Line::from(Span::styled(detail, theme::muted())).alignment(Alignment::Center))
-            .render(detail_rect, buf);
+        Paragraph::new(
+            Line::from(Span::styled(detail, theme::muted())).alignment(Alignment::Center),
+        )
+        .render(detail_rect, buf);
     }
 }
 
@@ -443,7 +455,11 @@ fn sample(t: u64, x: f64, y: f64) -> Option<Color> {
             // The four-point star is the astroid |x|^(2/3) + |y|^(2/3) <= 1.
             if dx.powf(2.0 / 3.0) + dy.powf(2.0 / 3.0) <= 1.0 {
                 // Flash bright while the pop is still moving, settle to gold.
-                return Some(if pop < 1.0 { theme::GOLD_BRIGHT } else { theme::GOLD });
+                return Some(if pop < 1.0 {
+                    theme::GOLD_BRIGHT
+                } else {
+                    theme::GOLD
+                });
             }
         }
     }
@@ -724,7 +740,10 @@ mod tests {
     fn the_cursor_blinks_after_the_assemble() {
         let on = draw(&state_at(BLINK_BASE_MS + 45), 80, 24);
         let off = draw(&state_at(BLINK_BASE_MS + BLINK_HALF_MS + 45), 80, 24);
-        assert!(on.join("\n").contains(CURSOR), "cursor on in the first half");
+        assert!(
+            on.join("\n").contains(CURSOR),
+            "cursor on in the first half"
+        );
         assert!(
             !off.join("\n").contains(CURSOR),
             "cursor off in the second half"
