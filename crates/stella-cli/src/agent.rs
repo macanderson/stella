@@ -354,7 +354,7 @@ async fn run_pipeline_one_shot(
         // for: skills, draft claims, and the volatile record channel.
         inject_recall_block(&mut messages, m.pipeline_recall_block(prompt).await);
     }
-    let mut budget = build_budget_guard(budget_limit);
+    let mut budget = crate::runtime::one_shot_budget_guard(budget_limit, cfg.turn_budget);
     budget.begin_turn();
 
     let result = {

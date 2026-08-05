@@ -3,7 +3,7 @@ title: Accessibility
 description: Run the Command Deck so a screen reader can read it — what --accessible changes, what it deliberately leaves alone, and how it differs from --plain.
 ---
 
-Stella's interactive surface is the **Command Deck**, a tabbed terminal UI. By default it
+stella's interactive surface is the **Command Deck**, a tabbed terminal UI. By default it
 draws the way full-window terminal apps do: on the alternate screen, repainting a whole
 grid many times a second. That is a good surface for an eye and a poor one for a screen
 reader, which is handed cell churn with no notion of *a new line appeared* — and which
@@ -122,7 +122,7 @@ quiet, because announcing it would bury the moves that matter.
 
 ### The program's own voice is marked
 
-Messages Stella itself speaks — "conversation cleared", driver and chrome notices — open
+Messages stella itself speaks — "conversation cleared", driver and chrome notices — open
 with `▸`. In the default deck those are distinguished by which rail they render on, which
 is a *visual* distinction, and therefore exactly the one that does not survive being read
 aloud. Without the marker the transcript asserts that the model said "conversation
@@ -145,7 +145,7 @@ behavior. If a feature works in the deck, it works here.
 
 ## When your terminal will not cooperate
 
-Drawing inline means anchoring to the cursor's current position, which Stella has to
+Drawing inline means anchoring to the cursor's current position, which stella has to
 *ask* for: it writes a cursor-position request and waits for the terminal to answer.
 Every real emulator answers. Some minimal terminals and most test harnesses do not, and
 the request times out.
@@ -222,4 +222,4 @@ emulator and reader named.
 ## See also
 
 - [`stella chat`](/docs/commands/chat) — the command reference, including every flag
-- [Agent Modes](/docs/agent-modes) — the other ways to drive Stella
+- [Agent Modes](/docs/agent-modes) — the other ways to drive stella

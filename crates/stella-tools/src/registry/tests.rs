@@ -124,6 +124,49 @@ async fn a_failing_shell_command_still_reports_what_it_wrote() {
     );
 }
 
+/// Attribution needs a cause (#1553). A bracket that dispatched no opaque
+/// call has nothing the probe could attribute a delta TO — so a file that
+/// appears mid-bracket (a human editing beside the run in a shared worktree)
+/// must not be recorded as this session's work. Before the gate, settle
+/// attributed any delta unconditionally, and the verification ladder read
+/// someone else's edit as the run's.
+#[tokio::test]
+async fn a_bracket_with_no_opaque_call_disowns_foreign_motion() {
+    let (root, reg) = bare_registry(None);
+    reg.begin_workspace_probe();
+    // The tree moves, but through no call this registry dispatched.
+    std::fs::write(root.path().join("foreign.txt"), "not ours\n").unwrap();
+    reg.settle_workspace_probe();
+    assert_eq!(
+        reg.mutations_recorded(),
+        0,
+        "foreign motion attributed to a turn that dispatched nothing: {:?}",
+        reg.files_touched()
+    );
+
+    // The disowned delta is dropped, never deferred: the settle re-armed
+    // from the after-image, so a NEXT bracket that does run an opaque call
+    // must not inherit the foreign file as its own work.
+    reg.begin_workspace_probe();
+    let out = reg
+        .execute(
+            "bash",
+            &serde_json::json!({"command": "echo mine > ours.txt"}),
+        )
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+    reg.settle_workspace_probe();
+    let touched = reg.files_touched();
+    assert!(
+        touched.iter().any(|(path, _)| path == "ours.txt"),
+        "the opaque call's own write is still attributed: {touched:?}"
+    );
+    assert!(
+        !touched.iter().any(|(path, _)| path == "foreign.txt"),
+        "the earlier foreign edit must not resurface under a later bracket: {touched:?}"
+    );
+}
+
 /// Reads must not be inflated into mutations: a shell command that only
 /// looks at the tree leaves the ledger where it found it.
 #[tokio::test]

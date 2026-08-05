@@ -1,6 +1,6 @@
 ---
 title: Gate on engine quality in CI
-description: Run Stella and Claude Code side by side on one task set every pull request. Block the merge on loop correctness; report the quality delta, never gate on it.
+description: Run stella and Claude Code side by side on one task set every pull request. Block the merge on loop correctness; report the quality delta, never gate on it.
 ---
 
 Once an agent engine is a dependency of your product, it regresses like any
@@ -9,7 +9,7 @@ trace. A prompt change, a model swap, a settings edit, an upstream release: the
 turn still exits zero, still prints something plausible, and does less work than
 it did last week.
 
-This guide sets up a CI job that catches that. It runs Stella and Claude Code
+This guide sets up a CI job that catches that. It runs stella and Claude Code
 over the same committed task set on every pull request, and — this is the part
 that matters — it treats their two outputs as answers to two different
 questions.
@@ -165,7 +165,7 @@ Here is what each one gives you, trimmed to the keys a gate reads:
 
 Two notes before you write the comparison.
 
-**Read `model`, not your own flag.** Stella reports the model that actually
+**Read `model`, not your own flag.** stella reports the model that actually
 served the worker turns, which a
 [worker-model route](/docs/configuration/agent-engine-config) can change out from
 under your `--model` argument. Attribute spend to what the receipt says.
@@ -178,7 +178,7 @@ works on both paths, which is why the assertions below use events.
 
 ## Step 3: The blocking half — loop correctness
 
-This is Stella's own gate on itself, and the vocabulary is worth borrowing
+This is stella's own gate on itself, and the vocabulary is worth borrowing
 because it was built by watching real failures. `loop-bench` collapses a run into
 one of four verdicts, checked in this order:
 
@@ -198,17 +198,17 @@ Read against the receipts from step 2, that becomes four assertions:
     run with fewer rows — gate still green.
   </OptionCard>
   <OptionCard name="2. Work happened">
-    At least one `tool_start` event for Stella; `num_turns > 1` and a non-empty
+    At least one `tool_start` event for stella; `num_turns > 1` and a non-empty
     diff for Claude Code. Zero tool calls on a task that requires an edit is the
     failure this whole job exists to catch.
   </OptionCard>
   <OptionCard name="3. It terminated, and said why">
-    Stella: `status` is `completed`, or `reason` is non-null. Claude Code:
+    stella: `status` is `completed`, or `reason` is non-null. Claude Code:
     `terminal_reason` is present. A run that ends with neither vanished, and that
     is `SILENT-DEATH`.
   </OptionCard>
   <OptionCard name="4. Nothing was silently blocked">
-    A non-empty `permission_denials`, or a Stella run aborted on a scope gate with
+    A non-empty `permission_denials`, or a stella run aborted on a scope gate with
     nobody to ask, means the agent was stopped rather than finished. Fail loudly —
     this reads as low quality otherwise, and you will spend a week tuning prompts.
   </OptionCard>
@@ -323,7 +323,7 @@ jobs:
 ```
 
 **Make it a required status check.** A check that is not required does not block a
-merge, and a check that does not block a merge does not do anything. Stella
+merge, and a check that does not block a merge does not do anything. stella
 learned this the expensive way: a dependency bump broke the bench workflow, the
 workflow reported failure, and the pull request merged twelve minutes later. It
 stayed broken for five days.
@@ -334,9 +334,9 @@ never reports — and a required context that never reports blocks the pull requ
 forever. The job above always runs and always reports; only the expensive part is
 conditional. An unrelated PR pays one runner start-up, not two agent runs.
 
-## If you are working on Stella itself
+## If you are working on stella itself
 
-The harness described above is the portable version. Stella ships its own, and it
+The harness described above is the portable version. stella ships its own, and it
 is cheaper and sharper if the thing you are changing *is* the engine:
 
 ```bash
@@ -352,7 +352,7 @@ report path), `3` that no trial artifacts were found at all — an infrastructur
 failure, deliberately distinguished from a loop regression — and `4` that the
 loop was healthy but fewer trials passed than `--min-pass` demanded.
 
-Stella runs it against itself nightly, not per-PR: it needs Docker, a task
+stella runs it against itself nightly, not per-PR: it needs Docker, a task
 runner, a provider key, and real money. Two details of that job are worth
 copying. The task list is pinned **by name** rather than taken as "the first
 four of the pool", because the pool is an ordinary source constant and
@@ -400,11 +400,11 @@ itself is worse than none.
 ## See also
 
 <CardGrid size="sm">
-  <SpecCard title="Drop Stella in as your agent engine" href="/docs/guides/embed-the-engine">
+  <SpecCard title="Drop stella in as your agent engine" href="/docs/guides/embed-the-engine">
     The companion guide. Get the engine inside your app and under test first — this
     page assumes a loop CI can already run.
   </SpecCard>
-  <SpecCard title="Scripting Stella" href="/docs/scripting">
+  <SpecCard title="Scripting stella" href="/docs/scripting">
     The full JSON envelope contract, the `schema_version` rule, and the jq patterns
     the scripts above are built from.
   </SpecCard>

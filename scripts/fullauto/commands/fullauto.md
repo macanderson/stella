@@ -91,6 +91,13 @@ Work in coherent groups — **at most `$FULLAUTO_PARALLEL` worktrees at once**, 
 PR per group, at most ~5 issues per PR. Twenty fixes in one PR is not reviewable
 and will not be reviewed.
 
+**A cycle wants a worktree to itself.** The verify stage observes the WORKING
+TREE, and while a run that dispatches no mutating call now disowns foreign
+motion (#1553), a cycle that runs shell commands in a tree a human is also
+editing cannot tell its own writes from theirs — no verifier can. Do not share
+the cycle's worktree; if you must look, look read-only, or take your edits to
+another worktree.
+
 For each group:
 
 - Branch from the freshly-fetched `origin/main`.
@@ -125,17 +132,25 @@ The open aperture is `$FULLAUTO_APERTURE`. Audit the **post-fix** tree, and audi
 it *through that lens specifically* — the point of the ladder is that each lens
 sees what the others structurally cannot:
 
-| Aperture | The question it asks |
-|---|---|
-| `rubric` | the standard engineering audit — `/ultraudit` or `/reaudit` |
-| `properties` | what is asserted by example that should be asserted by property |
-| `invariants` | where does the code violate AGENTS.md's numbered invariants |
-| `concurrency` | races, ordering, cancellation, partial failure |
-| `performance` | allocation, cache voids, per-step cost regressions |
-| `supply-chain` | `cargo deny`, pinning, licence drift, unvendored risk |
-| `security` | untrusted input, path handling, egress, credential surfaces |
-| `docs` | where the docs and the code disagree — either one may be the bug |
-| `soak` | long-run behaviour: leaks, unbounded growth, wedged loops |
+| Aperture | The question it asks | How you look (#1549) |
+|---|---|---|
+| `rubric` | the standard engineering audit | `/ultraudit` (deep) or `/reaudit` (fast) |
+| `properties` | what is asserted by example that should be asserted by property | `rg --files-without-match 'proptest' -g '*.rs' crates/stella-core/src crates/stella-context/src crates/stella-fleet/src crates/stella-pipeline/src crates/stella-tui/src` — a pure decision module in that list is a finding |
+| `invariants` | where does the code violate AGENTS.md's numbered invariants | `make invariants` for the mechanical half; the semantic half — read each numbered invariant against the code — is yours |
+| `concurrency` | races, ordering, cancellation, partial failure | **model-only** — no tooling yet; say so in the report |
+| `performance` | allocation, cache voids, per-step cost regressions | `scripts/fullauto.sh bench loop` + the prompt-cache goldens (`cargo test -p stella-model`) — heavy tier only |
+| `supply-chain` | `cargo deny`, pinning, licence drift, unvendored risk | `make supply-chain` |
+| `security` | untrusted input, path handling, egress, credential surfaces | **model-only** — no tooling yet; say so in the report |
+| `docs` | where the docs and the code disagree — either one may be the bug | `make doc-links && make doc-report && scripts/check-command-docs.sh` |
+| `soak` | long-run behaviour: leaks, unbounded growth, wedged loops | `scripts/fullauto.sh bench h2h` (long task list) — heavy tier only |
+
+`cycle-begin` hands you the open lens's declared backing as
+`$FULLAUTO_APERTURE_TOOL`, and `stella fullauto aperture --list` prints the
+whole table. A lens whose tool reports nothing can still go dry — but a
+missing tool must never read as "clean": the two `model-only` lenses work
+unaided and the report says so. Record what you *actually* ran with
+`--lens-tool` on `cycle-end`, so the ledger says which tool produced the
+findings.
 
 Run `$FULLAUTO_AUDIT` depth (`deep` = `/ultraudit`, `fast` = `/reaudit`). See
 `/fullauto:audit`.
@@ -192,6 +207,7 @@ scripts/fullauto.sh cycle-end \
   --fixed <n> --filed <n> --new <unseen-findings> \
   --gate green|red|skipped --bench pass|regressed|skipped \
   --prs "1234,1235" --minutes <n> \
+  --lens-tool "<what actually produced the findings>" \
   --outcome ok|resource-fail
 ```
 
@@ -270,7 +286,7 @@ gate      green (CI, scoped)
 bench     skipped (governor: box contended)
 ship      skipped (2 PRs still open)
 
-aperture  rubric · dry streak 0 / 2
+aperture  rubric · via /ultraudit · dry streak 0 / 2
 controller batch<=12 parallel<=1 (1 clean run)
 
 left undone

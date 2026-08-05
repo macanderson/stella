@@ -38,6 +38,7 @@ use tokio::sync::mpsc;
 
 use crate::OutputFormat;
 use crate::config::Config;
+use crate::timefmt::rfc3339_utc_now;
 
 /// Journal persistence is part of the accounting boundary: an event the
 /// journal did not accept must not be admitted to the run. Mirrors the
@@ -531,29 +532,6 @@ fn epoch_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0)
-}
-
-/// RFC 3339 UTC now — the trace timestamp profile (`SPEC.md` §F4), from the
-/// civil-from-days algorithm so no clock dependency is added.
-fn rfc3339_utc_now() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if month <= 2 { year + 1 } else { year };
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 #[cfg(test)]

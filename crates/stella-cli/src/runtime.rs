@@ -66,6 +66,34 @@ impl Sleeper for TokioSleeper {
     }
 }
 
+/// The budget guard for a one-shot invocation, with its wall-clock task
+/// deadline armed (#1503).
+///
+/// A one-shot run is one task, so the `--turn-budget` allowance the caller
+/// resolved — for the bench adapters, Harbor's own per-task timeout minus a
+/// teardown reserve (`bench/harbor_adapter`'s `turn_budget.py`) — IS the
+/// task's ceiling, and this is the one place the shipping binary computes
+/// `Instant::now() + allowance`, the absolute point
+/// `BudgetGuard::set_task_deadline` documents. #1481 built and proved the
+/// stop-at-a-safe-boundary mechanism; until this call nothing armed it, so a
+/// bench task ran into the harness's kill (`AgentTimeoutError`, work on disk
+/// discarded) instead of stopping itself with a scorable partial.
+///
+/// Goal rounds re-enter the one-shot path per round, so each round gets the
+/// same allowance — the flag's documented per-turn contract. The interactive
+/// surfaces (chat, the deck) deliberately keep an unarmed deadline: their
+/// sessions span many turns and no single wall-clock ceiling describes them.
+pub(crate) fn one_shot_budget_guard(
+    budget_limit: Option<f64>,
+    task_allowance: Option<std::time::Duration>,
+) -> stella_core::budget::BudgetGuard {
+    let mut guard = crate::agent::build_budget_guard(budget_limit);
+    if let Some(allowance) = task_allowance {
+        guard.set_task_deadline(Some(std::time::Instant::now() + allowance));
+    }
+    guard
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +118,31 @@ mod tests {
             clock.now_ms() < 1000,
             "a freshly constructed clock starts near zero"
         );
+    }
+
+    /// The #1503 witness: #1481's deadline mechanism was proven by a driver
+    /// test but nothing in the shipping binary armed it — this is the arming,
+    /// so a one-shot task stops itself at a safe boundary instead of running
+    /// into the harness's kill.
+    #[test]
+    fn a_one_shot_guard_arms_the_task_deadline_from_its_allowance() {
+        let allowance = std::time::Duration::from_secs(840);
+        let before = std::time::Instant::now();
+        let guard = one_shot_budget_guard(None, Some(allowance));
+        let deadline = guard
+            .task_deadline()
+            .expect("an allowance arms the deadline");
+        assert!(
+            deadline >= before + allowance,
+            "the deadline is the allowance measured from arming time"
+        );
+        // No allowance leaves the deadline unarmed — the advisory-only shape
+        // every caller had before #1503, and the one chat/deck keep.
+        assert!(one_shot_budget_guard(None, None).task_deadline().is_none());
+        // The dollar axis is orthogonal: arming time must not change mode.
+        let enforced = one_shot_budget_guard(Some(2.5), Some(allowance));
+        assert_eq!(enforced.mode(), stella_protocol::BudgetMode::Enforced);
+        assert!(enforced.task_deadline().is_some());
     }
 
     #[test]

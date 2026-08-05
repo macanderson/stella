@@ -3,7 +3,7 @@ title: Understand what a run cost, and why
 description: Follow one expensive run from the dollar figure down to the exact bytes the model was sent — stats, the Observatory, stella inspect. Entirely local.
 ---
 
-A run cost more than you expected. Most tools can tell you *that*. Stella can
+A run cost more than you expected. Most tools can tell you *that*. stella can
 tell you **which model call**, **what it was sent**, and **what changed between
 that call and the one before it** — from local records, with no network access
 and no API key.
@@ -65,7 +65,7 @@ Two diagnoses worth knowing by heart:
 ```bash
 # Everything with a suspiciously cold cache, as JSON.
 stella stats --format json |
-  jq '.[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
+  jq '.rows[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
 ```
 
 <Callout type="info">

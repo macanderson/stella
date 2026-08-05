@@ -19,6 +19,11 @@ Per trial, Harbor and the agent leave:
     Stella's own event stream, appended and flushed per event. Richer than
     ATIF and *current* rather than final, so it is preferred wherever both
     speak — it is what makes a live transcript possible at all.
+``arena/flip.json``
+    When the trial started passing, recovered after the fact by
+    ``arenabench flip`` (:mod:`arenabench.replay`). Present only when an
+    operator captured snapshots *and* ran the replay, so it is read
+    tolerantly and its absence costs nothing.
 
 Beside the trials, the *runner* leaves one artifact of its own per job:
 ``<job>.seat.json``, the seat's launch record — which provider api and
@@ -27,8 +32,8 @@ no model id the agent or Harbor records can carry that fact (the launch
 spelling differs by route), and pricing needs it (#1498). A job without one —
 every archive predating the record — is read exactly as before.
 
-Two readers sit on top. :class:`MetricsReader` reduces a trial to the seven
-scoreboard dimensions and re-parses a file only when its size changes, so an
+Two readers sit on top. :class:`MetricsReader` reduces a trial to the
+scoreboard's dimensions and re-parses a file only when its size changes, so an
 idle dashboard costs ``stat()`` calls. :class:`TranscriptReader` keeps a byte
 offset per file and yields only what is new, which is what the SSE endpoint
 streams.
@@ -45,13 +50,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from stat import S_ISDIR
 from typing import Any
 
-from .pricing import price_for, price_for_route, trial_cost
+from .pricing import Price, price_for, price_for_route, price_on_route, trial_cost
 
 __all__ = [
     "EVENTS_NAME",
+    "FLIP_NAME",
     "INFRASTRUCTURE_FAILURES",
+    "LIVENESS_NAMES",
     "TRAJECTORY_NAME",
     "MetricsReader",
     "TranscriptReader",
@@ -65,6 +73,25 @@ EVENTS_NAME = "agent/stella-events.jsonl"
 TRAJECTORY_NAME = "agent/trajectory.json"
 RESULT_NAME = "result.json"
 SEAT_MANIFEST_SUFFIX = ".seat.json"
+#: Where ``arenabench flip`` leaves its verdict on when the trial started
+#: passing (:func:`arenabench.replay.replay_flip`). Defined here, next to the
+#: reader, for the same reason as :func:`seat_manifest_path`: the writer
+#: imports it, so the two can never disagree about the location.
+FLIP_NAME = "arena/flip.json"
+
+#: Per-trial paths written incrementally *while the agent runs*, probed —
+#: never read — for liveness. Stella appends its event stream per event;
+#: Harbor appends ``trial.log`` as the trial progresses; a Claude Code arm
+#: tees its stdout to ``claude-code.txt`` and appends session transcripts
+#: under ``sessions/``. Deliberately an allowlist rather than the directory
+#: tree: the verifier and the arena write into the same trial directory, and
+#: their activity must not read as the agent's pulse (#1571).
+LIVENESS_NAMES: tuple[str, ...] = (
+    EVENTS_NAME,
+    "trial.log",
+    "agent/claude-code.txt",
+    "agent/sessions",
+)
 
 
 def seat_manifest_path(job_dir: Path) -> Path:
@@ -100,6 +127,38 @@ def _iso_seconds(started: Any, finished: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return max(0.0, delta.total_seconds())
+
+
+def _liveness_age(trial_dir: Path) -> float | None:
+    """Seconds since the trial last wrote any :data:`LIVENESS_NAMES` artifact.
+
+    The freshest mtime across the allowlist wins, and a directory entry is
+    probed recursively: appending to a transcript under ``agent/sessions/``
+    touches only that file's mtime, never a directory's. Before #1571 this
+    was the event stream's mtime alone, which made every trajectory-only arm
+    — i.e. every non-Stella contestant — silent by construction: a hung
+    Claude Code trial could burn its whole time allowance without the stall
+    rule ever seeing it. ``None`` when no artifact exists yet — a trial that
+    has not started has no liveness to be stale.
+    """
+    freshest: float | None = None
+    for name in LIVENESS_NAMES:
+        root = trial_dir / name
+        try:
+            probe = root.stat()
+        except OSError:
+            continue
+        mtime = probe.st_mtime
+        if S_ISDIR(probe.st_mode):
+            for child in root.rglob("*"):
+                try:
+                    mtime = max(mtime, child.stat().st_mtime)
+                except OSError:
+                    continue
+        freshest = mtime if freshest is None else max(freshest, mtime)
+    if freshest is None:
+        return None
+    return max(0.0, time.time() - freshest)
 
 
 # --------------------------------------------------------------------------
@@ -191,7 +250,8 @@ class TrialMetrics:
     #: shared table. ``None`` when the model is unpriced — missing beats wrong.
     priced_cost: float | None = None
     clock_time: float = 0.0
-    #: Seconds since the trial last wrote anything — its liveness.
+    #: Seconds since the trial last wrote any :data:`LIVENESS_NAMES`
+    #: artifact — its liveness, whichever files this arm happens to write.
     age_s: float | None = None
     cap_hits: int = 0
     models: tuple[str, ...] = ()
@@ -209,6 +269,17 @@ class TrialMetrics:
     #: final word, when that word was an error. Empty when the agent worked
     #: on after its most recent error.
     late_error: str = ""
+    #: Seconds from the trial's first workspace snapshot to the earliest one
+    #: the verifier passed — when the reward actually appeared, not when the
+    #: trial ended. Only ``arenabench flip`` can know this, so it is ``None``
+    #: for the overwhelming majority of trials: capture is opt-in and the
+    #: replay is a separate, deliberate act.
+    flip_elapsed: float | None = None
+    #: Seconds the trial kept running after it was already passing — strictly
+    #: negative expected value, and the window in which the agent could still
+    #: destroy its own solution. ``None`` whenever :attr:`flip_elapsed` is:
+    #: without a located flip there is no "after".
+    wasted_elapsed: float | None = None
 
     @property
     def cache_hit_rate(self) -> float | None:
@@ -252,6 +323,8 @@ class TrialMetrics:
             "declared_complete": self.declared_complete,
             "usage_incomplete": self.usage_incomplete,
             "late_error": self.late_error,
+            "flip_elapsed": self.flip_elapsed,
+            "wasted_elapsed": self.wasted_elapsed,
         }
 
 
@@ -274,6 +347,11 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
         "complete": False,
         "verifier_passed": None,
         "models": [],
+        # Token subtotals per model id as the stream spelled it, `""` for a
+        # step that named none. A pipeline seat runs several models at
+        # different rates, so pricing needs the split — the grand totals
+        # above cannot be un-summed (#1566).
+        "by_model": {},
         "usage_incomplete": 0,
         "late_error": "",
     }
@@ -305,6 +383,19 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
                     if model and model not in seen_models:
                         seen_models.add(model)
                         totals["models"].append(model)
+                    bucket = totals["by_model"].setdefault(
+                        model,
+                        {
+                            "tokens_in": 0,
+                            "tokens_out": 0,
+                            "cache_read": 0,
+                            "cache_write": 0,
+                        },
+                    )
+                    bucket["tokens_in"] += int(event.get("input_tokens") or 0)
+                    bucket["tokens_out"] += out
+                    bucket["cache_read"] += int(event.get("cached_input_tokens") or 0)
+                    bucket["cache_write"] += int(event.get("cache_write_tokens") or 0)
                     # A step after an error means the agent kept working, so
                     # that error was not the run's last word.
                     totals["late_error"] = ""
@@ -334,10 +425,10 @@ class MetricsReader:
         self._events: dict[Path, tuple[int, dict[str, Any]]] = {}
         self._seats: dict[Path, dict[str, Any] | None] = {}
 
-    def _seat_route(self, trial_dir: Path) -> str:
-        """The route-qualified model this trial's seat was launched with.
+    def _seat_record(self, trial_dir: Path) -> dict[str, Any] | None:
+        """The launch record of this trial's seat, or ``None``.
 
-        ``""`` when the job has no launch record — every archive predating
+        ``None`` when the job has no launch record — every archive predating
         it. Cached without invalidation: the record is written once, before
         the job's first trial exists, so by the time this reader has a trial
         directory to ask about, the record's presence and content are final.
@@ -345,31 +436,29 @@ class MetricsReader:
         try:
             path = seat_manifest_path(trial_dir.parent)
         except ValueError:
-            return ""
+            return None
         if path not in self._seats:
             self._seats[path] = _load_json(path)
-        seat = self._seats[path]
-        return str(seat.get("qualified_model") or "") if seat else ""
+        return self._seats[path]
 
-    def _events_summary(self, path: Path) -> tuple[dict[str, Any] | None, float | None]:
+    def _events_summary(self, path: Path) -> dict[str, Any] | None:
         try:
             stat = path.stat()
         except OSError:
-            return None, None
+            return None
         cached = self._events.get(path)
         if cached is not None and cached[0] == stat.st_size:
-            summary: dict[str, Any] | None = cached[1]
-        else:
-            summary = _reduce_events(path)
-            if summary is not None:
-                self._events[path] = (stat.st_size, summary)
-        age = max(0.0, time.time() - stat.st_mtime)
-        return summary, age
+            return cached[1]
+        summary = _reduce_events(path)
+        if summary is not None:
+            self._events[path] = (stat.st_size, summary)
+        return summary
 
     def read(self, trial_dir: Path, task: str) -> TrialMetrics:
         """Everything knowable about one trial, from its artifacts alone."""
         metrics = TrialMetrics(task=task, trial=trial_dir.name)
-        events, age = self._events_summary(trial_dir / EVENTS_NAME)
+        events = self._events_summary(trial_dir / EVENTS_NAME)
+        metrics.age_s = _liveness_age(trial_dir)
 
         # ATIF first: portable across agents, but written once at the end.
         trajectory = _load_json(trial_dir / TRAJECTORY_NAME)
@@ -410,11 +499,18 @@ class MetricsReader:
             metrics.total_cost = events["total_cost"] or metrics.total_cost
             metrics.cap_hits = events["cap_hits"]
             metrics.models = tuple(events["models"])
-            metrics.age_s = age
             metrics.status = "done" if events["complete"] else "running"
             metrics.declared_complete = events["complete"]
             metrics.usage_incomplete = events["usage_incomplete"]
             metrics.late_error = events["late_error"]
+        elif metrics.age_s is not None:
+            # Liveness artifacts and no verdict yet mean the trial is in
+            # flight even though nothing streams — every trajectory-only arm
+            # mid-run looks like this. Without it the stall rule could never
+            # see such an arm hang: a "pending" trial is not expected to be
+            # writing, so its silence would never be suspicious (#1571).
+            # `result.json` below still forces "done" once Harbor concludes.
+            metrics.status = "running"
 
         configured = ""
         result = _load_json(trial_dir / RESULT_NAME)
@@ -485,35 +581,96 @@ class MetricsReader:
         # routing (a directly-routed seat is launched with the bare id), so
         # only the record can say which route served the trial, and every
         # recorded string prices route-blind at the gateway tier (#1498).
-        # Among the recorded ids the configured seat model is tried first: a
-        # single process can log several roles' `step_usage` (verifier, triage)
-        # into one stream, so the stream's first-seen model may name a role
-        # rather than the seat — pricing on that would mis-cost the whole trial.
-        price = price_for_route(self._seat_route(trial_dir))
-        if price is None:
-            for name in (configured, *metrics.models):
-                price = price_for(name)
-                if price is not None:
+        record = self._seat_record(trial_dir)
+        qualified = ""
+        route_api = ""
+        if record:
+            qualified = str(record.get("qualified_model") or "")
+            route_api = str(record.get("api") or "") or qualified.split("/", 1)[0]
+
+        def single_rate() -> Price | None:
+            """The one-rate fallback for tokens no stream model accounts for.
+
+            The configured seat model is tried before the stream's ids: a
+            single process can log several roles' `step_usage` into one
+            stream, so the stream's first-seen model may name a role rather
+            than the seat — pricing every token on that would mis-cost the
+            whole trial.
+            """
+            price = price_for_route(qualified)
+            if price is None:
+                for name in (configured, *metrics.models):
+                    price = price_for(name)
+                    if price is not None:
+                        break
+            return price
+
+        # A pipeline seat runs several models at several rates — worker,
+        # verifier, triage — so where the stream says which model each step
+        # used, each model's subtotal is priced at its own rate and the trial
+        # costs their sum (#1566). Roles ride the seat's provider (a role
+        # config carries no api of its own), so the launch record's api
+        # qualifies every stream model, never the string's own spelling. One
+        # unpriced subtotal blanks the whole trial: summing only the priced
+        # share would publish a cost that is confidently short, and missing
+        # beats wrong here.
+        by_model = (events or {}).get("by_model") or {}
+        if any(model for model in by_model):
+            total = 0.0
+            for model, bucket in by_model.items():
+                if not model:
+                    price = single_rate()  # steps that named no model
+                elif record:
+                    price = price_on_route(route_api, model)
+                else:
+                    price = price_for(model)  # no route fact: gateway tier
+                if price is None:
+                    total = None
                     break
-        if price is not None:
-            metrics.priced_cost = trial_cost(
-                price,
-                tokens_in=metrics.tokens_in,
-                tokens_out=metrics.tokens_out,
-                cache_read=metrics.cache_read,
-                cache_write=metrics.cache_write,
-            )
+                total += trial_cost(price, **bucket)
+            metrics.priced_cost = total
+        else:
+            # ATIF-only trials publish grand totals and a single model; a
+            # stream that never named one is priced the same way.
+            price = single_rate()
+            if price is not None:
+                metrics.priced_cost = trial_cost(
+                    price,
+                    tokens_in=metrics.tokens_in,
+                    tokens_out=metrics.tokens_out,
+                    cache_read=metrics.cache_read,
+                    cache_write=metrics.cache_write,
+                )
 
         # A running trial has no finish timestamp, so wall clock has to come
-        # from the events file's own span rather than from Harbor.
+        # from its artifacts' own span rather than from Harbor. The earliest
+        # liveness artifact stands in for the start — for a streaming arm the
+        # event file's creation, as before #1571; for a trajectory-only arm
+        # the tee of its stdout, without which a trial this change surfaces
+        # as "running" would show a clock frozen at zero.
         if metrics.status == "running" and metrics.clock_time == 0.0:
-            events_path = trial_dir / EVENTS_NAME
-            try:
-                stat = events_path.stat()
+            started = None
+            for name in LIVENESS_NAMES:
+                try:
+                    stat = (trial_dir / name).stat()
+                except OSError:
+                    continue
                 created = getattr(stat, "st_birthtime", stat.st_ctime)
-                metrics.clock_time = max(0.0, time.time() - created)
-            except OSError:
-                pass
+                started = created if started is None else min(started, created)
+            if started is not None:
+                metrics.clock_time = max(0.0, time.time() - started)
+
+        # The flip replay's verdict, when an operator ran one. Silently absent
+        # otherwise — capture is opt-in and the replay is a separate act, so
+        # almost no trial has this file, and its absence must cost nothing.
+        flip = _load_json(trial_dir / FLIP_NAME)
+        if flip is not None:
+            elapsed = flip.get("flip_elapsed")
+            wasted = flip.get("wasted_elapsed")
+            if isinstance(elapsed, (int, float)):
+                metrics.flip_elapsed = float(elapsed)
+            if isinstance(wasted, (int, float)):
+                metrics.wasted_elapsed = float(wasted)
 
         metrics.has_video = (trial_dir / "arena" / "recording.mp4").exists()
         return metrics
@@ -570,6 +727,18 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         "tools": sum(t.tools for t in trials),
         "steps": sum(t.steps for t in trials),
         "cap_hits": sum(t.cap_hits for t in trials),
+        # Wasted time exists only for trials somebody replayed with
+        # `arenabench flip`. The sum rides with its own denominator because
+        # "510s wasted" means something different across 3 replayed trials
+        # than across 30 — a total over an unknown denominator is a lie.
+        # `None` (not 0.0) when no trial was replayed, so the dimension
+        # crowns nobody instead of crowning whoever has a zero.
+        "wasted_time": (
+            sum(t.wasted_elapsed for t in trials if t.wasted_elapsed is not None)
+            if any(t.wasted_elapsed is not None for t in trials)
+            else None
+        ),
+        "flip_trials": sum(1 for t in trials if t.wasted_elapsed is not None),
     }
 
 

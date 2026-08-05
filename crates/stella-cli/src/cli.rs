@@ -15,8 +15,9 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, ingest_cmd,
-    inspect, memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd, usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fullauto_cmd,
+    ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats, storage_cmd,
+    tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -144,15 +145,18 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, env = "STELLA_BUDGET", value_parser = parse_budget)]
     pub(crate) budget: Option<f64>,
 
-    /// Wall-clock seconds one turn may spend, for continuation decisions
+    /// Wall-clock seconds one turn may spend before it wraps up
     ///
-    /// The time twin of `--budget`, and deliberately weaker: this enforces
-    /// nothing and cancels nothing. It exists for callers running under an
-    /// EXTERNAL deadline — a benchmark harness that kills the process on
-    /// elapsed time — so the engine can decline to start an output-limit
-    /// continuation it cannot finish, and end with a truthful partial instead
-    /// of being destroyed mid-flight. Set it slightly below the real deadline.
-    /// Omit for no time-based continuation limit. Env: STELLA_TURN_BUDGET.
+    /// The time twin of `--budget`, for callers running under an EXTERNAL
+    /// deadline — a benchmark harness that kills the process on elapsed
+    /// time. Two mechanisms arm from it: the engine declines to start an
+    /// output-limit continuation it cannot finish (ending with a truthful
+    /// partial instead of being destroyed mid-flight), and a one-shot
+    /// `run` also stops at the next safe boundary once the allowance is
+    /// spent, so the work on disk is scored rather than discarded with the
+    /// kill (#1503). Interactive sessions (chat, the deck) treat it as
+    /// advisory only. Set it slightly below the real deadline. Omit for no
+    /// time-based limit. Env: STELLA_TURN_BUDGET.
     #[arg(long, global = true, env = "STELLA_TURN_BUDGET", value_parser = parse_turn_budget)]
     pub(crate) turn_budget: Option<std::time::Duration>,
 
@@ -443,6 +447,22 @@ pub(crate) enum Command {
         target: Option<String>,
     },
 
+    /// Drive the perpetual delivery loop: plan, cycle, audit, watch
+    ///
+    /// The deterministic half of fullauto — the loop that fixes a batch of
+    /// defects, audits what is left, files what it cannot fix, benchmarks,
+    /// ships, and repeats. These verbs are the machine-decidable controls:
+    /// the governor that sizes a cycle to this machine (plan), the ledger and
+    /// its folds (state, metrics, run), the audit lens ladder and the dedup
+    /// oracle that advance it (aperture, seen, cycle), and the low-duty
+    /// sentinel (watch). The judgement half stays with the model driving the
+    /// loop; `scripts/fullauto.sh` delegates these verbs here. Offline except
+    /// for `gh` reads of the defect queue; needs no API key.
+    Fullauto {
+        #[command(subcommand)]
+        cmd: fullauto_cmd::FullautoCmd,
+    },
+
     /// Start an interactive session (the Command Deck)
     Chat,
 
@@ -730,9 +750,9 @@ pub(crate) enum Command {
         #[arg(long = "call-seq", default_value_t = 0)]
         call_seq: u64,
 
-        /// Output format
+        /// Output format: text, or json under the versioned query envelope
         #[arg(long, value_enum, default_value = "text")]
-        format: inspect::InspectFormat,
+        format: query_format::QueryFormat,
 
         /// Print message bodies in full instead of eliding long ones
         #[arg(long)]
@@ -767,9 +787,9 @@ pub(crate) enum Command {
     /// Reads .stella/private/store.db only; needs no API key and never
     /// writes.
     Calibration {
-        /// Output format
+        /// Output format: text, or json under the versioned query envelope
         #[arg(long, value_enum, default_value = "text")]
-        format: inspect::InspectFormat,
+        format: query_format::QueryFormat,
     },
 
     /// Cost, tokens, and resolve rate per provider and model
@@ -778,9 +798,10 @@ pub(crate) enum Command {
     /// local telemetry (.stella/private/store.db) — $/resolved-task receipts.
     /// `stella stats prune` bounds that store's growth
     Stats {
-        /// Output format: table (aligned, with TOTAL row), json, or csv
-        #[arg(long, value_enum, default_value = "table")]
-        format: stats::StatsFormat,
+        /// Output format: text (aligned table with TOTAL row), json under
+        /// the versioned query envelope, or csv
+        #[arg(long, value_enum, default_value = "text")]
+        format: query_format::StatsFormat,
 
         /// Only show executions for this provider id (e.g. zai, anthropic,
         /// local)

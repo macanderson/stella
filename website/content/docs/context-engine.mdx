@@ -1,9 +1,9 @@
 ---
 title: Context Engine
-description: How Stella remembers — bi-temporal memory, prompt-cache-native recall, the citation loop, reflections, the tree-sitter code graph, and the domain taxonomy.
+description: How stella remembers — bi-temporal memory, prompt-cache-native recall, the citation loop, reflections, the tree-sitter code graph, and the domain taxonomy.
 ---
 
-Stella accumulates knowledge about your workspace so each session starts
+stella accumulates knowledge about your workspace so each session starts
 smarter than a blank slate — and it does so **prompt-cache-natively**: durable
 knowledge rides the provider's prompt cache instead of being re-billed at
 full price every call.
@@ -44,7 +44,7 @@ Everything is on your disk, under `.stella/`:
 </CardGrid>
 
 *Bi-temporal* means the context store keeps both when a fact was true and
-when Stella believed it: re-running `stella init` **supersedes** stale facts
+when stella believed it: re-running `stella init` **supersedes** stale facts
 rather than deleting them, so "what did we believe then?" stays answerable.
 
 ### Where rules come from
@@ -75,7 +75,7 @@ under a provenance-qualified id so both constraints stay in force.
 
 ## Local-first today; share rules through Git
 
-The stores above are **workspace-local**. Stella does not currently aggregate
+The stores above are **workspace-local**. stella does not currently aggregate
 memories, reflection logs, or telemetry into a hosted team graph, and it does
 not silently publish a learned pattern as organization policy.
 
@@ -99,7 +99,7 @@ boundary rather than make private local telemetry a shared source of truth.
 
 ## Two injection points, one cache discipline
 
-Stella feeds context to the model at exactly two places, chosen so the
+stella feeds context to the model at exactly two places, chosen so the
 expensive part never changes:
 
 1. **The baked prefix (stable).** At session start, workspace memories and
@@ -129,7 +129,7 @@ into the prompt. It maximizes relevance and **destroys prompt-cache
 locality** — every turn's prompt is different, the cache misses every call,
 and the whole system prompt re-bills at full input price, forever.
 
-Stella is built so invalidation *structurally cannot happen*, at two layers:
+stella is built so invalidation *structurally cannot happen*, at two layers:
 
 - **The cache layer.** The prefix is byte-stable by discipline — same
   memories, same order, same bytes, every call of the session — and the
@@ -142,12 +142,12 @@ Stella is built so invalidation *structurally cannot happen*, at two layers:
   would convert every subsequent cache hit into a miss.
 - **The knowledge layer.** The context store is bi-temporal: new facts
   **supersede** old ones with validity windows — they never overwrite or
-  delete them. Re-initializing a workspace doesn't invalidate what Stella
+  delete them. Re-initializing a workspace doesn't invalidate what stella
   believed before; it records what changed and when. History stays
   queryable, provenance stays intact, and a recalled fact can always say
   *when* it was true.
 
-The practical significance: Stella's memory gets **cheaper and richer** as a
+The practical significance: stella's memory gets **cheaper and richer** as a
 session runs and as a workspace ages — where per-turn-injection designs get
 more expensive with every memory they add. Cost architecture, not a cache
 trick.
@@ -156,11 +156,11 @@ trick.
 
 The recall seam isn't private plumbing — it is a versioned, open wire
 protocol: the **[Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)**
-(`contextgraph/1.0-draft`), now its own project, with Stella as its reference host.
+(`contextgraph/1.0-draft`), now its own project, with stella as its reference host.
 
 - **Zero-dependency wire types.** The protocol's types depend on nothing but
   a JSON codec — a context provider can be written in any language without
-  importing a line of Stella.
+  importing a line of stella.
 - **Machine-checked conformance.** "CGP conformant" isn't marketing — it's
   green on the public conformance suite. A conforming provider works with
   any CGP host, checked at CI time rather than discovered at integration
@@ -173,14 +173,14 @@ protocol: the **[Context Graph Protocol](https://github.com/macanderson/context-
 
 The consequence for you: the context engine is **extensible without forks**.
 Your company wiki, your issue tracker, your vector store — anything that
-speaks CGP can feed Stella's recall block under the same budget, scoring,
+speaks CGP can feed stella's recall block under the same budget, scoring,
 and citation rules as the built-in providers. The full analysis lives in
 [the CGP advantages paper](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md).
 
 
 ## The citation loop: memories that earn their place
 
-Memory in Stella is not write-only. It is a feedback loop:
+Memory in stella is not write-only. It is a feedback loop:
 
 - **`save_memory`** writes a lesson (a slug plus ≤ 2,000 chars of Markdown)
   to `.stella/memories/`.
@@ -233,7 +233,7 @@ Concretely, over a few sessions:
 ## Reflections: learning from every working turn
 
 After any turn that did real work (tool calls happened — a pure chat turn is
-skipped to save the call), Stella spends one cheap, deterministic model call
+skipped to save the call), stella spends one cheap, deterministic model call
 to extract **0–3 lessons**, tagged with allowed domains, written to both the
 context store and `.stella/private/reflections.jsonl`. Failed turns get a dedicated
 root-cause prompt — failure is treated as the highest-value learning signal,
@@ -249,7 +249,7 @@ capped per session and never clobbering an existing skill.
 
 ### Honest measurement: A/B control turns
 
-Does recall actually help? Stella measures instead of assuming: at a fixed
+Does recall actually help? stella measures instead of assuming: at a fixed
 rate (every 10th turn by default), recall is deterministically suppressed and
 the turn recorded as a **control turn** — its episode summary carries an
 `[ab-control]` marker. Comparing outcomes with and against controls keeps the
@@ -294,7 +294,7 @@ files change, for exactly as long as the session runs.
 ## Exploration maps: understanding that outlives the turn
 
 Understanding a slice of a codebase is expensive — and most agents throw it
-away the moment the turn ends. Stella keeps it. When the agent works out how a
+away the moment the turn ends. stella keeps it. When the agent works out how a
 subsystem fits together, it can call `save_exploration` to write a high-fidelity
 **exploration map** to `.stella/explorations/`; a later session (or a teammate)
 reads it back with the read-only `explorations` tool instead of re-deriving the
@@ -302,7 +302,7 @@ same picture from scratch.
 
 Two properties make the maps trustworthy rather than stale notes:
 
-- **Per-file staleness.** Each map carries a `path → sha256` manifest, so Stella
+- **Per-file staleness.** Each map carries a `path → sha256` manifest, so stella
   can tell you *exactly which files* have changed since the map was written —
   a per-file verdict, not a blunt "this might be old."
 - **Draft maps double as claims.** A map saved in *draft* status is also a

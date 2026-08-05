@@ -23,6 +23,7 @@ from arenabench.telemetry import (
     TranscriptReader,
     TrialMetrics,
     aggregate,
+    leaders,
     seat_manifest_path,
 )
 
@@ -285,6 +286,119 @@ class TestMetrics:
         metrics = MetricsReader().read(trial, "fix-git")
         assert metrics.priced_cost == pytest.approx(0.004538)
 
+    @staticmethod
+    def _zai_record(job_dir: Path) -> None:
+        seat_manifest_path(job_dir).write_text(
+            json.dumps({"schema": 1, "api": "zai", "qualified_model": "zai/glm-5.2"}),
+            encoding="utf-8",
+        )
+
+    def test_a_pipeline_trial_costs_the_sum_of_its_role_subtotals(
+        self, tmp_path: Path
+    ):
+        """The committed GLM match's pipeline arm runs three models at three
+        rates: worker glm-5.2, verifier glm-5.1, triage glm-4.5-air, all on
+        the seat's z.ai route. 1M input tokens on each is
+        $0.60 + $0.966 + $0.13 — not 3M tokens at the worker's rate ($1.80),
+        which is what one-rate pricing published, and the error landed only
+        on the pipeline arm because a single-model arm has no role tokens
+        (#1566)."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(model="zai/glm-5.2", input_tokens=1_000_000, output_tokens=0),
+                usage(
+                    role="verifier",
+                    model="zai/glm-5.1",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+                usage(
+                    role="triage",
+                    model="zai/glm-4.5-air",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+            ],
+        )
+        self._zai_record(trial_dir.parent)
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost == pytest.approx(0.60 + 0.966 + 0.13)
+
+    def test_an_unpriced_role_blanks_the_trial_rather_than_underbilling(
+        self, tmp_path: Path
+    ):
+        """Summing only the priced share would publish a cost that is
+        confidently short, and billing the unpriced role at the worker's rate
+        is the guess this issue exists to remove. Missing beats wrong: one
+        unpriced role model and the trial has no comparable cost at all."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(model="zai/glm-5.2", input_tokens=1_000_000, output_tokens=0),
+                usage(
+                    role="verifier",
+                    model="acme/mystery-1",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+            ],
+        )
+        self._zai_record(trial_dir.parent)
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost is None
+
+    def test_without_a_launch_record_role_subtotals_price_route_blind(
+        self, tmp_path: Path
+    ):
+        """An archive predating the launch record still gets per-model
+        pricing, at the gateway tier each — route stays uninferred from the
+        stream's spellings (#1498), but a verifier token no longer bills at
+        the worker's rate."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(
+                    model="openrouter/z-ai/glm-5.2",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+                usage(
+                    role="verifier",
+                    model="z-ai/glm-5.1",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+            ],
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost == pytest.approx(0.76 + 0.966)
+
+    def test_a_step_that_names_no_model_prices_at_the_seat_rate(
+        self, tmp_path: Path
+    ):
+        """A step_usage without a model field cannot join a per-model bucket;
+        its tokens bill the way the whole trial used to — at the seat's own
+        rate — rather than vanishing or blanking the trial."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(model="", input_tokens=1_000_000, output_tokens=0),
+                usage(
+                    role="verifier",
+                    model="zai/glm-5.1",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+            ],
+        )
+        self._zai_record(trial_dir.parent)
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost == pytest.approx(0.60 + 0.966)
 
 
 class TestAggregate:
@@ -318,6 +432,113 @@ class TestAggregate:
         """Not 0.0 — that is a free run, which is a claim, and a false one."""
         trials = [TrialMetrics("a", "a__1", resolved=True, total_cost=9.0)]
         assert aggregate(trials)["priced_cost"] is None
+
+
+class TestFlip:
+    """`arenabench flip` writes `arena/flip.json`; the scoreboard reads it.
+
+    Solve rate says whether an agent got there; these say how well. The file
+    exists only for trials an operator captured snapshots for *and* replayed,
+    so every reader here must treat absence as the normal case — and the
+    dimension must crown nobody when nobody was measured (#1536).
+    """
+
+    def _write_flip(self, trial_dir: Path, payload: dict) -> None:
+        (trial_dir / "arena").mkdir(parents=True, exist_ok=True)
+        (trial_dir / "arena" / "flip.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    def test_a_replayed_trial_surfaces_when_it_passed_and_what_came_after(
+        self, trial: Path
+    ):
+        self._write_flip(
+            trial,
+            {
+                "flip_index": 6,
+                "flip_elapsed": 180.0,
+                "wasted_elapsed": 510.0,
+                "snapshots": 24,
+                "probes": 5,
+                "unknown": 0,
+            },
+        )
+        metrics = MetricsReader().read(trial, "fix-git")
+        assert metrics.flip_elapsed == 180.0
+        assert metrics.wasted_elapsed == 510.0
+
+    def test_a_trial_without_a_replay_reads_none_and_stays_unmeasured(
+        self, trial: Path
+    ):
+        """The overwhelming majority of trials: no capture, no replay, no
+        file. That must read as *unmeasured*, never as zero — zero would be
+        the best possible score on a lower-is-better dimension."""
+        metrics = MetricsReader().read(trial, "fix-git")
+        assert metrics.flip_elapsed is None
+        assert metrics.wasted_elapsed is None
+        totals = aggregate([metrics])
+        assert totals["wasted_time"] is None
+        assert totals["flip_trials"] == 0
+
+    def test_a_replay_that_never_found_a_pass_stays_unmeasured(self, trial: Path):
+        """A flip.json with `flip_index: null` means the replay ran and no
+        snapshot passed. There is no "after solving" without a solve, so the
+        trial carries no wasted time rather than a fabricated one."""
+        self._write_flip(
+            trial,
+            {
+                "flip_index": None,
+                "flip_elapsed": None,
+                "wasted_elapsed": None,
+                "snapshots": 24,
+                "probes": 5,
+                "unknown": 0,
+            },
+        )
+        metrics = MetricsReader().read(trial, "fix-git")
+        assert metrics.flip_elapsed is None
+        assert metrics.wasted_elapsed is None
+
+    def test_aggregate_reports_the_denominator_beside_the_sum(self):
+        """510s of waste across 2 replayed trials and across 30 are different
+        findings; the count must travel with the sum."""
+        trials = [
+            TrialMetrics(
+                "a", "a__1", resolved=True, flip_elapsed=180.0, wasted_elapsed=510.0
+            ),
+            TrialMetrics("b", "b__1", resolved=True, wasted_elapsed=90.0),
+            TrialMetrics("c", "c__1", resolved=True),
+        ]
+        totals = aggregate(trials)
+        assert totals["wasted_time"] == pytest.approx(600.0)
+        assert totals["flip_trials"] == 2
+
+    def test_leaders_crown_nobody_on_wasted_time_without_flip_data(self):
+        """Both seats judged, neither replayed: the dimension exists and
+        crowns nobody. An empty dimension that silently crowns whoever has a
+        zero is worse than no dimension. Fails on `main`, where the
+        dimension does not exist at all."""
+        from arenabench.model import DIMENSIONS, DIMENSIONS_BY_KEY
+
+        assert DIMENSIONS_BY_KEY["wasted_time"].direction == "lower"
+        totals = {
+            "a": aggregate([TrialMetrics("t", "t__1", resolved=True)]),
+            "b": aggregate([TrialMetrics("t", "t__2", resolved=True)]),
+        }
+        assert "wasted_time" not in leaders(totals, DIMENSIONS)
+
+    def test_less_wasted_time_wins_when_both_seats_were_replayed(self):
+        from arenabench.model import DIMENSIONS
+
+        totals = {
+            "tight": aggregate(
+                [TrialMetrics("t", "t__1", resolved=True, wasted_elapsed=30.0)]
+            ),
+            "loose": aggregate(
+                [TrialMetrics("t", "t__2", resolved=True, wasted_elapsed=510.0)]
+            ),
+        }
+        assert leaders(totals, DIMENSIONS)["wasted_time"] == ["tight"]
 
 
 class TestTranscript:

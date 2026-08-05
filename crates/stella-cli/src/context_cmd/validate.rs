@@ -31,15 +31,16 @@ use stella_core::records::{Disposition, Registry, Severity};
 use crate::context_records::{
     SweepCache, now_rfc3339, probe_everything, registry_with_cache, rule_files,
 };
+use crate::query_format::{QueryFormat, Rows, Versioned};
 
 /// `stella context list`.
-pub fn run_list(root: &Path, json: bool) -> Result<(), String> {
+pub fn run_list(root: &Path, format: QueryFormat) -> Result<(), String> {
     let registry = crate::context_records::load_registry(root);
-    if json {
+    if format == QueryFormat::Json {
         let rows: Vec<RecordRow> = registry.entries.iter().map(RecordRow::from_entry).collect();
         println!(
             "{}",
-            serde_json::to_string_pretty(&rows).map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&Rows::new(&rows)).map_err(|e| e.to_string())?
         );
         return Ok(());
     }
@@ -92,7 +93,7 @@ pub fn run_list(root: &Path, json: bool) -> Result<(), String> {
 }
 
 /// `stella context validate`.
-pub fn run_validate(root: &Path, json: bool) -> Result<(), String> {
+pub fn run_validate(root: &Path, format: QueryFormat) -> Result<(), String> {
     // The promotion ledger's hash chain first (#994): a tampered ledger is a
     // governance failure that must fail the check regardless of what the
     // records themselves say — an edited grant is worse than a missing one.
@@ -131,11 +132,11 @@ pub fn run_validate(root: &Path, json: bool) -> Result<(), String> {
         }
     }
 
-    if json {
+    if format == QueryFormat::Json {
         let report = Report::build(&registry, &cache);
         println!(
             "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&Versioned::new(&report)).map_err(|e| e.to_string())?
         );
         return if report.blocking > 0 {
             Err(format!("{} blocking finding(s)", report.blocking))
@@ -322,7 +323,7 @@ fn force_of(_registry: &Registry, entry: &stella_core::records::Entry) -> &'stat
         .unwrap_or("info")
 }
 
-/// One record in `list --json`. A struct rather than a `json!` literal so the field
+/// One record in `list --format json`. A struct rather than a `json!` literal so the field
 /// order is the order written here — `serde_json` sorts map keys, which makes a
 /// hand-built object read alphabetically instead of meaningfully.
 #[derive(Debug, Serialize)]
@@ -374,7 +375,7 @@ impl RecordRow {
     }
 }
 
-/// The full `validate --json` report.
+/// The full `validate --format json` report.
 #[derive(Debug, Serialize)]
 struct Report {
     blocking: usize,

@@ -13,13 +13,31 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
   }
   const top = Math.max(0, ...Object.values(crowns));
   // Neutral dimensions are reported but crown nobody, so they are not part of
-  // the denominator a seat is being scored out of.
-  const crownable = snapshot.dimensions.filter((d) => d.direction !== "neutral").length;
+  // the denominator a seat is being scored out of. Neither is a dimension
+  // nobody has a number for — wasted time in a match nobody replayed with
+  // `arenabench flip` can crown nobody, and counting it would score every
+  // seat out of a total that includes an unwinnable column.
+  const crownable = snapshot.dimensions.filter(
+    (d) =>
+      d.direction !== "neutral" &&
+      snapshot.contestants.some((c) => c.totals[d.key] != null),
+  ).length;
 
   return (
     <section className="mb-2 grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(230px,1fr))]">
       {snapshot.contestants.map((c) => {
         const t = c.totals;
+        // The monitor's verdicts for this arm. Severity semantics are the
+        // agent monitor protocol's: critical invalidates the numbers, and an
+        // unknown severity from a newer server is treated as at least a
+        // warning. Notices are bookkeeping and stay off the card.
+        const detections = (snapshot.detections || []).filter(
+          (d) => d.contestant === c.id,
+        );
+        const critical = detections.filter((d) => d.severity === "critical");
+        const warned = detections.filter(
+          (d) => d.severity !== "critical" && d.severity !== "notice",
+        );
         const isLeader = top > 0 && crowns[c.id] === top;
         const best = (key: string) => (leaders[key] || []).includes(c.id);
         const stat = (key: string, label: string, value: string) => (
@@ -74,6 +92,26 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
                 {t.infrastructure} never started (harness/host)
               </div>
             ) : null}
+            {/* Critical means invalid, and the card says so in words — a
+                tinted cell reads as "something is off", and off is not the
+                message when the numbers must not be published at all. */}
+            {critical.length > 0 && (
+              <div className="mt-2.5 rounded-lg border border-bad/40 bg-bad/7 px-3 py-2 text-[11.5px] text-bad">
+                <div className="font-[650]">
+                  {critical.length} critical detection{critical.length > 1 ? "s" : ""} — this
+                  arm&apos;s numbers must not be published
+                </div>
+                {critical.map((d) => (
+                  <div
+                    key={`${d.task}:${d.rule}`}
+                    className="mt-1 font-mono text-[10.5px]"
+                    title={d.evidence}
+                  >
+                    {d.rule} · {d.task}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="mb-1 mt-3.5 flex items-baseline gap-2">
               <span className="font-mono text-[38px] font-light leading-none tracking-[-0.03em] text-(--seat-fg)">
                 {fmtPct(t.solve_rate)}
@@ -90,6 +128,15 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
             </div>
             <div className="grid grid-cols-2 gap-x-3.5 gap-y-[7px]">
               {stat("clock_time", "clock", fmtClock(t.clock_time))}
+              {/* Exists only when someone ran `arenabench flip`. The label
+                  carries the denominator because a sum over an unknown number
+                  of replayed trials reads as a measurement of the whole run. */}
+              {t.wasted_time != null &&
+                stat(
+                  "wasted_time",
+                  `wasted (${t.flip_trials ?? 0} replayed)`,
+                  fmtClock(t.wasted_time),
+                )}
               {/* The comparable figure carries the label; what the agent said
                   it spent sits beside it, named, and crowns nobody — the two
                   come from different price tables. */}
@@ -100,6 +147,18 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
               {stat("cache_read", "cache r", fmtTokens(t.cache_read))}
               {stat("cache_write", "cache w", fmtTokens(t.cache_write))}
             </div>
+            {warned.length > 0 && (
+              <div className="mt-[11px]">
+                <span
+                  className="inline-flex items-center rounded-full border border-warn/40 bg-warn/10 px-2.5 py-[3px] font-mono text-[10.5px] lowercase tracking-[0.05em] text-warn"
+                  title={warned
+                    .map((d) => `${d.rule} · ${d.task} — ${d.evidence}`)
+                    .join("\n")}
+                >
+                  ▲ {warned.length} monitor warning{warned.length > 1 ? "s" : ""}
+                </span>
+              </div>
+            )}
             {(c.warnings || []).length > 0 && (
               <div className="mt-[11px] font-mono text-[11px] text-warn">
                 {c.warnings!.join(" · ")}

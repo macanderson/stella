@@ -93,6 +93,12 @@ class Dimension:
 #: two tables produce a difference that is a fact about the tables. It is
 #: reported because an operator reconciling an invoice needs it, and it is
 #: labelled so nobody reads it as a comparison.
+#:
+#: ``wasted_time`` only exists for trials an operator replayed with
+#: ``arenabench flip`` — for everything else the aggregate is ``None``, which
+#: the leaderboard already reads as "no number, no crown". That is load-bearing:
+#: a dimension nobody measured must crown nobody, because the alternative is
+#: crowning whichever seat happens to spell "unmeasured" as zero.
 DIMENSIONS: tuple[Dimension, ...] = (
     Dimension(
         "solve_rate",
@@ -102,6 +108,13 @@ DIMENSIONS: tuple[Dimension, ...] = (
         "verifier rewards / trials completed",
     ),
     Dimension("clock_time", "Clock Time", "lower", "s", "wall-clock across all trials"),
+    Dimension(
+        "wasted_time",
+        "Wasted Time",
+        "lower",
+        "s",
+        "time still running after the solution already passed (snapshot replay)",
+    ),
     Dimension(
         "priced_cost",
         "Total Cost",

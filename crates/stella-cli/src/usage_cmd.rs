@@ -20,15 +20,16 @@ use colored::Colorize as _;
 use stella_store::usage::{PrunePolicy, UsageStore};
 use stella_store::{Store, identity};
 
-use crate::stats::StatsFormat;
+use crate::query_format::{Rows, StatsFormat};
 
 #[derive(Subcommand, Clone)]
 pub enum UsageCmd {
     /// Global telemetry report from the hub: per (org, provider, model)
     /// calls, tokens, cache reads, cost, and contributing projects
     Report {
-        /// Output format: table (aligned), json, or csv
-        #[arg(long, value_enum, default_value = "table")]
+        /// Output format: text (aligned table), json under the versioned
+        /// query envelope, or csv
+        #[arg(long, value_enum, default_value = "text")]
         format: StatsFormat,
 
         /// Only rows replicated under this org id
@@ -126,7 +127,7 @@ fn register_transition(current: Option<&str>, requested: &str) -> Result<(), Str
 
 pub fn run_usage(cmd: Option<UsageCmd>) -> Result<(), String> {
     match cmd.unwrap_or(UsageCmd::Report {
-        format: StatsFormat::Table,
+        format: StatsFormat::Text,
         org: None,
     }) {
         UsageCmd::Report { format, org } => report(format, org.as_deref()),
@@ -172,7 +173,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 .collect();
             println!(
                 "{}",
-                serde_json::to_string_pretty(&objects).map_err(|e| e.to_string())?
+                serde_json::to_string_pretty(&Rows::new(&objects)).map_err(|e| e.to_string())?
             );
         }
         StatsFormat::Csv => {
@@ -200,7 +201,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 );
             }
         }
-        StatsFormat::Table => {
+        StatsFormat::Text => {
             if rows.is_empty() {
                 println!(
                     "usage hub is empty — run `stella usage sync` in a workspace \

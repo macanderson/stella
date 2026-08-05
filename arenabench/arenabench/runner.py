@@ -43,6 +43,7 @@ from .agents import (
 )
 from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
+from .monitor import Detection, MatchWatcher
 from .recorder import RecorderSupervisor
 from .registry import Dataset, Registry
 from .snapshot import SnapshotSupervisor
@@ -152,6 +153,13 @@ class Match:
         self.snapshots: SnapshotSupervisor | None = None
         self.note = ""
         self._metrics = MetricsReader()
+        # The same watcher `arenabench watch` runs, held for the match's
+        # lifetime so its (agent, task, rule) dedup carries across snapshots.
+        # The web UI is the product for exploring a live match; a detection
+        # that only ever reached a terminal was the exact silence #1480 was
+        # filed about, one surface over (#1569).
+        self._watcher = MatchWatcher(self.workspace)
+        self._detections: list[Detection] = []
         self._lock = threading.Lock()
 
     # -- reading ----------------------------------------------------------
@@ -177,6 +185,17 @@ class Match:
 
     def snapshot(self) -> dict[str, Any]:
         """The whole contest as JSON. No secrets, by construction."""
+        # The monitor's view rides every snapshot. `scan` returns only
+        # detections not yet reported, so accumulation happens here, under the
+        # lock — several SSE streams snapshot concurrently, and a detection
+        # must land in the list exactly once. The watcher attributes by
+        # job-dir slug; the payload speaks contestant ids like every other
+        # snapshot field.
+        with self._lock:
+            self._detections.extend(self._watcher.scan())
+            detections = list(self._detections)
+        slug_to_id = {c.slug: c.id for c in self.spec.contestants}
+
         by_contestant: dict[str, dict[str, TrialMetrics]] = {}
         totals: dict[str, dict[str, Any]] = {}
         for contestant in self.spec.contestants:
@@ -242,6 +261,23 @@ class Match:
                 for contestant in self.spec.contestants
             ],
             "rows": rows,
+            # Severity semantics are the agent monitor protocol's
+            # (doc:agent-monitor-protocol): critical means this match's
+            # numbers are invalid and must not be published, and the UI is
+            # expected to say so rather than tint a cell. An arm whose job
+            # dir matches no contestant slug is reported under its raw name —
+            # an unrecognised arm is still an arm.
+            "detections": [
+                {
+                    "contestant": slug_to_id.get(d.agent, d.agent),
+                    "task": d.task,
+                    "rule": d.rule,
+                    "severity": d.severity,
+                    "evidence": d.evidence,
+                    "data": d.data,
+                }
+                for d in detections
+            ],
             "leaders": leaders(totals, DIMENSIONS),
             "dimensions": [
                 {

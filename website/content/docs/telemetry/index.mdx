@@ -3,14 +3,14 @@ title: Telemetry & budget
 description: Local-first metering, the opt-in Oxagen Enterprise operational export boundary, spool diagnostics, and how --budget becomes a hard spend cap.
 ---
 
-Stella meters every run **locally**. Token usage, cost, per-step accounting, and the
+stella meters every run **locally**. Token usage, cost, per-step accounting, and the
 full execution record land in SQLite on your disk.
 
 <TelemetryFlowDiagram />
 
 **Telemetry leaves your machine only if you configure it to.** A default install
 constructs no telemetry spool and no telemetry HTTP client. The model provider you
-selected remains Stella's normal BYOK network path; the local Observatory remains
+selected remains stella's normal BYOK network path; the local Observatory remains
 loopback-only.
 
 Exactly two things count as configuring telemetry egress. Both are explicit local
@@ -27,7 +27,7 @@ file a repository ships:
    from the Enterprise export — its own wire contract, its own encoder, its own endpoint
    — and it fires only when the file carries **both** an `org_id` (written by `stella
    cloud register`) and a `drain` block. With either absent, `stella cloud sync` performs
-   no network I/O, and nothing else in Stella invokes it.
+   no network I/O, and nothing else in stella invokes it.
 
 That list is complete: those two transports are the only code paths in the tree that send
 telemetry anywhere.
@@ -197,15 +197,15 @@ unsupported.
 
 ### Option A product boundary
 
-Stella remains the local execution product: provider calls, tools, workspace access,
+stella remains the local execution product: provider calls, tools, workspace access,
 the full event stream, context, and the Observatory stay on the developer host. Oxagen
 is the optional Enterprise control plane: it may provision signed enrollment and
 receive the minimal operational envelope described here.
 
-This repository implements Stella's enrollment verification, projection, durable
+This repository implements stella's enrollment verification, projection, durable
 spool, and HTTPS delivery client. A production Oxagen intake with matching
 authentication, schema validation, idempotency, tenancy, retention, and observability
-is a **companion server requirement**; these Stella docs do not claim that intake is
+is a **companion server requirement**; these stella docs do not claim that intake is
 already deployed.
 
 ### Enrollment and sink authorization
@@ -332,9 +332,9 @@ or expired managed configuration fails with a diagnostic rather than reporting a
 enrolled state.
 
 `flush` attempts one bounded delivery batch immediately and reports sent, pending, and
-dropped counts. Stella also starts a detached best-effort flush after enrollment is
+dropped counts. stella also starts a detached best-effort flush after enrollment is
 verified at process startup. That background attempt is non-blocking: it never delays
-agent execution and Stella does not wait for it during shutdown. Use explicit `flush`
+agent execution and stella does not wait for it during shutdown. Use explicit `flush`
 when an operator needs a synchronous delivery attempt before maintenance.
 
 ## Budget: observed vs. enforced
@@ -342,7 +342,7 @@ when an operator needs a synchronous delivery attempt before maintenance.
 The `--budget` flag (or the `STELLA_BUDGET` environment variable) attaches a USD spend
 limit to the whole run or session.
 
-- **Observed mode (default, no `--budget`)** — Stella meters spend for the end-of-run cost
+- **Observed mode (default, no `--budget`)** — stella meters spend for the end-of-run cost
   summary but never blocks. Use it to *see* what a task costs.
 - **Enforced mode (`--budget <usd>`)** — a hard cap. Once total spend exceeds the limit,
   work aborts **cleanly** — never in the middle of a tool call — so you are never left with

@@ -21,6 +21,17 @@
 # "no network" holds even where the real `gh` is installed). The observatory
 # half of the same contract is tested in
 # crates/stella-observatory/src/fullauto.rs.
+#
+# Since #1548 the ported verbs delegate to `stella fullauto`, so the one thing
+# this suite needs beyond a shell is a stella binary (located or built by
+# `locate_stella` below; pin one with STELLA_BIN). The same checks that pinned
+# the shell implementation now pin the Rust port through the delegation map —
+# this file is the behavioral golden for the port.
+#
+# The `bench h2h --rig` money path is rehearsed the same way (#1550): stub
+# aws/ssh/scp record every call they receive, so the dry run, the stop trap,
+# and the no-phantom-results contract are witnessed without an instance ever
+# starting.
 set -uo pipefail
 
 FA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/fullauto.sh"
@@ -47,6 +58,30 @@ check_eq() {
   local want="$1" got="$2" what="$3"
   if [ "$want" = "$got" ]; then ok "$what"; else bad "$what (want '$want', got '$got')"; fi
 }
+
+# The ported verbs delegate to `stella fullauto` (#1548), so this suite is an
+# end-to-end test of the BINARY through the wrapper's exec map — the same
+# checks that pinned the shell implementation now pin the Rust one. Locate a
+# binary, or build one (debug: correctness, not speed, is under test here).
+locate_stella() {
+  if [ -n "${STELLA_BIN:-}" ]; then printf '%s' "$STELLA_BIN"; return 0; fi
+  local root candidate
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  for candidate in "$root/target/release/stella" "$root/target/debug/stella"; do
+    [ -x "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+  done
+  echo "fullauto-test: no stella binary found; building one (cargo build -p stella-cli)…" >&2
+  (cd "$root" && cargo build -q -p stella-cli --bin stella) >&2 || return 1
+  printf '%s' "$root/target/debug/stella"
+}
+STELLA="$(locate_stella)" || { echo "fullauto-test: cannot obtain a stella binary" >&2; exit 1; }
+mkdir -p "$ROOT/stella-bin"
+ln -sf "$STELLA" "$ROOT/stella-bin/stella"
+# In front of the system PATH so the wrapper's `stella` resolves to the build
+# under test; the per-case stub bin still prepends in front of THIS, so the
+# stub gh/aws/ssh/scp keep winning where a case plants them.
+PATH="$ROOT/stella-bin:$PATH"
+export PATH
 
 # A stub `gh` first on PATH keeps the demand half of `plan` and the whole of
 # `queue` off the network — the real `gh` is installed on the dev box, and
@@ -317,6 +352,140 @@ queue_numbers() { # queue_numbers <limit>
 check_eq "103 102 101 104" "$(queue_numbers 10)" \
   "P0 first, age breaks ties inside a rank, triage counts, features do not"
 check_eq "103" "$(queue_numbers 1)" "--limit truncates after ranking, not before"
+
+# ---------------------------------------------------------------------------
+head_ "bench h2h --rig — the money path, rehearsed with stub tools (#1550)"
+
+# Stub aws/ssh/scp record every call they receive, so a case can assert not
+# only that the stop trap fired but that nothing ever started the instance.
+# This is the free rehearsal of a path whose real execution bills $1.90/hr —
+# the reason it shipped unexecuted in the first place.
+RIG_FIX_KEY="$ROOT/tb909-key.pem"
+: > "$RIG_FIX_KEY"
+RIG_FIX_MATCH="$ROOT/match.toml"
+printf '[match]\n' > "$RIG_FIX_MATCH"
+
+cat > "$STUB_BIN/aws" <<'SH'
+#!/bin/sh
+printf 'aws %s\n' "$*" >> "${STUB_LOG:?stub aws: no log declared}"
+case "$*" in
+  *"sts get-caller-identity"*)
+    [ "${AWS_FIX_STS:-0}" -eq 0 ] || exit "${AWS_FIX_STS}"
+    printf 'ok\n' ;;
+  *"State.Name"*)      printf '%s\n' "${AWS_FIX_STATE:-stopped}" ;;
+  *"PublicIpAddress"*) printf '198.51.100.7\n' ;;
+esac
+exit 0
+SH
+chmod +x "$STUB_BIN/aws"
+
+cat > "$STUB_BIN/ssh" <<'SH'
+#!/bin/sh
+printf 'ssh %s\n' "$*" >> "${STUB_LOG:?stub ssh: no log declared}"
+case "$*" in
+  *"test -d"*)        exit "${SSH_FIX_PREFLIGHT:-0}" ;;
+  *"arenabench run"*) exit "${SSH_FIX_MATCH:-0}" ;;
+  *)                  exit 0 ;;
+esac
+SH
+chmod +x "$STUB_BIN/ssh"
+
+cat > "$STUB_BIN/scp" <<'SH'
+#!/bin/sh
+printf 'scp %s\n' "$*" >> "${STUB_LOG:?stub scp: no log declared}"
+[ "${SCP_FIX_EXIT:-0}" -eq 0 ] || exit "${SCP_FIX_EXIT}"
+# The destination is the last argument; a real scp writes the file, so the
+# stub does too — the caller's JSON-parse check needs bytes to chew on.
+for last in "$@"; do :; done
+printf '{"verifier_result": {"rewards": {"reward": 1.0}}}\n' > "$last"
+SH
+chmod +x "$STUB_BIN/scp"
+
+rig_h2h() { # rig_h2h <case_dir> [VAR=v ...] -- [extra h2h flags ...]
+  local dir="$1"; shift
+  local envs=()
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  [ "${1:-}" = "--" ] && shift
+  mkdir -p "$ROOT/$dir"
+  env PATH="$STUB_BIN:$PATH" FULLAUTO_STATE_DIR="$ROOT/$dir" \
+      FULLAUTO_RIG_KEY="$RIG_FIX_KEY" FULLAUTO_MATCH="$RIG_FIX_MATCH" \
+      STUB_LOG="$ROOT/$dir/stub.log" \
+      ${envs[@]+"${envs[@]}"} "$FA" bench h2h --rig "$@"
+}
+
+# The dry run: every check runs, the plan prints, the instance never starts.
+dry_out="$(rig_h2h rg-dry -- --dry-run --out "$ROOT/rg-dry/h2h.json" 2>&1)"
+dry_rc=$?
+check_eq "0" "$dry_rc" "a green dry run exits 0"
+if grep -q 'ec2 start-instances' "$ROOT/rg-dry/stub.log" 2>/dev/null; then
+  bad "the dry run STARTED the instance"
+else
+  ok "the dry run never starts the instance"
+fi
+if grep -q 'sts get-caller-identity' "$ROOT/rg-dry/stub.log" 2>/dev/null; then
+  ok "the dry run really exercises the aws credential check"
+else
+  bad "the dry run skipped the aws credential check"
+fi
+if printf '%s' "$dry_out" | grep -q 'ec2 start-instances'; then
+  ok "the dry run prints the commands the paid path would run"
+else
+  bad "the dry run never printed its command plan"
+fi
+
+# A dead credential turns the rehearsal red — a NOT READY that exits 0 would
+# read as a rehearsal passed.
+rig_h2h rg-nr AWS_FIX_STS=1 -- --dry-run >/dev/null 2>&1
+check_eq "1" "$?" "a failed check turns the dry run red (exit 1)"
+
+# The remote preflight fails -> the match never runs, and the trap still
+# stops the instance. This is the case that used to cost a multi-hour billed
+# garbage run; now it costs cents and the stop is witnessed in the log.
+rig_h2h rg-pf SSH_FIX_PREFLIGHT=70 -- --out "$ROOT/rg-pf/h2h.json" >/dev/null 2>&1
+pf_rc=$?
+if [ "$pf_rc" -ne 0 ]; then ok "a failed remote preflight fails the run"; else bad "a failed remote preflight read as success"; fi
+if grep -q 'arenabench run' "$ROOT/rg-pf/stub.log" 2>/dev/null; then
+  bad "the match ran despite a failed remote preflight"
+else
+  ok "the match never runs after a failed remote preflight"
+fi
+if grep -q 'ec2 stop-instances' "$ROOT/rg-pf/stub.log" 2>/dev/null; then
+  ok "the stop trap fired on the failure path (the \$45.56/day bug)"
+else
+  bad "the stop trap NEVER FIRED — the instance would bill until someone noticed"
+fi
+
+# A missing results file is an error, not a phantom path the caller trusts.
+scp_out="$(rig_h2h rg-scp SCP_FIX_EXIT=1 -- --out "$ROOT/rg-scp/h2h.json" 2>/dev/null)"
+scp_rc=$?
+if [ "$scp_rc" -ne 0 ]; then ok "a missing results file fails the run"; else bad "a missing results file read as success"; fi
+if printf '%s' "$scp_out" | grep -q 'rg-scp/h2h.json'; then
+  bad "the run echoed a results path that does not exist"
+else
+  ok "no phantom results path on the failure path"
+fi
+if grep -q 'ec2 stop-instances' "$ROOT/rg-scp/stub.log" 2>/dev/null; then
+  ok "the stop trap fired on the scp failure too"
+else
+  bad "the stop trap missed the scp failure path"
+fi
+
+# The happy path: results come back, parse, and the rig is stopped anyway.
+ok_out="$(rig_h2h rg-ok -- --out "$ROOT/rg-ok/h2h.json" 2>/dev/null)"
+ok_rc=$?
+check_eq "0" "$ok_rc" "the happy path exits 0"
+check_eq "$ROOT/rg-ok/h2h.json" "$(printf '%s\n' "$ok_out" | tail -1)" \
+  "the happy path's last stdout line is the results path"
+if python3 -m json.tool "$ROOT/rg-ok/h2h.json" >/dev/null 2>&1; then
+  ok "the results file parses as JSON"
+else
+  bad "the results file does not parse"
+fi
+if grep -q 'ec2 stop-instances' "$ROOT/rg-ok/stub.log" 2>/dev/null; then
+  ok "the stop trap fires on success as well — ALWAYS stop"
+else
+  bad "the stop trap missed the success path"
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n'

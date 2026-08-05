@@ -1,6 +1,6 @@
 ---
 title: Work within a budget
-description: A hard dollar ceiling, and what Stella does as it approaches one — where the abort lands and what the scope gate stops before you spend anything.
+description: A hard dollar ceiling, and what stella does as it approaches one — where the abort lands and what the scope gate stops before you spend anything.
 ---
 
 You have a number in mind and you do not want to find out you passed it
@@ -68,7 +68,7 @@ A budget stops a run partway. The [scope review](/docs/inference-pipeline#3-scop
 stops it *before the first edit*, which is usually the outcome you actually
 wanted.
 
-When a plan's blast radius crosses any of three thresholds, Stella pauses and
+When a plan's blast radius crosses any of three thresholds, stella pauses and
 shows you the plan:
 
 <CardGrid size="sm">
@@ -155,7 +155,7 @@ A ceiling only helps if you know what is pushing against it.
 
 A long run's cost is not only what it does — it is how much conversation it
 carries while doing it. When the transcript approaches the compaction budget
-(**150,000 tokens** by default), Stella compacts it and keeps going, rather than
+(**150,000 tokens** by default), stella compacts it and keeps going, rather than
 failing or silently truncating.
 
 Compaction applies four mechanisms, **least-lossy first**:
@@ -194,7 +194,7 @@ read what it cost, then set a ceiling with headroom:
 
 ```bash
 stella run "the representative task"      # observed mode
-stella stats --format table               # what it actually cost
+stella stats --format text               # what it actually cost
 stella --budget 2.00 run "the next one"   # now with a ceiling
 ```
 

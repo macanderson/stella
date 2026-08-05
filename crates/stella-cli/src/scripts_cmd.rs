@@ -19,9 +19,13 @@ use clap::Subcommand;
 pub enum ScriptsCmd {
     /// List detected scripts and their canonical verb bindings
     List {
-        /// Emit the index as JSON (schema_version 1)
-        #[arg(long)]
-        json: bool,
+        /// Output format: text, or the index frame as JSON. The frame
+        /// versions itself (its own `schema_version`, pinned by
+        /// docs/spec/scripts-index.md) because it is shared byte-for-byte
+        /// with the `list_scripts` tool — it does not ride the query
+        /// envelope.
+        #[arg(long, value_enum, default_value = "text")]
+        format: crate::query_format::QueryFormat,
 
         /// Narrow to one workspace package dir
         #[arg(long)]
@@ -52,9 +56,9 @@ pub fn run_scripts(cmd: &ScriptsCmd) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     match cmd {
-        ScriptsCmd::List { json, dir } => {
+        ScriptsCmd::List { format, dir } => {
             let index = stella_tools::scripts::ScriptIndex::detect_blocking(&root);
-            if *json {
+            if *format == crate::query_format::QueryFormat::Json {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&index.to_json())

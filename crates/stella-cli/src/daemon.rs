@@ -32,15 +32,8 @@
 //! close, so a process without one is already immune and supervising it buys
 //! nothing while adding a process, two files, and a copy to every byte of
 //! output. Concretely that leaves every non-interactive caller — CI, a pipe,
-//! a container, and the Terminal-Bench harness, which runs `stella run` on
-//! pipes with no terminal — on exactly the process shape they run today.
-//!
-//! `nohup` is deliberately NOT in that list. It redirects the standard
-//! streams but never detaches the controlling terminal, so
-//! `nohup stella run &` still opens `/dev/tty` and still gets supervised. It
-//! loses nothing by that — a supervised run is at least as durable as a
-//! nohup'd one — but its output is written to the sidecar consoles and copied
-//! to `nohup.out`, rather than only the latter.
+//! `nohup`, and the Terminal-Bench harness, which runs `stella run` on pipes
+//! inside a container — on byte-for-byte the process shape they run today.
 //!
 //! # The three bugs this inherits rather than rediscovers
 //!

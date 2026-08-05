@@ -1,9 +1,9 @@
 ---
 title: Built-in Tools
-description: The complete catalog of tools the Stella agent can call in every session, including which are read-only and which mutate your workspace.
+description: The complete catalog of tools the stella agent can call in every session, including which are read-only and which mutate your workspace.
 ---
 
-Stella ships with a set of built-in tools that are always available to the agent. On top of these, you can add your own [custom script tools](/docs/agent-tools/custom-tools) and merge in tools from [MCP servers](/docs/agent-tools/mcp). Every tool is subject to a [per-tool permission model](/docs/agent-tools/permissions).
+stella ships with a set of built-in tools that are always available to the agent. On top of these, you can add your own [custom script tools](/docs/agent-tools/custom-tools) and merge in tools from [MCP servers](/docs/agent-tools/mcp). Every tool is subject to a [per-tool permission model](/docs/agent-tools/permissions).
 
 ## Listing tools
 
@@ -334,7 +334,7 @@ Three of the four register with **no key required** — `web_fetch`, `web_extrac
 
 #### Logging in to sites (`web_auth.toml`)
 
-To fetch pages behind a login — your subscriptions, a paywalled news site, an internal tool — give Stella your own session in `~/.stella/web_auth.toml` (override the path with `STELLA_WEB_AUTH_FILE`). Cookies and headers are injected per domain at request time and **never appear in tool output**, so the secrets stay out of the model's context.
+To fetch pages behind a login — your subscriptions, a paywalled news site, an internal tool — give stella your own session in `~/.stella/web_auth.toml` (override the path with `STELLA_WEB_AUTH_FILE`). Cookies and headers are injected per domain at request time and **never appear in tool output**, so the secrets stay out of the model's context.
 
 ```toml title="~/.stella/web_auth.toml"
 # Optional: override the default `stella/<version>` User-Agent for all requests.
@@ -363,7 +363,7 @@ chmod 600 ~/.stella/web_auth.toml
 ```
 
 <Callout type="warn">
-`web_auth.toml` holds live session secrets — treat it like `credentials.toml`. Stella redacts the values from its own logs and never echoes them into a tool result, but the file itself is plaintext: restrict it to owner-only (`chmod 600`). Unknown keys are a hard parse error, and a broken file makes every web tool fail loudly rather than silently fetching unauthenticated. `cookie` and `authorization` are dropped on a cross-host redirect; a secret in a custom `headers` entry is **not** — it would follow the redirect, so only put secrets in custom headers for hosts you trust to redirect.
+`web_auth.toml` holds live session secrets — treat it like `credentials.toml`. stella redacts the values from its own logs and never echoes them into a tool result, but the file itself is plaintext: restrict it to owner-only (`chmod 600`). Unknown keys are a hard parse error, and a broken file makes every web tool fail loudly rather than silently fetching unauthenticated. `cookie` and `authorization` are dropped on a cross-host redirect; a secret in a custom `headers` entry is **not** — it would follow the redirect, so only put secrets in custom headers for hosts you trust to redirect.
 </Callout>
 
 <Callout type="warn">
