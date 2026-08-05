@@ -68,7 +68,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use stella_core::step::CheckpointSink;
+// Through the facade, not around it (#1494). This crate is the first-party
+// durable host `stella-engine` is written for, so where it reaches for the
+// trait is the honest test of whether the facade is sufficient — and it used
+// to reach past it to `stella_core::step`, which is what proved it was not.
+use stella_engine::CheckpointSink;
 
 use crate::observe::SharedObserver;
 use crate::observe::event::{CheckpointOp, ServeEvent, TurnRef};
