@@ -24,9 +24,16 @@ The price used to be three acknowledged copies. `global::data_dir` was one of
 them — a hand-synced mirror of `../stella-store/src/usage.rs` with a comment
 asking readers to keep it equal — and is now shared through `stella-home`
 instead (#1139); linking a crate that is pure path arithmetic over environment
-variables and opens nothing costs none of the isolation above. Two copies
+variables and opens nothing costs none of the isolation above. Three copies
 remain: `project_id_for` ([`src/global.rs`](src/global.rs)) still mirrors the
-store's, and `/api/explorations` re-hashes exploration manifests itself.
+store's, `/api/explorations` re-hashes exploration manifests itself, and
+[`src/sent_context.rs`](src/sent_context.rs) re-implements the receipt
+reconstruction `stella_store::Store::reconstruct_call` performs (#1475). The
+last is the largest of the three and the only one with a *byte-level* coupling
+— it rebuilds a `tool_call` block's preimage in `stella_protocol::ToolCall`'s
+field order — so `tests/schema_conformance.rs` seeds its digests from that
+crate's own serializer: a reordered field fails the suite instead of printing
+"the journal is torn" on a user's dashboard.
 
 Only [`stella-cli`](../stella-cli) depends on it: `run_observe`
 ([`../stella-cli/src/storage_cmd.rs:47`](../stella-cli/src/storage_cmd.rs))
@@ -42,6 +49,7 @@ free one). This crate builds no binary —
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The HTTP responder: the route table, the `Host` and head-cap gates, the CSP, `serve`. Open it to add a route or to touch anything security-relevant. |
 | [`src/db.rs`](src/db.rs) | Every query against `.stella/private/store.db` and `fleet.db`. Open it when a panel needs a new aggregate; the SQL deliberately mirrors `stella stats` semantics (resolved = outcome `completed`, `off-grid` = provider `local`). |
+| [`src/sent_context.rs`](src/sent_context.rs) | `/api/execution-context`: the receipt queries (`step_receipt`, `step_manifest`, `context_blocks`) and the fold that rebuilds the messages one model call was sent, with the digest-verification verdict. Kept out of `src/db.rs` so that file stays clear of the 1500-line ratchet. |
 | [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). |
 | [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain, exploration maps — plus `redact`, the credential scrubber. |
 | [`src/fullauto.rs`](src/fullauto.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/fullauto/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
