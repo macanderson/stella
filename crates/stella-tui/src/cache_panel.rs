@@ -139,9 +139,10 @@ pub fn fmt_warmth(remaining_secs: Option<u64>) -> String {
 
 // ── Detail formatters ───────────────────────────────────────────────────────
 //
-// The statline carries the hit rate only (D1); the read/write volumes and
-// the warmth countdown are diagnostics and live in the context overlay's
-// SESSION VITALS section, built from these.
+// The statline's CACHE cell composes its own spans from `hit_pct` and
+// `fmt_tokens` (two rows buy it the width for the volumes); these build the
+// same figures as one flat string for the context overlay's SESSION VITALS
+// section, so the two surfaces cannot drift on the arithmetic.
 
 /// The cache detail line: hit rate plus the compact read/write volumes —
 /// `50% hit · 105.3M rd · 40.0K wr` — or the no-data dash before any input
@@ -279,10 +280,10 @@ mod tests {
 
     // ── Detail-line + statline diagnosis integration tests ──────────────────
     //
-    // The volumes left the statline for the context overlay (D1); what stays
-    // statline-side is the hit rate (asserted in `crate::statline`'s own
-    // tests) and the diagnosis row, asserted through the real band renderer
-    // here so the formatter and the row reservation cannot drift apart.
+    // The hit rate and the volumes are asserted in `crate::statline`'s own
+    // tests, where they are composed; what is asserted here is the diagnosis
+    // row, driven through the real band renderer so the formatter and the
+    // row reservation cannot drift apart.
 
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -340,7 +341,10 @@ mod tests {
             a.cache_is_opt_in_provider = true;
         }
         let ui = DeckUi::default();
-        let area = Rect::new(0, 0, 200, 2);
+        // Four rows: the label/value pair, the MODELS row, then the earned
+        // diagnosis — the same band `render_deck` reserves for a diagnosed
+        // agent.
+        let area = Rect::new(0, 0, 200, 4);
         let mut buf = Buffer::empty(area);
         crate::statline::render(&m, &ui, area, &mut buf);
         let text = buffer_text(&buf);
