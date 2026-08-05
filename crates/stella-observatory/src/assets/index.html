@@ -208,6 +208,16 @@ tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-vis
 .badge.warn{color:var(--warn);border-color:rgba(234,179,8,.42)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline-strong)}
 .badge.accent{color:var(--gold);border-color:var(--accent-edge)}
+/* fullauto: the run list is a control, so it says so on hover and keeps a
+   visible selection — the detail panes beside it are meaningless without
+   knowing which row produced them. */
+#fa-runs tbody tr{cursor:pointer}
+#fa-runs tbody tr:hover{background:var(--raised)}
+#fa-runs tbody tr.sel{background:var(--raised);box-shadow:inset 2px 0 0 var(--gold)}
+.fa-live{color:var(--gold)}
+.fa-sig{padding:var(--sp1) 0;border-bottom:1px solid var(--hairline)}
+.fa-sig:last-child{border-bottom:0}
+.fa-sig b{color:var(--warn)}
 .rowbtn{background:none;border:0;padding:0;font:inherit;color:var(--gold);
         cursor:pointer;text-align:left;font-variant-numeric:tabular-nums}
 .rowbtn:hover{text-decoration:underline}
@@ -351,6 +361,7 @@ footer b{color:var(--text-2);font-weight:600}
       <button role="tab" id="tab-mcp" aria-controls="panel-mcp" data-tab="mcp">MCP</button>
       <button role="tab" id="tab-memory" aria-controls="panel-memory" data-tab="memory">Memory &amp; rules</button>
       <button role="tab" id="tab-improve" aria-controls="panel-improve" data-tab="improve">Self-improve</button>
+      <button role="tab" id="tab-fullauto" aria-controls="panel-fullauto" data-tab="fullauto">Fullauto</button>
       <button role="tab" id="tab-hub" aria-controls="panel-hub" data-tab="hub">Org / hub</button>
       <button role="tab" id="tab-config" aria-controls="panel-config" data-tab="config">Config</button>
     </div>
@@ -590,6 +601,40 @@ footer b{color:var(--text-2);font-weight:600}
   </section>
 
   <!-- ══ CONFIG ════════════════════════════════════════════════════════ -->
+  <!-- ══ FULLAUTO ══════════════════════════════════════════════════════ -->
+  <section data-tab="fullauto" id="panel-fullauto" role="tabpanel" aria-labelledby="tab-fullauto" tabindex="0">
+    <div class="grid kpis" id="fa-kpis"></div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="kick">Every run on this machine · select one</div>
+        <h2>Runs</h2>
+        <div class="scroll-y-tall" id="fa-runs"></div>
+      </div>
+      <div class="card">
+        <div class="kick" id="fa-detail-kick">Nothing selected</div>
+        <h2 id="fa-detail-title">Run detail</h2>
+        <div id="fa-detail"></div>
+      </div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="kick">Cycle by cycle · the governor's path</div>
+        <h2>Trajectory</h2>
+        <div class="scroll-y" id="fa-trajectory"></div>
+      </div>
+      <div class="card">
+        <div class="kick">What the loop knows about itself</div>
+        <h2>Self-improvement</h2>
+        <div class="scroll-y" id="fa-self"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="kick">Loops on this machine · aperture &amp; learned ceilings</div>
+      <h2>Loops</h2>
+      <div class="scroll-x" id="fa-loops"></div>
+    </div>
+  </section>
+
   <section data-tab="config" id="panel-config" role="tabpanel" aria-labelledby="tab-config" tabindex="0">
     <div class="grid cols-2e">
       <div class="card">
@@ -689,7 +734,10 @@ function showTip(ev, html) {
 function hideTip() { tip.style.display = "none"; }
 
 /* ── state ───────────────────────────────────────────────────────────── */
-const state = { project: "", tf: "all", tab: "overview" };
+// `faRun` is the fullauto run currently drilled into; it survives the 5s
+// refresh so a live run's detail does not jump back to the top of the list
+// underneath the reader every five seconds.
+const state = { project: "", tf: "all", tab: "overview", faRun: null };
 // Hub drill scope: null = not selected. `(local)` selects the NULL/unregistered
 // bucket the backend understands. Deepest set field picks the drill level.
 const hub = { org: null, workspace: null, repo: null };
@@ -2097,6 +2145,154 @@ $("hubDrill").addEventListener("click", (ev) => {
   else if (level === "project") { state.project = r.key; renderProjects(D.projects); switchTab("overview"); }
 });
 
+/* ── fullauto: the perpetual delivery loop ───────────────────────────── */
+/* A run has four states and they are not interchangeable. `crashed` is never
+   written by the loop — it is resolved by the reader when a run that claims to
+   be running has no live heartbeat, because the process that would have
+   recorded its own death is by definition gone. */
+const FA_STATUS = {
+  running:   ["accent", "● running"],
+  completed: ["ok", "✓ completed"],
+  cancelled: ["warn", "◌ cancelled"],
+  crashed:   ["bad", "✕ crashed"],
+};
+const faBadge = (s) => {
+  const [cls, label] = pick(FA_STATUS, s, ["dim", String(s ?? "?")]);
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+};
+const faDash = (v) => (v === "" || v == null ? "—" : esc(v));
+
+function renderFullauto(d) {
+  const runs = d?.runs ?? [], loops = d?.loops ?? [], t = d?.totals ?? {};
+  const cycles = loops.reduce((a, l) => a + num(l.total_cycles), 0);
+  const fixed = runs.reduce((a, r) => a + num(r.fixed), 0);
+  const filed = runs.reduce((a, r) => a + num(r.filed), 0);
+  const found = runs.reduce((a, r) => a + num(r.new_findings), 0);
+
+  $("fa-kpis").innerHTML =
+    tile("Runs", fmtInt(t.runs), fmtInt(t.running) + " running now",
+      num(t.running) > 0) +
+    tile("Cycles", fmtInt(cycles), fmtInt(t.loops) + " loop(s) on this machine") +
+    tile("Defects fixed", fmtInt(fixed), fmtInt(filed) + " filed as handoffs") +
+    tile("Discovery", fmtInt(found),
+      cycles ? (found / cycles).toFixed(1) + " new findings per cycle" : "no cycles yet");
+
+  $("fa-runs").innerHTML = runs.length ? `<table><thead><tr>
+      <th>Run</th><th>Status</th><th class="num">Cyc</th><th class="num">Fixed</th>
+      <th class="num">Filed</th><th class="num">New</th><th>Started</th></tr></thead><tbody>
+    ${runs.map(r => `<tr data-run="${esc(r.run_id)}" title="${esc(r.slug)} · ${esc(r.driver)}">
+      <td>${esc(r.slug)}${r.is_current_workspace ? " <span class=\"badge accent\">here</span>" : ""}
+        ${r.live?.phase ? `<span class="fa-live"> · ${esc(r.live.phase)}</span>` : ""}</td>
+      <td>${faBadge(r.status)}</td>
+      <td class="num">${fmtInt(r.cycles)}</td>
+      <td class="num">${fmtInt(r.fixed)}</td>
+      <td class="num">${fmtInt(r.filed)}</td>
+      <td class="num">${fmtInt(r.new_findings)}</td>
+      <td>${agoUnix(r.started_unix)}</td></tr>`).join("")}
+    </tbody></table>`
+    : `<div class="empty">No fullauto runs on this machine yet.<br>
+       Start one with <code>scripts/fullauto.sh daemon start</code>.</div>`;
+
+  $("fa-loops").innerHTML = loops.length ? `<table><thead><tr>
+      <th>Loop</th><th>Aperture</th><th class="num">Cycles</th><th class="num">Seen</th>
+      <th class="num">Batch≤</th><th class="num">Par≤</th><th>Controller</th></tr></thead><tbody>
+    ${loops.map(l => `<tr>
+      <td>${esc(l.slug)}${l.is_current_workspace ? " <span class=\"badge accent\">here</span>" : ""}</td>
+      <td>${faDash(l.aperture)}</td>
+      <td class="num">${fmtInt(l.total_cycles)}</td>
+      <td class="num">${fmtInt(l.seen_findings)}</td>
+      <td class="num">${fmtInt(l.calibration?.batch_ceiling)}</td>
+      <td class="num">${fmtInt(l.calibration?.parallel_ceiling)}</td>
+      <td>${faDash(l.calibration?.note)}</td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">No loops recorded.</div>`;
+
+  // Keep the selection across refreshes; a run that has since disappeared
+  // clears it rather than leaving stale detail beside a list that lost it.
+  if (state.faRun && runs.some(r => r.run_id === state.faRun)) {
+    openFullautoRun(state.faRun, true);
+  } else if (runs.length) {
+    openFullautoRun(runs[0].run_id);
+  }
+}
+
+async function openFullautoRun(id, quiet) {
+  state.faRun = id;
+  [...document.querySelectorAll("#fa-runs tbody tr")].forEach(tr =>
+    tr.classList.toggle("sel", tr.dataset.run === id));
+  let d;
+  try {
+    d = await api("/api/fullauto-run?id=" + encodeURIComponent(id));
+  } catch (e) {
+    if (!quiet) fail("Could not load that run.", e);
+    return;
+  }
+  const r = d?.run;
+  if (!r) {
+    $("fa-detail").innerHTML = `<div class="empty">That run is no longer on disk.</div>`;
+    return;
+  }
+  $("fa-detail-kick").textContent = `${r.slug ?? ""} · ${r.driver ?? ""} · ${r.host ?? ""}`;
+  $("fa-detail-title").innerHTML = `${esc(id)} ${faBadge(r.status)}`;
+
+  const live = r.live && r.live.phase
+    ? `<div class="feed-item"><b>Live</b> — phase <span class="fa-live">${esc(r.live.phase)}</span>
+       in cycle ${fmtInt(r.live.cycle)} (${esc(r.live.tier)}), last heartbeat
+       ${fmtInt(r.live.heartbeat_age_s)}s ago, pid ${fmtInt(r.live.pid)}</div>`
+    : "";
+  const why = r.reason
+    ? `<div class="feed-item"><b>Reason</b> — ${esc(r.reason)}</div>` : "";
+  $("fa-detail").innerHTML = live + why + `
+    <div class="feed-item"><b>Started</b> — ${agoUnix(r.started_unix)}
+      <span class="when">${esc(r.started_at ?? "")}</span></div>
+    <div class="feed-item"><b>Work</b> — ${fmtInt(r.cycles)} cycles,
+      ${fmtInt(r.fixed)} fixed, ${fmtInt(r.filed)} filed,
+      ${fmtInt(r.new_findings)} new findings, ${fmtInt(r.red_gates)} red gates</div>
+    <div class="feed-item"><b>Wall clock</b> — ${fmtInt(r.minutes)} min across cycles</div>
+    <div class="feed-item"><b>Apertures</b> — ${(d.apertures ?? []).map(esc).join(" → ") || "—"}</div>
+    <div class="feed-item"><b>Workspace</b> — ${faDash(r.workspace_root)}</div>`;
+
+  const tr = d.trajectory ?? [];
+  $("fa-trajectory").innerHTML = tr.length ? `<table><thead><tr>
+      <th class="num">#</th><th>Tier</th><th>Aperture</th><th>Gate</th><th>Bench</th>
+      <th class="num">Fixed</th><th class="num">New</th><th class="num">Min</th>
+      <th>Outcome</th></tr></thead><tbody>
+    ${tr.map(c => `<tr>
+      <td class="num">${fmtInt(c.cycle)}</td>
+      <td>${faDash(c.tier)}</td>
+      <td>${faDash(c.aperture)}${c.dry ? " <span class=\"badge dim\">dry</span>" : ""}</td>
+      <td>${c.gate === "red"
+            ? `<span class="badge bad">red</span>`
+            : `<span class="badge ok">${faDash(c.gate)}</span>`}</td>
+      <td>${faDash(c.bench)}</td>
+      <td class="num">${fmtInt(c.fixed)}</td>
+      <td class="num">${fmtInt(c.new_findings)}</td>
+      <td class="num">${fmtInt(c.minutes)}</td>
+      <td>${c.outcome === "resource-fail"
+            ? `<span class="badge warn">resource-fail</span>` : faDash(c.outcome)}</td>
+      </tr>`).join("")}</tbody></table>`
+    : `<div class="empty">This run has not completed a cycle yet.</div>`;
+
+  const si = d.self_improvement ?? {};
+  const sigs = si.signals ?? [];
+  $("fa-self").innerHTML = `
+    <div class="fa-sig"><b>Yield</b> — ${num(si.fixed_per_cycle).toFixed(1)} fixed per cycle,
+      ${num(si.discovery_per_cycle).toFixed(1)} newly discovered per cycle</div>
+    <div class="fa-sig"><b>Zero-fix cycles</b> — ${fmtInt(si.zero_fix_cycles)} of ${fmtInt(si.cycles)}</div>
+    <div class="fa-sig"><b>Red-gate cycles</b> — ${fmtInt(si.red_gate_cycles)} of ${fmtInt(si.cycles)}</div>
+    <div class="fa-sig"><b>Controller</b> — batch ≤ ${fmtInt(d.loop?.calibration?.batch_ceiling)},
+      parallel ≤ ${fmtInt(d.loop?.calibration?.parallel_ceiling)}
+      (${fmtInt(d.loop?.calibration?.clean_run)} clean runs)</div>
+    ${sigs.length
+      ? sigs.map(s => `<div class="fa-sig"><b>${esc(s.code)}</b> — ${esc(s.text)}</div>`).join("")
+      : `<div class="fa-sig">No pathologies detected — nothing for
+         <code>/fullauto:evolve</code> to act on.</div>`}`;
+}
+
+$("fa-runs").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-run]");
+  if (tr) openFullautoRun(tr.dataset.run);
+});
+
 /* ── tabs, lazy loads, refresh loop ──────────────────────────────────── */
 async function loadTab(tab, force) {
   const key = `${tab}:${state.project}`;
@@ -2126,6 +2322,11 @@ async function loadTab(tab, force) {
       lazyCache[`skills:${state.project}`] = data;
       lazyCache[key] = data;
       renderImprove(data ?? []);
+    } else if (tab === "fullauto") {
+      // Never cached: a running loop's phase and heartbeat are the point, and a
+      // cached "● running, 3s ago" that is actually twenty minutes old would be
+      // worse than no panel at all.
+      renderFullauto(await api("/api/fullauto") ?? {});
     } else if (tab === "config") {
       const data = cached ?? await api("/api/config");
       lazyCache[key] = data;
@@ -2251,6 +2452,9 @@ async function refresh() {
     renderFiles(files ?? []); renderMemory(memory ?? {}); renderFleetMcp(fleet ?? [], mcp ?? []);
     renderExecutions(); renderActivity();
     if (state.tab === "improve") renderImprove(lazyCache[`skills:${state.project}`] ?? []);
+    // A live cycle moves between phases in seconds; the fullauto tab is only
+    // honest if it re-reads on the same cadence as everything else.
+    if (state.tab === "fullauto") loadTab("fullauto", true);
     if (state.tab === "mcp") loadTab("mcp", false);
     ok();
   } catch (e) {

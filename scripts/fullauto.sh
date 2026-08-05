@@ -118,7 +118,15 @@ repo_slug() {
   esac
 }
 
-STATE_DIR="${FULLAUTO_STATE_DIR:-$HOME/.fullauto/$(repo_slug)}"
+# State lives under the stella home, not a top-level ~/.fullauto, so it sits
+# beside every other durable per-user artifact and `STELLA_HOME` moves it with
+# the rest. The observatory resolves the same path through `stella-home` and
+# reads it read-only.
+stella_home() {
+  if [ -n "${STELLA_HOME:-}" ]; then printf '%s' "$STELLA_HOME"; else printf '%s' "$HOME/.stella"; fi
+}
+
+STATE_DIR="${FULLAUTO_STATE_DIR:-$(stella_home)/fullauto/$(repo_slug)}"
 readonly STATE_DIR
 
 # `gh` colorizes --json output even when it is redirected to a file, if
@@ -133,6 +141,33 @@ readonly SEEN="$STATE_DIR/seen.txt"
 readonly CYCLE_FILE="$STATE_DIR/cycle"
 readonly CALIBRATION="$STATE_DIR/calibration.json"
 readonly APERTURE_FILE="$STATE_DIR/aperture"
+
+# The durable run record. This is what makes a cycle observable from outside the
+# terminal that started it: pid, cycle, phase and a heartbeat, rewritten in
+# place as the cycle advances. A terminal that quits leaves this file behind
+# with a stale heartbeat, which is how a crashed cycle is told apart from a
+# running one — an absent record would look identical to a clean finish.
+readonly RUN_FILE="$STATE_DIR/run.json"
+
+# Which workspace roots this loop belongs to. The observatory cannot run git, so
+# it cannot re-derive the slug the way this script does; the loop writes down
+# its own roots and the dashboard matches on them.
+readonly WORKSPACE_FILE="$STATE_DIR/workspace.json"
+
+# One record per RUN — a `/loop` session or a daemon lifetime, spanning many
+# cycles. Append-only and event-sourced: every transition appends a record and
+# readers fold by run_id, last write winning. Rewriting one JSON document in
+# place would be the only structure that a crash mid-write could corrupt, and a
+# crash is precisely the case this file exists to record.
+readonly RUNS="$STATE_DIR/runs.jsonl"
+
+readonly DAEMON_PID="$STATE_DIR/daemon.pid"
+readonly DAEMON_LOG="$STATE_DIR/daemon.log"
+
+# A heartbeat older than this means nobody is driving the cycle any more.
+# Generous on purpose: a single model call inside an audit phase can legitimately
+# run for minutes, and calling a live cycle dead is worse than noticing late.
+readonly STALE_AFTER_SECS="${FULLAUTO_STALE_AFTER_SECS:-900}"
 
 # ---------------------------------------------------------------------------
 # Output
@@ -155,7 +190,9 @@ HARD_FAIL=0
 have() { command -v "$1" >/dev/null 2>&1; }
 
 ensure_state() {
+  migrate_legacy_state
   mkdir -p "$STATE_DIR" || die "cannot create state dir $STATE_DIR"
+  record_workspace_root
   [ -f "$LEDGER" ] || : > "$LEDGER"
   [ -f "$SEEN" ] || : > "$SEEN"
   [ -f "$CYCLE_FILE" ] || echo 0 > "$CYCLE_FILE"
@@ -167,6 +204,303 @@ ensure_state() {
   [ -f "$CALIBRATION" ] || cat > "$CALIBRATION" <<EOF
 {"batch_ceiling": $BATCH_HARD_MAX, "parallel_ceiling": 2, "clean_run": 0, "note": "seeded"}
 EOF
+}
+
+# An earlier build kept state at ~/.fullauto/<slug>. Move it, once, rather than
+# silently starting a fresh ledger — losing the seen-set would re-file every
+# finding ever triaged. Never overwrite: if both exist the new home wins and the
+# legacy directory is left untouched for the user to inspect.
+migrate_legacy_state() {
+  [ -n "${FULLAUTO_STATE_DIR:-}" ] && return 0
+  local legacy
+  legacy="$HOME/.fullauto/$(repo_slug)"
+  [ -d "$legacy" ] || return 0
+  [ -e "$STATE_DIR" ] && return 0
+  mkdir -p "$(dirname "$STATE_DIR")" || return 0
+  if mv "$legacy" "$STATE_DIR" 2>/dev/null; then
+    warn "migrated fullauto state: $legacy -> $STATE_DIR"
+  fi
+}
+
+# Record every workspace root that has driven this loop. The observatory reads
+# this to answer "which of these loops is the project I am looking at?" — it has
+# no git, so it cannot derive the slug itself. Worktrees legitimately add extra
+# roots for one repository, so this is a set, not a single value.
+record_workspace_root() {
+  python3 - "$WORKSPACE_FILE" "$REPO_ROOT" "$(repo_slug)" 2>/dev/null <<'PY' || true
+import json, os, sys
+path, root, slug = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    doc = json.load(open(path))
+except Exception:
+    doc = {}
+roots = doc.get("roots") or []
+if root not in roots:
+    roots.append(root)
+# Bound it: a machine that churns worktrees should not grow this without limit.
+doc.update({"slug": slug, "roots": roots[-32:]})
+tmp = path + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump(doc, fh, indent=2)
+os.replace(tmp, path)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# The durable run record
+# ---------------------------------------------------------------------------
+#
+# Written on cycle-begin, rewritten at every phase boundary, cleared on
+# cycle-end. Every write is atomic (temp file + rename) because the observatory
+# polls this file and a half-written JSON would render as a broken panel rather
+# than as the truth.
+
+run_write() {
+  local phase="$1" cycle="${2:-}" tier="${3:-}"
+  python3 - "$RUN_FILE" "$phase" "$cycle" "$tier" "$(cat "$APERTURE_FILE" 2>/dev/null || echo '')" \
+           "${FULLAUTO_DRIVER:-interactive}" "$$" 2>/dev/null <<'PY' || true
+import json, os, socket, sys, time
+path, phase, cycle, tier, aperture, driver, pid = sys.argv[1:8]
+try:
+    doc = json.load(open(path))
+except Exception:
+    doc = {}
+now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+if cycle:
+    doc["cycle"] = int(cycle)
+if tier:
+    doc["tier"] = tier
+doc.setdefault("started_at", now)
+doc.update({
+    "phase": phase,
+    "aperture": aperture,
+    "driver": driver,
+    "pid": int(pid),
+    "host": socket.gethostname(),
+    "heartbeat": now,
+    "heartbeat_unix": int(time.time()),
+})
+tmp = path + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump(doc, fh, indent=2)
+os.replace(tmp, path)
+PY
+}
+
+# `phase` is the hook the cycle calls at each boundary. It is what turns the run
+# record from "something is running" into "something is running, and it is in
+# the audit stage of cycle 12" — which is the difference between a status light
+# and an observable workflow.
+cmd_phase() {
+  ensure_state
+  local phase="${1:?phase needs a name}"
+  local cycle
+  cycle="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("cycle",""))' "$RUN_FILE" 2>/dev/null || echo '')"
+  run_write "$phase" "$cycle" ""
+  printf 'phase: %s\n' "$phase"
+}
+
+run_clear() {
+  rm -f "$RUN_FILE" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Run lifecycle — running / completed / cancelled / crashed
+# ---------------------------------------------------------------------------
+#
+# A RUN spans many cycles: one `/loop` session, or one daemon lifetime. It is
+# the unit the dashboard lists and drills into, and the only one that can be
+# CANCELLED — a cycle either finishes or is abandoned, but a person stops a run.
+
+new_run_id() {
+  printf 'r-%s-%s' "$(date -u +%Y%m%dT%H%M%SZ)" "$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"
+}
+
+current_run_id() {
+  [ -f "$RUN_FILE" ] || return 1
+  python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("run_id",""))' "$RUN_FILE" 2>/dev/null
+}
+
+run_append() {
+  python3 - "$RUNS" "$@" <<'PY' || true
+import json, socket, sys, time
+path = sys.argv[1]
+fields = {}
+for pair in sys.argv[2:]:
+    k, _, v = pair.partition("=")
+    fields[k] = v
+rec = {
+    "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "at_unix": int(time.time()),
+    "host": socket.gethostname(),
+}
+for k, v in fields.items():
+    if v.isdigit():
+        rec[k] = int(v)
+    else:
+        rec[k] = v
+with open(path, "a") as fh:
+    fh.write(json.dumps(rec, sort_keys=True) + "\n")
+print(json.dumps(rec))
+PY
+}
+
+cmd_run() {
+  ensure_state
+  local verb="${1:-status}"; shift || true
+  case "$verb" in
+    start)
+      local rid
+      rid="$(new_run_id)"
+      run_append "run_id=$rid" "status=running" "driver=${FULLAUTO_DRIVER:-interactive}" \
+                 "slug=$(repo_slug)" "workspace_root=$REPO_ROOT" "pid=$$" >/dev/null
+      python3 - "$RUN_FILE" "$rid" <<'PY' || true
+import json, os, sys, time
+path, rid = sys.argv[1], sys.argv[2]
+try:
+    doc = json.load(open(path))
+except Exception:
+    doc = {}
+doc["run_id"] = rid
+doc.setdefault("started_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+tmp = path + ".tmp"
+json.dump(doc, open(tmp, "w"), indent=2)
+os.replace(tmp, path)
+PY
+      # Stamp the first heartbeat through the SAME writer every other phase
+      # uses. Two writers producing different shapes is how a fresh run ends up
+      # looking infinitely old to the abandonment check — the record must be
+      # complete from its first byte, not completed by whatever happens next.
+      run_write "idle" "" ""
+      say "run $rid started"
+      echo "FULLAUTO_RUN_ID=$rid"
+      ;;
+    end)
+      local status="completed" reason="" rid
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --status) status="${2:?}"; shift 2 ;;
+          --reason) reason="${2:?}"; shift 2 ;;
+          *) die "run end: unknown flag $1" ;;
+        esac
+      done
+      rid="$(current_run_id || echo '')"
+      [ -n "$rid" ] || die "run end: no run in progress"
+      run_append "run_id=$rid" "status=$status" "reason=$reason" >/dev/null
+      run_clear
+      say "run $rid -> $status"
+      ;;
+    cancel)
+      cmd_run end --status cancelled --reason "${1:-stopped by hand}"
+      ;;
+    list)  cmd_runs_report ;;
+    status|"") cmd_runs_report ;;
+    *) die "run: use start | end | cancel | list" ;;
+  esac
+}
+
+# Fold runs.jsonl by run_id (last write wins) and resolve the one live status
+# the file cannot state: a run whose last record says `running` but whose
+# heartbeat has gone stale is CRASHED, not running. Only a reader can know that,
+# because the process that would have written it is gone.
+cmd_runs_report() {
+  ensure_state
+  python3 - "$RUNS" "$LEDGER" "$RUN_FILE" "$STALE_AFTER_SECS" <<'PY'
+import json, os, sys, time
+runs_path, ledger_path, run_path, stale = sys.argv[1:5]
+stale = int(stale)
+
+runs = {}
+if os.path.exists(runs_path):
+    for line in open(runs_path):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        rid = rec.get("run_id")
+        if not rid:
+            continue
+        runs.setdefault(rid, {}).update(rec)
+
+cycles = {}
+if os.path.exists(ledger_path):
+    for line in open(ledger_path):
+        try:
+            c = json.loads(line)
+        except Exception:
+            continue
+        cycles.setdefault(c.get("run_id", "-"), []).append(c)
+
+live = {}
+if os.path.exists(run_path):
+    try:
+        live = json.load(open(run_path))
+    except Exception:
+        live = {}
+now = int(time.time())
+
+if not runs:
+    print("no fullauto runs recorded yet")
+    raise SystemExit(0)
+
+print(f"{'run':<28} {'status':<10} {'cyc':>3} {'fixed':>5} {'filed':>5} {'new':>4}  phase")
+for rid, r in sorted(runs.items(), key=lambda kv: kv[1].get("at_unix", 0), reverse=True):
+    status = r.get("status", "?")
+    cs = cycles.get(rid, [])
+    fixed = sum(c.get("fixed", 0) for c in cs)
+    filed = sum(c.get("filed", 0) for c in cs)
+    new = sum(c.get("new_findings", 0) for c in cs)
+    phase = ""
+    if status == "running":
+        if live.get("run_id") == rid:
+            age = now - int(live.get("heartbeat_unix", 0) or 0)
+            phase = f"{live.get('phase', '?')} ({age}s ago)"
+            if age > stale:
+                status = "crashed"
+        else:
+            # Last record says running, but nothing is holding the live pointer.
+            status = "crashed"
+    print(f"{rid:<28} {status:<10} {len(cs):>3} {fixed:>5} {filed:>5} {new:>4}  {phase}")
+PY
+}
+
+# A run record left behind by a driver that died is banked as `crashed` the next
+# time anything starts, so the history records the abandonment rather than the
+# cycle silently disappearing.
+reconcile_abandoned_run() {
+  [ -f "$RUN_FILE" ] || return 0
+  local rid
+  rid="$(current_run_id || echo '')"
+  [ -n "$rid" ] || { run_clear; return 0; }
+
+  # A live run legitimately owns a run record — that is the whole point of it.
+  # Only an ABANDONED one may be banked; treating the mere existence of the file
+  # as abandonment destroys the run in progress.
+  #
+  # The witness is the HEARTBEAT, not the pid. Every subcommand here is its own
+  # short-lived process, so the pid in the record is dead microseconds after it
+  # is written — checking it would declare every interactive run crashed on its
+  # very next command. A pid is only meaningful when a supervisor owns the run,
+  # so it is consulted for `driver=daemon` and ignored otherwise.
+  local age driver pid
+  age="$(python3 -c 'import json,sys,time;print(int(time.time())-int(json.load(open(sys.argv[1])).get("heartbeat_unix",0) or 0))' "$RUN_FILE" 2>/dev/null || echo 999999)"
+  driver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("driver",""))' "$RUN_FILE" 2>/dev/null || echo '')"
+  if [ "${age:-999999}" -lt "$STALE_AFTER_SECS" ]; then
+    if [ "$driver" != "daemon" ]; then
+      return 0
+    fi
+    pid="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("pid",0))' "$RUN_FILE" 2>/dev/null || echo 0)"
+    if [ "${pid:-0}" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  run_append "run_id=$rid" "status=crashed" "reason=driver exited without ending the run" >/dev/null
+  warn "previous run $rid was abandoned — banked as crashed"
+  run_clear
 }
 
 # ---------------------------------------------------------------------------
@@ -244,10 +578,41 @@ probe_contention() {
     END { print n + 0 }')"
   # A running container is real work even when no host process names it — the
   # benchmark drives Docker, and on a Linux rig nothing on the host says so.
+  #
+  # But EXISTENCE is not activity. A finished match routinely leaves its
+  # recorder sidecars up for hours (measured: five `arenabench/recorder`
+  # containers still up 8 hours after the match ended). Counting those sheds the
+  # loop's compute forever for work that finished last night — the same
+  # permanent, silent, looks-like-caution failure as counting a `tail -f`
+  # watcher. Ask what the containers are DOING, not whether they exist.
   if [ "${hits:-0}" -eq 0 ] && have docker; then
-    if [ -n "$(docker ps -q 2>/dev/null)" ]; then hits=1; fi
+    local busy_containers
+    busy_containers="$(docker stats --no-stream --format '{{.CPUPerc}}' 2>/dev/null \
+      | tr -d '%' | awk '$1 + 0 > 20 { n++ } END { print n + 0 }')"
+    if [ "${busy_containers:-0}" -gt 0 ]; then hits=1; fi
   fi
   if [ "${hits:-0}" -gt 0 ]; then echo 1; else echo 0; fi
+}
+
+# Is the headless scope-review bypass on in any settings scope this run will
+# see? Project wins per field, so project is checked first — but for a boolean
+# gate like this, ON anywhere is what matters to the question being asked.
+scope_bypass_on() {
+  local f
+  for f in "$REPO_ROOT/.stella/settings.json" "$(stella_home)/settings.json"; do
+    [ -f "$f" ] || continue
+    if python3 -c '
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1])).get("agent_engine_config") or {}
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if str(cfg.get("headless_scope_bypass", "")).lower() == "on" else 1)
+' "$f" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 json_get() {
@@ -603,6 +968,17 @@ cmd_preflight() {
     if [ "$(command -v stella)" = "$REPO_ROOT/target/release/stella" ]; then
       warn "that is the LOCAL dev build shadowing any release (see \`upgrade\`)"
     fi
+    # Measured, not theorised: the first live daemon cycle died here. A cycle
+    # of any real size trips scope review, and a headless run has nobody to
+    # ask — so without the bypass EVERY daemon cycle burns its startup cost and
+    # then aborts. Better to refuse the cycle than to discover it in the log.
+    if scope_bypass_on; then
+      pass "headless_scope_bypass: on — a headless cycle can pass scope review"
+    else
+      fail "headless_scope_bypass is OFF — a headless cycle aborts at scope review.
+     Set it where the working tree is disposable:
+       .stella/settings.json -> {\"agent_engine_config\": {\"headless_scope_bypass\": \"on\"}}"
+    fi
   else
     warn "stella not on PATH — the fix batch falls back to the driving agent"
   fi
@@ -721,6 +1097,12 @@ cmd_cycle_begin() {
   local n
   n=$(( $(cat "$CYCLE_FILE") + 1 ))
   echo "$n" > "$CYCLE_FILE"
+  # A previous run record still present here means the last cycle never reached
+  # cycle-end — the terminal quit, the machine slept, or the driver crashed.
+  # Bank it before overwriting, so the ledger records the abandonment instead of
+  # the cycle just vanishing from the history.
+  reconcile_abandoned_run
+  run_write "starting" "$n" ""
   local streak
   streak="$(cmd_state --dry-streak)"
   cat <<EOF
@@ -758,15 +1140,19 @@ cmd_cycle_end() {
   done
   [ -n "$cycle" ] || die "cycle-end needs --cycle N"
   aperture="$(cat "$APERTURE_FILE")"
+  local run_id
+  run_id="$(current_run_id || echo '-')"
 
   python3 - "$LEDGER" "$cycle" "$fixed" "$filed" "$new_findings" "$bench" "$gate" \
-            "$prs" "$tier" "$aperture" "$outcome" "$minutes" <<'PY'
+            "$prs" "$tier" "$aperture" "$outcome" "$minutes" "$run_id" <<'PY'
 import json, sys, time
 (ledger, cycle, fixed, filed, new, bench, gate,
- prs, tier, aperture, outcome, minutes) = sys.argv[1:13]
+ prs, tier, aperture, outcome, minutes, run_id) = sys.argv[1:14]
 rec = {
     "cycle": int(cycle),
+    "run_id": run_id,
     "ended_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "ended_at_unix": int(time.time()),
     "fixed": int(fixed),
     "filed": int(filed),
     "new_findings": int(new),
@@ -793,6 +1179,12 @@ PY
     ok)            cmd_calibrate --ok >/dev/null ;;
     resource-fail) cmd_calibrate --resource-fail >/dev/null ;;
   esac
+
+  # The CYCLE ended, not the run — a run spans many cycles, and only `run end`
+  # or `run cancel` closes one. Clearing the live record here would leave
+  # runs.jsonl saying `running` with nothing holding the pointer, which every
+  # reader correctly interprets as a crash.
+  run_write "idle" "" "$tier"
 
   local streak
   streak="$(cmd_state --dry-streak)"
@@ -897,6 +1289,185 @@ cmd_seen() {
     --count) wc -l < "$SEEN" | tr -d ' ' ;;
     *) die "seen: use --new | --add | --digest | --count" ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# daemon — the loop outlives the terminal that started it
+# ---------------------------------------------------------------------------
+#
+# `/loop /fullauto` dies with the terminal app. The state was always durable —
+# it is files on disk — but the DRIVER was not, so quitting the terminal ended
+# the loop with no record of why. The daemon detaches the driver from the tty:
+# nohup so SIGHUP cannot reach it, a pidfile so it can be found again, and a
+# run record so a kill -9 still leaves evidence.
+#
+# `daemon install` goes one step further and hands the job to launchd, which is
+# what survives a logout or a reboot rather than merely a closed window.
+
+daemon_alive() {
+  [ -f "$DAEMON_PID" ] || return 1
+  local pid
+  pid="$(cat "$DAEMON_PID" 2>/dev/null)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+# The command that runs ONE cycle. Defaults to handing the cycle prompt to
+# Stella itself — this loop is Stella making Stella better, so the daemon
+# dogfoods by default and only falls back when asked to.
+cycle_command() {
+  if [ -n "${FULLAUTO_CYCLE_CMD:-}" ]; then
+    printf '%s' "$FULLAUTO_CYCLE_CMD"
+    return 0
+  fi
+  # `stella run` takes its prompt positionally or on stdin, and reads stdin when
+  # piped — which is the right channel for a prompt this long: an argv-borne
+  # cycle prompt would be visible in `ps` and can hit ARG_MAX.
+  #
+  # The budget is per-cycle and enforced by the engine, aborting only at a safe
+  # boundary between model calls (invariant 6) — never mid-tool.
+  printf 'cat %s/scripts/fullauto/commands/fullauto.md | stella run --budget %s' \
+    "$REPO_ROOT" "${FULLAUTO_BUDGET_USD:-10}"
+}
+
+cmd_daemon() {
+  ensure_state
+  local verb="${1:-status}"; shift || true
+  case "$verb" in
+    start)     daemon_start "$@" ;;
+    stop)      daemon_stop "$@" ;;
+    status)    daemon_status ;;
+    logs)      tail -n "${1:-40}" "$DAEMON_LOG" 2>/dev/null || echo "(no log yet)" ;;
+    loop)      daemon_loop "$@" ;;
+    install)   daemon_install ;;
+    uninstall) daemon_uninstall ;;
+    *) die "daemon: use start | stop | status | logs | install | uninstall" ;;
+  esac
+}
+
+daemon_start() {
+  local interval="${1:-2700}"
+  if daemon_alive; then
+    warn "daemon already running (pid $(cat "$DAEMON_PID"))"
+    return 0
+  fi
+  have stella || warn "stella is not on PATH — set FULLAUTO_CYCLE_CMD or the daemon will idle"
+
+  # nohup detaches from the terminal's SIGHUP; the background `&` detaches from
+  # job control. Both are needed: job-control stop alone would take the process
+  # down with the shell that spawned it.
+  nohup "$0" daemon loop "$interval" "${2:-}" >> "$DAEMON_LOG" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$DAEMON_PID"
+  disown "$pid" 2>/dev/null || true
+  say "daemon started (pid $pid, interval ${interval}s)"
+  pass "log: $DAEMON_LOG"
+  pass "it now survives this terminal closing; \`daemon install\` also survives logout"
+}
+
+daemon_loop() {
+  local interval="${1:-2700}" once="${2:-}"
+  export FULLAUTO_DRIVER=daemon
+  cmd_run start >/dev/null
+  # Ending the run on the way out is what makes a `daemon stop` read as
+  # `cancelled` rather than `crashed` — the distinction the dashboard shows.
+  trap 'cmd_run end --status cancelled --reason "daemon stopped" >/dev/null 2>&1; exit 0' TERM INT
+  local cmd
+  cmd="$(cycle_command)"
+  while true; do
+    printf '\n=== %s :: cycle start ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    run_write "cycle" "" ""
+    sh -c "$cmd" || warn "cycle command exited nonzero"
+    if [ "$once" = "--once" ]; then
+      printf '=== %s :: single cycle done ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      cmd_run end --status completed --reason "single cycle (--once)" >/dev/null
+      rm -f "$DAEMON_PID"
+      return 0
+    fi
+    printf '=== %s :: sleeping %ss ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$interval"
+    run_write "sleeping" "" ""
+    sleep "$interval"
+  done
+}
+
+daemon_stop() {
+  if ! daemon_alive; then
+    warn "no daemon running"
+    rm -f "$DAEMON_PID"
+    return 0
+  fi
+  local pid
+  pid="$(cat "$DAEMON_PID")"
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 1
+  if kill -0 "$pid" 2>/dev/null; then
+    warn "daemon $pid did not stop on TERM; sending KILL"
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  rm -f "$DAEMON_PID"
+  say "daemon stopped"
+}
+
+daemon_status() {
+  if daemon_alive; then
+    pass "daemon running (pid $(cat "$DAEMON_PID"))"
+  else
+    warn "daemon not running"
+  fi
+  cmd_runs_report
+}
+
+launchd_label() { printf 'sh.oxagen.fullauto.%s' "$(repo_slug)"; }
+launchd_plist() { printf '%s/Library/LaunchAgents/%s.plist' "$HOME" "$(launchd_label)"; }
+
+# launchd is the only thing on macOS that restarts the loop after a logout or a
+# reboot. A nohup'd process survives a closed window and nothing more.
+daemon_install() {
+  [ "$(uname -s)" = "Darwin" ] || die "daemon install is macOS-only (use systemd --user elsewhere)"
+  local plist label
+  plist="$(launchd_plist)"; label="$(launchd_label)"
+  mkdir -p "$(dirname "$plist")" || die "cannot write $(dirname "$plist")"
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$REPO_ROOT/scripts/fullauto.sh</string>
+    <string>daemon</string>
+    <string>loop</string>
+    <string>2700</string>
+  </array>
+  <key>WorkingDirectory</key><string>$REPO_ROOT</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$DAEMON_LOG</string>
+  <key>StandardErrorPath</key><string>$DAEMON_LOG</string>
+</dict>
+</plist>
+EOF
+  pass "wrote $plist"
+  if launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null; then
+    pass "loaded — the loop now survives logout and reboot"
+  else
+    warn "wrote the plist but launchctl bootstrap failed; load it with:"
+    printf '        launchctl bootstrap gui/%s %s\n' "$(id -u)" "$plist"
+  fi
+  printf '\n  Remove with: %s daemon uninstall\n' "$0"
+}
+
+daemon_uninstall() {
+  local plist
+  plist="$(launchd_plist)"
+  launchctl bootout "gui/$(id -u)/$(launchd_label)" 2>/dev/null || true
+  if [ -e "$plist" ]; then
+    rm -f "$plist"
+    pass "removed $plist"
+  else
+    warn "nothing to remove"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1179,6 +1750,10 @@ main() {
   case "$sub" in
     preflight|doctor)  cmd_preflight "$@" ;;
     plan)              cmd_plan "$@" ;;
+    run)               cmd_run "$@" ;;
+    runs)              cmd_runs_report ;;
+    phase)             cmd_phase "$@" ;;
+    daemon)            cmd_daemon "$@" ;;
     calibrate)         cmd_calibrate "$@" ;;
     aperture)          cmd_aperture "$@" ;;
     watch)             cmd_watch "$@" ;;
