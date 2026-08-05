@@ -7,7 +7,7 @@
 Pick a benchmark. Check the tasks you want. Seat as many contestants as you
 like — each one an agent, a full engine configuration, and its own `.env`.
 Then watch them race the same task list in real time: a tournament scoreboard
-across seven dimensions, live transcripts streaming per task, and a real MP4
+across a dozen dimensions, live transcripts streaming per task, and a real MP4
 screen recording of every trial.
 
 ```bash
@@ -209,21 +209,31 @@ per-contestant rather than global. Values live in the arena process and are
 handed only to that contestant's subprocess — the API returns key *names*,
 never values.
 
-**Eight dimensions, live.**
+**The dimensions, live.**
 
 | Dimension | Direction | Why |
 |---|---|---|
 | Solve Rate | higher wins | verifier rewards / trials **judged** |
+| Mean Reward | neutral | verifier score averaged over judged trials — partial credit |
 | Clock Time | lower wins | wall clock across all trials |
+| Wasted Time | lower wins | still running after the solution already passed (`arenabench flip`) |
 | Total Cost | lower wins | every seat's tokens through **one** price table |
 | Self-Reported | neutral | what each agent said it spent, on its own table |
 | Tokens In | lower wins | uncached prompt tokens billed |
 | Tokens Out | lower wins | completion tokens billed |
 | Cache Read | **higher wins** | prompt tokens you did not pay full price for |
 | Cache Write | neutral | a real cost paid to enable future reads |
+| Cache Hit | **higher wins** | share of prompt tokens served from cache — prompt-cache discipline |
+| Steps | neutral | model calls taken — a design fingerprint |
+| Tool Calls | neutral | tool invocations — a design fingerprint |
 
 Cache write crowns nobody on purpose. More writes is not obviously better or
 worse, and a scoreboard that confidently picks a direction there is lying.
+Steps and tool calls crown nobody for the same reason: how an agent decomposes
+work is a fact the tuner reads, not a ranking — fewer steps is not better any
+more than fewer functions makes a program better. Mean reward is neutral
+because it grades the axis the solve rate already crowns; it is there so two
+seats at 50% — one averaging 0.8, the other 0.5 — stop reading as equals.
 
 Neither does the self-reported column, for a sharper reason. Every agent prices
 its own run from its own table and no meter checks it; on one measured
@@ -233,6 +243,20 @@ computed in `pricing.py` from the token counts both agents report accurately,
 run through one table for both seats. A model that table does not cover reports
 no cost rather than a guessed one — a plausible wrong figure populates a column,
 sorts against the other arm, and crowns a winner on a dimension nobody measured.
+
+**The posture behind the label.** Every scoreboard card unfolds to the full
+engine pinning its seat was launched with — api and route-qualified model,
+reasoning and effort, output cap and budget, per-role overrides with
+inheritance spelled out rather than flattened, and the credential *names* the
+seat carried. What an A/B run is actually varying should be one click away,
+not only in the TOML that launched it.
+
+**Verdicts that say what happened.** A harness or host fault renders violet as
+`void — not judged`, never as a red loss. A partially-scored trial shows the
+verifier's actual number instead of a bare ✗. A failed trial whose agent had
+itself declared `complete` is labelled `claimed done` — the premature-complete
+signature — so a timeout and a false "done", opposite tuning problems, stop
+reading identically.
 
 **Live transcripts by task.** Click a task and every contestant's transcript
 streams side by side — reasoning, tool calls, results, per-step token and cost

@@ -126,6 +126,19 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"({totals['passed']}/{totals['judged']})  {cost:>9}  "
             f"(self-reported ${totals['total_cost']:.2f})"
         )
+        # The tuning fingerprint under the headline: how the seat worked, not
+        # just whether it won. Steps and tools are design facts, the cache-hit
+        # rate grades prompt-cache discipline, and the mean reward carries the
+        # partial credit the solve rate rounds away. Each rate prints only
+        # when measured — an absent number must not print as a zero.
+        detail = f"  {'':24} steps {totals['steps']}  tools {totals['tools']}"
+        if totals.get("cache_hit_rate") is not None:
+            detail += f"  cache hit {totals['cache_hit_rate']:.0f}%"
+        if totals.get("mean_reward") is not None:
+            detail += f"  avg reward {totals['mean_reward']:.2f}"
+        if totals.get("cap_hits"):
+            detail += f"  !! {totals['cap_hits']} output-cap"
+        print(detail)
         if totals["judged"] == 0:
             worst = 1
     if args.results:
