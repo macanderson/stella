@@ -1,5 +1,5 @@
-# deck golden · tab_session
-# the SESSION tab over the scripted demo session
+# deck golden · card_plan
+# the /plan card over SESSION — every step, then the envelope
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
@@ -21,25 +21,25 @@
 ┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Refactor the automations store into a shared workspace package                                                                                                │
 │3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
-│type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│● read_file    apps/app/automations/page.tsx                                                                          ││Refactor the automations store into a…│
-│  ⎿ 312 lines                                                                                                     42ms││○ 1 extract types                     │
-│                                                                                                                      ││○ 2 move hooks                        │
-│☰  plan  5/7  ·  Workflows canvas                                                                                     ││○ 3 update 9 imports                  │
-│                                                                                                                      │└────────────────────── /plan reads it ┘
-│⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files                        │┌ DONE VERIFICATION ───────────────────┐
-│                                                                                                                      ││● flip ✓ red→green                    │
-└─────────────────────────────────────────── ↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · /plan ┘└──────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
+│type approve  trim  xabort  ·  or what to change  —┌ plan  pending approval · 3 steps  x skip · esc close ┐                                                   │
+│                                                   │Refactor the automations store into a shared worksp…  │                                                   │
+│                                                   │                                                      │                                                   │
+│                                                   │▸ ○ 1  extract types                                  │                                                   │
+└───────────────────────────────────────────────────│  ○ 2  move hooks                                     │───────────────────────────────────────────────────┘
+┌ transcript · 21 lines · following ────────────────│  ○ 3  update 9 imports                               │───────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│● read_file    apps/app/automations/page.tsx       │                                                      │           ││Refactor the automations store into a…│
+│  ⎿ 312 lines                                      │repo      macanderson/web-app ⎇ feat/automations-store│       42ms││○ 1 extract types                     │
+│                                                   │write     packages/automations/** · apps/app/automatio│           ││○ 2 move hooks                        │
+│☰  plan  5/7  ·  Workflows canvas                  │read      apps/** · packages/**  (2 globs)            │           ││○ 3 update 9 imports                  │
+│                                                   │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           │└────────────────────── /plan reads it ┘
+│⏸ plan  Refactor the automations store into a share│models    think — · work glm-5.2-air · verify —       │           │┌ DONE VERIFICATION ───────────────────┐
+│                                                   │shell     allowlisted                                 │           ││● flip ✓ red→green                    │
+└─────────────────────────────────────────── ↑ selec│done when oracle flips red → green                    │nd · /plan ┘└──────────────────────────────────────┘
+────────────────────────────────────────────────────│          (confirmed from evidence, not self-report)  │────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shar└──────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- MODEL                   │ EXECUTE     │ CPU         │ CONTEXT          │ SPEND          │ CACHE                 │ ENGINE   │ LANES              │ PR
- worker: zai/glm-5.2-air │ Step 6 of 7 │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50 │ 63% (18.0K rd · 0 wr) │ 3 active │ ✦ 1 lead · ◆ 2 sub │ ⇢ #981 open …
+ MODEL                   │ EXECUTE     │ TURN  │ PLAN
+ worker: zai/glm-5.2-air │ Step 6 of 7 │ $0.04 │ pending approval 0/3                                                                     ↝ deterministic-first
  MODELS  T·—  W·zai/glm-5.2-air  J·—

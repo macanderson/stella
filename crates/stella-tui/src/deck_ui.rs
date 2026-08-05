@@ -625,23 +625,6 @@ pub struct DeckUi {
     /// Whether the queue editor popup is open (`ctrl+t`, or `↑` from an empty
     /// composer on the Session tab while prompts are queued).
     pub queue_open: bool,
-    /// Whether the STATE overlay is open (`ctrl+s`): the approved scope's
-    /// steps, the whole task board, and the full proof rail — the expansion of
-    /// the one-row state strip. Modal while open (Esc or ctrl+s closes).
-    ///
-    /// Read-only and scroll-free by design: it is a recall surface, not a
-    /// second place to act on any of the three. Anything actionable —
-    /// approving a scope, answering a question — stays on its own card where
-    /// the keys that answer it are advertised.
-    pub state_open: bool,
-    /// Scroll offset (content rows) for the STATE overlay. A long board or a
-    /// many-step plan outruns a 24-row terminal, and an overlay that dropped
-    /// the overflow would re-create, inside the fix, the very defect it exists
-    /// to remove. Clamped during render against what actually fit.
-    pub state_scroll: usize,
-    /// Rows the STATE overlay last measured, so the key handler can clamp the
-    /// next scroll against what was drawn rather than guessing.
-    pub state_rows: usize,
     /// Selected row in the queue editor.
     pub queue_sel: usize,
     /// Armed by the first `ctrl+d` in the queue editor; the second one clears
@@ -845,9 +828,6 @@ impl Default for DeckUi {
             slash_selected: 0,
             thinking_expanded: false,
             queue_open: false,
-            state_open: false,
-            state_scroll: 0,
-            state_rows: 0,
             queue_sel: 0,
             queue_confirm_clear: false,
             enter_submits: false,
@@ -1793,35 +1773,19 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         return action;
     }
 
-    // Ctrl-S opens the STATE overlay: the approved scope, the whole task board,
-    // and the full five-row proof rail — everything the one-row state strip
-    // compressed. `s` for state (and for scope, the half of it that had no way
-    // back at all once its gate closed). Free at the deck level: ctrl+s is a
-    // save chord only inside the modal SETTINGS/SKILLS editors, which claim the
-    // keyboard before this line is reached.
+    // Ctrl-S raises the plan card — the same surface `/plan` opens.
+    //
+    // It used to open a STATE overlay holding the approved scope, the task
+    // board and the full proof rail, because none of those had anywhere else
+    // to live. All three are now permanently in the rail, so the keystroke's
+    // job is no longer *recall*, it is *detail*: the full text of every plan
+    // step. Kept bound because the chord was taught. Free at the deck level:
+    // ctrl+s is a save chord only inside the modal SETTINGS/SKILLS editors,
+    // which claim the keyboard before this line is reached.
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s')) {
-        ui.state_open = !ui.state_open;
-        // Always open at the top: a stale offset from a previous look would
-        // hide the SCOPE section, which is the section it exists for.
-        ui.state_scroll = 0;
-        return DeckAction::Handled;
-    }
-
-    // Modal while open, like every other overlay: Esc or a second ctrl+s
-    // closes, and nothing behind it moves.
-    if ui.state_open {
-        // A recall surface, so the only verbs are move and leave.
-        let page = 10usize;
-        let max = ui.state_rows.saturating_sub(1);
-        match key.code {
-            KeyCode::Esc => ui.state_open = false,
-            KeyCode::Down => ui.state_scroll = (ui.state_scroll + 1).min(max),
-            KeyCode::Up => ui.state_scroll = ui.state_scroll.saturating_sub(1),
-            KeyCode::PageDown => ui.state_scroll = (ui.state_scroll + page).min(max),
-            KeyCode::PageUp => ui.state_scroll = ui.state_scroll.saturating_sub(page),
-            KeyCode::Home => ui.state_scroll = 0,
-            KeyCode::End => ui.state_scroll = max,
-            _ => {}
+        match ui.cards.open {
+            Some(cards::Card::Plan) => ui.cards.close(),
+            _ => ui.cards.raise(cards::Card::Plan),
         }
         return DeckAction::Handled;
     }
@@ -2119,16 +2083,12 @@ fn handle_slash_key(
             // The floating cards: pure view state, so the driver has no say.
             // `/budget` only *renders* locally — the edit it takes leaves as
             // `WorkspaceInput::SetBudget` from the card's own key handler.
-            "/tasks" => {
-                ui.cards.raise(cards::Card::Tasks);
-                DeckAction::Handled
-            }
-            "/scope" => {
-                ui.cards.raise(cards::Card::Scope);
-                DeckAction::Handled
-            }
-            "/witness" => {
-                ui.cards.raise(cards::Card::Witness);
+            // `/plan` is one card where `/tasks`, `/scope` and `/witness`
+            // used to be three. The old names still route here rather than
+            // erroring: a user who learned them should land on the surface
+            // that answers what they were asking, not on "unknown command".
+            "/plan" | "/tasks" | "/scope" | "/witness" => {
+                ui.cards.raise(cards::Card::Plan);
                 DeckAction::Handled
             }
             "/models" => {

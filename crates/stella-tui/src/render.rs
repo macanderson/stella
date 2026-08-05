@@ -59,13 +59,21 @@ pub(crate) fn inner_width(area: Rect) -> usize {
 
 // Panels
 
-/// The session HUD strip: stage, model, and the live cost of the turn.
+/// Rows the stat box claims: border, the stage line, border.
+pub(crate) const HUD_H: u16 = 3;
+
+/// The stat box: stage, model and the live cost of the turn.
 ///
 /// Cost here reads *per turn*, matching the composer's cell and the `✓ cost`
 /// line — it used to print `hud.spent_usd` raw, which on the deck is the
 /// session-cumulative gauge, so the "spend" in this box, the SPEND cell in the
 /// statline, and the `◇ spend` rows in the transcript were three different
 /// renderings of two different quantities under one word.
+///
+/// The four resource readings — cpu, context, spend, cache — live on the
+/// statline's own meter row, not here. They were briefly duplicated in this
+/// box as a second set of gauges; two renderings of the same four numbers, in
+/// two different bar glyphs, on one frame is worse than either alone.
 pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
     let label = Style::new().fg(theme::TEXT_TERTIARY);
     let mut spans: Vec<Span<'static>> = vec![
@@ -215,15 +223,18 @@ pub(crate) fn render_scope_review(
             ),
         ])
     });
-    // Warning, not the accent. A scope gate is the deck waiting on *you*, and
+    // Warning, not the accent. This gate is the deck waiting on *you*, and
     // "needs input" is a warning everywhere else in this UI — including the
-    // `⏸ scope` row this card mirrors in the transcript. Bordering it in the
+    // `⏸ plan` row this card mirrors in the transcript. Bordering it in the
     // brand hue made the one card that halts the session read as decoration,
     // and it was the single largest block of accent on the frame.
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().fg(theme::WARNING_BRIGHT))
-        .title(" scope review ");
+        // The thing being approved is the plan, so that is what the card is
+        // called. `scope` was this surface's word for the same object, and the
+        // rail beside it has already stopped using it.
+        .title(" plan review ");
     Paragraph::new(Text::from(lines))
         .block(block)
         .wrap(Wrap { trim: true })

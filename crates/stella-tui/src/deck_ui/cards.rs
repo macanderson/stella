@@ -1,10 +1,15 @@
-//! The floating card overlays — task list (D4), scope v2 (D5), witness
-//! panel (D6), model routing, and the budget editor — their shared view
-//! state and their modal key handlers. Split out of `deck_ui.rs` (already
-//! the crate's largest file) so the file-size guard holds; the rendering
-//! lives beside the other views in `crate::views::{task_card, scope_card,
-//! witness_card, models_card, budget_card}` over the shared chrome in
-//! `crate::views::cards`.
+//! The floating card overlays — the plan, model routing, and the budget
+//! editor — their shared view state and their modal key handlers. Split out
+//! of `deck_ui.rs` (already the crate's largest file) so the file-size guard
+//! holds; the rendering lives beside the other views in
+//! `crate::views::{plan_card, models_card, budget_card}` over the shared
+//! chrome in `crate::views::cards`.
+//!
+//! `/plan` is one card where there used to be three. `/tasks` showed a board
+//! nothing ever populated, `/scope` showed the same plan's envelope without
+//! its steps, and `/witness` showed the verification records that are now the
+//! rail's permanent bottom panel. Three cards, one subject, and no single one
+//! of them could answer "what is step 3".
 //!
 //! ## Interaction contract
 //!
@@ -26,12 +31,9 @@ use crate::envelope::WorkspaceInput;
 /// Which card is up. At most one — see the module docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Card {
-    /// The task-board card (`/tasks`).
-    Tasks,
-    /// The scope card v2 (`/scope`).
-    Scope,
-    /// The witness panel (`/witness`).
-    Witness,
+    /// The plan card (`/plan`): every plan step with its full text, over the
+    /// plan's operating envelope.
+    Plan,
     /// The model-routing card (`/models`): think · work · verify slots.
     Models,
     /// The spend-cap editor (`/budget`).
@@ -43,11 +45,11 @@ pub enum Card {
 pub struct CardState {
     /// The raised card, if any.
     pub open: Option<Card>,
-    /// Task-card selection, clamped to the board at render time.
-    pub tasks_sel: usize,
-    /// Whether the task card's selected row is expanded (⏎ shows the task's
-    /// description under it).
-    pub tasks_expanded: bool,
+    /// Plan-card step selection, clamped to the plan at render time.
+    pub plan_sel: usize,
+    /// Whether the plan card's selected step is expanded (⏎ shows its full
+    /// elaboration under it).
+    pub plan_expanded: bool,
     /// The budget editor's input buffer — digits and at most one `.`.
     pub budget_input: String,
 }
@@ -60,12 +62,12 @@ impl CardState {
 
     /// Raise `card`, lowering whichever was up. Re-raising resets the card's
     /// own transient state (selection, expansion, the budget draft) so
-    /// `/tasks` always opens at the top of the board and `/budget` opens
-    /// with a clean input.
+    /// `/plan` always opens at the first step and `/budget` opens with a
+    /// clean input.
     pub fn raise(&mut self, card: Card) {
         self.open = Some(card);
-        self.tasks_sel = 0;
-        self.tasks_expanded = false;
+        self.plan_sel = 0;
+        self.plan_expanded = false;
         self.budget_input.clear();
     }
 
@@ -83,73 +85,73 @@ pub fn handle_card_key(
     ui: &mut DeckUi,
 ) -> Option<DeckAction> {
     let card = ui.cards.open?;
-    if matches!(key.code, KeyCode::Esc) {
+    // Esc closes any card. ctrl+s closes the plan specifically, because that
+    // chord *raised* it — a toggle that only opens is a trap, and the card
+    // handler runs before the deck-level chord, so swallowing it here would
+    // make the second press do nothing.
+    let ctrl_s = key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char('s'));
+    if matches!(key.code, KeyCode::Esc) || (ctrl_s && card == Card::Plan) {
         ui.cards.close();
         return Some(DeckAction::Handled);
     }
     Some(match card {
-        Card::Tasks => handle_tasks_key(key, model, ui),
-        Card::Scope => handle_scope_key(key, model, ui),
+        Card::Plan => handle_plan_key(key, model, ui),
         Card::Budget => handle_budget_key(key, ui),
-        // Read-only surfaces: every key is swallowed so a stray letter never
+        // Read-only surface: every key is swallowed so a stray letter never
         // reaches the composer behind a card the user is looking at.
-        Card::Witness | Card::Models => DeckAction::Handled,
+        Card::Models => DeckAction::Handled,
     })
 }
 
-/// Task card: ↑/↓ select, ⏎ expand/collapse the selected row, `x` asks the
-/// driver to skip the selected still-open task. The skip is a
-/// [`WorkspaceInput::TaskSkip`] out; the row's state only changes when the
-/// driver's next `TaskUpdate` folds back.
-fn handle_tasks_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
+/// Plan card: ↑/↓ select a step, ⏎ expand/collapse it, `x` asks the driver to
+/// skip the selected still-open step, and `e` proposes a change to the plan's
+/// envelope once it is approved.
+///
+/// Both writes leave as a [`WorkspaceInput`] — the card never edits locally,
+/// so what it shows is always the plan actually in force, and a step's state
+/// changes only when the driver's next snapshot folds back.
+fn handle_plan_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     let Some(agent) = model.agents.get(ui.focused) else {
         return DeckAction::Handled;
     };
-    let tasks = &agent.model.tasks;
-    let count = tasks.len();
+    let steps = agent.model.plan.steps();
+    let approved =
+        agent.model.pending_scope_review.is_none() && agent.model.approved_scope.is_some();
+    if matches!(key.code, KeyCode::Char('e')) && approved {
+        return DeckAction::Send(WorkspaceInput::ScopeChangeRequest {
+            agent: agent.meta.id.clone(),
+        });
+    }
+    let count = steps.len();
     if count == 0 {
         return DeckAction::Handled;
     }
-    ui.cards.tasks_sel = ui.cards.tasks_sel.min(count - 1);
+    ui.cards.plan_sel = ui.cards.plan_sel.min(count - 1);
     match key.code {
         KeyCode::Up => {
-            ui.cards.tasks_sel = ui.cards.tasks_sel.saturating_sub(1);
+            ui.cards.plan_sel = ui.cards.plan_sel.saturating_sub(1);
             DeckAction::Handled
         }
         KeyCode::Down => {
-            ui.cards.tasks_sel = (ui.cards.tasks_sel + 1).min(count - 1);
+            ui.cards.plan_sel = (ui.cards.plan_sel + 1).min(count - 1);
             DeckAction::Handled
         }
         KeyCode::Enter => {
-            ui.cards.tasks_expanded = !ui.cards.tasks_expanded;
+            ui.cards.plan_expanded = !ui.cards.plan_expanded;
             DeckAction::Handled
         }
-        KeyCode::Char('x') => match tasks.get(ui.cards.tasks_sel) {
-            // Only a still-open task can be skipped; `x` on a settled row is
+        KeyCode::Char('x') => match steps.get(ui.cards.plan_sel) {
+            // Only a still-open step can be skipped; `x` on a settled row is
             // a no-op rather than a stray request.
-            Some(task) if task.status.is_open() => DeckAction::Send(WorkspaceInput::TaskSkip {
+            Some(step) if step.state.is_open() => DeckAction::Send(WorkspaceInput::TaskSkip {
                 agent: agent.meta.id.clone(),
-                id: task.id.clone(),
+                id: step.id.clone(),
             }),
             _ => DeckAction::Handled,
         },
-        _ => DeckAction::Handled,
-    }
-}
-
-/// Scope card: post-approval it is read-only and `e` proposes a scope change
-/// as a [`WorkspaceInput::ScopeChangeRequest`] out to the driver — the card
-/// never edits locally (the scope it shows is always the folded one).
-fn handle_scope_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
-    let Some(agent) = model.agents.get(ui.focused) else {
-        return DeckAction::Handled;
-    };
-    let approved =
-        agent.model.pending_scope_review.is_none() && agent.model.approved_scope.is_some();
-    match key.code {
-        KeyCode::Char('e') if approved => DeckAction::Send(WorkspaceInput::ScopeChangeRequest {
-            agent: agent.meta.id.clone(),
-        }),
         _ => DeckAction::Handled,
     }
 }
@@ -192,14 +194,14 @@ fn handle_budget_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     }
 }
 
-/// True when the selected task-card row can still be skipped — the render
-/// side uses this to decide whether to advertise `x skip` in the hints.
-pub fn selected_task_skippable(model: &WorkspaceModel, ui: &DeckUi) -> bool {
+/// True when the selected plan step can still be skipped — the render side
+/// uses this to decide whether to advertise `x skip` in the hints.
+pub fn selected_step_skippable(model: &WorkspaceModel, ui: &DeckUi) -> bool {
     model
         .agents
         .get(ui.focused)
-        .and_then(|a| a.model.tasks.get(ui.cards.tasks_sel))
-        .is_some_and(|t| t.status.is_open())
+        .and_then(|a| a.model.plan.steps().get(ui.cards.plan_sel).cloned())
+        .is_some_and(|s| s.state.is_open())
 }
 
 #[cfg(test)]
@@ -252,7 +254,7 @@ mod tests {
     fn esc_closes_the_topmost_card_and_claims_the_key() {
         let model = board_model();
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Tasks);
+        ui.cards.raise(Card::Plan);
         let action = handle_card_key(key(KeyCode::Esc), &model, &mut ui);
         assert_eq!(action, Some(DeckAction::Handled));
         assert!(!ui.cards.is_open(), "Esc lowers the card");
@@ -261,17 +263,17 @@ mod tests {
     #[test]
     fn raising_a_card_lowers_the_previous_one() {
         let mut cards = CardState::default();
-        cards.raise(Card::Tasks);
-        cards.raise(Card::Witness);
-        assert_eq!(cards.open, Some(Card::Witness), "at most one card is up");
+        cards.raise(Card::Plan);
+        cards.raise(Card::Models);
+        assert_eq!(cards.open, Some(Card::Models), "at most one card is up");
     }
 
     #[test]
-    fn skip_sends_a_task_skip_for_the_selected_open_task() {
+    fn skip_sends_a_skip_for_the_selected_open_step() {
         let model = board_model();
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Tasks);
-        ui.cards.tasks_sel = 1; // "doing two" — open
+        ui.cards.raise(Card::Plan);
+        ui.cards.plan_sel = 1; // "doing two" — open
         let action = handle_card_key(key(KeyCode::Char('x')), &model, &mut ui);
         assert_eq!(
             action,
@@ -283,11 +285,11 @@ mod tests {
     }
 
     #[test]
-    fn skip_on_a_settled_task_sends_nothing() {
+    fn skip_on_a_settled_step_sends_nothing() {
         let model = board_model();
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Tasks);
-        ui.cards.tasks_sel = 0; // "done one" — completed, terminal
+        ui.cards.raise(Card::Plan);
+        ui.cards.plan_sel = 0; // "done one" — completed, terminal
         let action = handle_card_key(key(KeyCode::Char('x')), &model, &mut ui);
         assert_eq!(action, Some(DeckAction::Handled));
     }
@@ -353,7 +355,7 @@ mod tests {
             },
         });
         let mut ui = DeckUi::default();
-        ui.cards.raise(Card::Scope);
+        ui.cards.raise(Card::Plan);
         let action = handle_card_key(key(KeyCode::Char('e')), &model, &mut ui);
         assert_eq!(action, Some(DeckAction::Handled));
 
