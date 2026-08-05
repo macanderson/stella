@@ -53,7 +53,7 @@ use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::receipts::RECEIPT_SEQ_ALLOCATED_BASE;
 use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
-use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
+use stella_core::{AbortKind, BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
     AgentEvent, CompletionMessage, LadderRung, LadderSnapshot, MessageRole, ModelCallRole,
     ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind, VerdictEvidence,
@@ -107,6 +107,7 @@ use crate::witness::{
     witness_prompt, witness_repair_prompt,
 };
 mod authored;
+mod candidate_result;
 mod disclosure;
 mod fanout_stage;
 mod raw_usage;
@@ -118,6 +119,7 @@ mod verifier_stage;
 mod verify_probes;
 use verify_probes::DiffProbe;
 mod witness_stage;
+use candidate_result::{CandidateAbort, CandidateResult, TurnAbort};
 use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
 pub use run_error::{PipelineError, PipelineRunError};
@@ -539,9 +541,13 @@ pub enum PipelineStatus {
         verdict: Verdict,
     },
     /// The run ended early: a step aborted (budget/loop/step-cap), or the user
-    /// aborted at scope review.
+    /// aborted at scope review. `kind` is the half a consumer branches on —
+    /// the engine stopping on purpose vs. the run falling over — and is what
+    /// lets the process boundary exit a deliberate stop distinctly from a
+    /// crash (#1524).
     Aborted {
         reason: String,
+        kind: AbortKind,
     },
 }
 
@@ -596,80 +602,6 @@ struct ResolvedRole<'a> {
     /// whose independence it undermines; dropping it silently is exactly the
     /// "fallback is always visible" rule (L-M7) applied to a softer signal.
     caveat: Option<String>,
-}
-
-/// The outcome of running one candidate (execute + verify + bounded revise).
-struct CandidateResult {
-    messages: Vec<CompletionMessage>,
-    final_text: String,
-    /// `Some(reason)` if a turn aborted (budget/loop/step-cap).
-    aborted: Option<String>,
-    /// Whether this abort is a degradable **infrastructure** setup failure —
-    /// no isolation port, or a workspace that could not be snapshotted. `run`
-    /// degrades these to a bare worker run rather than ending the turn with
-    /// zero work (the "never choose nothing" rule). Deliberately does NOT
-    /// cover a witness-integrity rejection (symlink artifact, language
-    /// mismatch, a witness author touching production code): those are
-    /// fail-closed security decisions and keep their abort. `false` on every
-    /// executed and every verified/unverified result.
-    degradable: bool,
-    /// The verification verdict, if verification ran.
-    verdict: Option<Verdict>,
-    /// This candidate's verification score, for best-of-N selection.
-    score: CandidateScore,
-    diff_lines: u32,
-    revisions: u32,
-    /// Workspace-relative paths of the witness artifact this candidate had
-    /// grafted into it, withheld from adoption unless
-    /// [`PipelineConfig::keep_witness`]. Empty when no witness was warranted,
-    /// which under demand-driven authoring is the common case.
-    ///
-    /// These ride on the result rather than beside the workspace because
-    /// authoring now happens *inside* the candidate, after execution: the
-    /// paths are an output of the run, and the caller indexes them by the same
-    /// index it already uses to find the workspace.
-    witness_paths: Vec<String>,
-}
-
-impl CandidateResult {
-    /// Whether this candidate got as far as dispatching worker work.
-    ///
-    /// Only a degradable **setup** abort answers `false`: by construction it is
-    /// the arm taken before any model call, so it is exactly the "generated
-    /// nothing" case. An execution abort (budget, loop, step-cap) and a
-    /// fail-closed witness rejection both ran real turns and count.
-    fn executed(&self) -> bool {
-        !(self.aborted.is_some() && self.degradable)
-    }
-
-    /// A candidate that aborted for a reason that is NOT a degradable
-    /// infrastructure setup failure: an execution abort (budget, loop,
-    /// step-cap — the worker ran) or a fail-closed security rejection (a
-    /// poisoned witness). These keep their stop.
-    fn aborted(messages: Vec<CompletionMessage>, reason: String) -> Self {
-        Self {
-            messages,
-            final_text: String::new(),
-            aborted: Some(reason),
-            degradable: false,
-            verdict: None,
-            score: CandidateScore::Failed,
-            diff_lines: 0,
-            revisions: 0,
-            witness_paths: Vec::new(),
-        }
-    }
-
-    /// A candidate that aborted on a degradable **infrastructure** setup
-    /// failure — no isolation port, or a tree that could not be snapshotted.
-    /// Flagged so `run` degrades it to a bare worker run rather than ending
-    /// the turn having done nothing.
-    fn setup_aborted(messages: Vec<CompletionMessage>, reason: String) -> Self {
-        Self {
-            degradable: true,
-            ..Self::aborted(messages, reason)
-        }
-    }
 }
 
 /// The candidate-local mutable state one execute+verify+revise pass threads
@@ -1019,6 +951,7 @@ impl<'a> Pipeline<'a> {
                     resolve_task_class(None, goal),
                     total_cost,
                     &abort.reason,
+                    AbortKind::DeliberateStop,
                 ));
             }
         };
@@ -1085,7 +1018,12 @@ impl<'a> Pipeline<'a> {
             {
                 Ok(PlannedScope::Steps(steps)) => Some(steps),
                 Ok(PlannedScope::Ended { reason }) => {
-                    return Ok(self.aborted_before_execute(task_class, total_cost, &reason));
+                    return Ok(self.aborted_before_execute(
+                        task_class,
+                        total_cost,
+                        &reason,
+                        AbortKind::DeliberateStop,
+                    ));
                 }
                 Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
             }
@@ -1212,13 +1150,23 @@ impl<'a> Pipeline<'a> {
         *messages = best.messages;
 
         // --- 6. Complete. --------------------------------------------------
-        if let Some(reason) = best.aborted {
-            self.emit(AgentEvent::Error {
-                message: reason.clone(),
-                retryable: false,
-            });
+        if let Some(abort) = best.aborted {
+            // One abort is one `error` event. A turn-originated abort already
+            // crossed the bus inside the worker turn (or, for a soft stop /
+            // host cancel, deliberately did not — a decision is not a
+            // failure); only a pipeline-originated abort still owes the
+            // stream its event (#1524).
+            if !abort.from_turn {
+                self.emit(AgentEvent::Error {
+                    message: abort.reason.clone(),
+                    retryable: false,
+                });
+            }
             return Ok(PipelineOutcome {
-                status: PipelineStatus::Aborted { reason },
+                status: PipelineStatus::Aborted {
+                    reason: abort.reason,
+                    kind: abort.kind,
+                },
                 task_class,
                 final_text: best.final_text,
                 total_cost_usd: total_cost,
@@ -1473,6 +1421,7 @@ impl<'a> Pipeline<'a> {
                     TaskClass::SimpleLookup,
                     *total_cost,
                     &abort.reason,
+                    AbortKind::DeliberateStop,
                 ));
             }
             // Even chat needs the model; if it is down, abort cleanly rather
@@ -1482,6 +1431,7 @@ impl<'a> Pipeline<'a> {
                     TaskClass::SimpleLookup,
                     *total_cost,
                     "conversational reply unavailable",
+                    AbortKind::Failure,
                 ));
             }
         };
@@ -1953,7 +1903,11 @@ impl<'a> Pipeline<'a> {
             .nth(best_idx)
             .expect("best_index returns an in-range index");
         if let Some(e) = adopt_failure {
-            best.aborted = Some(e.to_string());
+            best.aborted = Some(CandidateAbort {
+                reason: e.to_string(),
+                kind: AbortKind::Failure,
+                from_turn: false,
+            });
         }
         Ok((best, Some(worker_label), ran))
     }
@@ -2081,11 +2035,11 @@ impl<'a> Pipeline<'a> {
             last_verdict_diff: None,
         };
 
-        if let Err(reason) = self
+        if let Err(abort) = self
             .execute_plan(plan, engine, budget, total, &mut state)
             .await
         {
-            return CandidateResult::aborted(state.messages, reason);
+            return CandidateResult::turn_aborted(state.messages, abort);
         }
 
         // Decide whether to verify: unconditional for single/multi; for a
@@ -2133,7 +2087,11 @@ impl<'a> Pipeline<'a> {
             .await
         {
             Ok(witness) => witness,
-            Err(reason) => return CandidateResult::aborted(state.messages, reason),
+            // A witness-stage budget stop: pipeline policy, so this abort is
+            // deliberate and still owes the stream its one error event.
+            Err(reason) => {
+                return CandidateResult::aborted(state.messages, reason, AbortKind::DeliberateStop);
+            }
         };
 
         self.verify_candidate(
@@ -2152,7 +2110,7 @@ impl<'a> Pipeline<'a> {
     /// Execute stage: one turn for simple/single-task; one turn per plan step
     /// for multi-step (each step guides a fresh engine turn). The last turn's
     /// text lands in `state.final_text`; `Err` is the first aborted turn's
-    /// reason.
+    /// reason and kind, kept typed so the driver-side emit is not repeated.
     async fn execute_plan(
         &self,
         plan: Option<&[PlanStep]>,
@@ -2160,7 +2118,7 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         total: &mut f64,
         state: &mut CandidateState,
-    ) -> Result<(), String> {
+    ) -> Result<(), TurnAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Execute,
         });
@@ -2183,9 +2141,13 @@ impl<'a> Pipeline<'a> {
                     state.final_text = text;
                     *total += cost_usd;
                 }
-                TurnOutcome::Aborted { reason, cost_usd } => {
+                TurnOutcome::Aborted {
+                    reason,
+                    kind,
+                    cost_usd,
+                } => {
                     *total += cost_usd;
-                    return Err(reason);
+                    return Err(TurnAbort { reason, kind });
                 }
             }
         } else {
@@ -2212,9 +2174,13 @@ impl<'a> Pipeline<'a> {
                         state.final_text = text;
                         *total += cost_usd;
                     }
-                    TurnOutcome::Aborted { reason, cost_usd } => {
+                    TurnOutcome::Aborted {
+                        reason,
+                        kind,
+                        cost_usd,
+                    } => {
                         *total += cost_usd;
-                        return Err(reason);
+                        return Err(TurnAbort { reason, kind });
                     }
                 }
             }
@@ -2252,6 +2218,7 @@ impl<'a> Pipeline<'a> {
                 return CandidateResult::aborted(
                     state.messages,
                     format!("candidate could not be sealed for verification: {error}"),
+                    AbortKind::Failure,
                 );
             }
             let (touched_tests_passed, test_tail, test_infra) = self
@@ -2277,6 +2244,7 @@ impl<'a> Pipeline<'a> {
                         "witness artifact changed after its accepted baseline: {}",
                         tampered.join(", ")
                     ),
+                    AbortKind::Failure,
                 );
             }
             if let Some(workspace) = surface.workspace {
@@ -2286,12 +2254,14 @@ impl<'a> Pipeline<'a> {
                         return CandidateResult::aborted(
                             state.messages,
                             "candidate worktree changed after verification".to_string(),
+                            AbortKind::Failure,
                         );
                     }
                     Err(error) => {
                         return CandidateResult::aborted(
                             state.messages,
                             format!("could not validate the verified candidate seal: {error}"),
+                            AbortKind::Failure,
                         );
                     }
                 }
@@ -2438,6 +2408,7 @@ impl<'a> Pipeline<'a> {
                                          run; the candidate tree is no longer verified",
                                         mutant.path
                                     ),
+                                    AbortKind::Failure,
                                 );
                             }
                         }
@@ -2526,7 +2497,7 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(false)),
                         );
                     }
-                    if let Err(reason) = self
+                    if let Err(abort) = self
                         .revise_candidate(
                             engine,
                             surface,
@@ -2537,7 +2508,7 @@ impl<'a> Pipeline<'a> {
                         )
                         .await
                     {
-                        return CandidateResult::aborted(state.messages, reason);
+                        return CandidateResult::turn_aborted(state.messages, abort);
                     }
                 }
                 LadderDecision::Unverifiable => {
@@ -2637,15 +2608,19 @@ impl<'a> Pipeline<'a> {
                             }
                             Ok(None) => {}
                             Err(abort) => {
-                                return CandidateResult::aborted(state.messages, abort.reason);
+                                return CandidateResult::aborted(
+                                    state.messages,
+                                    abort.reason,
+                                    AbortKind::DeliberateStop,
+                                );
                             }
                         }
                     }
-                    if let Err(reason) = self
+                    if let Err(abort) = self
                         .revise_candidate(engine, surface, budget, &reason, total, &mut state)
                         .await
                     {
-                        return CandidateResult::aborted(state.messages, reason);
+                        return CandidateResult::turn_aborted(state.messages, abort);
                     }
                 }
                 // Triage judged this result not worth a separate reviewer,
@@ -2839,7 +2814,11 @@ impl<'a> Pipeline<'a> {
                                     verdict
                                 }
                                 Err(abort) => {
-                                    return CandidateResult::aborted(state.messages, abort.reason);
+                                    return CandidateResult::aborted(
+                                        state.messages,
+                                        abort.reason,
+                                        AbortKind::DeliberateStop,
+                                    );
                                 }
                             }
                         }
@@ -2887,13 +2866,13 @@ impl<'a> Pipeline<'a> {
                             {
                                 state.evidence_demands += 1;
                                 let ask = crate::verify::evidence_demand_prompt(cmd.command);
-                                if let Err(reason) = self
+                                if let Err(abort) = self
                                     .revise_candidate(
                                         engine, surface, budget, &ask, total, &mut state,
                                     )
                                     .await
                                 {
-                                    return CandidateResult::aborted(state.messages, reason);
+                                    return CandidateResult::turn_aborted(state.messages, abort);
                                 }
                                 // Re-observe from the top: the revised tree
                                 // gets a fresh test run and the ladder
@@ -2936,11 +2915,11 @@ impl<'a> Pipeline<'a> {
                     let feedback = self
                         .airlock_forward(&verdict.reasoning, "verifier_reasoning", &sealed)
                         .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
-                    if let Err(reason) = self
+                    if let Err(abort) = self
                         .revise_candidate(engine, surface, budget, &feedback, total, &mut state)
                         .await
                     {
-                        return CandidateResult::aborted(state.messages, reason);
+                        return CandidateResult::turn_aborted(state.messages, abort);
                     }
                 }
             }
@@ -2968,8 +2947,8 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Spend one revision: run [`Pipeline::revise_turn`] with the failure
-    /// evidence and fold the fresh diff back into `state`. `Err` is the abort
-    /// reason of a turn that died mid-revision (budget/loop).
+    /// evidence and fold the fresh diff back into `state`. `Err` is the typed
+    /// abort of a turn that died mid-revision (budget/loop).
     async fn revise_candidate(
         &self,
         engine: &Engine<'_>,
@@ -2978,7 +2957,7 @@ impl<'a> Pipeline<'a> {
         reason: &str,
         total: &mut f64,
         state: &mut CandidateState,
-    ) -> Result<(), String> {
+    ) -> Result<(), TurnAbort> {
         let probe = self
             .revise_turn(
                 engine,
@@ -3001,7 +2980,7 @@ impl<'a> Pipeline<'a> {
     /// Run one revision turn: append an evidence-carrying instruction, execute,
     /// and re-gather the diff. Emits the `Execute`/`Verify` stage bookends so
     /// the stream shows the revise loop. Returns the fresh `(diff_lines,
-    /// diff_text)` on success, or the abort reason on a budget/loop abort.
+    /// diff_text)` on success, or the typed abort on a budget/loop abort.
     #[allow(clippy::too_many_arguments)]
     async fn revise_turn(
         &self,
@@ -3015,7 +2994,7 @@ impl<'a> Pipeline<'a> {
         final_text: &mut String,
         total: &mut f64,
         untracked_before: &HashMap<String, String>,
-    ) -> Result<DiffProbe, String> {
+    ) -> Result<DiffProbe, TurnAbort> {
         messages.push(CompletionMessage::user(revision_prompt(reason)));
         self.emit(AgentEvent::Stage {
             name: StageKind::Execute,
@@ -3035,9 +3014,13 @@ impl<'a> Pipeline<'a> {
                 *final_text = text;
                 *total += cost_usd;
             }
-            TurnOutcome::Aborted { reason, cost_usd } => {
+            TurnOutcome::Aborted {
+                reason,
+                kind,
+                cost_usd,
+            } => {
                 *total += cost_usd;
-                return Err(reason);
+                return Err(TurnAbort { reason, kind });
             }
         }
         let probe = self.gather_diff(surface, untracked_before).await;
@@ -3382,8 +3365,10 @@ impl<'a> Pipeline<'a> {
         task_class: TaskClass,
         total_cost: f64,
         reason: &str,
+        kind: AbortKind,
     ) -> PipelineOutcome {
-        let (event, outcome) = stage_budget::aborted_before_execute(task_class, total_cost, reason);
+        let (event, outcome) =
+            stage_budget::aborted_before_execute(task_class, total_cost, reason, kind);
         self.emit(event);
         outcome
     }

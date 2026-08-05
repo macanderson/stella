@@ -102,7 +102,7 @@ async fn aborted_pipeline_totals_match_every_management_and_execute_usage_record
         .expect("a loop abort is a clean pipeline outcome");
     assert!(matches!(
         &outcome.status,
-        PipelineStatus::Aborted { reason } if reason.contains("stuck-loop")
+        PipelineStatus::Aborted { reason, .. } if reason.contains("stuck-loop")
     ));
 
     let events = drain(&mut rx);

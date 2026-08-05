@@ -25,6 +25,115 @@ impl ScriptedProvider {
     }
 }
 
+/// An identical no-progress tool call, for driving the engine's stuck-loop
+/// ladder end-to-end through the pipeline (steer on the first detection,
+/// abort on the second).
+fn looping_tool_result() -> CompletionResult {
+    CompletionResult {
+        text: String::new(),
+        tool_calls: vec![ToolCall {
+            call_id: "same-call".into(),
+            name: "read_output".into(),
+            input: serde_json::json!({"handle": "proc-5"}),
+        }],
+        usage: CompletionUsage::default(),
+        model: "scripted".into(),
+        cost_usd: 0.0001,
+        finish_reason: None,
+    }
+}
+
+/// #1524 witness: one loop abort is exactly ONE `error` event on the stream.
+/// The driver publishes the abort when it stops the turn; the pipeline's
+/// terminal path used to publish the identical record a second time when the
+/// aborted candidate was adopted, so every nightly loop-abort trial carried
+/// two byte-identical `error` rows. The status must also carry the typed
+/// kind that says this stop was the engine's own policy, not a crash.
+#[tokio::test]
+async fn a_loop_abort_reaches_the_stream_as_exactly_one_error_event() {
+    // Triage, then three identical no-progress calls (detect + steer) and a
+    // fourth that escalates to the abort.
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        looping_tool_result(),
+        looping_tool_result(),
+        looping_tool_result(),
+        looping_tool_result(),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+
+    let outcome = pipeline
+        .run("keep reading the process output", &mut messages, &mut budget)
+        .await
+        .expect("a loop abort is a clean pipeline outcome");
+
+    let PipelineStatus::Aborted { reason, kind } = &outcome.status else {
+        panic!("the stuck loop must abort the run, got {:?}", outcome.status);
+    };
+    assert!(reason.contains("stuck-loop"), "{reason}");
+    assert_eq!(
+        *kind,
+        AbortKind::DeliberateStop,
+        "a loop escalation is the engine stopping on purpose, not a crash"
+    );
+
+    let events = drain(&mut rx);
+    // Terminal errors only: `retryable: true` records are warnings (the deck
+    // folds them), and this run legitimately warns once when its isolation-
+    // free setup degrades to a bare worker turn.
+    let errors: Vec<&String> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Error {
+                message,
+                retryable: false,
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "one abort is one terminal error event on the pipeline path: {errors:?}"
+    );
+    assert!(errors[0].contains("stuck-loop"), "{}", errors[0]);
+}
+
 #[tokio::test]
 async fn red_final_verdict_is_verification_failed_not_completed() {
     let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
@@ -231,7 +340,7 @@ async fn unavailable_independent_witness_degrades_instead_of_aborting() {
     assert!(
         !matches!(
             outcome.status,
-            PipelineStatus::Aborted { ref reason }
+            PipelineStatus::Aborted { ref reason, .. }
                 if reason.contains("independent witness author")
         ),
         "losing the author must not abort the task: {outcome:?}"

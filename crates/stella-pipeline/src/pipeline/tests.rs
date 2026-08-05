@@ -2195,7 +2195,8 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
         outcome.status,
         PipelineStatus::Aborted {
             reason: "candidate isolation failed: workspace snapshot failed: not a git repo"
-                .to_string()
+                .to_string(),
+            kind: AbortKind::Failure,
         },
         "an isolation setup failure must not end the turn: {outcome:?}"
     );
