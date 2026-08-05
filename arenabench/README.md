@@ -136,10 +136,11 @@ agent = "claude-code"
 name; values arrive from the environment at launch. That is what makes the file
 safe to commit.
 
-**`verifier` here is Stella's internal judge role** — the one that checks its
+**`verifier` here is Stella's own internal role** — the one that checks its
 own work. It is *not* the benchmark's verifier, which is Harbor's and decides
-the reward. The file uses `verifier`; the Stella wire key stays
-`pipeline_judge_model`.
+the reward. The file and the Stella wire key agree on the name
+(`pipeline_verifier_model`); a template written against the older `judge`
+spelling still loads.
 
 **Seating one agent on another vendor's model.** Set `base_url` and the runner
 routes that seat there — Claude Code reads `ANTHROPIC_BASE_URL`, and because
