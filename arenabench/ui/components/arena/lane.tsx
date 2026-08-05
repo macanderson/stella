@@ -34,7 +34,14 @@ function useTranscript(matchId: string, contestantId: string, task: string) {
         setEntries([...bySeq.values()]);
       }
     });
-    source.addEventListener("end", () => source.close());
+    source.addEventListener("end", () => {
+      // A trial can end without ever emitting a transcript entry (e.g. it
+      // never started, or failed before producing output). Clear `waiting`
+      // so the empty state renders instead of a permanent loading message —
+      // the verdict header already conveys the terminal status.
+      setWaiting(false);
+      source.close();
+    });
     // On transport errors the browser retries by itself; a finished trial
     // ends the stream above.
     return () => source.close();
