@@ -17,7 +17,7 @@
 1615 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
 2271 crates/stella-cli/src/agent.rs
 1750 crates/stella-cli/src/agent_tests.rs
-1585 crates/stella-cli/src/candidate_ws.rs
+1596 crates/stella-cli/src/candidate_ws.rs
 4754 crates/stella-cli/src/command_deck.rs
 1506 crates/stella-cli/src/fleet_cmd.rs
 2129 crates/stella-core/src/bus.rs
