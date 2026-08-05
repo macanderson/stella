@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Z.ai reasoning-effort mapping: the enum-to-`reasoning_effort` table and the
 //! wire body it produces alongside GLM's `thinking` on/off object. Split out of
-//! the parent `tests.rs` (file-size gate), mirroring `openrouter_effort_tests`.
+//! the parent `tests.rs` (file-size gate), mirroring `openrouter_effort`.
 
 use super::*;
 use wiremock::MockServer;

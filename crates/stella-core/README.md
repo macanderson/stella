@@ -85,11 +85,9 @@ the [`src/driver/tests/`](src/driver/tests) modules were split out of
 [`src/driver.rs`](src/driver.rs) and its test module, and code you touch inside
 a god file is a candidate to extract the same way.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/bus.rs`](src/bus.rs) | 2129 |
-| [`src/driver.rs`](src/driver.rs) | 2765 |
-| [`src/driver/tests.rs`](src/driver/tests.rs) | 3672 |
+- [`src/bus.rs`](src/bus.rs)
+- [`src/driver.rs`](src/driver.rs)
+- [`src/driver/tests.rs`](src/driver/tests.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

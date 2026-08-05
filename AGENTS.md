@@ -332,21 +332,23 @@ inputs, not review afterthoughts:
   an escape hatch for a genuinely irreducible line (a module declaration in
   an already-oversized `lib.rs`), never something a plan may assume.
 
-The workspace's Rust god files, by crate (ceiling in lines; the bench
-harness's Python offenders sit in the same baseline). The baseline file is
-normative — if this table and the baseline ever disagree, the baseline
-governs:
+The workspace's Rust god files, by crate (the bench harness's Python offenders
+sit in the same baseline). Each file's ceiling lives in
+`scripts/file-size-baseline.txt` and is deliberately not repeated here: that
+file is generated and gate-enforced, so it is the only copy that can stay
+correct. This table names *which* files are closed to growth, which is the part
+a plan needs and the part that rarely changes:
 
-| Crate | God files (ceiling) |
+| Crate | God files |
 |---|---|
-| `stella-cli` | `src/command_deck.rs` (4754), `src/agent.rs` (2270), `src/agent/tests.rs` (1747), `src/candidate_ws.rs` (1629), `src/fleet_cmd.rs` (1506) |
-| `stella-core` | `src/driver/tests.rs` (3675), `src/driver.rs` (2770), `src/bus.rs` (2129) |
-| `stella-model` | `src/openai.rs` (2076), `src/zai/tests.rs` (1815), `src/anthropic/tests.rs` (1773), `src/zai.rs` (1542) |
-| `stella-pipeline` | `src/pipeline.rs` (3691), `src/pipeline/tests.rs` (2621) |
-| `stella-protocol` | `src/event.rs` (2920) |
-| `stella-store` | `src/tests.rs` (2268), `src/lib.rs` (2074), `src/usage.rs` (1916) |
-| `stella-tools` | `src/registry.rs` (2327), `src/scripts.rs` (1839), `src/media.rs` (1569) |
-| `stella-tui` | `src/deck_ui.rs` (4068), `src/views/engine.rs` (1665), `src/views/session.rs` (1621), `src/deck_render.rs` (1600), `src/deck.rs` (1528) |
+| `stella-cli` | `src/command_deck.rs`, `src/agent.rs`, `src/agent/tests.rs`, `src/candidate_ws.rs`, `src/fleet_cmd.rs` |
+| `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
+| `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs`, `src/zai.rs` |
+| `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
+| `stella-protocol` | `src/event.rs` |
+| `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
+| `stella-tools` | `src/registry.rs`, `src/scripts.rs`, `src/media.rs` |
+| `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs`, `src/deck.rs` |
 
 The other twelve crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
