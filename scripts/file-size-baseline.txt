@@ -27,8 +27,8 @@
 2076 crates/stella-model/src/openai.rs
 1542 crates/stella-model/src/zai.rs
 1815 crates/stella-model/src/zai/tests.rs
-3692 crates/stella-pipeline/src/pipeline.rs
-2624 crates/stella-pipeline/src/pipeline/tests.rs
+3756 crates/stella-pipeline/src/pipeline.rs
+2648 crates/stella-pipeline/src/pipeline/tests.rs
 2950 crates/stella-protocol/src/event.rs
 2074 crates/stella-store/src/lib.rs
 2268 crates/stella-store/src/tests.rs
@@ -37,7 +37,7 @@
 2318 crates/stella-tools/src/registry.rs
 1839 crates/stella-tools/src/scripts.rs
 1528 crates/stella-tui/src/deck.rs
-1570 crates/stella-tui/src/deck_render.rs
-4028 crates/stella-tui/src/deck_ui.rs
+1611 crates/stella-tui/src/deck_render.rs
+4068 crates/stella-tui/src/deck_ui.rs
 1665 crates/stella-tui/src/views/engine.rs
 1619 crates/stella-tui/src/views/session.rs

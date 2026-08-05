@@ -1,5 +1,5 @@
-# deck golden · tab_session
-# the SESSION tab over the scripted demo session
+# deck golden · card_witness
+# the /witness panel mid-execute (run 2 of 3)
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
@@ -18,7 +18,7 @@
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+┌ scope review ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Refactor the automations store into a shared workspace package                                                                                                │
 │3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
 │type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
@@ -26,20 +26,20 @@
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│● read_file    apps/app/automations/page.tsx                                                                          ││Refactor the automations store into a…│
-│  ⎿ 312 lines                                                                                                     42ms││○ 1 extract types                     │
-│                                                                                                                      ││○ 2 move hooks                        │
-│☰  plan  5/7  ·  Workflows canvas                                                                                     ││○ 3 update 9 imports                  │
-│                                                                                                                      │└────────────────────── /plan reads it ┘
-│⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files                        │┌ DONE VERIFICATION ───────────────────┐
-│                                                                                                                      ││● flip ✓ red→green                    │
-└─────────────────────────────────────────── ↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · /plan ┘└──────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
+ ☑ 5/7 ▸ Workflows canvas    ⚖ flip ✓ red→green
+┌ transcript · 21 lines · following ──┌ witness  run ends only on oracle flip ─────── verify unassigned · shadow sandbox ┐─────┐┌ TASKS 5/7 ───────────────────┐
+│  ⎿ 312 lines                        │✓  author   — test built before the patch                                     0:00│ 42ms││ ▸ #6 Workflows canvas (lead) │
+│                                     │   oracle: pnpm --filter app test:unit triggers · confirmed red pre-patch         │     ││ ☐ #7 Verify: witness suite g…│
+│☰  tasks  5/7  ·  Workflows canvas   │▸  execute  — replaying oracle against patched worktree                       0:00│     ││… +5 done                     │
+│                                     │   run 2 of 3 · deterministic seed 7741 · evidence → witness only, no self-report │     ││                              │
+│⏸ scope  Refactor the automations sto│○  result   — awaiting flip                                                       │     ││                              │
+│                                     │   red ──▸ green · 3/3 required                                                   │     ││                              │
+└─────────────────────────────────────│                                                                                  │tate ┘└──────────────────────────────┘
+──────────────────────────────────────│staged pipeline off · /pipeline arms witness-verified turns                       │──────────────────────────────────────
+ ▸ stage  Refactor the automations sto└──────────────────────────────────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- MODEL                   │ EXECUTE     │ CPU         │ CONTEXT          │ SPEND          │ CACHE                 │ ENGINE   │ LANES              │ PR
- worker: zai/glm-5.2-air │ Step 6 of 7 │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50 │ 63% (18.0K rd · 0 wr) │ 3 active │ ✦ 1 lead · ◆ 2 sub │ ⇢ #981 open …
+ MODEL                   │ EXECUTE     │ WITNESS               │ SPEND
+ worker: zai/glm-5.2-air │ Step 6 of 7 │ witness executing 2/3 │ $0.05 of $7.50                                                           ↝ deterministic-first
  MODELS  T·—  W·zai/glm-5.2-air  J·—

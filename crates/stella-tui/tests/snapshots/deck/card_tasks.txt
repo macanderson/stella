@@ -1,5 +1,5 @@
-# deck golden · tab_session
-# the SESSION tab over the scripted demo session
+# deck golden · card_tasks
+# the /tasks board card over SESSION
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
@@ -18,7 +18,7 @@
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+┌ scope review ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Refactor the automations store into a shared workspace package                                                                                                │
 │3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
 │type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
@@ -26,20 +26,20 @@
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│● read_file    apps/app/automations/page.tsx                                                                          ││Refactor the automations store into a…│
-│  ⎿ 312 lines                                                                                                     42ms││○ 1 extract types                     │
-│                                                                                                                      ││○ 2 move hooks                        │
-│☰  plan  5/7  ·  Workflows canvas                                                                                     ││○ 3 update 9 imports                  │
-│                                                                                                                      │└────────────────────── /plan reads it ┘
-│⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files                        │┌ DONE VERIFICATION ───────────────────┐
-│                                                                                                                      ││● flip ✓ red→green                    │
-└─────────────────────────────────────────── ↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · /plan ┘└──────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
+ ☑ 5/7 ▸ Workflows canvas    ⚖ flip ✓ red→green
+┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────────────┐┌ TASKS 5/7 ───────────────────┐
+│  ⎿ 312 lines                                      ┌ tasks  5 of 7 done ▰▰▰▰▰▱▱ ──── ↑↓ select · ⏎ expand ┐               42ms││ ▸ #6 Workflows canvas (lead) │
+│                                                   │▸ ✓ Scaffold the automations routes                   │                   ││ ☐ #7 Verify: witness suite g…│
+│☰  tasks  5/7  ·  Workflows canvas                 │  ✓ List view with live filters                       │                   ││… +5 done                     │
+│                                                   │  ✓ Editor panel plumbing                             │                   ││                              │
+│⏸ scope  Refactor the automations store into a shar│  ✓ Persist automation drafts                         │                   ││                              │
+│                                                   │  ✓ Wire the triggers API                             │                   ││                              │
+└──────────────────────────────────────────────── ↑ │  ▸ Workflows canvas                      0:00 · $0.00│ expand · ⌃S state ┘└──────────────────────────────┘
+────────────────────────────────────────────────────│  ○ Verify: witness suite green                       │────────────────────────────────────────────────────
+ ▸ stage  Refactor the automations store into a shar└──────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- MODEL                   │ EXECUTE     │ CPU         │ CONTEXT          │ SPEND          │ CACHE                 │ ENGINE   │ LANES              │ PR
- worker: zai/glm-5.2-air │ Step 6 of 7 │ ▮▮▮▯▯▯  50% │ ▯▯▯▯▯▯ 8.2k/200k │ $0.05 of $7.50 │ 63% (18.0K rd · 0 wr) │ 3 active │ ✦ 1 lead · ◆ 2 sub │ ⇢ #981 open …
+ MODEL                   │ EXECUTE     │ TURN
+ worker: zai/glm-5.2-air │ Step 6 of 7 │ $0.04                                                                                            ↝ deterministic-first
  MODELS  T·—  W·zai/glm-5.2-air  J·—

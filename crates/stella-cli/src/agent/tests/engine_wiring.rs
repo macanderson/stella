@@ -281,6 +281,69 @@ fn the_benchmark_posture_splits_worker_and_verifier_only_on_the_witness_arm() {
     );
 }
 
+/// The same-model degradation is a fact the operator is owed BEFORE a token
+/// is spent — the pipeline keeps running (an auto-routing gateway can serve
+/// distinct upstream models behind one id, so refusing would punish exactly
+/// that setup), but the notice must name the duplicated model and the config
+/// key that restores independence.
+#[test]
+fn a_same_model_posture_is_named_in_a_wiring_notice_not_refused() {
+    let same_model_notice = |wiring: &EngineWiring| {
+        wiring
+            .notices
+            .iter()
+            .any(|n| n.contains("verifier and worker are both") && n.contains("degraded"))
+    };
+
+    // The stock posture: no engine settings at all, every role on the
+    // session default.
+    let plain = cfg_for("zai");
+    let plain_ref = ModelRef::new(plain.provider.id, plain.model_id.clone());
+    let wiring = resolve_engine_wiring(&plain, &plain_ref, &[configured_provider("zai")]);
+    assert!(
+        same_model_notice(&wiring),
+        "no engine settings means every role rides `{plain_ref}` — the degradation \
+         must be named: {:?}",
+        wiring.notices
+    );
+    assert!(
+        wiring
+            .notices
+            .iter()
+            .any(|n| n.contains(&plain_ref.to_string()) && n.contains("pipeline_verifier_model")),
+        "the notice must name the duplicated model and the key that fixes it: {:?}",
+        wiring.notices
+    );
+
+    // The benchmark control-arm shape: settings present, but routing entirely
+    // through `default_model`.
+    let control = cfg_with_engine(
+        "openrouter",
+        r#"{ "default_model": "openrouter/z-ai/glm-5.1",
+             "allowed_models": ["openrouter/z-ai/glm-5.1"] }"#,
+    );
+    let worker_ref = ModelRef::new("openrouter", "z-ai/glm-5.1");
+    let wiring = resolve_engine_wiring(&control, &worker_ref, &[configured_provider("openrouter")]);
+    assert!(
+        same_model_notice(&wiring),
+        "a settings posture that lands every role on one model is the same fact: {:?}",
+        wiring.notices
+    );
+
+    // A split posture must NOT raise it.
+    let split = cfg_with_engine(
+        "openrouter",
+        r#"{ "default_model": "openrouter/z-ai/glm-5.1",
+             "pipeline_verifier_model": "openrouter/deepseek/deepseek-v4-pro" }"#,
+    );
+    let wiring = resolve_engine_wiring(&split, &worker_ref, &[configured_provider("openrouter")]);
+    assert!(
+        !same_model_notice(&wiring),
+        "an independent verifier pin is not degraded — no notice: {:?}",
+        wiring.notices
+    );
+}
+
 #[test]
 fn an_explicit_model_flag_leaves_triage_and_verifier_pins_alone() {
     // `--model` says nothing about the triage/verifier roles, so their own
