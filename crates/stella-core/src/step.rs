@@ -782,9 +782,14 @@ pub(crate) struct CompactionPass {
 ///
 /// The one signal that separates "wedged" from "working": a provider still
 /// emitting fragments is answering, however slowly. Cloned into the gate's
-/// delta path and read by [`bounded_generation`]; `Relaxed` because the only
-/// question asked of it is "did this change since I last looked", which no
-/// ordering with other memory affects.
+/// delta path and read by [`bounded_generation`] — and, for the same reason,
+/// by [`crate::accounted_call::run_accounted_call`]'s per-call deadline,
+/// which needs the identical "is anything arriving" signal for the
+/// non-engine callers (pipeline triage/verifier/plan, the overflow
+/// summarizer) that dispatch through `AccountedCall` instead of a step.
+/// `count` is `pub(crate)` for exactly that second reader. `Relaxed` because
+/// the only question asked of it is "did this change since I last looked",
+/// which no ordering with other memory affects.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StreamProgress(Arc<AtomicU64>);
 
@@ -793,7 +798,7 @@ impl StreamProgress {
         self.0.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn count(&self) -> u64 {
+    pub(crate) fn count(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
     }
 }

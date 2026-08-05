@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use stella_protocol::{
     AgentEvent, CompletionRequest, CompletionResult, ModelCallRole, Provider, ProviderError,
-    UsageIncompleteReason,
+    ToolCall, ToolCallObserver, UsageIncompleteReason,
 };
 use tokio::time::timeout;
 
@@ -13,6 +13,7 @@ use crate::budget::{BudgetGuard, BudgetOutcome};
 use crate::event_sender::EventSender;
 use crate::receipts::ReceiptLedger;
 use crate::retry::{RetryPolicy, Sleeper, retry_with_backoff_observed};
+use crate::step::StreamProgress;
 
 /// Where an auxiliary call sits in the receipt coordinate space, so the context
 /// it sent is reconstructable alongside the engine's own steps. `call_seq` must
@@ -54,8 +55,18 @@ pub struct AccountedCall<'a> {
     pub request: CompletionRequest,
     /// Retry + backoff envelope (`crate::retry`).
     pub retry_policy: RetryPolicy,
-    /// Deadline over the WHOLE retry future, backoff sleeps included. `None`
-    /// leaves the call bounded only by `retry_policy`.
+    /// Idle deadline over the WHOLE retry future, backoff sleeps included —
+    /// measured as time since the last streamed fragment
+    /// (`stella_protocol::ToolCallObserver`'s text/reasoning/tool-call/tool-
+    /// argument ticks), not since dispatch started, mirroring
+    /// `crate::step::bounded_generation`'s idle bound for the engine's own
+    /// step loop. A call that is actively answering is never cut off merely
+    /// for taking a while; only a window that passes in complete silence
+    /// trips it. That is what stops a provider whose usage/cost accounting
+    /// trails the content in one final frame — OpenRouter's `usage.include`
+    /// gateway accounting — from losing that frame to a ceiling sized for
+    /// "is anyone home" rather than "is the model still talking" (#1467).
+    /// `None` leaves the call bounded only by `retry_policy`.
     pub timeout: Option<Duration>,
     /// The caller's pre-call token estimate, paired with the provider's
     /// reported usage on `StepUsage` as a drift sample (`crate::estimator`).
@@ -107,6 +118,17 @@ pub enum AccountedCallError {
 /// backoff sleep — with no paid dispatch in flight — deliberately emits no
 /// `Timeout` envelope, since the preceding attempt already accounted for
 /// itself.
+///
+/// [`AccountedCall::timeout`] is an IDLE deadline, not a wall clock: it is
+/// measured since the last streamed fragment, so it re-arms every time the
+/// dispatch is observed to still be producing — the same distinction
+/// `crate::step::bounded_generation` draws for the engine's own step loop.
+/// A flat wall-clock deadline here used to abandon a call the instant total
+/// elapsed time crossed the ceiling even while the provider was actively
+/// answering, which lost OpenRouter's trailing usage/cost frame (it arrives
+/// in a final SSE frame *after* the content, once the gateway has settled
+/// the routed call's price) to a ceiling sized to catch silence, not a
+/// slow-but-live generation (#1467).
 pub async fn run_accounted_call(
     call: AccountedCall<'_>,
     budget: &mut BudgetGuard,
@@ -120,6 +142,13 @@ pub async fn run_accounted_call(
     // Timeout envelope to a moment when nothing was in flight: the attempt that
     // preceded a sleep already reported its own per-attempt envelope.
     let attempt_in_flight = AtomicBool::new(false);
+    // The idle clock backing `call.timeout` below. Shared (via `Clone`, an
+    // `Arc` count) across every attempt a retry makes: a fresh attempt must
+    // not be penalized for a stale "last seen" left over from a sibling
+    // attempt's own silence, and comparing the count at the start of a check
+    // window against the count at its end already gives each window its own
+    // delta regardless of how many attempts ran inside it.
+    let progress = StreamProgress::default();
     let future = retry_with_backoff_observed(
         &call.retry_policy,
         sleeper,
@@ -128,11 +157,20 @@ pub async fn run_accounted_call(
             // the driver's is, and used to pay a full deep copy of the request
             // on every attempt — including the overflow summarizer's, whose
             // input is a rendered span of the transcript (#921).
-            let call_fut = call.provider.complete_ref(call.request.as_borrowed());
+            let request = call.request.as_borrowed();
+            let provider = call.provider;
+            let attempt_progress = progress.clone();
             let in_flight = &attempt_in_flight;
             async move {
+                // Built *inside* the async block, not before it: the future
+                // `complete_observed_ref` returns borrows this observer for
+                // the dispatch's whole lifetime, so it must be owned by the
+                // same generator state that future lives in (the shape
+                // `crate::driver`'s `SpeculationGate` construction uses for
+                // the same reason).
+                let observer = IdleObserver(attempt_progress);
                 in_flight.store(true, Ordering::SeqCst);
-                let result = call_fut.await;
+                let result = provider.complete_observed_ref(request, &observer).await;
                 in_flight.store(false, Ordering::SeqCst);
                 result
             }
@@ -150,25 +188,45 @@ pub async fn run_accounted_call(
         },
     );
     let outcome = match call.timeout {
-        Some(limit) => match timeout(limit, future).await {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(error)) => {
-                return Err(AccountedCallError::Provider(error));
-            }
-            Err(_) => {
-                // The per-call deadline fired. Attribute a Timeout envelope only
-                // if a paid attempt was genuinely in flight — an expiry during a
-                // backoff sleep would double-report a failure the per-attempt
-                // observer already accounted for.
-                if attempt_in_flight.load(Ordering::SeqCst) {
-                    // A deadline fires from outside the adapter, so nothing
-                    // was salvaged: the stream is still open and its usage
-                    // frame may yet have been in flight.
-                    emit_incomplete(&call, events, started.elapsed(), None, None);
+        Some(limit) => {
+            let mut future = std::pin::pin!(future);
+            let mut seen = progress.count();
+            loop {
+                match timeout(limit, &mut future).await {
+                    Ok(Ok(outcome)) => break outcome,
+                    Ok(Err(error)) => {
+                        return Err(AccountedCallError::Provider(error));
+                    }
+                    Err(_) => {
+                        // The window elapsed with the call still unresolved.
+                        // Whether that is the deadline this bound exists for
+                        // depends on what arrived during it: any fragment at
+                        // all — including one from an attempt that has since
+                        // failed and moved into backoff — means something is
+                        // still happening, so re-arm and keep waiting. Only a
+                        // window that passed in complete silence is the wedge
+                        // (or genuinely-too-slow decision) this ceiling is for.
+                        let now = progress.count();
+                        if now == seen {
+                            // Attribute a Timeout envelope only if a paid
+                            // attempt was genuinely in flight — an expiry
+                            // during a backoff sleep would double-report a
+                            // failure the per-attempt observer already
+                            // accounted for.
+                            if attempt_in_flight.load(Ordering::SeqCst) {
+                                // A deadline fires from outside the adapter,
+                                // so nothing was salvaged: the stream is
+                                // still open and its usage frame may yet
+                                // have been in flight.
+                                emit_incomplete(&call, events, started.elapsed(), None, None);
+                            }
+                            return Err(AccountedCallError::Timeout);
+                        }
+                        seen = now;
+                    }
                 }
-                return Err(AccountedCallError::Timeout);
             }
-        },
+        }
         None => match future.await {
             Ok(outcome) => outcome,
             Err(error) => return Err(AccountedCallError::Provider(error)),
@@ -284,6 +342,34 @@ fn emit_incomplete(
         retries,
         partial,
     });
+}
+
+/// Ticks [`StreamProgress`] for [`run_accounted_call`]'s idle deadline — the
+/// minimal [`ToolCallObserver`] a raw one-shot call needs. Unlike
+/// `crate::speculation::SpeculationGate`, this observer does nothing with
+/// what it sees: an `AccountedCall` never carries tools (`tools: Vec::new()`
+/// at every call site — triage, verifier, plan, guidance, the overflow
+/// summarizer), so there is no speculative execution to gate and no preview
+/// event to forward. Every method exists only to record that *something*
+/// arrived.
+struct IdleObserver(StreamProgress);
+
+impl ToolCallObserver for IdleObserver {
+    fn tool_call_streamed(&self, _call: &ToolCall) {
+        self.0.record();
+    }
+
+    fn text_delta(&self, _delta: &str) {
+        self.0.record();
+    }
+
+    fn reasoning_delta(&self, _delta: &str) {
+        self.0.record();
+    }
+
+    fn tool_input_delta(&self) {
+        self.0.record();
+    }
 }
 
 #[cfg(test)]
@@ -634,6 +720,114 @@ mod tests {
                 }
             )),
             "the deadline fired during a backoff sleep, so no Timeout envelope is owed: {incomplete:?}"
+        );
+    }
+
+    /// A provider whose content streams immediately but whose result only
+    /// resolves after `trailing_delay` — the shape of OpenRouter's
+    /// `usage.include` gateway accounting, reported in one final SSE frame
+    /// after the content, once the gateway has settled the routed call's
+    /// price.
+    struct DelayedUsageFrame {
+        trailing_delay: Duration,
+    }
+
+    #[async_trait]
+    impl Provider for DelayedUsageFrame {
+        fn id(&self) -> &str {
+            "openrouter"
+        }
+
+        async fn complete_ref(
+            &self,
+            _request: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            panic!("this test dispatches through complete_observed_ref, not complete_ref");
+        }
+
+        async fn complete_observed_ref(
+            &self,
+            _request: CompletionRequestRef<'_>,
+            observer: &dyn ToolCallObserver,
+        ) -> Result<CompletionResult, ProviderError> {
+            // The answer streams right away...
+            observer.text_delta("SIMPLE_LOOKUP");
+            // ...but the gateway's own usage/cost accounting trails it,
+            // arriving only after this gap.
+            tokio::time::sleep(self.trailing_delay).await;
+            Ok(CompletionResult {
+                text: "SIMPLE_LOOKUP".into(),
+                tool_calls: Vec::new(),
+                usage: CompletionUsage {
+                    reported: true,
+                    input_tokens: 120,
+                    output_tokens: 8,
+                    cached_input_tokens: 0,
+                    cache_write_tokens: 0,
+                },
+                model: "z-ai/glm-5.2".into(),
+                cost_usd: 0.0042,
+                finish_reason: None,
+            })
+        }
+    }
+
+    /// Witness for #1467: OpenRouter's usage/cost accounting lands in one
+    /// final SSE frame that can arrive after the content is done. The
+    /// content here streams at t=0 (one `text_delta` tick), then the call
+    /// goes silent for 30ms before resolving — 30ms exceeds the 20ms
+    /// per-call ceiling, so a flat wall-clock deadline (measured from
+    /// dispatch start, oblivious to the tick) abandons the call and loses
+    /// its usage. An idle deadline (measured from the last fragment) re-arms
+    /// on the tick and lets the 30ms trailing wait land.
+    #[tokio::test(start_paused = true)]
+    async fn a_call_that_streams_before_a_delayed_resolution_keeps_its_usage() {
+        let provider = DelayedUsageFrame {
+            trailing_delay: Duration::from_millis(30),
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let result = run_accounted_call(
+            AccountedCall {
+                provider: &provider,
+                role: ModelCallRole::Triage,
+                model_hint: "z-ai/glm-5.2".into(),
+                request: CompletionRequest {
+                    messages: vec![CompletionMessage::user("inspect the repository")],
+                    max_output_tokens: None,
+                    temperature: None,
+                    effort: None,
+                    tools: Vec::new(),
+                    reasoning: None,
+                    params: None,
+                },
+                retry_policy: RetryPolicy::new(1, 0, 0),
+                timeout: Some(Duration::from_millis(20)),
+                estimated_input_tokens: 12,
+                receipt: None,
+            },
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await
+        .expect("the trailing gap must not abandon a call that was actively answering");
+
+        assert_eq!(result.cost_usd, 0.0042);
+        assert!(result.usage.is_complete());
+
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::StepUsage { complete: true, .. })),
+            "the delayed usage frame must still land as a complete StepUsage: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::UsageIncomplete { .. })),
+            "no accounting should be abandoned when the call was actively answering: {events:?}"
         );
     }
 }
