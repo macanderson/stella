@@ -1,6 +1,6 @@
 name: docs-guards
 
-# Three guards over prose. None needs a Rust toolchain, which is why they live
+# Four guards over prose. None needs a Rust toolchain, which is why they live
 # here rather than in ci.yml -- that workflow deliberately ignores `docs/**`,
 # `website/**` and `*.md`, and this one triggers on exactly those paths.
 #
@@ -24,9 +24,16 @@ name: docs-guards
 #     that still exists (#993). #928 found seven undocumented surfaces at once
 #     precisely because nothing related the two.
 #
-# Rust sources are in the path filter because all three read them: a citation
-# added to a .rs comment is exactly how one goes stale, and the subcommand list
-# the third guard checks is itself a Rust enum.
+#  4. brand-case (scripts/check-brand-case.sh): docs prose spells the
+#     wordmark lowercase — "stella", never "Stella" (#1500). The rule was
+#     documented in the brand kit and website/README.md and enforced nowhere;
+#     389 capitalised uses accumulated, including inside `description:`
+#     frontmatter, which becomes each page's meta description and llms.txt
+#     entry. Code spans, fenced blocks, and URLs are exempt by construction.
+#
+# Rust sources are in the path filter because the first three read them: a
+# citation added to a .rs comment is exactly how one goes stale, and the
+# subcommand list the third guard checks is itself a Rust enum.
 on:
   pull_request:
     paths:
@@ -35,8 +42,9 @@ on:
       - "**/*.rs"
       - "scripts/check-doc-links.py"
       - "scripts/check-invariants.sh"
-      - "website/content/docs/commands/**"
+      - "website/content/docs/**"
       - "scripts/check-command-docs.sh"
+      - "scripts/check-brand-case.sh"
       - ".github/workflows/docs-guards.yml"
   push:
     branches: [main]
@@ -46,8 +54,9 @@ on:
       - "**/*.rs"
       - "scripts/check-doc-links.py"
       - "scripts/check-invariants.sh"
-      - "website/content/docs/commands/**"
+      - "website/content/docs/**"
       - "scripts/check-command-docs.sh"
+      - "scripts/check-brand-case.sh"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
 
@@ -85,3 +94,10 @@ jobs:
       - name: every subcommand has a reference page
         if: ${{ !cancelled() }}
         run: bash scripts/check-command-docs.sh
+
+      # Docs-only by nature — ci.yml also runs it for code PRs, but a
+      # capitalised wordmark arrives in .mdx prose, which only this workflow
+      # sees.
+      - name: docs prose spells the wordmark lowercase
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-brand-case.sh

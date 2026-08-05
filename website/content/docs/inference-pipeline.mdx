@@ -1,9 +1,9 @@
 ---
 title: Inference Pipeline
-description: How Stella turns a prompt into verified work — the step loop, the staged pipeline from triage to verifier, deterministic verification, and per-role routing.
+description: How stella turns a prompt into verified work — the step loop, the staged pipeline from triage to verifier, deterministic verification, and per-role routing.
 ---
 
-Stella's answer to "did the agent actually do the work?" is structural, not
+stella's answer to "did the agent actually do the work?" is structural, not
 rhetorical. Every prompt runs through an **inference pipeline** that separates
 *doing* the work from *verifying* it — with deterministic checks preferred
 over model opinion, and an independent verifier preferred over self-assessment.
@@ -15,7 +15,7 @@ At the bottom of everything is a simple, single-threaded **step loop**:
 1. **The model proposes tool calls.** Given the conversation so far — the
    prompt, prior tool results, recalled memories and rules — the model decides
    what to do next.
-2. **Tools execute.** Stella runs each proposed tool: reading files, editing
+2. **Tools execute.** stella runs each proposed tool: reading files, editing
    code, running commands. Independent read-only calls fan out in parallel.
 3. **Results feed back.** Tool output is appended to the conversation.
 4. **Repeat until done.** The loop continues until the model stops proposing
@@ -24,7 +24,7 @@ At the bottom of everything is a simple, single-threaded **step loop**:
 There is no coordinator process and no hidden multi-agent swarm — one
 deterministic loop: plan, fan tools out, observe, compact if the conversation
 gets noisy, repeat. When the conversation approaches the compaction budget,
-Stella compacts it and keeps going.
+stella compacts it and keeps going.
 
 `stella run --no-pipeline` and interactive chat drive this raw loop directly.
 Everything else in this page is structure built **on top of** it.
@@ -51,7 +51,7 @@ a **lookup** ("what does this function do?") skips planning entirely, a
 **single concrete change** gets a light path (one execute turn, still verified), a
 **genuinely multi-step** task gets the full plan → scope-review → execute → verify → verdict
 pipeline. Triage runs under a hard latency ceiling (10 seconds); if the model
-doesn't answer in time, Stella falls through to the full path rather than
+doesn't answer in time, stella falls through to the full path rather than
 waiting. Triage can run on its own [configured model](/docs/configuration/agent-engine-config) —
 typically the cheapest, fastest one you have.
 
@@ -64,7 +64,7 @@ blocks the work.
 
 ### 3. Scope review
 
-If the plan's blast radius crosses any of three configured thresholds, Stella
+If the plan's blast radius crosses any of three configured thresholds, stella
 pauses for an interactive **scope review** — you approve, trim, revise, or
 abort the plan before any file changes:
 
@@ -200,14 +200,14 @@ When a model verdict is needed, the **verifier** — a separate model call, by
 preference from a *different model family* than the worker — reviews the goal,
 the diff, and the evidence summary, and answers with a leading `PASS` or
 `FAIL`. The verifier never sees the worker's narration, only what actually
-changed. If the verifier call fails, Stella falls back to a conservative
+changed. If the verifier call fails, stella falls back to a conservative
 heuristic verdict rather than hanging or guessing.
 
 ### 8. Revise
 
 A failed verification sends the worker back with the failure evidence — up to
 a bounded number of revision turns (2 by default). Once a revision has
-deterministically failed, Stella spends one verifier call on **distress guidance**:
+deterministically failed, stella spends one verifier call on **distress guidance**:
 a course-correction note that rides with the next revision prompt instead of
 letting the worker keep digging the same hole.
 

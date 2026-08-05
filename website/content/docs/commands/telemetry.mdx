@@ -90,7 +90,7 @@ Prints the number sent, plus the resulting pending and dropped counts. The batch
 Delivery is **at least once and sink-scoped**: rows are acknowledged only after a successful HTTPS response, and redirects are refused. A credential, transport, or server failure releases the *exact* lease with capped exponential backoff plus jitter — from one second up to five minutes, with jitter capped at 25%.
 
 <Callout type="info">
-Stella already starts a detached best-effort flush after enrollment is verified at process startup. That attempt never delays agent execution and is not waited on at shutdown. Use explicit `flush` when an operator needs a **synchronous** delivery attempt — before host maintenance, or to confirm an intake change took effect.
+stella already starts a detached best-effort flush after enrollment is verified at process startup. That attempt never delays agent execution and is not waited on at shutdown. Use explicit `flush` when an operator needs a **synchronous** delivery attempt — before host maintenance, or to confirm an intake change took effect.
 </Callout>
 
 ### `stella telemetry rollover-discard`

@@ -3,7 +3,7 @@ title: When something isn't working
 description: Config that isn't applying, a key that won't resolve, hooks that never fire, a run that does nothing — the checks in the order that finds it fastest.
 ---
 
-Most Stella problems are one of a small number of things, and nearly all of them
+Most stella problems are one of a small number of things, and nearly all of them
 are answerable locally in a few seconds. This page is organized by **symptom**,
 and each section is ordered so the cheapest check that could explain it comes
 first.
@@ -25,7 +25,7 @@ config mystery ends.
 
 Four checks, in this order.
 
-### 1. Is Stella reading the file you are editing?
+### 1. Is stella reading the file you are editing?
 
 There are three scopes, and they are merged rather than chosen:
 
@@ -119,7 +119,7 @@ Three specific traps:
 <CardGrid size="md">
   <SpecCard title="The key is only in a .env file your shell never loads">
     Project dotenv files are loaded into the environment before step 2, so a repo's
-    `.env.local` does reach Stella — but an **exported shell value always wins**, and a
+    `.env.local` does reach stella — but an **exported shell value always wins**, and a
     dotenv loaded by an interactive-shell hook is not loaded for a non-interactive
     invocation. `stella auth set <provider>` is the durable fix.
   </SpecCard>
@@ -153,12 +153,12 @@ error blames the wrong party.
 ```
 
 The fix is to make the two agree: pin the provider to the host
-(`--model zai/glm-5.2`), or drop the override. A host Stella does not recognize
+(`--model zai/glm-5.2`), or drop the override. A host stella does not recognize
 is left alone — a proxy or a private gateway is a legitimate use of the flag.
 
 ### Auto-detection picked a provider you did not expect
 
-With no `--model`, Stella takes the first provider with a resolvable credential,
+With no `--model`, stella takes the first provider with a resolvable credential,
 in this order:
 
 ```text

@@ -1,6 +1,6 @@
 ---
 title: Commands
-description: Overview of every Stella subcommand, the default chat behavior, global flags, and exit codes.
+description: Overview of every stella subcommand, the default chat behavior, global flags, and exit codes.
 ---
 
 The `stella` binary is a fast, BYOK (bring-your-own-key), model-agnostic terminal coding agent. Every piece of functionality is exposed through a subcommand.
@@ -161,7 +161,7 @@ Each command page in this section documents its usage synopsis, behavior, releva
 
 Three tests in `stella-cli` keep this page honest. `every_subcommand_has_a_reference_page` diffs the live clap command tree against this section's `meta.json`, so a new subcommand cannot land undocumented. `the_docs_nav_mirrors_these_groups` fails if the sidebar grouping drifts from the one `--help` renders, and `the_docs_index_summaries_are_the_clis_own` fails if any summary above differs from the CLI's own string.
 
-Two of them are specialized rather than day-to-day. `stella arena` is a benchmark-harness adapter for measuring Stella, not for doing work with it; `stella telemetry` operates the managed enterprise spool and is disabled without a signed org-managed enrollment.
+Two of them are specialized rather than day-to-day. `stella arena` is a benchmark-harness adapter for measuring stella, not for doing work with it; `stella telemetry` operates the managed enterprise spool and is disabled without a signed org-managed enrollment.
 
 ## Global flags
 
@@ -237,7 +237,7 @@ Token usage, cost, and per-step metering are recorded in a local SQLite store on
 
 ## Model selection
 
-If you do not pass `--model`, Stella auto-detects a provider by picking the first one with a resolvable credential, in this preference order:
+If you do not pass `--model`, stella auto-detects a provider by picking the first one with a resolvable credential, in this preference order:
 
 ```text
 zai, anthropic, openai, xai, deepseek, gemini, openrouter, then vertex, and bedrock LAST
@@ -275,4 +275,4 @@ case $? in
 esac
 ```
 
-This makes Stella safe to compose in scripts and CI pipelines — check `$?` (or rely on `set -e`) to react to failures.
+This makes stella safe to compose in scripts and CI pipelines — check `$?` (or rely on `set -e`) to react to failures.

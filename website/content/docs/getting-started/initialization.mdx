@@ -3,7 +3,7 @@ title: Repo initialization
 description: Prime a workspace with stella init — the domain taxonomy, the tree-sitter code graph, extension adoption, and everything that lands under .stella/.
 ---
 
-Stella works in any directory with zero setup — but one command primes it
+stella works in any directory with zero setup — but one command primes it
 with structured knowledge of your codebase:
 
 ```bash
@@ -39,7 +39,7 @@ hard-fails: you can initialize before configuring any provider key.
 
 ## What lands where
 
-Everything Stella knows about a workspace lives under `.stella/` — plain
+Everything stella knows about a workspace lives under `.stella/` — plain
 files and SQLite databases you can inspect, version, or delete at will:
 
 ### Shared — commit these
@@ -105,7 +105,7 @@ files and SQLite databases you can inspect, version, or delete at will:
 </CardGrid>
 
 When upgrading from a release that wrote private files directly under
-`.stella/`, Stella migrates safe, closed legacy files into `.stella/private/`
+`.stella/`, stella migrates safe, closed legacy files into `.stella/private/`
 on first use. Unsafe permissions or live SQLite WAL/SHM sidecars fail closed
 with an actionable error and remain untouched.
 
@@ -120,7 +120,7 @@ version control (prefer
 [`api_key_env` or `credentials.toml`](/docs/configuration/credentials)).
 
 Everything under `.stella/private/` is local state, including MCP OAuth tokens.
-Stella generates `.stella/.gitignore` for you, covering the private directory
+stella generates `.stella/.gitignore` for you, covering the private directory
 and any stray database or reflection log left by an older layout:
 
 ```text title=".stella/.gitignore"

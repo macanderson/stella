@@ -1,9 +1,9 @@
 ---
-title: Benchmark Stella against Claude Code
-description: Run Terminal-Bench 2.1 with Stella in one arm and Claude Code in the other — the setup, and the parity checks that make the comparison mean anything.
+title: Benchmark stella against Claude Code
+description: Run Terminal-Bench 2.1 with stella in one arm and Claude Code in the other — the setup, and the parity checks that make the comparison mean anything.
 ---
 
-You want a number: on the same tasks, with the same model, does Stella solve
+You want a number: on the same tasks, with the same model, does stella solve
 more than Claude Code — and at what cost? Terminal-Bench 2.1 is 89 containerized
 terminal tasks with a deterministic grader, which makes it the right instrument.
 Running it *twice*, once per agent, is the head-to-head.
@@ -14,7 +14,7 @@ differs in a second variable measures nothing and costs the same money.
 
 ## The shape of it
 
-Two Harbor jobs over one frozen dataset. Arm A is Stella, arm B is Claude Code:
+Two Harbor jobs over one frozen dataset. Arm A is stella, arm B is Claude Code:
 
 ```
 <tag>-armA-stella        harbor run --agent-import-path stella_harbor:StellaAgent
@@ -52,7 +52,7 @@ for the line between them before publishing anything from here.
     schedule.
   </OptionCard>
   <OptionCard name="uv, zig, cargo-zigbuild, rustup">
-    `uv` provisions the adapter venv; the zig toolchain cross-compiles the Stella
+    `uv` provisions the adapter venv; the zig toolchain cross-compiles the stella
     binary that runs *inside* the task containers.
   </OptionCard>
   <OptionCard name="Two API keys, one per arm">
@@ -76,7 +76,7 @@ constant*, not an upgrade candidate: the adapter refuses to launch unless
 `.github/dependabot.yml` ignores the package because an automated bump to 0.20.0
 once broke the run path for five days.
 
-The version also decides the CLI spelling. In 0.6.1 the Stella arm is selected
+The version also decides the CLI spelling. In 0.6.1 the stella arm is selected
 with `--agent-import-path`; 0.20.0 folded that into `--agent`. If you ever move
 off the pin, check the help text before spending anything —
 `harbor run --help` is the authority, and Harbor renders it through Rich, so
@@ -101,7 +101,7 @@ step.
 bench/evidence/run/build_sut.sh
 ```
 
-This cross-compiles Stella against `x86_64-unknown-linux-gnu.2.17` via
+This cross-compiles stella against `x86_64-unknown-linux-gnu.2.17` via
 `cargo-zigbuild`. That glibc floor is what lets **one** binary execute in every
 task image — including the two on `debian:bullseye-slim`, whose glibc 2.31 is the
 oldest in the dataset.
@@ -113,7 +113,7 @@ five trials before the agent ever started. Every integrity check still passed,
 because they all answer *did the file arrive intact* — and it had. Nothing
 answered *can this file run here*. Harbor recorded `NonZeroAgentExitCodeError`
 and scored each trial 0.0, which under a fixed denominator is arithmetically
-indistinguishable from Stella failing those tasks.
+indistinguishable from stella failing those tasks.
 </Callout>
 
 A host-side preflight now refuses to start a run whose binary requires a glibc
@@ -147,7 +147,7 @@ string to `harbor run --dataset`.
 
 ## 4. Make the two arms comparable
 
-Everything so far applies to a solo Stella run. This step is what makes it a
+Everything so far applies to a solo stella run. This step is what makes it a
 head-to-head, and it is the step people skip.
 
 ### Pick one API surface for both arms
@@ -183,7 +183,7 @@ solved.
 Both arms should be pinned to the same effort tier, by whatever mechanism each
 one actually honors:
 
-- **Stella** — the frozen benchmark posture (`agents.<role>.effort`), which is
+- **stella** — the frozen benchmark posture (`agents.<role>.effort`), which is
   asserted by digest rather than by reading the constant, so the value the
   launcher delivers and the value you assert cannot drift apart.
 - **Claude Code** — `harbor --ak reasoning_effort=<tier>`, which Harbor's
@@ -214,9 +214,9 @@ before it returns.
 
 ### Decide the per-trial spend cap deliberately
 
-Stella can be given a per-trial budget. Claude Code, as Harbor runs it, has no
-spend ceiling. Leaving Stella's default cap in place therefore hands the
-comparator an advantage that will not appear anywhere in the output — Stella's
+stella can be given a per-trial budget. Claude Code, as Harbor runs it, has no
+spend ceiling. Leaving stella's default cap in place therefore hands the
+comparator an advantage that will not appear anywhere in the output — stella's
 capped trials simply abort and score 0.
 
 Setting `STELLA_BUDGET` to the empty string means *no per-trial cap*, and that
@@ -304,11 +304,11 @@ re-derive it instead of trusting it.
 
 <Callout type="warn">
 **Self-reported cost can invert the ranking.** On one smoke dataset the agents'
-own numbers said Claude Code $2.65 / Stella $3.27, while a single price table
-applied to both said Claude Code $3.00 / Stella $1.93 — the opposite ordering.
+own numbers said Claude Code $2.65 / stella $3.27, while a single price table
+applied to both said Claude Code $3.00 / stella $1.93 — the opposite ordering.
 Always publish a recomputed, normalized cost. The price table in
 `bench/terminal_bench_analysis/normalized_cost.py` strips the routing prefix
-Stella carries and the comparator does not, so `anthropic/claude-sonnet-5` and
+stella carries and the comparator does not, so `anthropic/claude-sonnet-5` and
 `claude-sonnet-5` hit one row — but it still needs an entry for the model
 itself, and for the date the run happened on when that model's rate has
 changed.
@@ -365,7 +365,7 @@ denominator.
     The local stores a run writes, and how to query them.
   </SpecCard>
   <SpecCard title="Scripting" href="/docs/scripting">
-    Driving Stella headlessly with JSON output — the same surface the adapter
+    Driving stella headlessly with JSON output — the same surface the adapter
     uses.
   </SpecCard>
 </CardGrid>

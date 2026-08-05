@@ -164,6 +164,14 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-command-docs.sh
 
+      # Also toolchain-free. The brand's lowercase rule was documented in two
+      # places and enforced in none — 389 capitalised uses accumulated in the
+      # docs tree, including inside `description:` frontmatter, which is what
+      # search engines and model crawlers read first (#1500).
+      - name: docs prose spells the wordmark lowercase
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-brand-case.sh
+
       # Also toolchain-free (shellcheck ships preinstalled on ubuntu-latest).
       # install.sh is fetched over the network and piped into `sh` by
       # strangers before Stella is installed; the guard scripts are what the

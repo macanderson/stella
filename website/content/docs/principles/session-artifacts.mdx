@@ -1,12 +1,12 @@
 ---
 title: A session is an artifact, not a service
-description: Stella will hand you a session you can carry to another machine — and will not carry it for you. Why the line sits there, what Stella still owes you when the artifact lands somewhere new, and what it deliberately refuses to own.
+description: stella will hand you a session you can carry to another machine — and will not carry it for you. Why the line sits there, what stella still owes you when the artifact lands somewhere new, and what it deliberately refuses to own.
 ---
 
-Stella already survives a crash. Kill the process mid-turn and the next run
+stella already survives a crash. Kill the process mid-turn and the next run
 picks up the resume point, with the [no-clobber
 guarantee](/docs/principles/no-clobber) intact, because both live in a durable
-git store Stella keeps in its own directory.
+git store stella keeps in its own directory.
 
 What it does not survive is a *machine*. Your laptop dies, or you want to hand a
 half-finished session to a colleague, or start something on a desktop and finish
@@ -24,10 +24,10 @@ about, because it points straight at where the line belongs.
 
 ## Why local state is local on purpose
 
-Stella's durable store is keyed on a machine-local workspace id. That id lives
+stella's durable store is keyed on a machine-local workspace id. That id lives
 in `.stella/private/`, which is gitignored by construction, so a clone never
 carries it. Identity is decided by comparing absolute paths — a comparison with
-no meaning across machines. And when Stella sees the same id at a path where
+no meaning across machines. And when stella sees the same id at a path where
 another copy is still live, it deliberately mints a *fresh* id, so two copies of
 a project can never silently write into each other's history.
 
@@ -35,26 +35,26 @@ Every one of those choices is right for the question that module answers: *is
 this the same working copy I saw last time?* Every one of them is fatal to
 resuming somewhere else.
 
-The obvious fix is to give Stella a portable identity — an account, a project
+The obvious fix is to give stella a portable identity — an account, a project
 id, a login. That is the fix this project declines, and declining it is the
 whole decision.
 
 ## The line
 
-**Stella provides a checkpoint API and a replay API. The checkpoint API returns
+**stella provides a checkpoint API and a replay API. The checkpoint API returns
 a self-contained artifact; the replay API accepts one.** Identifying a
 workspace, storing the artifact, moving it, authenticating it, and deciding who
 may read it are the caller's concerns.
 
-That is not a division invented for this feature. It is the line Stella already
+That is not a division invented for this feature. It is the line stella already
 draws everywhere else.
 
-When Stella runs as a headless engine behind a host — the `stella-serve` crate —
+When stella runs as a headless engine behind a host — the `stella-serve` crate —
 every governed side effect is remoted back to the host. Model calls and tool
 calls are *requests the host answers*. The engine never holds ambient authority,
 which means a served turn is structurally incapable of reading one of your
 files: it can only ask, and something else decides. The workspace was never
-Stella's in that model.
+stella's in that model.
 
 Durability is the same shape of problem, so it gets the same answer. Extending
 an existing line costs nothing to explain. Carving an exception into it costs
@@ -65,7 +65,7 @@ you the ability to say what the system does.
 It is one integration instead of two, and for a single user with two machines
 that is a real advantage. It loses anyway, on three counts.
 
-**It requires an identity nobody can derive.** Stella sees a directory. It has
+**It requires an identity nobody can derive.** stella sees a directory. It has
 no way to know that `~/src/api` on your laptop and `/work/api` on the build box
 are the same project — only something with a concept of *project* knows that.
 Every scheme that guesses eventually binds two unrelated codebases together,
@@ -75,15 +75,15 @@ which is worse than an honest miss.
 credentials, and [zero telemetry egress by
 default](/docs/principles#the-seven-invariants-briefly) are load-bearing claims,
 with exactly two explicit opt-in exceptions. A first-party upload path makes
-them conditional — and the condition is precisely the thing people choose Stella
+them conditional — and the condition is precisely the thing people choose stella
 to avoid. An artifact API adds no third path: producing an artifact writes bytes
-locally, and Stella still uploads nothing.
+locally, and stella still uploads nothing.
 
 **It builds the easy half twice.** Storage, auth, tenancy, retention, audit —
 these are solved, and they do not get better for being reimplemented inside a
 CLI.
 
-## What Stella still owes you
+## What stella still owes you
 
 "Identity is the caller's problem" is right. "Any artifact may be replayed into
 any tree" is not.
@@ -96,7 +96,7 @@ prevent, for the same reason it is worse to be quietly misinformed than loudly
 blocked.
 
 So the artifact carries a fingerprint of the tree it came from, and **replay
-verifies it and refuses by default**. Stella is not naming your workspace. It is
+verifies it and refuses by default**. stella is not naming your workspace. It is
 checking that this artifact belongs to this tree.
 
 The fingerprint is not a new mechanism — it is the staleness map the no-clobber
@@ -104,7 +104,7 @@ guard already keeps: every path this session touched, and the digest of what it
 saw there. Verifying it is re-hashing those paths in the target tree. A mismatch
 names the exact files, exactly as a refused write does, and nothing is consumed.
 Overriding it is possible, but it is a distinct argument you pass, never a
-fallback Stella takes on your behalf when the check fails.
+fallback stella takes on your behalf when the check fails.
 
 That map covers the files the session actually touched and no others — so it
 cannot cry wolf over unrelated churn elsewhere in the repo, and it cannot detect
@@ -123,10 +123,10 @@ never inferred from what happens to be on disk.
 - **Materialize** writes the session's files out first. The cross-machine case.
 
 Materialize has a limit worth stating plainly: the artifact holds *the files the
-agent touched*, not your whole repository. Stella records the base commit it was
+agent touched*, not your whole repository. stella records the base commit it was
 captured against so a caller can name it, but it does not carry the base and
 will not — bundling your entire tree into a session artifact would move files
-the agent never read, and that is an egress decision Stella has no standing to
+the agent never read, and that is an egress decision stella has no standing to
 make on your behalf.
 
 Fetching the base is exactly the kind of thing a control plane is for. It has
@@ -142,16 +142,16 @@ That sentence belongs in the documentation of the type that holds it, where
 someone reads it before writing the code that moves the bytes — not in a release
 note and not in a banner.
 
-Stella does not encrypt it, redact it, classify it, or expire it. Those need to
+stella does not encrypt it, redact it, classify it, or expire it. Those need to
 know whose data it is, what jurisdiction it sits in, and who may read it, and
-Stella knows none of those. Its entire obligation here is to be accurate about
+stella knows none of those. Its entire obligation here is to be accurate about
 the contents so your decision is an informed one. That is not a gap in the
 design; it is the boundary doing its job.
 
 ## Forks stay visible
 
 Two machines replay the same artifact. Which one wins is a policy question, and
-Stella does not answer it.
+stella does not answer it.
 
 What it guarantees is that the divergence is *honest*: every replay starts its
 own session, with its own ref in the durable store, and the artifact's origin is
@@ -161,7 +161,7 @@ outcome that cannot be untangled afterwards.
 
 ## Where the line falls
 
-| Stella owns | Your control plane owns |
+| stella owns | Your control plane owns |
 |---|---|
 | what is in the artifact | naming a workspace or project |
 | byte-exact round-trip | storing artifacts, and keeping them |
@@ -171,11 +171,11 @@ outcome that cannot be untangled afterwards.
 | telling you what the artifact contains | who wins a conflict, and when |
 
 [Oxagen](https://oxagen.sh) is that control plane at enterprise scale —
-accounts and projects as the portable identity Stella refuses to invent, a
+accounts and projects as the portable identity stella refuses to invent, a
 store, access control, audit, and resuming a session from a browser.
 
 That is a **layering, not a dependency**, and the distinction is the test of
-whether the line is in the right place. Stella has to stay fully usable and
+whether the line is in the right place. stella has to stay fully usable and
 fully durable on its own: the work journal, crash resume, and the no-clobber
 guarantee are local mechanisms and stay local mechanisms. If a change ever made
 one of them conditional on a control plane existing, the change would be the
@@ -183,14 +183,14 @@ thing that is wrong.
 
 ## What this deliberately does not claim
 
-- **It is not sync.** There is no `stella login`, no Stella-hosted store, and no
+- **It is not sync.** There is no `stella login`, no stella-hosted store, and no
   first-party upload path. Not deferred — declined.
 - **Old artifacts do not read forever.** A stored artifact stays replayable
   across a stated support window, not indefinitely. When a build genuinely
   cannot read one, it says so and names what can — it does not guess at a format
   it half-understands, which would resume your session subtly wrong.
-- **Stella does not merge forks.** It makes them visible. Resolving them needs
-  to know which one matters, which is exactly what Stella does not know.
+- **stella does not merge forks.** It makes them visible. Resolving them needs
+  to know which one matters, which is exactly what stella does not know.
 - **The artifact is not a backup of your repository.** It is what the agent did,
   plus the identity of what it did it to.
 

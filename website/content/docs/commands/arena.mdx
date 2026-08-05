@@ -3,10 +3,10 @@ title: stella arena
 description: The arena-bench harness adapter — run one benchmark episode from a task directory, recording the trace journal judged against replay oracles.
 ---
 
-`stella arena` is Stella's side of the [arena-bench](https://github.com/macanderson/arena-bench) adapter contract. It runs **one benchmark episode** and records a [`contextgraph-trace`](https://github.com/macanderson/context-graph-protocol) journal that the arena runner scores with the Context Graph Protocol's replay oracles.
+`stella arena` is stella's side of the [arena-bench](https://github.com/macanderson/arena-bench) adapter contract. It runs **one benchmark episode** and records a [`contextgraph-trace`](https://github.com/macanderson/context-graph-protocol) journal that the arena runner scores with the Context Graph Protocol's replay oracles.
 
 <Callout type="info">
-This command exists for **benchmarking Stella, not for using it**. If you want to do work, reach for [`stella run`](/docs/commands/run), [`stella goal`](/docs/commands/goal), or [`stella chat`](/docs/commands/chat). Nothing here changes how Stella behaves on a real task — the adapter drives the ordinary one-shot path and only adds a journal alongside it. Stdout is **stream-json unconditionally**: the runner is the only intended reader, so there is no `--output-format` flag to promise otherwise.
+This command exists for **benchmarking stella, not for using it**. If you want to do work, reach for [`stella run`](/docs/commands/run), [`stella goal`](/docs/commands/goal), or [`stella chat`](/docs/commands/chat). Nothing here changes how stella behaves on a real task — the adapter drives the ordinary one-shot path and only adds a journal alongside it. Stdout is **stream-json unconditionally**: the runner is the only intended reader, so there is no `--output-format` flag to promise otherwise.
 </Callout>
 
 ## Synopsis

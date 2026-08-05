@@ -1,11 +1,11 @@
 ---
 title: Determinism over intelligence
-description: Why Stella is a deterministic single-thread engine, not a multi-agent swarm — the MAST failure taxonomy, the Agentless result, and what follows from both.
+description: Why stella is a deterministic single-thread engine, not a multi-agent swarm — the MAST failure taxonomy, the Agentless result, and what follows from both.
 ---
 
 The dominant trend in agent architecture is the swarm: a navigator agent, a
 coder agent, a reviewer agent, a tester agent, and a coordinator conducting
-them. Stella deliberately went the other way — **one deterministic,
+them. stella deliberately went the other way — **one deterministic,
 single-threaded step loop** — and treats that as a feature, not a
 limitation. This page distills
 [the full research note](https://github.com/macanderson/stella/blob/main/docs/papers/deterministic-engine.md).
@@ -37,7 +37,7 @@ complexity.
 
 <SingleThreadDiagram />
 
-## Stella's answer, by construction
+## stella's answer, by construction
 
 - **One loop.** Plan, fan tool calls out in parallel, observe, compact if
   noisy, repeat. No coordinator to go stale, no peer to disagree with, no
@@ -50,7 +50,7 @@ complexity.
   synchronous functions over owned data, which is what makes it
   property-testable — and what makes its behavior *reproducible* at all.
 
-Where parallelism genuinely pays, Stella provides it **without a shared
+Where parallelism genuinely pays, stella provides it **without a shared
 coordinator or shared engine state**: [fleets](/docs/agent-fleets) run N
 independent single-thread engines over one shared tree, coordinated only by
 cooperative file claims (dedicated git worktrees per task on opt-in) — parallel
@@ -84,7 +84,7 @@ failure class has nowhere to occur.
 
 ## The principle generalized
 
-"Prefer determinism over intelligence" is not anti-model — Stella exists to
+"Prefer determinism over intelligence" is not anti-model — stella exists to
 put frontier models to work. It is a statement about **where to spend
 them**:
 

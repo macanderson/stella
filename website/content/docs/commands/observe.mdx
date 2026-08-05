@@ -19,8 +19,8 @@ stella observe [--port <N>] [--open]
 `stella observe` starts a local HTTP server (default port `7787`) and serves the embedded
 dashboard — no separate install, no build step, and no Observatory egress: the server
 binds loopback and `stella observe` itself never sends anything off the machine. It reads
-the same SQLite stores every Stella command writes, so it works on any workspace that has
-run Stella at least once, and it needs no API key. (Telemetry can leave the machine only
+the same SQLite stores every stella command writes, so it works on any workspace that has
+run stella at least once, and it needs no API key. (Telemetry can leave the machine only
 through the two paths [the telemetry page enumerates](/docs/telemetry), neither of which
 this command uses.)
 
