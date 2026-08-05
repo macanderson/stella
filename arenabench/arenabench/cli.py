@@ -2,18 +2,21 @@
 # Copyright (c) 2026 the ArenaBench authors
 """``arenabench`` command line.
 
-Four verbs, because the web UI is the product and the CLI exists to get you to
-it, to prove the pieces work before you spend money, and to fetch what a match
-will need.
+The web UI is the product for exploring; the CLI is how a match becomes
+repeatable. ``arenabench run match.toml`` executes a committed template with no
+browser involved, which is what CI needs — the same match, the same way, every
+time, with credentials coming from the environment rather than the file.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import random
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from .agents import AGENTS
@@ -30,6 +33,142 @@ def _configure_logging(verbose: bool) -> None:
         format="%(asctime)s %(levelname)-7s %(name)s  %(message)s",
         datefmt="%H:%M:%S",
     )
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    """Run a committed ``arenabench.toml`` headlessly — the CI entry point.
+
+    Credentials are read from the process environment against each seat's
+    declared ``required`` list, never from the file. A missing one aborts
+    before any container starts, because an unauthenticated arm scores zero
+    and a zero is indistinguishable from a real result on a scoreboard.
+    """
+    import os
+    import time
+
+    from .config import MatchTemplateError, load_match, required_env
+    from .runner import MatchRunner
+    from .server import ArenaServer
+
+    try:
+        spec = load_match(Path(args.template).expanduser())
+    except MatchTemplateError as exc:
+        for problem in exc.problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 2
+
+    needed = required_env(spec)
+    missing: list[str] = []
+    seated: list = []
+    for contestant in spec.contestants:
+        env = {
+            name: os.environ[name]
+            for name in needed.get(contestant.id, [])
+            if os.environ.get(name)
+        }
+        absent = [n for n in needed.get(contestant.id, []) if n not in env]
+        if absent and not args.allow_missing_env:
+            missing.append(f"{contestant.name}: {', '.join(absent)}")
+        seated.append(replace(contestant, env=env))
+    if missing:
+        print("error: required environment variables are not set:", file=sys.stderr)
+        for line in missing:
+            print(f"  {line}", file=sys.stderr)
+        print("  (use --allow-missing-env to run anyway)", file=sys.stderr)
+        return 2
+
+    spec = replace(spec, contestants=tuple(seated))
+    workspace = Path(args.workspace).expanduser()
+    arena = ArenaServer(workspace)
+    runner: MatchRunner = arena.runner
+
+    print(f"match     : {spec.name}")
+    print(f"dataset   : {spec.dataset}")
+    print(f"tasks     : {len(spec.tasks) or 'all'}")
+    for contestant in spec.contestants:
+        print(f"  {contestant.name:24} {contestant.agent:14} {contestant.engine.label}")
+
+    match = runner.create(spec)
+    runner.start(match)
+    while match.status == "running":
+        time.sleep(args.poll)
+        if args.progress:
+            snapshot = match.snapshot()
+            parts = [
+                f"{c['name']}={c['totals']['passed']}/{c['totals']['judged']}"
+                for c in snapshot["contestants"]
+            ]
+            print(f"  [{snapshot['elapsed'] / 60:5.1f}m] " + "  ".join(parts))
+
+    snapshot = match.snapshot()
+    print(f"\nfinished in {snapshot['elapsed'] / 60:.1f}m")
+    worst = 0
+    for entry in snapshot["contestants"]:
+        totals = entry["totals"]
+        print(
+            f"  {entry['name']:24} {totals['solve_rate']:5.1f}%  "
+            f"({totals['passed']}/{totals['judged']})  ${totals['total_cost']:.2f}"
+        )
+        if totals["judged"] == 0:
+            worst = 1
+    if args.results:
+        Path(args.results).expanduser().write_text(
+            json.dumps(snapshot, indent=2), encoding="utf-8"
+        )
+        print(f"  results -> {args.results}")
+    return worst
+
+
+def _cmd_template(args: argparse.Namespace) -> int:
+    """Print a starter ``arenabench.toml`` to stdout or a file."""
+    from .config import dump_match
+    from .model import MatchSpec
+
+    spec = MatchSpec.from_json(
+        {
+            "name": args.name,
+            "dataset": args.dataset,
+            "tasks": [],
+            "attempts": 1,
+            "concurrency": 1,
+            "record_video": False,
+            "contestants": [
+                {
+                    "id": "stella",
+                    "name": "Stella",
+                    "agent": "stella",
+                    "engine": {
+                        "api": "openrouter",
+                        "model": "z-ai/glm-5.2",
+                        "effort": "medium",
+                        "max_tokens": 128000,
+                        "roles": {
+                            "judge": {"model": "openai/gpt-5.5", "effort": "xhigh"},
+                            "triage": {"model": "z-ai/glm-4.7-flash", "effort": "low"},
+                        },
+                    },
+                },
+                {
+                    "id": "claude-code",
+                    "name": "Claude Code",
+                    "agent": "claude-code",
+                    "engine": {
+                        "api": "openrouter",
+                        "model": "z-ai/glm-5.2",
+                        "effort": "medium",
+                        "base_url": "https://openrouter.ai/api/v1",
+                    },
+                },
+            ],
+        }
+    )
+    text = dump_match(spec)
+    if args.output:
+        Path(args.output).expanduser().write_text(text, encoding="utf-8")
+        print(f"wrote {args.output}")
+    else:
+        print(text, end="")
+    return 0
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -159,6 +298,31 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser(
+        "run", help="run a committed arenabench.toml (no browser; for CI)"
+    )
+    run_parser.add_argument("template", help="path to an arenabench.toml")
+    run_parser.add_argument("--workspace", default=str(default_workspace()))
+    run_parser.add_argument("--results", help="write the final snapshot JSON here")
+    run_parser.add_argument("--poll", type=float, default=15.0)
+    run_parser.add_argument(
+        "--progress", action="store_true", help="print a line per poll"
+    )
+    run_parser.add_argument(
+        "--allow-missing-env",
+        action="store_true",
+        help="launch even when a seat's declared credentials are absent",
+    )
+    run_parser.set_defaults(func=_cmd_run)
+
+    template_parser = subparsers.add_parser(
+        "template", help="print a starter arenabench.toml"
+    )
+    template_parser.add_argument("-o", "--output", help="write here instead of stdout")
+    template_parser.add_argument("--name", default="my match")
+    template_parser.add_argument("--dataset", default="terminal-bench-2.1")
+    template_parser.set_defaults(func=_cmd_template)
 
     serve_parser = subparsers.add_parser("serve", help="run the arena web UI")
     serve_parser.add_argument("--host", default="127.0.0.1")
