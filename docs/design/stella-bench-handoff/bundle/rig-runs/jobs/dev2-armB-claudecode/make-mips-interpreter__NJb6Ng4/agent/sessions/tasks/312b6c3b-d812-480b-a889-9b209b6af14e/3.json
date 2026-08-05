@@ -1,8 +1,0 @@
-{
-  "id": "3",
-  "subject": "Implement MIPS CPU interpreter in vm.js",
-  "description": "Implement MIPS32 instruction decode/execute: registers, loads/stores, arithmetic, branches, mul/div, likely delay slots.",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

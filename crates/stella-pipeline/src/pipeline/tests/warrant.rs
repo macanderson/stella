@@ -2,7 +2,7 @@
 //! stated reason instead of buying a verifier call to confirm the absence of a
 //! test that was never warranted.
 //!
-//! Design: [`docs/design/witness-protocol.md`](../../../../../docs/design/witness-protocol.md) §7.
+//! Design: [`docs/spec/witness-protocol.md`](../../../../../docs/spec/witness-protocol.md) §7.
 
 use super::*;
 

@@ -1,9 +1,0 @@
-{
-  "id": "4",
-  "subject": "Add FPU + remaining instructions",
-  "description": "Add MIPS32 FPU instructions (madd, FP arithmetic, mov-cc, etc.) as needed by iterating: trap on unknown opcodes, decode, add, repeat until boot succeeds.",
-  "activeForm": "Adding FPU and remaining instructions",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

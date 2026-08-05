@@ -538,7 +538,7 @@ around it, so it read as a session-wide bound while delivering a single-tool
 one — and a half-boundary people rely on is worse than a clearly absent one.
 For real containment, run the whole Stella process inside a container: that
 boundary sits outside every spawn path, so no tool can step around it. See
-[`docs/design/remote-sandboxes.md`](docs/design/remote-sandboxes.md).
+[`docs/spec/remote-sandboxes.md`](docs/spec/remote-sandboxes.md).
 
 **Conditional tools:** issue tools need `LINEAR_API_KEY` or a `gh auth login`;
 `generate_image` needs `ZAI_API_KEY` or `OPENAI_API_KEY`. Without their

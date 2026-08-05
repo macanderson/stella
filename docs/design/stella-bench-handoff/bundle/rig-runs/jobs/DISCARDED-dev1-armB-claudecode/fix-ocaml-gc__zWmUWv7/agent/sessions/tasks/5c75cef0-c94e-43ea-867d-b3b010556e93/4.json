@@ -1,9 +1,0 @@
-{
-  "id": "4",
-  "subject": "Run basic testsuite",
-  "description": "Run make -C testsuite one DIR=tests/basic and confirm it passes cleanly.",
-  "activeForm": "Running basic testsuite",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

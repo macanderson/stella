@@ -1,6 +1,6 @@
 //! `stella context propose <handle>` — turning a record into a reviewable change.
 //!
-//! The headline of `docs/design/adaptive-context/context-pr.md` is that a Context PR reuses the workflows
+//! The headline of `docs/spec/adaptive-context/context-pr.md` is that a Context PR reuses the workflows
 //! engineers already trust: diff, ownership, approval, revert. This command is where
 //! a record becomes one of those.
 //!
@@ -65,7 +65,7 @@ pub fn run_propose(root: &Path, needle: &str, commit: bool) -> Result<(), String
     if scope == SharingScope::Personal {
         return Err(format!(
             "^{} is a personal record. Personal records live in ~/.stella/rules/ and are never \
-             promoted into a shared change (docs/design/adaptive-context/context-pr.md §10). Change its sharing_scope to \
+             promoted into a shared change (docs/spec/adaptive-context/context-pr.md §10). Change its sharing_scope to \
              `repository` first if it really is repository policy.",
             entry.record.handle
         ));

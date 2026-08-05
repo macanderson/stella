@@ -16,7 +16,7 @@
 //! (`docs/specs/agent-engine-v2/`), not in this one — Stella's own `docs/adr/`
 //! is a separate 0001-0009 series scoped to Phase 0 adaptive-context. Every
 //! bare "ADR-033" in this crate means that Oxagen ADR;
-//! `docs/design/serve-surface.md` is the self-contained Stella-side account.
+//! `docs/spec/serve-surface.md` is the self-contained Stella-side account.
 //!
 //! # Shape
 //!

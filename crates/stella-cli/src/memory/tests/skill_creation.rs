@@ -1,6 +1,6 @@
 //! Spec §8: auto-creation must never clobber a hand-edited file (#737).
 //!
-//! The guarantee lives in `docs/design/adaptive-context/adaptive-context.md` §8. Its two pure
+//! The guarantee lives in `docs/spec/adaptive-context/adaptive-context.md` §8. Its two pure
 //! halves — the per-session cap and the no-clobber comparison itself — are
 //! tested in `stella-core/src/skills.rs`, and tombstone suppression is tested
 //! in `stella-store/src/forget/tests.rs`. What could not be tested there is the

@@ -1,6 +1,6 @@
 //! `stella context explain <handle>` — why did that rule apply?
 //!
-//! `docs/design/adaptive-context/context-pr.md` §13 promises this exchange works:
+//! `docs/spec/adaptive-context/context-pr.md` §13 promises this exchange works:
 //!
 //! ```text
 //! > Why did you add an integration test?

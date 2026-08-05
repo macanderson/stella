@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! Paths, which are the thing you most want and most cannot have —
-//! `docs/design/diagnostics/diagnostics.md` §5.4.
+//! `docs/spec/diagnostics.md` §5.4.
 //!
 //! The single most-wanted log field in a coding agent, and the most dangerous:
 //! a path carries a home directory name, a client name, a project name, and

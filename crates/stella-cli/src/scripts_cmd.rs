@@ -1,6 +1,6 @@
 //! `stella scripts` — the human door to the project scripts index, mirroring
 //! the `list_scripts`/`run_script` agent tools one-for-one
-//! (`docs/design/scripts-index.md`). Detection is static manifest parsing and
+//! (`docs/spec/scripts-index.md`). Detection is static manifest parsing and
 //! `run` executes one indexed entry, so the surface is offline and needs no
 //! API key.
 //!
@@ -14,7 +14,7 @@ use clap::Subcommand;
 
 /// The `stella scripts` surface, mirroring the `list_scripts`/`run_script`
 /// tools one-for-one so a human at the CLI and the model inside a turn see
-/// the same frames (docs/design/scripts-index.md).
+/// the same frames (docs/spec/scripts-index.md).
 #[derive(Subcommand)]
 pub enum ScriptsCmd {
     /// List detected scripts and their canonical verb bindings

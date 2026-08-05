@@ -1,9 +1,0 @@
-{
-  "id": "4",
-  "subject": "Build and install pyknotid with extensions",
-  "description": "cythonize + build ext modules + install to system global python (no-build-isolation, preserve numpy 2.3.0).",
-  "activeForm": "Building and installing pyknotid",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

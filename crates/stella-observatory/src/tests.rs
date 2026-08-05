@@ -142,6 +142,28 @@ fn seeded_workspace() -> TempDir {
              VALUES ('no-vacuous-fixes', 'a fix must change production code', 'reflection');",
     )
     .unwrap();
+    // The events journal, seeded in its own batch: the payloads are the
+    // internally-tagged `AgentEvent` JSON `Store::record_event` persists,
+    // and a raw string keeps their quoting readable. The `text_delta` row is
+    // there to be *excluded* — the journal route must drop live-preview
+    // fragments in favor of the authoritative `text` event.
+    conn.execute_batch(
+        r#"CREATE TABLE events (
+             execution_id INTEGER NOT NULL,
+             seq INTEGER NOT NULL,
+             ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             event_type TEXT NOT NULL,
+             payload TEXT NOT NULL,
+             UNIQUE (execution_id, seq));
+           INSERT INTO events (execution_id, seq, event_type, payload) VALUES
+             (1, 0, 'stage', '{"type":"stage","name":"build"}'),
+             (1, 1, 'text_delta', '{"type":"text_delta","text":"add"}'),
+             (1, 2, 'reasoning', '{"type":"reasoning","delta":"plan the edit"}'),
+             (1, 3, 'tool_start', '{"type":"tool_start","call":{"call_id":"c1","name":"read_file","input":{"path":"src/lib.rs"}}}'),
+             (1, 4, 'tool_result', '{"type":"tool_result","call_id":"c1","output":{"ok":{"content":"fn a() {}"}},"duration_ms":12,"speculated":false}'),
+             (1, 5, 'text', '{"type":"text","delta":"added the function"}');"#,
+    )
+    .unwrap();
     dir
 }
 
@@ -268,6 +290,68 @@ fn execution_detail_includes_steps_tools_files() {
     );
 }
 
+/// The transcript replay (#1461): the journal route folds an execution's
+/// `events` slice into an ordered transcript, drops `text_delta` fragments
+/// (the `text` event is the authoritative answer), and surfaces tool
+/// arguments and outputs — the content the telemetry projections
+/// deliberately do not carry.
+#[test]
+fn execution_journal_replays_transcript_without_deltas() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/execution-journal?id=1");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let types: Vec<&str> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        types,
+        ["stage", "reasoning", "tool_start", "tool_result", "text"],
+        "seq order, text_delta excluded"
+    );
+    assert_eq!(v[0]["label"], "build");
+    assert_eq!(v[1]["body"], "plan the edit");
+    assert_eq!(v[2]["name"], "read_file");
+    assert!(v[2]["body"].as_str().unwrap().contains("src/lib.rs"));
+    assert_eq!(v[3]["ok"], true);
+    assert_eq!(v[3]["body"], "fn a() {}");
+    assert_eq!(v[3]["duration_ms"], 12);
+    assert_eq!(v[4]["body"], "added the function");
+    assert_eq!(v[4]["truncated"], false);
+    // No execution 2 events were seeded — an empty transcript, not an error.
+    let none = respond(ws.path(), "/api/execution-journal?id=2");
+    let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
+    assert_eq!(v, serde_json::json!([]));
+}
+
+/// A body past [`db::JOURNAL_BODY_CLIP`] chars is clipped and flagged in the
+/// default payload, and returned whole under `?full=1` — the elision must
+/// announce itself, never pose as the data.
+#[test]
+fn execution_journal_clips_long_bodies_unless_full() {
+    use crate::db::JOURNAL_BODY_CLIP;
+    let ws = seeded_workspace();
+    let long = "x".repeat(JOURNAL_BODY_CLIP + 100);
+    Connection::open(ws.path().join(".stella/private/store.db"))
+        .unwrap()
+        .execute(
+            "INSERT INTO events (execution_id, seq, event_type, payload)
+             VALUES (2, 0, 'text', ?1)",
+            [serde_json::json!({"type": "text", "delta": long}).to_string()],
+        )
+        .unwrap();
+    let response = respond(ws.path(), "/api/execution-journal?id=2");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(v[0]["truncated"], true);
+    assert!(v[0]["body"].as_str().unwrap().chars().count() <= JOURNAL_BODY_CLIP + 1);
+    let full = respond(ws.path(), "/api/execution-journal?id=2&full=1");
+    let v: serde_json::Value = serde_json::from_slice(&full.body).unwrap();
+    assert_eq!(v[0]["truncated"], false);
+    assert_eq!(v[0]["body"].as_str().unwrap().chars().count(), long.len());
+}
+
 #[test]
 fn tool_leaderboard_counts_errors() {
     let ws = seeded_workspace();
@@ -290,6 +374,7 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
         "/api/meta",
         "/api/overview",
         "/api/executions",
+        "/api/execution-journal?id=1",
         "/api/models",
         "/api/tools",
         "/api/files",

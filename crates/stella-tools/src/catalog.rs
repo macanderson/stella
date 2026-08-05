@@ -160,7 +160,7 @@ catalog! {
     // Manifest-verb execution (argv, no shell)
     "run_lint"            => (false, false, Always, "build"),
     "format_code"         => (false, false, Always, "build"),
-    // The project scripts index (docs/design/scripts-index.md) — static
+    // The project scripts index (docs/spec/scripts-index.md) — static
     // manifest detection, nothing executed.
     "list_scripts"        => (true, true, Always, "scripts"),
     "run_script"          => (false, false, Always, "scripts"),

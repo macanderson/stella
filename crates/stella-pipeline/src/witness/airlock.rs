@@ -1,6 +1,6 @@
 //! The feedback airlock: the one channel from verification back to the worker.
 //!
-//! Design: [`docs/design/witness-protocol.md`](../../../../docs/design/witness-protocol.md) §4.
+//! Design: [`docs/spec/witness-protocol.md`](../../../../docs/spec/witness-protocol.md) §4.
 //!
 //! # Leak the defect, never the detector
 //!

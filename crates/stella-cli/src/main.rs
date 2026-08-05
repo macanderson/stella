@@ -449,7 +449,7 @@ fn main() -> ExitCode {
     // The diagnostic plane, before anything that can fail interestingly. From
     // here on a record explains a decision instead of being discarded, and the
     // panic hook is armed — so a crash after this line leaves an artifact a
-    // user can attach (docs/design/diagnostics/diagnostics.md §7.4). It is installed after
+    // user can attach (docs/spec/diagnostics.md §7.4). It is installed after
     // clap so `-v`/`--log-level`/`--log-file` are known, and after env-file
     // loading so `STELLA_LOG` from a project `.env` is honoured.
     let diag_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));

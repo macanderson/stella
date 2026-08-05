@@ -12,7 +12,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from stella_harbor.live_feed import _EventsCache, pair_rows, render, state, trial_view
+import pytest
+
+pytest.importorskip("harbor", reason="Harbor is required to import the adapter")
+
+from stella_harbor.live_feed import (  # noqa: E402 - after importorskip by design
+    _EventsCache,
+    pair_rows,
+    render,
+    state,
+    trial_view,
+)
 
 
 def _write_trial(

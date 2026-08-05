@@ -22,7 +22,7 @@ dist = true
 formula = "stella"
 
 [dependencies]
-# The diagnostic plane (docs/design/diagnostics.md). A leaf crate depending on
+# The diagnostic plane (docs/spec/diagnostics.md). A leaf crate depending on
 # serde alone, so the binary pays a few hundred lines and no transitive tree
 # for a structured log whose fields cannot carry prompts, paths, or model
 # output.

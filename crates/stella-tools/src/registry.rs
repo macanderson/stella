@@ -205,7 +205,7 @@ pub struct ToolRegistry {
     turn_controls: crate::subagent::TurnControlsSlot,
     storage_index: std::sync::Mutex<StorageIndex>,
     /// Which workspace paths are covered by a FRESH saved exploration map —
-    /// the read-side analogue of `storage_index` (`docs/design/
+    /// the read-side analogue of `storage_index` (`docs/spec/
     /// exploration-sharing.md` §6). Built once at construction, refreshed
     /// after every `save_exploration`; drives the once-per-session
     /// "this area is already mapped" hints on search-tool results.
@@ -296,7 +296,7 @@ impl ExplorationCoverage {
 }
 
 /// The session's storage-map state for the pre-write gate
-/// (`docs/design/storage-map.md` §8): a host-seeded baseline snapshot plus
+/// (`docs/spec/storage-map.md` §8): a host-seeded baseline snapshot plus
 /// the relations created by writes this session — which the on-disk index
 /// may not have re-indexed yet. The gate merges both over a fresh read of
 /// the persisted index on every gated write.
@@ -896,7 +896,7 @@ impl ToolRegistry {
             })
             .collect();
 
-        // Storage gate (docs/design/storage-map.md §8): if the call targets
+        // Storage gate (docs/spec/storage-map.md §8): if the call targets
         // storage-definition files, parse each proposed post-write content
         // with the SAME adapter extraction the indexer uses and verifier it
         // against the live storage map before anything lands. Objects a

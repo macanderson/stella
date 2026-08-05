@@ -35,7 +35,7 @@ agent-facing CLI behavior means updating this matrix in the same PR.
 `Deferred` is an honest and expected answer — the point is that a human wrote
 the answer down where a test can keep it true, not that every feature ships
 everywhere at once. The embedding story the matrix serves is
-[`docs/design/engine-embedding.md`](../../docs/design/engine-embedding.md).
+[`docs/spec/engine-embedding.md`](../../docs/spec/engine-embedding.md).
 
 ## Boundary — does this change belong here?
 

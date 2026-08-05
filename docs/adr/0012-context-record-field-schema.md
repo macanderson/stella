@@ -50,7 +50,7 @@ require a central service, and the solo path must work without one (§18).
 Provider-hosted **workspace** publication is not on this table because it is not
 a Context PR at all: the provider-hosted record is authoritative for workspace
 scope and is never materialized into a rule file unless a separate repository
-publication is approved (`docs/design/adaptive-context/context-pr.md` §2). That channel remains deferred.
+publication is approved (`docs/spec/adaptive-context/context-pr.md` §2). That channel remains deferred.
 
 Implemented as `stella_core::records::publication_dir`.
 
@@ -194,7 +194,7 @@ months.
 - The examples in `docs/context-record-examples/` are the schema reference, and
   their README's "illustrative, not ratified" caveat is retired for the fields
   above.
-- `docs/design/adaptive-context/context-pr.md` §6.1's nested `scope:` example is corrected to a shape the
+- `docs/spec/adaptive-context/context-pr.md` §6.1's nested `scope:` example is corrected to a shape the
   loader accepts — it is the example ADR 0011 cited as not parsing, and now that
   nesting is refused loudly it would fail to load rather than load wrong.
 - A new field still needs a decision. This ADR settles the fields that exist; it
