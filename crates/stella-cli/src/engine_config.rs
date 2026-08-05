@@ -460,6 +460,65 @@ pub fn unsupported_effort_notice(
     }
 }
 
+/// One line when a pinned effort IS accepted but not at the tier asked for, or
+/// `None` when the pinned tier reaches the wire as itself (#1499).
+///
+/// The sibling of [`unsupported_effort_notice`], and the case it could not
+/// see. That one fires when the adapter has no reasoning control at all; this
+/// one fires when it has one and cannot express the requested depth. Four of
+/// the eight `Controllable` providers map the finer tiers onto a coarser set
+/// the routed model is guaranteed to accept — the right wire posture, because
+/// sending a tier the model rejects is a hard 400, and the wrong thing to stay
+/// silent about.
+///
+/// Worth a boot line rather than a doc note because effort was the single
+/// largest measured variable in this repo's own paid arena runs: a run
+/// configured at `max` and served `high` is not the run its label says it is,
+/// and nothing else in the transcript would ever say so.
+///
+/// Keyed on the user's explicit pin for the same reason
+/// [`unsupported_effort_notice`] is — `effort_auto` synthesizes a per-agent
+/// effort nobody asked for, and a notice about a level the user never chose is
+/// noise.
+pub fn downgraded_effort_notice(
+    provider_id: &str,
+    provider_label: &str,
+    pinned_effort: Option<ReasoningEffort>,
+) -> Option<String> {
+    let effort = pinned_effort?;
+    let requested = effort_to_str(effort);
+    let served = stella_model::provider_parity::downgraded_effort(provider_id, requested)?;
+    Some(format!(
+        "reasoning effort '{requested}' is pinned, but {provider_label}'s adapter cannot send \
+         that tier — the request goes out at '{served}'. Pin '{served}' to say what you will \
+         actually get, or choose a provider that carries '{requested}'.",
+    ))
+}
+
+/// Every boot notice owed to a user whose pinned reasoning effort will not be
+/// served as pinned.
+///
+/// Two disjoint postures, one line each and never both: the adapter has no
+/// reasoning control ([`unsupported_effort_notice`] — the pin is dropped), or
+/// it has one and cannot express that tier ([`downgraded_effort_notice`] — the
+/// pin is served coarser). Collected here rather than at the call site because
+/// `command_deck.rs` is a god file closed to growth, and because the next
+/// posture that owes a notice should be added in the module that owns them.
+#[must_use]
+pub fn effort_notices(
+    provider_id: &str,
+    provider_label: &str,
+    pinned_effort: Option<ReasoningEffort>,
+) -> Vec<String> {
+    [
+        unsupported_effort_notice(provider_id, provider_label, pinned_effort),
+        downgraded_effort_notice(provider_id, provider_label, pinned_effort),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 // Enum ↔ string (the TUI edits strings; settings/serde hold enums)
 
 pub fn effort_to_str(effort: ReasoningEffort) -> &'static str {
@@ -1106,6 +1165,55 @@ mod tests {
         assert!(
             unsupported_effort_notice("no-such", "Nope", Some(ReasoningEffort::High)).is_none()
         );
+    }
+
+    #[test]
+    fn downgraded_effort_notice_fires_only_when_the_tier_is_really_coarsened() {
+        // No pin → nothing to be downgraded.
+        assert!(downgraded_effort_notice("openai", "OpenAI", None).is_none());
+
+        // The #1499 case: OpenAI folds xhigh/max into "high". A user who
+        // pinned max was told nothing and served high.
+        let notice = downgraded_effort_notice("openai", "OpenAI", Some(ReasoningEffort::Max))
+            .expect("openai collapses max");
+        assert!(notice.contains("OpenAI"), "{notice}");
+        assert!(notice.contains("max"), "{notice}");
+        assert!(notice.contains("high"), "{notice}");
+
+        // Gemini is coarser still — it loses medium too.
+        assert!(
+            downgraded_effort_notice("gemini", "Gemini", Some(ReasoningEffort::Medium)).is_some()
+        );
+
+        // Tiers that survive the mapping stay silent, on the same providers.
+        assert!(
+            downgraded_effort_notice("openai", "OpenAI", Some(ReasoningEffort::Medium)).is_none()
+        );
+        assert!(downgraded_effort_notice("gemini", "Gemini", Some(ReasoningEffort::Low)).is_none());
+
+        // Anthropic maps all five tiers onto distinct thinking budgets, and
+        // OpenRouter hands the tier to the gateway untouched → silent.
+        assert!(
+            downgraded_effort_notice("anthropic", "Anthropic", Some(ReasoningEffort::Max))
+                .is_none()
+        );
+        assert!(
+            downgraded_effort_notice("openrouter", "OpenRouter", Some(ReasoningEffort::Max))
+                .is_none()
+        );
+
+        // An Unsupported provider does not *downgrade* the effort, it drops
+        // it — that is `unsupported_effort_notice`'s line to print, and this
+        // one must not double up on it.
+        assert!(
+            downgraded_effort_notice("deepseek", "DeepSeek", Some(ReasoningEffort::Max)).is_none()
+        );
+        assert!(
+            unsupported_effort_notice("deepseek", "DeepSeek", Some(ReasoningEffort::Max)).is_some()
+        );
+
+        // Unknown id → no row, no claim.
+        assert!(downgraded_effort_notice("no-such", "Nope", Some(ReasoningEffort::Max)).is_none());
     }
 
     #[test]

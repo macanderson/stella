@@ -669,6 +669,95 @@
       "title": "ProviderResultIn",
       "type": "object"
     },
+    "ScopeReviewResultIn": {
+      "$defs": {
+        "ScopeDecisionWire": {
+          "description": "Wire mirror of [`stella_pipeline::ports::ScopeDecision`]. That type lives in\n`stella-pipeline` and is not itself `Serialize`/`Deserialize` — this crate\nowns the wire mapping, exactly as [`TurnOutcomeWire`] owns `TurnOutcome`'s.",
+          "oneOf": [
+            {
+              "description": "Execute the plan as proposed.",
+              "properties": {
+                "decision": {
+                  "const": "approve",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Execute only the steps at these indices into the proposed step list.",
+              "properties": {
+                "decision": {
+                  "const": "trim",
+                  "type": "string"
+                },
+                "keep_steps": {
+                  "items": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "decision",
+                "keep_steps"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Re-plan with the reviewer's own words folded into the next attempt. An\nempty `note` reads as [`ScopeDecision::Abort`] — the same collapse\n[`stella_pipeline::ports::StdioApprovalGate`] makes for a bare \"no\".",
+              "properties": {
+                "decision": {
+                  "const": "revise",
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision",
+                "note"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "decision": {
+                  "const": "abort",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Host → engine: the human's decision on a [`ServerFrame::ScopeReviewRequest`].",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ScopeDecisionWire"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "decision"
+      ],
+      "title": "ScopeReviewResultIn",
+      "type": "object"
+    },
     "ToolResultIn": {
       "$defs": {
         "ToolOutput": {
@@ -740,6 +829,6 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Bodies a host POSTs back to answer a reverse request. ToolResultIn answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers POST /v1/turns/{id}/provider-result; ProviderDeltaIn optionally streams fragments of an in-flight provider answer to POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn. Each is keyed by the request_id carried on the frame it answers. EngineOverrides is not a reverse-request answer at all: it is the optional `engine` object on POST /v1/turns and POST /v1/sessions/{id}/turns, published here because it is wire contract. This document is a definitions container, not a union: the bodies are not interchangeable and carry no discriminant.",
+  "description": "Bodies a host POSTs back to answer a reverse request. ToolResultIn answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers POST /v1/turns/{id}/provider-result; ProviderDeltaIn optionally streams fragments of an in-flight provider answer to POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn; ScopeReviewResultIn answers POST /v1/turns/{id}/approve, carrying the human's decision on a scope_review_request frame. Each is keyed by the request_id carried on the frame it answers. EngineOverrides is not a reverse-request answer at all: it is the optional `engine` object on POST /v1/turns and POST /v1/sessions/{id}/turns, published here because it is wire contract. This document is a definitions container, not a union: the bodies are not interchangeable and carry no discriminant.",
   "title": "StellaServeInbound"
 }
