@@ -358,8 +358,45 @@ pub(crate) fn spawn(
     args: &[std::ffi::OsString],
     stdin: &[u8],
 ) -> Result<Supervised, String> {
+    // Minted before the spawn so the child can be told its own id, and so a
+    // failed spawn leaves a directory rather than a half-registered session.
     let mut record = SessionRecord::new(workspace, title);
     record.summary = title.to_string();
+    launch(registry, record, program, args, stdin, Console::Fresh, None)
+}
+
+/// How a launched child's console files begin life.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Console {
+    /// A fresh run: truncate whatever a previous life left behind.
+    Fresh,
+    /// A resumed run (#1586): append, keeping the killed attempt's output —
+    /// that tail is the context a human reads to understand why there was
+    /// something to resume, and `attach --from-start` should show one
+    /// continuous story.
+    Preserve,
+}
+
+/// The mechanical half of [`spawn`], over a caller-supplied record: detach,
+/// take the liveness lock, wire the console, register. A fresh spawn mints
+/// its record; a resume ([`resume_supervised`]) re-launches under the record
+/// — and therefore the session id — it already has, because the checkpoint,
+/// the sidecar, and the registry row are all keyed by that id and a new one
+/// would strand every piece of state this exists to pick back up.
+///
+/// `cwd` pins the child's working directory. A fresh spawn inherits this
+/// process's (the child re-parses the same argv, and relative paths in it
+/// must keep meaning what the user meant); a resume sets the record's
+/// workspace, because the resuming parent may be run from anywhere.
+fn launch(
+    registry: &SessionRegistry,
+    mut record: SessionRecord,
+    program: &Path,
+    args: &[std::ffi::OsString],
+    stdin: &[u8],
+    console: Console,
+    cwd: Option<&Path>,
+) -> Result<Supervised, String> {
     let sidecar = registry
         .prepare_sidecar(&record.id)
         .map_err(|e| format!("cannot create the session directory: {e}"))?;
@@ -874,15 +911,22 @@ fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
 
     let lock = std::fs::metadata(lock_path).ok()?;
     for fd in 3..LOCK_FD_SCAN_LIMIT {
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: `fstat` writes only into `stat`, and reports EBADF for a
-        // descriptor that is not open rather than doing anything with it.
-        if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        // The identity is read through `MetadataExt`, not a raw `libc::stat`,
+        // because `dev_t` is unsigned on Linux and signed on macOS: no single
+        // conversion of `st_dev` compiles on both, while `dev()`/`ino()` are
+        // declared `u64` on every Unix.
+        //
+        // SAFETY: the descriptor is borrowed, never owned — `ManuallyDrop`
+        // keeps `File`'s destructor from closing an fd this only looks at.
+        // `metadata` is an `fstat`, which reports EBADF for a descriptor that
+        // is not open rather than doing anything with it.
+        let probe = std::mem::ManuallyDrop::new(unsafe {
+            <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd)
+        });
+        let Ok(stat) = probe.metadata() else {
             continue;
-        }
-        // SAFETY: `fstat` returned success, so it initialized the struct.
-        let stat = unsafe { stat.assume_init() };
-        if u64::from(stat.st_dev.cast_unsigned()) == lock.dev() && stat.st_ino == lock.ino() {
+        };
+        if stat.dev() == lock.dev() && stat.ino() == lock.ino() {
             return Some(fd);
         }
     }
@@ -964,11 +1008,11 @@ pub(crate) fn resume_supervised(
     let checkpoint = resume_point(&record)?;
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to resume with: {e}"))?;
-    let args = vec![
-        "daemon".to_string(),
-        "resume".to_string(),
-        record.id.clone(),
-        "--foreground".to_string(),
+    let args: Vec<std::ffi::OsString> = vec![
+        "daemon".into(),
+        "resume".into(),
+        record.id.clone().into(),
+        "--foreground".into(),
     ];
     let id = record.id.clone();
     let run = launch(
@@ -1166,7 +1210,18 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
         let (label, paint): (&str, fn(&str) -> ColoredString) = match (live, run.status) {
             (true, status) if status.is_live() => (status.label(), |s| s.green()),
             (true, _) => ("Running", |s| s.green()),
-            (false, status) if status.is_live() => ("Crashed", |s| s.red()),
+            // Probed only on this rare arm: a crashed run holding a resume
+            // point is exactly the row `daemon resume` exists for (#1586),
+            // and a killed run's journal already exists, so the probe opens
+            // rather than creates.
+            (false, status) if status.is_live() => {
+                if has_resume_point(&run) {
+                    any_resumable = true;
+                    ("Crashed ↩", |s| s.red())
+                } else {
+                    ("Crashed", |s| s.red())
+                }
+            }
             (false, status) => (status.label(), |s| s.normal()),
         };
         // Padded before it is painted. A width applied to a `ColoredString`
@@ -1217,9 +1272,10 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
         approval::forward_pending_approval(&sidecar, interactive, &mut approval_noted);
         if lock_is_held(&sidecar) != Some(true) {
             // Same ordering as `follow`: drain after observing the end, so the
-            // last thing the run wrote is never the thing attach misses.
-            out.drain(&mut std::io::stdout())?;
-            err.drain(&mut std::io::stderr())?;
+            // last thing the run wrote is never the thing attach misses. One
+            // `Follower::pump` is bounded, so "everything that is left" is the
+            // loop rather than the single call.
+            while console.pump(&mut std::io::stdout(), &mut std::io::stderr())? > 0 {}
             eprintln!("{} {} has finished", "▸".dimmed(), record.id.dimmed());
             return Ok(());
         }
