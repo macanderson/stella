@@ -1060,7 +1060,12 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
         // Padded before it is painted. A width applied to a `ColoredString`
         // counts the ANSI escapes as characters, so every coloured cell comes
         // out its escape-length too narrow and the last column ragged.
-        println!("{:<28} {} {}", run.id, paint(&format!("{label:<12}")), run.title);
+        println!(
+            "{:<28} {} {}",
+            run.id,
+            paint(&format!("{label:<12}")),
+            run.title
+        );
     }
     Ok(())
 }
