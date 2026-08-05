@@ -228,9 +228,18 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
         Some(false),
         "the run must actually be over"
     );
-    // SAFETY: probing a group with signal 0 sends nothing.
-    let group_alive = unsafe { libc::kill(-group, 0) } == 0;
-    assert!(!group_alive, "the whole process group must be gone");
+    // "Gone" is eventually-true, not instantly-true: the TERM'd `sleep` was
+    // orphaned when `sh` died, so it lingers as a zombie until PID 1 reaps
+    // it — and a zombie still answers a group probe. launchd reaps before
+    // the next statement on a laptop; a CI container's init can lose that
+    // race, which is a fact about reap latency, not about `stop`.
+    assert!(
+        eventually(Duration::from_secs(10), || {
+            // SAFETY: probing a group with signal 0 sends nothing.
+            unsafe { libc::kill(-group, 0) } != 0
+        }),
+        "the whole process group must be gone"
+    );
 
     assert_eq!(
         registry.get(&id).map(|r| r.status),

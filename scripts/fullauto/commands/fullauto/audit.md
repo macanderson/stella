@@ -62,7 +62,7 @@ the lens you were looking through, and a lens that has never run cannot have
 found nothing:
 
 ```bash
-scripts/fullauto.sh aperture --list
+scripts/fullauto.sh aperture --list   # every lens WITH its tool backing
 ```
 
 ```
@@ -73,6 +73,29 @@ supply-chain  security  docs  soak  →  watch
 Each is a different question, not a deeper pass of the same one. A codebase that
 is clean under `rubric` can be full of races under `concurrency`, and no amount
 of re-running `rubric` will ever say so.
+
+## What backs each lens (#1549)
+
+Every lens declares, on the record (`stella-core::fullauto::LENSES`, printed by
+`aperture --list`), either the concrete command the cycle runs and how to
+interpret it, or that it is **model-only**. No lens is silently a no-op:
+
+- **Tool-backed** — `rubric` (`/ultraudit` / `/reaudit`), `properties` (the
+  `rg --files-without-match 'proptest'` sweep over the property-tested crates),
+  `invariants` (`make invariants` + reading the numbered list against the
+  code), `performance` (`bench loop` + the prompt-cache goldens; heavy tier
+  only), `supply-chain` (`make supply-chain`), `docs` (`make doc-links`,
+  `make doc-report`, `check-command-docs.sh`), `soak` (`bench h2h`; heavy
+  tier only).
+- **Model-only** — `concurrency` and `security` have no mechanical backing
+  yet. You are working unaided there: say so in the report, and treat "the
+  tool found nothing" as a claim you cannot make.
+
+A lens whose tool reports nothing can still go dry — dryness is about unseen
+findings, not tool output — but a *missing* tool must never read as "clean".
+`cycle-begin` emits the declared backing as `$FULLAUTO_APERTURE_TOOL`; record
+what you actually ran with `--lens-tool` on `cycle-end`, so every ledger
+record says which tool produced that cycle's findings.
 
 When the last lens goes dry the loop enters **watch mode**: cheap sentinels, no
 spend, waking when `main` moves, a defect is filed, or CI goes red. It never
