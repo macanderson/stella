@@ -84,8 +84,8 @@ pub struct TaskAssessment {
     pub class: TaskClass,
     /// Whether the input is conversational — a greeting, small talk, or a
     /// question about the agent rather than a software task at all. When set,
-    /// the pipeline answers in one plain completion and skips plan → witness →
-    /// execute → verify entirely (the escape hatch a bare `hi` needs so it
+    /// the pipeline answers in one plain completion and skips plan → execute →
+    /// witness → verify entirely (the escape hatch a bare `hi` needs so it
     /// never gets forced into authoring a witness test). Orthogonal to
     /// [`TaskClass`]: "is this even a task" is a different axis from "how big
     /// is the task", so it rides its own field instead of a bottom variant of

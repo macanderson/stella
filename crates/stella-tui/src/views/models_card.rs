@@ -51,7 +51,7 @@ use crate::envelope::{EngineConfigState, RoleWiringRow};
 use crate::theme;
 use crate::views::cards;
 
-/// Wider than [`cards::CARD_MAX_W`], like the witness panel: a model slug and
+/// Wider than [`cards::CARD_MAX_W`], the only card that is: a model slug and
 /// the settings key that chose it are fixed strings that lose their meaning
 /// elided, and `openrouter/moonshotai/kimi-k3` alone would spend 29 of the
 /// standard card's 52 usable columns.
