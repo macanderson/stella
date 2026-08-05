@@ -10,13 +10,17 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_protocol::{CompletionRequestRef, CompletionResult, CompletionUsage};
 use tokio::sync::mpsc;
 
+// Everything through `crate::`, including the three completion types that used
+// to come straight from `stella_protocol` here (#1494). That import was the
+// crate's own proof that the facade was incomplete: these tests exist to do
+// what a host does, and they could not do it the way a host must.
 use crate::{
-    AgentEvent, BudgetGuard, BudgetMode, CANCELLED_REASON, CancelToken, CompletionMessage, Engine,
-    EngineConfig, EventSender, MessageRole, Provider, ProviderError, Sleeper, StepOutcome,
-    ToolCall, ToolExecutor, ToolOutput, ToolSchema, TurnOutcome,
+    AgentEvent, BudgetGuard, BudgetMode, CANCELLED_REASON, CancelToken, CompletionMessage,
+    CompletionRequestRef, CompletionResult, CompletionUsage, Engine, EngineConfig, EventSender,
+    MessageRole, Provider, ProviderError, Sleeper, StepOutcome, ToolCall, ToolExecutor, ToolOutput,
+    ToolSchema, TurnOutcome,
 };
 
 /// A `Sleeper` that records but never actually waits.

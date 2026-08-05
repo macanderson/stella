@@ -371,3 +371,102 @@ async fn late_guidance_is_abandoned_and_reported_incomplete() {
         "the missed deadline must surface as an explicit incomplete-usage record: {events:?}"
     );
 }
+
+/// #1501, the residual of #1483: `verifier`/`verifier_guidance` got their
+/// clock, but `plan_stage` — which is on the ordinary `stella run` path, not
+/// a verification-only one — still dispatched with `RawCall.timeout: None`.
+///
+/// The Plan case is the same shape as the Verdict one and worse for the same
+/// reason: the arm below it *already* degrades `RawCallError::Timeout` to the
+/// single-step fallback plan, so without a clock that arm was unreachable
+/// code. A dribbling provider parked a headless run indefinitely next to a
+/// written-down fallback that could never fire.
+///
+/// A tiny `model_timeout` against a provider that answers a real multi-step
+/// plan well after it proves the call is abandoned at the ceiling: the stage
+/// returns the one-step fallback (the goal itself) rather than the model's
+/// three parsed steps, and the abandonment is recorded as an explicit
+/// `UsageIncomplete { role: Plan, reason: Timeout }`.
+#[tokio::test]
+async fn a_late_plan_is_abandoned_and_falls_back_to_the_single_step_plan() {
+    let provider = DelayedProvider {
+        result: TokioMutex::new(Some(text_result(
+            r#"["read the failing test", "fix the parser", "run the suite"]"#,
+        ))),
+        delay: Duration::from_millis(20),
+    };
+    let resolver = AnyProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            engine: EngineConfig {
+                model_timeout: Some(Duration::from_millis(1)),
+                ..EngineConfig::default()
+            },
+            ..PipelineConfig::default()
+        },
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let mut total = 0.0;
+
+    let steps = pipeline
+        .plan_stage(
+            "make the parser stop panicking",
+            &[],
+            "",
+            None,
+            &mut budget,
+            &mut total,
+        )
+        .await
+        .expect("a wedged planner is never a run-ending failure");
+
+    assert_eq!(
+        steps,
+        vec![PlanStep::new("make the parser stop panicking")],
+        "the abandoned call must take the written-down single-step fallback, \
+         not wait out the model's real (late) three-step plan"
+    );
+    assert_eq!(total, 0.0, "nothing settled, so nothing is charged");
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::UsageIncomplete {
+                role: ModelCallRole::Plan,
+                reason: stella_protocol::UsageIncompleteReason::Timeout,
+                ..
+            }
+        )),
+        "the missed deadline must surface as an explicit incomplete-usage record: {events:?}"
+    );
+}

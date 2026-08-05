@@ -105,7 +105,8 @@ destination, and which a client written from it gets wrong:
 - **Reverse RPC is keyed by `request_id` on its own frame types**, not by a
   `call_id` on a `tool_start` / `scope_review` / `ask_user` `AgentEvent`. The
   engine emits dedicated `tool_request` / `provider_request` `ServerFrame`
-  variants whose ids are per-turn counters (`prov-0`, `tool-0`, …). This is the
+  variants whose ids are `<port>-<instance>-<counter>` (`prov-1-3`, `tool-0-0`,
+  …) and are opaque to the host — echo them back, never parse them. This is the
   single most dangerous drift in this document for anyone mirroring it in
   another language: it names the wrong field on the wrong frame.
 
