@@ -46,7 +46,11 @@ impl<'a> Pipeline<'a> {
                     messages,
                     policy: RetryPolicy::deterministic(),
                     overrides: &self.config.role_overrides.verifier,
-                    timeout: None,
+                    // The worker's per-call ceiling (`model_timeout`, #1211/#1277) —
+                    // guidance is best-effort (`Ok(None)` on any failure below), so
+                    // a wedged call degrades to evidence-only revision instead of
+                    // stalling the run on the clock that scores it (#1483).
+                    timeout: self.config.engine.model_timeout,
                 },
                 budget,
                 total,
@@ -98,7 +102,11 @@ impl<'a> Pipeline<'a> {
 
         let messages = prompt.into_messages();
         // Deterministic policy: a verifier call that fails must not hang; it falls
-        // back to the heuristic verdict rather than retrying.
+        // back to the heuristic verdict rather than retrying. The timeout is the
+        // other half of that contract (#1483) — the worker's per-call ceiling
+        // (`model_timeout`, #1211/#1277) so a hung verifier is abandoned onto the
+        // heuristic fallback instead of stalling the run on the clock that
+        // scores it, the same posture `triage_latency_ceiling` gives triage.
         match self
             .metered_raw_call(
                 RawCall {
@@ -107,7 +115,7 @@ impl<'a> Pipeline<'a> {
                     messages,
                     policy: RetryPolicy::deterministic(),
                     overrides: &self.config.role_overrides.verifier,
-                    timeout: None,
+                    timeout: self.config.engine.model_timeout,
                 },
                 budget,
                 total,
