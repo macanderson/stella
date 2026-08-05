@@ -2191,12 +2191,9 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
         .await
         .expect("a setup failure is a degradation, not a run-ending error");
 
-    assert_ne!(
-        outcome.status,
-        PipelineStatus::Aborted {
-            reason: "candidate isolation failed: workspace snapshot failed: not a git repo"
-                .to_string()
-        },
+    let iso = "candidate isolation failed: workspace snapshot failed: not a git repo";
+    assert!(
+        !matches!(&outcome.status, PipelineStatus::Aborted { reason, .. } if reason == iso),
         "an isolation setup failure must not end the turn: {outcome:?}"
     );
     assert!(

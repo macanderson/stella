@@ -903,7 +903,7 @@ async fn run_task(
                         "verification_failed",
                         false,
                     ),
-                    PipelineStatus::Aborted { reason } => {
+                    PipelineStatus::Aborted { reason, .. } => {
                         (truncate(&reason), false, "aborted", false)
                     }
                 },

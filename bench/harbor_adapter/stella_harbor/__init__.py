@@ -79,6 +79,12 @@ from .credential_bundle import (
     read_bundle_from_environment,
     select_route_credentials,
 )
+from .exit_status import (
+    DELIBERATE_STOP_EXIT_CODE,
+    DeliberateStopError,
+    SelfReportedVerificationFailureError,
+    is_self_reported_verification_failure,
+)
 from .exit_cause import (
     EXIT_CAUSE_LOG_NAME,
     SIGKILL_EXIT_CODE,
@@ -148,12 +154,6 @@ _TRAJECTORY_NAME = "trajectory.json"
 # container copy was already present (11 false alarms in one 2026-07-31 run,
 # zero bytes lost), which trained readers to ignore it.
 _TELEMETRY_INCOMPLETE = "stella-adapter: TELEMETRY-INCOMPLETE"
-
-# The CLI's generic failure status, which a completed turn also exits with
-# when its own verification verdict is red (`pipeline_status_result` returns
-# `Err("verification failed: …")` and `main` maps that to `ExitCode::FAILURE`).
-# See `_is_self_reported_verification_failure`.
-_VERIFICATION_FAILED_EXIT_CODE = 1
 
 # Defaults when neither Harbor nor the environment specify a value.
 _DEFAULT_MODEL = "anthropic/claude-fable-5"
@@ -1174,46 +1174,6 @@ def _stream_to_envelope(
     }
 
 
-class SelfReportedVerificationFailureError(NonZeroAgentExitCodeError):
-    """Stella ran the task to a verdict and its own verdict said "not verified".
-
-    A ``VerificationFailed`` pipeline status is a completed turn: the agent
-    worked, the ladder closed, and the run reported honestly that the work did
-    not verify. The CLI surfaces that as exit 1, which is also what a crash
-    exits with — so under one exception class a truthful self-report and a
-    process that died are the same row in a results table, exactly the
-    conflation :mod:`stella_harbor.portability` was written to end for loader
-    failures.
-
-    Deliberately a *subclass* of the official error rather than a sibling:
-    Harbor records ``type(exc).__name__`` in ``result.json``, so the name is
-    all analysis needs, while every ``except NonZeroAgentExitCodeError`` in
-    Harbor and in this adapter keeps behaving exactly as before — the trial is
-    still scored, and the benchmark verifier still runs.
-    """
-
-
-def _is_self_reported_verification_failure(
-    return_code: int | None, envelope: dict[str, Any] | None
-) -> bool:
-    """Is this nonzero exit Stella's own failed verdict rather than a crash?
-
-    The discriminator is the trial's own proof stream, not the exit code: exit
-    1 is the CLI's generic failure status, but a ``verdict`` event stating
-    ``passed: false`` is a claim only a turn that reached the end of the
-    ladder can make (`posture.fold_witness_observations` folds the last one,
-    which is the claim the trial ends on). A stream that never reached a
-    verdict stays unclassified — "not measured" must never read as "measured
-    and failed".
-    """
-    if return_code != _VERIFICATION_FAILED_EXIT_CODE or envelope is None:
-        return False
-    stream = envelope.get("_stella_stream")
-    if not isinstance(stream, dict):
-        return False
-    return stream.get("self_verdict_state") == "failed"
-
-
 class StellaAgent(BaseInstalledAgent):
     """Run the Stella coding CLI as a Harbor installed agent."""
 
@@ -1558,7 +1518,7 @@ class StellaAgent(BaseInstalledAgent):
                         f"verdict: {report['verdict']} ({report['detail']}) — "
                         f"evidence in {EXIT_CAUSE_LOG_NAME}."
                     )
-            if _is_self_reported_verification_failure(
+            if is_self_reported_verification_failure(
                 self._return_code, self._envelope
             ):
                 raise SelfReportedVerificationFailureError(
@@ -1566,6 +1526,14 @@ class StellaAgent(BaseInstalledAgent):
                     "failed verification verdict: the turn ran to a verdict and "
                     "the agent reported the work unverified. Stream telemetry was "
                     f"preserved in {_STREAM_EVENTS_PATH}. stderr: "
+                    f"{self._truncate_output(stderr)}"
+                )
+            if self._return_code == DELIBERATE_STOP_EXIT_CODE:
+                raise DeliberateStopError(
+                    f"Stella exited with code {self._return_code}: a deliberate "
+                    "stop (loop escalation, budget, deadline, or step cap) — the "
+                    "engine chose to end the run rather than crashing. Stream "
+                    f"telemetry was preserved in {_STREAM_EVENTS_PATH}. stderr: "
                     f"{self._truncate_output(stderr)}"
                 )
             raise NonZeroAgentExitCodeError(

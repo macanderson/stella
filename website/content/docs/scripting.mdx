@@ -89,8 +89,10 @@ ladder ran:
     verdict summary. Exits non-zero.
   </OptionCard>
   <OptionCard name="aborted">
-    A backstop ended the run — the budget cap, a scope gate with nobody to ask,
-    a signal. `reason` says which. Exits non-zero.
+    A backstop ended the run — the budget cap, a loop escalation, a scope gate
+    with nobody to ask, a signal. `reason` says which. Exits non-zero: `3` when
+    the stop was the engine's own deliberate policy, `1` when the run fell
+    over underneath it.
   </OptionCard>
   <OptionCard name="error">
     The run failed outright, including every pre-flight failure. Exits non-zero.
@@ -274,7 +276,14 @@ stella --budget 10 fleet --plan cleanup.toml --max-concurrency 4
   </OptionCard>
   <OptionCard name="1">
     Failure — an unresolved credential, an invalid flag, a failed verification,
-    or an aborted run.
+    or a run that fell over mid-turn (a model call that would not commit).
+  </OptionCard>
+  <OptionCard name="3">
+    Deliberate stop. The engine chose to end the run: a stuck loop escalated
+    past its steering warning, an enforced budget or deadline, the step cap, a
+    scope review the operator ended. The work did not finish, but nothing
+    crashed — a wrapper can retry with a different strategy, and a benchmark
+    should score "gave up", not "died".
   </OptionCard>
   <OptionCard name="128 + signal">
     The run was interrupted: `130` for `SIGINT` (Ctrl-C), `143` for `SIGTERM`
@@ -289,6 +298,7 @@ stella --budget 3 run --output-format json \
   "make the store migration idempotent on an already-v2 file" > result.json
 case $? in
   0)   echo "verified" ;;
+  3)   echo "stella stopped on purpose — read the reason before retrying"; exit 1 ;;
   130) echo "cancelled by the operator"; exit 0 ;;
   143) echo "the runner killed us — probably a job timeout"; exit 0 ;;
   *)   echo "failed"; exit 1 ;;

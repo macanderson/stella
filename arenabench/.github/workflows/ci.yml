@@ -57,9 +57,9 @@ jobs:
         run: npm ci
 
       # `build` exports the Next.js app and syncs it into arenabench/web/ —
-      # the directory the Python server serves and the wheel ships. The build
-      # output is committed, so `pip install arenabench` never needs Node;
-      # this job proves the committed client still builds from source.
+      # the directory the Python server serves and the wheel ships. The
+      # export is gitignored generated output, so this job is the proof that
+      # the client builds from source and lands where the server serves.
       - name: build
         working-directory: ui
         run: npm run build

@@ -147,6 +147,18 @@ pub mod supervised {
     /// they must stop it being inherited further, or a background process the
     /// run spawned will go on answering yes after the run has ended.
     pub const LOCK: &str = "supervisor.lock";
+    /// A scope-review proposal parked by the child, awaiting a human (#1585).
+    ///
+    /// Its own file — never folded into either console — because the two
+    /// console files are byte-verbatim stdout/stderr and a prompt inside
+    /// either would corrupt what a machine-format caller is parsing. Present
+    /// exactly while the run's record reads `NeedsInput`; the child removes it
+    /// once answered.
+    pub const APPROVAL_REQUEST: &str = "approval-request.json";
+    /// The answer to [`APPROVAL_REQUEST`], written atomically by whichever
+    /// attached terminal took the question. The child polls for it, applies
+    /// it, and removes both files.
+    pub const APPROVAL_ANSWER: &str = "approval-answer.json";
 }
 
 /// How to reach a supervised session's work: it is a detached child in its own

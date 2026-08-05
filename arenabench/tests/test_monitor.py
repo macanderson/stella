@@ -5,8 +5,9 @@
 Match ``dd52a57a6f49`` (2026-08-04, Claude Code vs the Stella pipeline, both
 on Fable 5) was diagnosed by hand hours after it finished: a rate-limited arm
 scored as three losses, a three-step "complete" that passed nothing, and a
-verification failure as a trial's final word. The committed artifacts under
-``fixtures/matches/dd52a57a6f49`` replay that match, and the witness tests
+verification failure as a trial's final word. The tracked archive
+``fixtures/matches/dd52a57a6f49.zip`` — unpacked by ``conftest.py`` before
+collection — replays that match, and the witness tests
 here assert the watcher reports exactly those detections — and stays silent
 on the seven trials where nothing was wrong, because a watcher that cries on
 healthy trials trains its consumers to ignore it.

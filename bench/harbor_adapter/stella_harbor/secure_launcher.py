@@ -75,6 +75,7 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/atif.py",
     "bench/harbor_adapter/stella_harbor/credential_bundle.py",
     "bench/harbor_adapter/stella_harbor/exit_cause.py",
+    "bench/harbor_adapter/stella_harbor/exit_status.py",
     "bench/harbor_adapter/stella_harbor/git_baseline.py",
     "bench/harbor_adapter/stella_harbor/host_attestation.py",
     "bench/harbor_adapter/stella_harbor/live_feed.py",

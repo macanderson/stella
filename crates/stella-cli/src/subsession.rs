@@ -718,9 +718,9 @@ async fn run_worker(
         RacedTurn::Outcome(stella_core::TurnOutcome::Completed { cost_usd, .. }) => {
             ("completed", cost_usd, WorkerEnd::Done)
         }
-        RacedTurn::Outcome(stella_core::TurnOutcome::Aborted { reason, cost_usd }) => {
-            ("aborted", cost_usd, WorkerEnd::Failed(reason))
-        }
+        RacedTurn::Outcome(stella_core::TurnOutcome::Aborted {
+            reason, cost_usd, ..
+        }) => ("aborted", cost_usd, WorkerEnd::Failed(reason)),
         RacedTurn::Stopped => (
             "cancelled",
             agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd()),

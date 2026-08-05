@@ -1,4 +1,4 @@
-use stella_core::BudgetOutcome;
+use stella_core::{AbortKind, BudgetOutcome};
 use stella_protocol::AgentEvent;
 
 use super::{PipelineOutcome, PipelineStatus};
@@ -35,6 +35,7 @@ pub(super) fn aborted_before_execute(
     task_class: TaskClass,
     total_cost: f64,
     reason: &str,
+    kind: AbortKind,
 ) -> (AgentEvent, PipelineOutcome) {
     let event = AgentEvent::Error {
         message: reason.to_string(),
@@ -43,6 +44,7 @@ pub(super) fn aborted_before_execute(
     let outcome = PipelineOutcome {
         status: PipelineStatus::Aborted {
             reason: reason.to_string(),
+            kind,
         },
         task_class,
         final_text: String::new(),

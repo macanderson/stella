@@ -3,6 +3,7 @@ use stella_protocol::AgentEvent;
 use super::TurnOutcome;
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome, DeadlineOutcome};
 use crate::event_sender::EventSender;
+use crate::step::AbortKind;
 
 /// Which budget axes have already surfaced an observed-mode warning during
 /// the current turn. A breach persists across every remaining settled call
@@ -168,6 +169,7 @@ fn check_budget(
         });
         return Some(TurnOutcome::Aborted {
             reason,
+            kind: AbortKind::DeliberateStop,
             cost_usd: total_cost_usd,
         });
     }
@@ -191,6 +193,7 @@ fn check_budget(
     });
     Some(TurnOutcome::Aborted {
         reason,
+        kind: AbortKind::DeliberateStop,
         cost_usd: total_cost_usd,
     })
 }

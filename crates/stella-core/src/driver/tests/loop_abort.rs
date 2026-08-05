@@ -162,6 +162,81 @@ async fn a_loop_that_resumes_after_a_successful_course_correction_still_aborts()
     );
 }
 
+/// The #1524 shape from the nightly's `prove-plus-comm` trial: the steer
+/// WORKS — the model stops repeating the warned tool — and a fresh loop
+/// forms on a *different* tool. The abort itself is correct policy (the
+/// turn's one warning is spent), but its reason must not claim the warned
+/// loop "persisted", and the whole abort must reach the bus as exactly one
+/// `Error` event.
+#[tokio::test]
+async fn a_fresh_loop_on_a_different_tool_is_not_blamed_on_the_warned_one() {
+    // grep ×3 (detect + steer) → read_file forever, byte-identical
+    // (ScriptedProvider repeats its last entry): the grep loop is broken,
+    // the read_file loop is new.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(grep_call()),
+            Ok(grep_call()),
+            Ok(grep_call()),
+            Ok(call_of(
+                "c_read",
+                "read_file",
+                serde_json::json!({"path": "stella-tui/src/deck.rs"}),
+            )),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = ConstantTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        max_steps: 30,
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("why is the cache write count wrong?"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    let TurnOutcome::Aborted { reason, kind, .. } = outcome else {
+        panic!("the second detection must abort the turn, got {outcome:?}");
+    };
+    assert!(
+        !reason.contains("persisted"),
+        "the model DID break the grep loop it was warned about — a fresh \
+         read_file loop must not be reported as that warning persisting: {reason}"
+    );
+    assert!(
+        reason.contains("grep"),
+        "the abort should name what the warning was actually about: {reason}"
+    );
+    assert_eq!(
+        kind,
+        AbortKind::DeliberateStop,
+        "a loop escalation is the engine stopping on purpose, not a crash"
+    );
+    let events = drain_events(&mut rx);
+    let errors: Vec<&String> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::Error { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "one abort is one error event on the raw engine path: {errors:?}"
+    );
+}
+
 /// A provider that never repeats an argument: every call is `grep` with a
 /// freshly mutated pattern, exactly as the field transcript showed (a regex
 /// alternation the model kept reshuffling). The tool answers identically
