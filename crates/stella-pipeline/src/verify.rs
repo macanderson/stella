@@ -786,21 +786,128 @@ pub fn model_verdict_evidence(verdict: &Verdict) -> VerdictEvidence {
     }
 }
 
-/// The fixed sentence both verifier-facing prompts carry to explain the
-/// renderer's `#` stat lines ([`diff_render`]). One constant, for the same
-/// reason [`UNTRUSTED_DIFF_HEADING_SUFFIX`] is one: prompts and tests must
-/// read the same spelling or the guard outlives the thing it guards.
+/// Ceiling on the worker-authored diff text interpolated into a verifier or
+/// guidance prompt, in chars (~10k tokens). The fast-submit diff budget is
+/// 400 *lines*, so a legitimately judged diff almost always fits whole; what
+/// this bounds is the pathological tail — a generated file, a vendored blob, a
+/// worker that rewrote the world — which used to ride into every paid verifier
+/// call at full length. Head-weighted middle-out, matching the compactor's
+/// aging pass: the head carries the file headers and the intent, the tail the
+/// most recent hunks, and the elision is marked in-band so the verifier knows it
+/// is reading an excerpt rather than the whole change.
+const VERIFIER_DIFF_BUDGET_CHARS: usize = 40_000;
+
+/// A diff with the authored witness's own file chunks removed, plus the
+/// paths that were removed — see [`strip_witness_hunks`].
+pub struct StrippedDiff {
+    pub diff: String,
+    pub omitted: Vec<String>,
+}
+
+/// Remove the authored witness's file chunks from a diff bound for a
+/// verifier-facing prompt.
 ///
-/// Unconditional — present even when the render happened to reduce nothing —
-/// because the instruction text is exactly the part of these prompts that
-/// must stay byte-stable across calls (the management-call caching work,
-/// #1434, depends on that stability).
-const DIFF_STAT_LINE_NOTE: &str = "Inside the diff, a line beginning with `#` is a rendering note from the pipeline, not \
-     part of the change: a file section may be reduced to one such stat line when it is \
-     unchanged since a previous review round of this same candidate (a prior round read its \
-     full text), when it is the pipeline's own witness test rather than the worker's change, \
-     or when the diff exceeds its token budget. A summarized file is still part of the \
-     change — weigh what its stat line states.";
+/// The witness artifact is grafted into the candidate tree before
+/// verification, so the working-tree diff carries the verifier's OWN test
+/// under the prompt's "worker-authored data" heading — misattributed, and
+/// billed against the diff budget on every escalated verdict and guidance
+/// call. What the verifier needs to know about the witness it already gets
+/// from the trusted evidence summary (`witness_tamper_check`,
+/// `witness_tautological`, the oracle trace); the test's text says nothing
+/// about the change under review.
+///
+/// Paths are matched the way [`coverage::changed_lines`] excludes them: each
+/// chunk's first `+++ ` header, `b/`-stripped, compared exactly. The omitted
+/// paths are RETURNED, not written into the diff — the caller names them in
+/// the evidence summary, which is the trusted zone; an in-band note would sit
+/// in the region the verifier is told to treat as forgeable worker data.
+pub fn strip_witness_hunks(diff: &str, witness_paths: &[String]) -> StrippedDiff {
+    if witness_paths.is_empty() || diff.is_empty() {
+        return StrippedDiff {
+            diff: diff.to_string(),
+            omitted: Vec::new(),
+        };
+    }
+    let mut out = String::with_capacity(diff.len());
+    let mut omitted: Vec<String> = Vec::new();
+    let mut chunk = String::new();
+    let mut chunk_path: Option<String> = None;
+
+    fn flush(
+        out: &mut String,
+        omitted: &mut Vec<String>,
+        witness_paths: &[String],
+        chunk: &mut String,
+        chunk_path: &mut Option<String>,
+    ) {
+        if chunk.is_empty() {
+            return;
+        }
+        let dropped = chunk_path
+            .as_deref()
+            .is_some_and(|path| witness_paths.iter().any(|w| w == path));
+        if dropped {
+            omitted.push(chunk_path.take().expect("dropped chunks carry a path"));
+        } else {
+            out.push_str(chunk);
+        }
+        chunk.clear();
+        *chunk_path = None;
+    }
+
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            flush(
+                &mut out,
+                &mut omitted,
+                witness_paths,
+                &mut chunk,
+                &mut chunk_path,
+            );
+        }
+        // First `+++ ` per chunk only: the real new-file header lands right
+        // after `--- `, before any content line can start with `+++ `.
+        if chunk_path.is_none()
+            && let Some(path) = line.strip_prefix("+++ ")
+        {
+            let path = path.strip_prefix("b/").unwrap_or(path).trim();
+            if path != "/dev/null" {
+                chunk_path = Some(path.to_string());
+            }
+        }
+        chunk.push_str(line);
+        chunk.push('\n');
+    }
+    flush(
+        &mut out,
+        &mut omitted,
+        witness_paths,
+        &mut chunk,
+        &mut chunk_path,
+    );
+    StrippedDiff { diff: out, omitted }
+}
+
+/// Clamp a worker-authored diff to `VERIFIER_DIFF_BUDGET_CHARS` for prompt
+/// interpolation: keep the head and tail, elide the middle, and say so where
+/// the cut was made. Char-based, not byte-based, so a multi-byte diff can
+/// never split a code point (the same unit [`crate::pipeline`]'s recall
+/// clamp settled on).
+fn bounded_worker_diff(diff: &str) -> String {
+    let total = diff.chars().count();
+    if total <= VERIFIER_DIFF_BUDGET_CHARS {
+        return diff.to_string();
+    }
+    let head_chars = VERIFIER_DIFF_BUDGET_CHARS * 2 / 3;
+    let tail_chars = VERIFIER_DIFF_BUDGET_CHARS - head_chars;
+    let head: String = diff.chars().take(head_chars).collect();
+    let tail: String = diff.chars().skip(total - tail_chars).collect();
+    let elided = total - head_chars - tail_chars;
+    format!(
+        "{head}\n[… {elided} chars elided from the middle of the diff — the head and tail are \
+         shown; verifier from what is visible and weigh that the middle is not …]\n{tail}"
+    )
+}
 
 /// The one framing under which worker-authored text may enter a verifier-facing
 /// prompt (witness-protocol D5, `docs/design/witness-protocol.md` §2): the
