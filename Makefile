@@ -242,6 +242,10 @@ impacted: ## Print the cargo scope for a diff (RANGE=origin/main..HEAD)
 impacted-test: ## Test the gate-scoping script (hermetic; not part of `gate`)
 	./scripts/test-impacted-crates.sh
 
+.PHONY: fullauto-test
+fullauto-test: ## Test the fullauto control logic — digest, AIMD, aperture, run lifecycle (hermetic; not part of `gate`)
+	./scripts/test-fullauto.sh
+
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)
 	git config core.hooksPath .githooks

@@ -45,6 +45,7 @@ mod accept;
 mod codegraph;
 mod db;
 mod fsview;
+mod fullauto;
 mod global;
 mod live;
 
@@ -277,6 +278,13 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 "ratings": ratings,
             })
         }),
+        // fullauto is machine-scoped, not workspace-scoped: the list answers
+        // "what is my agent doing anywhere", and the workspace root only marks
+        // which loop belongs to the project this tab is pointed at.
+        "/api/fullauto" => Ok(fullauto::runs(root)),
+        "/api/fullauto-run" => Ok(query_param(query, "id")
+            .map(|id| fullauto::run_detail(&id))
+            .unwrap_or_else(|| serde_json::json!({}))),
         _ => return Response::error("404 Not Found", "no such route"),
     };
     match result {
