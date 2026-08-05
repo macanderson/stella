@@ -132,7 +132,7 @@ track_latest = ["anthropic/claude-opus"]
 # =============================================================================
 # AGENTS  ── RESHAPED (closed set -> open set) + EXTENDED
 # =============================================================================
-# Today the agent set is CLOSED: four struct fields — default, worker, judge,
+# Today the agent set is CLOSED: four struct fields — default, worker, verifier,
 # triage. A misspelled agent key in JSON is silently ignored.
 #
 # Opening it is what makes the `task` tool configurable. That tool exists and
@@ -147,20 +147,20 @@ track_latest = ["anthropic/claude-opus"]
 # The four built-in names keep their meaning and stay reserved.
 
 [agents]
-default_model         = "anthropic/claude-fable-5"
-pipeline_worker_model = "zai/glm-5.2"
-pipeline_judge_model  = "anthropic/claude-opus-5"
-pipeline_triage_model = "deepseek/deepseek-chat"
-auto_mode             = "off"
-effort_auto           = "on"
-reasoning_auto        = "on"
-headless_scope_bypass = "off"
-hunk_review           = "off"
+default_model           = "anthropic/claude-fable-5"
+pipeline_worker_model   = "zai/glm-5.2"
+pipeline_verifier_model = "anthropic/claude-opus-5"
+pipeline_triage_model   = "deepseek/deepseek-chat"
+auto_mode               = "off"
+effort_auto             = "on"
+reasoning_auto          = "on"
+headless_scope_bypass   = "off"
+hunk_review             = "off"
 # `allowed_models` MOVED to [models].allowed. §6.1 migrates it and warns on
 # the old location for one release.
 
 # ── EXTENDED: a built-in agent gains provider fallback and a tool scope ──
-[agents.judge]
+[agents.verifier]
 model  = "anthropic/claude-opus-5"
 effort = "high"
 
@@ -179,7 +179,8 @@ provider_preference = ["anthropic", "openrouter"]
 on_exhausted        = "fail"   # fail | degrade  (degrade = fall back to the
                                # default agent's model rather than ending the
                                # turn; opt-in, because a silent capability
-                               # drop in a judge is worse than a clean failure)
+                               # drop in a verifier is worse than a clean
+                               # failure)
 
 # NEW — per-agent tool scope. Uses the EXACT SAME grammar as the root
 # [tools] block (name > group > "*"), because a second tool-permission
@@ -188,7 +189,7 @@ on_exhausted        = "fail"   # fail | degrade  (degrade = fall back to the
 # Composition: root [tools] is the workspace floor, this narrows it further,
 # and the managed authority ceiling clamps both. An agent can never GRANT a
 # tool the root block or the ceiling denied — narrowing only.
-[agents.judge.tools]
+[agents.verifier.tools]
 "*"       = "off"
 read_file = "on"
 grep      = "on"
@@ -219,9 +220,9 @@ prompt_file = ".stella/prompts/security-reviewer.md"
 # PIPELINE  ── NEW
 # =============================================================================
 # Today the staged pipeline (triage -> plan -> witness -> execute -> verify ->
-# judge) is hard-coded in `stella-pipeline`, and the only control is
+# verdict) is hard-coded in `stella-pipeline`, and the only control is
 # `--no-pipeline`, which turns the entire thing off and drops to the raw
-# step-loop. There is no way to say "skip the judge" or "allow three revision
+# step-loop. There is no way to say "skip the verdict" or "allow three revision
 # rounds".
 #
 # ONE `enabled` FLAG, NOT TWO. The original example had `[agents.*].enabled`
@@ -231,8 +232,12 @@ prompt_file = ".stella/prompts/security-reviewer.md"
 
 # NOTE — the six stages below are the READABLE subset, not the vocabulary.
 # `StageKind` (stella-protocol/src/event.rs) has eleven variants: Triage,
-# ContextRecall, Plan, ScopeReview, Witness, Execute, Verify, Judge, Reflect,
+# ContextRecall, Plan, ScopeReview, Witness, Execute, Verify, Verdict, Reflect,
 # ContextWrite, Complete. The real block is built against the enum.
+#
+# `Verdict` is the stage; `verifier` is the model that runs it. The stage is
+# named for its output precisely because `verify` (deterministic proof) and
+# `verifier` (a model's opinion) as adjacent stage names hid which was which.
 #
 # Three are deliberately NOT configurable here, because each already has an
 # owner and a second switch is how these blocks rot — see DESIGN.md §4.5:
@@ -249,8 +254,9 @@ enabled   = true
 #   skip  — go straight to the next enabled stage
 #   fail  — refuse to run a pipeline that is missing this stage
 on_disable = "skip"
-# `triage_route` mode only: where this stage may dispatch.
-routes_to  = ["worker", "judge"]
+# `triage_route` mode only: which AGENTS this stage may dispatch to (names from
+# [agents], not stage names).
+routes_to  = ["worker", "verifier"]
 
 [pipeline.stages.plan]
 enabled    = true
@@ -269,10 +275,10 @@ on_disable = "fail"
 enabled    = true
 on_disable = "skip"
 
-[pipeline.stages.judge]
+[pipeline.stages.verdict]
 enabled    = true
 on_disable = "skip"     # worker output is returned unreviewed
-# How many times the judge may bounce work back to the worker.
+# How many times the verifier may bounce work back to the worker.
 max_revisions = 2
 
 
