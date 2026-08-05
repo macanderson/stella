@@ -634,6 +634,7 @@ async fn run_worker(
         cfg.provider.id.to_string(),
         in_tx.clone(),
         spec.lane.clone(),
+        Some(registry.task_board()),
     );
 
     /// How the raced turn resolved, before store closeout.

@@ -648,19 +648,9 @@ fn deck_render_snapshots_pin_the_floating_cards() {
     let model = fixture_model();
     for (card, name, description) in [
         (
-            Card::Tasks,
-            "card_tasks",
-            "the /tasks board card over SESSION",
-        ),
-        (
-            Card::Scope,
-            "card_scope",
-            "the /scope grid card over SESSION",
-        ),
-        (
-            Card::Witness,
-            "card_witness",
-            "the /witness panel mid-execute (run 2 of 3)",
+            Card::Plan,
+            "card_plan",
+            "the /plan card over SESSION — every step, then the envelope",
         ),
         (Card::Models, "card_models", "the /models routing card"),
         (Card::Budget, "card_budget", "the /budget editor"),
