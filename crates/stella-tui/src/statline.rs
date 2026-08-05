@@ -53,10 +53,10 @@
 //! ## Collapse: a card on top gets a quiet floor
 //!
 //! When any overlay/card is open the band collapses to at most four cells
-//! chosen for that context (the task card keeps `TURN` + tok/s, the scope
-//! card keeps `CONTEXT` + `SPEND`, the witness panel keeps its phase).
-//! [`statline_items`] is the single decision function, unit-testable without
-//! a buffer.
+//! chosen for that context (the plan card keeps `TURN` + where the plan
+//! stands; every other card, and every non-card overlay, keeps `CONTEXT` +
+//! `SPEND`). [`statline_items`] is the single decision function,
+//! unit-testable without a buffer.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -380,9 +380,10 @@ fn model_spans(model: &WorkspaceModel, dim: Style, val: Style) -> Vec<Span<'stat
 
 /// The pipeline role as the deck says it out loud: triage / worker / verify.
 ///
-/// `Judge` reads "verify" because that is the stage word the stepper and the
-/// witness panel already use for the same step; "judge" is the internal role
-/// name, and two words for one thing is one too many on a glanceable row.
+/// `Verifier` reads "verify" because that is the stage word the stepper and
+/// the rail's DONE VERIFICATION panel already use for the same step;
+/// `Verifier` names the model, and two words for one thing is one too many on
+/// a glanceable row.
 fn role_word(role: PipelineRole) -> &'static str {
     match role {
         PipelineRole::Triage => "triage",
