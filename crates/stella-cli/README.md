@@ -87,9 +87,12 @@ file is a candidate to extract into one.
 
 - [`src/agent.rs`](src/agent.rs)
 - [`src/agent/tests.rs`](src/agent/tests.rs)
-- [`src/candidate_ws.rs`](src/candidate_ws.rs)
 - [`src/command_deck.rs`](src/command_deck.rs)
 - [`src/fleet_cmd.rs`](src/fleet_cmd.rs)
+
+([`src/candidate_ws.rs`](src/candidate_ws.rs) left this list when adoption
+moved into [`src/candidate_ws/adopt.rs`](src/candidate_ws/adopt.rs) — the
+extraction pattern above, taken all the way back under the limit.)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

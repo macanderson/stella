@@ -1,4 +1,7 @@
-//! Reading `git`'s account of what an adoption moved.
+//! Winner-only adoption — applying the baseline→sealed patch to the real
+//! tree, and reading `git`'s account of what it moved. A child module of
+//! `candidate_ws` so the workspace's private fields and git plumbing stay
+//! reachable, split out to keep the parent under the size gate.
 //!
 //! A candidate's edits happen inside a shadow worktree with its own tool
 //! stack, deliberately untapped: a losing candidate's work is discarded, and
@@ -14,8 +17,258 @@
 //! the text), and the patch itself, which [`split_patch_per_file`] cuts into the
 //! per-file diffs the pane renders.
 
-use stella_pipeline::ports::AdoptedChange;
+use std::sync::atomic::Ordering;
+
+use stella_fleet::git::{GitCli, SystemGitCli};
+use stella_pipeline::ports::{AdoptedChange, WorkspaceError};
 use stella_protocol::FileChangeKind;
+
+use super::{GitCandidateWorkspace, SHADOW_SEQ, git, git_stdout_to_file};
+
+/// Tool scratch directories that `adopt` never carries into the user's tree.
+///
+/// Deliberately short, and deliberately NOT build outputs (`target`, `dist`,
+/// `build`) — producing one of those is frequently the whole job, and the same
+/// reasoning keeps them out of `stella_tools::shell_touch::SKIP_DIRS`. What is
+/// listed here is scratch written by *running* code, which no task asks for.
+///
+/// The seal is a blanket `git add -A`, so anything a candidate's test run left
+/// behind is committed into `sealed`. That is right for the seal — it is a
+/// forensic record of the candidate — and wrong for adoption, which is the
+/// user's tree. It also closes a gap the withhold list cannot: withholding an
+/// authored witness does not withhold the `__pycache__/<witness>.cpython-*.pyc`
+/// that running it produced, so a run could ship the shadow of a file it had
+/// deliberately kept back.
+const ADOPT_CACHE_EXCLUDES: &[&str] = &[
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+];
+
+impl GitCandidateWorkspace {
+    /// Winner-only adoption: diff the immutable baseline→verified seal and
+    /// apply that patch to the REAL tree in one atomic
+    /// `git apply` — no `--index`, so the user's index is untouched and the
+    /// adopted files land exactly as uncommitted working-tree changes.
+    pub(super) async fn adopt_inner(
+        &self,
+        withhold: &[String],
+    ) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+        let fail = |reason: String, paths: Vec<String>| WorkspaceError::Adopt {
+            reason,
+            paths,
+            workspace: self.dir.display().to_string(),
+        };
+        let sealed = self
+            .sealed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .ok_or_else(|| fail("candidate has no verified seal".to_string(), Vec::new()))?;
+        if !self
+            .sealed_unchanged_inner()
+            .await
+            .map_err(|error| fail(error.to_string(), Vec::new()))?
+        {
+            return Err(fail(
+                "candidate worktree changed after verification".to_string(),
+                Vec::new(),
+            ));
+        }
+        // Withheld paths drop out via git pathspec magic, appended identically
+        // to the name-status listing and to the binary patch below — the
+        // reported changes and the applied bytes must never disagree, or the
+        // event stream would claim a file the user's tree does not have.
+        // `literal` disables glob interpretation: a path is a path, never a
+        // pattern, so a witness filename containing `*` or `[` cannot widen
+        // the exclusion into production code.
+        let mut exclusions: Vec<String> = withhold
+            .iter()
+            .map(|path| format!(":(exclude,literal){path}"))
+            .collect();
+        // `glob`, not `literal`: these ARE patterns, and a leading `**/` is
+        // git's "in any directory", so a top-level `__pycache__/x.pyc` and a
+        // nested `a/b/__pycache__/x.pyc` both drop out. Appended to the same
+        // vec as the withheld paths, so they reach the name-status listing and
+        // the applied patch identically — the invariant above is what keeps the
+        // event stream from claiming a file the user's tree does not have.
+        exclusions.extend(
+            ADOPT_CACHE_EXCLUDES
+                .iter()
+                .map(|dir| format!(":(exclude,glob)**/{dir}/**")),
+        );
+        let mut name_args = vec![
+            "diff",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            self.baseline.as_str(),
+            sealed.as_str(),
+        ];
+        let mut patch_args = vec![
+            "diff",
+            "--binary",
+            "--no-renames",
+            self.baseline.as_str(),
+            sealed.as_str(),
+        ];
+        let mut numstat_args = vec![
+            "diff",
+            "--numstat",
+            "--no-renames",
+            "-z",
+            self.baseline.as_str(),
+            sealed.as_str(),
+        ];
+        // The patch that is APPLIED is `--binary`, streamed to a file so a huge
+        // one never lands in memory. This one is text and in-memory: it exists
+        // only to slice per-file diffs for display, so it is deliberately a
+        // separate, smaller read.
+        let mut text_args = vec![
+            "diff",
+            "--no-renames",
+            self.baseline.as_str(),
+            sealed.as_str(),
+        ];
+        if !exclusions.is_empty() {
+            for args in [
+                &mut name_args,
+                &mut patch_args,
+                &mut numstat_args,
+                &mut text_args,
+            ] {
+                args.push("--");
+                args.push(".");
+                args.extend(exclusions.iter().map(String::as_str));
+            }
+        }
+        let names = git(&self.dir, &name_args)
+            .await
+            .map_err(|e| fail(e, Vec::new()))?;
+        let mut changes = parse_name_status(&names);
+        if changes.is_empty() {
+            return Ok(Vec::new());
+        }
+        // How much each file moved, and what moved in it. Both best-effort: a
+        // failed measurement leaves `0/0` with no diff, which the Files tab
+        // shows as a changed file of unknown extent — never as an unchanged one.
+        if let Ok(numstat) = git(&self.dir, &numstat_args).await {
+            attach_numstat(&mut changes, &numstat);
+        }
+        if let Ok(text) = git(&self.dir, &text_args).await {
+            attach_diffs(&mut changes, &text);
+        }
+
+        let patch_file = std::env::temp_dir().join(format!(
+            "stella_candidate_adopt_{}_{}.patch",
+            std::process::id(),
+            SHADOW_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let all_paths = || changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
+        git_stdout_to_file(&self.dir, &patch_args, &patch_file)
+            .await
+            .map_err(|e| fail(e, all_paths()))?;
+        let patch_str = match patch_file.to_str() {
+            Some(s) => s,
+            None => {
+                return Err(fail(
+                    "patch path is not valid UTF-8".to_string(),
+                    all_paths(),
+                ));
+            }
+        };
+        let apply = SystemGitCli
+            .run(&self.toplevel, &["apply", "--whitespace=nowarn", patch_str])
+            .await;
+        let _ = tokio::fs::remove_file(&patch_file).await;
+        match apply {
+            Ok(out) if out.success => Ok(changes),
+            // `git apply` verifies every hunk's preimage before writing
+            // anything, so a rejection means the real tree is not the tree this
+            // patch was built against — and NOTHING was applied.
+            //
+            // WHICH divergence it is, git cannot say, and the module used to
+            // guess: "the real tree changed under us (user edits mid-run)". The
+            // guess is wrong in the case that matters most, where an isolated
+            // candidate wrote through to the real tree and its own bytes are
+            // what the patch now collides with. So the precondition is stated
+            // explicitly here rather than inferred from the failure.
+            //
+            // Run only on the failure path, deliberately. A pre-check would pay
+            // on every successful adoption for an answer `git apply` already
+            // gives atomically — and, worse, could pass and then be contradicted
+            // by the apply, since the tree can move in between. The apply's own
+            // preimage verification IS the precondition test; what was missing
+            // was the attribution of its result, which is exactly what can be
+            // computed after the fact against a tree nothing has written to.
+            Ok(out) => {
+                let paths = conflict_paths_from_stderr(&out.stderr, &changes);
+                let git_said = format!("`git apply` rejected the patch: {}", out.stderr.trim());
+                let reason = match self.attribute_conflict(&paths, &sealed).await {
+                    Some(attribution) => format!("{attribution}. {git_said}"),
+                    None => git_said,
+                };
+                Err(fail(reason, paths))
+            }
+            Err(e) => Err(fail(e.to_string(), all_paths())),
+        }
+    }
+
+    /// Name what actually broke the adoption precondition, by comparing the
+    /// real tree's current bytes at each conflicting path against the two
+    /// states this candidate knows: the baseline it snapshotted and the commit
+    /// it sealed. See [`PathDivergence`] for why those two answer the question
+    /// git's stderr cannot.
+    ///
+    /// Best-effort throughout: every probe that fails leaves its side `None`,
+    /// which classifies as "not the problem". A path this cannot read is one it
+    /// stays quiet about, so an unreadable tree degrades to git's own message
+    /// rather than inventing an attribution — the misleading claim is what this
+    /// exists to remove, and replacing it with a differently misleading one
+    /// would be no better.
+    async fn attribute_conflict(&self, paths: &[String], sealed: &str) -> Option<String> {
+        // Three cheap `git` calls per path, on a path already known to be
+        // failing. Bounded so a patch conflicting on hundreds of files cannot
+        // fork hundreds of processes while reporting an error.
+        const MAX_EXAMINED: usize = 24;
+        let examined = paths.len().min(MAX_EXAMINED);
+        let mut classified = Vec::with_capacity(examined);
+        for path in paths.iter().take(examined) {
+            // `--path` so the clean filter is applied exactly as it was when
+            // the blob was written; without it a repo with `.gitattributes`
+            // filters would hash raw bytes and every path would look diverged.
+            let real =
+                blob_id(git(&self.toplevel, &["hash-object", "--path", path, "--", path]).await);
+            let baseline = blob_id(
+                git(
+                    &self.dir,
+                    &["rev-parse", &format!("{}:{path}", self.baseline)],
+                )
+                .await,
+            );
+            let sealed_blob =
+                blob_id(git(&self.dir, &["rev-parse", &format!("{sealed}:{path}")]).await);
+            classified.push((
+                path.clone(),
+                PathDivergence::classify(
+                    real.as_deref(),
+                    baseline.as_deref(),
+                    sealed_blob.as_deref(),
+                ),
+            ));
+        }
+        describe_divergence(&classified, paths.len() > examined)
+    }
+}
+
+/// The blob id a `hash-object` / `rev-parse <rev>:<path>` probe reported, or
+/// `None` when the probe failed — which is how "that path is absent in that
+/// state" arrives, since both commands error rather than print an empty id.
+fn blob_id(probe: Result<String, String>) -> Option<String> {
+    probe.ok().map(|id| id.trim().to_string())
+}
 
 /// Parse `git diff --name-status --no-renames -z` output — `S\0path\0`
 /// records with statuses A/M/D (renames disabled, so no two-path records).

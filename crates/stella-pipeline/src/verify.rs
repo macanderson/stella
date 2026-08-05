@@ -68,7 +68,7 @@ pub mod mutation;
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
-use stella_protocol::{LadderRung, VerdictEvidence};
+use stella_protocol::{LadderRung, LadderSnapshot, VerdictEvidence};
 
 use crate::management_prompt::ManagementPrompt;
 
@@ -647,6 +647,37 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> VerdictEvidence {
         evidence_refs: Vec::new(),
         ladder: None,
     }
+}
+
+/// Restamp a verifier PASS that nothing deterministic corroborates as the
+/// abstention it is scored as.
+///
+/// The rung has to move with the decision. Every other channel already says
+/// abstention by the time the pipeline reaches for this — the score is
+/// `Unverified`, the summary leads with UNVERIFIED, and
+/// `VerificationUnavailable` goes on the rail — but the snapshot was stamped
+/// [`LadderRung::ModelVerdict`] when the verifier answered, before the caller
+/// knew the answer stood alone. Left there it is the one reader-facing field
+/// that disagrees, and the disagreement is not cosmetic:
+/// [`crate::reward::outcome_term`] reads the rung and nothing else, so it
+/// would credit `+weights.judged` to an uncorroborated pass instead of
+/// discarding it as `Abstained` — training on exactly the verdicts #871
+/// exists to distrust. The most concrete way to reach this state is a
+/// warranted witness whose baseline run came back `infra_failure`: no
+/// toolchain, so no flip, so nothing deterministic behind the verifier's
+/// "done".
+pub fn uncorroborated_pass_evidence(
+    evidence: &VerdictEvidence,
+    snapshot: &LadderSnapshot,
+) -> VerdictEvidence {
+    let mut abstained = evidence.clone();
+    abstained.summary = format!(
+        "UNVERIFIED: verifier passed with no deterministic \
+         corroboration (no flip, no green test) — {}",
+        abstained.summary
+    );
+    abstained.ladder = Some(Box::new(snapshot.with_rung(LadderRung::Unverifiable)));
+    abstained
 }
 
 /// Build the `VerdictEvidence` for a [`LadderDecision::NothingAttempted`] turn.

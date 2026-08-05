@@ -94,7 +94,8 @@ use crate::verify::{
     FlipOracle, LadderDecision, LadderInputs, Verdict as ModelVerifierVerdict,
     deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
     guidance_prompt, heuristic_fallback, ladder_decision, model_verdict_evidence,
-    nothing_attempted_evidence, parse_verifier_response, unverifiable_evidence, verifier_prompt,
+    nothing_attempted_evidence, parse_verifier_response, uncorroborated_pass_evidence,
+    unverifiable_evidence, verifier_prompt,
 };
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
@@ -2969,33 +2970,11 @@ impl<'a> Pipeline<'a> {
                                 continue;
                             }
                             // No answerable ask left — record the pass as
-                            // unverified, per the comment above.
-                            let mut abstained = evidence.clone();
-                            abstained.summary = format!(
-                                "UNVERIFIED: verifier passed with no deterministic \
-                                 corroboration (no flip, no green test) — {}",
-                                abstained.summary
-                            );
-                            // The rung has to move with the decision. Every
-                            // other channel here already says abstention — the
-                            // score is `Unverified`, the summary leads with
-                            // UNVERIFIED, and `unverifiable()` puts
-                            // `VerificationUnavailable` on the rail — but the
-                            // snapshot was stamped `ModelJudge` above, when the
-                            // verifier answered and before this branch knew the
-                            // answer stood alone. Left there it is the one
-                            // reader-facing field that disagrees, and the
-                            // disagreement is not cosmetic: `reward::outcome_term`
-                            // reads the rung and nothing else, so it credits
-                            // `+weights.judged` to an uncorroborated pass instead
-                            // of discarding it as `Abstained` — training on
-                            // exactly the verdicts #871 exists to distrust. The
-                            // most concrete way to reach here is a warranted
-                            // witness whose baseline run came back
-                            // `infra_failure`: no toolchain, so no flip, so
-                            // nothing deterministic behind the verifier's "done".
-                            abstained.ladder =
-                                Some(Box::new(snapshot.with_rung(LadderRung::Unverifiable)));
+                            // unverified, per the comment above, with the rung
+                            // moved to match (see `uncorroborated_pass_evidence`
+                            // for why leaving `ModelVerdict` would train reward
+                            // on a verdict the ladder declined to believe).
+                            let abstained = uncorroborated_pass_evidence(&evidence, &snapshot);
                             self.unverifiable(&abstained.summary);
                             return state.into_verified(
                                 true,
