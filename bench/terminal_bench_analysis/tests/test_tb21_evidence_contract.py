@@ -1613,3 +1613,47 @@ def test_promotion_rejects_behavioral_identity_change_between_stages() -> None:
 
     with pytest.raises(ValueError, match="screen.*frozen candidate identity"):
         append_candidate(ledger, candidate)
+
+
+def test_the_v3_contract_is_not_interchangeable_with_the_shipped_v2_study() -> None:
+    """Two study designs live in this directory and only v2 shipped.
+
+    Asserted rather than left to a docstring, so that wiring v3 up takes a
+    deliberate edit here instead of leaving both designs looking live.
+    """
+    import github_public_timing
+    import tb21_analysis
+    import tb21_evidence_contract
+
+    assert tb21_evidence_contract.RUN_LEDGER_SCHEMA == "stella-tb21-run-ledger-v3"
+    assert tb21_analysis.RUN_LEDGER_SCHEMA == "stella-tb21-run-ledger-v2"
+
+    v2_fields = tb21_analysis.RUN_LEDGER_TOP_LEVEL_FIELDS
+    v3_fields = tb21_evidence_contract.RUN_LEDGER_FIELDS
+    assert v3_fields != v2_fields
+    assert {"candidates", "budget_authorizations"} <= v3_fields
+    assert {"candidates", "budget_authorizations"}.isdisjoint(v2_fields)
+    assert "ledger_path" in v2_fields
+    assert "ledger_path" not in v3_fields
+
+    # `_ledger_is_prefix` requires set equality, so a v3 ledger can never pass
+    # public-timing verification against the v2 field set.
+    assert not github_public_timing._ledger_is_prefix(
+        dict.fromkeys(v3_fields, []), dict.fromkeys(v2_fields, [])
+    )
+
+
+def test_no_hybrid_study_artifact_exists_for_the_contract_to_validate() -> None:
+    """`validate_run_ledger` has never run against a real artifact.
+
+    If one of these appears, the not-wired status recorded in the v3 module
+    docstrings is out of date and has to be revisited.
+    """
+    import tb21_evidence_contract
+
+    repo_root = Path(__file__).resolve().parents[3]
+    if not (repo_root / "bench" / "evidence").is_dir():
+        pytest.skip("not running from a repository checkout")
+
+    for name, relative in tb21_evidence_contract.FIXED_PATHS.items():
+        assert not (repo_root / relative).exists(), name

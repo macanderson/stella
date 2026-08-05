@@ -46,7 +46,11 @@ const PROTOCOL_VERSION_HEADER: &str = "MCP-Protocol-Version";
 /// single frame at the same 8 MiB (`stdio::MAX_LINE_BYTES`) and `sse.rs`
 /// bounds an unterminated event there too, so this keeps the three framings on
 /// one budget: far past any plausible JSON-RPC message, still cheap to hold.
-const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+///
+/// The registry client and the OAuth exchanges read their bodies through the
+/// same [`read_capped_body`], on this one budget — every HTTP body this crate
+/// buffers comes from a host it does not control.
+pub(crate) const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 /// A streamable-HTTP connection to one MCP server.
 pub struct HttpTransport {
@@ -219,51 +223,10 @@ impl HttpTransport {
         )))
     }
 
-    /// Read a whole response body into a `String`, refusing anything past
-    /// [`MAX_BODY_BYTES`].
-    ///
-    /// `reqwest`'s own `text()`/`bytes()` buffer whatever the server chooses to
-    /// send, which would let an untrusted MCP server decide how much of
-    /// stella's memory it occupies — so the body is streamed and abandoned the
-    /// moment the running total would cross the cap. A declared
-    /// `Content-Length` past the cap is refused before a single byte is read.
-    ///
-    /// A non-UTF-8 body is a protocol error rather than a lossy replacement:
-    /// JSON-RPC is UTF-8 by definition, and silently substituting U+FFFD would
-    /// only move the failure into the decoder with a worse message.
+    /// This server's response body, under [`MAX_BODY_BYTES`] — see
+    /// [`read_capped_body`].
     async fn read_body(&self, response: reqwest::Response) -> Result<String, McpError> {
-        if let Some(len) = response.content_length()
-            && len > MAX_BODY_BYTES as u64
-        {
-            return Err(McpError::Transport(format!(
-                "server `{}` declared a {len}-byte response body, past the \
-                 {MAX_BODY_BYTES}-byte cap",
-                self.server_name
-            )));
-        }
-        let mut buf: Vec<u8> = Vec::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| {
-                McpError::Transport(format!(
-                    "reading response body from `{}` failed: {e}",
-                    self.server_name
-                ))
-            })?;
-            if buf.len().saturating_add(chunk.len()) > MAX_BODY_BYTES {
-                return Err(McpError::Transport(format!(
-                    "server `{}` streamed a response body past the {MAX_BODY_BYTES}-byte cap",
-                    self.server_name
-                )));
-            }
-            buf.extend_from_slice(&chunk);
-        }
-        String::from_utf8(buf).map_err(|_| {
-            McpError::Protocol(format!(
-                "response body from `{}` is not valid UTF-8",
-                self.server_name
-            ))
-        })
+        read_capped_body(response, &self.server_name).await
     }
 
     /// Read a `text/event-stream` body and return the JSON-RPC message that
@@ -378,6 +341,48 @@ impl Transport for HttpTransport {
         // `DELETE` the session; v1 lets the server expire it.)
         Ok(())
     }
+}
+
+/// Read a whole response body into a `String`, refusing anything past
+/// [`MAX_BODY_BYTES`]. `source` names the host in the diagnostic — a server
+/// name here, a registry base URL or an OAuth endpoint at the other call
+/// sites.
+///
+/// `reqwest`'s own `text()`/`json()` buffer whatever the peer chooses to send,
+/// which would let an untrusted host decide how much of stella's memory it
+/// occupies — so the body is streamed and abandoned the moment the running
+/// total would cross the cap. A declared `Content-Length` past the cap is
+/// refused before a single byte is read.
+///
+/// A non-UTF-8 body is a protocol error rather than a lossy replacement: these
+/// are JSON documents, UTF-8 by definition, and silently substituting U+FFFD
+/// would only move the failure into the decoder with a worse message.
+pub(crate) async fn read_capped_body(
+    response: reqwest::Response,
+    source: &str,
+) -> Result<String, McpError> {
+    if let Some(len) = response.content_length()
+        && len > MAX_BODY_BYTES as u64
+    {
+        return Err(McpError::Transport(format!(
+            "`{source}` declared a {len}-byte response body, past the {MAX_BODY_BYTES}-byte cap"
+        )));
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+            McpError::Transport(format!("reading a body from `{source}` failed: {e}"))
+        })?;
+        if buf.len().saturating_add(chunk.len()) > MAX_BODY_BYTES {
+            return Err(McpError::Transport(format!(
+                "`{source}` streamed a response body past the {MAX_BODY_BYTES}-byte cap"
+            )));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    String::from_utf8(buf)
+        .map_err(|_| McpError::Protocol(format!("the body from `{source}` is not valid UTF-8")))
 }
 
 /// Char-boundary-safe truncation for diagnostic bodies. Shared by every

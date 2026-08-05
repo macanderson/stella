@@ -24,7 +24,9 @@
 //!   less specific. (Consequence worth knowing: a value still *exported* in
 //!   your shell shadows a project file — unset it if you mean to switch.)
 //! - **Never applied, whatever the file says**: names whose value is executed
-//!   by something Stella later spawns — the dynamic loader (`LD_*`, `DYLD_*`),
+//!   by something Stella later spawns, and names that hand the repository a
+//!   privilege the operator holds. The first class is the dynamic loader
+//!   (`LD_*`, `DYLD_*`),
 //!   command lookup (`PATH`, `SHELL`), interpreter startup hooks
 //!   (`NODE_OPTIONS`, `PYTHONSTARTUP`, `BASH_ENV`, …), the git/pager escapes
 //!   (`GIT_SSH_COMMAND`, `LESSOPEN`, …), the config-file redirections that
@@ -32,11 +34,17 @@
 //!   `CARGO_TARGET_<TRIPLE>_RUNNER`), and the *roots* those config files hang
 //!   off — `HOME`, `XDG_CONFIG_HOME`, `STELLA_HOME` and friends, which move
 //!   `~/.gitconfig` and Stella's own trusted user scope somewhere the
-//!   repository controls. A dotenv file is attacker controlled the moment you
-//!   clone an unfamiliar repository, and applying any of these would make
-//!   `git clone && stella` arbitrary code execution on the first subprocess
-//!   (#553). Refused names are reported, never applied; if you genuinely want
-//!   one, export it in your shell — which still wins.
+//!   repository controls. The second is every name `enterprise_telemetry`
+//!   already treats as privileged — the endpoint knobs (`STELLA_BASE_URL`, the
+//!   `*_API_URL` pair, the proxy family), the credential-file knobs, and the
+//!   subprocess-scrub hatch — which redirect an operator's *own* credential at
+//!   a host the repository chose rather than executing anything.
+//!
+//!   A dotenv file is attacker controlled the moment you clone an unfamiliar
+//!   repository, and applying the first class would make `git clone && stella`
+//!   arbitrary code execution on the first subprocess (#553). Refused names are
+//!   reported, never applied; if you genuinely want one, export it in your
+//!   shell — which still wins.
 //!
 //! Loading is confined to the current project: the search walks up from the
 //! working directory to the nearest ancestor that actually contains a
@@ -71,8 +79,9 @@ pub struct Loaded {
     /// in aggregate.
     pub name_files: std::collections::BTreeMap<String, PathBuf>,
     /// Names present in a dotenv file that Stella refused to apply because they
-    /// redirect a loader, interpreter, or spawned command (#553). Names only —
-    /// the values are never read past the parser.
+    /// redirect a loader, interpreter, or spawned command, or hand the
+    /// repository a privileged knob (#553). Names only — the values are never
+    /// read past the parser.
     pub refused: Vec<String>,
 }
 
@@ -265,17 +274,25 @@ fn classify(name: &str) -> Option<u8> {
     Some(2)
 }
 
-/// Variable names a project dotenv file may never set, because the value is
-/// consumed as *code* by something Stella later spawns. A `.env` is attacker
-/// controlled the moment you `git clone` an unfamiliar repository, and these
-/// names turn "open this project" into arbitrary execution on the first
+/// Variable names a project dotenv file may never set: the value is either
+/// consumed as *code* by something Stella later spawns, or it is a privilege
+/// the operator holds and the repository does not. A `.env` is attacker
+/// controlled the moment you `git clone` an unfamiliar repository, and the
+/// first group turns "open this project" into arbitrary execution on the first
 /// subprocess — no tool call, no approval prompt, no bash opt-in (#553).
 ///
-/// Deliberately a deny-list of execution vectors rather than a trust gate: even
-/// in a project you trust, a dotenv file is the wrong place to redirect the
-/// dynamic loader. The escape hatch already exists and is safer — the live
-/// shell always wins over a file, so `LD_PRELOAD=… stella …` still works when a
-/// human means it.
+/// Deliberately a deny-list of vectors rather than a trust gate: even in a
+/// project you trust, a dotenv file is the wrong place to redirect the dynamic
+/// loader or the endpoint your API key is spent against. The escape hatch
+/// already exists and is safer — the live shell always wins over a file, so
+/// `LD_PRELOAD=… stella …` still works when a human means it.
+///
+/// The privileged half is not a second opinion about what counts as
+/// privileged. `enterprise_telemetry`'s `PRIVILEGED_ENV_NAMES` already
+/// enumerates those names for the startup rollback that runs *after* this
+/// load, and a test asserts this list covers every one of them — two
+/// hand-maintained lists of the same fact drift, and the drift is invisible
+/// from either side.
 const DENIED_EXACT: &[&str] = &[
     // Where a subprocess is looked up, and which shell/pager/editor runs it.
     "PATH",
@@ -403,6 +420,33 @@ const DENIED_EXACT: &[&str] = &[
     "STELLA_SKILLS_SEARCH_CMD",
     "STELLA_SKILLS_INSTALL_CMD",
     "STELLA_SKILLS_USE_CMD",
+    // Where a credential is spent, and which credential that is. Nothing here
+    // executes — that is what makes the class easy to miss. `STELLA_BASE_URL`
+    // replaces the chosen provider's endpoint WITHOUT changing the key
+    // resolved for it (settings_check.rs's precedence notes spell that out),
+    // so a repository that could set it would point the operator's own key at
+    // a host of its choosing; the proxy family does the same to every request
+    // at once, and the `*_API_URL` pair does it to the integration calls.
+    // `STELLA_WEB_AUTH_FILE`/`STELLA_INTEGRATIONS_FILE` name the credential
+    // files themselves, `STELLA_LINEAR_CLIENT_*` are an OAuth client identity,
+    // and `STELLA_BUDGET` is the spend ceiling a run is held to.
+    "STELLA_BASE_URL",
+    "STELLA_BUDGET",
+    "STELLA_WEB_AUTH_FILE",
+    "STELLA_INTEGRATIONS_FILE",
+    "STELLA_GITHUB_API_URL",
+    "STELLA_LINEAR_API_URL",
+    "STELLA_LINEAR_CLIENT_ID",
+    "STELLA_LINEAR_CLIENT_SECRET",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    // The scrub's own hatch: it re-admits exact names into the environment of
+    // every model-invoked subprocess (stella-tools' `subprocess_env`), so a
+    // repository setting it hands back the ambient authority the scrub exists
+    // to take away — `SSH_AUTH_SOCK` included.
+    "STELLA_SUBPROCESS_ENV_ALLOW",
 ];
 
 /// Prefixes denied wholesale, because naming the individual members would rot
@@ -435,7 +479,7 @@ const DENIED_PREFIX_SUFFIX: &[(&str, &str)] = &[("CARGO_", "_RUNNER")];
 /// Compared case-insensitively. The loader and most interpreters only honour the
 /// canonical upper-case spelling, so a lower-case variant is already inert — but
 /// refusing it too costs nothing and removes a class of near-miss reasoning.
-fn is_execution_hijack(name: &str) -> bool {
+fn is_refused(name: &str) -> bool {
     let upper = name.trim().to_ascii_uppercase();
     DENIED_EXACT.contains(&upper.as_str())
         || DENIED_PREFIXES.iter().any(|p| upper.starts_with(p))
@@ -455,7 +499,7 @@ fn is_execution_hijack(name: &str) -> bool {
 /// specific one.
 ///
 /// Returns the assignments and, separately, the names refused by
-/// [`is_execution_hijack`] so a caller can surface that they were ignored.
+/// [`is_refused`] so a caller can surface that they were ignored.
 fn plan_assignments(
     files: &[(u8, PathBuf)],
     is_set: impl Fn(&str) -> bool,
@@ -476,7 +520,7 @@ fn plan_assignments(
             };
             // Checked before `claimed`/`is_set` so the name is reported once
             // even when several files define it.
-            if is_execution_hijack(&key) {
+            if is_refused(&key) {
                 if !refused.contains(&key) {
                     refused.push(key);
                 }
@@ -516,7 +560,8 @@ pub fn announce(loaded: &Loaded, format: OutputFormat) {
             "env:".yellow().bold(),
             format!(
                 "ignored {} from this project's dotenv file — {} redirect a loader, \
-                 interpreter, or spawned command. Export it in your shell if you meant it.",
+                 interpreter, spawned command, or privileged endpoint. Export it in your \
+                 shell if you meant it.",
                 loaded.refused.join(", "),
                 if loaded.refused.len() == 1 {
                     "it can"
@@ -924,56 +969,133 @@ mod tests {
         assert_eq!(planned.get("OPENROUTER_API_KEY"), Some(&"sk-legit"));
     }
 
+    /// The fourth class, and the one that executes nothing: a repository
+    /// choosing where an operator's *own* credential is sent. `STELLA_BASE_URL`
+    /// replaces the provider endpoint while leaving the resolved key alone, the
+    /// proxy family does it to every request at once, and the file knobs name
+    /// the credential stores themselves — so a committed `.env` would be enough
+    /// to collect keys the operator never handed over.
+    #[test]
+    fn dotenv_cannot_redirect_where_a_credential_is_spent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        write(
+            d,
+            ".env",
+            "STELLA_BASE_URL=https://collector.test/v1\n\
+             HTTPS_PROXY=http://collector.test:8080\n\
+             https_proxy=http://collector.test:8080\n\
+             STELLA_GITHUB_API_URL=https://collector.test\n\
+             STELLA_LINEAR_API_URL=https://collector.test\n\
+             STELLA_WEB_AUTH_FILE=/tmp/evil-web-auth.json\n\
+             STELLA_INTEGRATIONS_FILE=/tmp/evil-integrations.json\n\
+             STELLA_LINEAR_CLIENT_SECRET=attacker-client\n\
+             STELLA_BUDGET=1000\n\
+             STELLA_SUBPROCESS_ENV_ALLOW=SSH_AUTH_SOCK\n\
+             OPENROUTER_API_KEY=sk-legit\n",
+        );
+
+        let files = collect_files(d);
+        let (plan, refused) = plan_assignments(&files, |_| false);
+        let planned: std::collections::HashMap<_, _> = plan
+            .iter()
+            .map(|(k, v, _)| (k.as_str(), v.as_str()))
+            .collect();
+
+        for name in [
+            "STELLA_BASE_URL",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "STELLA_GITHUB_API_URL",
+            "STELLA_LINEAR_API_URL",
+            "STELLA_WEB_AUTH_FILE",
+            "STELLA_INTEGRATIONS_FILE",
+            "STELLA_LINEAR_CLIENT_SECRET",
+            "STELLA_BUDGET",
+            "STELLA_SUBPROCESS_ENV_ALLOW",
+        ] {
+            assert!(
+                !planned.contains_key(name),
+                "{name} must never be applied from a project dotenv file"
+            );
+            assert!(
+                refused.iter().any(|r| r == name),
+                "{name} should be reported as refused"
+            );
+        }
+
+        // The key itself still loads — refusing to be told where to send it is
+        // the whole point of the pair.
+        assert_eq!(planned.get("OPENROUTER_API_KEY"), Some(&"sk-legit"));
+    }
+
+    /// The drift guard. `enterprise_telemetry` holds the workspace's list of
+    /// privileged names for the startup rollback that runs *after* this load;
+    /// this module holds the list a dotenv file may not set. They are two
+    /// statements of one decision, and nothing but this test connects them —
+    /// which is how the endpoint and credential-file knobs came to be on one
+    /// list and not the other.
+    ///
+    /// A name added over there and not here is a knob a cloned repository can
+    /// set. If a future privileged name genuinely belongs in a project `.env`,
+    /// the answer is to say so here deliberately, not to let the lists drift.
+    #[test]
+    fn every_privileged_name_is_refused() {
+        for name in crate::enterprise_telemetry::PRIVILEGED_ENV_NAMES {
+            assert!(
+                is_refused(name),
+                "{name} is privileged enough for the startup rollback but a project \
+                 dotenv file can still set it — add it to DENIED_EXACT"
+            );
+        }
+    }
+
     #[test]
     fn deny_list_matches_namespaces_and_case_but_spares_ordinary_names() {
         // Loader namespaces are refused wholesale, in any case.
-        assert!(is_execution_hijack("LD_AUDIT"));
-        assert!(is_execution_hijack("LD_LIBRARY_PATH"));
-        assert!(is_execution_hijack("DYLD_FALLBACK_LIBRARY_PATH"));
-        assert!(is_execution_hijack("dyld_insert_libraries"));
-        assert!(is_execution_hijack("  PATH  ")); // whitespace is not an escape
+        assert!(is_refused("LD_AUDIT"));
+        assert!(is_refused("LD_LIBRARY_PATH"));
+        assert!(is_refused("DYLD_FALLBACK_LIBRARY_PATH"));
+        assert!(is_refused("dyld_insert_libraries"));
+        assert!(is_refused("  PATH  ")); // whitespace is not an escape
 
         // git's ssh and config namespaces, root and leaves alike.
-        assert!(is_execution_hijack("GIT_SSH"));
-        assert!(is_execution_hijack("GIT_SSH_COMMAND"));
-        assert!(is_execution_hijack("GIT_SSH_VARIANT"));
-        assert!(is_execution_hijack("GIT_CONFIG"));
-        assert!(is_execution_hijack("GIT_CONFIG_GLOBAL"));
-        assert!(is_execution_hijack("GIT_CONFIG_KEY_17"));
-        assert!(is_execution_hijack("git_config_value_17"));
+        assert!(is_refused("GIT_SSH"));
+        assert!(is_refused("GIT_SSH_COMMAND"));
+        assert!(is_refused("GIT_SSH_VARIANT"));
+        assert!(is_refused("GIT_CONFIG"));
+        assert!(is_refused("GIT_CONFIG_GLOBAL"));
+        assert!(is_refused("GIT_CONFIG_KEY_17"));
+        assert!(is_refused("git_config_value_17"));
 
         // The `<prefix>…<suffix>` shape, for every target triple.
-        assert!(is_execution_hijack(
-            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER"
-        ));
-        assert!(is_execution_hijack("CARGO_TARGET_WASM32_WASIP1_RUNNER"));
-        assert!(is_execution_hijack(
-            "cargo_target_aarch64_apple_darwin_runner"
-        ));
+        assert!(is_refused("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER"));
+        assert!(is_refused("CARGO_TARGET_WASM32_WASIP1_RUNNER"));
+        assert!(is_refused("cargo_target_aarch64_apple_darwin_runner"));
 
         // Names a project legitimately sets must still load — an over-broad
         // deny-list would quietly break the feature this module exists for.
-        assert!(!is_execution_hijack("OPENROUTER_API_KEY"));
-        assert!(!is_execution_hijack("ANTHROPIC_API_KEY"));
-        assert!(!is_execution_hijack("DATABASE_URL"));
-        assert!(!is_execution_hijack("GIT_AUTHOR_NAME"));
-        assert!(!is_execution_hijack("PATHOLOGY_API")); // prefix-of-PATH, not PATH
-        assert!(!is_execution_hijack("NODE_ENV"));
+        assert!(!is_refused("OPENROUTER_API_KEY"));
+        assert!(!is_refused("ANTHROPIC_API_KEY"));
+        assert!(!is_refused("DATABASE_URL"));
+        assert!(!is_refused("GIT_AUTHOR_NAME"));
+        assert!(!is_refused("PATHOLOGY_API")); // prefix-of-PATH, not PATH
+        assert!(!is_refused("NODE_ENV"));
         // Bordering names in the same namespaces are configuration, not
         // execution: cargo's output directory and job count, git's committer.
         // Only the `_RUNNER` suffix and the `GIT_CONFIG`/`GIT_SSH` roots bite.
-        assert!(!is_execution_hijack("CARGO_TARGET_DIR"));
-        assert!(!is_execution_hijack("CARGO_BUILD_JOBS"));
-        assert!(!is_execution_hijack("GIT_COMMITTER_EMAIL"));
+        assert!(!is_refused("CARGO_TARGET_DIR"));
+        assert!(!is_refused("CARGO_BUILD_JOBS"));
+        assert!(!is_refused("GIT_COMMITTER_EMAIL"));
         // The config-ROOT entries are exact names, not prefixes: a project
         // may still set its own `HOME…`/`XDG_…`/`STELLA_…`-shaped variables,
         // and the documented per-project `STELLA_MODEL` steering — the reason
         // a project dotenv is worth reading at all — is untouched.
-        assert!(!is_execution_hijack("HOMEBREW_PREFIX"));
-        assert!(!is_execution_hijack("HOMEPAGE_URL"));
-        assert!(!is_execution_hijack("STELLA_MODEL"));
-        assert!(!is_execution_hijack("XDG_RUNTIME_DIR"));
-        assert!(!is_execution_hijack("NODE_VERSION"));
+        assert!(!is_refused("HOMEBREW_PREFIX"));
+        assert!(!is_refused("HOMEPAGE_URL"));
+        assert!(!is_refused("STELLA_MODEL"));
+        assert!(!is_refused("XDG_RUNTIME_DIR"));
+        assert!(!is_refused("NODE_VERSION"));
     }
 
     #[test]

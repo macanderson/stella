@@ -319,28 +319,80 @@ pub(super) fn snapshot_result_identities(
     }
 }
 
+/// Opens `read_file`'s trailing footer, on its own line after the payload's
+/// last newline.
+///
+/// # One definition, two crates
+///
+/// The footer is written by `stella_tools::read` and read back by
+/// [`comparable_output`] below, across a crate boundary — the producer
+/// depends on `stella-core`, so this module is the only place both sides can
+/// name. These five fragments are that shared definition, and
+/// `the_footer_a_read_writes_is_the_one_loop_comparison_strips` in
+/// `stella-tools` is what fails if either side stops using them: a reworded
+/// footer no longer stripped here is not a cosmetic change, it is loop
+/// detection going blind on `read_file` (see [`comparable_output`]).
+pub const READ_FOOTER_OPEN: &str = "\n(";
+
+/// Closes the footer, after every clause it carries.
+pub const READ_FOOTER_CLOSE: &str = ")";
+
+/// Joins the footer's clauses. The tally is only the first; a read that
+/// clipped a long line or stopped at the payload cap appends more.
+pub const READ_FOOTER_CLAUSE_SEP: &str = " \u{b7} ";
+
+/// Sits between the shown/total line counts and the per-session read tally:
+/// `{shown}/{total}` + this + `{reads}` + [`READ_FOOTER_TALLY_END`].
+pub const READ_FOOTER_TALLY_MID: &str = " lines shown \u{b7} read ";
+
+/// Ends the tally clause — the volatile part, and the reason the whole footer
+/// has to come off before two reads can be compared.
+pub const READ_FOOTER_TALLY_END: &str = "\u{d7} this session";
+
 /// Normalize one tool output for loop comparison: strip `read_file`'s
 /// volatile session-tally footer (`\n\n(N/M lines shown · read K× this
-/// session)`). The footer changes on EVERY read by design — it is the
-/// model-facing "you already read this" nudge — but the loop detector
+/// session[ · …][ · …])`). The tally changes on EVERY read by design — it is
+/// the model-facing "you already read this" nudge — but the loop detector
 /// requires byte-identical outputs, so the footer made every reread unique
 /// and blinded detection to the exact thrash it exists to catch (the
 /// read → failing-edit → read cycle the `loop_detect` module doc names).
 /// Comparison-only: the transcript and history keep the footer untouched.
 ///
+/// Anchored on the footer's opening paren rather than on the tally's own last
+/// byte, because the tally is only the FIRST clause: a read that clipped a
+/// long line or stopped at the payload cap appends further `·` clauses before
+/// the close. Ending the match at the tally would leave the volatile count in
+/// the compared bytes for precisely the large-file rereads a stuck agent
+/// produces most.
+///
 /// Borrowed on the overwhelmingly common path (no footer): both callers run
 /// over the WHOLE transcript on every step, so returning an owned copy meant a
 /// full heap copy of every tool result — a step's worth of garbage proportional
 /// to the entire history, for a normalization that usually changes nothing.
-pub(super) fn comparable_output(output: &ToolOutput) -> Cow<'_, ToolOutput> {
+pub fn comparable_output(output: &ToolOutput) -> Cow<'_, ToolOutput> {
     if let ToolOutput::Ok { content } = output
-        && content.ends_with("\u{d7} this session)")
-        && let Some(idx) = content.rfind("\n\n(")
-        && content[idx..].contains(" lines shown \u{b7} read ")
+        && let Some(idx) = read_footer_start(content)
     {
         return Cow::Owned(ToolOutput::Ok {
             content: content[..idx].to_string(),
         });
     }
     Cow::Borrowed(output)
+}
+
+/// Where `read_file`'s footer begins in `content`, or `None` when the output
+/// does not carry one.
+///
+/// The footer's own bytes contain no [`READ_FOOTER_OPEN`], so the last one in
+/// a payload that ends with [`READ_FOOTER_CLOSE`] and carries the tally is
+/// the footer's — a file line that merely starts with `(` sits earlier and is
+/// never selected.
+fn read_footer_start(content: &str) -> Option<usize> {
+    if !content.ends_with(READ_FOOTER_CLOSE) {
+        return None;
+    }
+    let start = content.rfind(READ_FOOTER_OPEN)?;
+    let footer = &content[start..];
+    (footer.contains(READ_FOOTER_TALLY_MID) && footer.contains(READ_FOOTER_TALLY_END))
+        .then_some(start)
 }

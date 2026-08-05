@@ -11,10 +11,10 @@
 4292 bench/harbor_adapter/stella_harbor/secure_launcher.py
 2339 bench/harbor_adapter/tests/test_adapter.py
 3360 bench/harbor_adapter/tests/test_secure_launcher.py
-8211 bench/terminal_bench_analysis/tb21_analysis.py
-1887 bench/terminal_bench_analysis/tb21_evidence_contract.py
-4237 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
-1615 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
+8272 bench/terminal_bench_analysis/tb21_analysis.py
+1911 bench/terminal_bench_analysis/tb21_evidence_contract.py
+4335 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
+1659 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
 2270 crates/stella-cli/src/agent.rs
 1754 crates/stella-cli/src/agent/tests.rs
 1629 crates/stella-cli/src/candidate_ws.rs

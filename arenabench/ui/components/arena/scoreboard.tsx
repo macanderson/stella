@@ -12,6 +12,9 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
     for (const id of winners) crowns[id] = (crowns[id] || 0) + 1;
   }
   const top = Math.max(0, ...Object.values(crowns));
+  // Neutral dimensions are reported but crown nobody, so they are not part of
+  // the denominator a seat is being scored out of.
+  const crownable = snapshot.dimensions.filter((d) => d.direction !== "neutral").length;
 
   return (
     <section className="mb-2 grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(230px,1fr))]">
@@ -49,7 +52,7 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
               <div className="absolute right-3.5 top-[11px] text-[15px]">👑</div>
             ) : (
               <div className="absolute right-[15px] top-[13px] font-mono text-[11px] text-dim">
-                {crowns[c.id] || 0}/6
+                {crowns[c.id] || 0}/{crownable}
               </div>
             )}
             <div className="flex items-center gap-2 text-[15px] font-[650]">
@@ -87,7 +90,11 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
             </div>
             <div className="grid grid-cols-2 gap-x-3.5 gap-y-[7px]">
               {stat("clock_time", "clock", fmtClock(t.clock_time))}
-              {stat("total_cost", "cost", fmtMoney(t.total_cost))}
+              {/* The comparable figure carries the label; what the agent said
+                  it spent sits beside it, named, and crowns nobody — the two
+                  come from different price tables. */}
+              {stat("priced_cost", "cost", fmtMoney(t.priced_cost))}
+              {stat("total_cost", "self-rep", fmtMoney(t.total_cost))}
               {stat("tokens_in", "tok in", fmtTokens(t.tokens_in))}
               {stat("tokens_out", "tok out", fmtTokens(t.tokens_out))}
               {stat("cache_read", "cache r", fmtTokens(t.cache_read))}

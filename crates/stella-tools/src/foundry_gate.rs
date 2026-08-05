@@ -34,8 +34,15 @@
 //! with a shell can rewrite, and the proof that justified adopting it was a
 //! proof about *that script's behavior*. Re-pointing the manifest at a new
 //! command, or rewriting the script under an approved manifest, does not
-//! inherit the approval — so both are digested at adoption and re-checked at
-//! every discovery.
+//! inherit the approval — so both are digested at adoption and re-checked
+//! whenever the gate rules on them.
+//!
+//! Discovery is not enough on its own, because a session discovers once and
+//! executes for hours: a rewrite landing after that single pass would run
+//! under the earlier approval. So the digests the gate approved ride on the
+//! tool it hands back ([`FoundryProvenance::approved`]) and are checked again
+//! against the file being launched ([`recheck_before_launch`]). The bytes that
+//! execute are the bytes that were approved, or nothing executes.
 //!
 //! # Scope: foundry tools only
 //!
@@ -110,6 +117,16 @@ pub struct FoundryProvenance {
     /// invented arguments.
     #[serde(default)]
     pub witness_input: serde_json::Value,
+    /// The digests [`gate_report`] approved these artifacts at, carried to the
+    /// point of use so [`recheck_before_launch`] can hold the script being
+    /// executed to them.
+    ///
+    /// Not part of the manifest in either direction — `serde(skip)` is what
+    /// stops a manifest from arriving with its own approval already filled in.
+    /// `None` means no gate has ruled on this tool yet, which is the state a
+    /// staged candidate is proved in ([`crate::foundry_witness`]).
+    #[serde(skip)]
+    pub approved: Option<ArtifactDigests>,
 }
 
 impl FoundryProvenance {
@@ -318,7 +335,7 @@ pub fn gate_report(
         .map(|record| (record.name.as_str(), record))
         .collect();
     let mut kept = Vec::with_capacity(tools.len());
-    for tool in tools {
+    for mut tool in tools {
         let observed = observe(&tool, root);
         let decision = decide(
             tool.foundry.as_ref(),
@@ -326,7 +343,16 @@ pub fn gate_report(
             ledger.get(tool.name.as_str()).copied(),
         );
         match decision {
-            GateDecision::Register => kept.push(tool),
+            GateDecision::Register => {
+                // What this pass approved, pinned to the tool so the launch
+                // path can hold the file it is about to run to the same bytes.
+                if let (Some(provenance), Ok(observed)) = (tool.foundry.as_mut(), observed)
+                    && provenance.is_foundry_authored()
+                {
+                    provenance.approved = Some(observed);
+                }
+                kept.push(tool);
+            }
             GateDecision::Withhold(reason) => diagnostics.push(ToolDiagnostic {
                 path: tool.source.clone(),
                 reason: format!("`{}` withheld: {}", tool.name, reason.sentence()),
@@ -337,6 +363,37 @@ pub fn gate_report(
         tools: kept,
         diagnostics,
     }
+}
+
+/// Hold a gated tool to the bytes it was gated on, at the moment it is about
+/// to run. `Ok(())` means the launch may proceed.
+///
+/// The gate reads the filesystem once, when discovery hands it a scan; a
+/// session then executes the tools it kept for as long as it runs. In between,
+/// `command[0]` is an ordinary file anything with a shell can rewrite — so
+/// without this the approved digests would only ever describe a file that has
+/// since moved on, and the rewritten bytes would execute under the old
+/// approval. Two reads and two digests per call is what that costs, against a
+/// call that is about to spawn a process.
+///
+/// Only a tool the gate stamped is checked. A hand-written manifest carries no
+/// provenance and is not this gate's business, and a candidate being proved has
+/// no approval to be held to yet — its witness *is* the proof pass.
+pub fn recheck_before_launch(tool: &CustomTool, root: &Path) -> Result<(), String> {
+    let Some(approved) = tool.foundry.as_ref().and_then(|p| p.approved.as_ref()) else {
+        return Ok(());
+    };
+    let reason = match observe(tool, root) {
+        Ok(observed) if &observed == approved => return Ok(()),
+        Ok(observed) if observed.manifest != approved.manifest => WithholdReason::ManifestTampered,
+        Ok(_) => WithholdReason::ScriptTampered,
+        Err(why) => WithholdReason::ScriptUnreadable(why),
+    };
+    Err(format!(
+        "custom tool `{}` did not run: {}",
+        tool.name,
+        reason.sentence()
+    ))
 }
 
 #[cfg(test)]

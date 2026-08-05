@@ -3820,7 +3820,7 @@ def test_cross_model_tokens_are_explicitly_ineligible() -> None:
     )
 
 
-def test_full_89_point_uses_calibration_tasks_but_lcb_uses_only_79() -> None:
+def test_the_win_rule_ignores_the_calibration_tasks_stella_was_tuned_on() -> None:
     stella: list[dict] = []
     comparator: list[dict] = []
     for task in _full_tasks():
@@ -3855,9 +3855,12 @@ def test_full_89_point_uses_calibration_tasks_but_lcb_uses_only_79() -> None:
 
     accuracy = result["dimensions"]["accuracy"]
     assert result["observed_inference_tasks"] == 79
+    # Stella beats the comparator on the 10 calibration tasks and ties on the
+    # other 79. The descriptive all-89 point therefore clears 10%, and the
+    # win rule must not: every point of that lift came from tuned-on tasks.
     assert accuracy["point_relative_improvement"] == pytest.approx(10 / 89)
-    assert accuracy["point_meets_threshold"] is True
     assert accuracy["inferential_point_relative_improvement"] == 0.0
+    assert accuracy["point_meets_threshold"] is False
     assert accuracy["lower_confidence_bound"] == 0.0
     assert accuracy["win"] is False
 
@@ -4157,6 +4160,101 @@ def test_build_report_writes_comparator_unavailable_explicitly(tmp_path: Path) -
         "stella-tb21-analysis-v1"
     )
     assert "Comparator per-task" in (output / "report.md").read_text()
+
+
+def test_a_contained_comparator_trial_id_is_enriched(tmp_path: Path) -> None:
+    manifest = tmp_path / "comparator" / "manifest.json"
+    result = manifest.parent / "trials" / "trial-1" / "result.json"
+    _write_json(result, {"task_checksum": "abc", "task_id": {"ref": "sha256:aa"}})
+    warnings: list[str] = []
+
+    rows = analysis_module._enrich_comparator_manifest_rows(
+        [{"submitted_trial_id": "trial-1"}], manifest, warnings
+    )
+
+    assert warnings == []
+    assert rows[0]["task_checksum"] == "abc"
+    assert rows[0]["task_ref"] == "sha256:aa"
+    assert rows[0]["result_path"] == str(result.resolve())
+
+
+def test_a_traversing_comparator_trial_id_is_refused(tmp_path: Path) -> None:
+    """The named file is hashed, JSON-parsed, and its absolute path published
+    into report.json, so a trial id must not reach outside the manifest's own
+    trials directory."""
+    manifest = tmp_path / "comparator" / "manifest.json"
+    (manifest.parent / "trials").mkdir(parents=True)
+    _write_json(tmp_path / "outside" / "result.json", {"task_checksum": "leaked"})
+    warnings: list[str] = []
+
+    rows = analysis_module._enrich_comparator_manifest_rows(
+        [{"submitted_trial_id": "../../outside"}], manifest, warnings
+    )
+
+    assert rows == [{"submitted_trial_id": "../../outside"}]
+    assert "result_path" not in rows[0]
+    assert any("resolves outside" in warning for warning in warnings)
+
+
+def test_only_the_envelope_cost_is_recovered_from_an_exception() -> None:
+    """A per-step cost printed before the envelope must not be picked up and
+    then stamped with the envelope's provenance."""
+    message = (
+        'stdout: {"type": "step", "cost_usd": 0.001}\n'
+        '{"cost_usd": 0.25, "status": "ok", "events": []}'
+    )
+
+    assert analysis_module._recover_cost_from_exception(message) == pytest.approx(0.25)
+
+
+def test_a_stream_without_an_envelope_recovers_no_cost() -> None:
+    assert (
+        analysis_module._recover_cost_from_exception(
+            'stdout: {"type": "step", "cost_usd": 0.001}'
+        )
+        is None
+    )
+
+
+def test_main_exits_nonzero_when_the_claim_is_not_established(
+    tmp_path: Path,
+) -> None:
+    """A caller in a script must be able to tell a descriptive run from an
+    established one without parsing report.json."""
+    job = tmp_path / "empty-job"
+    _write_json(job / "config.json", _job_config(["requested-only"]))
+    output = tmp_path / "output"
+
+    code = analysis_module.main(
+        [str(job), "--output-dir", str(output), "--bootstrap-draws", "10"]
+    )
+
+    assert code == 1
+    report = json.loads((output / "report.json").read_text())
+    assert report["bootstrap"]["claim_established"] is False
+
+
+def test_main_exits_zero_only_when_the_claim_is_established(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = tmp_path / "empty-job"
+    _write_json(job / "config.json", _job_config(["requested-only"]))
+    written: list[dict] = []
+    monkeypatch.setattr(
+        analysis_module,
+        "build_report",
+        lambda *args, **kwargs: {"bootstrap": {"claim_established": True}},
+    )
+    monkeypatch.setattr(
+        analysis_module,
+        "write_outputs",
+        lambda report, output_dir: written.append(report),
+    )
+
+    code = analysis_module.main([str(job), "--output-dir", str(tmp_path / "out")])
+
+    assert code == 0
+    assert written
 
 
 def test_comparator_csv_numeric_fields_are_parsed(tmp_path: Path) -> None:

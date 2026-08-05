@@ -34,6 +34,9 @@ arenabench serve                    # -> http://127.0.0.1:8900
 arenabench serve --port 8930 --no-browser
 ```
 
+Loopback only. A `--host` that is reachable from elsewhere is refused unless
+you add `--allow-remote` — see [Security](#security).
+
 Then: **new run → set up from scratch** (or load a template) → pick the
 benchmark → check tasks → seat contestants → **start the match**.
 
@@ -170,13 +173,14 @@ per-contestant rather than global. Values live in the arena process and are
 handed only to that contestant's subprocess — the API returns key *names*,
 never values.
 
-**Seven dimensions, live.**
+**Eight dimensions, live.**
 
 | Dimension | Direction | Why |
 |---|---|---|
 | Solve Rate | higher wins | verifier rewards / trials **judged** |
 | Clock Time | lower wins | wall clock across all trials |
-| Total Cost | lower wins | provider spend |
+| Total Cost | lower wins | every seat's tokens through **one** price table |
+| Self-Reported | neutral | what each agent said it spent, on its own table |
 | Tokens In | lower wins | uncached prompt tokens billed |
 | Tokens Out | lower wins | completion tokens billed |
 | Cache Read | **higher wins** | prompt tokens you did not pay full price for |
@@ -184,6 +188,15 @@ never values.
 
 Cache write crowns nobody on purpose. More writes is not obviously better or
 worse, and a scoreboard that confidently picks a direction there is lying.
+
+Neither does the self-reported column, for a sharper reason. Every agent prices
+its own run from its own table and no meter checks it; on one measured
+head-to-head those tables turned a 2.5x token gap into a reported 7.9x cost
+gap. Subtracting two tables is not a cost difference, so the cost *crown* is
+computed in `pricing.py` from the token counts both agents report accurately,
+run through one table for both seats. A model that table does not cover reports
+no cost rather than a guessed one — a plausible wrong figure populates a column,
+sorts against the other arm, and crowns a winner on a dimension nobody measured.
 
 **Live transcripts by task.** Click a task and every contestant's transcript
 streams side by side — reasoning, tool calls, results, per-step token and cost
@@ -360,9 +373,28 @@ Two design rules worth knowing if you extend it:
 
 ## Security
 
-The arena binds to loopback and should stay there. It holds provider
-credentials in memory and can spawn runs that spend real money; anyone who can
-reach the port can do both. There is no authentication — this is a local tool.
+This is a local tool and there is no login. What that buys has to be paid for
+somewhere, so the local-only assumption is enforced rather than assumed:
+
+- **Loopback or an explicit flag.** A non-loopback `--host` is refused unless
+  you also pass `--allow-remote`. The arena holds provider credentials and
+  `POST /api/matches` spawns processes with them; anyone who can reach the port
+  can spend your money, so that has to be a decision rather than a typo.
+- **Only its own address.** Every request must carry a `Host` naming the
+  interface actually bound, and any `Origin` must be this arena or another
+  loopback port (which is what `npm run dev` is). That is what stops a page you
+  are merely *visiting* from driving the arena through your browser — DNS
+  rebinding included, since a name an attacker controls can point at
+  `127.0.0.1` but still arrives as their name.
+- **Writes must be JSON.** An HTML form can send exactly three content types
+  and none of them is `application/json`, so a cross-origin form cannot reach a
+  write route at all.
+- **A seat carries credentials and endpoints, nothing else.** A contestant's
+  pasted `.env` becomes the environment of a subprocess on this machine, so it
+  is screened to names ending in `_API_KEY`, `_AUTH_TOKEN`, `_BASE_URL` and
+  friends. `PATH`, `PYTHONPATH`, `LD_PRELOAD`, `DOCKER_HOST` and `STELLA_BINARY`
+  are ways to make that subprocess run something other than the benchmark, and
+  no contestant needs any of them. Anything dropped is reported on the seat.
 
 ---
 

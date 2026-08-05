@@ -91,7 +91,7 @@ use lifecycle::{step_outcome_label, turn_outcome_payload};
 
 mod confident_zero;
 pub mod lifecycle;
-mod loop_evidence;
+pub mod loop_evidence;
 mod truncation;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;

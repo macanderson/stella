@@ -22,10 +22,23 @@ Two live channels, both Server-Sent Events over a threading HTTP server:
     keeps a byte offset, so a client that connects to a match already an hour
     deep gets the backlog once and then only deltas.
 
-**Binding.** Loopback by default and it should stay that way. Operators paste
-provider credentials into this UI; those never leave the process (the API
-returns key *names* only), but an arena bound to a public interface would let
-anyone on the network launch runs that spend your money.
+**The trust boundary is the loopback interface, and it is enforced rather than
+recommended.** ``POST /api/matches`` starts subprocesses with the operator's
+environment; there is no login, and adding one would not help a tool whose whole
+audience is the person at the keyboard. So three things hold instead:
+
+* the arena binds loopback only, and a non-loopback bind must be asked for
+  explicitly (``--allow-remote``) rather than typed by accident;
+* every request must carry a ``Host`` naming the interface actually bound, and
+  any ``Origin`` must be this arena or another loopback port (the dev client) —
+  which is what stops a page you are merely *visiting* from driving the arena
+  through your browser, DNS rebinding included;
+* a write must be ``application/json``, a content type no cross-origin HTML
+  form can produce, so a form post cannot reach a route at all.
+
+A seat's pasted environment is screened before it is handed to a subprocess
+(:func:`~.model.screen_env`) — credentials and endpoints, nothing that redirects
+what gets executed.
 """
 
 from __future__ import annotations
@@ -69,6 +82,48 @@ TRANSCRIPT_INTERVAL_S = 0.25
 #: Keep-alive comment cadence, so proxies and browsers do not reap an idle
 #: stream during a long model call that emits nothing.
 HEARTBEAT_S = 15.0
+
+#: Hostnames that mean "this machine, over the loopback interface".
+LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+
+
+def is_loopback(host: str) -> bool:
+    return host.strip().lower() in LOOPBACK_HOSTS
+
+
+def allowed_hosts(host: str, port: int) -> frozenset[str]:
+    """Every ``Host`` header value that names the loopback arena.
+
+    A request whose ``Host`` is anything else is not addressed to this arena.
+    That is the check that costs an attacker DNS rebinding: a name they control
+    can be pointed at ``127.0.0.1``, but it still arrives as their name.
+    """
+    names = set(LOOPBACK_HOSTS)
+    names.add(host)
+    entries = {f"{name}:{port}" for name in names if name}
+    if port == 80:  # a browser omits the default port entirely
+        entries |= {name for name in names if name}
+    return frozenset(entries)
+
+
+def origin_allowed(origin: str, host: str, *, loopback_bound: bool) -> bool:
+    """Whether a request carrying this ``Origin`` may act on the arena.
+
+    Its own origin, always. On a loopback bind, any other loopback port too —
+    which is what the dev client is: ``next dev`` serves the UI on ``:3900`` and
+    proxies ``/api`` here, forwarding its own ``Origin`` as it goes.
+
+    That concession costs nothing a loopback bind had not already conceded.
+    These two headers constrain a *browser* and nothing else: a process on this
+    machine writes whatever it likes into both, so no header check was ever
+    going to stop one. What they do stop is the case they exist for — a page on
+    the internet, or a name an attacker rebound to ``127.0.0.1``, driving the
+    arena through the browser of the person who is already logged in to it.
+    """
+    parsed = urlparse(origin)
+    if parsed.netloc == host:
+        return True
+    return loopback_bound and is_loopback(parsed.hostname or "")
 
 
 class ArenaServer:
@@ -305,7 +360,14 @@ class ArenaServer:
 # --------------------------------------------------------------------------
 
 
-def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
+def _handler_factory(
+    arena: ArenaServer, hosts: frozenset[str] | None = None
+) -> type[BaseHTTPRequestHandler]:
+    """Build the request handler. ``hosts`` of ``None`` skips the Host allowlist,
+    which is what an explicitly remote bind asks for — the same-origin rule below
+    still holds, because it compares ``Origin`` against whatever ``Host`` the
+    client itself sent."""
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "ArenaBench"
         protocol_version = "HTTP/1.1"
@@ -336,6 +398,43 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
 
         def _error(self, status: int, message: str) -> None:
             self._json({"error": message}, status=status)
+
+        def _permitted(self, *, write: bool) -> bool:
+            """Whether this request is one the local operator actually made.
+
+            There is no session to check, so the question is answered from the
+            two headers a browser sets and a page cannot forge: the ``Host`` it
+            resolved and the ``Origin`` it is running on. A write additionally
+            has to be JSON — HTML forms can only send three content types, none
+            of them this one, so the shape of the request is itself the proof
+            that something other than a cross-origin form sent it.
+            """
+
+            def refuse(status: int, message: str) -> bool:
+                # Nothing has read the request body at this point, so the
+                # connection cannot be reused: the unread bytes would be parsed
+                # as the next request on it.
+                self.close_connection = True
+                self._error(status, message)
+                return False
+
+            host = self.headers.get("Host", "")
+            if hosts is not None and host not in hosts:
+                return refuse(
+                    HTTPStatus.FORBIDDEN,
+                    "this arena answers only to its own loopback address",
+                )
+            origin = self.headers.get("Origin")
+            if origin and not origin_allowed(origin, host, loopback_bound=hosts is not None):
+                return refuse(HTTPStatus.FORBIDDEN, "cross-origin requests are refused")
+            if write:
+                ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    return refuse(
+                        HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                        "writes must be application/json",
+                    )
+            return True
 
         def _sse(self, events: Callable[[], Iterator[tuple[str, Any]]]) -> None:
             self.send_response(200)
@@ -431,6 +530,8 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
         # -- routing ------------------------------------------------------
 
         def do_GET(self) -> None:
+            if not self._permitted(write=False):
+                return
             parsed = urlparse(self.path)
             parts = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
             try:
@@ -498,6 +599,8 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
                     self._error(HTTPStatus.NOT_FOUND, "unknown endpoint")
 
         def do_POST(self) -> None:
+            if not self._permitted(write=True):
+                return
             parsed = urlparse(self.path)
             parts = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
             length = int(self.headers.get("Content-Length") or 0)
@@ -542,19 +645,35 @@ def serve(
     port: int = 8900,
     registry: Registry | None = None,
     open_browser: bool = False,
+    allow_remote: bool = False,
 ) -> None:
-    """Run the arena until interrupted."""
+    """Run the arena until interrupted.
+
+    Raises :class:`ValueError` on a non-loopback ``host`` unless ``allow_remote``
+    says the operator meant it. Refusing rather than warning is the point: the
+    warning was printed after the socket was already open, to a terminal nobody
+    reads twice, on the one decision that hands strangers a shell's worth of
+    credentials.
+    """
+    local = is_loopback(host)
+    if not local and not allow_remote:
+        raise ValueError(
+            f"refusing to bind {host!r}: anyone who can reach that interface could "
+            "launch runs with your provider credentials. Pass --allow-remote if "
+            "that is genuinely what you want."
+        )
     arena = ArenaServer(workspace, registry)
-    handler = _handler_factory(arena)
+    handler = _handler_factory(arena, allowed_hosts(host, port) if local else None)
     httpd = ThreadingHTTPServer((host, port), handler)
     httpd.daemon_threads = True
     url = f"http://{host}:{port}/"
     print(f"\n  arenabench  ->  {url}")
     print(f"  workspace   ->  {workspace}")
-    if host not in ("127.0.0.1", "localhost", "::1"):
+    if not local:
         print(
-            "\n  WARNING: bound to a non-loopback interface. Anyone who can reach\n"
-            "  this port can launch runs that spend your provider credits.\n"
+            "\n  WARNING: bound to a non-loopback interface with the local-only\n"
+            "  guard lifted. Anyone who can reach this port can launch runs that\n"
+            "  spend your provider credits.\n"
         )
     print("  ctrl-c to stop\n")
     if open_browser:

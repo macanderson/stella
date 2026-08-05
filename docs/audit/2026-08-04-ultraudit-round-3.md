@@ -129,9 +129,16 @@ the evidence that produced it.
 7. **The exported wire contract omits `ScopeReviewResultIn`**
    (`schema_export.rs:84`), so a host is told to expect a `scope_review_request`
    frame and given no type for the answer.
-8. **Two hand-maintained pricing tables disagree ~25%** on the same model,
-   citing the same source on the same day (`arenabench/pricing.py:73` vs
-   `bench/terminal_bench_analysis/normalized_cost.py:125`).
+8. **A first-party z.ai seat is billed at OpenRouter's gateway rate**
+   (`arenabench/pricing.py::_normalise`). This one is worth reading as a
+   correction: the finding was reported as "two pricing tables disagree by
+   25%", and that was wrong. `catalog.rs` carries both rates keyed by route,
+   and the gap is the gateway markup — `normalized_cost.py` was simply
+   mislabelled, and is fixed. What survives is narrower and harder: prefix
+   stripping collapses both routes to one key, so the direct seat pays the
+   gateway rate. Two reviewers reached opposite conclusions about the fix
+   (#1498), because route-keyed pricing would bill two seats hitting one
+   endpoint differently inside a single match.
 9. **`ReasoningPosture::Controllable` conflates "honoured exactly" with
    "silently downgraded"** (`provider_parity.rs:163`). Four of seven Controllable
    rows collapse effort tiers, while the notice that would warn the user fires
@@ -170,6 +177,24 @@ the honest signal in this table. Agents that read the store's migration and
 prune paths scored it very differently from agents that read its telemetry and
 export paths, and that disagreement is itself a finding: the crate does not
 have one standard of care.
+
+## What a discovery-only round gets wrong
+
+Three findings were materially wrong in ways the missing refutation round exists
+to catch, and all three were caught instead by the agent sent to fix them. That
+is a small sample with an obvious lesson about the value of the phase that did
+not run.
+
+- The pricing "disagreement" above was a mislabel, not a disagreement.
+- "`normalized_cost.py` has zero non-test callers" was false:
+  `bench/telemetry_store/ingest.py` loads it by path and fills
+  `trials.cost_usd_norm` from it.
+- The recommended fix for the `start_process` availability finding in round 2
+  was rejected on its merits and replaced with a better mechanism — a group
+  policy layer — with the reasoning written down.
+
+A finding that names a `file:line` and describes a mechanism is still worth
+acting on. A finding that names a *conclusion* deserves the second model.
 
 ## How to finish this round
 

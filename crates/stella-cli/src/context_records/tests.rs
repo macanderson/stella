@@ -368,3 +368,60 @@ fn the_published_path_maps_back_to_its_lineage() {
     );
     assert_eq!(lineage_from_published_path("not-a-record").as_deref(), None);
 }
+
+/// One enforcement grant, with the chain fields left for `next_line` to stamp.
+fn grant(lineage: &str, reason: &str) -> stella_core::records::promotion::PromotionEvent {
+    stella_core::records::promotion::PromotionEvent {
+        seq: 0,
+        prev: String::new(),
+        at: "2026-08-04T09:00:00Z".into(),
+        lineage_id: lineage.into(),
+        from: "advisory".into(),
+        to: "blocking".into(),
+        approver: "mac".into(),
+        proposer: None,
+        reason: reason.into(),
+        mode: "solo".into(),
+    }
+}
+
+/// The promotion ledger is the repository-visible, hash-chained artifact the
+/// enforcement grants live in, so its append is a durable replacement, not a
+/// truncate in place — and nothing the replacement needs may land in the
+/// directory a reviewer reads.
+#[test]
+fn appending_a_promotion_extends_the_chain_and_leaves_the_reviewed_dir_clean() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(
+        append_promotion(root.path(), grant("ctx.acme.web.a", "first grant")).unwrap(),
+        1
+    );
+    assert_eq!(
+        append_promotion(root.path(), grant("ctx.acme.web.b", "second grant")).unwrap(),
+        2
+    );
+
+    let events = read_promotions(root.path()).expect("the chain still verifies");
+    assert_eq!(events.len(), 2, "the second append kept the first event");
+    let (_, text) = promotion_ledger_text(root.path());
+    assert_eq!(
+        events[1].prev,
+        stella_core::records::promotion::line_digest(text.lines().next().unwrap()),
+        "the second event links to the exact bytes of the first"
+    );
+
+    let mut listed: Vec<String> = std::fs::read_dir(root.path().join(RULES_DIR))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec!["promotions.jsonl".to_string()],
+        "no temp file from the replacement, and no lock file, in the reviewed directory"
+    );
+    assert!(
+        root.path().join(PROMOTION_LOCK).exists(),
+        "the lock lives under the gitignored private dir instead"
+    );
+}

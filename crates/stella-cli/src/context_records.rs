@@ -65,6 +65,15 @@ pub(crate) const PROMOTION_LEDGER: &str = ".stella/rules/promotions.jsonl";
 /// reason: which tier applies is itself reviewed policy.
 pub(crate) const GOVERNANCE_FILE: &str = ".stella/rules/governance.toml";
 
+/// Where the promotion ledger's read-verify-append is serialized.
+///
+/// Under `.stella/private/` — a lock is a local artifact of one machine's
+/// concurrency, not a governance record, and it is gitignored there so it
+/// never reaches a review. And a *separate* file rather than the ledger
+/// itself, because a durable write replaces the target's inode: a lock held
+/// on the ledger would be dropped by the very rename it exists to guard.
+const PROMOTION_LOCK: &str = ".stella/private/promotions.lock";
+
 /// Read the governance settings; absent file = solo defaults (§5.1).
 pub(crate) fn read_governance(root: &Path) -> stella_core::records::promotion::Governance {
     let path = root.join(GOVERNANCE_FILE);
@@ -115,10 +124,28 @@ pub(crate) fn read_promotions(
 }
 
 /// Append one promotion event, stamping seq + prev from the verified tail.
+///
+/// The ledger is a hash chain, so every append is a read-verify-write over the
+/// whole file, and both halves of that need protecting:
+///
+/// - **The write is durable** ([`stella_store::durable`], #617) — temp +
+///   fsync + rename + fsync of the directory. A truncate-in-place would put a
+///   window between "the old chain is gone" and "the new one is on disk", and
+///   a crash inside it leaves the repository holding a governance artifact
+///   that no longer verifies and whose grants nobody can reconstruct.
+///   `preserving_mode` because the file lives in the user's tree and is
+///   committed like any other reviewed file.
+/// - **The whole sequence is serialized** ([`PROMOTION_LOCK`]). Atomicity of
+///   the replacement is not serialization: two promotions racing would each
+///   read the same tail, stamp the same `seq` against the same `prev`, and
+///   the second rename would drop the first grant with the chain still
+///   verifying perfectly — a silent loss, which is the one failure mode a
+///   reviewable ledger must not have.
 pub(crate) fn append_promotion(
     root: &Path,
     event: stella_core::records::promotion::PromotionEvent,
 ) -> Result<u64, String> {
+    let _lock = promotion_lock(root)?;
     let (path, text) = promotion_ledger_text(root);
     let line = stella_core::records::promotion::next_line(&text, event).map_err(|violation| {
         format!(
@@ -135,11 +162,36 @@ pub(crate) fn append_promotion(
     let mut appended = text;
     appended.push_str(&line);
     appended.push('\n');
-    std::fs::write(&path, &appended)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    stella_store::durable::write_atomic_preserving_mode(
+        &path,
+        appended.as_bytes(),
+        stella_store::durable::MODE_SHARED,
+    )
+    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     let events = stella_core::records::promotion::parse_and_verify(&appended)
         .map_err(|violation| format!("ledger invalid after append: {}", violation.reason))?;
     Ok(stella_core::records::promotion::policy_version(&events))
+}
+
+/// Take the promotion ledger's mutation lock, held for as long as the
+/// returned handle lives. Advisory, so it binds every writer that goes
+/// through [`append_promotion`] — which is all of them.
+fn promotion_lock(root: &Path) -> Result<std::fs::File, String> {
+    let path = root.join(PROMOTION_LOCK);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
+    Ok(file)
 }
 
 /// Now, as every ledger here stores it.

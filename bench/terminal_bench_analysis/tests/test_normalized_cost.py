@@ -119,12 +119,10 @@ def test_the_introductory_rate_applies_before_it_lapses_and_not_after():
 
 
 def test_cache_reads_bill_at_a_tenth_of_input_on_both_sonnet_rates():
-    cached = dict(
-        n_input_tokens=1_000_000, n_cache_tokens=1_000_000, n_output_tokens=0
+    cached = dict(n_input_tokens=1_000_000, n_cache_tokens=1_000_000, n_output_tokens=0)
+    assert normalized_cost_usd("claude-sonnet-5", on=INTRO, **cached) == pytest.approx(
+        0.20
     )
-    assert normalized_cost_usd(
-        "claude-sonnet-5", on=INTRO, **cached
-    ) == pytest.approx(0.20)
     assert normalized_cost_usd(
         "claude-sonnet-5", on=STANDARD, **cached
     ) == pytest.approx(0.30)
@@ -150,7 +148,30 @@ def test_an_unchanged_rate_needs_no_date():
         n_input_tokens=1_000_000,
         n_cache_tokens=0,
         n_output_tokens=0,
-    ) == pytest.approx(0.60)
+    ) == pytest.approx(0.76)
+
+
+def test_the_studys_pinned_worker_is_priced():
+    """The confirmatory run is pinned to `openrouter/z-ai/glm-5.1`. A table
+    with no row for it leaves every trial of the actual study unpriced, which
+    is indistinguishable from the table not being applied at all."""
+    assert normalized_cost_usd(
+        "openrouter/z-ai/glm-5.1",
+        n_input_tokens=1_000_000,
+        n_cache_tokens=0,
+        n_output_tokens=0,
+    ) == pytest.approx(0.966)
+
+
+def test_the_gateway_route_is_priced_apart_from_the_first_party_one():
+    """`z-ai/glm-5.2` is the OpenRouter route and `zai/glm-5.2` is z.ai
+    direct. They bill differently, so one row for both would misprice
+    whichever arm took the other route."""
+    counts = dict(n_input_tokens=1_000_000, n_cache_tokens=0, n_output_tokens=0)
+    gateway = normalized_cost_usd("openrouter/z-ai/glm-5.2", **counts)
+    first_party = normalized_cost_usd("zai/glm-5.2", **counts)
+    assert gateway == pytest.approx(0.76)
+    assert first_party == pytest.approx(0.60)
 
 
 def test_price_windows_tile_without_gaps_or_overlaps():
@@ -159,9 +180,7 @@ def test_price_windows_tile_without_gaps_or_overlaps():
     that only shows up as a missing column months later."""
     for slug, rates in PRICE_TABLE.items():
         assert rates, slug
-        ordered = sorted(
-            rates, key=lambda r: r.effective_from or date.min
-        )
+        ordered = sorted(rates, key=lambda r: r.effective_from or date.min)
         assert ordered[0].effective_from is None, (
             f"{slug}: the earliest rate must be open-started, or runs before it "
             f"silently become unpriced"
@@ -209,7 +228,7 @@ def test_a_cache_count_exceeding_the_input_count_never_goes_negative():
         n_cache_tokens=5_000,
         n_output_tokens=1_000_000,
     )
-    assert cost == pytest.approx(2.20 + 5_000 * 0.11 / 1_000_000)
+    assert cost == pytest.approx(2.42 + 5_000 * 0.14 / 1_000_000)
 
 
 def test_the_self_report_is_kept_beside_the_normalized_figure():
@@ -245,8 +264,9 @@ def test_normalize_trial_agrees_across_arms_on_the_same_day():
     comparator = normalize_trial(trial, "claude-sonnet-5", on=INTRO)
     assert stella["normalized_cost_usd"] == comparator["normalized_cost_usd"]
     assert stella["normalized_cost_model"] == comparator["normalized_cost_model"]
-    assert stella["normalized_cost_rate_source"] == (
-        comparator["normalized_cost_rate_source"]
+    assert (
+        stella["normalized_cost_rate_source"]
+        == (comparator["normalized_cost_rate_source"])
     )
 
 
@@ -259,7 +279,7 @@ def test_a_custom_table_overrides_without_mutating_the_shipped_one():
         n_output_tokens=0,
         table=custom,
     ) == pytest.approx(1.0)
-    assert PRICE_TABLE["z-ai/glm-5.2"][0].price.input_per_m == pytest.approx(0.60)
+    assert PRICE_TABLE["z-ai/glm-5.2"][0].price.input_per_m == pytest.approx(0.76)
 
 
 def test_a_run_before_every_recorded_rate_is_unpriced_not_free():

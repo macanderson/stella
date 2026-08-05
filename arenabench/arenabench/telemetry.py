@@ -485,6 +485,12 @@ def leaders(
     seat that has not spent a token "leads" cost, tokens and clock time, and
     crowning it would make the scoreboard actively misleading for the first
     several minutes of every match.
+
+    A dimension a contestant has **no number** for excludes only that
+    contestant, and only there. ``priced_cost`` is ``None`` for a seat on an
+    unpriced model, and reading that as zero would hand it the cost crown for
+    the one reason nobody would accept: that nobody knows what it spent. If no
+    seat has a number, the dimension crowns nobody at all.
     """
     eligible = {
         name: totals
@@ -500,7 +506,10 @@ def leaders(
         best: float | None = None
         winners: list[str] = []
         for name, totals in eligible.items():
-            value = float(totals.get(dimension.key) or 0.0)
+            raw = totals.get(dimension.key)
+            if raw is None:
+                continue
+            value = float(raw)
             if best is None or dimension.better(value, best):
                 best, winners = value, [name]
             elif value == best:
