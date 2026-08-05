@@ -67,6 +67,12 @@ impl<'a> Pipeline<'a> {
             None => messages,
         };
         let engine = &self.config.engine;
+        // The real pre-call estimate, not 0: this pairs with the provider's
+        // reported usage on `StepUsage` as an estimator drift sample, and a
+        // hardcoded zero recorded "estimated 0, actual N" against every
+        // management call — poisoning calibration and hiding a 10k-token
+        // verifier prompt from anything reading the estimate.
+        let estimated_input_tokens = stella_core::estimator::estimate_conversation_tokens(&messages);
         let req = CompletionRequest {
             messages,
             max_output_tokens: overrides.max_output_tokens.or(engine.max_output_tokens),
@@ -84,7 +90,7 @@ impl<'a> Pipeline<'a> {
                 request: req,
                 retry_policy: policy,
                 timeout,
-                estimated_input_tokens: 0,
+                estimated_input_tokens,
                 // Management roles assemble their own prompts — the role's task
                 // prompt, an optional settings-supplied system override, and a
                 // rendered transcript that exists nowhere else. This receipt is

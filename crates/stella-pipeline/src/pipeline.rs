@@ -922,6 +922,9 @@ pub struct Pipeline<'a> {
     /// Whether the verifier's same-family degradation caveat (L-M8) has been
     /// surfaced this run — see [`Pipeline::warn_verifier_caveat`].
     verifier_caveat_warned: AtomicBool,
+    /// Whether a verdict's silent degradation to the deterministic heuristic
+    /// has been surfaced this run — see [`Pipeline::warn_verifier_fallback`].
+    verifier_fallback_warned: AtomicBool,
     /// Whether more than one candidate is currently writing to [`Self::events`]
     /// — set for the duration of a concurrent best-of-N fan-out and false
     /// everywhere else.
@@ -972,6 +975,7 @@ impl<'a> Pipeline<'a> {
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
             verifier_caveat_warned: AtomicBool::new(false),
+            verifier_fallback_warned: AtomicBool::new(false),
             shared_event_lane: AtomicBool::new(false),
         }
     }
@@ -1081,10 +1085,33 @@ impl<'a> Pipeline<'a> {
             .test_command
             .as_deref()
             .filter(|_| !assessment.conversational && task_class.verifies_unconditionally());
+        // The authored-witness decision, taken HERE — before the user message
+        // is assembled — so a run with no oracle and no independent author
+        // can tell the worker up front that its own failing test is the only
+        // deterministic evidence the run will carry (test-first is cheap
+        // exactly at the start and unaffordable after the diff exists). The
+        // conjunction short-circuits in the same order it did at the
+        // single-shot/best-of-N split below, so `can_author…` — which
+        // announces the degradation — is still never consulted for a turn
+        // that would not have authored a witness anyway.
+        let authored_witness = !assessment.conversational
+            && self.config.test_command.is_none()
+            && self.config.witness_writer
+            && assessment.wants_witness()
+            && task_class.verifies_unconditionally()
+            && self.can_author_independent_witness();
+        let contract = match verified_by {
+            Some(command) => VerificationContract::Oracle(command),
+            None if !assessment.conversational
+                && task_class.verifies_unconditionally()
+                && !authored_witness =>
+            {
+                VerificationContract::WorkerTestFirst
+            }
+            None => VerificationContract::None,
+        };
         messages.push(CompletionMessage::user(assemble_user_message(
-            goal,
-            &frames,
-            verified_by,
+            goal, &frames, contract,
         )));
 
         // --- Conversational fast path. -------------------------------------
@@ -1120,17 +1147,14 @@ impl<'a> Pipeline<'a> {
         // --- 5. Witness + execute + verify (single-shot or best-of-N). ------
         let n = self.config.candidate_count();
         let base_messages = messages.clone();
-        // Decided here, before the single-shot/best-of-N split, because an
-        // authored witness is the *only* reason a single candidate needs
-        // disposable isolation. Resolving independence later would commit the
-        // run to snapshot machinery it then discovers it cannot use — and
-        // candidate isolation requires a git working tree, so on a plain
-        // directory that is a hard failure rather than an unused cost.
-        let authored_witness = self.config.test_command.is_none()
-            && self.config.witness_writer
-            && assessment.wants_witness()
-            && task_class.verifies_unconditionally()
-            && self.can_author_independent_witness();
+        // Decided above, before the user message was assembled (the worker's
+        // test-first contract keys off it) and before this single-shot/
+        // best-of-N split, because an authored witness is the *only* reason a
+        // single candidate needs disposable isolation. Resolving independence
+        // later would commit the run to snapshot machinery it then discovers
+        // it cannot use — and candidate isolation requires a git working
+        // tree, so on a plain directory that is a hard failure rather than an
+        // unused cost.
         // The third reason a single candidate needs isolation: the operator
         // asked for this run's work to happen in a worktree rather than in
         // their checkout. Resolved here, beside the other two, so all three
@@ -3420,8 +3444,20 @@ impl<'a> Pipeline<'a> {
             // left the rail's witness row with no statement, so it fell
             // through to the backstop's "not reported" when the real answer
             // was known all along and worth naming.
+            //
+            // The message names the degradation AND the way out: a same-model
+            // posture is legitimate (an auto-routing gateway can serve
+            // distinct upstream models behind one id, and this run keeps
+            // going either way), but the operator must hear that the flip
+            // oracle cannot arm and what config change restores it.
             WitnessAuthorIndependence::Unavailable(reason) => {
-                self.unproven(reason);
+                self.unproven(format!(
+                    "{reason}; verification is degraded — the deterministic \
+                     flip oracle cannot arm, so the verdict is a model review \
+                     with no independent test. Set `pipeline_verifier_model` \
+                     (or `agents.verifier.model`) to a model distinct from \
+                     the worker to restore independent verification"
+                ));
                 false
             }
             // A worker that won't resolve fails later, on its own terms —
@@ -3618,12 +3654,27 @@ fn bound_recalled_frames(frames: Vec<RecalledFrame>) -> Vec<RecalledFrame> {
     out
 }
 
+/// What the worker's user message says about how this run will be verified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerificationContract<'a> {
+    /// An operator-configured oracle: disclose the command.
+    Oracle(&'a str),
+    /// No oracle and no independent witness author: the worker's own failing
+    /// test, written first, is the only deterministic evidence the run will
+    /// carry — say so on the channel the worker plans from.
+    WorkerTestFirst,
+    /// Nothing to add: a conversational turn, a class that never verifies, or
+    /// an authored witness that will supply the oracle post-execution (its
+    /// disclosure stays governed by the airlock).
+    None,
+}
+
 fn assemble_user_message(
     goal: &str,
     frames: &[RecalledFrame],
-    verified_by: Option<&str>,
+    contract: VerificationContract<'_>,
 ) -> String {
-    if frames.is_empty() && verified_by.is_none() {
+    if frames.is_empty() && contract == VerificationContract::None {
         return goal.to_string();
     }
     let mut s = String::new();
@@ -3655,14 +3706,27 @@ fn assemble_user_message(
     // operator-CONFIGURED command is ever disclosed here: an authored
     // witness's command does not exist yet at assembly time, and its
     // disclosure stays governed by the airlock (`crate::witness::airlock`).
-    if let Some(command) = verified_by {
-        s.push_str("\n\n## Verification\n");
-        s.push_str(&format!(
-            "This run's primary verification is `{command}`: the accepted deterministic \
-             evidence is this command failing before your change and passing after it. \
-             Reproduce the failure with it before editing; make it pass before finishing. \
-             Do not modify the tests it runs."
-        ));
+    match contract {
+        VerificationContract::Oracle(command) => {
+            s.push_str("\n\n## Verification\n");
+            s.push_str(&format!(
+                "This run's primary verification is `{command}`: the accepted deterministic \
+                 evidence is this command failing before your change and passing after it. \
+                 Reproduce the failure with it before editing; make it pass before finishing. \
+                 Do not modify the tests it runs."
+            ));
+        }
+        VerificationContract::WorkerTestFirst => {
+            s.push_str("\n\n## Verification\n");
+            s.push_str(
+                "No test command is configured for this run and no independent test author \
+                 is available: nothing outside your own work will check this change. Before \
+                 implementing, write the failing test that captures this task and run it to \
+                 watch it fail; make it pass before finishing. That test is the only \
+                 deterministic evidence this run will carry.",
+            );
+        }
+        VerificationContract::None => {}
     }
     s
 }

@@ -79,7 +79,13 @@ impl<'a> Pipeline<'a> {
         let resolved = match self.resolve_provider(Role::Verifier) {
             Ok(r) => r,
             // Verifier unresolvable → conservative heuristic verdict (L-E11).
-            Err(_) => return Ok(heuristic_fallback(inputs)),
+            Err(_) => {
+                self.warn_verifier_fallback(
+                    "the verifier role is unresolvable (no routable provider); check the \
+                     `pipeline_verifier_model` provider and its credential",
+                );
+                return Ok(heuristic_fallback(inputs));
+            }
         };
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
@@ -104,13 +110,20 @@ impl<'a> Pipeline<'a> {
             )
             .await
         {
-            Ok(result) => {
-                let verdict = parse_verifier_response(&result.text)
-                    .unwrap_or_else(|| heuristic_fallback(inputs));
-                Ok(verdict)
-            }
+            Ok(result) => match parse_verifier_response(&result.text) {
+                Some(verdict) => Ok(verdict),
+                None => {
+                    self.warn_verifier_fallback(
+                        "the verifier's response did not follow the verdict protocol",
+                    );
+                    Ok(heuristic_fallback(inputs))
+                }
+            },
             Err(RawCallError::Budget(abort)) => Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => Ok(heuristic_fallback(inputs)),
+            Err(RawCallError::Provider | RawCallError::Timeout) => {
+                self.warn_verifier_fallback("the verifier call failed or timed out");
+                Ok(heuristic_fallback(inputs))
+            }
         }
     }
 
@@ -128,6 +141,22 @@ impl<'a> Pipeline<'a> {
             && !self.verifier_caveat_warned.swap(true, Ordering::Relaxed)
         {
             self.warn(caveat.clone());
+        }
+    }
+
+    /// Surface a verdict's degradation to the deterministic heuristic — once
+    /// per run, like the caveat above, because the escalation loop can hit
+    /// the same dead verifier several times and the transcript needs the fact,
+    /// not an echo. The ladder rung (`HeuristicFallback`) records *that* it
+    /// happened on every round either way; this is the prose account of *why*,
+    /// which used to be silent (a configured-on pipeline must never degrade
+    /// without saying so and naming a way out).
+    fn warn_verifier_fallback(&self, why: &str) {
+        if !self.verifier_fallback_warned.swap(true, Ordering::Relaxed) {
+            self.warn(format!(
+                "the verifier could not render a model verdict — {why}; this round's verdict \
+                 falls back to a deterministic heuristic"
+            ));
         }
     }
 }

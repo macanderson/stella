@@ -613,6 +613,9 @@ pub(crate) fn resolve_engine_wiring(
         notices: Vec::new(),
     };
     let Some(engine) = cfg.engine_settings.clone() else {
+        // No engine settings at all is the stock posture — and the most
+        // common same-model one: every role rides the session default.
+        push_same_model_notice(&mut wiring, None);
         return wiring;
     };
 
@@ -739,9 +742,10 @@ pub(crate) fn resolve_engine_wiring(
         (Role::Verifier, "verifier", verifier_spec),
     ];
 
+    let mut verifier_pin: Option<ModelRef> = None;
     for (role, label, spec) in role_specs {
         let Some(spec) = spec else { continue };
-        pin_role(
+        let pinned = pin_role(
             &mut wiring,
             &[role],
             label,
@@ -750,8 +754,40 @@ pub(crate) fn resolve_engine_wiring(
             configured,
             "rides the worker",
         );
+        if matches!(role, Role::Verifier) {
+            verifier_pin = pinned;
+        }
     }
+
+    push_same_model_notice(&mut wiring, verifier_pin.as_ref());
     wiring
+}
+
+/// The same-model degradation, named at wiring time — before a token is
+/// spent — instead of discovered mid-run. A same-model posture is
+/// legitimate and the pipeline runs regardless (an auto-routing gateway
+/// can serve distinct upstream models behind one id, and refusing would
+/// punish exactly that setup); what the operator is owed is the fact, the
+/// consequence, and the way out. Only claimed when it is *certain*: an
+/// explicit verifier pin equal to the worker, or an unpinned verifier with
+/// no other provider profile the router could cross to. The ambiguous
+/// multi-profile case is left to the pipeline's own run-time independence
+/// check, which resolves through the real router and announces itself via
+/// `unproven`.
+fn push_same_model_notice(wiring: &mut EngineWiring, verifier_pin: Option<&ModelRef>) {
+    let verifier_is_worker = match verifier_pin {
+        Some(pin) => *pin == wiring.worker_model,
+        None => wiring.profiles.len() == 1,
+    };
+    if verifier_is_worker {
+        let model = &wiring.worker_model;
+        wiring.notices.push(format!(
+            "verifier and worker are both `{model}` — verification is degraded for `{model}`: \
+             no independent witness author, and verdicts are the same model reviewing its own \
+             work. The pipeline still runs; set `pipeline_verifier_model` (or \
+             `agents.verifier.model`) to a different model to restore independent verification"
+        ));
+    }
 }
 
 /// Maps each pinned [`ModelRef`] to its adapter: the primary (worker)
