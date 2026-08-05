@@ -136,10 +136,16 @@ pub mod supervised {
     pub const STDIN: &str = "stdin";
     /// The advisory lock the child holds open for its whole life.
     ///
-    /// The kernel releases it when the process dies — crash, `SIGKILL` and
-    /// power loss included — so "is the lock free?" answers "is this run
+    /// The kernel releases it when the last holder dies — crash, `SIGKILL`
+    /// and power loss included — so "is the lock free?" answers "is this run
     /// over?" without trusting a pid. See [`super::SupervisorInfo::pgid`] for
     /// why that distinction is load-bearing rather than fastidious.
+    ///
+    /// *Last holder*, not *the process*: a `flock` belongs to an open file
+    /// description, and `fork`+`exec` inherits one. Keeping the answer equal
+    /// to "is the run over?" is therefore a duty of whoever takes the lock —
+    /// they must stop it being inherited further, or a background process the
+    /// run spawned will go on answering yes after the run has ended.
     pub const LOCK: &str = "supervisor.lock";
 }
 
