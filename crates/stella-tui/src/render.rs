@@ -162,84 +162,8 @@ pub(crate) fn render_transcript_window(
         .render(area, buf);
 }
 
-pub(crate) fn render_scope_review(
-    proposal: &stella_protocol::ScopeProposal,
-    answered: bool,
-    area: Rect,
-    buf: &mut Buffer,
-) {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::from(Span::styled(
-        proposal.summary.clone(),
-        Style::new().add_modifier(Modifier::BOLD),
-    )));
-    let cost = proposal
-        .estimated_cost_usd
-        .map(|c| format!("  ·  est. cost ~${c:.2}"))
-        .unwrap_or_default();
-    lines.push(Line::from(Span::styled(
-        format!(
-            "{} steps  ·  ~{} files{cost}",
-            proposal.steps.len(),
-            proposal.estimated_files
-        ),
-        Style::new().fg(theme::TEXT_TERTIARY),
-    )));
-    lines.push(if answered {
-        Line::from(Span::styled(
-            "decision sent — awaiting engine…",
-            Style::new()
-                .fg(theme::TEXT_TERTIARY)
-                .add_modifier(Modifier::ITALIC),
-        ))
-    } else {
-        // Every answer is typed and sent, so the legend reads as what to type
-        // rather than as keys that fire on their own — `[a]` looked like a
-        // one-press command, which is exactly the reading that made a note
-        // opening "also…" approve an eight-step plan. The bracket styling stays
-        // for scannability; the trailing "then ⏎" is the whole contract.
-        //
-        // The typed path is named here because it is now the only way to say
-        // "not like that — do this", and an affordance nobody is told about is
-        // one the next reviewer discovers by having their words routed
-        // somewhere they did not expect.
-        Line::from(vec![
-            Span::styled("type ", Style::new().fg(theme::TEXT_TERTIARY)),
-            Span::styled("a", Style::new().fg(theme::OK).add_modifier(Modifier::BOLD)),
-            Span::styled("pprove  ", Style::new().fg(theme::INK)),
-            Span::styled(
-                "t",
-                Style::new().fg(theme::WARN).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("rim  ", Style::new().fg(theme::INK)),
-            Span::styled(
-                "x",
-                Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("abort", Style::new().fg(theme::INK)),
-            Span::styled(
-                "  ·  or what to change  —  then ⏎",
-                Style::new().fg(theme::TEXT_TERTIARY),
-            ),
-        ])
-    });
-    // Warning, not the accent. This gate is the deck waiting on *you*, and
-    // "needs input" is a warning everywhere else in this UI — including the
-    // `⏸ plan` row this card mirrors in the transcript. Bordering it in the
-    // brand hue made the one card that halts the session read as decoration,
-    // and it was the single largest block of accent on the frame.
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().fg(theme::WARNING_BRIGHT))
-        // The thing being approved is the plan, so that is what the card is
-        // called. `scope` was this surface's word for the same object, and the
-        // rail beside it has already stopped using it.
-        .title(" plan review ");
-    Paragraph::new(Text::from(lines))
-        .block(block)
-        .wrap(Wrap { trim: true })
-        .render(area, buf);
-}
+// The scope gate's renderer is the modal plan-review dialog
+// (`crate::views::scope_dialog`) — the band it replaced lived here.
 
 /// Rows one hunk claims on the card: its header line plus a capped slice of
 /// its diff body. Capped because a card that scrolls off the frame hides the

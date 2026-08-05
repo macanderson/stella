@@ -690,6 +690,12 @@ pub async fn run_deck(
                                         model.queue.remove(*index);
                                     }
                                     WorkspaceInput::QueueClear => model.queue.clear(),
+                                    // `/clear`: a session reset to seq-0 has no
+                                    // backlog — the transcript itself resets on
+                                    // the driver's `Inbound::SessionReset`, so
+                                    // stale in-flight events can never repaint
+                                    // a pane the deck already blanked.
+                                    WorkspaceInput::SessionClear => model.queue.clear(),
                                     _ => {}
                                 }
                                 let _ = submissions.send(input);

@@ -17,24 +17,24 @@
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│Refactor the automations store into a shared workspace package                                                                                                │
-│3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
-│type approve  trim  xabort  ·  or what to change  —┌ plan  pending approval · 3 steps  x skip · esc close ┐                                                   │
-│                                                   │Refactor the automations store into a shared worksp…  │                                                   │
-│                                                   │                                                      │                                                   │
-│                                                   │▸ ○ 1  extract types                                  │                                                   │
-└───────────────────────────────────────────────────│  ○ 2  move hooks                                     │───────────────────────────────────────────────────┘
-┌ transcript · 21 lines · following ────────────────│  ○ 3  update 9 imports                               │───────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                                   │                                                      │           ││Refactor the automations store into a…│
-│● read_file    apps/app/automations/page.tsx       │repo      macanderson/web-app ⎇ feat/automations-store│           ││○ 1 extract types                     │
-│  ⎿ 312 lines                                      │write     packages/automations/** · apps/app/automatio│       42ms││○ 2 move hooks                        │
-│                                                   │read      apps/** · packages/**  (2 globs)            │           ││○ 3 update 9 imports                  │
-│☰  plan  5/7  ·  Workflows canvas                  │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           ││                                      │
-│                                                   │models    think — · work glm-5.2-air · verify —       │           │└────────────────────── /plan reads it ┘
-│⏸ plan  Refactor the automations store into a share│shell     allowlisted                                 │           │┌ DONE VERIFICATION ───────────────────┐
-│                                                   │done when oracle flips red → green                    │           ││● flip ✓ red→green                    │
+└──────────────────────────────────────────┌ plan review ───────────────────────────────────────────────────────────┐──────────────────────────────────────────┘
+┌ transcript · 21 lines · following ───────│Refactor the automations store into a shared workspace package          │──┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│                                          │                                                                        │  ││Refactor the automations store into a…│
+│  Planning the automations cluster: list, │ ○  1. extract types                                                    │  ││○ 1. extract types                    │
+│                                          │ ○  2. m┌ plan  pending approval · 3 steps  x skip · esc close ┐        │  ││○ 2. move hooks                       │
+│☰  plan  4/7  ·  Wire the triggers API    │ ○  3. u│Refactor the automations store into a shared worksp…  │        │  ││○ 3. update 9 imports                 │
+│                                          │        │                                                      │        │  ││                                      │
+│── WITNESS ───────────────────────────────│3 steps │▸ ○ 1. extract types                                  │        │──││                                      │
+│                                          │        │  ○ 2. move hooks                                     │        │  ││                                      │
+│── EXECUTE ───────────────────────────────│a approv│  ○ 3. update 9 imports                               │        │──││                                      │
+│                                          └────────│                                                      │ aborts ┘  ││                                      │
+│● read_file    apps/app/automations/page.tsx       │repo      macanderson/web-app ⎇ feat/automations-store│           │└────────────────────── /plan reads it ┘
+│  ⎿ 312 lines                                      │write     packages/automations/** · apps/app/automatio│       42ms│┌ DONE VERIFICATION ───────────────────┐
+│                                                   │read      apps/** · packages/**  (2 globs)            │           ││○ warrant  pending                    │
+│☰  plan  5/7  ·  Workflows canvas                  │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           ││● witness  authored  apps/app/automat…│
+│                                                   │models    think — · work glm-5.2-air · verify —       │           ││● oracle   ✗ fails on base → ✓ passes…│
+│⏸ plan  Refactor the automations store into a share│shell     allowlisted                                 │           ││○ tamper   pinned  sha256:9f3c1d2e4…  │
+│                                                   │done when oracle flips red → green                    │           ││○ verdict  pending                    │
 └─────────────────────────────────────────── ↑ selec│          (confirmed from evidence, not self-report)  │nd · /plan ┘└──────────────────────────────────────┘
 ────────────────────────────────────────────────────└──────────────────────────────────────────────────────┘────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package

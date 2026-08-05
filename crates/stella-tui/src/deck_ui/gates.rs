@@ -1,12 +1,15 @@
-//! The focused agent's blocking gates: the scope-review card, the per-hunk
+//! The focused agent's blocking gates: the plan-review dialog, the per-hunk
 //! approval card (#1265), and the `ask_user` question.
 //!
 //! All three follow one rule — a pending, unanswered gate owns the user's next
-//! submission. That rule is what makes a card answerable at all: the deck's
+//! submission. That rule is what makes a gate answerable at all: the deck's
 //! driver reads any other mid-turn submission as a *new request* and spawns a
 //! sidecar sub-session for it, so a gate that does not claim the submit chord
 //! watches the reviewer's words go to a different agent while it stays parked.
-//! Split out of `deck_ui.rs` beside `nav`/`create` (#458).
+//! The plan-review gate goes further: it is a modal dialog
+//! ([`crate::views::scope_dialog`]) that owns the whole keyboard, answered
+//! with a single keypress. Split out of `deck_ui.rs` beside `nav`/`create`
+//! (#458).
 
 use super::*;
 
@@ -69,68 +72,77 @@ pub(super) fn handle_focused_gates(
     let composer_empty = ui.composer.buffer().is_empty();
 
     // Scope review, while UNANSWERED — the pending gate clears on the engine's
-    // follow-on event, so the latch is what stops a second submit re-sending the
-    // decision during that round-trip; the card reads "decision sent" until
-    // then and keys type into the composer as usual.
+    // follow-on event, so the latch is what stops a second keypress re-sending
+    // the decision during that round-trip (the dialog drops the moment the
+    // latch is set — see `views::scope_dialog::pending`).
     //
-    // **Only non-text keys act on their own.** `Esc` aborts immediately; every
-    // other answer — `a`, `t`, `x`, `ok`, or a sentence describing a different
-    // scope — is typed into the composer and sent with the submit chord, read by
-    // [`ScopeDecision::from_typed`].
+    // The gate is a **modal dialog** now, answered with a single keypress:
+    // `a` approve · `t` trim · `r` refine (type a note, `⏎` sends it) ·
+    // `x`/Esc abort. Single letters were tried once before and removed,
+    // because the gate then rendered as a *band* while the composer stayed
+    // live underneath — the two surfaces competed for every letter, and a
+    // note opening "also do X" silently approved an eight-step plan. The
+    // dialog resolves that collision structurally instead of by ceremony:
+    // while it is up it owns the keyboard (every unclaimed key is swallowed
+    // here, never typed into the composer), so a letter can only ever mean
+    // what the dialog says it means — the same modality that makes `git`'s
+    // `y/n` and the routing card's `s/n/p` safe. Free-text intent survives as
+    // the `r` note, which is its own input inside the dialog rather than the
+    // composer.
     //
-    // A single unmodified letter used to commit from an empty composer, and that
-    // is wrong for *this* surface. A single-key commit is fine where the prompt
-    // is modal (git's `y/n`, a permission dialog) because nothing else wants the
-    // letter. Here the composer is an unconditional band, always live, and
-    // typing a note is now the advertised way to ask for a different scope — so
-    // the card was competing with the text field for `a`, and losing either way:
-    // a note opening "also do X" silently approved an eight-step plan, while a
-    // reviewer who typed past that first letter had no way to send what they
-    // wrote (it fell through to the driver, which reads a mid-turn prompt as a
-    // *new request* and spawns a sidecar sub-session for it — the gate stayed
-    // parked, the words went to a stranger agent, and the only key still
-    // reaching the card was Esc, which aborts).
-    //
-    // `Esc` keeps acting immediately because it cannot collide with prose, and
-    // because it is the direction that *stops* work rather than starting it.
-    // The one keystroke this costs buys deliberate consent at the one gate whose
-    // whole purpose is deliberate consent.
-    //
-    // Esc is claimed with a *non-empty* composer too, which the letter keys
-    // never are. Otherwise "type a note, change your mind, press Esc" fell past
-    // the gate into the turn-stop chain — and for a pipeline turn that is a hard
-    // cancel, so the same gesture ended the turn cleanly or violently depending
-    // on whether the user had started typing. While a card is up, Esc means one
-    // thing: get out of this card.
+    // `PgUp`/`PgDn` deliberately fall through: they are pure transcript
+    // scroll, and a reviewer reads back for context before deciding — the
+    // same carve-out the hunk card makes. (`!` shell lines, which the typed
+    // flow used to carve out, do not: the composer is unreachable while a
+    // modal owns the keyboard. Abort first, or answer.)
     if entry.model.pending_scope_review.is_some() && !ui.scope_answered.contains(agent) {
-        let decision = match key.code {
-            KeyCode::Esc => Some(ScopeDecision::Abort),
-            // A `!` line is a shell command even while a gate is pending — it
-            // must run immediately, not be read as the decision (same carve-out
-            // as `ask_user`).
-            KeyCode::Enter
-                if classify_enter(&key) == EnterAction::Submit
-                    && !ui.composer.buffer().trim_start().starts_with('!') =>
-            {
-                match ui.composer.take_submission() {
-                    // A *modified* `⏎` is NOT claimed above (`classify_enter`
-                    // answers Newline for it), so a note can span lines
-                    // before a bare `⏎` sends it.
-                    Some(submission) => Some(ScopeDecision::from_typed(&submission.text)),
-                    // An empty submit while a card is pending: force an
-                    // explicit answer rather than sending a blank note.
-                    None => return Some(DeckAction::Ignored),
+        // Note-entry (`r` was pressed): the dialog is a text input until `⏎`
+        // sends the note or Esc returns to the options.
+        if let Some(note) = ui.scope_note.as_mut() {
+            match key.code {
+                KeyCode::Esc => {
+                    ui.scope_note = None;
+                    return Some(DeckAction::Handled);
                 }
+                KeyCode::Enter => {
+                    let note = note.trim().to_string();
+                    // A blank note is not an answer — stay in the input.
+                    if note.is_empty() {
+                        return Some(DeckAction::Ignored);
+                    }
+                    ui.scope_note = None;
+                    ui.scope_answered.insert(agent.clone());
+                    return Some(DeckAction::Send(WorkspaceInput::ToAgent {
+                        agent: agent.clone(),
+                        input: UserInput::ScopeDecision(ScopeDecision::Revise { note }),
+                    }));
+                }
+                KeyCode::Backspace => {
+                    note.pop();
+                    return Some(DeckAction::Handled);
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    note.push(c);
+                    return Some(DeckAction::Handled);
+                }
+                _ => return Some(DeckAction::Handled),
             }
-            _ => None,
-        };
-        // A blank note is not an answer — keep the card up (the composer is
-        // already drained, so this is the "typed only whitespace" case).
-        if let Some(ScopeDecision::Revise { note }) = &decision
-            && note.is_empty()
-        {
-            return Some(DeckAction::Ignored);
         }
+        let decision = match key.code {
+            KeyCode::Char('a') if key.modifiers.is_empty() => Some(ScopeDecision::Approve),
+            KeyCode::Char('t') if key.modifiers.is_empty() => Some(ScopeDecision::Trim),
+            KeyCode::Char('x') if key.modifiers.is_empty() => Some(ScopeDecision::Abort),
+            KeyCode::Esc => Some(ScopeDecision::Abort),
+            KeyCode::Char('r') if key.modifiers.is_empty() => {
+                ui.scope_note = Some(String::new());
+                return Some(DeckAction::Handled);
+            }
+            // Pure scroll stays available — reading back is part of deciding.
+            KeyCode::PageUp | KeyCode::PageDown => None,
+            // Everything else is swallowed: a dialog whose keys leaked into
+            // the composer behind it would be worse than no dialog.
+            _ => return Some(DeckAction::Handled),
+        };
         if let Some(decision) = decision {
             ui.scope_answered.insert(agent.clone());
             return Some(DeckAction::Send(WorkspaceInput::ToAgent {

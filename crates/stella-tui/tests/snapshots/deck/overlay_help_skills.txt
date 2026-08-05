@@ -17,17 +17,17 @@
 │                                             │  e             edit the selected skill                           │                                             │
 │                                             │  p             pin / unpin                                       │                                             │
 │                                             │  n             new skill — drafted by the LLM                    │                                             │
-│                                             │  ctrl-o        preview                                           │                                             │
-│                                             │  ctrl-x ×2     delete (press twice to confirm)                   │                                             │
-│                                             │  type          search skills                                     │                                             │
-│                                             │                                                                  │                                             │
-│                                             │  everywhere                                                      │                                             │
-│                                             │  tab / ⇧tab    switch tabs                                       │                                             │
-│                                             │  ⏎             queue the prompt — mid-turn it runs as its own age│                                             │
-│                                             │  ⌘⏎ / ⌃⏎ / ⌥⏎  insert a line break in the prompt                 │                                             │
-│                                             │  !cmd          run a shell command NOW (skips the queue)         │                                             │
-│                                             │  /             slash commands — ↑↓ pick · tab completes · ⏎ runs │                                             │
-│                                             │  ctrl-v        paste — a copied image is attached to the prompt  │                                             │
+│                                          ┌ p│  ctrl-o        preview                                           │──┐                                          │
+│                                          │Re│  ctrl-x ×2     delete (press twice to confirm)                   │  │                                          │
+│                                          │  │  type          search skills                                     │  │                                          │
+│                                          │ ○│                                                                  │  │                                          │
+│                                          │ ○│  everywhere                                                      │  │                                          │
+│                                          │ ○│  tab / ⇧tab    switch tabs                                       │  │                                          │
+│                                          │  │  ⏎             queue the prompt — mid-turn it runs as its own age│  │                                          │
+│                                          │3 │  ⌘⏎ / ⌃⏎ / ⌥⏎  insert a line break in the prompt                 │  │                                          │
+│                                          │  │  !cmd          run a shell command NOW (skips the queue)         │  │                                          │
+│                                          │a │  /             slash commands — ↑↓ pick · tab completes · ⏎ runs │  │                                          │
+│                                          └──│  ctrl-v        paste — a copied image is attached to the prompt  │s ┘                                          │
 │                                             │  ctrl-t        open the queue editor                             │                                             │
 │                                             │  ctrl-s        STATE — the approved scope's steps, the task board│                                             │
 │                                             │  >text         steer the running turn — lands at the next step bo│                                             │
