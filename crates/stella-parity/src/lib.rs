@@ -38,7 +38,7 @@
 //!
 //! The embedding story this matrix serves — what "the API surface ships with
 //! parity" means for hosts dropping Stella into their own applications — is
-//! `docs/design/engine-embedding.md`.
+//! `docs/spec/engine-embedding.md`.
 
 /// How one capability ships on one surface.
 #[derive(Debug)]

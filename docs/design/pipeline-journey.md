@@ -387,4 +387,4 @@ ceilings, scope thresholds, headless behavior, `test_command`,
 verification half's design history and remaining work are tracked in
 [`ROADMAP.md`](../ROADMAP.md); every decision and its spend is pinned by the
 per-PR degradation gate (`crates/stella-pipeline/src/pipeline/tests/degradation_gate.rs`,
-`docs/design/verification-gate.md`).
+`docs/spec/verification-gate.md`).

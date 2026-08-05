@@ -1,9 +1,0 @@
-{
-  "id": "2",
-  "subject": "Implement MIPS32r2 LE interpreter core",
-  "description": "Implement the CPU: registers, hi/lo, PC, fetch-decode-execute loop for MIPS32r2 little-endian integer instructions (R-type, I-type, J-type, loads/stores, mul/div, branches, jumps, syscall, etc).",
-  "activeForm": "Implementing MIPS interpreter core",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

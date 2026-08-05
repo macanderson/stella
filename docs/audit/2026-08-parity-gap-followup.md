@@ -195,7 +195,7 @@ selected by `STELLA_BASH_SANDBOX`. No other tool runs confined.
 > **Superseded (#1300).** This finding was resolved by removal, not by
 > extension: `sandbox.rs` and `STELLA_BASH_SANDBOX` are gone, so nothing runs
 > confined in-process and the setting no longer implies otherwise. Isolation
-> is the container Stella runs in — `docs/design/remote-sandboxes.md` §2. The
+> is the container Stella runs in — `docs/spec/remote-sandboxes.md` §2. The
 > file path above is retained as the audit read it and no longer resolves.
 
 ---

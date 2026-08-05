@@ -1,8 +1,0 @@
-{
-  "id": "1",
-  "subject": "Understand ELF binary and MIPS architecture",
-  "description": "Parse the ELF header, determine MIPS endianness, ABI, entry point, program headers, segments, and the syscall convention used.",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

@@ -30,7 +30,7 @@ fn a_turn_that_touched_files_invisibly_still_needs_one() {
 
 #[test]
 fn docs_only_needs_no_test() {
-    let d = diff(&["README.md", "docs/design/x.md"], "+Some new prose.\n");
+    let d = diff(&["README.md", "docs/spec/x.md"], "+Some new prose.\n");
     assert_eq!(
         warrant(&d, 2),
         WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly)

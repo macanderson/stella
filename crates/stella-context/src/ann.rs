@@ -39,7 +39,7 @@
 //! behavior change, which is why the setting ships off
 //! ([`crate::RecallTuning::ann_enabled`]) and why a recall served by the index
 //! says so on its result ([`crate::RecallResult::used_ann_index`]) rather than
-//! leaving a caller to infer it — `docs/design/adaptive-context/adaptive-context.md` §5.5 asks for
+//! leaving a caller to infer it — `docs/spec/adaptive-context/adaptive-context.md` §5.5 asks for
 //! honesty a caller can see, not honesty in prose.
 //!
 //! # Freshness

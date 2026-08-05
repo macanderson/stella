@@ -17,7 +17,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from stella_harbor.exit_cause import (
+pytest.importorskip("harbor", reason="Harbor is required to import the adapter")
+
+from harbor.agents.installed.base import NonZeroAgentExitCodeError  # noqa: E402
+from harbor.models.agent.context import AgentContext  # noqa: E402
+
+from stella_harbor import (  # noqa: E402 - after importorskip by design
+    _INSTALL_PATH,
+    SelfReportedVerificationFailureError,
+    StellaAgent,
+)
+from stella_harbor.exit_cause import (  # noqa: E402 - after importorskip by design
     EXIT_CAUSE_LOG_NAME,
     SIGKILL_EXIT_CODE,
     build_exit_cause_report,
@@ -25,13 +35,6 @@ from stella_harbor.exit_cause import (
     parse_memory_events,
     sigkill_verdict,
 )
-
-pytest.importorskip("harbor", reason="Harbor is required to import the adapter")
-
-from harbor.agents.installed.base import NonZeroAgentExitCodeError  # noqa: E402
-from harbor.models.agent.context import AgentContext  # noqa: E402
-
-from stella_harbor import _INSTALL_PATH, StellaAgent  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -300,3 +303,117 @@ class TestRunIntegration:
             )
         assert not environment.probed
         assert not (tmp_path / EXIT_CAUSE_LOG_NAME).exists()
+
+
+def _stream_ending_in_a_verdict(*, passed: bool) -> str:
+    """A turn that reached the end of its ladder and stated an outcome."""
+    events: list[dict[str, object]] = [
+        {"type": "stage", "name": "execute"},
+        {
+            "type": "step_usage",
+            "step": 0,
+            "model": "anthropic/claude-sonnet-5",
+            "input_tokens": 900,
+            "output_tokens": 120,
+            "cost_usd": 0.01,
+            "duration_ms": 700,
+        },
+        {
+            "type": "verdict",
+            "passed": passed,
+            "summary": "the added test still fails",
+            "evidence": {"deterministic": True},
+        },
+        {"type": "error", "message": "verification failed: the added test still fails"},
+    ]
+    return "".join(json.dumps(event) + "\n" for event in events)
+
+
+class _VerificationFailedEnvironment(_SigkilledEnvironment):
+    """A trial that ran to a verdict and exited 1 because the verdict was red."""
+
+    def __init__(self, *, passed: bool = False, stream: str | None = None) -> None:
+        super().__init__()
+        self._stream = (
+            stream if stream is not None else _stream_ending_in_a_verdict(passed=passed)
+        )
+
+    async def _stella_secure_exec_with_stdin(
+        self, *, command: list[str], env: dict[str, str], stdin: bytes
+    ) -> SimpleNamespace:
+        return SimpleNamespace(stdout=self._stream, stderr=None, return_code=1)
+
+
+class TestVerificationFailureIsNotACrash:
+    """Exit 1 is both "the agent died" and "the agent reported honestly".
+
+    A ``VerificationFailed`` verdict is a completed turn — the work ran, the
+    ladder closed, and the run said the result did not verify. Recorded under
+    the same exception class as a process that crashed, the two are one number
+    in a results table, which is the conflation `portability` ended for loader
+    failures.
+    """
+
+    def test_a_red_verdict_at_exit_one_gets_its_own_class(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test-secret")
+        agent = _sigkilled_agent(tmp_path)
+        context = AgentContext()
+
+        with pytest.raises(SelfReportedVerificationFailureError) as raised:
+            asyncio.run(
+                StellaAgent.run.__wrapped__(
+                    agent,
+                    "Fix the task.",
+                    _VerificationFailedEnvironment(passed=False),
+                    context,
+                )
+            )
+
+        # Still the class Harbor scores by: the trial is recorded exactly as
+        # before and the benchmark verifier still runs. Only the name changes,
+        # and the name is what `result.json` carries into an analysis.
+        assert isinstance(raised.value, NonZeroAgentExitCodeError)
+        assert "failed verification verdict" in str(raised.value)
+        assert context.metadata["stella_self_verdict_state"] == "failed"
+
+    def test_a_crash_at_the_same_exit_code_stays_the_generic_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test-secret")
+        agent = _sigkilled_agent(tmp_path)
+
+        with pytest.raises(NonZeroAgentExitCodeError) as raised:
+            asyncio.run(
+                StellaAgent.run.__wrapped__(
+                    agent,
+                    "Fix the task.",
+                    _VerificationFailedEnvironment(stream=_stream_cut_mid_step()),
+                    AgentContext(),
+                )
+            )
+
+        # A stream that never reached a verdict made no claim, and "not
+        # measured" must not be promoted to "measured and failed".
+        assert type(raised.value) is NonZeroAgentExitCodeError
+
+    def test_a_passing_verdict_that_still_exits_nonzero_stays_generic(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test-secret")
+        agent = _sigkilled_agent(tmp_path)
+
+        with pytest.raises(NonZeroAgentExitCodeError) as raised:
+            asyncio.run(
+                StellaAgent.run.__wrapped__(
+                    agent,
+                    "Fix the task.",
+                    _VerificationFailedEnvironment(passed=True),
+                    AgentContext(),
+                )
+            )
+
+        # A green verdict that still exits nonzero is an anomaly, not a
+        # self-report, and must keep the loud generic class.
+        assert type(raised.value) is NonZeroAgentExitCodeError

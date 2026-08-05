@@ -8,7 +8,7 @@
 # proved that a change to it was additive. Three consumers, one enum, zero
 # machine-checked contract.
 #
-# docs/design/serve-surface.md is the cautionary case: it opens with a
+# docs/spec/serve-surface.md is the cautionary case: it opens with a
 # hand-maintained table of "the only routes that exist" and calls that prose
 # "the single most dangerous drift in this document". Hand-maintained wire
 # documentation drifts, silently, and reads as authority the whole time. So

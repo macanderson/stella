@@ -997,6 +997,60 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
     );
 }
 
+/// #1434: management calls ship as `[system(instructions), user(payload)]` —
+/// the byte-stable instruction block rides where the provider adapters'
+/// cache machinery can mark it, and everything per-call rides after it.
+/// Asserted through a real escalation, so the shape pinned here is the one
+/// `metered_raw_call` actually dispatched, not what a prompt builder returns
+/// in isolation.
+#[tokio::test]
+async fn management_calls_ship_a_stable_system_prefix_before_the_volatile_payload() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS — read the diff, the change is right"),
+    ]);
+    let probe = ScriptedCoverage::measuring(&[("src/lib.rs", &[40, 41, 42])]);
+    let (_outcome, _events) = run_with_coverage(&probe, false, &provider).await;
+
+    let shapes = provider.shapes();
+    let triage = shapes.first().expect("the triage call was made");
+    assert_eq!(triage.len(), 2, "triage ships [system, user]: {triage:#?}");
+    assert_eq!(triage[0].0, stella_protocol::MessageRole::System);
+    assert!(triage[0].1.contains("Classify the following user message"));
+    assert_eq!(triage[1].0, stella_protocol::MessageRole::User);
+    assert!(
+        triage[1].1.starts_with("Task:\n"),
+        "only the task itself is volatile: {}",
+        triage[1].1
+    );
+
+    let verdict = shapes.last().expect("the verdict call was made");
+    assert_eq!(
+        verdict.len(),
+        2,
+        "the verdict ships [system, user]: {verdict:#?}"
+    );
+    assert_eq!(verdict[0].0, stella_protocol::MessageRole::System);
+    let reference = crate::verify::verifier_prompt(
+        "an unrelated goal",
+        "+an unrelated diff\n",
+        "unrelated evidence",
+        &crate::verify::diff_render::DiffContext::default(),
+    );
+    assert_eq!(
+        verdict[0].1, reference.instructions,
+        "the system block is the input-independent instruction constant — \
+         byte-equal whatever the call was about"
+    );
+    assert_eq!(verdict[1].0, stella_protocol::MessageRole::User);
+    assert!(
+        verdict[1].1.starts_with("## Goal\n"),
+        "the payload leads with the volatile sections: {}",
+        verdict[1].1
+    );
+}
+
 /// #1291, the honest-degradation half: a workspace with no coverage tooling
 /// pays no verifier call — the alternative taxes every run to be told what the
 /// evidence already said — but the run is scored **UNVERIFIED**, not as a

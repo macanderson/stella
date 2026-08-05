@@ -23,7 +23,7 @@
 //!
 //! # Why there is no per-frame debug record
 //!
-//! `docs/design/serve-observability.md` §7 planned individual `AgentEvent`
+//! `docs/spec/serve-observability.md` §7 planned individual `AgentEvent`
 //! records behind `STELLA_SERVE_LOG=debug`. Building it showed that to be a
 //! mistake: `AgentEvent::Text`, `TextDelta` and `Reasoning` carry model output
 //! verbatim, so such a record would put prompt-adjacent content in a log file —

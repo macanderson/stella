@@ -198,6 +198,8 @@ mod tests {
     #[test]
     fn bedrock_reads_the_credentials_file_when_the_environment_has_nothing() {
         let _env = crate::test_env::lock();
+        let _restore =
+            crate::test_env::EnvRestore::capture(&["AWS_SECRET_ACCESS_KEY", "AWS_REGION"]);
         // The gap this closes: `stella auth set bedrock` could store the access
         // key id and nothing else, so a user who stored their credentials
         // instead of exporting them got "needs AWS_SECRET_ACCESS_KEY" with no
@@ -225,17 +227,15 @@ mod tests {
     #[test]
     fn the_environment_outranks_the_credentials_file() {
         let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["AWS_SECRET_ACCESS_KEY"]);
         let mut file = CredentialsFile::empty();
         file.set_field("bedrock", "AWS_SECRET_ACCESS_KEY", "secret-from-the-file");
 
-        // SAFETY: guarded by test_env's process-wide lock; removed below.
+        // SAFETY: guarded by test_env's process-wide lock.
         unsafe {
             std::env::set_var("AWS_SECRET_ACCESS_KEY", "secret-from-the-environment");
         }
         let aux = provider_aux(&bedrock(), &file);
-        unsafe {
-            std::env::remove_var("AWS_SECRET_ACCESS_KEY");
-        }
 
         assert_eq!(
             aux.get("AWS_SECRET_ACCESS_KEY"),
@@ -261,6 +261,7 @@ mod tests {
     #[test]
     fn bedrock_without_a_secret_anywhere_is_not_auto_detectable() {
         let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["AWS_SECRET_ACCESS_KEY"]);
         // SAFETY: guarded by test_env's process-wide lock.
         unsafe {
             std::env::remove_var("AWS_SECRET_ACCESS_KEY");

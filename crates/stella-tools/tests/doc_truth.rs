@@ -32,12 +32,12 @@ const DOCS: &[(&str, &str)] = &[
         include_str!("../../../docs/why-stella.md"),
     ),
     (
-        "docs/design/threat-model.md",
-        include_str!("../../../docs/design/threat-model.md"),
+        "docs/spec/threat-model.md",
+        include_str!("../../../docs/spec/threat-model.md"),
     ),
     (
-        "docs/design/semantic-resolution-bridge.md",
-        include_str!("../../../docs/design/semantic-resolution-bridge.md"),
+        "docs/spec/semantic-resolution-bridge.md",
+        include_str!("../../../docs/spec/semantic-resolution-bridge.md"),
     ),
 ];
 

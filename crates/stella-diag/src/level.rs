@@ -6,7 +6,7 @@
 //! Two types rather than one, and the distinction is load-bearing:
 //! [`Level`] is a property of a record and always exists; [`LevelFilter`] is a
 //! property of a *sink* and can be [`LevelFilter::Off`], which a record's level
-//! never can. `docs/design/diagnostics/diagnostics.md` §6 is the rule that keeps them
+//! never can. `docs/spec/diagnostics.md` §6 is the rule that keeps them
 //! apart — the filter governs sinks, never emission, so counters and the crash
 //! ring stay correct at any verbosity.
 

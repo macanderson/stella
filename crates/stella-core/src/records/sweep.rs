@@ -2,7 +2,7 @@
 //! still true enough to steer.
 //!
 //! This is the reason the record surface has a truth axis at all. The worked case
-//! is `docs/design/adaptive-context/context-record-examples/05-imported-proposals.toml`: `CLAUDE.md` says
+//! is `docs/spec/adaptive-context/context-record-examples/05-imported-proposals.toml`: `CLAUDE.md` says
 //! "we use Node 20", `.nvmrc` has said `22` for months. Publishing that claim with
 //! a `must` force teaches the agent something false on *every turn*, forever,
 //! with the full authority of a reviewed and committed policy file. Ingest probes
@@ -10,7 +10,7 @@
 //!
 //! # Resolved before rendering, never expressed in the cached prefix
 //!
-//! `docs/design/adaptive-context/context-record-examples/07-agent-projection.md` forbids a clock in the
+//! `docs/spec/adaptive-context/context-record-examples/07-agent-projection.md` forbids a clock in the
 //! byte-stable system prefix: a "last checked 3 days ago" note would change every
 //! turn and break the prompt cache for the whole prefix behind it. So a stale
 //! record does not get a warning *appended* — it gets **demoted to the volatile

@@ -2,9 +2,9 @@
 
 The **diagnostic plane**: the stream that answers *why did the program behave
 this way?* Design:
-[`../../docs/design/diagnostics/diagnostics.md`](../../docs/design/diagnostics/diagnostics.md), which
+[`../../docs/spec/diagnostics.md`](../../docs/spec/diagnostics.md), which
 generalises the shipped, crate-scoped
-[`../../docs/design/serve-observability.md`](../../docs/design/serve-observability.md)
+[`../../docs/spec/serve-observability.md`](../../docs/spec/serve-observability.md)
 to the whole workspace.
 
 Stella has four observability planes and, until this crate, had built three:

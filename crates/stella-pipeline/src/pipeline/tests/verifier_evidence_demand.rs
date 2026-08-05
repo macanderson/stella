@@ -168,7 +168,6 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
         text_result("done"),
         text_result("PASS — the change reads correct"),
         text_result("there is no test surface for this"),
-        text_result("PASS — still reads correct"),
     ]);
     // Never observable: every run is inconclusive, so the evidence the ask
     // wants cannot appear however many times it is asked for.
@@ -195,9 +194,55 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
     );
     assert_eq!(outcome.revisions, 1, "one ask, not one per verifier pass");
     assert_eq!(
-        calls, 5,
-        "triage, worker, verifier, the single ask, and the verifier re-reading the \
-         revised turn — then it stops"
+        calls, 4,
+        "triage, worker, verifier, and the single ask. The revised turn changed \
+         nothing the verdict depends on, so the verifier's re-read is the CACHED \
+         pass (#1431) — no fifth call"
+    );
+    assert!(
+        verdict.summary.contains("verdict reused"),
+        "the reused verdict says so, so the transcript stays honest: {}",
+        verdict.summary
+    );
+}
+
+/// The FAIL shape of the same reuse (#1431): a revision that changes neither
+/// the diff nor the evidence re-asks the verifier the byte-identical question.
+/// The cached opinion is the same opinion at zero cost — a second paid call
+/// could differ only by sampling noise, and no one defends a verification
+/// layer that flips on noise.
+#[tokio::test]
+async fn an_unchanged_revision_reuses_the_verdict_instead_of_rebuying_it() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("FAIL — the change does not handle the empty case"),
+        text_result("I believe the change is correct as written"),
+    ]);
+    let runner = ScriptedRunner::scripted(
+        vec![TestScript::Fail, TestScript::TimeOut, TestScript::TimeOut],
+        "@@ -1 +1 @@\n-old\n+new",
+    );
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        max_revisions: 1,
+        ..PipelineConfig::default()
+    };
+
+    let (outcome, _events, calls) = run_scenario!(provider, runner, config);
+
+    let verdict = outcome.verdict.expect("a verdict was produced");
+    assert!(!verdict.passed, "the reused FAIL still fails the run");
+    assert_eq!(
+        calls, 4,
+        "triage, worker, verifier, one revision — the second verdict round is \
+         the cached FAIL, not a fifth call"
+    );
+    assert!(
+        verdict.summary.contains("verdict reused"),
+        "the reuse is stated in the verdict the run reports: {}",
+        verdict.summary
     );
 }
 
