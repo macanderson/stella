@@ -34,6 +34,7 @@ pub mod ports;
 pub mod receipts;
 pub mod records;
 pub mod redact;
+pub mod repair;
 pub mod retry;
 pub mod router;
 pub mod rules;
@@ -69,6 +70,7 @@ pub use hooks::{HookEvent, HookPayload, HookRunOutcome, HookRunner, Hooks, run_h
 pub use loop_detect::{CallRecord, LoopDetectionConfig, LoopVerdict, detect_loop};
 pub use mcp_usage::{McpUsageLedger, McpUsageRecord, drain_usage, push_usage};
 pub use ports::{Clock, ToolExecutor};
+pub use repair::{RepairCost, RepairHeadroom, RepairPlan, RepairRefusal, plan_repair};
 pub use retry::{RetryOutcome, RetryPolicy, retry_with_backoff};
 pub use router::{RoleTable, Router};
 pub use rules::{

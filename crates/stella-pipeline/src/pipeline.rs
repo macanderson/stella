@@ -109,6 +109,7 @@ mod authored;
 mod disclosure;
 mod fanout_stage;
 mod raw_usage;
+mod repair_gate;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
@@ -953,6 +954,9 @@ pub struct Pipeline<'a> {
     /// authoritative `Text` — still goes out live. See
     /// `pipeline::fanout_stage`'s module doc.
     shared_event_lane: AtomicBool,
+    /// When this pipeline was constructed — the turn's own elapsed clock, one
+    /// pipeline being one turn. Read only by [`repair_gate`].
+    started: std::time::Instant,
 }
 
 impl<'a> Pipeline<'a> {
@@ -994,6 +998,7 @@ impl<'a> Pipeline<'a> {
             verifier_caveat_warned: AtomicBool::new(false),
             verifier_fallback_warned: AtomicBool::new(false),
             shared_event_lane: AtomicBool::new(false),
+            started: std::time::Instant::now(),
         }
     }
 
@@ -2304,6 +2309,7 @@ impl<'a> Pipeline<'a> {
         });
         let effective_cmd = self.effective_test_command(witness);
         let witness_paths = Self::witness_paths(witness);
+        let meter = repair_gate::RepairMeter::start(*total);
         loop {
             if let Some(workspace) = surface.workspace
                 && let Err(error) = workspace.seal().await
@@ -2578,7 +2584,7 @@ impl<'a> Pipeline<'a> {
                         passed: false,
                         evidence: evidence.clone(),
                     });
-                    if state.revisions >= self.config.max_revisions {
+                    if !self.affords_repair(&state, &meter, *total, budget) {
                         return state.into_verified(
                             false,
                             &evidence,
@@ -2647,7 +2653,7 @@ impl<'a> Pipeline<'a> {
                         passed: false,
                         evidence: evidence.clone(),
                     });
-                    if state.revisions >= self.config.max_revisions {
+                    if !self.affords_repair(&state, &meter, *total, budget) {
                         return state.into_verified(
                             false,
                             &evidence,
@@ -2983,7 +2989,7 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(true)),
                         );
                     }
-                    if state.revisions >= self.config.max_revisions {
+                    if !self.affords_repair(&state, &meter, *total, budget) {
                         return state.into_verified(
                             false,
                             &evidence,
