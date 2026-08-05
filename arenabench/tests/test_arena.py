@@ -781,3 +781,83 @@ class TestMatchTemplateRoles:
         roles = raw["contestant"][0]["engine"]["roles"]
         assert "verifier" in roles and "judge" not in roles
 
+
+class TestSnapshotDetections:
+    """The monitor's verdicts ride the snapshot the web UI renders (#1569).
+
+    Match dd52a57a6f49's five hand-diagnosed detections are pinned by
+    `test_monitor.py`; here the same fixture is served through the arena and
+    the snapshot payload must carry exactly those five, attributed to
+    contestant ids rather than job-dir slugs. An operator watching the web UI
+    must see the same dead arm the terminal watcher reports — a detection
+    that only ever reached a terminal is the exact silence #1480 was filed
+    about, one surface over.
+    """
+
+    FIXTURE = Path(__file__).parent / "fixtures" / "matches" / "dd52a57a6f49"
+
+    def _fixture_arena(self, tmp_path: Path):
+        from arenabench.runner import Match
+        from arenabench.server import ArenaServer
+
+        # Names chosen so the slugs match the fixture's job directories
+        # (`dd52a57a6f49-claude-code-fable-5`, `dd52a57a6f49-stella-…`).
+        spec = MatchSpec.from_json(
+            {
+                "id": "dd52a57a6f49",
+                "name": "replayed",
+                "dataset": "terminal-bench-2.1",
+                "contestants": [
+                    {
+                        "id": "cc",
+                        "name": "claude code fable 5",
+                        "agent": "claude-code",
+                        "engine": {"api": "anthropic", "model": "claude-fable-5"},
+                    },
+                    {
+                        "id": "st",
+                        "name": "stella fable 5 pipeline",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "z-ai/glm-5.2"},
+                    },
+                ],
+            }
+        )
+        arena = ArenaServer(tmp_path / "ws")
+        match = Match(spec, DEFAULT_REGISTRY.get("terminal-bench-2.1"), self.FIXTURE)
+        match.status = "finished"
+        arena.runner.matches[spec.id] = match
+        return arena, spec.id
+
+    def test_the_snapshot_carries_the_five_pinned_detections(self, tmp_path: Path):
+        arena, match_id = self._fixture_arena(tmp_path)
+        payload = arena.match(match_id)
+        found = {
+            (d["contestant"], d["task"], d["rule"]): d["severity"]
+            for d in payload["detections"]
+        }
+        assert found == {
+            ("cc", "fix-git", "zero-token"): "critical",
+            ("cc", "nginx-request-logging", "zero-token"): "critical",
+            ("cc", "openssl-selfsigned-cert", "zero-token"): "critical",
+            ("st", "large-scale-text-editing", "late-verdict"): "warning",
+            ("st", "sqlite-with-gcov", "premature-complete"): "warning",
+        }
+        # The structured evidence reaches the client too — the UI never has
+        # to parse prose.
+        zero = next(d for d in payload["detections"] if d["rule"] == "zero-token")
+        assert zero["data"]["steps"] == 2
+        assert "never made a model call" in zero["evidence"]
+
+    def test_detections_accumulate_across_snapshots_rather_than_draining(
+        self, tmp_path: Path
+    ):
+        """The watcher reports each fact once; the snapshot must not. A
+        second SSE tick — or a second client — gets the same five, or the UI
+        would flash a banner for one poll interval and go quiet."""
+        arena, match_id = self._fixture_arena(tmp_path)
+        first = arena.match(match_id)["detections"]
+        second = arena.match(match_id)["detections"]
+        assert len(first) == 5
+        assert second == first
+
