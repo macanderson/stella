@@ -693,7 +693,7 @@ pub async fn run_deck_session(
         });
 
     // The deck drives turns through the staged pipeline by default (triage →
-    // recall → plan → scope → witness → execute → verify → verifier); `/pipeline`
+    // recall → plan → scope → witness → execute → verify → verdict); `/pipeline`
     // toggles back to the raw `Engine::run_turn` loop (`run_lead_turn`). A
     // resumed session keeps whatever it last had — the same state the persona
     // choice above read, so driver and persona start the session agreeing.
@@ -838,7 +838,7 @@ pub async fn run_deck_session(
     let mut dispatch = HoldState::new();
     dispatch.held = resume_hold;
     // `/pipeline`: route lead turns through the staged pipeline (triage →
-    // witness → execute → verify → verifier) instead of the raw engine loop.
+    // witness → execute → verify → verdict) instead of the raw engine loop.
     // Session-local, ON at start (the deck loads with the pipeline active)
     // unless a resumed session had toggled it — mirrored to the PIPELINE
     // stat box via `Inbound::Pipeline`.
@@ -4070,7 +4070,7 @@ async fn run_deck_command(
             let _ = in_tx.send(Inbound::Pipeline(*pipeline_on));
             say(if *pipeline_on {
                 "staged pipeline ON — turns now run triage → recall → (plan → scope review) → \
-                 witness → execute → verify → verifier, with bounded revision. Triage already \
+                 witness → execute → verify → verdict, with bounded revision. Triage already \
                  right-sizes each turn: chat answers in one completion, and only genuinely \
                  multi-step goals plan at all. The witness stage authors a failing test that \
                  must flip to green before work counts as done; a large plan raises the scope \
@@ -4421,7 +4421,7 @@ async fn run_lead_turn(
 /// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
 /// analogue of the `stella run` pipeline path — same tool stack, persistence,
 /// and event forwarding as [`run_lead_turn`], with `Pipeline::run` (triage →
-/// recall → plan → scope → witness → execute → verify → verifier → revise) in
+/// recall → plan → scope → witness → execute → verify → verdict → revise) in
 /// place of the raw `Engine::run_turn`.
 ///
 /// Deck-mode seams, all named:

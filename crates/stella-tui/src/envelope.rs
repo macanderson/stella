@@ -178,7 +178,7 @@ pub enum Inbound {
     /// custom commands/skills so the menu reflects them without a restart.
     SlashCommands(Vec<crate::composer::SlashCommand>),
     /// The driver toggled staged-pipeline routing (`/pipeline`): subsequent
-    /// turns run triage → witness → execute → verify → verifier instead of the
+    /// turns run triage → witness → execute → verify → verdict instead of the
     /// raw engine loop. Folded into [`crate::deck::WorkspaceModel::pipeline`]
     /// so the `PIPELINE` stat box flips live.
     Pipeline(bool),

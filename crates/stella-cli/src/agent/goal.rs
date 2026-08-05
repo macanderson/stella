@@ -198,7 +198,7 @@ pub(crate) async fn run_raw_one_shot(
 /// skills), same as `run_one_shot`.
 ///
 /// `use_pipeline` (the default) runs each working round through the staged
-/// pipeline (triage → recall → plan → witness → execute → verify → verifier);
+/// pipeline (triage → recall → plan → witness → execute → verify → verdict);
 /// `false` falls back to the raw `Engine::run_goal` step-loop.
 pub async fn run_goal_cmd(
     cfg: &Config,
@@ -545,7 +545,7 @@ pub(crate) async fn run_goal_turn(
 }
 
 /// One staged-pipeline goal turn: keep running the pipeline (triage → recall →
-/// plan → witness → execute → verify → verifier) until an independent goal verifier
+/// plan → witness → execute → verify → verdict) until an independent goal verifier
 /// assesses the goal as met, or a backstop ends the loop. This is the pipeline
 /// analogue of [`run_goal_turn`] — same goal-loop structure, same judgment,
 /// but each working round goes through the staged pipeline instead of the raw
@@ -785,7 +785,7 @@ async fn run_goal_pipeline_turn(
 
             // Goal assessment (same verifier + read-only tools as the raw goal loop).
             let _ = tx.send(AgentEvent::Stage {
-                name: stella_protocol::StageKind::Verifier,
+                name: stella_protocol::StageKind::Verdict,
             });
             let (verdict, verifier_cost) = match verifier_engine
                 .with_turn_instance(round_turn)

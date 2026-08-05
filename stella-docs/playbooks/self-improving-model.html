@@ -118,7 +118,7 @@
   <div class="wrap">
     <p class="eyebrow">Playbook · Stella × Self-Improvement</p>
     <h1>Build a <span class="grad">Self-Improving Model</span><br>into Stella</h1>
-    <p class="lede">A step-by-step engineering plan to close the loop — collect traces, extract rewards from Stella's verify→judge ladder, fine-tune, re-evaluate on the bench harness, and redeploy through the <code class="mono">Provider</code> trait — without breaking the pipeline's guarantees.</p>
+    <p class="lede">A step-by-step engineering plan to close the loop — collect traces, extract rewards from Stella's verify→verdict ladder, fine-tune, re-evaluate on the bench harness, and redeploy through the <code class="mono">Provider</code> trait — without breaking the pipeline's guarantees.</p>
     <div class="meta">
       <span class="pill"><span class="dot"></span>17 crates · Rust workspace</span>
       <span class="pill">Provider trait · stella-protocol</span>
@@ -155,7 +155,7 @@
       <div class="crate"><p class="cn">stella-protocol</p><p class="cd">The <code>Provider</code> trait + <code>CompletionRequest/Result</code>. Every model — including your fine-tuned one — plugs in here.</p></div>
       <div class="crate"><p class="cn">stella-model</p><p class="cd">Concrete adapters: Z.ai (GLM 5.2), Anthropic, OpenAI, Gemini, Vertex, Bedrock. <code>factory.rs</code>, <code>catalog.rs</code>.</p></div>
       <div class="crate"><p class="cn">stella-core</p><p class="cd">The <code>Engine</code> step-driver. One model call per step, retry+backoff, loop detection, USD budget metering.</p></div>
-      <div class="crate"><p class="cn">stella-pipeline</p><p class="cd">Orchestration: evaluate→enhance→route→execute→<strong>witness→verify→judge→revise</strong>. The reward signal lives here.</p></div>
+      <div class="crate"><p class="cn">stella-pipeline</p><p class="cd">Orchestration: evaluate→enhance→route→execute→<strong>witness→verify→verdict→revise</strong>. The reward signal lives here.</p></div>
       <div class="crate"><p class="cn">stella-context</p><p class="cd"><code>ContextStore</code>: bi-temporal property graph, embedding index, <strong>episodic memory</strong>, <code>recall</code>/<code>upsert</code>.</p></div>
       <div class="crate"><p class="cn">stella-core :: hooks</p><p class="cd"><code>HookRunner</code> trait — lifecycle telemetry channel. Observes every step boundary. The instrumentation point.</p></div>
       <div class="crate"><p class="cn">stella-core :: calibration</p><p class="cd"><code>CalibrationMap</code> — existing precedent: the engine already <em>learns</em> (token-drift correction) from observed data. Model the improvement loop on this pattern.</p></div>
@@ -163,7 +163,7 @@
     </div>
     <div class="callout key">
       <p class="lbl">Key realization</p>
-      <p>You are not building a self-improvement system from zero. Stella already has a <strong>closed feedback loop</strong> (verify→judge→revise), a <strong>persistent memory</strong> (ContextStore), and an <strong>eval harness</strong> (bench/). Self-improvement = adding a training step on the cold path between "the loop produced an outcome" and "the loop runs again with a better model."</p>
+      <p>You are not building a self-improvement system from zero. Stella already has a <strong>closed feedback loop</strong> (verify→verdict→revise), a <strong>persistent memory</strong> (ContextStore), and an <strong>eval harness</strong> (bench/). Self-improvement = adding a training step on the cold path between "the loop produced an outcome" and "the loop runs again with a better model."</p>
     </div>
   </div>
 </section>
@@ -216,7 +216,7 @@
         <g font-family="sans-serif" font-size="10" fill="#5c6777">
           <text x="450" y="70" text-anchor="middle">stella run</text>
           <text x="770" y="90" text-anchor="middle">hooks → traces</text>
-          <text x="770" y="155" text-anchor="middle">verify + judge</text>
+          <text x="770" y="155" text-anchor="middle">verify + verdict</text>
           <text x="450" y="180" text-anchor="middle">SFT / DPO / RL</text>
           <text x="130" y="155" text-anchor="middle">bench/</text>
           <text x="130" y="90" text-anchor="middle">Provider trait</text>
@@ -273,10 +273,10 @@
             <tr><th>Field</th><th>Source</th><th>Why it matters</th></tr>
             <tr><td><code>execution_id</code></td><td>Engine turn receipt</td><td>Groups steps into one task</td></tr>
             <tr><td><code>model_ref</code></td><td><code>CompletionRequest</code></td><td>Which model produced this</td></tr>
-            <tr><td><code>role</code></td><td><code>ModelCallRole</code></td><td>triage / worker / judge / witness-author</td></tr>
+            <tr><td><code>role</code></td><td><code>ModelCallRole</code></td><td>triage / worker / verdict / witness-author</td></tr>
             <tr><td><code>prompt_messages</code></td><td>Engine accumulator</td><td>The exact input (for SFT)</td></tr>
             <tr><td><code>tool_calls[]</code></td><td>Router events</td><td>What the model chose to do</td></tr>
-            <tr><td><code>stage_trajectory</code></td><td><code>StageKind</code> sequence</td><td>evaluate→…→judge path taken</td></tr>
+            <tr><td><code>stage_trajectory</code></td><td><code>StageKind</code> sequence</td><td>evaluate→…→verdict path taken</td></tr>
             <tr><td><code>diff_fingerprint</code></td><td><code>verification_honest_diff</code></td><td>What actually changed</td></tr>
             <tr><td><code>cost_usd</code></td><td><code>BudgetGuard</code></td><td>Economic reward shaping</td></tr>
           </table>

@@ -652,7 +652,7 @@ fn stage_name(stage: StageKind) -> &'static str {
         StageKind::Witness => "witness",
         StageKind::Execute => "execute",
         StageKind::Verify => "verify",
-        StageKind::Verifier => "verifier",
+        StageKind::Verdict => "verifier",
         StageKind::Reflect => "reflect",
         StageKind::ContextWrite => "context_write",
         StageKind::Complete => "complete",

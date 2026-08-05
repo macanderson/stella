@@ -4,7 +4,7 @@
 //! `stella-pipeline` — the orchestration plane that sits *above*
 //! `stella-core::Engine`. It drives one prompt
 //! through the staged turn flow — **evaluate → enhance → route → execute →
-//! witness → verify → verifier → revise** (the witness is authored on demand,
+//! witness → verify → verdict → revise** (the witness is authored on demand,
 //! after execution, once the warrant has read the diff) — over injected
 //! ports, emitting an `AgentEvent` at every stage boundary.
 //!

@@ -290,7 +290,7 @@ fn all_stage_kinds() -> Vec<StageKind> {
         Witness,
         Execute,
         Verify,
-        Verifier,
+        Verdict,
         Reflect,
         ContextWrite,
         Complete,

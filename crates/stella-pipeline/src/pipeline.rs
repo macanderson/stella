@@ -1,6 +1,6 @@
 //! The orchestrator: the staged turn flow that sits
 //! *above* `stella-core::Engine`. It sequences evaluate → enhance → route →
-//! execute → witness → verify → verifier → revise over the injected ports,
+//! execute → witness → verify → verdict → revise over the injected ports,
 //! emitting a `Stage` event at every boundary and owning terminal
 //! success-or-failure signaling for outcome-producing runs (`Complete` or a
 //! non-retryable `Error`). Hard infrastructure failures return out of band as

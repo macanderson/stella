@@ -187,7 +187,7 @@ back.
 
 **Pipeline (default).** The prompt runs the full
 [staged pipeline](/docs/inference-pipeline) — triage → recall → plan → scope
-review → witness → execute → verify → verifier, with a bounded revise loop —
+review → witness → execute → verify → verdict, with a bounded revise loop —
 with per-role model routing and circuit-breaker fallback. Pass
 `--test-command "cargo test -p …"` and verification gets a
 deterministic oracle: a change that flips a failing test to passing can

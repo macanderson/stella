@@ -1485,7 +1485,7 @@ function renderConfig(cfg) {
     s.settings && s.settings.agent_engine_config
       ? deepMerge(acc, s.settings.agent_engine_config) : acc, {});
   const agents = engine.agents ?? {};
-  const names = ["default", "worker", "judge", "triage"].filter(n => agents[n]);
+  const names = ["default", "worker", "verifier", "triage"].filter(n => agents[n]);
   $("cfg-engine").innerHTML = names.length
     ? `<table><thead><tr><th scope="col">agent</th><th scope="col">model</th>
         <th scope="col">effort</th><th scope="col">reasoning</th>

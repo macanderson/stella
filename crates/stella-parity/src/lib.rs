@@ -452,7 +452,7 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "pipeline.verified_run",
-        engine_home: "stella-pipeline: the plan/witness/verify/verifier ladder behind `verified done, not claimed done`",
+        engine_home: "stella-pipeline: the plan/witness/verify/verdict ladder behind `verified done, not claimed done`",
         engine_entries: &[],
         cli: SurfacePosture::Shipped {
             mechanism: "`stella run` (default pipeline path) with the scope-review approval gate",

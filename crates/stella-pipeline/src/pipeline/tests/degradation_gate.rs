@@ -113,7 +113,7 @@ async fn run_scenario(s: Scenario) {
     );
 
     let events = drain(&mut rx);
-    let verifier_ran = stages(&events).contains(&StageKind::Verifier);
+    let verifier_ran = stages(&events).contains(&StageKind::Verdict);
     assert_eq!(
         verifier_ran, s.expect.verifier_stage,
         "[{name}] verifier stage presence changed — escalation shape drifted"

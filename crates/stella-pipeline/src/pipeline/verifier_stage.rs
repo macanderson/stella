@@ -33,7 +33,7 @@ impl<'a> Pipeline<'a> {
         }
         self.warn_verifier_caveat(&resolved);
         self.emit(AgentEvent::Stage {
-            name: StageKind::Verifier,
+            name: StageKind::Verdict,
         });
         let prompt = guidance_prompt(goal, diff, evidence_summary);
         match self
@@ -74,7 +74,7 @@ impl<'a> Pipeline<'a> {
         total: &mut f64,
     ) -> Result<ModelVerifierVerdict, PipelineBudgetAbort> {
         self.emit(AgentEvent::Stage {
-            name: StageKind::Verifier,
+            name: StageKind::Verdict,
         });
         let resolved = match self.resolve_provider(Role::Verifier) {
             Ok(r) => r,

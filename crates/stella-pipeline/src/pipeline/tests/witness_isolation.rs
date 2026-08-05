@@ -726,7 +726,7 @@ async fn post_baseline_witness_tamper_is_hard_failure_even_if_verifier_would_pas
         &outcome.status,
         "witness artifact changed after its accepted baseline: tests/witness.rs",
     );
-    assert!(!stages(&events).contains(&StageKind::Verifier));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
     let log = log.lock().unwrap().clone();
     assert!(
         !log.iter().any(|entry| entry.starts_with("adopt:")),
@@ -994,7 +994,7 @@ async fn a_tampered_witness_file_hard_fails_before_verifier_evaluation() {
         "aborted for the wrong reason: {reason}"
     );
     assert!(
-        !stages(&events).contains(&StageKind::Verifier),
+        !stages(&events).contains(&StageKind::Verdict),
         "tamper is not eligible for verifier override"
     );
 }
@@ -1075,7 +1075,7 @@ async fn a_renamed_witness_file_hard_fails_before_verifier_evaluation() {
         "witness artifact changed after its accepted baseline: tests/witness.rs",
     );
     assert!(
-        !stages(&events).contains(&StageKind::Verifier),
+        !stages(&events).contains(&StageKind::Verdict),
         "a renamed witness is not eligible for verifier override"
     );
     let log = log.lock().unwrap().clone();
@@ -1165,7 +1165,7 @@ async fn a_grafted_witness_is_not_billed_to_the_workers_diff() {
         verdict.summary
     );
     assert!(
-        !stages(&events).contains(&StageKind::Verifier),
+        !stages(&events).contains(&StageKind::Verdict),
         "no verifier is bought: {:?}",
         stages(&events)
     );
@@ -1253,7 +1253,7 @@ async fn a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check() {
         &outcome.status,
         "witness artifact changed after its accepted baseline: tests/witness.rs",
     );
-    assert!(!stages(&events).contains(&StageKind::Verifier));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
     let log = log.lock().unwrap().clone();
     assert!(
         !log.iter().any(|entry| entry.starts_with("adopt:")),

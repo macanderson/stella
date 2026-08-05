@@ -22,7 +22,7 @@ depends on it.
 ## Where we are today
 
 The current design (L-E11) is deterministic-first and already avoids the two
-classic failure modes: judges rubber-stamping plausible work, and "it passed,
+classic failure modes: verifiers rubber-stamping plausible work, and "it passed,
 ship it" false positives.
 
 - **Flip oracle** (`verify::FlipOracle`): only a fail→pass flip of the *same

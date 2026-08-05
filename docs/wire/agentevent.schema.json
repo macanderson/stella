@@ -432,7 +432,7 @@
         },
         {
           "const": "model_verdict",
-          "description": "The verifier answered on genuinely inconclusive evidence. Named for\nthe *evidence class* — a model's opinion — not for the model: it is\ndeliberately not called `ModelVerifier`, because the whole ladder is\nverification and this is the one rung that is only an opinion.\n\nThe alias is what keeps this rename additive. This rung shipped as\n`model_judge`, so every session already on disk spells it that way; a\nbare rename would make those streams fail to parse — and this enum's\nown contract is that an unknown rung fails the event rather than being\nlaundered, so the failure would be loud and total. New writes use\n`model_verdict`; old reads still land.",
+          "description": "The verifier answered on genuinely inconclusive evidence. Named for\nthe *evidence class* — a model's opinion — not for the model: it is\ndeliberately not called `ModelVerifier`, because the whole ladder is\nverification and this is the one rung that is only an opinion.",
           "type": "string"
         },
         {
@@ -774,7 +774,7 @@
         },
         {
           "const": "verdict",
-          "description": "The verifier's verdict call, on inconclusive deterministic evidence.\n\nAliased: this call role shipped as `judge`, so every recorded model\ncall in every stored session names it that way.",
+          "description": "The verifier's verdict call, on inconclusive deterministic evidence.",
           "type": "string"
         },
         {
@@ -883,7 +883,7 @@
               "type": "string"
             },
             "verifier": {
-              "description": "Whether a model verifier was called for on inconclusive evidence.\n\nAliased: this field shipped as `judge`, and every recorded session\nand golden fixture spells it that way. Renaming it without the\nalias makes those streams unparseable — which is exactly what the\ngolden fixtures caught.",
+              "description": "Whether a model verifier was called for on inconclusive evidence.",
               "type": "boolean"
             },
             "witness": {
@@ -1221,8 +1221,8 @@
           "type": "string"
         },
         {
-          "const": "verifier",
-          "description": "The model verifier, reached only when the deterministic ladder came back\ninconclusive (L-E11).\n\nAliased for the same reason as the other two renames in this pass: the\nstage shipped on the wire as `judge`, so every recorded session names\nit that way. Reading them is not optional — replay, the observatory and\nthe golden fixtures all parse stored streams.",
+          "const": "verdict",
+          "description": "The verifier's verdict, reached only when the deterministic ladder came\nback inconclusive (L-E11). Named for the output rather than the model:\na stage called `Verifier` sitting next to `Verify` hid which of the two\nwas proof and which was opinion.",
           "type": "string"
         },
         {
@@ -2536,7 +2536,7 @@
       "type": "object"
     },
     {
-      "description": "A verification verdict — from the deterministic ladder (flip oracle,\ntouched-tests-green) or the model verifier (L-E11: deterministic-first;\nmodel verifiers handle only inconclusive evidence).\n\nAliased: this event shipped on the wire as `judge_verdict`. Without the\nalias a stored stream's verdict line does not fail loudly — serde skips\nto the next variant and the event simply *disappears*, which is how the\ngolden trajectories came to be one event short rather than unparseable.",
+      "description": "A verification verdict — from the deterministic ladder (flip oracle,\ntouched-tests-green) or the model verifier (L-E11: deterministic-first;\nmodel verifiers handle only inconclusive evidence).",
       "properties": {
         "evidence": {
           "$ref": "#/$defs/VerdictEvidence"

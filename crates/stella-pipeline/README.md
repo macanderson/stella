@@ -1,7 +1,7 @@
 # stella-pipeline
 
 The orchestration plane above `stella-core::Engine`. It drives one prompt through the
-staged turn flow — **evaluate → enhance → route → execute → witness → verify → verifier →
+staged turn flow — **evaluate → enhance → route → execute → witness → verify → verdict →
 revise** (the witness is authored on demand, after execution, once the warrant has read
 the diff) — over injected ports, emitting an `AgentEvent` at every stage boundary. This is
 the default `stella run` path.
@@ -307,7 +307,7 @@ does* (candidate isolation, MCP pre-fetch) is an `Option`, so degradation stays 
 
 **Adding a stage**: add the variant to `StageKind` in `stella-protocol`, give it a rank in
 `stage_rank` ([`src/replay.rs`](src/replay.rs)) — `validate_stream` rejects any backward
-transition that is not the Verify/Verifier → Execute revise back-edge — then re-record the
+transition that is not the Verify/Verdict → Execute revise back-edge — then re-record the
 goldens and read the fixture diff, because a change there changes the observable event
 contract.
 

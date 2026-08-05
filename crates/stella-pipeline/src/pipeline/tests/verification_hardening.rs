@@ -79,7 +79,7 @@ async fn a_timed_out_baseline_never_manufactures_a_flip() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verifier),
+        stages(&events).contains(&StageKind::Verdict),
         "no flip evidence exists, so the ladder must escalate to the verifier"
     );
 }
@@ -155,7 +155,7 @@ async fn a_timed_out_candidate_suite_escalates_instead_of_revising() {
 
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verifier),
+        stages(&events).contains(&StageKind::Verdict),
         "an unobservable suite is inconclusive — verifier, not revise"
     );
     // No deterministic red verdict may be emitted for infra noise: every
@@ -244,7 +244,7 @@ async fn a_flaky_flip_fails_its_confirmation_and_escalates() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verifier),
+        stages(&events).contains(&StageKind::Verdict),
         "the unconfirmed flip escalates to the verifier instead of fast-submitting"
     );
     assert!(
@@ -365,7 +365,7 @@ async fn a_fresh_diagnostic_error_vetoes_the_fast_submit() {
     );
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verifier),
+        stages(&events).contains(&StageKind::Verdict),
         "the regression veto must escalate to the verifier"
     );
     assert!(
@@ -480,7 +480,7 @@ async fn without_a_lint_probe_the_flip_still_fast_submits() {
     assert!(why.contains("flip=achieved"), "got: {why}");
     assert!(why.contains("baseline:fail → candidate:pass"), "got: {why}");
     let events = drain(&mut rx);
-    assert!(!stages(&events).contains(&StageKind::Verifier));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
 }
 
 /// A scripted mutation probe (#870): every mutant gets the same outcome,
@@ -573,7 +573,7 @@ async fn a_tautological_witness_is_downgraded_to_the_verifier() {
         "both proposed mutants ran (none was killed, so no early exit)"
     );
     assert!(
-        stages(&events).contains(&StageKind::Verifier),
+        stages(&events).contains(&StageKind::Verdict),
         "the downgrade escalates to the verifier"
     );
     let snapshot = verdict
@@ -628,7 +628,7 @@ async fn a_witness_that_kills_a_mutant_keeps_its_deterministic_pass() {
         1,
         "the first killed mutant proves the witness; the second is never paid for"
     );
-    assert!(!stages(&events).contains(&StageKind::Verifier));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
     let snapshot = verdict
         .ladder
         .as_deref()
@@ -717,7 +717,7 @@ async fn an_out_of_memory_test_run_is_retried_instead_of_revised() {
     );
     let events = drain(&mut rx);
     assert!(
-        !stages(&events).contains(&StageKind::Verifier),
+        !stages(&events).contains(&StageKind::Verdict),
         "a deterministic flip needs no verifier"
     );
     let snapshot = verdict
@@ -814,7 +814,7 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
         "a memory kill must never be reported as a deterministic test failure"
     );
     assert!(
-        stages(&events).contains(&StageKind::Verifier),
+        stages(&events).contains(&StageKind::Verdict),
         "an unobservable suite is inconclusive — verifier, not revise"
     );
     let verdict = outcome.verdict.expect("a verdict was produced");
@@ -959,7 +959,7 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
 
     assert_eq!(probe.calls(), 1, "the probe runs once, in the audit");
     assert!(
-        stages(&events).contains(&StageKind::Verifier),
+        stages(&events).contains(&StageKind::Verdict),
         "a coincidental pass must be escalated, not fast-submitted"
     );
     assert!(
@@ -1014,7 +1014,7 @@ async fn an_unmeasurable_overlap_is_scored_unproven_without_costing_a_verifier_c
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed, "an unproven run is not a failed run");
     assert!(
-        !stages(&events).contains(&StageKind::Verifier),
+        !stages(&events).contains(&StageKind::Verdict),
         "being honest about an unmeasured overlap must not cost a reviewer"
     );
     assert_eq!(
@@ -1053,7 +1053,7 @@ async fn an_unmeasurable_overlap_is_scored_unproven_without_costing_a_verifier_c
     let (strict_outcome, strict_events) =
         run_with_coverage(&strict_probe, true, &strict_provider).await;
     assert!(
-        stages(&strict_events).contains(&StageKind::Verifier),
+        stages(&strict_events).contains(&StageKind::Verdict),
         "strict mode turns 'unmeasured' into an escalation"
     );
     let strict_verdict = strict_outcome.verdict.expect("a verdict was produced");
@@ -1076,7 +1076,7 @@ async fn a_measured_overlap_still_earns_the_deterministic_badge() {
 
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed && verdict.deterministic);
-    assert!(!stages(&events).contains(&StageKind::Verifier));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
     assert_eq!(
         outcome.score,
         Some(crate::candidate::CandidateScore::DeterministicPass),

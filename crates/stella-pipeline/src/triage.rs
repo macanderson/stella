@@ -13,7 +13,7 @@
 //! - [`TaskClass::SingleTask`] skips DAG planning (one execute turn) but is
 //!   still verified.
 //! - [`TaskClass::MultiStep`] takes the full plan → scope-review → execute →
-//!   verify → verifier path.
+//!   verify → verdict path.
 //!
 //! Every fast path must **downgrade correctly**: a complex task *misclassified*
 //! as simple must still complete (just without the planning/verification

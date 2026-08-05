@@ -723,7 +723,7 @@ export interface ScopeProposal {
  * exists in this workspace — never duplicated per-crate (the TS-era
  * `StageKind` duplication this structurally forbids, L-E1).
  */
-export type StageKind = "triage" | "context_recall" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verifier" | "reflect" | "context_write" | "complete";
+export type StageKind = "triage" | "context_recall" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
 
 /**
  * One point in a sub-agent's lifecycle. Exactly one `Started` and exactly

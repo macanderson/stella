@@ -29,7 +29,7 @@
 1843 crates/stella-model/src/zai/tests.rs
 3692 crates/stella-pipeline/src/pipeline.rs
 2624 crates/stella-pipeline/src/pipeline/tests.rs
-2932 crates/stella-protocol/src/event.rs
+2908 crates/stella-protocol/src/event.rs
 2082 crates/stella-store/src/lib.rs
 2264 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs

@@ -140,7 +140,7 @@ pub(crate) async fn drive_goal(
         }
 
         let _ = sender.send(AgentEvent::Stage {
-            name: StageKind::Verifier,
+            name: StageKind::Verdict,
         });
         let (verdict, verifier_cost) = match round_engine
             .assess(

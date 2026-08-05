@@ -111,7 +111,7 @@ fn stage_kind_for_label(label: &str) -> Option<StageKind> {
         "writing the witness" => Some(StageKind::Witness),
         "executing" => Some(StageKind::Execute),
         "verifying" => Some(StageKind::Verify),
-        "judging" => Some(StageKind::Verifier),
+        "judging" => Some(StageKind::Verdict),
         "reflecting" => Some(StageKind::Reflect),
         _ => None,
     }

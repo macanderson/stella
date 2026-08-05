@@ -664,7 +664,7 @@ pub fn stage_label(stage: StageKind) -> &'static str {
         StageKind::Witness => "witness",
         StageKind::Execute => "execute",
         StageKind::Verify => "verify",
-        StageKind::Verifier => "verifier",
+        StageKind::Verdict => "verifier",
         StageKind::Reflect => "reflect",
         StageKind::ContextWrite => "context write",
         StageKind::Complete => "complete",

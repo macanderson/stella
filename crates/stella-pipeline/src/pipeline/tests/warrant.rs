@@ -79,7 +79,7 @@ async fn a_docs_only_change_completes_without_buying_a_verifier_call() {
         "the run spent exactly triage + worker; a verifier call would be a third"
     );
     assert!(
-        !stages(&drain(&mut rx)).contains(&StageKind::Verifier),
+        !stages(&drain(&mut rx)).contains(&StageKind::Verdict),
         "no verifier stage for a change with nothing to prove"
     );
 
@@ -163,7 +163,7 @@ async fn a_verifier_waiver_on_a_behavioral_diff_still_buys_the_verifier() {
         "the verifier call must be spent: a waived verifier here would leave the third result unserved"
     );
     assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Verifier),
+        stages(&drain(&mut rx)).contains(&StageKind::Verdict),
         "a behavioral diff keeps its reviewer, whatever triage guessed"
     );
     let verdict = outcome.verdict.expect("a judged verdict");
@@ -236,7 +236,7 @@ async fn a_verifier_waiver_stands_where_the_warrant_agrees() {
         "exactly triage + worker were spent"
     );
     assert!(
-        !stages(&drain(&mut rx)).contains(&StageKind::Verifier),
+        !stages(&drain(&mut rx)).contains(&StageKind::Verdict),
         "the waiver stands where the warrant agrees there is nothing to review"
     );
     let verdict = outcome.verdict.expect("a reasoned verdict");
@@ -345,7 +345,7 @@ async fn a_blind_diff_probe_never_completes_as_nothing_changed() {
 
     let events = drain(&mut rx);
     assert!(
-        !stages(&events).contains(&StageKind::Verifier),
+        !stages(&events).contains(&StageKind::Verdict),
         "with every channel blind there is nothing for a verifier to read — asking \
          one anyway is what produced a confident false negative"
     );
@@ -442,7 +442,7 @@ async fn the_verifier_is_told_what_the_recorder_counted_not_zero() {
         "the verifier must be told what the recorder counted: {verifier_prompt}"
     );
     assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Verifier),
+        stages(&drain(&mut rx)).contains(&StageKind::Verdict),
         "six observed mutations are evidence, so this escalates rather than abstaining"
     );
 }
@@ -625,7 +625,7 @@ async fn a_turn_that_called_no_tool_does_not_report_success() {
         "the emitted verdict — the field every downstream reader keys on — must be false"
     );
     assert!(
-        !stages(&events).contains(&StageKind::Verifier),
+        !stages(&events).contains(&StageKind::Verdict),
         "nothing was attempted, so there is nothing for a verifier to weigh"
     );
 }

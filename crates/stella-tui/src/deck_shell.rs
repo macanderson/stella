@@ -77,7 +77,7 @@ pub struct DeckOptions {
     /// static frame. Also forced on by `STELLA_NO_ANIM` or `NO_COLOR`.
     pub no_anim: bool,
     /// Whether this session runs turns through the staged pipeline (triage →
-    /// plan → execute → verify → verifier). Seeded into
+    /// plan → execute → verify → verdict). Seeded into
     /// [`WorkspaceModel::pipeline`] and surfaced as the `PIPELINE` stat box.
     pub pipeline: bool,
     /// Run the deck the way a screen reader can actually read it —

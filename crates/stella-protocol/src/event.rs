@@ -127,15 +127,19 @@ pub enum StageKind {
     /// The deterministic verification ladder: the flip oracle, the touched
     /// tests, the diff budget.
     Verify,
-    /// The model verifier, reached only when the deterministic ladder came back
-    /// inconclusive (L-E11).
+    /// The verifier's verdict, reached only when the deterministic ladder came
+    /// back inconclusive (L-E11). Named for the output rather than the model:
+    /// a stage called `Verifier` sitting next to `Verify` hid which of the two
+    /// was proof and which was opinion.
     ///
-    /// Aliased for the same reason as the other two renames in this pass: the
+    /// Aliased for the same reason as the other renames in this pass: the
     /// stage shipped on the wire as `judge`, so every recorded session names
     /// it that way. Reading them is not optional — replay, the observatory and
-    /// the golden fixtures all parse stored streams.
-    #[serde(alias = "judge")]
-    Verifier,
+    /// the golden fixtures all parse stored streams. `verifier` is aliased too
+    /// because it was this stage's name for the length of one commit on this
+    /// branch, and a stream recorded against that build must still read.
+    #[serde(alias = "judge", alias = "verifier")]
+    Verdict,
     /// Post-turn self-reflection: the agent reviews its own performance on
     /// the completed turn and records improvement memories into the context
     /// plane, tagged with the workspace's inferred domains, for recall on

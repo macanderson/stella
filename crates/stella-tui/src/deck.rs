@@ -336,7 +336,7 @@ pub struct WorkspaceModel {
     /// events). Drives the status-bar gauge and dispatch backpressure.
     pub global_cpu_pct: f32,
     /// Whether the session drives turns through the staged pipeline (triage →
-    /// witness → execute → verify → verifier) rather than the raw engine loop.
+    /// witness → execute → verify → verdict) rather than the raw engine loop.
     /// Surfaced as the `PIPELINE` stat box. Seeded from
     /// `DeckOptions::pipeline` and toggled live by [`Inbound::Pipeline`]
     /// (the driver's `/pipeline` command).

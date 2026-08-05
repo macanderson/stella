@@ -453,7 +453,7 @@ pub struct StreamViolation {
 /// :
 ///
 /// 1. **Legal stage ordering** — consecutive `Stage` events move forward in
-///    the canonical order or take a known revise back-edge (Verify/Verifier →
+///    the canonical order or take a known revise back-edge (Verify/Verdict →
 ///    Execute); no other backward jump is legal.
 /// 2. **Tool pairing** — every `ToolStart` has a later matching `ToolResult`
 ///    (same `call_id`), and no `ToolResult` appears without a prior
@@ -488,7 +488,7 @@ fn stage_rank(stage: StageKind) -> u8 {
         // re-execution never re-authors.
         StageKind::Witness => 5,
         StageKind::Verify => 6,
-        StageKind::Verifier => 7,
+        StageKind::Verdict => 7,
         // Reflect is post-verdict self-reflection, before context write-back.
         StageKind::Reflect => 8,
         StageKind::ContextWrite => 9,
@@ -497,7 +497,7 @@ fn stage_rank(stage: StageKind) -> u8 {
 }
 
 /// Whether a transition between two consecutive `Stage` events is legal: a
-/// forward (or same-rank) move, or the revise back-edge from Verify/Verifier to
+/// forward (or same-rank) move, or the revise back-edge from Verify/Verdict to
 /// Execute (the revision loop and best-of-N re-execute the work).
 pub fn stage_transition_legal(from: StageKind, to: StageKind) -> bool {
     if stage_rank(to) >= stage_rank(from) {
@@ -505,7 +505,7 @@ pub fn stage_transition_legal(from: StageKind, to: StageKind) -> bool {
     }
     matches!(
         (from, to),
-        (StageKind::Verify, StageKind::Execute) | (StageKind::Verifier, StageKind::Execute)
+        (StageKind::Verify, StageKind::Execute) | (StageKind::Verdict, StageKind::Execute)
     )
 }
 
@@ -1026,7 +1026,7 @@ mod tests {
             StageKind::Execute
         ));
         assert!(stage_transition_legal(
-            StageKind::Verifier,
+            StageKind::Verdict,
             StageKind::Execute
         ));
         // Witness authoring is demand-driven and FOLLOWS execution (the

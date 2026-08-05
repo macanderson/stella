@@ -870,7 +870,7 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_verifier() {
     let events = drain(&mut rx);
     // Verifier stage must NOT appear (submit-fast skips it).
     assert!(
-        !stages(&events).contains(&StageKind::Verifier),
+        !stages(&events).contains(&StageKind::Verdict),
         "the verifier must be skipped on a deterministic pass"
     );
     // A deterministic Verdict event must be present.
@@ -1189,7 +1189,7 @@ async fn misclassified_lookup_that_touches_files_still_gets_verified() {
 
     let events = drain(&mut rx);
     assert!(
-        stages(&events).contains(&StageKind::Verifier),
+        stages(&events).contains(&StageKind::Verdict),
         "the zero-diff guard must run the verifier on an unexpected mutation"
     );
 }
@@ -1254,11 +1254,11 @@ async fn clean_lookup_skips_plan_verify_and_verifier() {
     let s = stages(&drain(&mut rx));
     assert!(!s.contains(&StageKind::Plan));
     assert!(!s.contains(&StageKind::Verify));
-    assert!(!s.contains(&StageKind::Verifier));
+    assert!(!s.contains(&StageKind::Verdict));
 }
 
 /// A greeting takes the conversational fast path: **one** plain completion, no
-/// triage call, no plan / witness / execute / verify / verifier. This is the fix
+/// triage call, no plan / witness / execute / verify / verdict. This is the fix
 /// for "typing `hi` authored a witness test", and now also for "typing `hi`
 /// paid for a classification that could not change the answer".
 ///
@@ -1338,7 +1338,7 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
         StageKind::Witness,
         StageKind::Execute,
         StageKind::Verify,
-        StageKind::Verifier,
+        StageKind::Verdict,
     ] {
         assert!(
             !s.contains(&forbidden),
@@ -1688,7 +1688,7 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
     let s = stages(&events);
     assert!(s.contains(&StageKind::Witness), "witness stage emitted");
     assert!(
-        !s.contains(&StageKind::Verifier),
+        !s.contains(&StageKind::Verdict),
         "verifier skipped on the flip"
     );
 }
@@ -1734,7 +1734,7 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         "triage said no witness: {s:?}"
     );
     assert!(
-        s.contains(&StageKind::Verifier),
+        s.contains(&StageKind::Verdict),
         "a behavioral diff keeps its reviewer, whatever triage guessed: {s:?}"
     );
     // Three paid calls: triage, the worker, and the verifier the evidence
@@ -2032,7 +2032,7 @@ async fn second_consecutive_red_verification_gets_verifier_guidance() {
     });
     assert!(carried, "guidance rides with the second revision prompt");
     assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Verifier),
+        stages(&drain(&mut rx)).contains(&StageKind::Verdict),
         "the guidance call is an honest Verifier stage in the stream"
     );
 }

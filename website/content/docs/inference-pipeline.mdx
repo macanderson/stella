@@ -49,7 +49,7 @@ needs a test at all.
 A fast, cheap classification call decides how much process the task deserves —
 a **lookup** ("what does this function do?") skips planning entirely, a
 **single concrete change** gets a light path (one execute turn, still verified), a
-**genuinely multi-step** task gets the full plan → scope-review → execute → verify → verifier
+**genuinely multi-step** task gets the full plan → scope-review → execute → verify → verdict
 pipeline. Triage runs under a hard latency ceiling (10 seconds); if the model
 doesn't answer in time, Stella falls through to the full path rather than
 waiting. Triage can run on its own [configured model](/docs/configuration/agent-engine-config) —

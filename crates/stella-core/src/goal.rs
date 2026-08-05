@@ -207,7 +207,7 @@ impl Engine<'_> {
             }
 
             let _ = events.send(AgentEvent::Stage {
-                name: StageKind::Verifier,
+                name: StageKind::Verdict,
             });
             let (verdict, verifier_cost) = match round_engine
                 .assess(verifier, goal, messages, budget, events, goal_config)

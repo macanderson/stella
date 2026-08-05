@@ -56,7 +56,7 @@ flowchart TB
         MODEL["stella-model<br/>provider adapters + parity matrix"]
         TOOLS["stella-tools<br/>sandboxed tool registry"]
         STORE["stella-store<br/>sessions, telemetry, drift samples"]
-        PIPE["stella-pipeline<br/>plan → witness → verify → verifier"]
+        PIPE["stella-pipeline<br/>plan → witness → verify → verdict"]
         MCP["stella-mcp"]
         CTX["stella-context / stella-graph"]
     end
@@ -233,7 +233,7 @@ today. Fix shape: an `engine` block on turn/session create mapping onto
 `EngineConfig`, matrix row `config.tuning` flipping to `Shipped`.
 
 **G3 — "Verified done" is unreachable from the API.** The pipeline (plan →
-witness → verify → verifier), and with it the approval gate, is structurally
+witness → verify → verdict), and with it the approval gate, is structurally
 absent from serve — the crate is not even linked. The product's defining
 contract is CLI-only, which for customer segment #1 is the single biggest
 gap. This needs the deferred design decision recorded in
