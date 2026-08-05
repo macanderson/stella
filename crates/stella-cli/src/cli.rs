@@ -144,15 +144,18 @@ pub(crate) struct GlobalArgs {
     #[arg(long, global = true, env = "STELLA_BUDGET", value_parser = parse_budget)]
     pub(crate) budget: Option<f64>,
 
-    /// Wall-clock seconds one turn may spend, for continuation decisions
+    /// Wall-clock seconds one turn may spend before it wraps up
     ///
-    /// The time twin of `--budget`, and deliberately weaker: this enforces
-    /// nothing and cancels nothing. It exists for callers running under an
-    /// EXTERNAL deadline — a benchmark harness that kills the process on
-    /// elapsed time — so the engine can decline to start an output-limit
-    /// continuation it cannot finish, and end with a truthful partial instead
-    /// of being destroyed mid-flight. Set it slightly below the real deadline.
-    /// Omit for no time-based continuation limit. Env: STELLA_TURN_BUDGET.
+    /// The time twin of `--budget`, for callers running under an EXTERNAL
+    /// deadline — a benchmark harness that kills the process on elapsed
+    /// time. Two mechanisms arm from it: the engine declines to start an
+    /// output-limit continuation it cannot finish (ending with a truthful
+    /// partial instead of being destroyed mid-flight), and a one-shot
+    /// `run` also stops at the next safe boundary once the allowance is
+    /// spent, so the work on disk is scored rather than discarded with the
+    /// kill (#1503). Interactive sessions (chat, the deck) treat it as
+    /// advisory only. Set it slightly below the real deadline. Omit for no
+    /// time-based limit. Env: STELLA_TURN_BUDGET.
     #[arg(long, global = true, env = "STELLA_TURN_BUDGET", value_parser = parse_turn_budget)]
     pub(crate) turn_budget: Option<std::time::Duration>,
 
