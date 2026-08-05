@@ -159,26 +159,23 @@ contestant, so 1 already means two containers running at once.
 **Solve rate, clock time, tokens in/out** are real and comparable. They come
 from the verifier and from each agent's own trajectory.
 
-**Total cost is actively misleading here — treat the column as broken.** It is
-tempting to assume an unpriced model reports nothing; it does not. A measured
-smoke trial returned **`cost_usd: 0.3326`** for a task run entirely on the
-subscription, where the true marginal spend was zero. Claude Code computes
-`total_cost_usd` from its own pricing table, and with every model alias pointed
-at `glm-5.2` it prices the run as though it were the Anthropic model those
-aliases normally name.
+**Total Cost is comparable; Self-Reported is not, and the board says which is
+which.** The two columns are different measurements:
 
-A fabricated-but-plausible number is worse than a missing one: it populates the
-column, sorts against the other arm, and crowns a winner on a dimension nobody
-measured. **Ignore Total Cost for any seat on the coding plan.** If you need a
-real cost comparison, run both arms on metered keys.
+- **Total Cost** is each seat's own token counts run through one shared table
+  (`arenabench/pricing.py`). Both agents count tokens the same way, so this is
+  the column that ranks. On a subscription it is a *list-price equivalent* —
+  what those tokens would have billed on metered access — not an invoice.
+- **Self-Reported** is what the agent said it spent. It crowns nobody, and it
+  is why the split exists. On the same task Claude Code reported `0.3326` and
+  Stella `0.0641`: Stella's catalog *has* a `glm-5.2` entry, so its figure is a
+  fair estimate of metered z.ai, while Claude Code's has none and prices GLM as
+  the Anthropic model whose alias it was pointed at. Read side by side that
+  says "Stella is 5× cheaper", which is not a finding about either agent — it
+  is two different tables being subtracted from each other.
 
-**Worse: the two arms do not even use the same pricing table.** On the same
-task, Claude Code reported `0.3326` and Stella `0.0641`. Stella's catalog *has*
-a `glm-5.2` entry, so its figure is a fair estimate of what the run would cost
-on metered z.ai. Claude Code's has none, so its figure prices GLM as the
-Anthropic model whose alias it was pointed at. Read side by side that says
-"Stella is 5× cheaper", which is not a finding about either agent — it is two
-different tables being subtracted from each other.
+A model the shared table does not cover reports **no** cost rather than a
+guessed one, so an empty Total Cost means unpriced, never free.
 
 **Cache read is real and large** — the same trial reported 286,656 of 296,070
 input tokens served from cache. z.ai returns `cache_read_input_tokens`, so that

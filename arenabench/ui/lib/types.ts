@@ -77,13 +77,16 @@ export interface Totals {
   passed: number;
   solve_rate: number;
   clock_time: number;
+  /** What the agents said they spent, each on its own table. Not comparable. */
   total_cost: number;
+  /** Every seat's tokens through one price table. `null` = model unpriced. */
+  priced_cost: number | null;
   tokens_in: number;
   tokens_out: number;
   cache_read: number;
   cache_write: number;
   infrastructure?: number;
-  [key: string]: number | undefined;
+  [key: string]: number | null | undefined;
 }
 
 export interface ContestantSnap {
@@ -118,6 +121,7 @@ export interface Cell {
   cache_read: number;
   cache_write: number;
   total_cost: number;
+  priced_cost: number | null;
   clock_time: number;
   cap_hits?: number;
   has_video?: boolean;

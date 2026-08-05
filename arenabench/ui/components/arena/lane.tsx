@@ -69,7 +69,8 @@ function entryBody(entry: TranscriptEntry): string {
     return (
       `${meta.model || ""} · in ${fmtTokens(meta.tokens_in)} out ${fmtTokens(meta.tokens_out)}` +
       ` · cache ${fmtTokens(meta.cache_read)}/${fmtTokens(meta.cache_write)}` +
-      ` · ${fmtMoney(meta.cost_usd)} · ${Math.round(((meta.duration_ms as number) || 0) / 100) / 10}s`
+      ` · self-rep ${fmtMoney(meta.cost_usd)}` +
+      ` · ${Math.round(((meta.duration_ms as number) || 0) / 100) / 10}s`
     );
   }
   if (entry.kind === "tool") return `${entry.title ?? ""} ${body}`;
@@ -151,7 +152,10 @@ export function Lane({
             </b>
           </span>
           <span>
-            cost <b className="font-medium text-foreground">{fmtMoney(cell.total_cost)}</b>
+            cost <b className="font-medium text-foreground">{fmtMoney(cell.priced_cost)}</b>
+          </span>
+          <span>
+            self-rep <b className="font-medium text-foreground">{fmtMoney(cell.total_cost)}</b>
           </span>
           <span>{fmtClock(cell.clock_time)}</span>
           {cell.cap_hits ? <span className="text-warn">⚠ {cell.cap_hits} output-cap</span> : null}

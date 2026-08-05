@@ -259,7 +259,7 @@ class Renderer:
             f"{SLATE}out{RESET} {BONE}{human(t['tout'])}{RESET}  "
             f"{SLATE}cache{RESET} {CYAN}{human(t['cread'])}{RESET}"
             f"{SLATE}/{RESET}{CITRON}{human(t['cwrite'])}{RESET}  "
-            f"{SLATE}cost{RESET} {AMBER}${t['cost']:.4f}{RESET}"
+            f"{SLATE}self-rep{RESET} {AMBER}${t['cost']:.4f}{RESET}"
         )
         model = f"{SLATE}{self.model}{RESET}" if self.model else ""
         pad = max(1, self.screen.width - visible_len(bar) - visible_len(model))

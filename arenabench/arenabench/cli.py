@@ -106,9 +106,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
     worst = 0
     for entry in snapshot["contestants"]:
         totals = entry["totals"]
+        # The comparable figure first, and the agent's own number labelled as
+        # its own: the two are computed from different tables, so printing them
+        # in one unlabelled column would be subtracting one from the other.
+        priced = totals["priced_cost"]
+        cost = f"${priced:.2f}" if priced is not None else "unpriced"
         print(
             f"  {entry['name']:24} {totals['solve_rate']:5.1f}%  "
-            f"({totals['passed']}/{totals['judged']})  ${totals['total_cost']:.2f}"
+            f"({totals['passed']}/{totals['judged']})  {cost:>9}  "
+            f"(self-reported ${totals['total_cost']:.2f})"
         )
         if totals["judged"] == 0:
             worst = 1
@@ -173,12 +179,17 @@ def _cmd_template(args: argparse.Namespace) -> int:
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
-    serve(
-        workspace=Path(args.workspace).expanduser(),
-        host=args.host,
-        port=args.port,
-        open_browser=not args.no_browser,
-    )
+    try:
+        serve(
+            workspace=Path(args.workspace).expanduser(),
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_browser,
+            allow_remote=args.allow_remote,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -331,6 +342,12 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser.add_argument("--workspace", default=str(default_workspace()))
     serve_parser.add_argument(
         "--no-browser", action="store_true", help="do not open a browser"
+    )
+    serve_parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="permit a non-loopback --host; anyone who can reach it can spend "
+             "your provider credits",
     )
     serve_parser.set_defaults(func=_cmd_serve)
 

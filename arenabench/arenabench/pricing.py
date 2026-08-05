@@ -67,6 +67,17 @@ class Price:
 #: endpoint is the source of truth for these numbers and re-checking it is the
 #: way to refresh them.
 #:
+#: **These are gateway rates, and the collapse is deliberate.** A model bought
+#: through OpenRouter and the same model bought from its own provider are two
+#: different rates: GLM-5.2 lists here at 0.76 in / 2.42 out / 0.14 cached, and
+#: at 0.60 / 2.20 / 0.11 direct from z.ai. Keying on the route would price the
+#: *seats of one match* differently, because a routed seat is launched with the
+#: bare model id and an unrouted one keeps its ``provider/`` prefix — Claude
+#: Code would be costed at z.ai's rate and Stella at OpenRouter's, in a match
+#: where both call the identical endpoint. Comparability is the whole product
+#: here, so one id means one rate, and the rate is the higher of the two rather
+#: than a number that flatters whichever seat happened to be routed.
+#:
 #: Deliberately small. This is not a price oracle — it covers the models people
 #: actually seat here, and anything else reports no cost rather than a guess.
 PRICES: dict[str, Price] = {

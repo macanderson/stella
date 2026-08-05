@@ -9,7 +9,11 @@ export function fmtTokens(value: unknown): string {
   return String(Math.round(n));
 }
 
+// An absent cost is drawn as absent. A model with no entry in the price table
+// yields null, and rendering that as "$0.0000" would put a fabricated number in
+// a column that sorts — the one failure the whole pricing path exists to avoid.
 export function fmtMoney(value: unknown): string {
+  if (value == null) return "—";
   const n = Number(value) || 0;
   return n >= 100 ? "$" + n.toFixed(0) : n >= 1 ? "$" + n.toFixed(2) : "$" + n.toFixed(4);
 }
@@ -34,6 +38,7 @@ export function fmtDim(key: string, value: unknown): string {
       return fmtPct(value);
     case "clock_time":
       return fmtClock(value);
+    case "priced_cost":
     case "total_cost":
       return fmtMoney(value);
     default:

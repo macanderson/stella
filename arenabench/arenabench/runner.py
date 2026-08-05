@@ -42,7 +42,7 @@ from .agents import (
     routes_directly,
 )
 from .harbor_agent import ARENA_ENGINE_ENV
-from .model import DIMENSIONS, Contestant, MatchSpec
+from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .recorder import RecorderSupervisor
 from .registry import Dataset, Registry
 from .telemetry import MetricsReader, TrialMetrics, aggregate, leaders
@@ -393,8 +393,18 @@ class MatchRunner:
                 task if local_path is not None else f"{match.dataset.namespace}/{task}",
             ]
 
+        # Screened here as well as where the seat was parsed, because this is
+        # the line that actually hands a mapping to `Popen`: a seat assembled by
+        # some other path must not be able to put `PATH` or `PYTHONPATH` in it.
+        seat_env, ignored = screen_env(contestant.env)
+        ignored = sorted({*ignored, *contestant.ignored_env})
+        if ignored:
+            run.warnings.append(
+                "env keys ignored — a seat may carry credentials and endpoints "
+                "only: " + ", ".join(ignored)
+            )
         env = _base_environment()
-        env.update(contestant.env)
+        env.update(seat_env)
         env.update(self._agent_environment(contestant, run))
 
         log.info(

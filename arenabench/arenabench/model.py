@@ -39,6 +39,7 @@ __all__ = [
     "MatchSpec",
     "RoleConfig",
     "parse_dotenv",
+    "screen_env",
     "slugify",
 ]
 
@@ -75,7 +76,7 @@ class Dimension:
         return False
 
 
-#: The seven primary dimensions of a contest, in scoreboard order.
+#: The primary dimensions of a contest, in scoreboard order.
 #:
 #: ``cache_read`` is ``higher``-is-better on purpose: cache reads are prompt
 #: tokens you did not pay full price for, so a contestant that reads more cache
@@ -83,6 +84,15 @@ class Dimension:
 #: real cost paid to make future reads possible, so neither more nor less is
 #: self-evidently better, and crowning either direction would be a lie the
 #: scoreboard tells confidently.
+#:
+#: Cost is two dimensions because there are two numbers and only one of them is
+#: comparable. ``priced_cost`` is every seat's tokens run through one shared
+#: table (see :mod:`.pricing`) and is what crowns the cost winner.
+#: ``total_cost`` is what each agent said it spent, on its own table, and is
+#: ``neutral`` for the reason that split exists at all: two agents pricing from
+#: two tables produce a difference that is a fact about the tables. It is
+#: reported because an operator reconciling an invoice needs it, and it is
+#: labelled so nobody reads it as a comparison.
 DIMENSIONS: tuple[Dimension, ...] = (
     Dimension(
         "solve_rate",
@@ -92,7 +102,20 @@ DIMENSIONS: tuple[Dimension, ...] = (
         "verifier rewards / trials completed",
     ),
     Dimension("clock_time", "Clock Time", "lower", "s", "wall-clock across all trials"),
-    Dimension("total_cost", "Total Cost", "lower", "$", "provider spend across all trials"),
+    Dimension(
+        "priced_cost",
+        "Total Cost",
+        "lower",
+        "$",
+        "list price of every trial's tokens, one table for all seats",
+    ),
+    Dimension(
+        "total_cost",
+        "Self-Reported",
+        "neutral",
+        "$",
+        "what each agent said it spent, on its own table",
+    ),
     Dimension("tokens_in", "Tokens In", "lower", "tok", "uncached prompt tokens billed"),
     Dimension("tokens_out", "Tokens Out", "lower", "tok", "completion tokens billed"),
     Dimension("cache_read", "Cache Read", "higher", "tok", "prompt tokens served from cache"),
@@ -343,6 +366,9 @@ class Contestant:
     engine: Engine
     env: dict[str, str] = field(default_factory=dict)
     color: str = ARENA_COLORS[0]
+    #: Names :func:`screen_env` refused to carry into the subprocess, kept so
+    #: the seat can say what it dropped instead of dropping it in silence.
+    ignored_env: tuple[str, ...] = ()
 
     @property
     def slug(self) -> str:
@@ -362,6 +388,7 @@ class Contestant:
             "engine": self.engine.to_json(),
             "engine_label": self.engine.label,
             "env_keys": sorted(self.env),
+            "ignored_env_keys": list(self.ignored_env),
             "color": self.color,
         }
 
@@ -376,6 +403,7 @@ class Contestant:
             env = {str(k): str(v) for k, v in env.items()}
         else:
             env = {}
+        env, ignored = screen_env(env)
         engine = Engine.from_json(raw.get("engine") or {})
         return cls(
             id=str(raw.get("id") or uuid.uuid4().hex[:12]),
@@ -384,6 +412,7 @@ class Contestant:
             engine=engine,
             env=env,
             color=str(raw.get("color") or ARENA_COLORS[seat % len(ARENA_COLORS)]),
+            ignored_env=tuple(ignored),
         )
 
 
@@ -489,6 +518,47 @@ def _disambiguate(contestants: Iterable[Contestant]) -> tuple[Contestant, ...]:
 # --------------------------------------------------------------------------
 # .env parsing
 # --------------------------------------------------------------------------
+
+#: Name shapes a seat's environment may carry. Everything a contestant
+#: legitimately needs is a credential or an endpoint — the provider key, the
+#: agent's own token variable, the base URL it is routed at — and every one of
+#: those ends in one of these.
+#:
+#: The list is a fence, not a convenience. A seat's ``env`` is attacker-shaped
+#: input on the HTTP path (anyone who can POST a match writes it) and it lands
+#: in the environment of a subprocess this machine's operator owns. ``PATH``,
+#: ``PYTHONPATH``, ``LD_PRELOAD``, ``STELLA_BINARY`` and ``DOCKER_HOST`` are all
+#: ways to make that subprocess run something other than the benchmark, and none
+#: of them is a thing a contestant needs. Allowing shapes rather than denying
+#: names is deliberate: a denylist is only as current as the last variable
+#: somebody thought of.
+_ENV_ALLOWED_SUFFIXES: tuple[str, ...] = (
+    "_API_KEY",
+    "_API_TOKEN",
+    "_AUTH_TOKEN",
+    "_OAUTH_TOKEN",
+    "_ACCESS_TOKEN",
+    "_BASE_URL",
+    "_API_BASE",
+)
+
+
+def screen_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Split a seat's pasted environment into what it may carry and what it may not.
+
+    Returns ``(allowed, rejected_names)``. Rejected names are returned rather
+    than dropped in silence because an operator who pastes a whole shell profile
+    should be told which lines the arena declined to honour — a credential that
+    silently did not arrive looks exactly like an agent that cannot code.
+    """
+    allowed: dict[str, str] = {}
+    rejected: list[str] = []
+    for key, value in env.items():
+        if key.upper().endswith(_ENV_ALLOWED_SUFFIXES):
+            allowed[key] = value
+        else:
+            rejected.append(key)
+    return allowed, sorted(rejected)
 
 
 def parse_dotenv(text: str) -> dict[str, str]:
