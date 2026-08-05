@@ -156,7 +156,7 @@ pub fn calibrate(cal: &mut Calibration, outcome: CycleOutcome, limits: &AimdLimi
         CycleOutcome::Ok => {
             cal.clean_run += 1;
             cal.batch_ceiling = (cal.batch_ceiling + 2).min(limits.batch_max);
-            if cal.clean_run % 3 == 0 {
+            if cal.clean_run.is_multiple_of(3) {
                 cal.parallel_ceiling = (cal.parallel_ceiling + 1).min(limits.parallel_max);
             }
             cal.note = format!("clean run {}", cal.clean_run);
