@@ -1843,13 +1843,21 @@ impl ToolRegistry {
             Coverage::Partial
         };
         self.remember_observed(&pending.path, coverage);
+        // Stella's own state directory is not workspace content: probe-observed
+        // churn under `.stella/` (the code-graph DB and its WAL/SHM sidecars)
+        // drowned real task edits 60:1 on a single bench trial (#1537). The
+        // staleness refresh above still runs — a write there stays guarded —
+        // but nothing downstream records, journals, or announces it.
+        if crate::file_touch::is_stella_state_path(&pending.path) {
+            return;
+        }
         let reason = input
             .get("reason")
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(String::from)
-            .unwrap_or_else(|| default_reason(pending.op).to_string());
+            .unwrap_or_else(|| crate::file_touch::default_reason(pending.op).to_string());
         // The durable record, written from the same choke point as the ledger
         // and the staleness map, so all three describe one reality. Before the
         // diff work below, which is presentation: if anything here is going to
@@ -2270,17 +2278,6 @@ fn mentions_path(haystack: &str, path: &str) -> bool {
         from = end;
     }
     false
-}
-
-/// Fallback audit-log reason when the model omitted the tool's optional
-/// `reason` field — the schema requires a non-empty human-readable string.
-fn default_reason(op: FileOp) -> &'static str {
-    match op {
-        FileOp::Create => "file created (no reason given)",
-        FileOp::Read => "file read (no reason given)",
-        FileOp::Update => "file updated (no reason given)",
-        FileOp::Delete => "file deleted (no reason given)",
-    }
 }
 
 /// `ToolRegistry` is the production implementation of `stella-core`'s

@@ -40,6 +40,11 @@ use crate::file_touch::{FileOp, normalize_workspace_path};
 /// module exists to remove.
 const SKIP_DIRS: &[&str] = &[
     ".git",
+    // Stella's own per-workspace state: the code-graph SQLite database and
+    // its WAL/SHM sidecars mutate on nearly every turn, and fingerprinting
+    // them means reading megabytes of binary pages per walk only for
+    // `record_touch` to drop the result (#1537).
+    ".stella",
     "node_modules",
     "__pycache__",
     ".venv",
@@ -317,6 +322,32 @@ mod tests {
         let post = WorkspaceProbe::capture(dir.path());
 
         assert!(pre.diff(&post).is_empty());
+    }
+
+    /// Stella's own state directory mutates on nearly every turn (the
+    /// code-graph database and its WAL/SHM sidecars), and none of it is
+    /// workspace content — the probe must neither pay to fingerprint it nor
+    /// attribute its churn (#1537).
+    #[test]
+    fn stella_state_churn_is_invisible_to_the_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "src/lib.rs", "pub fn f() {}\n");
+        let pre = WorkspaceProbe::capture(dir.path());
+        write(
+            dir.path(),
+            ".stella/private/codegraph.db",
+            "\u{0}binary pages\u{0}\n",
+        );
+        write(
+            dir.path(),
+            ".stella/private/codegraph.db-wal",
+            "\u{0}wal\u{0}\n",
+        );
+        write(dir.path(), "src/lib.rs", "pub fn f() -> u8 { 0 }\n");
+        let post = WorkspaceProbe::capture(dir.path());
+
+        let paths: Vec<_> = pre.diff(&post).into_iter().map(|t| t.path).collect();
+        assert_eq!(paths, vec!["src/lib.rs".to_string()]);
     }
 
     /// Skipping `.git` is what keeps the probe affordable; skipping a build
