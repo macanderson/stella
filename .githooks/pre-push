@@ -30,7 +30,7 @@
 #
 # WHAT IT COSTS
 #
-# `make gate` compiles, documents and tests all 21 workspace members. Running
+# `make gate` compiles, documents and tests all 22 workspace members. Running
 # that unconditionally meant a test-only change confined to one crate paid the
 # full workspace, twice, once per push (observed on #911: the push blew a
 # two-minute timeout and had to be re-run detached). So the compile tiers —

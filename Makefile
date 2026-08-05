@@ -25,8 +25,10 @@ CARGO_SCOPE ?= --workspace
 # The guard tiers, named so the gate, the fast check and the hook can compose
 # them instead of restating the list three times and drifting apart.
 # GATE_GUARDS_FAST needs no toolchain at all (shell scripts over the tree);
-# wire-schema is separated out because it runs the two schema exporters, which
-# is a cargo build.
+# wire-schema joins in GATE_GUARDS because it runs the two schema exporters,
+# which is a cargo build. Every rung below runs the full GATE_GUARDS — `check`
+# compiles the workspace for clippy anyway, so excluding wire-schema there
+# saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch action-pins cargo-install-pins license-allowlist-parity \
                     repro-wiring shellcheck invariants doc-links command-docs file-size
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
@@ -209,18 +211,19 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 # The three tiers of the gate, from cheapest to dearest. Each is a superset of
 # the one above it, and only the compile tiers honour CARGO_SCOPE.
 #
-#   guards  every global guard + rustfmt. No crate compiles, so nothing to scope.
+#   guards  every global guard + rustfmt. Only wire-schema's two schema
+#           exporters compile, so there is still nothing to scope.
 #   check   ...plus clippy. The graduated fallback: a reduced gate, not no gate.
 #   gate    ...plus rustdoc and the test suite. What CI runs, unscoped.
 
 .PHONY: guards
-guards: $(GATE_GUARDS) format-check ## Global guards + fmt only (no crate compiles; nothing to scope)
+guards: $(GATE_GUARDS) format-check ## Global guards + fmt only (nothing compiles beyond the wire-schema exporters; nothing to scope)
 
 .PHONY: gate
 gate: $(GATE_GUARDS) doc-warnings format-check lint test ## Full CI gate: guards + rustdoc + fmt-check + clippy + test
 
 .PHONY: check
-check: $(GATE_GUARDS_FAST) format-check lint ## Fast pre-push check: toolchain-free guards + fmt + clippy, no rustdoc and no tests
+check: $(GATE_GUARDS) format-check lint ## Reduced pre-push gate: every guard + fmt + clippy, no rustdoc and no tests
 
 .PHONY: impacted
 impacted: ## Print the cargo scope for a diff (RANGE=origin/main..HEAD)
