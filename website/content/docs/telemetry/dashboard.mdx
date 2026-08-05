@@ -44,10 +44,12 @@ panels labeled *all-time* ignore it.
     successes, commits) with MCP traffic, and a memory/reflections/skills digest — plus the
     **Executions** table: every run's kind, prompt, model, outcome, steps, tool calls,
     files touched, tokens, and cost. Clicking a row opens a drill-down drawer with per-step
-    tokens and latency, the **transcript** replayed from the run's event journal — answer
-    text, reasoning, and each tool call's arguments and output, with long bodies clipped
-    until you ask for them in full — every tool call, the files touched, and the post-turn
-    self-reflection.
+    tokens and latency, **context sent** — the message array each recorded model call was
+    given, system prompt included, rebuilt from that call's context receipt and checked
+    against the digests recorded when it was emitted (what `stella inspect` prints) — the
+    **transcript** replayed from the run's event journal — answer text, reasoning, and each
+    tool call's arguments and output, with long bodies clipped until you ask for them in
+    full — every tool call, the files touched, and the post-turn self-reflection.
   </OptionCard>
   <OptionCard name="activity">
     Per-day time series over the window: cost, tokens (input vs output), runs (resolved vs
