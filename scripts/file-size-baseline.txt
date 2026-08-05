@@ -9,7 +9,7 @@
 # review like any other change.
 2231 bench/harbor_adapter/stella_harbor/__init__.py
 4292 bench/harbor_adapter/stella_harbor/secure_launcher.py
-2333 bench/harbor_adapter/tests/test_adapter.py
+2335 bench/harbor_adapter/tests/test_adapter.py
 3360 bench/harbor_adapter/tests/test_secure_launcher.py
 8272 bench/terminal_bench_analysis/tb21_analysis.py
 1911 bench/terminal_bench_analysis/tb21_evidence_contract.py
@@ -26,16 +26,16 @@
 2076 crates/stella-model/src/openai.rs
 1542 crates/stella-model/src/zai.rs
 1815 crates/stella-model/src/zai/tests.rs
-3873 crates/stella-pipeline/src/pipeline.rs
-2638 crates/stella-pipeline/src/pipeline/tests.rs
+3617 crates/stella-pipeline/src/pipeline.rs
+2598 crates/stella-pipeline/src/pipeline/tests.rs
 2950 crates/stella-protocol/src/event.rs
 2074 crates/stella-store/src/lib.rs
 2268 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs
 1569 crates/stella-tools/src/media.rs
-2308 crates/stella-tools/src/registry.rs
+2214 crates/stella-tools/src/registry.rs
 1839 crates/stella-tools/src/scripts.rs
-1528 crates/stella-tui/src/deck.rs
+1510 crates/stella-tui/src/deck.rs
 1580 crates/stella-tui/src/deck_render.rs
 4028 crates/stella-tui/src/deck_ui.rs
 1665 crates/stella-tui/src/views/engine.rs

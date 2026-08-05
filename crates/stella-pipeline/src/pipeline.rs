@@ -2091,10 +2091,18 @@ impl<'a> Pipeline<'a> {
         // Decide whether to verify: unconditional for single/multi; for a
         // simple lookup, only if the turn unexpectedly touched files (the
         // zero-diff guard, L-E2). "Touched files" = FileChange events observed
-        // OR a non-empty diff.
+        // OR a non-empty diff from a turn that dispatched something able to
+        // write. The second conjunct is #1553: the diff reads the WORKING
+        // TREE, and in a shared worktree the tree can move under a run —
+        // a human editing beside it. `mutating_actions` is counted off the
+        // calls this pipeline dispatched, not off any look at the world, so
+        // a lookup that dispatched nothing that could write cannot own the
+        // motion the diff shows, and must not be dragged into verification
+        // over someone else's edit.
         let probe = self.gather_diff(surface, &state.untracked_before).await;
         self.absorb_probe(&mut state, probe);
-        let files_touched = state.file_changes > 0 || !state.diff_text.trim().is_empty();
+        let files_touched = state.file_changes > 0
+            || (state.mutating_actions > 0 && !state.diff_text.trim().is_empty());
         let should_verify = assessment.class.verifies_unconditionally()
             || (assessment.class == TaskClass::SimpleLookup && files_touched);
         if !should_verify {
