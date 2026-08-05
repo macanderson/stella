@@ -391,14 +391,14 @@ fn model_spans(model: &WorkspaceModel, dim: Style, val: Style) -> Vec<Span<'stat
 
 /// The pipeline role as the deck says it out loud: triage / worker / verify.
 ///
-/// `Judge` reads "verify" because that is the stage word the stepper and the
-/// witness panel already use for the same step; "judge" is the internal role
-/// name, and two words for one thing is one too many on a glanceable row.
+/// `Verifier` reads "verify" because that is the stage word the stepper and
+/// the witness panel already use for the same step — the row names the work,
+/// not the role.
 fn role_word(role: PipelineRole) -> &'static str {
     match role {
         PipelineRole::Triage => "triage",
         PipelineRole::Worker => "worker",
-        PipelineRole::Judge => "verify",
+        PipelineRole::Verifier => "verify",
     }
 }
 
@@ -432,7 +432,7 @@ fn stage_label_upper(stage: Option<stella_protocol::StageKind>) -> &'static str 
         Some(S::Witness) => "WITNESS",
         Some(S::Execute) => "EXECUTE",
         Some(S::Verify) => "VERIFY",
-        Some(S::Judge) => "JUDGE",
+        Some(S::Verdict) => "VERDICT",
         Some(S::Reflect) => "REFLECT",
         Some(S::ContextWrite) => "CONTEXT WRITE",
         Some(S::Complete) => "COMPLETE",
@@ -941,8 +941,8 @@ mod tests {
     fn the_role_word_is_the_one_the_deck_says_out_loud() {
         assert_eq!(role_word(PipelineRole::Triage), "triage");
         assert_eq!(role_word(PipelineRole::Worker), "worker");
-        // `Judge` reads "verify" — the stage word the stepper already uses.
-        assert_eq!(role_word(PipelineRole::Judge), "verify");
+        // `Verifier` reads "verify" — the stage word the stepper already uses.
+        assert_eq!(role_word(PipelineRole::Verifier), "verify");
     }
 
     #[test]
