@@ -923,7 +923,12 @@ fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
         }
         // SAFETY: `fstat` returned success, so it initialized the struct.
         let stat = unsafe { stat.assume_init() };
-        if u64::from(stat.st_dev.cast_unsigned()) == lock.dev() && stat.st_ino == lock.ino() {
+        // `st_dev` is `i32` on macOS and already `u64` on Linux, and std's
+        // `MetadataExt::dev()` widens it with exactly this cast — identity
+        // only matches if the conversion does too.
+        #[allow(clippy::unnecessary_cast)] // a no-op on Linux, the point on macOS
+        let dev = stat.st_dev as u64;
+        if dev == lock.dev() && stat.st_ino == lock.ino() {
             return Some(fd);
         }
     }
