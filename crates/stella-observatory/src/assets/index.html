@@ -296,6 +296,8 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
   font:var(--fs-micro)/1 var(--mono);padding:6px 10px;border-radius:var(--radius-sm);
   cursor:pointer;margin-top:8px}
 #drawer .jrnl-full:hover{color:var(--text);border-color:var(--accent)}
+/* The same button, sitting inside a step row rather than under a section. */
+#drawer .ctx-call{margin-top:0;padding:3px 8px}
 .step-row{display:grid;grid-template-columns:34px minmax(0,1fr) 160px;gap:var(--sp2);
           align-items:center;font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3);padding:3px 0}
 .step-row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1175,6 +1177,11 @@ async function openDrawer(id, full = false) {
      attacker-influenced text — so each one goes through esc(). */
   let j = null;
   try { j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}${full ? "&full=1" : ""}`); } catch { j = null; }
+  /* The receipt index (#1475): which model calls this run recorded a receipt
+     for. Only the index is fetched here — a reconstruction is one call's whole
+     prompt, so it loads on demand when a row is drilled into. */
+  let cx = null;
+  try { cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`); } catch { cx = null; }
   const entries = Array.isArray(j) ? j : [];
   const jrnl = entries.map(journalEntryHtml).join("");
   // Rendered even with zero entries while the run is still going: the
@@ -1229,12 +1236,17 @@ async function openDrawer(id, full = false) {
     ${steps ? `<div class="sect"><div class="kick">Per-step tokens and latency</div>${steps}</div>`
             : `<div class="sect"><div class="kick">Per-step tokens and latency</div>
                <div class="empty">No steps recorded for this run.</div></div>`}
+    ${sentContextSectionHtml(cx)}
     ${jrnlSect}
     ${tools ? `<div class="sect"><div class="kick">Tool calls</div>${tools}</div>` : ""}
     ${files ? `<div class="sect"><div class="kick">Files touched</div>${files}</div>` : ""}
     ${refl}`);
   const fullBtn = $("jrnl-full");
   if (fullBtn) fullBtn.addEventListener("click", () => openDrawer(id, true));
+  for (const b of $("drawer").querySelectorAll(".ctx-call")) {
+    b.addEventListener("click", () =>
+      loadSentContext(id, +b.dataset.turn, +b.dataset.step, +b.dataset.seq));
+  }
   drawerState = {
     id,
     full,
@@ -1277,6 +1289,85 @@ async function refreshDrawerJournal() {
     }
   }
   drawerState.lastSeq = entries[entries.length - 1].seq;
+}
+/* ── sent context (#1475) ────────────────────────────────────────────────
+   What a model call was *given*, as opposed to what the run did: the
+   message array rebuilt server-side from that call's context receipt, the
+   same view `stella inspect <execution> --step N` prints. One row per
+   recorded call — the receipt plane's own step rows, keyed
+   (turn, step, call_seq) — each drilling into the reconstruction below it.
+   Every string here is workspace-influenced text (a system prompt is the
+   most workspace-influenced text on the page), so all of it goes through
+   esc(). */
+function sentContextSectionHtml(cx) {
+  if (!cx) return "";
+  // A store with no receipts is a state, not a failure: say which state, in
+  // the words `stella inspect` uses for the same case.
+  if (!cx.receipts_recorded) {
+    return `<div class="sect"><div class="kick">Context sent</div>
+      <div class="empty">${esc(cx.note ?? "No receipts recorded for this run.")}</div></div>`;
+  }
+  const rows = (cx.calls ?? []).map(c => `<div class="step-row">
+      <span>${fmtInt(c.step)}</span>
+      <span class="name">${esc(c.call_role)} · ${esc(c.provider)}/${esc(c.model)}
+        · ${fmtTok(c.estimated_input_tokens)} tok${
+        num(c.turn) || num(c.call_seq) ? ` · turn ${fmtInt(c.turn)} seq ${fmtInt(c.call_seq)}` : ""}</span>
+      <span><button type="button" class="jrnl-full ctx-call" data-turn="${esc(String(c.turn))}"
+        data-step="${esc(String(c.step))}" data-seq="${esc(String(c.call_seq))}"
+        >context sent</button></span>
+    </div>`).join("");
+  return `<div class="sect"><div class="kick">Context sent</div>${rows}
+    <div id="ctx-body"></div></div>`;
+}
+/* The two failure modes stay separate, as they do on the CLI: an unresolved
+   block is a documented coverage gap, a digest mismatch is a torn-journal or
+   tampering signal. Collapsing them into one "unverified" word would hide
+   which one happened. */
+function sentContextVerdictHtml(c) {
+  if (c.verified) {
+    return `<div class="kick" style="color:var(--ok)">✓ verified · every
+      journal-resolved block re-hashed to its recorded digest</div>`;
+  }
+  const bad = (c.digest_mismatches ?? []).length;
+  const gaps = (c.unresolved ?? []).length;
+  return `${bad ? `<div class="kick" style="color:var(--bad)">✕ ${fmtInt(bad)} block(s)
+      did NOT re-hash to their recorded digest — the journal is torn or was altered</div>` : ""}
+    ${gaps ? `<div class="kick" style="color:var(--warn)">◌ ${fmtInt(gaps)} block(s) could not
+      be resolved (synthetic results, discarded speculation, or attachments)</div>` : ""}`;
+}
+function sentContextMessageHtml(m) {
+  const blocks = m.blocks ?? [];
+  const torn = blocks.some(b => b.digest_verified === false);
+  return `<div class="jrnl${torn ? " err" : ""}">
+    <div class="kick">[${fmtInt(m.index)}] ${esc(m.role)} · ${fmtInt(blocks.length)} block${
+      blocks.length === 1 ? "" : "s"}${
+      m.truncated ? ` · <span style="color:var(--warn)">clipped</span>` : ""}</div>
+    ${m.body ? `<pre class="jrnl-body">${esc(m.body)}</pre>` : ""}</div>`;
+}
+/* Load one call's reconstruction into the open drawer. On demand rather than
+   with the drawer: this is a whole prompt — the largest payload the dashboard
+   can ask for — and a run has one per model call. */
+async function loadSentContext(id, turn, step, callSeq, full = false) {
+  const body = $("ctx-body");
+  if (!body) return;
+  let cx = null;
+  try {
+    cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`
+      + `&turn=${encodeURIComponent(turn)}&step=${encodeURIComponent(step)}`
+      + `&call_seq=${encodeURIComponent(callSeq)}${full ? "&full=1" : ""}`);
+  } catch { cx = null; }
+  const c = cx && cx.context;
+  if (!c || !c.found) {
+    body.innerHTML = `<div class="empty">${
+      esc((c && c.note) || "That call has no recorded receipt.")}</div>`;
+    return;
+  }
+  const messages = c.messages ?? [];
+  body.innerHTML = `${sentContextVerdictHtml(c)}${messages.map(sentContextMessageHtml).join("")}${
+    messages.some(m => m.truncated)
+      ? `<button type="button" class="jrnl-full" id="ctx-full">show full bodies</button>` : ""}`;
+  const btn = $("ctx-full");
+  if (btn) btn.addEventListener("click", () => loadSentContext(id, turn, step, callSeq, true));
 }
 /* The main poll already re-fetches `/api/executions` (with `finished_at`)
    on every cursor move — reuse that instead of a dedicated per-tick
