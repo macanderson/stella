@@ -14,8 +14,13 @@
 # None of them announce themselves, which is why they need a test rather than
 # an eyeball.
 #
-# Partial coverage of #1547. The observatory half of the same contract is
-# tested in crates/stella-observatory/src/fullauto.rs.
+# Covers #1547: the seen-digest dedup oracle, the AIMD controller, the
+# per-lens dry streak, the governor's whole tier ladder (the probes are pinned
+# with FULLAUTO_PROBE_* so the same cases pass on a loaded laptop and a bare
+# CI runner), and queue ranking (a stub `gh` first on PATH serves fixtures, so
+# "no network" holds even where the real `gh` is installed). The observatory
+# half of the same contract is tested in
+# crates/stella-observatory/src/fullauto.rs.
 set -uo pipefail
 
 FA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/fullauto.sh"
@@ -42,6 +47,27 @@ check_eq() {
   local want="$1" got="$2" what="$3"
   if [ "$want" = "$got" ]; then ok "$what"; else bad "$what (want '$want', got '$got')"; fi
 }
+
+# A stub `gh` first on PATH keeps the demand half of `plan` and the whole of
+# `queue` off the network — the real `gh` is installed on the dev box, and
+# without the stub those cases would make live API calls and float with the
+# actual issue tracker. It answers `plan`'s two count queries from
+# $GH_FIX_P0 / $GH_FIX_BUGS and serves `queue` its raw payload from
+# $GH_FIX_QUEUE. The `:?` on the queue fixture is a tripwire: a case that
+# reaches it without declaring a fixture is a case that thought it was not
+# touching gh at all.
+STUB_BIN="$ROOT/bin"
+mkdir -p "$STUB_BIN"
+cat > "$STUB_BIN/gh" <<'SH'
+#!/bin/sh
+case "$*" in
+  *"--label bug --label P0"*) printf '%s\n' "${GH_FIX_P0:-0}" ;;
+  *"--label bug"*)            printf '%s\n' "${GH_FIX_BUGS:-0}" ;;
+  *"issue list"*)             cat "${GH_FIX_QUEUE:?stub gh: no queue fixture declared}" ;;
+  *) echo "stub gh: unexpected args: $*" >&2; exit 1 ;;
+esac
+SH
+chmod +x "$STUB_BIN/gh"
 
 # ---------------------------------------------------------------------------
 head_ "digest — the dedup key the termination oracle rests on"
@@ -104,6 +130,18 @@ fa ap cycle-end --cycle 4 --new 0 --outcome ok >/dev/null 2>&1
 check_eq "properties" "$(fa ap aperture --current)" "a fresh lens does not inherit the dry tail that opened it"
 fa ap cycle-end --cycle 5 --new 0 --outcome ok >/dev/null 2>&1
 check_eq "invariants" "$(fa ap aperture --current)" "two dry cycles under the new lens advance again"
+
+# The other half of the streak contract: the dry cycles must be CONSECUTIVE.
+# A discovering cycle between two dry ones restarts the count — the streak
+# walk stops at the first non-dry record — so dry-noise-dry never advances.
+# If someone "simplifies" the walk into counting dry records in the tail,
+# this is the case that goes red.
+fa apr cycle-end --cycle 1 --new 0 --outcome ok >/dev/null 2>&1
+fa apr cycle-end --cycle 2 --new 1 --outcome ok >/dev/null 2>&1
+fa apr cycle-end --cycle 3 --new 0 --outcome ok >/dev/null 2>&1
+check_eq "rubric" "$(fa apr aperture --current)" "a discovering cycle between two dry ones resets the streak"
+fa apr cycle-end --cycle 4 --new 0 --outcome ok >/dev/null 2>&1
+check_eq "properties" "$(fa apr aperture --current)" "two consecutive dry cycles after the reset advance"
 
 # ---------------------------------------------------------------------------
 head_ "run lifecycle — running / completed / cancelled"
@@ -183,9 +221,102 @@ check_eq "cancelled" "$dmn_status" "a hand-stopped run records cancelled, not cr
 # ---------------------------------------------------------------------------
 head_ "governor — the plan is a function of the machine"
 
-plan="$(FULLAUTO_DISK_FLOOR_GB=999999 fa gov plan)"
-build="$(printf '%s\n' "$plan" | awk -F= '/^FULLAUTO_LOCAL_BUILD=/ {print $2}')"
-check_eq "0" "$build" "a breached disk floor forbids the local build"
+# One assertion shape for the whole ladder: pin every probe to a healthy
+# 8-core / 16 GiB / 50 GiB baseline, apply one case's overrides on top (later
+# `env` assignments win), and compare the WHOLE decision tuple exactly. Exact
+# rather than per-field, because "light with the build still on" and "light
+# with the build forbidden" are different decisions and a single-field check
+# lets one impersonate the other — the same philosophy as
+# test-impacted-crates.sh asserting the exact scope line.
+want_plan() { # want_plan <name> <case_dir> "<tier build par scope bench batch audit>" [VAR=v ...]
+  local name="$1" dir="$2" want="$3"
+  shift 3
+  local got
+  got="$(env PATH="$STUB_BIN:$PATH" FULLAUTO_STATE_DIR="$ROOT/$dir" \
+      FULLAUTO_PROBE_CPU=8 FULLAUTO_PROBE_LOAD1=1 \
+      FULLAUTO_PROBE_MEM_TOTAL_GB=16 FULLAUTO_PROBE_MEM_FREE_GB=8 \
+      FULLAUTO_PROBE_DISK_FREE_GB=50 FULLAUTO_PROBE_ON_BATTERY=0 \
+      FULLAUTO_PROBE_CONTENTION=0 "$@" "$FA" plan \
+    | awk -F= '
+        $1 == "FULLAUTO_TIER"        { t = $2 }
+        $1 == "FULLAUTO_LOCAL_BUILD" { b = $2 }
+        $1 == "FULLAUTO_PARALLEL"    { p = $2 }
+        $1 == "FULLAUTO_SCOPE"       { s = $2 }
+        $1 == "FULLAUTO_BENCH"       { n = $2 }
+        $1 == "FULLAUTO_BATCH"       { a = $2 }
+        $1 == "FULLAUTO_AUDIT"       { d = $2 }
+        END { print t, b, p, s, n, a, d }')"
+  check_eq "$want" "$got" "$name"
+}
+
+# Supply rungs, straddled in pairs where the rule has an edge.
+want_plan "a healthy mid box runs a normal cycle at the calibrated ceilings" \
+  g-n1 "normal 1 2 impacted loop 20 deep"
+want_plan "a big idle box earns the heavy tier and the measured match" \
+  g-h1 "heavy 1 2 workspace h2h 20 deep" \
+  FULLAUTO_PROBE_MEM_TOTAL_GB=64 FULLAUTO_PROBE_MEM_FREE_GB=32 FULLAUTO_PROBE_DISK_FREE_GB=200
+want_plan "...but only when it is actually idle (load at cpu/2 is not)" \
+  g-h2 "normal 1 2 impacted loop 20 deep" \
+  FULLAUTO_PROBE_MEM_TOTAL_GB=64 FULLAUTO_PROBE_MEM_FREE_GB=32 FULLAUTO_PROBE_DISK_FREE_GB=200 \
+  FULLAUTO_PROBE_LOAD1=4
+want_plan "a breached disk floor forbids the local build and sheds the bench" \
+  g-d1 "light 0 2 ci off 5 deep" FULLAUTO_PROBE_DISK_FREE_GB=5
+want_plan "the floor outranks heavy-class hardware — the first rung wins" \
+  g-d2 "light 0 2 ci off 5 deep" \
+  FULLAUTO_PROBE_MEM_TOTAL_GB=64 FULLAUTO_PROBE_MEM_FREE_GB=32 FULLAUTO_PROBE_DISK_FREE_GB=5
+want_plan "the floor itself is a knob — raised above real free space it trips" \
+  g-d3 "light 0 2 ci off 5 deep" FULLAUTO_DISK_FLOOR_GB=999999
+want_plan "a busy box gives up the build AND drops to serial" \
+  g-b1 "light 0 1 ci off 5 deep" FULLAUTO_PROBE_CONTENTION=1
+want_plan "a breached memory floor reads like a busy box" \
+  g-m1 "light 0 1 ci off 5 deep" FULLAUTO_PROBE_MEM_FREE_GB=2
+want_plan "battery sheds compute but keeps the local build" \
+  g-p1 "light 1 1 impacted off 5 deep" FULLAUTO_PROBE_ON_BATTERY=1
+want_plan "a saturated box narrows concurrency and nothing else" \
+  g-l1 "light 1 1 impacted loop 5 deep" FULLAUTO_PROBE_LOAD1=8
+
+# Demand rungs: the queue can shrink the batch, and a P0 can rescue a light
+# cycle — but demand never upgrades the tier and never widens the batch.
+want_plan "the queue clamps the batch — 3 open defects never earn a batch of 20" \
+  g-q1 "normal 1 2 impacted loop 3 deep" GH_FIX_BUGS=3
+want_plan "a P0 on a light tier buys a minimal fast cycle, not a skipped one" \
+  g-q2 "light 1 1 impacted off 2 fast" \
+  FULLAUTO_PROBE_ON_BATTERY=1 GH_FIX_BUGS=3 GH_FIX_P0=2
+want_plan "a P0 on a healthy box changes nothing — the rescue is light-only" \
+  g-q3 "normal 1 2 impacted loop 3 deep" GH_FIX_BUGS=3 GH_FIX_P0=2
+want_plan "the light tier caps the batch at 5 whatever the queue holds" \
+  g-q4 "light 1 1 impacted off 5 deep" FULLAUTO_PROBE_ON_BATTERY=1 GH_FIX_BUGS=9
+
+# ---------------------------------------------------------------------------
+head_ "queue — ranked P0 > P1 > P2, oldest first inside a rank"
+
+QFIX="$ROOT/queue-fixture.json"
+cat > "$QFIX" <<'JSON'
+[
+  {"number": 101, "title": "fresh P1",  "createdAt": "2026-08-01T00:00:00Z", "url": "u",
+   "labels": [{"name": "bug"}, {"name": "P1"}]},
+  {"number": 102, "title": "aged P1",   "createdAt": "2026-01-01T00:00:00Z", "url": "u",
+   "labels": [{"name": "bug"}, {"name": "P1"}]},
+  {"number": 103, "title": "the P0",    "createdAt": "2026-08-01T00:00:00Z", "url": "u",
+   "labels": [{"name": "bug"}, {"name": "P0"}]},
+  {"number": 104, "title": "untriaged", "createdAt": "2025-01-01T00:00:00Z", "url": "u",
+   "labels": [{"name": "triage"}]},
+  {"number": 105, "title": "a feature", "createdAt": "2025-01-01T00:00:00Z", "url": "u",
+   "labels": [{"name": "enhancement"}]}
+]
+JSON
+
+queue_numbers() { # queue_numbers <limit>
+  env PATH="$STUB_BIN:$PATH" GH_FIX_QUEUE="$QFIX" FULLAUTO_STATE_DIR="$ROOT/qr" \
+    "$FA" queue --json --limit "$1" \
+    | python3 -c 'import json,sys;print(" ".join(str(i["number"]) for i in json.load(sys.stdin)))'
+}
+
+# 104 is oldest of all yet ranks last, and 105 never appears: rank beats age
+# across ranks, an untriaged issue counts as a defect, a feature does not.
+check_eq "103 102 101 104" "$(queue_numbers 10)" \
+  "P0 first, age breaks ties inside a rank, triage counts, features do not"
+check_eq "103" "$(queue_numbers 1)" "--limit truncates after ranking, not before"
 
 # ---------------------------------------------------------------------------
 printf '\n'
