@@ -122,7 +122,7 @@ pub enum AccountedCallError {
 /// [`AccountedCall::timeout`] is an IDLE deadline, not a wall clock: it is
 /// measured since the last streamed fragment, so it re-arms every time the
 /// dispatch is observed to still be producing — the same distinction
-/// [`crate::step::bounded_generation`] draws for the engine's own step loop.
+/// `crate::step::bounded_generation` draws for the engine's own step loop.
 /// A flat wall-clock deadline here used to abandon a call the instant total
 /// elapsed time crossed the ceiling even while the provider was actively
 /// answering, which lost OpenRouter's trailing usage/cost frame (it arrives
