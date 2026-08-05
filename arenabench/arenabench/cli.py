@@ -22,6 +22,7 @@ from pathlib import Path
 from .agents import AGENTS
 from .recorder import IMAGE_TAG, build_image, docker_available, image_present
 from .registry import DEFAULT_REGISTRY, export_root, sample_tasks
+from .replay import ReplayError, replay_flip
 from .server import default_workspace, serve
 
 __all__ = ["main"]
@@ -291,6 +292,62 @@ def _cmd_agents(args: argparse.Namespace) -> int:
     return 0
 
 
+def _task_dir_for(trial_dir: Path) -> Path | None:
+    """Where the task this trial ran lives, read back from its own result.
+
+    Harbor records the absolute path it resolved the task from, so a trial
+    carries the location of its own verifier and the operator does not have to
+    reconstruct which export a months-old run used.
+    """
+    try:
+        raw = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    path = ((raw.get("task_id") or {}) if isinstance(raw, dict) else {}).get("path")
+    return Path(str(path)) if path else None
+
+
+def _cmd_flip(args: argparse.Namespace) -> int:
+    trial_dir = Path(args.trial_dir).expanduser().resolve()
+    if not trial_dir.is_dir():
+        print(f"no such trial directory: {trial_dir}", file=sys.stderr)
+        return 1
+    task_dir = Path(args.task_dir).expanduser() if args.task_dir else _task_dir_for(trial_dir)
+    if task_dir is None or not task_dir.is_dir():
+        print(
+            "could not resolve the task directory; pass --task-dir",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        result = replay_flip(
+            trial_dir,
+            task_dir,
+            verifier_timeout=args.verifier_timeout,
+            confirm_window=args.confirm_window,
+        )
+    except ReplayError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    if result.flip_index is None:
+        print(
+            f"no snapshot passed ({result.snapshots} captured, "
+            f"{result.probes} probed, {result.unknown} unknown)"
+        )
+        return 0
+    print(
+        f"flip at snapshot {result.flip_index}/{result.snapshots - 1} "
+        f"(t+{result.flip_elapsed:.0f}s)"
+    )
+    print(
+        f"kept running {result.wasted_elapsed:.0f}s after it was already passing "
+        f"— {result.probes} verifier runs, {result.unknown} unknown"
+    )
+    return 0
+
+
 def _cmd_build_recorder(args: argparse.Namespace) -> int:
     if not docker_available():
         print("docker is not available", file=sys.stderr)
@@ -400,6 +457,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     recorder_parser.add_argument("--force", action="store_true")
     recorder_parser.set_defaults(func=_cmd_build_recorder)
+
+    flip_parser = subparsers.add_parser(
+        "flip",
+        help="find when a trial started passing, and what it did afterwards",
+    )
+    flip_parser.add_argument("trial_dir", help="a trial directory containing arena/snapshots")
+    flip_parser.add_argument(
+        "--task-dir",
+        help="the task's dataset directory (default: resolved from result.json)",
+    )
+    flip_parser.add_argument(
+        "--verifier-timeout",
+        type=float,
+        default=1800.0,
+        help="seconds allowed for one verifier run (default: 1800)",
+    )
+    flip_parser.add_argument(
+        "--confirm-window",
+        type=int,
+        default=3,
+        help="snapshots to re-probe before the bisected answer (default: 3)",
+    )
+    flip_parser.set_defaults(func=_cmd_flip)
 
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)
