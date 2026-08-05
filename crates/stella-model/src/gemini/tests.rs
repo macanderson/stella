@@ -378,7 +378,7 @@ async fn complete_returns_transport_err_on_clean_eof_without_finish_reason() {
 
     let err = provider.complete(req).await.unwrap_err();
     assert!(
-        matches!(err, ProviderError::Transport(_)),
+        matches!(err, ProviderError::Transport { .. }),
         "expected Transport, got {err:?}"
     );
     assert!(err.is_retryable(), "a disconnect must be retryable");

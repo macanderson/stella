@@ -139,12 +139,13 @@ pub async fn run_accounted_call(
         },
         // Per-attempt duration (retry.rs times each dispatch individually):
         // the failed call's own latency, never cumulative across attempts.
-        |attempt, _error, attempt_duration| {
+        |attempt, error, attempt_duration| {
             emit_incomplete(
                 &call,
                 events,
                 attempt_duration,
                 Some(attempt.saturating_sub(1)),
+                error.partial_usage().copied(),
             );
         },
     );
@@ -160,7 +161,10 @@ pub async fn run_accounted_call(
                 // backoff sleep would double-report a failure the per-attempt
                 // observer already accounted for.
                 if attempt_in_flight.load(Ordering::SeqCst) {
-                    emit_incomplete(&call, events, started.elapsed(), None);
+                    // A deadline fires from outside the adapter, so nothing
+                    // was salvaged: the stream is still open and its usage
+                    // frame may yet have been in flight.
+                    emit_incomplete(&call, events, started.elapsed(), None, None);
                 }
                 return Err(AccountedCallError::Timeout);
             }
@@ -265,6 +269,7 @@ fn emit_incomplete(
     events: &EventSender,
     duration: Duration,
     retries: Option<u32>,
+    partial: Option<stella_protocol::PartialUsage>,
 ) {
     let _ = events.send(AgentEvent::UsageIncomplete {
         role: call.role,
@@ -277,6 +282,7 @@ fn emit_incomplete(
         },
         duration_ms: duration.as_millis() as u64,
         retries,
+        partial,
     });
 }
 
@@ -313,7 +319,7 @@ mod tests {
             let mut attempts = self.attempts.lock().expect("attempt lock");
             *attempts += 1;
             if *attempts == 1 {
-                return Err(ProviderError::Transport("private failed body".into()));
+                return Err(ProviderError::transport("private failed body"));
             }
             Ok(CompletionResult {
                 text: "done".into(),
@@ -567,7 +573,7 @@ mod tests {
             &self,
             _request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
-            Err(ProviderError::Transport("private failed body".into()))
+            Err(ProviderError::transport("private failed body"))
         }
     }
 

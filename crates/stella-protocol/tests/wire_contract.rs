@@ -929,6 +929,8 @@ fn sample_events() -> Vec<AgentEvent> {
             .into_iter()
             .flat_map(|reason| {
                 [
+                    // The recovering shape: a stream that died after the
+                    // provider had already reported what the prompt cost.
                     AgentEvent::UsageIncomplete {
                         role: ModelCallRole::Worker,
                         provider: "anthropic".into(),
@@ -936,7 +938,22 @@ fn sample_events() -> Vec<AgentEvent> {
                         reason,
                         duration_ms: 30_000,
                         retries: Some(2),
+                        partial: Some(stella_protocol::PartialUsage {
+                            usage: stella_protocol::CompletionUsage {
+                                input_tokens: 14_000,
+                                cached_input_tokens: 12_000,
+                                cache_write_tokens: 400,
+                                output_tokens: 130,
+                                reported: false,
+                            },
+                            cost_usd: 0.0213,
+                            input_reported: true,
+                        }),
                     },
+                    // The shape that genuinely learned nothing — a failure
+                    // before any usage frame. `partial` must stay absent from
+                    // the wire rather than serializing as a zeroed envelope,
+                    // which would read as "this attempt was free".
                     AgentEvent::UsageIncomplete {
                         role: ModelCallRole::Worker,
                         provider: "anthropic".into(),
@@ -944,6 +961,7 @@ fn sample_events() -> Vec<AgentEvent> {
                         reason,
                         duration_ms: 30_000,
                         retries: None,
+                        partial: None,
                     },
                 ]
             }),

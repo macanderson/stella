@@ -411,13 +411,19 @@ impl FleetBoard {
                     None => display,
                 });
             }
+            // Reads ride this event so the files panel sees them without a
+            // second data path, but they carry no delta and never a diff.
+            // Enriching on one would hang a meaningless `+0-0` on a read; the
+            // row keeps whatever `ToolStart` painted instead. Guarded exactly
+            // as every other consumer guards — `dataset_cmd`, `arena`, the
+            // deck ledger, the model — so one read cannot mean two things.
             AgentEvent::FileChange {
                 path,
                 kind,
                 added,
                 removed,
                 diff,
-            } => {
+            } if kind.is_mutation() => {
                 // Enrich the last action with the +A-B the recorder measured,
                 // and keep the diff for the focused task's detail pane.
                 let (added, removed) = (*added, *removed);

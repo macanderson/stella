@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
-use stella_protocol::ProviderError;
+use stella_protocol::{CompletionUsage, PartialUsage, ProviderError, tokens::estimate_tokens};
+
+use crate::catalog::Pricing;
 
 /// How long to wait for the initial TCP/TLS connection before giving up. A
 /// dead or black-holed provider endpoint should fail fast and retryably, not
@@ -107,7 +109,7 @@ pub(crate) fn unary_client() -> reqwest::Client {
 /// land. Ordinary transport faults (resets, DNS, TLS) stay retryable too.
 pub(crate) fn classify_unary_dispatch_error(label: &str, error: &reqwest::Error) -> ProviderError {
     if error.is_connect() {
-        return ProviderError::Transport(error.to_string());
+        return ProviderError::transport(error.to_string());
     }
     if error.is_timeout() {
         return ProviderError::Terminal(format!(
@@ -116,7 +118,7 @@ pub(crate) fn classify_unary_dispatch_error(label: &str, error: &reqwest::Error)
             UNARY_READ_TIMEOUT.as_secs()
         ));
     }
-    ProviderError::Transport(error.to_string())
+    ProviderError::transport(error.to_string())
 }
 
 /// Parse a `Retry-After` header (RFC 9110 §10.2.3) into a millisecond hint
@@ -397,7 +399,7 @@ pub(crate) fn classify_http_status(
             retry_after_ms,
         },
         s if s.is_server_error() => {
-            ProviderError::Transport(format!("{label} HTTP {status}: {}", body_snippet(body)))
+            ProviderError::transport(format!("{label} HTTP {status}: {}", body_snippet(body)))
         }
         _ => {
             let mut message = format!("{label} HTTP {status}: {}", body_snippet(body));
@@ -428,9 +430,9 @@ where
 {
     match tokio::time::timeout(idle, stream.next()).await {
         Ok(Some(Ok(item))) => Ok(Some(item)),
-        Ok(Some(Err(e))) => Err(ProviderError::Transport(e.to_string())),
+        Ok(Some(Err(e))) => Err(ProviderError::transport(e.to_string())),
         Ok(None) => Ok(None),
-        Err(_elapsed) => Err(ProviderError::Transport(format!(
+        Err(_elapsed) => Err(ProviderError::transport(format!(
             "stream idle timeout: no data for {}s",
             idle.as_secs()
         ))),
@@ -481,14 +483,154 @@ pub(crate) fn truncated_tool_input_error(
 /// never be committed as a successful completion. Shared by every streaming
 /// adapter so the disconnect classifies as retryable `Transport` uniformly.
 pub(crate) fn stream_ended_before_terminal(provider: &str, terminal_event: &str) -> ProviderError {
-    ProviderError::Transport(format!(
+    ProviderError::transport(format!(
         "{provider} stream ended before {terminal_event} — connection closed mid-response"
     ))
+}
+
+/// Package whatever accounting a dying stream had already accumulated, so it
+/// rides out on the error instead of dying with the aggregator's stack frame.
+///
+/// This is the recovery half of the two error paths every streaming adapter
+/// has — a mid-stream transport fault ([`next_with_timeout`]) and a clean EOF
+/// with no terminal event ([`stream_ended_before_terminal`]). Both used to
+/// discard a `CompletionUsage` that, on the Anthropic-shaped dialects, already
+/// held the provider's own exact input and cache figures from the opening
+/// frame. The turn was then recorded as if the attempt had been free.
+///
+/// Two deliberate choices about truth:
+///
+/// - `reported` is forced to `false`. The dialects that stream a *running*
+///   output count (Anthropic's `message_delta`) set it mid-flight, so a
+///   partial can arrive here already flagged as authoritative; letting that
+///   through would launder a half-answer into the settled-accounting path.
+/// - A zero `output_tokens` is replaced by an estimate over the text that did
+///   arrive. Those tokens were generated and are billable, and a zero we know
+///   to be wrong is worse than an approximation we can label — the estimate is
+///   never mistaken for provider truth because `input_reported` describes only
+///   the input side and `reported` stays false regardless.
+///
+/// Returns `None` when nothing was observed at all. That case is real and
+/// common on the OpenAI-shaped dialects, which send usage only in the final
+/// chunk: a stream cut early there has no counts and no text. Attaching a
+/// zeroed envelope would be strictly worse than attaching nothing, because
+/// downstream it is indistinguishable from a genuine call that cost nothing —
+/// the exact misreading this whole change exists to stop.
+pub(crate) fn partial_usage(
+    usage: &CompletionUsage,
+    text: &str,
+    pricing: Option<&Pricing>,
+) -> Option<PartialUsage> {
+    if usage.input_tokens == 0 && usage.output_tokens == 0 && text.is_empty() {
+        return None;
+    }
+    let input_reported = usage.input_tokens > 0;
+    let mut observed = *usage;
+    observed.reported = false;
+    if observed.output_tokens == 0 {
+        observed.output_tokens = estimate_tokens(text);
+    }
+    Some(PartialUsage {
+        cost_usd: pricing.map_or(0.0, |p| p.cost_usd(&observed)),
+        usage: observed,
+        input_reported,
+    })
+}
+
+/// Hang whatever [`partial_usage`] salvaged onto `error`, leaving it untouched
+/// when there was nothing to salvage. The one call every streaming adapter
+/// makes at its two loss sites.
+pub(crate) fn attach_partial(
+    error: ProviderError,
+    usage: &CompletionUsage,
+    text: &str,
+    pricing: Option<&Pricing>,
+) -> ProviderError {
+    match partial_usage(usage, text, pricing) {
+        Some(partial) => error.with_partial(partial),
+        None => error,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pricing() -> Pricing {
+        Pricing {
+            input_usd_per_mtok: 3.0,
+            output_usd_per_mtok: 15.0,
+            cached_input_usd_per_mtok: 0.3,
+            cache_write_usd_per_mtok: 3.75,
+        }
+    }
+
+    /// A stream cut before anything arrived has nothing to report, and must
+    /// say so. A zeroed envelope here is indistinguishable downstream from a
+    /// real call that cost nothing — the misreading this whole path exists to
+    /// prevent. This is the normal early-drop case on the OpenAI-shaped
+    /// dialects, which send usage only in the final chunk.
+    #[test]
+    fn nothing_observed_yields_no_partial_at_all() {
+        assert!(partial_usage(&CompletionUsage::default(), "", Some(&pricing())).is_none());
+    }
+
+    /// Text without a usage frame still counts: those tokens were generated
+    /// and are billable, so an estimate beats a zero we know to be wrong.
+    #[test]
+    fn streamed_text_alone_is_enough_to_report_an_estimate() {
+        let partial = partial_usage(&CompletionUsage::default(), "hello there", Some(&pricing()))
+            .expect("text that arrived is recoverable");
+        assert!(partial.usage.output_tokens > 0);
+        assert!(
+            !partial.input_reported,
+            "no input frame arrived, so the input side is not the provider's"
+        );
+        assert!(!partial.usage.is_complete());
+    }
+
+    /// The Anthropic-shaped case: `message_start` already reported the input
+    /// side, so it is the provider's own figure and is priced as such.
+    #[test]
+    fn a_reported_input_frame_is_marked_as_the_providers_own() {
+        let usage = CompletionUsage {
+            input_tokens: 14_000,
+            cached_input_tokens: 12_000,
+            // Mid-flight `message_delta` can set this before the stream dies.
+            reported: true,
+            ..Default::default()
+        };
+        let partial = partial_usage(&usage, "Hello", Some(&pricing()))
+            .expect("reported input is recoverable");
+        assert!(partial.input_reported);
+        assert_eq!(partial.usage.input_tokens, 14_000);
+        // 2k uncached @ $3 + 12k cached @ $0.30, plus the estimated output at
+        // $15 — the cache split is the point: billing all 14k at the input
+        // rate would be $0.042, over four times the truth.
+        let expected = 0.006 + 0.0036 + (partial.usage.output_tokens as f64 / 1_000_000.0) * 15.0;
+        assert!(
+            (partial.cost_usd - expected).abs() < 1e-9,
+            "cache split must be priced: got {}, expected {expected}",
+            partial.cost_usd
+        );
+        assert!(
+            !partial.usage.is_complete(),
+            "a mid-flight `reported` flag must never survive into a partial"
+        );
+    }
+
+    /// `attach_partial` must leave an error alone when there is nothing to
+    /// hang on it, rather than decorating it with an empty envelope.
+    #[test]
+    fn attach_partial_is_a_no_op_when_nothing_was_observed() {
+        let err = attach_partial(
+            ProviderError::transport("connect refused"),
+            &CompletionUsage::default(),
+            "",
+            Some(&pricing()),
+        );
+        assert!(err.partial_usage().is_none());
+    }
 
     #[test]
     fn client_builds_without_panicking() {
@@ -685,7 +827,7 @@ mod tests {
             err.is_retryable(),
             "idle timeout must be retryable: {err:?}"
         );
-        assert!(matches!(err, ProviderError::Transport(_)));
+        assert!(matches!(err, ProviderError::Transport { .. }));
     }
 
     #[tokio::test]
@@ -931,6 +1073,6 @@ mod tests {
             "gpt-5.5",
         );
         assert!(server_error.is_retryable());
-        assert!(matches!(server_error, ProviderError::Transport(_)));
+        assert!(matches!(server_error, ProviderError::Transport { .. }));
     }
 }

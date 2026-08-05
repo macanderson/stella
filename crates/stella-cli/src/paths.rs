@@ -383,7 +383,7 @@ mod tests {
     /// # Why a test rather than a gate script
     ///
     /// `make gate` already runs the suite, so this costs no new step (the same
-    /// argument `main_tests.rs`' command-documentation fence makes). And it
+    /// argument `src/tests.rs`' command-documentation fence makes). And it
     /// scopes itself correctly for free: a shell grep would have to re-derive
     /// which directory is this crate's source.
     ///

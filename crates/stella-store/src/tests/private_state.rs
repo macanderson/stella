@@ -200,7 +200,7 @@ fn private_state_creation_ignores_an_ambient_zero_umask() {
     if std::env::var_os(CHILD).is_none() {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("private_state_tests::private_state_creation_ignores_an_ambient_zero_umask")
+            .arg("tests::private_state::private_state_creation_ignores_an_ambient_zero_umask")
             .arg("--nocapture")
             .env(CHILD, "1")
             .status()

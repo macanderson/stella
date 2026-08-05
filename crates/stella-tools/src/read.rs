@@ -79,6 +79,17 @@ enum Loaded {
 struct ReadState {
     reads: u64,
     sha256: String,
+    /// Whether the most recent read actually put the WHOLE file in front of
+    /// the model — every line, uncapped and unclipped.
+    ///
+    /// Distinct from `sha256`, which is deliberately the hash of the full file
+    /// even for a ranged read: that answers "did this file change since the
+    /// model looked", and the whole file was current at that moment. This
+    /// answers the different question "did the model SEE all of it", which is
+    /// the only one the no-clobber guard may act on. `false` by default, so a
+    /// path that arrived through `record_known` alone never claims coverage it
+    /// did not earn.
+    whole_file: bool,
 }
 
 /// Session-scoped ledger of the last file content the model has *seen*.
@@ -101,7 +112,39 @@ impl ReadLedger {
         let state = states.entry(normalized_key(root, path)).or_default();
         state.reads += 1;
         state.sha256 = crate::staleness::hex_sha256(content.as_bytes());
+        // Coverage is not known until the payload has been rendered, so it is
+        // cleared here and set by `record_coverage` below. Clearing rather than
+        // leaving the previous value standing means every path that returns
+        // before rendering — a past-end offset, an early error — falls back to
+        // "the model did not see all of it", which is the safe direction.
+        state.whole_file = false;
         state.reads
+    }
+
+    /// Record whether the read that just rendered showed the model the whole
+    /// file. Paired with [`Self::record_read`], which clears the flag first.
+    pub fn record_coverage(&self, root: &std::path::Path, path: &str, whole_file: bool) {
+        let mut states = self.states.lock().unwrap_or_else(|p| p.into_inner());
+        states
+            .entry(normalized_key(root, path))
+            .or_default()
+            .whole_file = whole_file;
+    }
+
+    /// Whether the model has been shown every line of `path` by its most
+    /// recent read. `false` for a file never read, a ranged read, a read that
+    /// hit the payload cap, and a read whose lines were clipped.
+    ///
+    /// The no-clobber guard keys on this: a belief is only as good as what the
+    /// agent actually saw, and recording one for bytes it never looked at is
+    /// worse than recording none — it converts a caught clobber into a silent
+    /// one.
+    pub fn saw_whole_file(&self, root: &std::path::Path, path: &str) -> bool {
+        self.states
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&normalized_key(root, path))
+            .is_some_and(|s| s.whole_file)
     }
 
     /// Record content the model produced or was shown for `path` without
@@ -374,6 +417,15 @@ impl Tool for ReadFile {
                     );
                 }
                 numbered.push(')');
+                // Every line, and every line whole. `shown == total` alone is
+                // not enough: a full-range read can still hand back clipped
+                // lines or stop at the payload cap, and in both cases there are
+                // bytes on disk the model was never shown.
+                self.ledger.record_coverage(
+                    root,
+                    path,
+                    shown == total && clipped_lines == 0 && !payload_capped,
+                );
                 ToolOutput::Ok { content: numbered }
             }
             Err(message) => ToolOutput::Error { message },

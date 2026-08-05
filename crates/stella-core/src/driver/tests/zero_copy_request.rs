@@ -41,7 +41,7 @@ impl Provider for SliceAddressProvider {
             req.tools.len(),
         ));
         if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-            return Err(ProviderError::Transport("blip".into()));
+            return Err(ProviderError::transport("blip"));
         }
         Ok(text_result("done"))
     }

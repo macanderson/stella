@@ -28,18 +28,18 @@
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  ☑ 5/7 ▸ Workflows canvas    ⚖ flip ✓ red→green
 ┌ transcript · 21 lines · following ──┌ witness  run ends only on oracle flip ─────── verify unassigned · shadow sandbox ┐─────┐┌ TASKS 5/7 ───────────────────┐
-│                                     │✓  author   — test built before the patch                                     0:00│     ││ ✓ #1 Scaffold the automation…│
-│● read_file    apps/app/automations/p│   oracle: pnpm --filter app test:unit triggers · confirmed red pre-patch         │     ││ ✓ #2 List view with live fil…│
-│  ⎿ 312 lines                        │▸  execute  — replaying oracle against patched worktree                       0:00│ 42ms││ ✓ #3 Editor panel plumbing (…│
-│                                     │   run 2 of 3 · deterministic seed 7741 · evidence → witness only, no self-report │     ││ ✓ #4 Persist automation draf…│
-│☰  tasks  5/7  ·  Workflows canvas   │○  result   — awaiting flip                                                       │     ││ ✓ #5 Wire the triggers API (…│
-│                                     │   red ──▸ green · 3/3 required                                                   │     ││ ▸ #6 Workflows canvas (lead) │
-│⏸ scope  Refactor the automations sto│                                                                                  │     ││ ☐ #7 Verify: witness suite g…│
-│                                     │staged pipeline off · /pipeline arms witness-verified turns                       │     ││                              │
-└─────────────────────────────────────└──────────────────────────────────────────────────────────────────────────────────┘tate ┘└──────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
+│  ⎿ 312 lines                        │✓  author   — test built before the patch                                     0:00│ 42ms││ ▸ #6 Workflows canvas (lead) │
+│                                     │   oracle: pnpm --filter app test:unit triggers · confirmed red pre-patch         │     ││ ☐ #7 Verify: witness suite g…│
+│☰  tasks  5/7  ·  Workflows canvas   │▸  execute  — replaying oracle against patched worktree                       0:00│     ││… +5 done                     │
+│                                     │   run 2 of 3 · deterministic seed 7741 · evidence → witness only, no self-report │     ││                              │
+│⏸ scope  Refactor the automations sto│○  result   — awaiting flip                                                       │     ││                              │
+│                                     │   red ──▸ green · 3/3 required                                                   │     ││                              │
+└─────────────────────────────────────│                                                                                  │tate ┘└──────────────────────────────┘
+──────────────────────────────────────│staged pipeline off · /pipeline arms witness-verified turns                       │──────────────────────────────────────
+ ▸ stage  Refactor the automations sto└──────────────────────────────────────────────────────────────────────────────────┘
 ✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
 >>>
  ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
- ✦ lead · ● execute │ run $0.05 of $7.50                                                                                                  witness executing 2/3
+ MODEL                   │ EXECUTE     │ WITNESS               │ SPEND
+ worker: zai/glm-5.2-air │ Step 6 of 7 │ witness executing 2/3 │ $0.05 of $7.50                                                           ↝ deterministic-first
+ MODELS  T·—  W·zai/glm-5.2-air  J·—

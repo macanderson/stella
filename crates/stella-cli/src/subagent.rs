@@ -421,5 +421,4 @@ impl SubAgentDispatcher for SessionSubAgents {
 }
 
 #[cfg(test)]
-#[path = "subagent/tests.rs"]
 mod tests;

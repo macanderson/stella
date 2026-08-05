@@ -1,6 +1,6 @@
 //! Durable execution-accounting completeness witnesses.
 
-use super::*;
+use crate::*;
 
 const SINK: &str = "sink_0000000000000000000000000000000000000000000000000000000000000000";
 

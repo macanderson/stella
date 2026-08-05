@@ -3,7 +3,7 @@
 /// What the prompt must and must not say. A child module so it can drive
 /// [`reflect_on_turn`] directly rather than through the whole record path.
 #[cfg(test)]
-mod prompt_tests;
+mod tests;
 
 use std::path::Path;
 

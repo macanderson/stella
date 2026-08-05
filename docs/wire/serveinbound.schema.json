@@ -442,6 +442,30 @@
             }
           ]
         },
+        "PartialUsage": {
+          "description": "The accounting an adapter had already observed when an attempt died before\nits terminal usage frame arrived.\n\nA mid-stream disconnect is not a total loss of accounting. The\nAnthropic-shaped dialects report the prompt's cost in `message_start`,\ninside the first few hundred bytes of the response, so a stream cut during\ngeneration has *already* delivered exact input, cache-read and cache-write\ncounts. Before this type existed those numbers travelled exactly as far as\nthe adapter's stack frame: [`crate::error::ProviderError`] carried a\n`String` and nothing else, the `?` on the next chunk dropped the whole\nenvelope, and the turn was recorded as though the attempt had cost nothing.\nA user watching a dropped connection was told their accounting was\n\"incomplete\" for numbers the process had been holding a moment earlier.\n\nEvery field is a LOWER BOUND, and that is the point: it is a floor under\nreal spend, never a substitute for a provider-attested total. `reported`\non the inner [`CompletionUsage`] is therefore always `false`, which keeps a\npartial structurally unable to pass [`CompletionUsage::is_complete`] and so\nout of the settled-accounting path no matter how complete it looks.",
+          "properties": {
+            "cost_usd": {
+              "description": "`usage` priced at the serving model's catalog rates, or `0.0` when the\nadapter had no pricing row for the model. Never provider-attested.",
+              "format": "double",
+              "type": "number"
+            },
+            "input_reported": {
+              "default": false,
+              "description": "Whether the input-side counts came from the provider's own frame\nrather than a local estimate. `true` is the common case for\nAnthropic-shaped streams and `false` for the OpenAI-shaped ones, which\nsend usage only at the end — the distinction a reader needs before\ntreating `usage.input_tokens` as fact.",
+              "type": "boolean"
+            },
+            "usage": {
+              "$ref": "#/$defs/CompletionUsage",
+              "description": "Counts observed before the failure. Input-side figures are the\nprovider's own when the dialect front-loads them; `output_tokens` is\nwhatever the last usage frame stated, or an estimate over the text\nthat actually arrived when no such frame did."
+            }
+          },
+          "required": [
+            "usage",
+            "cost_usd"
+          ],
+          "type": "object"
+        },
         "ProviderErrorWire": {
           "description": "Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the\nfailure at its adapter (never re-derived here) and sends the class; the\nengine reconstructs a real [`ProviderError`] so its retry logic behaves\nexactly as it would with a local provider.",
           "oneOf": [
@@ -453,6 +477,17 @@
                 },
                 "message": {
                   "type": "string"
+                },
+                "partial": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PartialUsage"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Accounting a host's dying stream had already observed. Carried\nacross the wire so a remote provider loses no more usage than a\nlocal one does; `serde(default)` keeps hosts that predate the\nfield (and the many failures with nothing to report) valid."
                 }
               },
               "required": [

@@ -503,7 +503,7 @@ mod tests {
 
         let result = retry_with_backoff(&policy, &sleeper, || {
             calls.fetch_add(1, Ordering::SeqCst);
-            async { Err::<(), _>(ProviderError::Transport("timeout".into())) }
+            async { Err::<(), _>(ProviderError::transport("timeout")) }
         })
         .await;
 
@@ -544,14 +544,16 @@ mod tests {
 
         let result = retry_with_backoff(&policy, &sleeper, || {
             let n = calls.fetch_add(1, Ordering::SeqCst);
-            async move { Err::<(), _>(ProviderError::Transport(format!("attempt {n} failed"))) }
+            async move { Err::<(), _>(ProviderError::transport(format!("attempt {n} failed"))) }
         })
         .await;
 
         // 1 initial attempt + 3 retries == 4 total calls.
         assert_eq!(calls.load(Ordering::SeqCst), 4);
         match result {
-            Err(ProviderError::Transport(msg)) => assert!(msg.contains("attempt 3")),
+            Err(ProviderError::Transport { message, .. }) => {
+                assert!(message.contains("attempt 3"))
+            }
             other => panic!("expected the LAST transport error, got {other:?}"),
         }
         assert_eq!(
@@ -571,7 +573,7 @@ mod tests {
             let n = calls.fetch_add(1, Ordering::SeqCst);
             async move {
                 if n < 2 {
-                    Err(ProviderError::Transport(format!("flaky {n}")))
+                    Err(ProviderError::transport(format!("flaky {n}")))
                 } else {
                     Ok(42)
                 }

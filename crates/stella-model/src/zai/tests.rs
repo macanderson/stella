@@ -1010,7 +1010,7 @@ async fn complete_maps_5xx_to_retryable_transport() {
     };
 
     let err = provider.complete(req).await.unwrap_err();
-    assert!(matches!(err, ProviderError::Transport(_)));
+    assert!(matches!(err, ProviderError::Transport { .. }));
     assert!(err.is_retryable(), "5xx must be retryable");
 }
 
@@ -1043,7 +1043,7 @@ async fn complete_returns_err_on_mid_stream_error_frame_not_truncated_ok() {
 
     let err = provider.complete(req).await.unwrap_err();
     // server_error / overloaded ⇒ retryable Transport.
-    assert!(matches!(err, ProviderError::Transport(_)));
+    assert!(matches!(err, ProviderError::Transport { .. }));
     assert!(err.is_retryable());
 }
 
@@ -1080,7 +1080,7 @@ async fn complete_returns_transport_err_on_clean_eof_without_done() {
 
     let err = provider.complete(req).await.unwrap_err();
     assert!(
-        matches!(err, ProviderError::Transport(_)),
+        matches!(err, ProviderError::Transport { .. }),
         "expected Transport, got {err:?}"
     );
     assert!(err.is_retryable(), "a disconnect must be retryable");
@@ -1654,11 +1654,12 @@ fn xai_reasoning_effort_support_denies_only_the_original_grok4() {
     assert!(xai_supports_reasoning_effort("grok-3-mini"));
 }
 
-mod error_classify_tests;
-mod openrouter_effort_tests;
-mod openrouter_stream_tests;
-mod stream_frame_tests;
-mod zai_effort_tests;
+mod error_classify;
+mod openrouter_effort;
+mod openrouter_stream;
+mod stream_frame;
+mod vision;
+mod zai_effort;
 
 #[test]
 fn rejects_disabled_reasoning_matches_the_upstream_wording_only() {
