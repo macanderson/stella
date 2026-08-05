@@ -3,11 +3,14 @@
 //!
 //! One entry of [`ToolRegistry::observed`](super::ToolRegistry) — the whole of
 //! the no-clobber guarantee. This module owns what a belief is, the form it
-//! persists in, and the rule for updating one
-//! ([`ToolRegistry::remember_observed`](super::ToolRegistry::remember_observed)).
-//! The map itself and the comparison a mutation is checked against
-//! (`clobbered_paths`) stay on the registry, next to the touch that triggers
-//! them.
+//! persists in, the rule for updating one
+//! ([`ToolRegistry::remember_observed`](super::ToolRegistry::remember_observed))
+//! and the rule for acting on one
+//! ([`ToolRegistry::refused_mutation`](super::ToolRegistry::refused_mutation)).
+//! The map itself and the digest comparison (`clobbered_paths`) stay on the
+//! registry, next to the touch that triggers them.
+
+use super::{FileOp, PendingTouch};
 
 /// How much of a file's content the agent actually saw when it formed the
 /// belief.
@@ -81,7 +84,116 @@ impl Belief {
     }
 }
 
+/// Why a pending mutation is refused before it is allowed to run.
+///
+/// Both arms make the same claim at different strengths — "this call would
+/// destroy content the agent cannot account for" — and both are recoverable by
+/// reading, so each carries the message that names its own way out.
+pub(super) enum Refusal {
+    /// The bytes moved: something outside this session edited these paths
+    /// after the agent last looked at them.
+    Drifted(Vec<String>),
+    /// Nothing drifted, but the agent only ever saw part of this file and is
+    /// about to replace the whole of it. What would be lost is not another
+    /// agent's *edit* — it is every region the agent never read.
+    Unseen(String),
+}
+
+impl Refusal {
+    /// The model-facing refusal. Both arms name the file and the next action,
+    /// because this is returned as a tool error the agent is expected to
+    /// recover from in one step rather than as a failed turn.
+    pub(super) fn message(&self) -> String {
+        match self {
+            Self::Drifted(paths) => format!(
+                "refusing to write: {} changed since you last read {}. Another \
+                 agent (or a person) edited it after you looked, and this call \
+                 would overwrite their work with a plan formed against content \
+                 that no longer exists.\n\nRe-read {} and redo the change \
+                 against what is there now. Your edit is not lost — nothing was \
+                 written.",
+                paths.join(", "),
+                if paths.len() == 1 { "it" } else { "them" },
+                if paths.len() == 1 {
+                    "the file"
+                } else {
+                    "those files"
+                },
+            ),
+            Self::Unseen(path) => format!(
+                "refusing to write: you have only seen part of {path}. Every \
+                 read of it this session was windowed, clipped, or a single \
+                 span, so replacing the whole file would overwrite regions that \
+                 were never on your screen — including any work another agent \
+                 (or a person) left in them.\n\nRe-read {path} in full and \
+                 rewrite it against what is actually there, or use edit_file to \
+                 change only the region you did see. Your edit is not lost — \
+                 nothing was written.",
+            ),
+        }
+    }
+}
+
 impl super::ToolRegistry {
+    /// Whether this call must be refused before it runs, and why.
+    ///
+    /// Drift is checked first: when a file both drifted and is only partly
+    /// seen, "someone else changed this" is the more specific fact and the one
+    /// the agent has to act on.
+    pub(super) fn refused_mutation(&self, tool: &str, pending: &[PendingTouch]) -> Option<Refusal> {
+        let drifted = self.clobbered_paths(pending);
+        if !drifted.is_empty() {
+            return Some(Refusal::Drifted(drifted));
+        }
+        self.unseen_whole_file_rewrite(tool, pending)
+            .map(Refusal::Unseen)
+    }
+
+    /// The path this call would replace in full while holding only a partial
+    /// belief about it, if any.
+    ///
+    /// # Why this is not "refuse every mutation on a partial belief"
+    ///
+    /// What makes a partial belief dangerous is *whole-file replacement*, not
+    /// mutation as such. `write_file` substitutes the entire contents, so every
+    /// line the agent never read is destroyed whether or not it was the target
+    /// — and unlike drift, no digest comparison can catch it, because the bytes
+    /// the agent never saw are exactly the bytes it also never hashed a
+    /// disagreement about.
+    ///
+    /// `edit_file` and `apply_edits` replace a matched region and leave the
+    /// rest of the file byte-identical, so an unseen remainder is not at risk
+    /// and refusing them would buy nothing. It would also cost everything:
+    /// `read_file` windows at 2000 lines, so on any file above that ceiling
+    /// EVERY belief is partial and always will be. Refusing edits there would
+    /// make the largest files in a tree permanently unwritable — the deadlock
+    /// this guard is specifically built to avoid, since being told to look
+    /// again must cost a step, never the whole file.
+    ///
+    /// So the split is by what the tool destroys, not by how the belief was
+    /// earned: whole-file replacement is refused, targeted edits proceed, and
+    /// the agent's way back to a full rewrite is one honest whole-file read.
+    fn unseen_whole_file_rewrite(&self, tool: &str, pending: &[PendingTouch]) -> Option<String> {
+        // `web_download` lands a file exactly as `write_file` does — same
+        // classification, same total substitution of the contents — so it is
+        // the same hazard and takes the same rule.
+        if !matches!(tool, "write_file" | "web_download") {
+            return None;
+        }
+        let observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
+        pending
+            .iter()
+            // A `Create` replaces nothing: there is no prior content to be
+            // wrong about, and a path with no file has no belief either.
+            .filter(|p| matches!(p.op, FileOp::Update))
+            .find(|p| {
+                observed
+                    .get(&p.path)
+                    .is_some_and(|held| held.coverage == Coverage::Partial)
+            })
+            .map(|p| p.path.clone())
+    }
+
     /// Record what this session now knows `path` to hold, hashed from disk,
     /// and how much of that content the agent was actually shown.
     ///
