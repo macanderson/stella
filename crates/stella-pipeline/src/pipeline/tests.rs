@@ -2385,6 +2385,8 @@ mod mcp_prefetch;
 mod scope_gate_interactive;
 mod terminal_outcomes;
 mod usage;
+/// Bounded repair after a refuted success claim (#1479).
+mod verdict_repair;
 mod verification_hardening;
 /// Asking for corroboration when only a model verifier approved the work
 /// (#1295), and — the part that decides whether the ask is affordable —

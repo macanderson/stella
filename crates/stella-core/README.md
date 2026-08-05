@@ -107,6 +107,7 @@ lib.rs), never as a planning assumption.
 | [`src/estimator.rs`](src/estimator.rs) | Conservative token estimate plus `Calibration`/`CalibrationMap`, the per-model drift correction fed by reported usage. |
 | [`src/loop_detect.rs`](src/loop_detect.rs) | `detect_loop()` — exact repeats and short cycles over `CallRecord`s. |
 | [`src/retry.rs`](src/retry.rs) | `RetryPolicy`, backoff computation, `retry_with_backoff*`, and the `Sleeper` port. |
+| [`src/repair.rs`](src/repair.rs) | `plan_repair()` — whether a verdict that refuted the model's success claim earns another attempt, bounded by an explicit cap and by the budget/wall-clock headroom the caller measured. |
 | [`src/speculation.rs`](src/speculation.rs) | Early execution of read-only tool calls announced mid-stream (`pub(crate)`). |
 | [`src/receipts.rs`](src/receipts.rs) | `ReceiptLedger` — `BlockRegistered` + `StepManifest` context receipts, content-free (digests, never payloads). |
 | [`src/accounted_call.rs`](src/accounted_call.rs), [`src/event_sender.rs`](src/event_sender.rs) | A one-shot accounted provider call for callers that are not the engine, and the channel wrapper that can journal an event durably before admitting it. |
