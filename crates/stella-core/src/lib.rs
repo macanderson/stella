@@ -91,8 +91,8 @@ pub use skills::{
     mine_skill_candidates, render_skills_section, select_skills,
 };
 pub use step::{
-    BudgetSnapshot, CANCELLED_REASON, CHECKPOINT_VERSION, CancelToken, Checkpoint, CheckpointError,
-    StepOutcome, TurnState,
+    AbortKind, BudgetSnapshot, CANCELLED_REASON, CHECKPOINT_VERSION, CancelToken, Checkpoint,
+    CheckpointError, StepOutcome, TurnState,
 };
 pub use subagent::{
     AgentAttribution, ChildSteering, MAX_SUB_AGENT_DEPTH, SubAgentDispatcher, SubAgentHost,

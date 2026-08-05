@@ -69,6 +69,7 @@ use super::TurnOutcome;
 use super::loop_evidence::turn_start_index;
 use super::truncation::MAX_LENGTH_CONTINUATIONS;
 use crate::event_sender::EventSender;
+use crate::step::AbortKind;
 
 /// A completing step's text longer than this is never considered a stray
 /// thought, however it opens — a genuine orientation fragment is short by
@@ -226,8 +227,12 @@ pub(super) fn check(
             message: reason.clone(),
             retryable: true,
         });
+        // A `Failure`, not a deliberate stop: the model produced nothing
+        // usable, which is the run falling over — unlike the confident-zero
+        // close below, where the engine itself refuses a trailing-off turn.
         return Some(TurnOutcome::Aborted {
             reason,
+            kind: AbortKind::Failure,
             cost_usd: total_cost_usd,
         });
     }
@@ -249,6 +254,7 @@ pub(super) fn check(
     });
     Some(TurnOutcome::Aborted {
         reason,
+        kind: AbortKind::DeliberateStop,
         cost_usd: total_cost_usd,
     })
 }

@@ -97,11 +97,16 @@ pub fn turn_outcome_payload(outcome: &TurnOutcome, steps: usize) -> serde_json::
             "steps": steps,
             "cost_usd": cost_usd,
         }),
-        TurnOutcome::Aborted { reason, cost_usd } => serde_json::json!({
+        TurnOutcome::Aborted {
+            reason,
+            kind,
+            cost_usd,
+        } => serde_json::json!({
             "outcome": "aborted",
             "steps": steps,
             "cost_usd": cost_usd,
             "reason": reason,
+            "kind": kind.label(),
         }),
     }
 }
