@@ -6,7 +6,6 @@
     "chat",
     "goal",
     "resume",
-    "daemon",
     "init",
     "daemon",
     "---Run many at once---",

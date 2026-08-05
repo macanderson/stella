@@ -160,12 +160,7 @@ async fn race<F: Future>(
 static INTERRUPTED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Record that a signal cut this process short.
-///
-/// [`block_on_interruptible`] is the usual caller. The supervisor
-/// ([`crate::daemon`]) is the other: it cannot use that wrapper, because a
-/// signal there must stop the *child* and keep streaming rather than drop the
-/// work — but the exit code it owes the shell is the same one.
-pub(crate) fn note_interrupt(signal: Interrupt) {
+fn note_interrupt(signal: Interrupt) {
     INTERRUPTED.store(signal.exit_code(), std::sync::atomic::Ordering::SeqCst);
 }
 

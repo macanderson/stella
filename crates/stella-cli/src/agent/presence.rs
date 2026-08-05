@@ -35,23 +35,13 @@ impl SessionPresence {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| cfg.workspace_root.display().to_string());
-        let registry = stella_store::SessionRegistry::open_default();
-        // A supervised run continues the record its supervisor registered
-        // rather than minting a second one for the same work (#1552). The
-        // supervisor knew the pid and the process group; this side knows the
-        // prompt and, in `finish`, the outcome — and `stella daemon list` has
-        // to show one session, not two halves of one. Its `pid` is already
-        // this process: the supervisor recorded the child's, deliberately.
-        let mut record = crate::daemon::supervised_id()
-            .and_then(|id| registry.get(&id))
-            .unwrap_or_else(|| {
-                stella_store::SessionRecord::new(
-                    cfg.workspace_root.display().to_string(),
-                    name.clone(),
-                )
-            });
+        let mut record = stella_store::SessionRecord::new(
+            cfg.workspace_root.display().to_string(),
+            name.clone(),
+        );
         record.title = format!("{name}: {}", crate::command_deck::prompt_line(prompt, 48));
         record.summary = crate::command_deck::prompt_line(prompt, 240);
+        let registry = stella_store::SessionRegistry::open_default();
         let _ = registry.upsert(&record);
         // stderr, not stdout: `--output-format json` owns stdout, and a
         // durability advisory must never land inside a machine-readable
