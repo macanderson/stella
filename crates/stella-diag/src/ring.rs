@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The crash ring — `docs/design/diagnostics/diagnostics.md` §7.4.
+//! The crash ring — `docs/spec/diagnostics.md` §7.4.
 //!
 //! A bounded in-memory ring holding **every** record at **every** level,
 //! filter notwithstanding. It is written to disk only on a panic or a non-zero

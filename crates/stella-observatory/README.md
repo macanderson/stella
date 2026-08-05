@@ -141,7 +141,7 @@ reaches the browser must be audited the same way before it lands.
 
 Everything else here is read out of a store stella wrote. An exploration record
 is different — it travels with the tree and can be *ingested* from another
-machine ([`../../docs/design/exploration-sharing.md`](../../docs/design/exploration-sharing.md)
+machine ([`../../docs/spec/exploration-sharing.md`](../../docs/spec/exploration-sharing.md)
 §3), so its `path → sha256` manifest is untrusted text.
 `fsview::is_workspace_relative` refuses any key that is absolute or contains
 `..` before `/api/explorations` opens it, mirroring the `resolve_within_root`
@@ -273,7 +273,7 @@ through `redact`, or emit key names only, the way `mcp_servers` does.
   (the `execution_id` / `run_id` distinction this crate joins across), "The
   `.stella/` directory (per-workspace state)" for what each store holds, and
   invariant 3, "Zero telemetry egress by default".
-- [`../../docs/design/exploration-sharing.md`](../../docs/design/exploration-sharing.md)
+- [`../../docs/spec/exploration-sharing.md`](../../docs/spec/exploration-sharing.md)
   §4e — the exploration-map freshness verdict `fsview::explorations` computes.
 - [`../../website/content/docs/commands/observe.mdx`](../../website/content/docs/commands/observe.mdx)
   and [`../../website/content/docs/telemetry/dashboard.mdx`](../../website/content/docs/telemetry/dashboard.mdx)

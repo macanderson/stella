@@ -180,7 +180,7 @@ skip the roll) were re-inserted the same way.
   `--network none` for the equivalent of `restricted`, with the same cost it
   always had — no model provider, no dependency fetches, no `git push`. See
   [Permissions](https://stella.oxagen.sh/docs/agent-tools/permissions) and
-  `docs/design/remote-sandboxes.md`. Nothing else changes: `bash` already ran
+  `docs/spec/remote-sandboxes.md`. Nothing else changes: `bash` already ran
   unconfined by default, and the `command.started` policy chain still gates
   every model-authored command line before it spawns.
 
@@ -1373,7 +1373,7 @@ user-facing changes._
   mixed or unreadable still buys the test. Removals and test-only changes keep
   their independent reviewer, because deleting the wrong thing is a mistake a
   reader catches and no test would have. Design:
-  `docs/design/witness-protocol.md` §7.
+  `docs/spec/witness-protocol.md` §7.
 - Verification cost is now fully demand-driven: a change with nothing to prove
   no longer pays for a **witness test** either. Authoring runs after execution
   and only when the diff warrants it, so a docs or comment edit dispatches no
@@ -1382,7 +1382,7 @@ user-facing changes._
   implementation (it works in a pristine pre-execution snapshot), so a witness
   proves the same thing it always did. A witness that cannot be produced now
   leaves the completed work alone instead of discarding the candidate and
-  re-running the task. Design: `docs/design/witness-protocol.md` §7.3.
+  re-running the task. Design: `docs/spec/witness-protocol.md` §7.3.
 
 - The pipeline no longer replays raw test-runner output into a worker's
   revision prompt. A deterministic verification failure is now disclosed
@@ -1391,7 +1391,7 @@ user-facing changes._
   back inbound (distress guidance, judge reasoning) is scrubbed against the
   sealed material before it can reach the worker. Operator-facing output is
   unchanged — `stella` still shows you the real failure; only the model's
-  prompt is redacted. Design: `docs/design/witness-protocol.md`.
+  prompt is redacted. Design: `docs/spec/witness-protocol.md`.
 
 ## [0.5.59] — 2026-07-27
 

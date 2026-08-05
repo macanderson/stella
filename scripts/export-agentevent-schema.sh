@@ -19,7 +19,7 @@
 # `AgentEvent` is the wire format for three surfaces at once — the TUI folds
 # it, `--output-format stream-json` prints it, and stella-serve streams it over
 # SSE — and nothing used to prove that a change to it was additive.
-# docs/design/serve-surface.md says as much about its own hand-maintained route
+# docs/spec/serve-surface.md says as much about its own hand-maintained route
 # table: "the single most dangerous drift in this document". A hand-written
 # schema would be a second copy of that problem, so these are DERIVED from the
 # types (schemars, behind stella-protocol's optional `schema` feature) and then

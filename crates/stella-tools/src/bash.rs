@@ -32,7 +32,7 @@
 //! spawned around it, so "sandbox: on" claimed a session-wide bound it never
 //! had. Isolation belongs to the container the whole Stella process runs in,
 //! which no spawn path can step around — see
-//! `docs/design/remote-sandboxes.md` §2.
+//! `docs/spec/remote-sandboxes.md` §2.
 
 use std::path::Path;
 use std::time::Duration;

@@ -9,7 +9,7 @@
 //! `witness_stage.rs` was: it is one nameable concern, and `pipeline.rs` is
 //! already the crate's largest file.
 //!
-//! Design: [`docs/design/witness-protocol.md`](../../../../docs/design/witness-protocol.md) §4.
+//! Design: [`docs/spec/witness-protocol.md`](../../../../docs/spec/witness-protocol.md) §4.
 
 use stella_protocol::PolicyKind;
 

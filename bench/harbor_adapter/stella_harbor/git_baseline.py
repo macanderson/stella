@@ -7,6 +7,17 @@ has nothing to snapshot, and the mutation audit cannot restore — most of the
 verification ladder degrades on exactly this benchmark. One baseline commit
 before the agent starts turns those channels on (issue #1211 item 4).
 
+One workspace, one baseline, one disclosed state. The marker line the script
+prints is the whole contract between the in-container shell and the host-side
+parser, and the parsed report is published verbatim in trial metadata
+(``stella_workspace_git_baseline``) and in the public ATIF trajectory — so
+``state=preexisting`` has to keep meaning *the task owned this repository and
+the adapter left it alone*. That is only true while exactly one thing may
+create a repository here, which is why the script, its parser, and the step
+that runs them live together in this module: a second baseline mechanism
+would observe the first one's repository and publish a false provenance
+claim about the workspace it just created.
+
 Its own module rather than more length on the adapter package root, per the
 repository's file-size ratchet rule: separable new code becomes a module.
 """
@@ -19,7 +30,8 @@ from typing import Any
 
 # Default ON; set the env to a falsy value to run the old bare-directory
 # posture. A scored-behavior change either way — a claim run states which
-# posture it used.
+# posture it used, and a run that turned it off discloses `state=disabled`
+# rather than looking like a workspace nothing was ever attempted on.
 GIT_BASELINE_ENV = "STELLA_TB_GIT_BASELINE"
 
 # Skip the baseline when the workspace is larger than this many KiB: git
@@ -27,47 +39,111 @@ GIT_BASELINE_ENV = "STELLA_TB_GIT_BASELINE"
 # carry disk limits the baseline must never be the thing that breaches.
 GIT_BASELINE_SIZE_CAP_KB = 524_288  # 512 MiB
 
+# The one line the in-container script and the host-side parser agree on.
+GIT_BASELINE_MARKER = "stella-git-baseline:"
+GIT_BASELINE_TIMEOUT_SEC = 180
+
+# The identity and subject a reviewer finds on the one commit the adapter
+# made. Both name the adapter, so a trajectory reporting `state=created` and
+# the commit it refers to are recognizably the same event.
+GIT_BASELINE_COMMIT_MESSAGE = "stella-harbor: task workspace baseline"
+GIT_BASELINE_IDENT = "stella-harbor"
+GIT_BASELINE_EMAIL = "stella-harbor@bench.invalid"
+
 
 def git_baseline_script(workdir: str | None) -> str:
-    """The guarded, best-effort shell that gives a bare task dir a baseline.
+    """Build the POSIX-sh script that establishes the workspace git baseline.
 
-    Every guard exits 0 — this must never fail a trial:
+    Always exits 0 and reports through one greppable marker line, because an
+    evidence-channel setup step must never be able to fail a trial — a
+    workspace it could not baseline runs exactly as every published number
+    did (diff-blind), it just says so in metadata instead of silently.
 
-    - no ``git`` in the image → skip. The adapter uploads only the frozen
-      Stella binary and provisions no utilities (protocol: container
-      utilities), so a git-less image simply keeps the bare-directory posture;
-    - a repository already present → skip. That covers a *broken* one
-      (``fix-git``'s puzzle state must not be touched) via ``-e .git``, and a
-      parent-directory repository via ``git rev-parse --git-dir``;
-    - workspace over the size cap → skip rather than double its disk usage.
+    Branch order is load-bearing:
 
-    The committer identity rides per-invocation ``-c`` flags so no config file
-    the task or the agent could observe is written, and ``.stella/`` is
-    excluded via ``.git/info/exclude`` (inside ``.git``, invisible to the
-    task) so Stella's own state — the code-graph DB the very next install
-    step creates — never enters the baseline or a later diff.
+    - ``[ -e .git ]`` runs before ``rev-parse`` so a repository git refuses
+      to read (dubious ownership) still reads as *preexisting* rather than
+      falling through to ``git init`` — reinitializing and committing inside
+      a task-owned repository would rewrite task state. ``fix-git``'s broken
+      ``.git`` is the shape that makes this concrete.
+    - ``rev-parse`` runs under ``safe.directory='*'`` for the same reason:
+      a false "not a repository" is the one probe result that must not
+      happen, and it covers the workspace-nested-inside-a-parent-repo case
+      ``[ -e .git ]`` cannot see.
+    - the size cap is tested only after both repository probes said no, so an
+      oversized workspace that already has history is still reported as
+      ``preexisting`` rather than as a skip that hides it.
+    - ``.stella/`` is excluded via ``.git/info/exclude``, never a tracked
+      ``.gitignore`` — the exclude file lives inside ``.git``, so the
+      baseline adds zero entries to the tree a verifier might enumerate, and
+      it is written before ``git add`` so Stella's own state can never enter
+      the baseline or a later diff.
+    - ``--allow-empty`` guarantees a baseline commit exists even for an
+      empty task directory, so "repository with no HEAD" is not a state the
+      diff probe can encounter.
+
+    The committer identity rides per-invocation ``-c`` flags, so no config
+    file the task or the agent could observe is written, and the commit is
+    made unsigned and without hooks: a task-supplied hook or a signing config
+    must not be able to decide whether the baseline exists.
     """
-    lead = f"cd {shlex.quote(str(workdir))} 2>/dev/null || exit 0; " if workdir else ""
-    identity = "-c user.name=stella-baseline -c user.email=baseline@stella.invalid"
-    return (
-        lead
-        + "command -v git >/dev/null 2>&1 || { "
-        + "echo 'stella-adapter: git baseline skipped: git is not installed'; "
-        + "exit 0; }; "
-        + "if [ -e .git ] || git rev-parse --git-dir >/dev/null 2>&1; then "
-        + "echo 'stella-adapter: git baseline skipped: a repository is already"
-        + " present'; exit 0; fi; "
-        + "size_kb=$(du -sk . 2>/dev/null | cut -f1); "
-        + f'if [ "${{size_kb:-0}}" -gt {GIT_BASELINE_SIZE_CAP_KB} ]; then '
-        + 'echo "stella-adapter: git baseline skipped: workspace ${size_kb}KB '
-        + f'exceeds the {GIT_BASELINE_SIZE_CAP_KB}KB cap"; exit 0; fi; '
-        + "git init -q && "
-        + "printf '.stella/\\n' >> .git/info/exclude && "
-        + f"{{ git {identity} add -A . >/dev/null 2>&1 || true; }} && "
-        + f"git {identity} commit -q --allow-empty --no-gpg-sign "
-        + "-m 'stella adapter: pre-agent baseline' && "
-        + "echo 'stella-adapter: git baseline committed'"
+    prologue = ""
+    if workdir:
+        prologue = (
+            f"cd {shlex.quote(workdir)} || {{ "
+            f"echo '{GIT_BASELINE_MARKER} state=error detail=workdir-unavailable'; "
+            "exit 0; }; "
+        )
+    ident = (
+        f"-c user.name={shlex.quote(GIT_BASELINE_IDENT)} "
+        f"-c user.email={shlex.quote(GIT_BASELINE_EMAIL)}"
     )
+    return (
+        f"{prologue}"
+        "if ! command -v git >/dev/null 2>&1; then "
+        f"echo '{GIT_BASELINE_MARKER} state=unavailable detail=git-not-installed'; "
+        "elif [ -e .git ] || git -c safe.directory='*' rev-parse "
+        "--is-inside-work-tree >/dev/null 2>&1; then "
+        f"echo '{GIT_BASELINE_MARKER} state=preexisting'; "
+        "elif size_kb=$(du -sk . 2>/dev/null | cut -f1); "
+        f'[ "${{size_kb:-0}}" -gt {GIT_BASELINE_SIZE_CAP_KB} ]; then '
+        f'echo "{GIT_BASELINE_MARKER} state=skipped detail=workspace-over-size-cap '
+        f'size_kb=${{size_kb:-0}} cap_kb={GIT_BASELINE_SIZE_CAP_KB}"; '
+        "elif git init -q >/dev/null 2>&1 "
+        "&& mkdir -p .git/info "
+        "&& printf '%s\\n' '.stella/' >> .git/info/exclude "
+        "&& git add -A >/dev/null 2>&1 "
+        f"&& git {ident} commit -q --allow-empty --no-verify --no-gpg-sign "
+        f"-m {shlex.quote(GIT_BASELINE_COMMIT_MESSAGE)} >/dev/null 2>&1; then "
+        f'echo "{GIT_BASELINE_MARKER} state=created '
+        'commit=$(git rev-parse HEAD 2>/dev/null)"; '
+        "else "
+        f"echo '{GIT_BASELINE_MARKER} state=failed detail=git-command-failed'; "
+        "fi"
+    )
+
+
+def parse_git_baseline_report(stdout: str | None) -> dict[str, str]:
+    """Parse the marker line into a report; absence is itself a finding.
+
+    The last marker line wins (a retried step reports its final state), and
+    only non-empty ``key=value`` tokens are kept, so a failed
+    ``git rev-parse HEAD`` yields no ``commit`` key rather than an empty one.
+    """
+    if stdout:
+        for line in reversed(stdout.splitlines()):
+            stripped = line.strip()
+            if not stripped.startswith(GIT_BASELINE_MARKER):
+                continue
+            report: dict[str, str] = {}
+            for token in stripped[len(GIT_BASELINE_MARKER) :].split():
+                key, sep, value = token.partition("=")
+                if sep and key and value:
+                    report[key] = value
+            if report.get("state"):
+                return report
+            break
+    return {"state": "unreported"}
 
 
 async def ensure_git(agent: Any, environment: Any) -> None:
@@ -127,31 +203,45 @@ async def ensure_git(agent: Any, environment: Any) -> None:
         pass
 
 
-async def run_git_baseline(agent: Any, environment: Any) -> None:
-    """Give a bare task workspace a git baseline before the agent starts.
+async def run_git_baseline(agent: Any, environment: Any) -> dict[str, str]:
+    """Give a bare task workspace a git baseline, and report what happened.
 
-    Ordered before the adapter's code-graph step so the ``.stella/``
-    exclusion is in place before ``stella init`` writes its DB into the
-    workspace. Best-effort by construction: every skip reason is a printed
-    line, never a failed trial.
+    The single caller runs this once per task environment, before the
+    code-graph step, so the ``.stella/`` exclusion is in place before
+    ``stella init`` writes its DB into the workspace, and as the same
+    in-container user the turn runs as — so the repository the diff probe
+    later reads is owned by the user reading it.
+
+    Returns the report the adapter discloses. Best-effort by construction:
+    every outcome, including "could not even exec" and "the operator turned
+    this off", comes back as a state rather than a raised error, because an
+    evidence-channel setup step must never be able to fail a trial.
     """
     configured = agent._configured_value(GIT_BASELINE_ENV)
     if configured is not None and not _is_truthy(configured):
-        return
-    cwd = getattr(environment.task_env_config, "workdir", None)
+        return {"state": "disabled"}
+    task_env_config = getattr(environment, "task_env_config", None)
+    cwd = getattr(task_env_config, "workdir", None)
     try:
         result = await agent.exec_as_agent(
             environment,
-            command=git_baseline_script(cwd),
-            timeout_sec=120,
+            command=git_baseline_script(str(cwd) if cwd else None),
+            timeout_sec=GIT_BASELINE_TIMEOUT_SEC,
         )
     except Exception as exc:  # noqa: BLE001 - a baseline aid, never fatal
-        print(f"stella-adapter: git baseline unavailable: {exc}", file=sys.stderr)
-        return
-    summary = getattr(result, "stdout", None) or ""
-    for line in summary.splitlines():
-        if line.startswith("stella-adapter: git baseline"):
-            print(line, file=sys.stderr)
+        print(
+            f"stella-adapter: workspace git baseline unavailable: {exc}",
+            file=sys.stderr,
+        )
+        return {"state": "error", "detail": str(exc)}
+    report = parse_git_baseline_report(getattr(result, "stdout", None))
+    detail = report.get("detail")
+    print(
+        f"stella-adapter: workspace git baseline {report['state']}"
+        + (f": {detail}" if detail else ""),
+        file=sys.stderr,
+    )
+    return report
 
 
 def _is_truthy(value: str | None) -> bool:

@@ -1,4 +1,4 @@
-//! The shared staleness oracle (`docs/design/exploration-sharing.md` §3b).
+//! The shared staleness oracle (`docs/spec/exploration-sharing.md` §3b).
 //!
 //! One answer to "is this saved artifact still true of the code?", shared by
 //! every context-caching surface: `gather_context` packs and exploration

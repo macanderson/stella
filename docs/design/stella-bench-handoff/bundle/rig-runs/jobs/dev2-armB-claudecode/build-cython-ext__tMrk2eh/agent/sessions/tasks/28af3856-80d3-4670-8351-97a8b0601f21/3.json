@@ -1,9 +1,0 @@
-{
-  "id": "3",
-  "subject": "Fix compatibility issues in Cython source files",
-  "description": "Patch the Cython extensions and build files to be compatible with Numpy 2.3.0.",
-  "activeForm": "Fixing Cython compatibility issues",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

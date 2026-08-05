@@ -4,7 +4,7 @@ The Stella engine as a headless, host-driven service. The host assembles a turn,
 the engine here orchestrates it, and every governed side effect — model
 completions and tool calls — is remoted back to the host over a wire protocol.
 This is ADR-033 Option B, the Rust sidecar; the design is
-[`../../docs/design/serve-surface.md`](../../docs/design/serve-surface.md).
+[`../../docs/spec/serve-surface.md`](../../docs/spec/serve-surface.md).
 
 The hard boundary is **no ambient authority**. The engine running inside this
 server never calls a model and never executes a tool itself: `RemoteProvider` and
@@ -61,7 +61,7 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/routes.rs`](src/routes.rs) | The endpoint handlers and the wire types they parse — the five `/v1/turns` routes (including `cancel`), `/healthz`, `/v1/metrics`, `/v1/calibration`, and the host-supplied ceilings (`max_steps`, `reverse_request_timeout_ms`). |
 | [`src/extensions.rs`](src/extensions.rs) | `ServeExtension` — the operator's per-turn hook plane (#1298), and the argument for why registration is operator-only and no route reaches it. |
 | [`src/calibration.rs`](src/calibration.rs) | The per-provider token-drift state and the `GET /v1/calibration` body: what the engine estimated against what the provider billed. |
-| [`src/observe/`](src/observe/) | Observability: `ServeEvent` (18 typed boundary events), the `Observer` port and its sinks, the request fold, the counters behind `/v1/metrics`, and the per-turn tally folded from the engine's own `AgentEvent` stream. Start at [`src/observe.rs`](src/observe.rs); the design is [`docs/design/serve-observability.md`](../../docs/design/serve-observability.md). |
+| [`src/observe/`](src/observe/) | Observability: `ServeEvent` (18 typed boundary events), the `Observer` port and its sinks, the request fold, the counters behind `/v1/metrics`, and the per-turn tally folded from the engine's own `AgentEvent` stream. Start at [`src/observe.rs`](src/observe.rs); the design is [`docs/spec/serve-observability.md`](../../docs/spec/serve-observability.md). |
 | [`src/accept.rs`](src/accept.rs) | The written `accept()` classification policy — transient vs fatal, the backoff, and the give-up streak. Byte-identical to [`crates/stella-observatory/src/accept.rs`](../stella-observatory/src/accept.rs) (the observatory takes no `stella-*` dependency, so there is no shared crate to hold it); a drift-guard test in both crates fails if the two copies differ. Change one, change the other. |
 | [`src/http.rs`](src/http.rs) | A hand-rolled HTTP/1.1 + SSE layer following [`stella-observatory`](../stella-observatory)'s no-framework idiom, extended with request bodies, bearer auth, and long-lived responses. |
 | [`src/error.rs`](src/error.rs) | `ServeError` — the named failures at the boundary. |
@@ -142,7 +142,7 @@ every request with its one model exactly as before. The caller's knobs are
 bounded by the server (`MAX_SERVED_GOAL_ROUNDS`, `ServeConfig::sub_agents`),
 and sub-agents are **off by default** because children spend money on the
 host's account. Shapes and a worked example:
-[`docs/design/serve-surface.md`](../../docs/design/serve-surface.md#judged-multi-round-runs-and-sub-agents-1297).
+[`docs/spec/serve-surface.md`](../../docs/spec/serve-surface.md#judged-multi-round-runs-and-sub-agents-1297).
 
 **Provider failures are classified by the host, not re-derived here.**
 `ProviderErrorWire` mirrors `ProviderError`'s taxonomy on the wire; the engine
@@ -345,7 +345,7 @@ the wire would be silently reclassified.
 - [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not concretions" (why the
   remoted ports are adapters, not a rewrite) and the "Workspace layout" row for
   this crate, which states the own-binary/not-linked rule.
-- [`../../docs/design/serve-surface.md`](../../docs/design/serve-surface.md) — the full
+- [`../../docs/spec/serve-surface.md`](../../docs/spec/serve-surface.md) — the full
   design. Its status line now flags the gaps itself: it describes a larger
   target surface than what is implemented (sessions rather than turns,
   steering, pause, an approval gate, SSE replay from `?after=<seq>`, a

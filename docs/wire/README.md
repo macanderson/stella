@@ -42,7 +42,7 @@ quietly lying.
 - `stella-serve` streams it over SSE.
 
 Three consumers, one enum, and until this existed nothing proved that a change
-to it was additive. `docs/design/serve-surface.md` makes the argument against
+to it was additive. `docs/spec/serve-surface.md` makes the argument against
 the alternative better than this page can: it opens with a hand-maintained
 table of "the only routes that exist" and calls its own prose "the single most
 dangerous drift in this document". A hand-written schema would be a second copy

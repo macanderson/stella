@@ -62,7 +62,7 @@ Only tracked `*.rs` (comment lines) and `*.md` are scanned. A path written in a
 `.mdx` page, a shell script or a TOML file is neither checked nor healed -- and
 that is usually right, because those are commands and fixtures rather than
 claims: `website/content/docs/commands/ingest.mdx` shows
-`stella ingest docs/design/storage-map.md` as example *input*, not a citation.
+`stella ingest docs/spec/storage-map.md` as example *input*, not a citation.
 
 In a `.rs` file a line starting with `#` counts as a comment, which is true of
 attributes and also of string literals whose content is a comment in some other
@@ -124,7 +124,7 @@ NUMBERED_DOC_RE = re.compile(r"^## \d+\.", re.M)
 
 # The escape hatch. Not every `docs/…md` in prose is a citation: a design doc
 # may name a file it intends to *generate*, which by definition does not exist
-# yet. `docs/design/diagnostics/diagnostics.md` describes a generated
+# yet. `docs/spec/diagnostics.md` describes a generated
 # `docs/reference/diagnostics.md` that way, and healing "fixed" it into a
 # sentence claiming the design doc generates itself. A path the author says is
 # not a citation is not a citation.
@@ -842,7 +842,7 @@ def cmd_selftest(args):
     check("id shape rejects caps", bool(ID_RE.match("Adr")), False)
     check("id shape rejects underscore", bool(ID_RE.match("a_b")), False)
 
-    check("suggest plain", suggest_id("docs/design/storage-map.md", set()), "storage-map")
+    check("suggest plain", suggest_id("docs/spec/storage-map.md", set()), "storage-map")
     check("suggest readme borrows dir", suggest_id("docs/brand/README.md", set()), "brand")
     check("suggest docs readme", suggest_id("docs/README.md", set()), "docs-readme")
     check(

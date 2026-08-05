@@ -1,8 +1,0 @@
-{
-  "id": "3",
-  "subject": "Reproduce the bootstrap crash",
-  "description": "Configure and build the compiler, reproduce the crash that happens during bootstrapping.",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

@@ -92,7 +92,7 @@ Rules:
 const MEMORY_PROMPT_BUDGET_CHARS: usize = 16_000;
 
 /// Cap on the workspace-maps index appended to the system prompt
-/// (`docs/design/exploration-sharing.md` §4a): metadata only — slice,
+/// (`docs/spec/exploration-sharing.md` §4a): metadata only — slice,
 /// title, freshness verdict, age — never map bodies, which stay one cheap
 /// `explorations` tool call away.
 const EXPLORATION_INDEX_BUDGET_CHARS: usize = 2_000;
@@ -142,7 +142,7 @@ pub(crate) fn assemble_system_prompt(
     // carrying its `^handle` so the model can name what it followed. Byte-stable by
     // construction — the truth sweep already demoted or dropped anything whose
     // freshness is in question, so no clock and no per-turn text enters here
-    // (docs/design/adaptive-context/context-record-examples/07-agent-projection.md).
+    // (docs/spec/adaptive-context/context-record-examples/07-agent-projection.md).
     let rules_section = active_rules
         .registry()
         .render(stella_core::records::Channel::Cached, None)
@@ -181,7 +181,7 @@ fn append_exploration_index(prompt: &mut String, workspace_root: &std::path::Pat
 /// index's canonical verb → command bindings, rendered once at session
 /// start right after the base instructions (project ground truth before
 /// recalled lessons). Detection is static manifest parsing
-/// (`stella_tools::scripts`, docs/design/scripts-index.md) and the section
+/// (`stella_tools::scripts`, docs/spec/scripts-index.md) and the section
 /// is byte-stable for the same workspace state, so "install this project"
 /// costs one `run_script` call and zero discovery turns. Empty workspaces
 /// render nothing.

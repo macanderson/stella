@@ -29,8 +29,9 @@ CARGO_SCOPE ?= --workspace
 # which is a cargo build. Every rung below runs the full GATE_GUARDS — `check`
 # compiles the workspace for clippy anyway, so excluding wire-schema there
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
-GATE_GUARDS_FAST := no-scratch action-pins cargo-install-pins license-allowlist-parity \
-                    repro-wiring shellcheck invariants doc-links command-docs file-size
+GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
+                    license-allowlist-parity repro-wiring shellcheck invariants doc-links \
+                    command-docs file-size
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 .PHONY: help
@@ -131,6 +132,14 @@ bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer)
 .PHONY: no-scratch
 no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
 	@./scripts/check-no-scratch.sh
+
+.PHONY: no-secrets
+no-secrets: ## Assert no private key material is tracked
+	@./scripts/check-no-secrets.sh
+
+.PHONY: design-refs
+design-refs: ## Assert nothing outside docs/design cites it (docs/design is work-in-flight)
+	@./scripts/check-design-refs.sh
 
 .PHONY: action-pins
 action-pins: ## Assert every workflow `uses:` is pinned to a commit SHA (#648)

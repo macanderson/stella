@@ -21,7 +21,36 @@ if [ ! -d "$workflows" ]; then
   exit 0
 fi
 
-install_lines="$(grep -rnE '^[[:space:]]*run:[[:space:]]*cargo install\b' "$workflows" || true)"
+shopt -s nullglob
+workflow_files=("$workflows"/*.yml "$workflows"/*.yaml)
+shopt -u nullglob
+if [ "${#workflow_files[@]}" -eq 0 ]; then
+  echo "check-cargo-install-pins: no workflow files in $workflows; skipping."
+  exit 0
+fi
+
+# A `cargo install` counts wherever a shell runs it: a one-line `run:` step or
+# any line of a `run: |` block scalar. Step names and comments only talk about
+# the command, so they are not matched.
+install_lines="$(awk '
+  FNR == 1 { inblock = 0 }
+  {
+    if ($0 ~ /^[[:space:]]*$/) next
+    indent = match($0, /[^[:space:]]/) - 1
+    if (inblock && indent <= base) inblock = 0
+    if (!inblock) {
+      if ($0 !~ /^[[:space:]]*(-[[:space:]]+)?run:/) next
+      if ($0 ~ /^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*[|>]/) {
+        base = indent
+        inblock = 1
+        next
+      }
+    } else if ($0 ~ /^[[:space:]]*#/) next
+    at = index($0, "cargo install")
+    if (at == 0) next
+    printf "%s:%d:%s\n", FILENAME, FNR, substr($0, at + length("cargo install"))
+  }
+' "${workflow_files[@]}")"
 if [ -z "$install_lines" ]; then
   echo "check-cargo-install-pins: no 'cargo install' lines found; skipping."
   exit 0
@@ -33,11 +62,13 @@ while IFS= read -r line; do
   file_and_rest="${line%%:*}"
   rest="${line#*:}"
   lineno="${rest%%:*}"
-  # Everything after `cargo install`, minus flags (anything starting with -).
-  args="$(printf '%s\n' "$line" | sed -E 's/^[^:]+:[0-9]+:[[:space:]]*run:[[:space:]]*cargo install[[:space:]]*//')"
+  # Everything after `cargo install`, minus flags (anything starting with -)
+  # and the trailing backslash of a wrapped shell line.
+  args="${rest#*:}"
   for tok in $args; do
     case "$tok" in
       -*) continue ;;
+      \\) continue ;;
       *@*) continue ;;
       *)
         echo "check-cargo-install-pins: $file_and_rest:$lineno installs '$tok' with no @version pin." >&2

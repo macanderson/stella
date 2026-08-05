@@ -8,7 +8,7 @@
 //! nothing at all from the library. Four situations produced identical output
 //! (none): a turn wedged on a reverse request nobody will answer, a host
 //! answering with the wrong `request_id`, a 429 storm, and a bearer-token brute
-//! force. See #930 and `docs/design/serve-observability.md`.
+//! force. See #930 and `docs/spec/serve-observability.md`.
 //!
 //! # Emission and sink are separate decisions
 //!

@@ -1,5 +1,5 @@
 //! Pure-Rust `use`→file resolution over the module tree (#443, option B2 of
-//! `docs/design/semantic-resolution-bridge.md`).
+//! `docs/spec/semantic-resolution-bridge.md`).
 //!
 //! File-level edges only, by design: a `use crate::a::b::Item` resolves to
 //! the **file defining the deepest path segment that names a module file**

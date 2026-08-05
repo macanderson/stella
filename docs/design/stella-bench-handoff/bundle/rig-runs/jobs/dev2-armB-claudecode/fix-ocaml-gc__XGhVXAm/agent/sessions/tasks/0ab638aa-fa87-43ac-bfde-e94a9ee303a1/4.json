@@ -1,8 +1,0 @@
-{
-  "id": "4",
-  "subject": "Fix the GC bug",
-  "description": "Identify and fix the root cause of the crash in the run-length compression sweeping code.",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

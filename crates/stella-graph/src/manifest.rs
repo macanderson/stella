@@ -316,7 +316,7 @@ pub fn append_meaning(
         text.push_str(
             "# stella.storage.toml — the storage map's durable half.\n\
              # Structure is parsed from source; this file holds layers,\n\
-             # boundaries, intent, and redirects. See docs/design/storage-map.md.\n\
+             # boundaries, intent, and redirects. See docs/spec/storage-map.md.\n\
              version = 1\n",
         );
     }

@@ -47,7 +47,7 @@ that's the user's judgment call, not a boundary Stella claims to enforce.
 
 ## Threat model
 
-`docs/design/threat-model.md` enumerates the assets, the adversaries, the
+`docs/spec/threat-model.md` enumerates the assets, the adversaries, the
 trust boundaries, and the attack paths that cross them — including the risks
 Stella knowingly does not defend against, and why. Read it before deciding
 whether a behavior you found is a vulnerability or a documented choice: several

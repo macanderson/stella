@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The properties `docs/design/diagnostics/diagnostics.md` §12 asks for, as properties
+//! The properties `docs/spec/diagnostics.md` §12 asks for, as properties
 //! rather than as examples.
 //!
 //! | # | Property | Here |

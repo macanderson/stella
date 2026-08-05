@@ -160,7 +160,7 @@ Stella has always recalled memories. What it could not do was tell you *why* a m
 - **Ambient authority scrubbed from model-controlled subprocesses**, including git's config/SSH/proxy hooks and `SSH_AUTH_SOCK`. Escape hatch: `STELLA_SUBPROCESS_ENV_ALLOW`.
 - Secrets are zeroized on drop and no longer dumpable via `{:?}`; files Stella creates are owner-only; `run_tests`' `filter` is quoted per token, closing a command-injection path; a stored-XSS hole in the exported dashboard is closed; MCP servers are bounded on every axis (an MCP server streaming without a newline used to OOM-kill Stella).
 - **Releases carry build-provenance attestation** covering both the tarballs and `SHA256SUMS`, and `install.sh` verifies it. A *contradicted* attestation always aborts; set `STELLA_REQUIRE_PROVENANCE=1` to make *unverifiable* abort too.
-- A new [threat model](https://github.com/macanderson/stella/blob/main/docs/design/threat-model.md) records nine residual risks — including that "bash is off" was never the same claim as "the agent cannot run code."
+- A new [threat model](https://github.com/macanderson/stella/blob/main/docs/spec/threat-model.md) records nine residual risks — including that "bash is off" was never the same claim as "the agent cannot run code."
 
 ### Reliability
 

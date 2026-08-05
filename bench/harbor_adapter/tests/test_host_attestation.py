@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
-import stella_harbor.host_attestation as host
+pytest.importorskip("harbor", reason="Harbor is required to import the adapter")
+
+import stella_harbor.host_attestation as host  # noqa: E402 - after importorskip
 
 _INTENT = "a" * 64
 _COMMIT = "b" * 40

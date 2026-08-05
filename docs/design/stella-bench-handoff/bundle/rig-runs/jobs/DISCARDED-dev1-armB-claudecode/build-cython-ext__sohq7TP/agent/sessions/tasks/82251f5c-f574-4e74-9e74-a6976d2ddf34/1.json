@@ -1,9 +1,0 @@
-{
-  "id": "1",
-  "subject": "Install build toolchain and runtime deps",
-  "description": "Install setuptools, wheel, Cython (build) and runtime deps (sympy, networkx, peewee, planarity, appdirs, requests, tqdm, vispy) without disturbing numpy 2.3.0.",
-  "activeForm": "Installing build toolchain and runtime deps",
-  "status": "completed",
-  "blocks": [],
-  "blockedBy": []
-}

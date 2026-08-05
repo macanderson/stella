@@ -198,7 +198,7 @@ got.
   a line from the scripts index — all four are always-on and all four reach `bash -c` through
   `exec::run`. There is no per-command OS confinement to fall back on: `STELLA_BASH_SANDBOX`
   wrapped the `bash` tool alone and was removed for exactly that reason (#1300 — isolation is
-  the container the process runs in, `docs/design/remote-sandboxes.md` §2). The one fence that
+  the container the process runs in, `docs/spec/remote-sandboxes.md` §2). The one fence that
   spans the whole class is the registry's
   `command.started` policy chain (`ToolRegistry::command_line_for` enumerates every member), so a
   deployment that needs shell execution actually bounded must gate on that chain — not on the
@@ -287,9 +287,9 @@ under `.stella/tools/` or `~/.stella/tools/`, discovered at startup with no regi
   rule) and "The definition of done: witness tests" (the contract `verify_done` automates).
 - [`../stella-core/src/ports.rs`](../stella-core/src/ports.rs) — the `ToolExecutor` port this
   crate implements, and the `ReadOnlyTools` view built from `read_only`.
-- Specs for the subsystems above: [`scripts-index.md`](../../docs/design/scripts-index.md) (verb
-  detection), [`exploration-sharing.md`](../../docs/design/exploration-sharing.md) (saved maps, the
-  staleness oracle, coverage hints), [`storage-map.md`](../../docs/design/storage-map.md) (§8 is the
+- Specs for the subsystems above: [`scripts-index.md`](../../docs/spec/scripts-index.md) (verb
+  detection), [`exploration-sharing.md`](../../docs/spec/exploration-sharing.md) (saved maps, the
+  staleness oracle, coverage hints), [`storage-map.md`](../../docs/spec/storage-map.md) (§8 is the
   pre-write schema gate).
 - [`../../website/content/docs/agent-tools/index.mdx`](../../website/content/docs/agent-tools/index.mdx),
   [`hooks.mdx`](../../website/content/docs/agent-tools/hooks.mdx),

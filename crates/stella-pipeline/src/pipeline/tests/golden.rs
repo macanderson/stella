@@ -17,7 +17,7 @@
 //! *not* establish that the Rust stack agrees with a reference implementation.
 //! That needs a [`RecordingSource::Reference`] recording, which is blocked on
 //! an adapter — see `tests/reference_conformance.rs` and
-//! `docs/design/replay-golden-trajectories.md`.
+//! `docs/spec/replay-golden-trajectories.md`.
 //!
 //! # Refreshing
 //!

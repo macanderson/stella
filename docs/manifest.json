@@ -16,12 +16,12 @@
       "title": "ADR 0010: Incremental Authority Transfer"
     },
     "07-agent-projection": {
-      "path": "docs/design/adaptive-context/context-record-examples/07-agent-projection.md",
+      "path": "docs/spec/adaptive-context/context-record-examples/07-agent-projection.md",
       "status": "living",
       "title": "What the agent actually sees"
     },
     "adaptive-context": {
-      "path": "docs/design/adaptive-context/adaptive-context.md",
+      "path": "docs/spec/adaptive-context/adaptive-context.md",
       "sections": [
         1,
         2,
@@ -43,7 +43,7 @@
       "title": "stella\\* \u2014 brand kit v1.0"
     },
     "context-frame-spec": {
-      "path": "docs/design/adaptive-context/context-frame-spec.md",
+      "path": "docs/spec/adaptive-context/context-frame-spec.md",
       "sections": [
         1,
         2,
@@ -67,12 +67,12 @@
       "title": "Context Frame Specification"
     },
     "context-graph-protocol-build-prompt": {
-      "path": "docs/design/adaptive-context/context-graph-protocol-build-prompt.md",
+      "path": "docs/spec/adaptive-context/context-graph-protocol-build-prompt.md",
       "status": "living",
       "title": "Context Graph Protocol Lifecycle Build Prompt"
     },
     "context-pr": {
-      "path": "docs/design/adaptive-context/context-pr.md",
+      "path": "docs/spec/adaptive-context/context-pr.md",
       "sections": [
         1,
         2,
@@ -97,7 +97,7 @@
       "title": "Context PRs"
     },
     "context-prs-spec": {
-      "path": "docs/design/adaptive-context/context-prs-spec.md",
+      "path": "docs/spec/adaptive-context/context-prs-spec.md",
       "sections": [
         1,
         2,
@@ -127,12 +127,12 @@
       "title": "Context Pull Requests \u2014 Feature Specification"
     },
     "context-record-examples": {
-      "path": "docs/design/adaptive-context/context-record-examples/README.md",
+      "path": "docs/spec/adaptive-context/context-record-examples/README.md",
       "status": "living",
       "title": "Context record examples"
     },
     "context-reuse": {
-      "path": "docs/design/adaptive-context/context-reuse.md",
+      "path": "docs/spec/adaptive-context/context-reuse.md",
       "sections": [
         1,
         2,
@@ -143,7 +143,7 @@
       "title": "Context reuse: identity, accounting, consent, and verification"
     },
     "diagnostics": {
-      "path": "docs/design/diagnostics/diagnostics.md",
+      "path": "docs/spec/diagnostics.md",
       "sections": [
         1,
         2,
@@ -174,7 +174,7 @@
       "title": "docs/"
     },
     "engine-embedding": {
-      "path": "docs/design/engine-embedding.md",
+      "path": "docs/spec/engine-embedding.md",
       "sections": [
         1,
         2,
@@ -186,12 +186,12 @@
       "title": "Stella as an embeddable gen-AI engine \u2014 architecture, surfaces, and the parity contract"
     },
     "enterprise-authority-telemetry": {
-      "path": "docs/design/enterprise-authority-telemetry.md",
+      "path": "docs/spec/enterprise-authority-telemetry.md",
       "status": "living",
       "title": "Enterprise Authority and Telemetry"
     },
     "exploration-sharing": {
-      "path": "docs/design/exploration-sharing.md",
+      "path": "docs/spec/exploration-sharing.md",
       "sections": [
         0,
         1,
@@ -210,12 +210,12 @@
       "title": "Design: Session-Shared Exploration Maps"
     },
     "filesystem-layout": {
-      "path": "docs/design/filesystem-layout.md",
+      "path": "docs/spec/filesystem-layout.md",
       "status": "living",
       "title": "Where Stella puts things on your disk"
     },
     "remote-sandboxes": {
-      "path": "docs/design/remote-sandboxes.md",
+      "path": "docs/spec/remote-sandboxes.md",
       "sections": [
         1,
         2,
@@ -235,27 +235,27 @@
       "title": "Design: Remote sandboxes \u2014 one sandbox type, on your disk or someone else's"
     },
     "replay-golden-trajectories": {
-      "path": "docs/design/replay-golden-trajectories.md",
+      "path": "docs/spec/replay-golden-trajectories.md",
       "status": "living",
       "title": "Golden replay trajectories"
     },
     "schema-graph": {
-      "path": "docs/design/schema-graph.md",
+      "path": "docs/spec/schema-graph.md",
       "status": "implemented",
       "title": "Design: Schema-Aware Code Graph for Zero Schema Drift"
     },
     "scripts-index": {
-      "path": "docs/design/scripts-index.md",
+      "path": "docs/spec/scripts-index.md",
       "status": "implemented",
       "title": "Project scripts index"
     },
     "semantic-resolution-bridge": {
-      "path": "docs/design/semantic-resolution-bridge.md",
+      "path": "docs/spec/semantic-resolution-bridge.md",
       "status": "implemented",
       "title": "Semantic-resolution bridge \u2014 evaluation"
     },
     "serve-observability": {
-      "path": "docs/design/serve-observability.md",
+      "path": "docs/spec/serve-observability.md",
       "sections": [
         1,
         2,
@@ -274,12 +274,12 @@
       "title": "Observability for `stella-serve` \u2014 a typed event at every boundary"
     },
     "serve-surface": {
-      "path": "docs/design/serve-surface.md",
+      "path": "docs/spec/serve-surface.md",
       "status": "implemented",
       "title": "Stella serve surface \u2014 the headless engine for Oxagen"
     },
     "session-telemetry-receipts-spec": {
-      "path": "docs/design/session-telemetry-receipts-spec.md",
+      "path": "docs/spec/session-telemetry-receipts-spec.md",
       "sections": [
         1,
         2,
@@ -320,7 +320,7 @@
       "title": "Stella: A Defensible Technology Position"
     },
     "storage-map": {
-      "path": "docs/design/storage-map.md",
+      "path": "docs/spec/storage-map.md",
       "sections": [
         1,
         2,
@@ -340,12 +340,12 @@
       "title": "Design: The Storage Map \u2014 Vendor-Agnostic Storage Layer Indexing for Zero Drift"
     },
     "threat-model": {
-      "path": "docs/design/threat-model.md",
+      "path": "docs/spec/threat-model.md",
       "status": "living",
       "title": "Stella Threat Model"
     },
     "verification-gate": {
-      "path": "docs/design/verification-gate.md",
+      "path": "docs/spec/verification-gate.md",
       "status": "living",
       "title": "The verification gate \u2014 how CI says whether a change helps or hurts the agent"
     },
@@ -355,7 +355,7 @@
       "title": "Why stella"
     },
     "witness-protocol": {
-      "path": "docs/design/witness-protocol.md",
+      "path": "docs/spec/witness-protocol.md",
       "sections": [
         1,
         2,

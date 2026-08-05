@@ -295,7 +295,7 @@ fn projection_carries_the_frames_content_digest_instead_of_dropping_it() {
     .expect("labeled memory frame projects");
     assert_eq!(recalled.content_digest.as_deref(), Some("sha256:feedface"));
 
-    // A provider that declares none keeps `None`. Per docs/design/adaptive-context/context-reuse.md §1
+    // A provider that declares none keeps `None`. Per docs/spec/adaptive-context/context-reuse.md §1
     // such a frame is not verifiable and must be re-queried rather than reused,
     // so the absence is information — recomputing a digest locally would erase
     // it and, since this projection trims the content, would not even agree

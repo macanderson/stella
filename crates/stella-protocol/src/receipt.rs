@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 /// attributable unit that can enter the model's prompt. Finer-grained than a
 /// `CompletionMessage`: a tool message holding several results decomposes into
 /// one `ToolResult` block per `call_id`. See the session-telemetry-receipts
-/// spec (`docs/design/session-telemetry-receipts-spec.md`, §4). Forward-compat:
+/// spec (`docs/spec/session-telemetry-receipts-spec.md`, §4). Forward-compat:
 /// an unknown kind read from a newer emitter deserializes to [`BlockKind::Other`]
 /// rather than failing the whole event.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,7 +203,7 @@ pub struct ProviderShare {
 }
 
 /// One provider's contribution to a recall's cost, as the CGP usage report
-/// defines it (`docs/design/adaptive-context/context-reuse.md` §2 `ProviderUsage`).
+/// defines it (`docs/spec/adaptive-context/context-reuse.md` §2 `ProviderUsage`).
 ///
 /// Distinct from [`ProviderShare`], which counts only the frames that *won*
 /// fusion and reached the prompt. This counts what the provider **served to
@@ -228,7 +228,7 @@ pub struct ContextProviderUsage {
 }
 
 /// The per-request roll-up of what one context recall cost
-/// (`docs/design/adaptive-context/context-reuse.md` §2 `UsageReport`) — the envelope a metering
+/// (`docs/spec/adaptive-context/context-reuse.md` §2 `UsageReport`) — the envelope a metering
 /// pipeline bills from, and the answer to "what did this turn's context cost,
 /// and which sources drove it?".
 ///
@@ -255,7 +255,7 @@ pub struct ContextUsage {
 
 impl ContextUsage {
     /// Whether the report re-sums: `budget_consumed` must equal the summed
-    /// per-provider `token_cost` (`docs/design/adaptive-context/context-reuse.md` §2, the arithmetic
+    /// per-provider `token_cost` (`docs/spec/adaptive-context/context-reuse.md` §2, the arithmetic
     /// identity). A metering pipeline checks this before trusting a total, so
     /// a corrupted number is a checkable failure rather than a silent misbill.
     ///
