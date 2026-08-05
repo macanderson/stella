@@ -274,3 +274,82 @@ async fn the_demand_can_be_switched_off() {
     assert_eq!(outcome.revisions, 0, "off means no ask");
     assert_eq!(calls, 3, "triage, worker, verifier");
 }
+
+/// An uncorroborated verifier pass must be stamped `Unverifiable` on the wire,
+/// not `ModelJudge`.
+///
+/// Every other channel on this path already says abstention: the score is
+/// `Unverified`, the summary leads with UNVERIFIED, and `unverifiable()` puts
+/// `VerificationUnavailable` on the rail. The snapshot's rung was the one field
+/// left disagreeing — stamped when the verifier answered, before the branch
+/// below discovered the answer stood alone.
+///
+/// It is not a labelling nicety. `reward::outcome_term` reads the rung and
+/// nothing else: `ModelJudge` earns `+weights.judged`, while `Unverifiable`
+/// returns `DiscardReason::Abstained`. Left wrong, every pass the ladder
+/// declined to believe was fed back as a positive training signal — the exact
+/// verdicts #871's asymmetric trust exists to refuse.
+///
+/// The scenario is the one that produced it in the wild: a warranted witness
+/// whose runner is not installed. `TestScript::Infra` observes no assertion, so
+/// there is no flip and no green test, and the verifier's "done" is all that is
+/// left standing.
+#[tokio::test]
+async fn an_uncorroborated_verifier_pass_is_stamped_as_an_abstention_not_a_judgement() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS — the change reads correct"),
+    ]);
+    let runner = ScriptedRunner::scripted(
+        vec![TestScript::Fail, TestScript::Infra],
+        "@@ -1 +1 @@\n-old\n+new",
+    );
+    let config = PipelineConfig {
+        test_command: Some("pytest -q".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        // The ask is a separate axis with its own tests above; switching it off
+        // keeps this scenario on the relabelling branch it is about.
+        verifier_evidence_demand: false,
+        ..PipelineConfig::default()
+    };
+
+    let (outcome, _events, _calls) = run_scenario!(provider, runner, config);
+
+    let verdict = outcome.verdict.expect("a verdict was produced");
+    assert!(
+        verdict.passed && !verdict.deterministic,
+        "an unverified pass is still not a failure"
+    );
+    assert_eq!(
+        outcome.score,
+        Some(crate::candidate::CandidateScore::Unverified),
+        "the score already knew this was not a real pass"
+    );
+    assert!(
+        verdict.summary.starts_with("UNVERIFIED"),
+        "and so did the summary: {}",
+        verdict.summary
+    );
+
+    let rung = verdict
+        .ladder
+        .as_deref()
+        .expect("the verdict carries its snapshot")
+        .rung
+        .expect("a rung is stamped");
+    assert_eq!(
+        rung,
+        stella_protocol::LadderRung::Unverifiable,
+        "the rung must agree with the abstention every other channel recorded — \
+         `ModelJudge` here is what fed an uncorroborated pass into reward as a win"
+    );
+    assert!(
+        matches!(
+            crate::reward::outcome_term(rung, verdict.passed, &Default::default()),
+            Err(crate::reward::DiscardReason::Abstained)
+        ),
+        "the consequence that makes the rung load-bearing: this trajectory must \
+         be discarded, never credited"
+    );
+}

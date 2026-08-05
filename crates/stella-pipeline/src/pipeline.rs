@@ -2976,6 +2976,26 @@ impl<'a> Pipeline<'a> {
                                  corroboration (no flip, no green test) — {}",
                                 abstained.summary
                             );
+                            // The rung has to move with the decision. Every
+                            // other channel here already says abstention — the
+                            // score is `Unverified`, the summary leads with
+                            // UNVERIFIED, and `unverifiable()` puts
+                            // `VerificationUnavailable` on the rail — but the
+                            // snapshot was stamped `ModelJudge` above, when the
+                            // verifier answered and before this branch knew the
+                            // answer stood alone. Left there it is the one
+                            // reader-facing field that disagrees, and the
+                            // disagreement is not cosmetic: `reward::outcome_term`
+                            // reads the rung and nothing else, so it credits
+                            // `+weights.judged` to an uncorroborated pass instead
+                            // of discarding it as `Abstained` — training on
+                            // exactly the verdicts #871 exists to distrust. The
+                            // most concrete way to reach here is a warranted
+                            // witness whose baseline run came back
+                            // `infra_failure`: no toolchain, so no flip, so
+                            // nothing deterministic behind the verifier's "done".
+                            abstained.ladder =
+                                Some(Box::new(snapshot.with_rung(LadderRung::Unverifiable)));
                             self.unverifiable(&abstained.summary);
                             return state.into_verified(
                                 true,

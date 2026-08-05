@@ -93,6 +93,25 @@ pub(crate) fn candidate_winner_notice(best_idx: usize, n: u32, ran: u32) -> Opti
 /// A candidate that knows can reinstall; a candidate that doesn't reports the
 /// project as broken.
 ///
+/// # Why it must promise adoption, not just forbid the escape
+///
+/// Naming the root and forbidding `cd` was the whole of this notice, and it was
+/// not enough — because it described the isolation without ever describing the
+/// hand-off. A candidate reading only "work outside this root does not count"
+/// learns that its answer is trapped somewhere the user will never see it, and
+/// the *helpful* response to that belief is to deliver the answer by hand: `cp`
+/// the finished file to the absolute path the task named. That is not a model
+/// ignoring the instruction, it is a model obeying the goal under a
+/// true-sounding premise nobody corrected. It is also the one move that
+/// guarantees the loss it was trying to prevent — the out-of-band write lands
+/// in the real tree, so the winner's patch can no longer create a file that is
+/// already there and adoption fails for every path at once.
+///
+/// So the notice states the mechanism: the winner's diff is applied to the real
+/// project automatically. With that said, staying inside the root is no longer
+/// a rule the model must trust against its own reading of the task — it is the
+/// path that visibly delivers the work, and copying out is visibly redundant.
+///
 /// Appended AFTER the shared prefix, never inside it: the candidates of a
 /// fan-out share one cached prefix, so the single message that differs between
 /// them has to be last (the prompt-cache stability invariant).
@@ -105,11 +124,17 @@ pub(crate) fn messages_rooted_at(
         let root = ws.root();
         let mut notice = format!(
             "Workspace: your tools and shell are rooted at `{root}`, an isolated \
-             snapshot of the project. Only work inside this root is collected when \
-             the turn finishes. Absolute paths in the task above name the original \
-             tree; resolve them against this root instead (`/x/y` -> `{root}/x/y`). \
-             Another copy of the project may be readable elsewhere on this machine — \
-             editing it does not count, so do not `cd` out of this root."
+             snapshot of the project. Absolute paths in the task above name the \
+             original tree; resolve them against this root instead \
+             (`/x/y` -> `{root}/x/y`).\n\
+             Your work is collected for you: if this turn is chosen, everything you \
+             changed inside this root is applied to the real project automatically, \
+             at the paths the task names. You never need to copy, move, or install \
+             your result anywhere else to make it count.\n\
+             So write only inside this root. Another copy of the project may be \
+             readable elsewhere on this machine — do not `cd` out of this root and \
+             do not write to it. Work placed there is not collected, and it also \
+             breaks the automatic hand-off above, which discards this turn entirely."
         );
         let omitted = ws.omitted_paths();
         if !omitted.is_empty() {
@@ -242,8 +267,39 @@ mod tests {
             "the escape hatch that splits a turn across two trees: {notice}"
         );
         assert!(
-            notice.contains("Only work inside this root is collected"),
+            notice.contains("not collected"),
             "naming the root is not enough — say the other copy does not count: {notice}"
+        );
+    }
+
+    /// The half that removes the *motive* for the escape rather than
+    /// forbidding it again.
+    ///
+    /// A candidate told only that outside work "does not count" concludes its
+    /// answer is stranded, and the cooperative move is then to deliver it by
+    /// hand to the absolute path the task named — which is exactly the
+    /// out-of-band write that makes the winner's patch unappliable. The notice
+    /// has to state that adoption happens automatically, or the prohibition is
+    /// asking the model to leave the task undelivered.
+    #[test]
+    fn an_isolated_candidate_is_told_its_work_is_adopted_for_it() {
+        let ws = NoticeOnlyWorkspace::at("/tmp/stella_candidate_7_0");
+        let rooted =
+            messages_rooted_at(&[CompletionMessage::user("write vm.js to /app")], Some(&ws));
+        let notice = &rooted[1].content;
+
+        assert!(
+            notice.contains("applied to the real project automatically"),
+            "the candidate must learn its work is adopted, not stranded: {notice}"
+        );
+        assert!(
+            notice.contains("never need to copy"),
+            "name the specific move the old wording invited — the `cp` out: {notice}"
+        );
+        assert!(
+            notice.contains("breaks the automatic hand-off"),
+            "writing outside is not merely uncounted, it fails adoption for the \
+             whole candidate — say the real cost: {notice}"
         );
     }
 
