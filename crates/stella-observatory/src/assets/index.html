@@ -1126,6 +1126,11 @@ $("executions").addEventListener("click", (ev) => {
 
 /* ── drawer ──────────────────────────────────────────────────────────── */
 let drawerReturn = null;          // element focus came from, restored on close
+/* The live transcript refresh (#1476): set on drawer-open, cleared on close.
+   `lastSeq` is the highest journal `seq` already rendered — the drawer's
+   incremental poll asks for `after_seq=lastSeq` instead of the whole
+   transcript. `finished` stops the poll once the execution closes out. */
+let drawerState = null;           // { id, full, lastSeq, finished } | null
 function showDrawer(html) {
   const el = $("drawer");
   el.innerHTML = `<button type="button" class="close" aria-label="Close detail">esc</button>` + html;
@@ -1134,6 +1139,21 @@ function showDrawer(html) {
   el.removeAttribute("aria-hidden");
   $("scrim").classList.add("open");
   el.focus();
+}
+/* One transcript entry's HTML — shared by the initial drawer render and the
+   incremental refresh below, so the two can never draw the same entry type
+   differently. Every model/workspace-derived string routes through esc(). */
+function journalEntryHtml(e) {
+  if (e.type === "stage") return `<div class="jrnl-stage">stage · ${esc(e.label ?? "")}</div>`;
+  if (e.type === "speculation_discarded")
+    return `<div class="jrnl"><div class="kick">◌ speculative ${esc(e.name ?? "")} discarded · ${esc(e.reason ?? "")}</div></div>`;
+  const head =
+    e.type === "tool_start" ? `▸ ${esc(e.name ?? "")}` :
+    e.type === "tool_result" ? `${e.ok ? "✓" : "✕"} result${e.duration_ms != null ? ` · ${fmtMs(e.duration_ms)}` : ""}${e.speculated ? " · speculated" : ""}` :
+    e.type === "reasoning" ? "reasoning" : "answer";
+  return `<div class="jrnl${e.type === "tool_result" && !e.ok ? " err" : ""}">
+    <div class="kick">${head}${e.truncated ? ` · <span style="color:var(--warn)">clipped</span>` : ""}</div>
+    ${e.body ? `<pre class="jrnl-body">${esc(e.body)}</pre>` : ""}</div>`;
 }
 async function openDrawer(id, full = false) {
   if (!Number.isFinite(id)) return;
@@ -1156,22 +1176,18 @@ async function openDrawer(id, full = false) {
   let j = null;
   try { j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}${full ? "&full=1" : ""}`); } catch { j = null; }
   const entries = Array.isArray(j) ? j : [];
-  const jrnl = entries.map(e => {
-    if (e.type === "stage") return `<div class="jrnl-stage">stage · ${esc(e.label ?? "")}</div>`;
-    if (e.type === "speculation_discarded")
-      return `<div class="jrnl"><div class="kick">◌ speculative ${esc(e.name ?? "")} discarded · ${esc(e.reason ?? "")}</div></div>`;
-    const head =
-      e.type === "tool_start" ? `▸ ${esc(e.name ?? "")}` :
-      e.type === "tool_result" ? `${e.ok ? "✓" : "✕"} result${e.duration_ms != null ? ` · ${fmtMs(e.duration_ms)}` : ""}${e.speculated ? " · speculated" : ""}` :
-      e.type === "reasoning" ? "reasoning" : "answer";
-    return `<div class="jrnl${e.type === "tool_result" && !e.ok ? " err" : ""}">
-      <div class="kick">${head}${e.truncated ? ` · <span style="color:var(--warn)">clipped</span>` : ""}</div>
-      ${e.body ? `<pre class="jrnl-body">${esc(e.body)}</pre>` : ""}</div>`;
-  }).join("");
-  const jrnlSect = jrnl
-    ? `<div class="sect"><div class="kick">Transcript${full ? " · full" : ""}</div>${jrnl}${
+  const jrnl = entries.map(journalEntryHtml).join("");
+  // Rendered even with zero entries while the run is still going: the
+  // container has to exist up front so the incremental refresh below has
+  // somewhere to append into, rather than reconstructing the drawer's DOM
+  // mid-poll. A finished execution with nothing to show still gets no
+  // section, matching the original one-shot behaviour.
+  const stillRunning = d.finished_at == null;
+  const jrnlSect = (jrnl || stillRunning)
+    ? `<div class="sect" id="jrnl-sect"><div class="kick">Transcript${full ? " · full" : ""}</div>
+        <div id="jrnl-list">${jrnl}</div>${
         entries.some(e => e.truncated)
-          ? `<button class="jrnl-full" id="jrnl-full">show full bodies</button>` : ""}</div>`
+          ? `<button type="button" class="jrnl-full" id="jrnl-full">show full bodies</button>` : ""}</div>`
     : "";
   const tok = (s) => num(s.input_tokens) + num(s.output_tokens);
   const maxTok = Math.max(...(d.steps ?? []).map(tok), 1);
@@ -1219,6 +1235,56 @@ async function openDrawer(id, full = false) {
     ${refl}`);
   const fullBtn = $("jrnl-full");
   if (fullBtn) fullBtn.addEventListener("click", () => openDrawer(id, true));
+  drawerState = {
+    id,
+    full,
+    lastSeq: entries.length ? entries[entries.length - 1].seq : -1,
+    finished: !stillRunning,
+  };
+}
+/* Append newly-persisted journal entries to an open, still-running drawer
+   (#1476) instead of re-fetching the whole transcript. Piggybacked on the
+   page's existing poll — both `pollOnce` and the live-stream tick handler
+   call this right after they notice the cursor moved — so an idle
+   workspace pays only for the `after_seq` query's index probe, and a busy
+   one appends rather than re-downloads. `full` mode carries over: the
+   incremental fetch asks for the same clip setting the drawer opened with. */
+async function refreshDrawerJournal() {
+  if (!drawerState || drawerState.finished) return;
+  const el = $("drawer");
+  if (!el.classList.contains("open")) { drawerState = null; return; }
+  const { id, full, lastSeq } = drawerState;
+  let j = null;
+  try {
+    j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}&after_seq=${lastSeq}${full ? "&full=1" : ""}`);
+  } catch {
+    return;
+  }
+  const entries = Array.isArray(j) ? j : [];
+  if (!entries.length) return;
+  const list = $("jrnl-list");
+  if (list) list.insertAdjacentHTML("beforeend", entries.map(journalEntryHtml).join(""));
+  if (entries.some(e => e.truncated) && !$("jrnl-full")) {
+    const sect = $("jrnl-sect");
+    if (sect) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "jrnl-full";
+      btn.id = "jrnl-full";
+      btn.textContent = "show full bodies";
+      btn.addEventListener("click", () => openDrawer(id, true));
+      sect.appendChild(btn);
+    }
+  }
+  drawerState.lastSeq = entries[entries.length - 1].seq;
+}
+/* The main poll already re-fetches `/api/executions` (with `finished_at`)
+   on every cursor move — reuse that instead of a dedicated per-tick
+   `/api/execution` call just to learn the drawer's execution closed out. */
+function checkDrawerFinished() {
+  if (!drawerState || drawerState.finished) return;
+  const row = (D.executions ?? []).find(e => e.id === drawerState.id);
+  if (row && row.finished_at != null) drawerState.finished = true;
 }
 function closeDrawer() {
   const el = $("drawer");
@@ -1228,6 +1294,7 @@ function closeDrawer() {
   $("scrim").classList.remove("open");
   if (drawerReturn && document.contains(drawerReturn)) drawerReturn.focus();
   drawerReturn = null;
+  drawerState = null;
 }
 $("scrim").addEventListener("click", closeDrawer);
 /* Keep Tab inside the open drawer: it is aria-modal, so focus escaping it
@@ -2225,7 +2292,12 @@ async function pollOnce() {
       ["/api/v1/cursor", "/api/v1/snapshot"].map(api));
     renderInflight(snapshot);
     const stamp = JSON.stringify(cursor);
-    if (stamp !== lastCursor) { lastCursor = stamp; await refresh(); }
+    if (stamp !== lastCursor) {
+      lastCursor = stamp;
+      await refresh();
+      await refreshDrawerJournal();
+      checkDrawerFinished();
+    }
     $("live").classList.remove("paused");
   } catch {
     $("live").classList.add("paused");
@@ -2302,7 +2374,10 @@ function connectLive() {
     // fallback does not re-fetch everything just because it never saw the
     // frames that already updated the page.
     lastCursor = JSON.stringify(payload.cursor);
-    if (payload.changed) refresh();
+    if (payload.changed) {
+      refresh().then(checkDrawerFinished);
+      refreshDrawerJournal();
+    }
   });
   source.onerror = () => {
     // EventSource reconnects on its own, but a refused stream (the server's

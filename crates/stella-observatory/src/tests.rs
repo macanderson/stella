@@ -326,6 +326,39 @@ fn execution_journal_replays_transcript_without_deltas() {
     assert_eq!(v, serde_json::json!([]));
 }
 
+/// `after_seq` (#1476) narrows the transcript to rows newer than the
+/// drawer's last-seen `seq` — the incremental fetch a still-running
+/// execution's poll uses instead of re-downloading the whole transcript
+/// every tick.
+#[test]
+fn execution_journal_after_seq_returns_only_newer_rows() {
+    let ws = seeded_workspace();
+    // Seq 3 is the tool_start row; only tool_result (4) and text (5) — both
+    // > 3 — should come back.
+    let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=3");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let seqs: Vec<i64> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["seq"].as_i64().unwrap())
+        .collect();
+    assert_eq!(seqs, [4, 5], "only rows with seq > 3 come back");
+    // A cursor past every seeded row degrades to empty, not an error.
+    let none = respond(ws.path(), "/api/execution-journal?id=1&after_seq=99");
+    let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
+    assert_eq!(v, serde_json::json!([]));
+    // Unset behaves exactly like `after_seq=0` would be wrong to: seq 0 (the
+    // opening `stage` row) is still included.
+    let all = respond(ws.path(), "/api/execution-journal?id=1&after_seq=-1");
+    let v: serde_json::Value = serde_json::from_slice(&all.body).unwrap();
+    assert_eq!(
+        v.as_array().unwrap().len(),
+        5,
+        "seq 0 survives after_seq=-1"
+    );
+}
+
 /// A body past [`db::JOURNAL_BODY_CLIP`] chars is clipped and flagged in the
 /// default payload, and returned whole under `?full=1` — the elision must
 /// announce itself, never pose as the data.
@@ -375,6 +408,7 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
         "/api/overview",
         "/api/executions",
         "/api/execution-journal?id=1",
+        "/api/execution-journal?id=1&after_seq=0",
         "/api/models",
         "/api/tools",
         "/api/files",
