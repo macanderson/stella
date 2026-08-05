@@ -304,6 +304,12 @@ enum TestScript {
     /// modelled as the runner classifies it, so a test can drive the retry
     /// without faking a signal.
     OutOfMemory,
+    /// The command never produced a real exit status because it could not be
+    /// spawned — the missing-toolchain shape (`pytest` with no Python). Its own
+    /// variant rather than a shade of [`Self::TimeOut`] because the pipeline
+    /// treats the two differently: a timeout may be worth waiting out, an
+    /// unspawnable runner will be unspawnable on every retry.
+    Infra,
     /// A pass whose stdout carries scripted runner output — for the #867
     /// fingerprint scenarios, which read test names from the tail.
     PassWith(&'static str),
@@ -457,6 +463,12 @@ impl TestRunner for ScriptedRunner {
                 stdout_tail: String::new(),
                 stderr_tail: "Killed".to_string(),
                 kind: CmdKind::OutOfMemory,
+            },
+            TestScript::Infra => CmdOutcome {
+                exit_code: -1,
+                stdout_tail: String::new(),
+                stderr_tail: "No such file or directory (os error 2)".to_string(),
+                kind: CmdKind::Infra,
             },
             TestScript::PassWith(output) => CmdOutcome {
                 exit_code: 0,

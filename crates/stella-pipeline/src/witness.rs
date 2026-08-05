@@ -578,7 +578,12 @@ pub fn witness_identity_matches(
 /// hard requirements — new file only, must fail now, no production edits,
 /// marker line — are the parts [`parse_witness_command`] and the pipeline's
 /// fail-check enforce mechanically; the prose is guidance.
-pub fn witness_prompt(goal: &str, recall: &[RecalledFrame], repo_structure: &str) -> String {
+pub fn witness_prompt(
+    goal: &str,
+    recall: &[RecalledFrame],
+    repo_structure: &str,
+    project_test_command: Option<&str>,
+) -> String {
     let mut s = String::from(
         "You are the WITNESS AUTHOR for a coding agent. Write a witness test: a minimal \
          test that FAILS on the current code and will PASS once the goal below is correctly \
@@ -586,7 +591,16 @@ pub fn witness_prompt(goal: &str, recall: &[RecalledFrame], repo_structure: &str
          Hard requirements:\n\
          - Create ONE NEW test file. Never modify existing files, and never touch \
          production code — the implementation is someone else's job.\n\
-         - Put it where the language's runner collects it. Rust integration tests MUST \
+         - CHOOSE A RUNNER THIS REPOSITORY ALREADY USES. You cannot execute anything in \
+         this role, so you cannot discover a missing toolchain — and a command whose \
+         runner is not installed does not fail the test, it produces NO observation at \
+         all, which discards your witness and leaves the work unverified. Pick the \
+         ecosystem the repository listing below evidences (a manifest such as \
+         `Cargo.toml`, `package.json`, `pyproject.toml`/`setup.py`, `go.mod`, or a \
+         `*.csproj`, plus existing tests written for it) and match the conventions of \
+         the tests already there. If the listing evidences no test runner at all, say \
+         so in prose and emit no TEST_COMMAND line rather than guessing one.\n\
+         - Put it where that runner collects it. Rust integration tests MUST \
          live in `tests/` (cargo cannot run a test file under `src/`); Python, Vitest, Go \
          and .NET may use their filename conventions.\n\
          - The test must fail NOW for the RIGHT reason (it exercises the missing/broken \
@@ -604,6 +618,18 @@ pub fn witness_prompt(goal: &str, recall: &[RecalledFrame], repo_structure: &str
          - End your reply with exactly one line:\n\
          TEST_COMMAND: <the direct, artifact-specific test command>\n",
     );
+    if let Some(command) = project_test_command.map(str::trim).filter(|c| !c.is_empty()) {
+        // The strongest available evidence that a runner exists, and the only
+        // one that is a fact rather than an inference: this project names this
+        // command, so its toolchain is installed here. Given first, above the
+        // file listing, because it settles the choice the listing can only hint
+        // at.
+        s.push_str(&format!(
+            "\n## This project's own test command\n`{command}`\nIts runner is installed \
+             and working here. Author for that runner, and shape your TEST_COMMAND like \
+             this one — narrowed to your single new test.\n"
+        ));
+    }
     if !repo_structure.trim().is_empty() {
         s.push_str("\n## Repository structure\n");
         s.push_str(repo_structure.trim());
@@ -1168,7 +1194,7 @@ mod tests {
             id: None,
             content_digest: None,
         }];
-        let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs");
+        let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", None);
         assert!(p.contains("TEST_COMMAND:"));
         assert!(p.contains("fix the retry bug"));
         assert!(p.contains("src/"));
@@ -1179,6 +1205,53 @@ mod tests {
         // costs the same round trip the screen exists to save.
         assert!(p.contains("assert_eq!(2, 2)"), "{p}");
         assert!(p.contains("REFUSED"), "{p}");
+    }
+
+    /// The author has `read_file` and one create — no execution at all — so it
+    /// cannot discover that the runner it picked is not installed. A command
+    /// naming an absent toolchain yields `infra_failure`, which observes NO
+    /// assertion and discards the witness entirely, so the prompt has to say
+    /// that choosing a runner is a decision made from evidence, not a default.
+    #[test]
+    fn the_author_is_told_it_cannot_probe_and_must_pick_an_evidenced_runner() {
+        let p = witness_prompt("add a parser", &[], "go.mod\nmain.go", None);
+        assert!(
+            p.contains("CHOOSE A RUNNER THIS REPOSITORY ALREADY USES"),
+            "{p}"
+        );
+        assert!(
+            p.contains("cannot execute anything in this role"),
+            "the author must know its own blindness, not just the rule: {p}"
+        );
+        assert!(
+            p.contains("NO observation at all"),
+            "the cost has to be named — a missing runner is not a failing test: {p}"
+        );
+        assert!(
+            p.contains("emit no TEST_COMMAND line rather than guessing"),
+            "with no evidenced runner, abstaining beats a fabricated command: {p}"
+        );
+    }
+
+    /// The one anchor that is a fact rather than an inference: this project
+    /// names this command, so its runner is installed on this machine.
+    #[test]
+    fn a_configured_test_command_anchors_the_authors_runner_choice() {
+        let anchored = witness_prompt("add a parser", &[], "go.mod", Some("go test ./..."));
+        assert!(anchored.contains("`go test ./...`"), "{anchored}");
+        assert!(
+            anchored.contains("Its runner is installed and working here"),
+            "the whole value of the anchor is that it is observed, not guessed: {anchored}"
+        );
+
+        // Nothing to anchor on: the section must be absent rather than empty.
+        let bare = witness_prompt("add a parser", &[], "go.mod", None);
+        assert!(!bare.contains("This project's own test command"), "{bare}");
+        let blank = witness_prompt("add a parser", &[], "go.mod", Some("   "));
+        assert!(
+            !blank.contains("This project's own test command"),
+            "a whitespace command anchors nothing: {blank}"
+        );
     }
 
     #[test]

@@ -64,6 +64,136 @@ pub(crate) fn conflict_paths_from_stderr(stderr: &str, changes: &[AdoptedChange]
     paths
 }
 
+/// Where the real tree stands at one path whose hunk `git apply` refused,
+/// relative to the two states adoption already knows: `baseline`, the tree the
+/// candidate snapshotted when it started, and `sealed`, the tree it finished
+/// with.
+///
+/// # Why the adoption error needs this at all
+///
+/// `git apply` verifies every preimage before writing anything, so a rejection
+/// always means "the real tree is not what this patch was built against". For a
+/// long time the module read that as one thing — the user edited a file
+/// mid-run — and said so. It is not one thing, and the other case is the more
+/// interesting one: a candidate that wrote *through* to the real tree, `cp`ing
+/// its answer to the absolute path the task named instead of leaving it in its
+/// snapshot. Then git reports `already exists in working directory` and the
+/// error blames a user who did nothing, while the actual defect — an isolated
+/// candidate escaping its isolation — goes unnamed and unfixed.
+///
+/// The two are distinguishable, because the candidate's own output is a
+/// signature. Nothing else on the machine produces the exact sealed blob for
+/// that path; if the real tree holds those bytes and the baseline did not, the
+/// candidate put them there. That is what this enum records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PathDivergence {
+    /// The real tree already holds the candidate's OWN sealed bytes at a path
+    /// whose baseline differed. The candidate wrote outside its workspace.
+    CandidateWroteOutside,
+    /// The real tree moved off the baseline, and not toward the candidate's
+    /// result — something outside this run changed it, most often the user.
+    ChangedUnderTheRun,
+    /// The real tree still matches what the candidate started from. Not what
+    /// the rejection was about; carried so a caller can report it as ruled out
+    /// rather than silently dropping it.
+    Matches,
+}
+
+impl PathDivergence {
+    /// Classify one path from three blob identities: what the real tree holds
+    /// now, what the candidate started from, and what it sealed. `None` means
+    /// the file is absent in that state.
+    ///
+    /// A path the real tree does not have cannot be the thing blocking a patch
+    /// that writes it, so absence is always [`Self::Matches`] — the interesting
+    /// asymmetry is the other direction, where a path absent from the baseline
+    /// and present in the real tree with the sealed bytes is the escape.
+    pub(crate) fn classify(
+        real: Option<&str>,
+        baseline: Option<&str>,
+        sealed: Option<&str>,
+    ) -> Self {
+        let Some(real) = real else {
+            return Self::Matches;
+        };
+        if Some(real) == baseline {
+            return Self::Matches;
+        }
+        // Ordered before the generic divergence on purpose: a real tree holding
+        // the sealed bytes satisfies BOTH conditions, and only the specific
+        // reading is actionable.
+        if Some(real) == sealed {
+            return Self::CandidateWroteOutside;
+        }
+        Self::ChangedUnderTheRun
+    }
+}
+
+/// The sentence that leads an adoption failure, given what each conflicting
+/// path turned out to be. `None` when nothing diverged — then git's own stderr
+/// is the better account and this must not talk over it.
+///
+/// The escape is reported first and unconditionally when present, even
+/// alongside ordinary user edits: it is a defect in the run rather than a fact
+/// about the user's tree, and it is the one of the two that will recur on every
+/// future turn until it is fixed.
+pub(crate) fn describe_divergence(
+    classified: &[(String, PathDivergence)],
+    truncated: bool,
+) -> Option<String> {
+    let named = |want: PathDivergence| -> Vec<&str> {
+        classified
+            .iter()
+            .filter(|(_, divergence)| *divergence == want)
+            .map(|(path, _)| path.as_str())
+            .collect()
+    };
+    let escaped = named(PathDivergence::CandidateWroteOutside);
+    let edited = named(PathDivergence::ChangedUnderTheRun);
+    if escaped.is_empty() && edited.is_empty() {
+        return None;
+    }
+    let mut reason = String::new();
+    if !escaped.is_empty() {
+        reason.push_str(&format!(
+            "the candidate wrote outside its workspace: the real tree already holds this \
+             candidate's own final bytes at {} — so it did not confine its work to its \
+             snapshot, and the patch cannot re-create what is already there",
+            render_paths(&escaped)
+        ));
+    }
+    if !edited.is_empty() {
+        if !reason.is_empty() {
+            reason.push_str("; additionally, ");
+        }
+        reason.push_str(&format!(
+            "the real tree changed under the run at {} (content that is neither the state \
+             the candidate started from nor the state it produced)",
+            render_paths(&edited)
+        ));
+    }
+    if truncated {
+        reason.push_str(" (only the first conflicting paths were examined)");
+    }
+    Some(reason)
+}
+
+/// Up to four paths inline, then a count — an adoption that conflicts on a
+/// hundred files must not paste a hundred paths into one error line.
+fn render_paths(paths: &[&str]) -> String {
+    const INLINE: usize = 4;
+    let shown = paths
+        .iter()
+        .take(INLINE)
+        .map(|path| format!("`{path}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match paths.len().checked_sub(INLINE) {
+        Some(rest) if rest > 0 => format!("{shown} (+{rest} more)"),
+        _ => shown,
+    }
+}
+
 /// Attach each file's own slice of a multi-file `git diff` to its change.
 ///
 /// Splitting on `diff --git` is what makes the per-file attribution possible,
@@ -320,6 +450,127 @@ deleted file mode 100644
         attach_numstat(&mut changes, "4\t5\tmy dir/b c.rs\0");
         assert_eq!((changes[0].added, changes[0].removed), (1, 0));
         assert_eq!((changes[1].added, changes[1].removed), (4, 5));
+    }
+
+    /// The escape, and the discriminator that identifies it: the real tree
+    /// holds bytes the candidate sealed at a path the candidate started
+    /// without. Nothing else produces that blob.
+    #[test]
+    fn the_real_tree_holding_the_sealed_bytes_is_the_candidate_writing_outside() {
+        assert_eq!(
+            // Absent from the baseline, present in the real tree, and equal to
+            // what the candidate sealed — the `cp` out of the workspace.
+            PathDivergence::classify(Some("sealed"), None, Some("sealed")),
+            PathDivergence::CandidateWroteOutside
+        );
+        assert_eq!(
+            // Same reading when the path did exist before and the real tree now
+            // carries the candidate's version of it.
+            PathDivergence::classify(Some("sealed"), Some("base"), Some("sealed")),
+            PathDivergence::CandidateWroteOutside
+        );
+    }
+
+    /// The case the module used to assume was the only one. It must survive
+    /// intact: content that is neither what the candidate started from nor what
+    /// it produced came from outside the run.
+    #[test]
+    fn content_from_neither_known_state_is_an_edit_under_the_run() {
+        assert_eq!(
+            PathDivergence::classify(Some("other"), Some("base"), Some("sealed")),
+            PathDivergence::ChangedUnderTheRun
+        );
+    }
+
+    #[test]
+    fn a_path_still_matching_its_baseline_is_not_the_conflict() {
+        assert_eq!(
+            PathDivergence::classify(Some("base"), Some("base"), Some("sealed")),
+            PathDivergence::Matches
+        );
+        assert_eq!(
+            PathDivergence::classify(None, None, Some("sealed")),
+            PathDivergence::Matches,
+            "a file the real tree does not have cannot be blocking a patch that writes it"
+        );
+        assert_eq!(
+            PathDivergence::classify(None, Some("base"), Some("sealed")),
+            PathDivergence::Matches,
+            "an absent real file is still not what a rejected preimage collided with"
+        );
+    }
+
+    /// A tree whose probes all failed reads as `Matches` everywhere, and then
+    /// this must stay silent — git's own stderr is a better account than an
+    /// attribution built from nothing.
+    #[test]
+    fn nothing_diverged_produces_no_attribution() {
+        let classified = vec![
+            ("a.rs".to_string(), PathDivergence::Matches),
+            ("b.rs".to_string(), PathDivergence::Matches),
+        ];
+        assert_eq!(describe_divergence(&classified, false), None);
+        assert_eq!(describe_divergence(&[], false), None);
+    }
+
+    #[test]
+    fn the_escape_is_named_first_and_never_reported_as_a_user_edit() {
+        let classified = vec![
+            (
+                "src/edited.rs".to_string(),
+                PathDivergence::ChangedUnderTheRun,
+            ),
+            ("app/vm.js".to_string(), PathDivergence::CandidateWroteOutside),
+        ];
+        let reason = describe_divergence(&classified, false).expect("a divergence is described");
+
+        let escape = reason
+            .find("wrote outside its workspace")
+            .expect("the escape is named");
+        let edit = reason
+            .find("changed under the run")
+            .expect("the user edit is still reported");
+        assert!(
+            escape < edit,
+            "the run's own defect leads; it recurs every turn until fixed: {reason}"
+        );
+        assert!(reason.contains("`app/vm.js`"), "{reason}");
+        assert!(reason.contains("`src/edited.rs`"), "{reason}");
+    }
+
+    /// The old message blamed the user unconditionally. A pure escape must not
+    /// mention a mid-run edit at all — that sentence is what sent the last
+    /// diagnosis down the wrong path.
+    #[test]
+    fn a_pure_escape_does_not_mention_a_mid_run_edit() {
+        let classified = vec![("app/vm.js".to_string(), PathDivergence::CandidateWroteOutside)];
+        let reason = describe_divergence(&classified, false).expect("described");
+        assert!(reason.contains("wrote outside its workspace"), "{reason}");
+        assert!(
+            !reason.contains("changed under the run"),
+            "nothing changed under this run — the candidate did it: {reason}"
+        );
+    }
+
+    #[test]
+    fn many_conflicting_paths_are_summarized_not_pasted() {
+        let classified: Vec<_> = (0..9)
+            .map(|i| (format!("f{i}.rs"), PathDivergence::CandidateWroteOutside))
+            .collect();
+        let reason = describe_divergence(&classified, true).expect("described");
+        assert!(
+            reason.contains("`f0.rs`") && reason.contains("`f3.rs`"),
+            "{reason}"
+        );
+        assert!(
+            !reason.contains("`f4.rs`"),
+            "only the first four are inlined: {reason}"
+        );
+        assert!(reason.contains("+5 more"), "{reason}");
+        assert!(
+            reason.contains("only the first conflicting paths were examined"),
+            "a bounded examination must say it was bounded: {reason}"
+        );
     }
 
     #[test]

@@ -196,7 +196,19 @@ impl<'a> Pipeline<'a> {
 
         let mut messages = vec![
             CompletionMessage::system(WITNESS_SYSTEM_PROMPT),
-            CompletionMessage::user(witness_prompt(goal, frames, &structure)),
+            CompletionMessage::user(witness_prompt(
+                goal,
+                frames,
+                &structure,
+                // Only a command that PARSED is offered as an anchor. An
+                // unparseable one names no runner the author could copy, and
+                // the run already refuses before reaching here.
+                self.configured_test
+                    .as_ref()
+                    .ok()
+                    .and_then(Option::as_ref)
+                    .and(self.config.test_command.as_deref()),
+            )),
         ];
         // Both tallies are local and discarded, on the same reasoning: they
         // measure the *witness author*, and the ladder's channels are about

@@ -21,8 +21,11 @@
 //! the shadow in a private commit. Adoption requires the shadow to remain
 //! byte-identical to that seal, diffs the immutable baseline against that
 //! exact verified commit, and applies the result in one `git apply`. The
-//! worker cannot race verification with adoption, and a file the user edited
-//! mid-run fails the whole adoption loudly instead of half-applying.
+//! worker cannot race verification with adoption, and a real tree that no
+//! longer matches what the candidate started from fails the whole adoption
+//! loudly instead of half-applying — naming which of the two divergences it
+//! was, a user edit or a candidate that wrote outside its snapshot (see
+//! [`adopt::PathDivergence`]).
 //!
 //! # What a candidate's engine can reach
 //!
@@ -95,7 +98,10 @@ use crate::agent::{
 mod adopt;
 mod snapshot_gaps;
 mod witness_tools;
-use adopt::{attach_diffs, attach_numstat, conflict_paths_from_stderr, parse_name_status};
+use adopt::{
+    PathDivergence, attach_diffs, attach_numstat, conflict_paths_from_stderr, describe_divergence,
+    parse_name_status,
+};
 use witness_tools::WitnessToolExecutor;
 
 /// The commit identity for snapshot plumbing commits (which exist only
@@ -134,6 +140,13 @@ const ADOPT_CACHE_EXCLUDES: &[&str] = &[
 /// Shadow names carry pid + a process-wide counter (the `verify_done`
 /// pattern): concurrent candidates must never collide on a path.
 static SHADOW_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// The blob id a `hash-object` / `rev-parse <rev>:<path>` probe reported, or
+/// `None` when the probe failed — which is how "that path is absent in that
+/// state" arrives, since both commands error rather than print an empty id.
+fn blob_id(probe: Result<String, String>) -> Option<String> {
+    probe.ok().map(|id| id.trim().to_string())
+}
 
 /// One git command against `repo` through the fleet's [`SystemGitCli`]
 /// (explicit `-C` targeting, hook-exported `GIT_*` env scrubbed, no
@@ -832,14 +845,77 @@ impl GitCandidateWorkspace {
         match apply {
             Ok(out) if out.success => Ok(changes),
             // `git apply` verifies every hunk's preimage before writing
-            // anything, so a rejection means the real tree changed under us
-            // (user edits mid-run) — and NOTHING was applied.
-            Ok(out) => Err(fail(
-                format!("`git apply` rejected the patch: {}", out.stderr.trim()),
-                conflict_paths_from_stderr(&out.stderr, &changes),
-            )),
+            // anything, so a rejection means the real tree is not the tree this
+            // patch was built against — and NOTHING was applied.
+            //
+            // WHICH divergence it is, git cannot say, and the module used to
+            // guess: "the real tree changed under us (user edits mid-run)". The
+            // guess is wrong in the case that matters most, where an isolated
+            // candidate wrote through to the real tree and its own bytes are
+            // what the patch now collides with. So the precondition is stated
+            // explicitly here rather than inferred from the failure.
+            //
+            // Run only on the failure path, deliberately. A pre-check would pay
+            // on every successful adoption for an answer `git apply` already
+            // gives atomically — and, worse, could pass and then be contradicted
+            // by the apply, since the tree can move in between. The apply's own
+            // preimage verification IS the precondition test; what was missing
+            // was the attribution of its result, which is exactly what can be
+            // computed after the fact against a tree nothing has written to.
+            Ok(out) => {
+                let paths = conflict_paths_from_stderr(&out.stderr, &changes);
+                let git_said = format!("`git apply` rejected the patch: {}", out.stderr.trim());
+                let reason = match self.attribute_conflict(&paths, &sealed).await {
+                    Some(attribution) => format!("{attribution}. {git_said}"),
+                    None => git_said,
+                };
+                Err(fail(reason, paths))
+            }
             Err(e) => Err(fail(e.to_string(), all_paths())),
         }
+    }
+
+    /// Name what actually broke the adoption precondition, by comparing the
+    /// real tree's current bytes at each conflicting path against the two
+    /// states this candidate knows: the baseline it snapshotted and the commit
+    /// it sealed. See [`PathDivergence`] for why those two answer the question
+    /// git's stderr cannot.
+    ///
+    /// Best-effort throughout: every probe that fails leaves its side `None`,
+    /// which classifies as "not the problem". A path this cannot read is one it
+    /// stays quiet about, so an unreadable tree degrades to git's own message
+    /// rather than inventing an attribution — the misleading claim is what this
+    /// exists to remove, and replacing it with a differently misleading one
+    /// would be no better.
+    async fn attribute_conflict(&self, paths: &[String], sealed: &str) -> Option<String> {
+        // Three cheap `git` calls per path, on a path already known to be
+        // failing. Bounded so a patch conflicting on hundreds of files cannot
+        // fork hundreds of processes while reporting an error.
+        const MAX_EXAMINED: usize = 24;
+        let examined = paths.len().min(MAX_EXAMINED);
+        let mut classified = Vec::with_capacity(examined);
+        for path in paths.iter().take(examined) {
+            // `--path` so the clean filter is applied exactly as it was when
+            // the blob was written; without it a repo with `.gitattributes`
+            // filters would hash raw bytes and every path would look diverged.
+            let real = blob_id(
+                git(&self.toplevel, &["hash-object", "--path", path, "--", path]).await,
+            );
+            let baseline = blob_id(
+                git(&self.dir, &["rev-parse", &format!("{}:{path}", self.baseline)]).await,
+            );
+            let sealed_blob =
+                blob_id(git(&self.dir, &["rev-parse", &format!("{sealed}:{path}")]).await);
+            classified.push((
+                path.clone(),
+                PathDivergence::classify(
+                    real.as_deref(),
+                    baseline.as_deref(),
+                    sealed_blob.as_deref(),
+                ),
+            ));
+        }
+        describe_divergence(&classified, paths.len() > examined)
     }
 }
 
