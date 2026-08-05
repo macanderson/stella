@@ -2340,7 +2340,7 @@ fn isolated_config(n: u32) -> PipelineConfig {
 /// the shared infra (`run_isolated`, `isolated_config`, ...) stays here.
 #[cfg(test)]
 mod verification_honesty {
-    use super::super::verification_honest_diff;
+    use super::super::verify_probes::verification_honest_diff;
 
     /// The archetypal lie: the turn emitted file-change events, but the diff
     /// came back empty (committed work, a baseline miss, an uncaptured file).
