@@ -304,6 +304,25 @@ run_clear() {
   rm -f "$RUN_FILE" 2>/dev/null || true
 }
 
+# Stamp (or clear) the pid of the process actually executing the cycle.
+run_stamp_cycle_pid() {
+  python3 - "$RUN_FILE" "${1:-}" 2>/dev/null <<'PY' || true
+import json, os, sys
+path, pid = sys.argv[1], sys.argv[2]
+try:
+    doc = json.load(open(path))
+except Exception:
+    raise SystemExit(0)
+if pid:
+    doc["cycle_pid"] = int(pid)
+else:
+    doc.pop("cycle_pid", None)
+tmp = path + ".tmp"
+json.dump(doc, open(tmp, "w"), indent=2)
+os.replace(tmp, path)
+PY
+}
+
 # ---------------------------------------------------------------------------
 # Run lifecycle — running / completed / cancelled / crashed
 # ---------------------------------------------------------------------------
@@ -1381,15 +1400,48 @@ daemon_loop() {
   local interval="${1:-2700}" once="${2:-}"
   export FULLAUTO_DRIVER=daemon
   cmd_run start >/dev/null
-  # Ending the run on the way out is what makes a `daemon stop` read as
-  # `cancelled` rather than `crashed` — the distinction the dashboard shows.
-  trap 'cmd_run end --status cancelled --reason "daemon stopped" >/dev/null 2>&1; exit 0' TERM INT
+
+  # The cycle runs as a tracked BACKGROUND child so the signal handler can take
+  # it down. Running it in the foreground meant a TERM reached this supervisor
+  # and nothing else: `daemon stop` reported "daemon stopped" while the model
+  # call kept running and kept spending. A stop that does not stop is worse
+  # than no stop, because the operator believes it is over. (Measured: spend
+  # continued climbing for minutes after the daemon was reported stopped.)
+  CYCLE_PID=""
+  # shellcheck disable=SC2317  # invoked via trap, not fallthrough
+  daemon_shutdown() {
+    if [ -n "$CYCLE_PID" ] && kill -0 "$CYCLE_PID" 2>/dev/null; then
+      warn "stopping the in-flight cycle (pid $CYCLE_PID)"
+      kill -TERM "-$CYCLE_PID" 2>/dev/null || kill -TERM "$CYCLE_PID" 2>/dev/null || true
+      sleep 2
+      kill -KILL "-$CYCLE_PID" 2>/dev/null || kill -KILL "$CYCLE_PID" 2>/dev/null || true
+    fi
+    cmd_run end --status cancelled --reason "daemon stopped" >/dev/null 2>&1
+    rm -f "$DAEMON_PID"
+    exit 0
+  }
+  trap daemon_shutdown TERM INT
+
   local cmd
   cmd="$(cycle_command)"
   while true; do
     printf '\n=== %s :: cycle start ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     run_write "cycle" "" ""
-    sh -c "$cmd" || warn "cycle command exited nonzero"
+    # `set -m` puts the child in its own process group, so `kill -TERM -PID`
+    # above reaches the whole `sh -c … | stella run` pipeline rather than only
+    # the wrapper shell.
+    set -m
+    sh -c "$cmd" &
+    CYCLE_PID=$!
+    set +m
+    # Record WHICH process is doing the work. The supervisor's pid says a
+    # daemon exists; this says the cycle is actually executing, and it is the
+    # only handle anything outside this script has on the child — `sh -c` is
+    # exec-optimized away, so the child is unrecognisable in the process table.
+    run_stamp_cycle_pid "$CYCLE_PID"
+    wait "$CYCLE_PID" || warn "cycle command exited nonzero"
+    CYCLE_PID=""
+    run_stamp_cycle_pid ""
     if [ "$once" = "--once" ]; then
       printf '=== %s :: single cycle done ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       cmd_run end --status completed --reason "single cycle (--once)" >/dev/null
@@ -1411,10 +1463,23 @@ daemon_stop() {
   local pid
   pid="$(cat "$DAEMON_PID")"
   kill -TERM "$pid" 2>/dev/null || true
-  sleep 1
+
+  # Give the shutdown handler room to finish. It deliberately takes a couple of
+  # seconds — it TERMs the in-flight cycle, waits, then KILLs it — and only
+  # afterwards records the run as `cancelled`. A one-second escalation raced it
+  # every time: the KILL landed mid-handler, the transition was never written,
+  # and a run the operator stopped by hand went into the history as `crashed`.
+  local waited=0
+  while [ "$waited" -lt 8 ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    waited=$((waited + 1))
+  done
   if kill -0 "$pid" 2>/dev/null; then
-    warn "daemon $pid did not stop on TERM; sending KILL"
+    warn "daemon $pid did not stop after ${waited}s; sending KILL"
     kill -KILL "$pid" 2>/dev/null || true
+    # The handler never ran, so nothing recorded the transition. Do it here
+    # rather than leaving a hand-stopped run to age into `crashed`.
+    cmd_run end --status cancelled --reason "daemon killed after refusing TERM" >/dev/null 2>&1 || true
   fi
   rm -f "$DAEMON_PID"
   say "daemon stopped"

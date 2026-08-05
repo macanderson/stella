@@ -128,6 +128,50 @@ PY
 check_eq "completed" "$sup" "a Unicode-digit field value does not drop the run record"
 
 # ---------------------------------------------------------------------------
+head_ "daemon — a stop that does not stop costs real money"
+
+# Both cases below were live defects. `daemon stop` reported success while the
+# model call kept running and kept spending, and the hand-stopped run went into
+# the history as `crashed` because the KILL raced the shutdown handler.
+#
+# The child is identified by the pid the daemon RECORDS, never by matching a
+# command line. `sh -c "sleep 120"` is exec-optimized into a bare `sleep`, so
+# any pattern specific enough to be safe does not appear in the process table
+# at all — and a loose pattern like `sleep 120` matches unrelated processes,
+# including an orphan a previous failing run of this test left behind. That
+# turns a working daemon into a red test and sends the reader hunting a bug
+# that is not there. (Both happened while writing this.)
+FULLAUTO_STATE_DIR="$ROOT/dmn" FULLAUTO_CYCLE_CMD="sleep 120" \
+  "$FA" daemon start 60 >/dev/null 2>&1
+sleep 3
+cycle_pid="$(python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("cycle_pid",""))
+except Exception: print("")' "$ROOT/dmn/run.json" 2>/dev/null || echo "")"
+if [ -n "$cycle_pid" ] && kill -0 "$cycle_pid" 2>/dev/null; then
+  ok "the daemon starts a detached cycle child and records its pid"
+else
+  bad "the daemon never started (or never recorded) its cycle child"
+fi
+
+stop_out="$(FULLAUTO_STATE_DIR="$ROOT/dmn" "$FA" daemon stop 2>&1)"
+sleep 1
+if [ -n "$cycle_pid" ] && kill -0 "$cycle_pid" 2>/dev/null; then
+  bad "daemon stop ORPHANED the in-flight cycle (pid $cycle_pid still running, still spending)"
+  kill -KILL "$cycle_pid" 2>/dev/null || true
+else
+  ok "daemon stop takes the in-flight cycle down with it"
+fi
+
+if printf '%s' "$stop_out" | grep -q 'did not stop'; then
+  bad "daemon stop had to escalate to KILL (the handler was raced)"
+else
+  ok "daemon stop lets the shutdown handler finish instead of racing it"
+fi
+
+dmn_status="$(FULLAUTO_STATE_DIR="$ROOT/dmn" "$FA" runs | awk '/^r-/ {print $2}')"
+check_eq "cancelled" "$dmn_status" "a hand-stopped run records cancelled, not crashed"
+
+# ---------------------------------------------------------------------------
 head_ "governor — the plan is a function of the machine"
 
 plan="$(FULLAUTO_DISK_FLOOR_GB=999999 fa gov plan)"

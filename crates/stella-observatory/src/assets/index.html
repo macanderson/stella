@@ -2237,7 +2237,10 @@ async function openFullautoRun(id, quiet) {
   const live = r.live && r.live.phase
     ? `<div class="feed-item"><b>Live</b> — phase <span class="fa-live">${esc(r.live.phase)}</span>
        in cycle ${fmtInt(r.live.cycle)} (${esc(r.live.tier)}), last heartbeat
-       ${fmtInt(r.live.heartbeat_age_s)}s ago, pid ${fmtInt(r.live.pid)}</div>`
+       ${fmtInt(r.live.heartbeat_age_s)}s ago, supervisor pid ${fmtInt(r.live.pid)}${
+       num(r.live.cycle_pid) > 0
+         ? `, cycle pid ${fmtInt(r.live.cycle_pid)}`
+         : " (between cycles)"}</div>`
     : "";
   const why = r.reason
     ? `<div class="feed-item"><b>Reason</b> — ${esc(r.reason)}</div>` : "";

@@ -226,6 +226,10 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
                     "aperture": str_at(&live, "aperture"),
                     "heartbeat_age_s": age,
                     "pid": i64_at(&live, "pid"),
+                    // The supervisor's pid says a daemon exists; this says the
+                    // cycle is actually executing right now. Absent between
+                    // cycles, which is a real and different state.
+                    "cycle_pid": i64_at(&live, "cycle_pid"),
                 });
             } else {
                 status = "crashed".into();
@@ -236,10 +240,7 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
         let filed: i64 = cycles.iter().map(|c| i64_at(c, "filed")).sum();
         let new_findings: i64 = cycles.iter().map(|c| i64_at(c, "new_findings")).sum();
         let minutes: i64 = cycles.iter().map(|c| i64_at(c, "minutes")).sum();
-        let red: i64 = cycles
-            .iter()
-            .filter(|c| str_at(c, "gate") == "red")
-            .count() as i64;
+        let red: i64 = cycles.iter().filter(|c| str_at(c, "gate") == "red").count() as i64;
 
         out.push(json!({
             "run_id": id,
@@ -284,10 +285,7 @@ fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
     let filed: i64 = cycles.iter().map(|c| i64_at(c, "filed")).sum();
     let new_findings: i64 = cycles.iter().map(|c| i64_at(c, "new_findings")).sum();
     let zero_fix = cycles.iter().filter(|c| i64_at(c, "fixed") == 0).count() as i64;
-    let red = cycles
-        .iter()
-        .filter(|c| str_at(c, "gate") == "red")
-        .count() as i64;
+    let red = cycles.iter().filter(|c| str_at(c, "gate") == "red").count() as i64;
     let clean_run = i64_at(calibration, "clean_run");
     let batch_ceiling = calibration
         .get("batch_ceiling")
@@ -526,7 +524,10 @@ mod tests {
 
         let out = runs(Path::new("/nowhere"));
         let row = &out["runs"][0];
-        assert_eq!(row["status"], "crashed", "stale heartbeat must read crashed");
+        assert_eq!(
+            row["status"], "crashed",
+            "stale heartbeat must read crashed"
+        );
         assert_eq!(row["run_id"], "r-1");
     }
 
