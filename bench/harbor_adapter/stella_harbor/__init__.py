@@ -155,6 +155,13 @@ _TELEMETRY_INCOMPLETE = "stella-adapter: TELEMETRY-INCOMPLETE"
 # See `_is_self_reported_verification_failure`.
 _VERIFICATION_FAILED_EXIT_CODE = 1
 
+# The CLI's deliberate-stop status (`failure::DELIBERATE_STOP_EXIT_CODE`):
+# the engine chose to end the run — a stuck loop escalated past its steering
+# warning, an enforced budget or deadline, the step cap, a confident-zero
+# close. Only Stella's own exit path produces this code, so unlike exit 1 it
+# needs no stream corroboration to classify. See ``DeliberateStopError``.
+_DELIBERATE_STOP_EXIT_CODE = 3
+
 # Defaults when neither Harbor nor the environment specify a value.
 _DEFAULT_MODEL = "anthropic/claude-fable-5"
 _DEFAULT_BUDGET = "5.0"
@@ -1214,6 +1221,25 @@ def _is_self_reported_verification_failure(
     return stream.get("self_verdict_state") == "failed"
 
 
+class DeliberateStopError(NonZeroAgentExitCodeError):
+    """Stella deliberately stopped the run and said so at the process boundary.
+
+    Exit ``3`` is the CLI's typed deliberate-stop status (#1524): the engine
+    detected a stuck loop and escalated past its steering warning, enforced a
+    budget or deadline, hit its step cap, or refused a trailing-off turn.
+    That is the engine doing its job — before this class, a correct
+    loop-abort raised the same ``NonZeroAgentExitCodeError`` as a segfault,
+    and the benchmark could not tell "the agent correctly gave up" from "the
+    agent fell over".
+
+    Deliberately a *subclass* of the official error, exactly like
+    :class:`SelfReportedVerificationFailureError`: Harbor records
+    ``type(exc).__name__`` in ``result.json``, so the name is all analysis
+    needs, while every ``except NonZeroAgentExitCodeError`` keeps behaving as
+    before — the trial is still scored, and the verifier still runs.
+    """
+
+
 class StellaAgent(BaseInstalledAgent):
     """Run the Stella coding CLI as a Harbor installed agent."""
 
@@ -1566,6 +1592,14 @@ class StellaAgent(BaseInstalledAgent):
                     "failed verification verdict: the turn ran to a verdict and "
                     "the agent reported the work unverified. Stream telemetry was "
                     f"preserved in {_STREAM_EVENTS_PATH}. stderr: "
+                    f"{self._truncate_output(stderr)}"
+                )
+            if self._return_code == _DELIBERATE_STOP_EXIT_CODE:
+                raise DeliberateStopError(
+                    f"Stella exited with code {self._return_code}: a deliberate "
+                    "stop (loop escalation, budget, deadline, or step cap) — the "
+                    "engine chose to end the run rather than crashing. Stream "
+                    f"telemetry was preserved in {_STREAM_EVENTS_PATH}. stderr: "
                     f"{self._truncate_output(stderr)}"
                 )
             raise NonZeroAgentExitCodeError(

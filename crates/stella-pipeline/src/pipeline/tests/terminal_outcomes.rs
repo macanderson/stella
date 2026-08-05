@@ -98,12 +98,19 @@ async fn a_loop_abort_reaches_the_stream_as_exactly_one_error_event() {
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
 
     let outcome = pipeline
-        .run("keep reading the process output", &mut messages, &mut budget)
+        .run(
+            "keep reading the process output",
+            &mut messages,
+            &mut budget,
+        )
         .await
         .expect("a loop abort is a clean pipeline outcome");
 
     let PipelineStatus::Aborted { reason, kind } = &outcome.status else {
-        panic!("the stuck loop must abort the run, got {:?}", outcome.status);
+        panic!(
+            "the stuck loop must abort the run, got {:?}",
+            outcome.status
+        );
     };
     assert!(reason.contains("stuck-loop"), "{reason}");
     assert_eq!(

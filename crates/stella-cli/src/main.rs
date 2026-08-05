@@ -616,7 +616,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 Some(ModelsCmd::List { provider, all }) => {
                     model_catalog::run_list(provider.as_deref(), *all)
                 }
-            }.map_err(failure::CliFailure::from);
+            }
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Tools {
             validate,
@@ -650,7 +651,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 // a plain `stella tools` stays the lenient listing.
                 (Some(dir), None) => agent::run_tools_validation(dir.as_deref()),
                 (None, None) => agent::run_tools_listing(),
-            }.map_err(failure::CliFailure::from);
+            }
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Graph { op, target }) => {
             // Reads the local index only — works with zero API keys.
@@ -715,7 +717,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 diff: *diff,
                 context: *context,
                 only: *only,
-            }).map_err(failure::CliFailure::from);
+            })
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Stats {
             format,
@@ -730,7 +733,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 None => stats::run_stats(*format, provider.as_deref()),
                 Some(stats::StatsCmd::Prune(args)) => stats::run_stats_prune(args),
                 Some(stats::StatsCmd::Graph(args)) => stats_graph::run_stats_graph(args),
-            }.map_err(failure::CliFailure::from);
+            }
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Usage { cmd }) => {
             // Hub-only reads/writes — no provider, no API keys.
@@ -753,7 +757,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 cli.globals.model.as_deref(),
                 cli.globals.api_key.as_deref(),
                 cli.globals.base_url.as_deref(),
-            ).map_err(failure::CliFailure::from);
+            )
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Scoreboard) => {
             // Reads .stella/private/store.db only.
@@ -783,7 +788,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 }
                 memory_cmd::MemoryCmd::Compact(args) => memory_compact::run_memory_compact(args),
                 memory_cmd::MemoryCmd::Index(args) => memory_index::run_memory_index(args),
-            }.map_err(failure::CliFailure::from);
+            }
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Mcp { cmd }) => {
             // MCP management reads/writes local config + the registry over
@@ -845,7 +851,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 *last_failure,
                 cli.globals.model.as_deref(),
                 cli.globals.base_url.as_deref(),
-            ).map_err(failure::CliFailure::from);
+            )
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Completions { shell }) => {
             // Generated from the live `Command` tree, so a new subcommand or
@@ -903,7 +910,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 cli.globals.base_url.as_deref(),
                 term_policy::animation_disabled(cli.globals.no_anim),
             ),
-        ).map_err(failure::CliFailure::from);
+        )
+        .map_err(failure::CliFailure::from);
     }
 
     // Run/Chat/Config need a resolved config (which requires an API key).

@@ -59,7 +59,9 @@ pub(super) fn check_loop_detection(
     // one place that decides "is this a loop".
     let (kind, pattern, repeats) = match &verdict {
         LoopVerdict::NoLoop => return None,
-        LoopVerdict::ExactRepeat { tool, count, .. } => ("exact_repeat", vec![tool.clone()], *count),
+        LoopVerdict::ExactRepeat { tool, count, .. } => {
+            ("exact_repeat", vec![tool.clone()], *count)
+        }
         LoopVerdict::ShortCycle { pattern, repeats } => (
             "short_cycle",
             pattern.iter().map(|c| c.name.clone()).collect(),
@@ -138,8 +140,7 @@ mod tests {
     fn re_detecting_the_warned_pattern_claims_persistence() {
         let reason = abort_reason(&tools(&["bash"]), &tools(&["bash"]), "bash repeated 4×");
         assert_eq!(
-            reason,
-            "stuck-loop detected (persisted after a steering warning): bash repeated 4×",
+            reason, "stuck-loop detected (persisted after a steering warning): bash repeated 4×",
             "the byte-exact legacy phrasing must survive for the one case it was true of"
         );
     }

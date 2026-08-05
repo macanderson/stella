@@ -2060,7 +2060,9 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
 
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
     match outcome {
-        TurnOutcome::Aborted { reason, cost_usd, .. } => {
+        TurnOutcome::Aborted {
+            reason, cost_usd, ..
+        } => {
             assert!(reason.contains("budget"));
             assert!(
                 (cost_usd - 0.0001).abs() < 1e-9,
