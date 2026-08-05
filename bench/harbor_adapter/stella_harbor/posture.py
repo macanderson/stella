@@ -29,7 +29,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-#: Signature of an engine-posture builder: ``(model, *, witness_author)`` ->
+#: Signature of an engine-posture builder: ``(model, *, verifier)`` ->
 #: ``(posture, canonical_json, sha256)``. `_benchmark_engine_posture` is the
 #: frozen claim implementation; `StellaAgent._build_engine_posture` is the seam
 #: a non-claim harness may override with another frozen configuration.
@@ -38,11 +38,11 @@ PostureBuilder = Callable[..., "tuple[dict[str, Any], str, str]"]
 _ENGINE_POSTURE_VERSION = "stella-tb21-engine-posture-v1"
 _ASSURANCE_TIERS_VERSION = "stella-tb21-assurance-tiers-v1"
 
-# Host-side selector for the witness/judge author. Unset (the default) is the
+# Host-side selector for the witness/verifier author. Unset (the default) is the
 # control arm: one inherited model, authored witness structurally off. Set to a
 # second `provider/model` on the worker's provider and the same 89 tasks run the
 # treatment arm. Never forwarded into the container — the decision reaches
-# Stella only as `pipeline_judge_model` inside the hashed posture, so the arm a
+# Stella only as `pipeline_verifier_model` inside the hashed posture, so the arm a
 # trial ran cannot disagree with the arm its digest records (#1007).
 _WITNESS_AUTHOR_ENV = "STELLA_WITNESS_AUTHOR_MODEL"
 
@@ -97,7 +97,7 @@ _CANDIDATES_ENV = "STELLA_CANDIDATES"
 # still describes the posture that produced it.
 _MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
 
-# Host-side selector for the corroboration ask (#1295): when a model judge
+# Host-side selector for the corroboration ask (#1295): when a model verifier
 # passes and nothing deterministic stands behind it, does the pipeline spend
 # one revision demanding the evidence, or record the pass as unverified on the
 # spot?
@@ -112,7 +112,7 @@ _MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
 #
 # Unset omits the key, so every digest recorded before this selector existed
 # still describes the posture that produced it.
-_JUDGE_EVIDENCE_DEMAND_ENV = "STELLA_JUDGE_EVIDENCE_DEMAND"
+_VERIFIER_EVIDENCE_DEMAND_ENV = "STELLA_VERIFIER_EVIDENCE_DEMAND"
 
 # Refusal ceilings, not clamps. Unlike the effort tier there is no enum to
 # validate an integer against, so a bound is the only check available beyond
@@ -151,7 +151,7 @@ _MODEL_TIMEOUT_CEILING = 21_600
 _DEFAULT_OUTPUT_CAP = 64_000
 _OUTPUT_CAP_BY_SLUG = {"claude-fable-5": 128_000}
 
-# The models an arm can actually book, by bare slug: worker, the two judges,
+# The models an arm can actually book, by bare slug: worker, the two verifiers,
 # and triage. `TestOutputCeilingParity` checks the caps above against
 # `catalog.rs` for THESE and no others.
 #
@@ -197,7 +197,7 @@ _SUB_CEILING_RATIONALE: dict[str, str] = {
         "from anything — the divergence appeared the moment the catalog "
         "learned a number, which is exactly when it should become a decision "
         "rather than stay a silence. Kept at the default because kimi-k3 is "
-        "booked as arm B's JUDGE: it emits a verdict, not a solution, so the "
+        "booked as arm B's VERIFIER: it emits a verdict, not a solution, so the "
         "cap has never bound and 'never be the side that stops first' is a "
         "claim about the worker's budget. Raising it would also owe a "
         "`_MODEL_TIMEOUT_BY_SLUG` entry derived from an observed token rate "
@@ -303,7 +303,7 @@ def resolve_candidates(value: str | None) -> int | None:
     )
 
 
-def resolve_judge_evidence_demand(value: str | None) -> bool | None:
+def resolve_verifier_evidence_demand(value: str | None) -> bool | None:
     """Resolve the corroboration-ask arm, or ``None`` to inherit the default.
 
     Fails closed on anything that is not one of the four accepted spellings,
@@ -321,7 +321,7 @@ def resolve_judge_evidence_demand(value: str | None) -> bool | None:
     if text in ("off", "0"):
         return False
     raise ValueError(
-        "benchmark judge evidence demand must be one of on/off/1/0; "
+        "benchmark verifier evidence demand must be one of on/off/1/0; "
         f"got `{value}`"
     )
 
@@ -372,9 +372,9 @@ def resolve_triage_model(value: str | None) -> str | None:
 def _validated_role_model(model: str, candidate: str, role: str) -> str:
     """Return a validated per-role model pin, or refuse it with the reason.
 
-    The provider rule is the same one `_validated_witness_author` enforces and
+    The provider rule is the same one `_validated_verifier` enforces and
     it is enforced separately rather than shared, because the two roles fail
-    differently: an unreachable judge silently degrades the *claim* (the run
+    differently: an unreachable verifier silently degrades the *claim* (the run
     proceeds with the worker as its own author), while an unreachable triage
     model fails the *call*. Both are refusals here, before anything is spent.
     """
@@ -411,8 +411,8 @@ def _validated_worker_effort(worker_effort: str) -> str:
     return effort
 
 
-def _validated_witness_author(model: str, witness_author: str) -> str:
-    """Return the pinned witness/judge author, or refuse it with the reason.
+def _validated_verifier(model: str, verifier: str) -> str:
+    """Return the pinned witness/verifier author, or refuse it with the reason.
 
     Three fail-closed conditions, because a treatment arm that quietly
     degrades into the control arm is precisely the failure #1007 is about:
@@ -425,7 +425,7 @@ def _validated_witness_author(model: str, witness_author: str) -> str:
     both roles inside one provider — the protocol's roster is entirely
     ``openrouter/…`` for this reason.
     """
-    author = witness_author.strip()
+    author = verifier.strip()
     if not author or "/" not in author:
         raise ValueError(
             "benchmark witness author must be a non-empty provider/model spec"
@@ -452,12 +452,12 @@ def _validated_witness_author(model: str, witness_author: str) -> str:
 def _benchmark_engine_posture(
     model: str,
     *,
-    witness_author: str | None = None,
+    verifier: str | None = None,
     worker_effort: str = "xhigh",
     triage_model: str | None = None,
     max_revisions: int | None = None,
     candidates: int | None = None,
-    judge_evidence_demand: bool | None = None,
+    verifier_evidence_demand: bool | None = None,
     model_timeout_secs: int | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
@@ -469,14 +469,14 @@ def _benchmark_engine_posture(
     Two arms, and which one a run used is a property of the hash rather than of
     the logs (#1007):
 
-    * ``witness_author=None`` — the **control arm**. Model routing is expressed
+    * ``verifier=None`` — the **control arm**. Model routing is expressed
       only by ``default_model``; every role inherits it and no role has a
       provider/model override. Stella will not let the worker write the test
       that verifies it, so with one model for every role the independent author
       never exists: the run reports ``WitnessUnavailable`` and proceeds unproven
       (#973). Every Terminal-Bench number published before #1007 is this arm.
-    * ``witness_author="provider/slug"`` — the **treatment arm**. A second model
-      is pinned for the judge role via ``pipeline_judge_model``, which is what
+    * ``verifier="provider/slug"`` — the **treatment arm**. A second model
+      is pinned for the verifier role via ``pipeline_verifier_model``, which is what
       the authored-witness tier resolves its author from, and ``allowed_models``
       widens to name both. Still fully pinned, still one hash, still no
       auto-selection — the reproducibility argument is untouched; the posture
@@ -600,7 +600,7 @@ def _benchmark_engine_posture(
                 "reasoning": "on",
                 "params": {"max_tokens": output_cap},
             },
-            "judge": {
+            "verifier": {
                 "effort": "xhigh",
                 "reasoning": "on",
                 "params": {"max_tokens": output_cap},
@@ -608,34 +608,34 @@ def _benchmark_engine_posture(
             "triage": {"effort": "low", "reasoning": "off"},
         },
     }
-    if witness_author is not None:
-        author = _validated_witness_author(selected_model, witness_author)
-        # The flat root key, never `agents.judge.model`. Both resolve — the
+    if verifier is not None:
+        author = _validated_verifier(selected_model, verifier)
+        # The flat root key, never `agents.verifier.model`. Both resolve — the
         # engine reads `agents.<role>.model` first and falls through to the
         # flat key (`AgentEngineConfig::model_for`), and
-        # `the_flat_pipeline_judge_model_alone_resolves_role_judge_to_the_witness_author`
-        # pins that the flat key alone reaches `Role::Judge` — but the flat key
-        # is what `settings_check` and `stella config` report as the judge's
+        # `the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_verifier`
+        # pins that the flat key alone reaches `Role::Verifier` — but the flat key
+        # is what `settings_check` and `stella config` report as the verifier's
         # origin, so the disclosed posture and the engine's own account of its
         # wiring name the same field.
         #
         # Naming the author is not the same as reaching it. A trial runs with
         # the catalog frozen (`STELLA_CATALOG_AUTO_REFRESH=0`), so the author
         # must be a slug Stella's OFFLINE seed catalog carries for that
-        # provider; an unlisted one fails slug validation, the judge pin is
-        # dropped, and the judge falls back to the worker. That used to make
+        # provider; an unlisted one fails slug validation, the verifier pin is
+        # dropped, and the verifier falls back to the worker. That used to make
         # the treatment arm run as the control arm under a treatment-arm digest
         # (#1147). It now refuses the run instead: a posture delivered through
-        # the trusted launcher seam that names a judge other than the worker
+        # the trusted launcher seam that names a verifier other than the worker
         # arms `PipelineConfig::require_independent_witness`, and a run that
         # cannot resolve an independent author fails before it spends anything.
         # A witness arm whose author is outside the seed therefore produces no
         # number at all, which is the intended outcome — the alternative is a
         # number this digest misdescribes.
-        posture["pipeline_judge_model"] = author
+        posture["pipeline_verifier_model"] = author
         posture["allowed_models"] = [selected_model, author]
     if triage_model is not None:
-        # Same flat-key reasoning as the judge pin above: `settings_check` and
+        # Same flat-key reasoning as the verifier pin above: `settings_check` and
         # `stella config` report the flat key as the role's origin, so the
         # disclosed posture and the engine's own account of its wiring name the
         # same field. `allowed_models` has to widen with it — the vocabulary is
@@ -662,9 +662,9 @@ def _benchmark_engine_posture(
     # vocabulary rather than as a JSON bool: the CLI parses this key as a
     # `Toggle`, and a `true` here would be a refused run rather than a
     # selected arm.
-    if judge_evidence_demand is not None:
-        posture["pipeline_judge_evidence_demand"] = (
-            "on" if judge_evidence_demand else "off"
+    if verifier_evidence_demand is not None:
+        posture["pipeline_verifier_evidence_demand"] = (
+            "on" if verifier_evidence_demand else "off"
         )
     # Same omit-when-unset rule, and here it carries an extra weight: this key
     # is what makes a timeout change a *posture* change rather than a rebuild.
@@ -692,7 +692,7 @@ def _benchmark_engine_posture(
 def _benchmark_assurance_tiers(
     model: str,
     *,
-    witness_author: str | None = None,
+    verifier: str | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return which verification tiers this posture exercises, and its hash.
 
@@ -712,24 +712,24 @@ def _benchmark_assurance_tiers(
     if not selected_model or "/" not in selected_model:
         raise ValueError("benchmark model must be a non-empty provider/model spec")
     author = (
-        _validated_witness_author(selected_model, witness_author)
-        if witness_author is not None
+        _validated_verifier(selected_model, verifier)
+        if verifier is not None
         else None
     )
     declaration: dict[str, Any] = {
         "version": _ASSURANCE_TIERS_VERSION,
         "arm": "witness-on" if author else "witness-off",
         "worker_model": selected_model,
-        "witness_author_model": author,
+        "verifier_model": author,
         "tiers": {
             # Flip oracle and recorded test results need no second model, so
             # this rung is on in both arms.
             "deterministic_verify": "on",
             "authored_witness": "on" if author else "off",
-            # The judge rung runs either way; in the control arm it resolves to
+            # The verifier rung runs either way; in the control arm it resolves to
             # the worker's own model, which is a materially weaker claim and is
             # named as such rather than reported as a plain "on".
-            "model_judge": (
+            "model_verdict": (
                 "on-independent-of-worker" if author else "on-same-model-as-worker"
             ),
         },
@@ -763,7 +763,7 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
 
     Reads `{"type":"proof","step":{"kind":…}}` events, Stella's own account of
     its verification ladder (`stella_protocol::ProofStep`), plus the
-    `{"type":"judge_verdict"}` event that closes the ladder. Before #1007 this
+    `{"type":"verdict"}` event that closes the ladder. Before #1007 this
     lived only in the human-readable warning beside it, so "was the witness
     authored" was a question you answered by grepping trajectories.
 
@@ -774,7 +774,7 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
 
     The verdict fields are the other half of the A/B question (#1284). A trial
     carries two independent opinions about the same work — Stella's own
-    (`judge_verdict`) and the benchmark's external grader (`reward`, from the
+    (`verdict`) and the benchmark's external grader (`reward`, from the
     verifier, which the agent never sees) — and the interesting number is how
     often they disagree, in which direction. That comparison was only ever
     computable from the multi-gigabyte job tree, which is never committed, so
@@ -784,7 +784,7 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
 
     `self_verdict_deterministic` is what keeps that comparison honest: a verdict
     the flip oracle decided and a verdict a model opined are not the same claim,
-    and the model-judge-only rate is the one #1284 quotes.
+    and the model-verifier-only rate is the one #1284 quotes.
     """
     proof_kinds: dict[str, int] = {}
     unavailable_reasons: list[str] = []
@@ -795,12 +795,12 @@ def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:
     verdict_deterministic: bool | None = None
 
     for event in events:
-        if event.get("type") == "judge_verdict":
+        if event.get("type") == "verdict":
             passed = event.get("passed")
             if not isinstance(passed, bool):
                 continue  # a verdict that states no outcome is not one
             verdict_count += 1
-            # Last verdict wins: a turn can revise a candidate and judge it
+            # Last verdict wins: a turn can revise a candidate and verifier it
             # again, and the claim the trial *ends* on is the one the external
             # reward is a comment on.
             verdict_passed = passed

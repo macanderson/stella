@@ -718,7 +718,7 @@ impl AnthropicProvider {
                 // Adaptive thinking spends from the SAME output allowance as the
                 // answer, so an un-capped reasoning turn needs far more headroom
                 // than the old 4096 no-thinking default — 4096 would truncate a
-                // max-effort judge mid-verdict (returning empty text with
+                // max-effort verifier mid-verdict (returning empty text with
                 // stop_reason=max_tokens). We already stream, so a high ceiling
                 // costs nothing; a caller-set cap is still honored as-is.
                 let max_tokens =

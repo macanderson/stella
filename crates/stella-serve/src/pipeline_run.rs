@@ -1,7 +1,7 @@
 //! The verification pipeline over the wire (#1288): `pipeline` on
 //! `POST /v1/turns` (and `POST /v1/sessions/{id}/turns`) drives a turn through
 //! `stella_pipeline::Pipeline::run` — plan, scope review, execute, witness,
-//! verify, judge — instead of a bare engine step loop.
+//! verify, verifier — instead of a bare engine step loop.
 //!
 //! # Why a mode on a turn, not a `/v1/runs` resource
 //!
@@ -9,7 +9,7 @@
 //! turn and is already witnessed, exactly as `goal` (#1297) found before it:
 //! `GET /v1/turns/{id}/events` streams its progress (the pipeline already
 //! emits `AgentEvent::Stage`, `AgentEvent::ScopeReview`, `AgentEvent::
-//! JudgeVerdict`, and the rest of its own vocabulary — this module adds no
+//! Verdict`, and the rest of its own vocabulary — this module adds no
 //! new event types), `POST /v1/turns/{id}/cancel` stops it, and the
 //! settlement hook writes the transcript back. A `/v1/runs` resource would
 //! restate every one of those with its own id space and its own bugs — the
@@ -61,16 +61,16 @@
 //!   served run still verifies — it just cannot isolate best-of-N candidates
 //!   or measure diff coverage yet. Wiring them is additive follow-up work,
 //!   not a redesign.
-//! - **Per-role provider routing.** Worker, triage, and judge each get their
-//!   own [`crate::remote::RemoteProvider`] (so the host can route a judge to
-//!   a different model, mirroring `goal.judge_provider_id`), but a served
+//! - **Per-role provider routing.** Worker, triage, and verifier each get their
+//!   own [`crate::remote::RemoteProvider`] (so the host can route a verifier to
+//!   a different model, mirroring `goal.verifier_provider_id`), but a served
 //!   run's `witness_writer` role rides the worker's — an independent witness
-//!   author needs its own provider id the same way judge does, and is a
+//!   author needs its own provider id the same way verifier does, and is a
 //!   small, additive follow-up.
 //! - **Mid-run steering and sub-agents.** `goal`/`sub_agents` blocks are not
 //!   accepted together with `pipeline` — the pipeline already loops
-//!   internally (revisions, best-of-N) and drives its own judge, so layering
-//!   the turn-level judge/delegation modes on top would be two competing
+//!   internally (revisions, best-of-N) and drives its own verifier, so layering
+//!   the turn-level verifier/delegation modes on top would be two competing
 //!   control loops. Refused with a named 400, not silently ignored.
 //! - **Cancellation is reverse-RPC-boundary, not step-boundary.** Exactly the
 //!   limitation `docs/design/serve-surface.md` already states for the plain
@@ -136,10 +136,10 @@ pub struct PipelineRun {
     /// on a different account/model than the worker. `None` runs it on the
     /// turn's own provider id.
     pub triage_provider_id: Option<String>,
-    /// The provider id the judge call announces — the same knob
-    /// `goal.judge_provider_id` already exposes, generalized to the
-    /// pipeline's own internal judge.
-    pub judge_provider_id: Option<String>,
+    /// The provider id the verifier call announces — the same knob
+    /// `goal.verifier_provider_id` already exposes, generalized to the
+    /// pipeline's own internal verifier.
+    pub verifier_provider_id: Option<String>,
 }
 
 /// A time source for the single-profile [`CircuitBreaker`] a served pipeline
@@ -168,18 +168,18 @@ impl stella_core::ports::Clock for WallClock {
 mod role_tag {
     pub(super) const WORKER: &str = "worker";
     pub(super) const TRIAGE: &str = "triage";
-    pub(super) const JUDGE: &str = "judge";
+    pub(super) const VERIFIER: &str = "verifier";
 }
 
 /// Resolves the pipeline's role-tagged [`ModelRef`]s to one of three
 /// [`RemoteProvider`]s, each announcing its own `provider_id` and
 /// [`stella_protocol::ModelCallRole`] on the wire — so a host can route a
-/// served run's judge to a different model than its worker, the same
-/// property `goal.judge_provider_id` already buys a turn-level judge.
+/// served run's verifier to a different model than its worker, the same
+/// property `goal.verifier_provider_id` already buys a turn-level verifier.
 struct ServedProviderResolver {
     worker: RemoteProvider,
     triage: RemoteProvider,
-    judge: RemoteProvider,
+    verifier: RemoteProvider,
 }
 
 impl ProviderResolver for ServedProviderResolver {
@@ -187,7 +187,7 @@ impl ProviderResolver for ServedProviderResolver {
         match model.model_id.as_str() {
             role_tag::WORKER => Some(&self.worker),
             role_tag::TRIAGE => Some(&self.triage),
-            role_tag::JUDGE => Some(&self.judge),
+            role_tag::VERIFIER => Some(&self.verifier),
             _ => None,
         }
     }
@@ -266,8 +266,8 @@ pub(crate) async fn drive_pipeline(
         .triage_provider_id
         .clone()
         .unwrap_or_else(|| worker_id.clone());
-    let judge_id = run
-        .judge_provider_id
+    let verifier_id = run
+        .verifier_provider_id
         .clone()
         .unwrap_or_else(|| worker_id.clone());
 
@@ -285,13 +285,13 @@ pub(crate) async fn drive_pipeline(
             reverse_request_timeout,
         )
         .with_role(stella_protocol::ModelCallRole::Triage),
-        judge: RemoteProvider::new(
-            judge_id,
+        verifier: RemoteProvider::new(
+            verifier_id,
             frame_tx.clone(),
             pending.clone(),
             reverse_request_timeout,
         )
-        .with_role(stella_protocol::ModelCallRole::Judge),
+        .with_role(stella_protocol::ModelCallRole::Verdict),
     };
 
     let router = Router::new(
@@ -300,7 +300,7 @@ pub(crate) async fn drive_pipeline(
             worker_id,
             ModelRef::new(role_tag::WORKER, role_tag::WORKER),
             ModelRef::new(role_tag::TRIAGE, role_tag::TRIAGE),
-            ModelRef::new(role_tag::JUDGE, role_tag::JUDGE),
+            ModelRef::new(role_tag::VERIFIER, role_tag::VERIFIER),
         )],
         CircuitBreaker::new(Box::new(WallClock)),
     );
@@ -382,7 +382,7 @@ mod tests {
             max_revisions: None,
             candidates: None,
             triage_provider_id: None,
-            judge_provider_id: None,
+            verifier_provider_id: None,
         }
     }
 

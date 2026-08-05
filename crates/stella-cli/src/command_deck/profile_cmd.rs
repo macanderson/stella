@@ -98,7 +98,7 @@ pub fn usage() -> String {
 
 /// What `auto` means, in the same voice as the profile taglines.
 const AUTO_TAGLINE: &str =
-    "no profile — the engine picks effort per role (judge high, worker medium, triage low)";
+    "no profile — the engine picks effort per role (verifier high, worker medium, triage low)";
 
 /// `/profile auto` — restore the auto switches and drop the per-role effort
 /// pins, handing the dials back to the engine. The way out of a profile.
@@ -117,7 +117,7 @@ pub fn set_auto() -> Result<String, String> {
          effort_auto, reasoning_auto and auto_mode are back on, and the per-role effort, \
          thinking, verbosity and service-tier pins a profile had written are gone.\n\
          Model choices were left alone: a pin may predate the profile, and `auto_mode` \
-         re-picks the judge on its own."
+         re-picks the verifier on its own."
     ))
 }
 
@@ -155,7 +155,7 @@ fn role_label(kind: EngineAgentKind) -> &'static str {
     match kind {
         EngineAgentKind::Default => "default",
         EngineAgentKind::Worker => "worker",
-        EngineAgentKind::Judge => "judge",
+        EngineAgentKind::Verifier => "verifier",
         EngineAgentKind::Triage => "triage",
     }
 }
@@ -177,9 +177,9 @@ fn plan_notes(plan: &Plan) -> Vec<String> {
                 .to_string(),
         );
     }
-    if plan.judge_shares_worker_family {
+    if plan.verifier_shares_worker_family {
         notes.push(
-            "the judge shares the worker's model family — no reachable model was both \
+            "the verifier shares the worker's model family — no reachable model was both \
              independent of it and at least as capable, so review is correlated with the \
              work it grades. A key from another vendor fixes this."
                 .to_string(),
@@ -278,7 +278,7 @@ pub fn set_profile(cfg: &Config, name: &str) -> Result<String, String> {
     })?;
     // Load-mutate-save, never construct fresh: `save_to` replaces the whole
     // `agent_engine_config` block, so building a new one would silently drop a
-    // custom judge prompt or a pinned temperature.
+    // custom verifier prompt or a pinned temperature.
     //
     // Read the file being written, NOT the merged view: the merged config also
     // carries the project's and the org's opinions, and saving that to user
@@ -387,7 +387,7 @@ mod tests {
     fn the_readout_names_every_role_and_its_model() {
         let plan = profile::plan(Profile::Ultra, &sample());
         let rows = plan_rows(&plan);
-        for role in ["default", "worker", "judge", "triage"] {
+        for role in ["default", "worker", "verifier", "triage"] {
             assert!(rows.contains(role), "readout omits the {role} row:\n{rows}");
         }
         assert!(rows.contains("anthropic/claude-fable-5"));
@@ -399,9 +399,9 @@ mod tests {
     }
 
     #[test]
-    fn notes_explain_a_clamped_effort_and_a_correlated_judge() {
+    fn notes_explain_a_clamped_effort_and_a_correlated_verifier() {
         // One cheap outsider and a wall of same-family models: the only
-        // independent judge is too far below the worker to follow the work, so
+        // independent verifier is too far below the worker to follow the work, so
         // capability takes over and the correlation must be spoken.
         let correlated = vec![
             Candidate {
@@ -432,7 +432,7 @@ mod tests {
         let notes = plan_notes(&profile::plan(Profile::Ultra, &correlated));
         assert!(
             notes.iter().any(|n| n.contains("shares the worker's")),
-            "a correlated judge went unreported: {notes:?}"
+            "a correlated verifier went unreported: {notes:?}"
         );
         // A single model whose provider stops at `high` must report the clamp.
         let capped = vec![Candidate {

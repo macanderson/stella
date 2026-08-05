@@ -180,13 +180,13 @@ async fn witness_worker_and_revision_hooks_are_bound_to_the_candidate_root() {
     assert_eq!(std::fs::read_dir(session_root.path()).unwrap().count(), 0);
 }
 
-/// Pinning worker and judge to one model costs the run its authored witness,
+/// Pinning worker and verifier to one model costs the run its authored witness,
 /// not the task: the pipeline warns once and proceeds down the unauthored
 /// verify ladder. (The profile-level single-model case is covered by
 /// `single_model_config_degrades_to_unauthored_witness_instead_of_aborting`;
 /// this pins the roles explicitly, which is a distinct resolution path.)
 #[tokio::test]
-async fn authored_witness_degrades_when_judge_is_worker() {
+async fn authored_witness_degrades_when_verifier_is_worker() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
@@ -205,14 +205,14 @@ async fn authored_witness_degrades_when_judge_is_worker() {
     let same = ModelRef::new("scripted", "same-model");
     let mut roles = RoleTable::new();
     roles.pin(Role::Worker, same.clone());
-    roles.pin(Role::Judge, same);
+    roles.pin(Role::Verifier, same);
     let router = Router::new(
         roles,
         vec![ProviderProfile::new(
             "scripted",
             ModelRef::new("scripted", "worker"),
             ModelRef::new("scripted", "triage"),
-            ModelRef::new("scripted", "judge"),
+            ModelRef::new("scripted", "verifier"),
         )],
         CircuitBreaker::new(Box::new(ZeroClock)),
     );
@@ -251,7 +251,7 @@ async fn authored_witness_degrades_when_judge_is_worker() {
     assert_eq!(
         outcome.status,
         PipelineStatus::Completed,
-        "pinning judge to the worker must not abort the task: {outcome:?}"
+        "pinning verifier to the worker must not abort the task: {outcome:?}"
     );
     let events = drain(&mut rx);
     assert!(
@@ -666,7 +666,7 @@ async fn symlink_witness_artifact_aborts_after_worker_execution() {
 }
 
 #[tokio::test]
-async fn post_baseline_witness_tamper_is_hard_failure_even_if_judge_would_pass() {
+async fn post_baseline_witness_tamper_is_hard_failure_even_if_verifier_would_pass() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("worker done"),
@@ -726,7 +726,7 @@ async fn post_baseline_witness_tamper_is_hard_failure_even_if_judge_would_pass()
         &outcome.status,
         "witness artifact changed after its accepted baseline: tests/witness.rs",
     );
-    assert!(!stages(&events).contains(&StageKind::Judge));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
     let log = log.lock().unwrap().clone();
     assert!(
         !log.iter().any(|entry| entry.starts_with("adopt:")),
@@ -823,7 +823,7 @@ async fn a_docs_only_change_authors_no_witness_and_creates_no_second_snapshot() 
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("updated the docs"), // worker
-        text_result("PASS reads well"),  // judge: TestsOnly/PureRemoval keep it
+        text_result("PASS reads well"),  // verifier: TestsOnly/PureRemoval keep it
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let candidate = FakeWorkspace::new(0, vec![], Ok(vec![]), log.clone())
@@ -882,7 +882,7 @@ async fn a_graft_collision_keeps_the_work_and_drops_only_the_witness() {
         text_result("single"),
         text_result("done"), // worker
         text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
-        text_result("PASS looks right"), // judge, since there is no flip
+        text_result("PASS looks right"), // verifier, since there is no flip
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone())
@@ -928,9 +928,9 @@ async fn a_graft_collision_keeps_the_work_and_drops_only_the_witness() {
 }
 
 /// Tamper exclusion: the worker modified the witness test file after it
-/// was authored, so the candidate hard-fails without judge override.
+/// was authored, so the candidate hard-fails without verifier override.
 #[tokio::test]
-async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
+async fn a_tampered_witness_file_hard_fails_before_verifier_evaluation() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"), // worker
@@ -972,7 +972,7 @@ async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
             link_count: 1,
         });
     let config = PipelineConfig {
-        max_revisions: 0, // judge FAIL ends the run — keeps the script short
+        max_revisions: 0, // verifier FAIL ends the run — keeps the script short
         ..PipelineConfig::default()
     };
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -994,8 +994,8 @@ async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
         "aborted for the wrong reason: {reason}"
     );
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
-        "tamper is not eligible for judge override"
+        !stages(&events).contains(&StageKind::Verdict),
+        "tamper is not eligible for verifier override"
     );
 }
 
@@ -1005,9 +1005,9 @@ async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
 /// directory) can still resolve the pinned path to those bytes, so the
 /// observation arrives identical in everything but the location it was
 /// actually made at. The location is part of the pinned identity: the
-/// candidate hard-fails without judge override, exactly like an edit.
+/// candidate hard-fails without verifier override, exactly like an edit.
 #[tokio::test]
-async fn a_renamed_witness_file_hard_fails_before_judge_evaluation() {
+async fn a_renamed_witness_file_hard_fails_before_verifier_evaluation() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"), // worker
@@ -1075,8 +1075,8 @@ async fn a_renamed_witness_file_hard_fails_before_judge_evaluation() {
         "witness artifact changed after its accepted baseline: tests/witness.rs",
     );
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
-        "a renamed witness is not eligible for judge override"
+        !stages(&events).contains(&StageKind::Verdict),
+        "a renamed witness is not eligible for verifier override"
     );
     let log = log.lock().unwrap().clone();
     assert!(
@@ -1093,7 +1093,7 @@ async fn a_renamed_witness_file_hard_fails_before_judge_evaluation() {
 /// pre-existing dirty state. Grafting after execution writes the file *after*
 /// that snapshot, so the next gather — the one a revision performs — would read
 /// a new untracked file and bill it to the worker, inflating `diff_lines`
-/// against the SubmitFast budget and showing a judge a change nobody made.
+/// against the SubmitFast budget and showing a verifier a change nobody made.
 /// `witness_on_demand` enrolls the grafted path at its pinned fingerprint to
 /// restore the exclusion.
 #[tokio::test]
@@ -1105,7 +1105,7 @@ async fn a_grafted_witness_is_not_billed_to_the_workers_diff() {
             "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
         ),
         text_result("revision done"),
-        // No judge response. An escalation past SubmitFast aborts the run
+        // No verifier response. An escalation past SubmitFast aborts the run
         // rather than quietly passing on a heuristic.
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1165,8 +1165,8 @@ async fn a_grafted_witness_is_not_billed_to_the_workers_diff() {
         verdict.summary
     );
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
-        "no judge is bought: {:?}",
+        !stages(&events).contains(&StageKind::Verdict),
+        "no verifier is bought: {:?}",
         stages(&events)
     );
 }
@@ -1175,7 +1175,7 @@ async fn a_grafted_witness_is_not_billed_to_the_workers_diff() {
 /// turns of a single candidate. The tamper check runs every verify-loop
 /// iteration, so a revise turn that edits the witness file it is being
 /// judged by is caught at the next iteration's check and hard-fails the
-/// candidate — no judge can be asked to bless it, and nothing is adopted.
+/// candidate — no verifier can be asked to bless it, and nothing is adopted.
 #[tokio::test]
 async fn a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check() {
     let provider = ScriptedProvider::new(vec![
@@ -1253,7 +1253,7 @@ async fn a_revise_turn_that_edits_the_witness_hard_fails_at_the_next_check() {
         &outcome.status,
         "witness artifact changed after its accepted baseline: tests/witness.rs",
     );
-    assert!(!stages(&events).contains(&StageKind::Judge));
+    assert!(!stages(&events).contains(&StageKind::Verdict));
     let log = log.lock().unwrap().clone();
     assert!(
         !log.iter().any(|entry| entry.starts_with("adopt:")),
@@ -1289,14 +1289,14 @@ async fn requiring_an_independent_witness_refuses_before_spending_anything() {
     let same = ModelRef::new("scripted", "same-model");
     let mut roles = RoleTable::new();
     roles.pin(Role::Worker, same.clone());
-    roles.pin(Role::Judge, same);
+    roles.pin(Role::Verifier, same);
     let router = Router::new(
         roles,
         vec![ProviderProfile::new(
             "scripted",
             ModelRef::new("scripted", "worker"),
             ModelRef::new("scripted", "triage"),
-            ModelRef::new("scripted", "judge"),
+            ModelRef::new("scripted", "verifier"),
         )],
         CircuitBreaker::new(Box::new(ZeroClock)),
     );
@@ -1361,18 +1361,18 @@ async fn requiring_an_independent_witness_refuses_before_spending_anything() {
 async fn the_independence_requirement_is_opt_in() {
     assert!(
         !PipelineConfig::default().require_independent_witness,
-        "a single-key setup must keep working: the judge legitimately rides \
-         the worker there, and `authored_witness_degrades_when_judge_is_worker` \
+        "a single-key setup must keep working: the verifier legitimately rides \
+         the worker there, and `authored_witness_degrades_when_verifier_is_worker` \
          pins that path"
     );
 }
 
-/// A judge distinct from the worker satisfies the requirement, so the flag is
+/// A verifier distinct from the worker satisfies the requirement, so the flag is
 /// inert on the arm it exists to protect: the treatment arm must RUN, not
 /// merely fail loudly. Without this the previous test would pass just as well
 /// against a guard that refuses unconditionally.
 #[tokio::test]
-async fn requiring_an_independent_witness_lets_a_distinct_judge_through() {
+async fn requiring_an_independent_witness_lets_a_distinct_verifier_through() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
@@ -1388,7 +1388,7 @@ async fn requiring_an_independent_witness_lets_a_distinct_judge_through() {
     let sleeper = NoopSleeper;
     let mut roles = RoleTable::new();
     roles.pin(Role::Worker, ModelRef::new("scripted", "worker-model"));
-    roles.pin(Role::Judge, ModelRef::new("scripted", "author-model"));
+    roles.pin(Role::Verifier, ModelRef::new("scripted", "author-model"));
     let router = Router::new(
         roles,
         vec![ProviderProfile::new(
@@ -1443,6 +1443,6 @@ async fn requiring_an_independent_witness_lets_a_distinct_judge_through() {
             outcome.as_ref().map_err(|e| &e.cause),
             Err(PipelineError::WitnessAuthorUnavailable(_))
         ),
-        "an independent judge must satisfy the requirement: {outcome:?}"
+        "an independent verifier must satisfy the requirement: {outcome:?}"
     );
 }

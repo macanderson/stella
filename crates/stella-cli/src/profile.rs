@@ -10,7 +10,7 @@
 //! [`CatalogEntry`](stella_model::catalog::CatalogEntry) carries no tier,
 //! rank, or latency field, so a profile has to infer capability from
 //! something. It uses **list output price**, the same proxy
-//! [`crate::engine_config::auto_judge_spec`] already ranks by. That choice is
+//! [`crate::engine_config::auto_verifier_spec`] already ranks by. That choice is
 //! deliberate: a hardcoded table of model names would be stale the week after
 //! it merged, whereas price ranking picks up every `stella models refresh`
 //! for free. It is a proxy, not a truth — a cheap frontier model ranks low
@@ -25,7 +25,7 @@
 //!
 //! # Why the auto switches go off
 //!
-//! `effort_auto` is a convenience that pins judge=high, worker=medium,
+//! `effort_auto` is a convenience that pins verifier=high, worker=medium,
 //! triage=low and **overrides any per-agent effort**. Left on, it would cap
 //! `/profile ultra`'s worker at medium — the profile would print one thing and
 //! run another. So applying a profile turns `effort_auto`, `reasoning_auto`,
@@ -76,7 +76,7 @@ const EFFORT_LADDER: [ReasoningEffort; 5] = [
 pub enum Profile {
     /// Cheapest reachable model everywhere, thinking off, terse replies.
     Fast,
-    /// The daily driver: mid-priced worker, a stronger cross-family judge,
+    /// The daily driver: mid-priced worker, a stronger cross-family verifier,
     /// the cheapest model on triage.
     Balanced,
     /// Near the top of what the keys can reach, with real deliberation.
@@ -133,17 +133,17 @@ impl Profile {
     /// classification under a latency ceiling, and spending the session's most
     /// expensive model on it buys nothing.
     ///
-    /// The judge's fraction is measured over a **filtered** list — see
-    /// [`plan`] — so it reads as "how far up the qualifying judges to reach",
+    /// The verifier's fraction is measured over a **filtered** list — see
+    /// [`plan`] — so it reads as "how far up the qualifying verifiers to reach",
     /// not as a position in the full catalog.
     fn percentile(self, kind: EngineAgentKind) -> f64 {
         match (self, kind) {
             (Profile::Fast, _) => 0.0,
             (Profile::Balanced, EngineAgentKind::Triage) => 0.0,
-            (Profile::Balanced, EngineAgentKind::Judge) => 0.75,
+            (Profile::Balanced, EngineAgentKind::Verifier) => 0.75,
             (Profile::Balanced, _) => 0.50,
             (Profile::Pro, EngineAgentKind::Triage) => 0.25,
-            (Profile::Pro, EngineAgentKind::Judge) => 1.0,
+            (Profile::Pro, EngineAgentKind::Verifier) => 1.0,
             (Profile::Pro, _) => 0.85,
             (Profile::Ultra, EngineAgentKind::Triage) => 0.50,
             (Profile::Ultra, _) => 1.0,
@@ -155,10 +155,10 @@ impl Profile {
         match (self, kind) {
             (Profile::Fast, _) => ReasoningEffort::Low,
             (Profile::Balanced, EngineAgentKind::Triage) => ReasoningEffort::Low,
-            (Profile::Balanced, EngineAgentKind::Judge) => ReasoningEffort::High,
+            (Profile::Balanced, EngineAgentKind::Verifier) => ReasoningEffort::High,
             (Profile::Balanced, _) => ReasoningEffort::Medium,
             (Profile::Pro, EngineAgentKind::Triage) => ReasoningEffort::Low,
-            (Profile::Pro, EngineAgentKind::Judge) => ReasoningEffort::Xhigh,
+            (Profile::Pro, EngineAgentKind::Verifier) => ReasoningEffort::Xhigh,
             (Profile::Pro, _) => ReasoningEffort::High,
             (Profile::Ultra, EngineAgentKind::Triage) => ReasoningEffort::Medium,
             (Profile::Ultra, _) => ReasoningEffort::Max,
@@ -213,7 +213,7 @@ pub struct Candidate {
     pub provider: String,
     /// Provider-native slug, never re-qualified with the provider (#259).
     pub model: String,
-    /// Family, for the judge's cross-family preference.
+    /// Family, for the verifier's cross-family preference.
     pub family: String,
     /// List output price. Zero means the catalog does not know.
     pub output_usd_per_mtok: f64,
@@ -286,11 +286,11 @@ pub struct Plan {
     /// means every role landed on the same model and the profiles differ only
     /// by effort — worth saying out loud rather than letting it look broken.
     pub ranked_count: usize,
-    /// `true` when the judge had to share the worker's model family because no
+    /// `true` when the verifier had to share the worker's model family because no
     /// reachable model was both independent of it and at least as capable. The
     /// review is then correlated with the work it grades; the summary reports
     /// it rather than letting the compromise pass unseen.
-    pub judge_shares_worker_family: bool,
+    pub verifier_shares_worker_family: bool,
 }
 
 impl Plan {
@@ -395,16 +395,16 @@ pub fn plan(profile: Profile, candidates: &[Candidate]) -> Plan {
         &ranked_list
     };
 
-    // What the worker landed on decides the judge, so resolve it first.
+    // What the worker landed on decides the verifier, so resolve it first.
     let worker_index = index_at(pool.len(), profile.percentile(EngineAgentKind::Worker));
     let worker = worker_index.and_then(|i| pool.get(i).copied());
     let worker_family = worker.map(|c| c.family.as_str()).unwrap_or_default();
     let worker_price = worker.map(|c| c.output_usd_per_mtok).unwrap_or_default();
 
-    // Choosing the judge.
+    // Choosing the verifier.
     //
-    // Two goals pull against each other. A judge in the worker's own family
-    // lets a shared blind spot pass review twice; a judge well below the
+    // Two goals pull against each other. A verifier in the worker's own family
+    // lets a shared blind spot pass review twice; a verifier well below the
     // worker's tier cannot follow the work it grades, and rubber-stamps. No
     // single ordering satisfies both on every catalog, so this resolves in
     // three steps, preferring the option that gives up the least:
@@ -412,7 +412,7 @@ pub fn plan(profile: Profile, candidates: &[Candidate]) -> Plan {
     //   1. Independent AND at least as capable — no compromise at all.
     //   2. Nothing clears the floor, but the strongest independent model is
     //      only one rung below the worker. That is a near miss, not an
-    //      outmatched judge, so independence is worth the single rung.
+    //      outmatched verifier, so independence is worth the single rung.
     //   3. The strongest independent model is further down than that. Now
     //      capability wins, and `Plan` records the correlation so the summary
     //      says it out loud instead of absorbing it silently.
@@ -440,24 +440,24 @@ pub fn plan(profile: Profile, candidates: &[Candidate]) -> Plan {
                 .is_some_and(|rank| rank + 1 >= worker_index),
             _ => false,
         };
-    // Steps 1 and 2 both end with an independent judge; only step 3 gives that
+    // Steps 1 and 2 both end with an independent verifier; only step 3 gives that
     // up, and that is the case worth reporting.
-    let judge_is_independent = !at_or_above.is_empty() || near_miss;
+    let verifier_is_independent = !at_or_above.is_empty() || near_miss;
 
     let picks = EngineAgentKind::ALL
         .iter()
         .map(|&kind| {
             let wanted = profile.effort(kind);
-            // The judge's three steps, in order; every other role just takes
+            // The verifier's three steps, in order; every other role just takes
             // its fraction of the whole pool.
             let chosen = match kind {
-                EngineAgentKind::Judge if !at_or_above.is_empty() => {
+                EngineAgentKind::Verifier if !at_or_above.is_empty() => {
                     at_percentile_expressive(&at_or_above, profile.percentile(kind), wanted)
                 }
-                // A near-miss judge was chosen for being the strongest
+                // A near-miss verifier was chosen for being the strongest
                 // independent option there is, so it takes the top of that list
                 // rather than the profile's usual fraction.
-                EngineAgentKind::Judge if near_miss => cross_family.last().copied(),
+                EngineAgentKind::Verifier if near_miss => cross_family.last().copied(),
                 _ => at_percentile_expressive(pool, profile.percentile(kind), wanted),
             };
             let effort = chosen.and_then(|c| clamp_effort(wanted, c.effort_levels));
@@ -486,20 +486,20 @@ pub fn plan(profile: Profile, candidates: &[Candidate]) -> Plan {
         ranked_count: pool.len(),
         // Only a compromise when there was a worker to be independent OF, and
         // when no independent option survived either of the first two steps.
-        judge_shares_worker_family: !judge_is_independent && worker.is_some(),
+        verifier_shares_worker_family: !verifier_is_independent && worker.is_some(),
     }
 }
 
 /// Write a plan into an existing engine config, in place.
 ///
-/// **Preserves what the profile does not own.** A hand-written judge prompt, a
+/// **Preserves what the profile does not own.** A hand-written verifier prompt, a
 /// pinned provider, a chosen temperature or seed all survive: the profile
 /// claims the per-role model, effort, reasoning, verbosity, and service tier,
 /// and nothing else. It also leaves `allowed_models` alone — silently
 /// narrowing the model picker is the kind of surprise that makes a
 /// convenience command untrustworthy.
 pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
-    // The profile is now the authority on effort and judge selection; the
+    // The profile is now the authority on effort and verifier selection; the
     // auto switches would override it. See the module docs.
     engine.auto_mode = Some(Toggle::Off);
     engine.effort_auto = Some(Toggle::Off);
@@ -512,7 +512,7 @@ pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
             match pick.kind {
                 EngineAgentKind::Default => engine.default_model = qualified,
                 EngineAgentKind::Worker => engine.pipeline_worker_model = qualified,
-                EngineAgentKind::Judge => engine.pipeline_judge_model = qualified,
+                EngineAgentKind::Verifier => engine.pipeline_verifier_model = qualified,
                 EngineAgentKind::Triage => engine.pipeline_triage_model = qualified,
             }
         }
@@ -543,12 +543,12 @@ pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
 /// this that is a one-way door: nothing puts a preference back once a profile
 /// has claimed it. This restores all three and drops the per-role effort,
 /// thinking, verbosity and service-tier pins a profile writes, so the engine
-/// goes back to choosing them (judge high, worker medium, triage low).
+/// goes back to choosing them (verifier high, worker medium, triage low).
 ///
 /// It deliberately leaves **model** choices alone. The switches are what a
 /// profile took away; a model pin may well predate it — set by `/model` or by
 /// hand — and clearing that would be destroying something this command never
-/// owned. `auto_mode` re-picks the judge on its own regardless.
+/// owned. `auto_mode` re-picks the verifier on its own regardless.
 pub fn restore_auto(engine: &mut AgentEngineConfig) {
     engine.auto_mode = Some(Toggle::On);
     engine.effort_auto = Some(Toggle::On);

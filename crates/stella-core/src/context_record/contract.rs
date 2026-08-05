@@ -3,7 +3,7 @@
 //! Two spec points are handled per the flagged-decisions issue (#483) with a
 //! documented, non-freezing choice: **requirement kinds and the validation
 //! `method` are extensible strings**, not closed enums (the spec never names the
-//! semantic-judge method token, and requirement kinds are explicitly extensible
+//! semantic-verifier method token, and requirement kinds are explicitly extensible
 //! with "unknown kinds fail closed"). `validation_status` keeps its four named
 //! values; `requirement_status` gets its own enum.
 //!
@@ -50,8 +50,8 @@ impl RequirementKind {
     pub const MARKDOWN_SECTIONS: &'static str = "markdown_sections";
     /// A command exits successfully (needs `execution_approval_ref`).
     pub const COMMAND: &'static str = "command";
-    /// A semantic judge scores against a rubric.
-    pub const SEMANTIC_JUDGE: &'static str = "semantic_judge";
+    /// A semantic verifier scores against a rubric.
+    pub const SEMANTIC_VERIFIER: &'static str = "semantic_verifier";
 
     const RECOGNIZED: [&'static str; 10] = [
         Self::FILE_EXISTS,
@@ -63,7 +63,7 @@ impl RequirementKind {
         Self::JSON_SCHEMA,
         Self::MARKDOWN_SECTIONS,
         Self::COMMAND,
-        Self::SEMANTIC_JUDGE,
+        Self::SEMANTIC_VERIFIER,
     ];
 
     /// Construct a requirement kind, rejecting an empty identifier.
@@ -263,7 +263,7 @@ impl RequirementStatus {
 }
 
 /// One requirement's result within a [`ContractValidation`]. `method` is an
-/// extensible identifier (e.g. `deterministic`, or a semantic-judge token).
+/// extensible identifier (e.g. `deterministic`, or a semantic-verifier token).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequirementResult {
     /// The requirement this result is for.

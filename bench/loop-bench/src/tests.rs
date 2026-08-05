@@ -751,7 +751,7 @@ fn a_multi_step_fold_ends_where_the_last_step_ended() {
 
 /// #1299: step order comes from harbor's `step_results`, not from sorting the
 /// directory names — the fold reads the last step's ending, so the wrong order
-/// judges the wrong step.
+/// verifiers the wrong step.
 #[test]
 fn step_order_follows_harbors_record_not_the_alphabet() {
     let job = tempfile::tempdir().expect("job dir");

@@ -64,7 +64,7 @@ stella run "explain what this repository does, then list the riskiest files"
 ```
 
 `stella run` runs a one-shot, non-interactive task and prints the result. By default it goes
-through the staged pipeline (triage → plan → execute → verify → judge); `--no-pipeline` falls
+through the staged pipeline (triage → plan → execute → verify → verdict); `--no-pipeline` falls
 back to a single raw step loop. It can read files, run commands, and edit code as needed.
 
 ## 4. Chat interactively
@@ -96,14 +96,14 @@ for the full deck command set, and for the plain REPL's separate, smaller one.
 
 ## 5. Give it a goal
 
-Goal mode works in judged rounds until a **separate judge model** confirms the objective
+Goal mode works in judged rounds until a **separate verifier model** confirms the objective
 is met from evidence — not just because the worker says so:
 
 ```bash
 stella goal "the test suite passes and there are no clippy warnings"
 ```
 
-See [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) for how the judge is chosen and how the loop ends.
+See [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) for how the verifier is chosen and how the loop ends.
 
 ## 6. Pin a specific model (optional)
 

@@ -85,7 +85,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
       "agents": {
         "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
         "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
-        "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+        "verifier": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
         "triage": {"effort": "low", "reasoning": "off"}
       }
     },
@@ -205,7 +205,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
           "agents": {
             "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
-            "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "verifier": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
@@ -221,7 +221,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
           "agents": {
             "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
-            "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "verifier": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
@@ -237,7 +237,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
           "agents": {
             "default": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "worker": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
-            "judge": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
+            "verifier": {"effort": "xhigh", "reasoning": "on", "params": {"max_tokens": 64000}},
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
@@ -587,7 +587,7 @@ Every attempted Stella trial must match the frozen binary, embedded source
 commit, adapter/Harbor source hashes, endpoint, budget, reflection policy, and
 allowed raw per-call model roster. It must also carry the exact canonical
 engine-posture object, normalized JSON, schema version, and SHA-256 for its
-configuration model: all roles inherit that model; default/worker/judge use
+configuration model: all roles inherit that model; default/worker/verifier use
 reasoning on at high effort; triage uses reasoning off at low effort; auto
 modes and per-role model/provider overrides are absent. Accounting and the
 terminal stream must be complete; Harbor totals must exactly match raw

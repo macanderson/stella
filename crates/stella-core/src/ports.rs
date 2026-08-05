@@ -53,14 +53,14 @@ pub trait ToolExecutor: Send + Sync {
 
 /// A read-only view over another executor: advertises only the schemas
 /// marked `read_only` and refuses to execute anything else. This is how a
-/// judge gets real evidence-gathering power (read files, grep, check
+/// verifier gets real evidence-gathering power (read files, grep, check
 /// saved explorations) with a structural guarantee it cannot mutate the
 /// workspace it is judging — the restriction is enforced at execution
 /// time, not just by prompt.
 pub struct ReadOnlyTools<'a> {
     inner: &'a dyn ToolExecutor,
     /// The inner executor's read-only tool names, resolved once at
-    /// construction. `execute` is on the hot path of every judge/verifier
+    /// construction. `execute` is on the hot path of every verifier/verifier
     /// tool call, and answering "is this tool read-only?" must not
     /// re-materialize the full schema list (each schema carries its whole
     /// JSON parameter document) per call. The view is short-lived — built

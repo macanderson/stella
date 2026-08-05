@@ -2,7 +2,7 @@
 
 Run this **only after both fixes have merged to `main`**:
 
-1. the premature-completion fix (`judge_verdict: passed=true` on zero-work
+1. the premature-completion fix (`verdict: passed=true` on zero-work
    UNVERIFIABLE turns) — see `PROMPT-glm-premature-completion.md`
 2. the binary-portability guard — see `PROMPT-2-fix-install-glibc.md`
 
@@ -130,7 +130,7 @@ and report the counts:
    infrastructure contaminated it — discard.
 3. **Zero silent premature completions.** For every Stella trial, cross-check
    `total_steps` and tool-call count from `agent/trajectory.json` against
-   `judge_verdict.passed` in `agent/stella-events.jsonl`. A trial with 0 tool
+   `verdict.passed` in `agent/stella-events.jsonl`. A trial with 0 tool
    calls, `diff_lines: 0`, and `passed: true` means the fix did not take.
 4. **Equal denominators.** Both arms must have scored the same 20 tasks. If one
    arm has fewer, the pairing is broken — do not compute McNemar on it.

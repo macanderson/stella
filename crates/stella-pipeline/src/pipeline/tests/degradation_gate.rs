@@ -1,16 +1,16 @@
 //! The agent-degradation gate (`docs/design/verification-gate.md`, layer 1).
 //!
 //! A fixed matrix of full-pipeline scenarios — real triage, execution,
-//! verification ladder, and judge over scripted doubles — each pinning THREE
+//! verification ladder, and verifier over scripted doubles — each pinning THREE
 //! things at once:
 //!
 //! 1. **The decision**: the verdict and whether it was deterministic.
 //! 2. **The spend**: the exact model calls, by role and in order, and the
 //!    exact number of test-suite invocations. A change that keeps every
-//!    verdict but buys a judge call where the ladder used to decide for free
+//!    verdict but buys a verifier call where the ladder used to decide for free
 //!    is a cost regression, and it fails HERE, on the PR, with the extra
 //!    call named — not three weeks later on an invoice.
-//! 3. **The escalation shape**: whether the judge stage ran at all.
+//! 3. **The escalation shape**: whether the verifier stage ran at all.
 //!
 //! Runs on every `cargo test` — deterministic, offline, no API key. When a
 //! scenario fails on an *intended* behavior change, update its expectation
@@ -21,12 +21,12 @@ use super::verification_hardening::{ScriptedLint, lint_error};
 use super::*;
 
 /// What one scenario pins. `roles` is the full ordered model-call sequence
-/// (from `StepManifest` events) — order matters, because "judge before
-/// worker" and "worker before judge" are different pipelines.
+/// (from `StepManifest` events) — order matters, because "verifier before
+/// worker" and "worker before verifier" are different pipelines.
 struct Expect {
     passed: bool,
     deterministic: bool,
-    judge_stage: bool,
+    verifier_stage: bool,
     roles: &'static [ModelCallRole],
     test_runs: u32,
 }
@@ -34,7 +34,7 @@ struct Expect {
 struct Scenario {
     name: &'static str,
     goal: &'static str,
-    /// Scripted model responses, in call order (triage, worker, [judge]).
+    /// Scripted model responses, in call order (triage, worker, [verifier]).
     provider: Vec<CompletionResult>,
     /// Scripted suite results, in run order; an exhausted queue passes.
     tests: Vec<TestScript>,
@@ -113,10 +113,10 @@ async fn run_scenario(s: Scenario) {
     );
 
     let events = drain(&mut rx);
-    let judge_ran = stages(&events).contains(&StageKind::Judge);
+    let verifier_ran = stages(&events).contains(&StageKind::Verdict);
     assert_eq!(
-        judge_ran, s.expect.judge_stage,
-        "[{name}] judge stage presence changed — escalation shape drifted"
+        verifier_ran, s.expect.verifier_stage,
+        "[{name}] verifier stage presence changed — escalation shape drifted"
     );
     let roles: Vec<ModelCallRole> = events
         .iter()
@@ -139,11 +139,11 @@ async fn run_scenario(s: Scenario) {
     );
 }
 
-use ModelCallRole::{Judge, Triage, Worker};
+use ModelCallRole::{Triage, Verdict, Worker};
 
 /// The paved road: a genuine fail→pass flip fast-submits deterministically.
 /// Exactly two paid calls (triage, worker) and three suite runs (baseline,
-/// candidate, the #859 confirmation). The judge is never consulted.
+/// candidate, the #859 confirmation). The verifier is never consulted.
 #[tokio::test]
 async fn gate_clean_flip_fast_submits_with_two_calls_and_three_runs() {
     run_scenario(Scenario {
@@ -158,7 +158,7 @@ async fn gate_clean_flip_fast_submits_with_two_calls_and_three_runs() {
         expect: Expect {
             passed: true,
             deterministic: true,
-            judge_stage: false,
+            verifier_stage: false,
             roles: &[Triage, Worker],
             test_runs: 3,
         },
@@ -167,10 +167,10 @@ async fn gate_clean_flip_fast_submits_with_two_calls_and_three_runs() {
 }
 
 /// A flaky flip (#859): the confirmation re-run fails, so the determinism is
-/// withheld and ONE judge call is bought. Still three suite runs — the
+/// withheld and ONE verifier call is bought. Still three suite runs — the
 /// confirmation is the third; nothing retries it.
 #[tokio::test]
-async fn gate_flaky_flip_buys_exactly_one_judge_call() {
+async fn gate_flaky_flip_buys_exactly_one_verifier_call() {
     run_scenario(Scenario {
         name: "flaky_flip",
         goal: "Fix the failing test",
@@ -187,8 +187,8 @@ async fn gate_flaky_flip_buys_exactly_one_judge_call() {
         expect: Expect {
             passed: true,
             deterministic: false,
-            judge_stage: true,
-            roles: &[Triage, Worker, Judge],
+            verifier_stage: true,
+            roles: &[Triage, Worker, Verdict],
             test_runs: 3,
         },
     })
@@ -196,7 +196,7 @@ async fn gate_flaky_flip_buys_exactly_one_judge_call() {
 }
 
 /// A timed-out baseline (#860) arms nothing: no flip exists, so no
-/// confirmation run is ever bought — two suite runs, one judge call.
+/// confirmation run is ever bought — two suite runs, one verifier call.
 #[tokio::test]
 async fn gate_timed_out_baseline_never_buys_a_confirmation() {
     run_scenario(Scenario {
@@ -215,8 +215,8 @@ async fn gate_timed_out_baseline_never_buys_a_confirmation() {
         expect: Expect {
             passed: true,
             deterministic: false,
-            judge_stage: true,
-            roles: &[Triage, Worker, Judge],
+            verifier_stage: true,
+            roles: &[Triage, Worker, Verdict],
             test_runs: 2,
         },
     })
@@ -247,19 +247,19 @@ async fn gate_lint_veto_skips_the_confirmation_run() {
         expect: Expect {
             passed: true,
             deterministic: false,
-            judge_stage: true,
-            roles: &[Triage, Worker, Judge],
+            verifier_stage: true,
+            roles: &[Triage, Worker, Verdict],
             test_runs: 2,
         },
     })
     .await;
 }
 
-/// A red suite is a deterministic failure: no judge call is ever bought to
+/// A red suite is a deterministic failure: no verifier call is ever bought to
 /// "confirm" it (L-E11). With revisions exhausted the run fails on exactly
 /// two paid calls.
 #[tokio::test]
-async fn gate_red_tests_fail_without_buying_a_judge() {
+async fn gate_red_tests_fail_without_buying_a_verifier() {
     run_scenario(Scenario {
         name: "red_tests",
         goal: "Fix the failing test",
@@ -272,7 +272,7 @@ async fn gate_red_tests_fail_without_buying_a_judge() {
         expect: Expect {
             passed: false,
             deterministic: true,
-            judge_stage: false,
+            verifier_stage: false,
             roles: &[Triage, Worker],
             test_runs: 2,
         },
@@ -283,7 +283,7 @@ async fn gate_red_tests_fail_without_buying_a_judge() {
 /// A turn that dispatched nothing is a deterministic no-op finding
 /// (`NothingAttempted`), never an abstention that reads as a pass — the
 /// eleven 0.0-scored Terminal-Bench trials, pinned as spend: two paid
-/// calls, zero suite runs, no judge.
+/// calls, zero suite runs, no verifier.
 #[tokio::test]
 async fn gate_a_no_op_turn_fails_closed_without_spend() {
     run_scenario(Scenario {
@@ -298,7 +298,7 @@ async fn gate_a_no_op_turn_fails_closed_without_spend() {
         expect: Expect {
             passed: false,
             deterministic: true,
-            judge_stage: false,
+            verifier_stage: false,
             roles: &[Triage, Worker],
             test_runs: 0,
         },
@@ -309,7 +309,7 @@ async fn gate_a_no_op_turn_fails_closed_without_spend() {
 /// Fix-by-disappearance (#867): the baseline names its failing test, the
 /// candidate's suite passes with a complete listing that no longer contains
 /// it (deleted/renamed). The exit code says flip; the same-failure rule says
-/// no — one judge call, and no confirmation run is bought for a flip that
+/// no — one verifier call, and no confirmation run is bought for a flip that
 /// was never credited.
 #[tokio::test]
 async fn gate_a_vanished_failing_test_earns_no_flip() {
@@ -338,8 +338,8 @@ async fn gate_a_vanished_failing_test_earns_no_flip() {
         expect: Expect {
             passed: false,
             deterministic: false,
-            judge_stage: true,
-            roles: &[Triage, Worker, Judge],
+            verifier_stage: true,
+            roles: &[Triage, Worker, Verdict],
             test_runs: 2,
         },
     })

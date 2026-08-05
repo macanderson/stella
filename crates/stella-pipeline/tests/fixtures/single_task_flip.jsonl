@@ -8,6 +8,6 @@
 {"type":"text","delta":"Fixed the off-by-one error in the range check."}
 {"type":"budget_tick","spent_usd":0.0013,"limit_usd":null,"mode":"observed"}
 {"type":"stage","name":"verify"}
-{"type":"judge_verdict","passed":true,"evidence":{"summary":"flip oracle: fail→pass of `cargo test -p stella-core budget`; touched tests green; diff 12 lines within budget","deterministic":true}}
+{"type":"verdict","passed":true,"evidence":{"summary":"flip oracle: fail→pass of `cargo test -p stella-core budget`; touched tests green; diff 12 lines within budget","deterministic":true}}
 {"type":"stage","name":"complete"}
 {"type":"complete","model":"zai/glm-5.2","cost_usd":0.0013}

@@ -300,7 +300,7 @@ now. READ anything anywhere in the workspace. WRITE only to the paths above. ***
 METHOD:
 1. Read your unit's modules end to end. Do not sample — the partition is sized so you can
    afford to read all of it.
-2. Read enough of the callers and surrounding code to judge your unit in context.
+2. Read enough of the callers and surrounding code to verifier your unit in context.
 3. Hunt real defects: correctness bugs; panics or crashes on attacker- or environment-
    controlled input; unbounded growth; missing cancellation; silently swallowed errors; TOCTOU;
    resource leaks; busy-wait loops; needless allocation on hot paths; blocking IO on an async
@@ -339,7 +339,7 @@ If you are about to do either, STOP and just report. ***
 The author claimed these fixes in ${u.unit}:
 ${JSON.stringify((res.fixes_applied || []).slice(0, 24))}
 
-For EACH claimed fix: open the file, read the actual current code, and judge it.
+For EACH claimed fix: open the file, read the actual current code, and verifier it.
 
 - Does the edit do what the rationale says? Authors describe intent, not always outcome.
 - Would it compile / run? Look for a renamed symbol, a dropped import, a changed arity, an
@@ -395,22 +395,22 @@ construction; authn/authz and the permission model, including whether it can be 
 second code path. Then take every claim the docs make about a trust boundary and VERIFY it by
 finding the code that enforces it. Rate exploitability honestly: a fabricated critical is a
 firing offense, and so is calling a working exploit chain theoretical.` },
-  { key: 'loop-correctness', weight3: true, focus: `LOOP CORRECTNESS and HOT-PATH LATENCY. Judge
+  { key: 'loop-correctness', weight3: true, focus: `LOOP CORRECTNESS and HOT-PATH LATENCY. Verifier
 termination guarantees, timeout backstops, cancellation propagation (does interrupt actually
 stop in-flight work AND its child process groups?), budget enforcement, retry storms, error
 classification (retryable vs terminal — and whether a timeout bounding a whole operation is
 misclassified as retryable), state-machine correctness, deadlocks, races, orphaned children,
-unbounded channels and queues. Then judge LATENCY: what sits on the critical path, what
+unbounded channels and queues. Then verifier LATENCY: what sits on the critical path, what
 blocking work runs on an async runtime without being offloaded, what repeats redundantly, what
 is needlessly serialized.` },
   { key: 'architecture', focus: `SYSTEM ARCHITECTURE and VENDOR LOCK AVOIDANCE. Map the real
-dependency graph and judge the layering: does anything depend upward, are there cycles, are
+dependency graph and verifier the layering: does anything depend upward, are there cycles, are
 there god modules? Verify claimed invariants by exhaustive search rather than trusting one
-example. Judge every abstraction seam: is it a boundary you could actually swap, or have vendor
-specifics bled into core? Name leaks with file:line. Judge whether the decomposition fits the
+example. Verifier every abstraction seam: is it a boundary you could actually swap, or have vendor
+specifics bled into core? Name leaks with file:line. Verifier whether the decomposition fits the
 size of the system.` },
   { key: 'data-durability', focus: `DATA STORAGE and DURABILITY. Read the persistence layer and
-every call site that writes state. Judge schema and migrations (forward-only? tested?
+every call site that writes state. Verifier schema and migrations (forward-only? tested?
 versioned? idempotent?), transaction boundaries and atomicity, crash recovery, concurrent
 access from multiple processes, file locking, retention and growth bounds on EVERY store, and
 behavior when the disk is full or the data is corrupt. Check every persisted file that is not
@@ -423,7 +423,7 @@ cached prefix. Check that EVERY tool-result path is bounded before it enters con
 For compute: hot-path allocations, needless clones, O(n^2) scans, blocking IO inside async,
 unbounded buffers, redundant passes over the same data, render cost. Quantify where you can
 ("this clones the whole transcript every step").${NO_LLM ? ' Score token_efficiency 0 (N/A).' : ''}` },
-  { key: 'naming-consistency', focus: `NAMING, FORMATTING, FILE ORGANIZATION and LANGUAGE. Judge
+  { key: 'naming-consistency', focus: `NAMING, FORMATTING, FILE ORGANIZATION and LANGUAGE. Verifier
 the tree as a reader meeting it for the first time. Cover naming conventions and how many run
 at once, module organization and god-modules (and whether any size limit is enforced by
 anything at all), whether similar concepts use the same word everywhere or drift, vocabulary
@@ -434,15 +434,15 @@ Check for mojibake and double-encoded UTF-8 in user-facing strings.` },
 journey by reading code: install, first run, auth setup, the command surface (consistent?
 discoverable? are flags named uniformly? is help any good?), error messages when things go
 wrong, and machine-readable output (one contract, or several incompatible idioms?). Find where
-a new user falls off. Then judge the repo as a stranger who wants to contribute: README honesty
+a new user falls off. Then verifier the repo as a stranger who wants to contribute: README honesty
 (does it claim anything the code does not do?), license consistency across every metadata file,
 contribution and security-disclosure process, CI transparency, and whether a contributor can
 get a working dev loop from the README alone.` },
-  { key: 'maintainability', focus: `MAINTAINABILITY and TEST ADVERSARIALISM. Judge the test
+  { key: 'maintainability', focus: `MAINTAINABILITY and TEST ADVERSARIALISM. Verifier the test
 suite as an adversary would: do tests assert real behavior or merely that the code ran? Is
 there a test that would FAIL if the central guarantee broke — find it, or record that it does
 not exist. Look for tests asserting on mocks, tests with no assertions, skipped or ignored
-tests, flakiness suppression, and coverage thresholds set below what is already achieved. Judge
+tests, flakiness suppression, and coverage thresholds set below what is already achieved. Verifier
 lint policy (are warnings allowed to accumulate?), reviewability of recent diffs, and whether
 CI actually blocks a merge or merely reports.` },
 ]
@@ -845,7 +845,7 @@ const SYNTH_SCHEMA = {
       }, {}),
     },
     executive_summary: { type: 'string', description: '4-6 paragraphs for a technical founder' },
-    remediation_verdict: { type: 'string', description: 'Judge the QUALITY of work since last time: root-cause or symptomatic, did any fix introduce a defect, converging or churning?' },
+    remediation_verdict: { type: 'string', description: 'Verifier the QUALITY of work since last time: root-cause or symptomatic, did any fix introduce a defect, converging or churning?' },
     second_opinion_response: { type: 'string', description: 'Where you accepted the critic and where you overruled it, and why' },
     top_strengths: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' } } } },
     top_risks: { type: 'array', items: { type: 'object',

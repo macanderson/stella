@@ -8,6 +8,6 @@
 {"type":"text","delta":"Corrected the boundary condition."}
 {"type":"budget_tick","spent_usd":0.0019,"limit_usd":null,"mode":"observed"}
 {"type":"stage","name":"verify"}
-{"type":"judge_verdict","passed":true,"evidence":{"summary":"flip oracle: fail→pass of `cargo test -p stella-core budget`; touched tests green; diff 9 lines within budget","deterministic":true}}
+{"type":"verdict","passed":true,"evidence":{"summary":"flip oracle: fail→pass of `cargo test -p stella-core budget`; touched tests green; diff 9 lines within budget","deterministic":true}}
 {"type":"stage","name":"complete"}
 {"type":"complete","model":"anthropic/claude-fable-5","cost_usd":0.0019}

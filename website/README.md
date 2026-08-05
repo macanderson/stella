@@ -69,7 +69,7 @@ content/docs/            # all documentation (MDX + meta.json ordering)
   index.mdx              # Introduction
   getting-started/       # installation, initialization, providers
   api-providers/         # per-provider pages + the live model catalog
-  inference-pipeline.mdx # the staged pipeline: triage → … → judge
+  inference-pipeline.mdx # the staged pipeline: triage → … → verifier
   context-engine.mdx     # bi-temporal memory, recall, citation loop
   agent-modes.mdx        # chat / run / goal / monitor / fleet, and which to use
   agent-engine-paths.mdx # which engine path a given invocation actually takes

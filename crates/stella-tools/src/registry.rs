@@ -17,7 +17,10 @@ use crate::file_touch::{
     normalize_workspace_path,
 };
 
+mod belief;
 mod process_tools;
+
+use belief::{Belief, Coverage};
 
 /// One tool the agent can call. Input arrives as the model-produced JSON;
 /// output is always a typed `ToolOutput` (never a bare string).
@@ -105,7 +108,11 @@ pub struct ToolRegistry {
     /// just changed using a plan A's content no longer justifies. Waiting is
     /// also the wrong cost model for an agent — being told "that moved, read
     /// it again" is a cheap retry, where blocking burns a turn.
-    observed: std::sync::Mutex<HashMap<String, String>>,
+    ///
+    /// Each entry also carries HOW MUCH of that content the agent actually
+    /// saw ([`Coverage`]), which decides what a later partial read is allowed
+    /// to do to it — see [`Self::remember_observed`].
+    observed: std::sync::Mutex<HashMap<String, Belief>>,
     /// The session's durable record, once a host attaches one. Absent — the
     /// default — leaves every existing caller behaving exactly as before.
     ///
@@ -126,8 +133,9 @@ pub struct ToolRegistry {
     span_reads: crate::read_symbol::SpanReadLedger,
     /// The read-state ledger shared with `read_file`/`read_symbol`/`edit_file`/
     /// `write_file`, held here for one question only: did a read actually show
-    /// the model the whole file? [`Self::remember_observed`] may not act on a
-    /// read that did not — see the gate in [`Self::record_touch`].
+    /// the model the whole file? That answer is the [`Coverage`] grade
+    /// [`Self::record_touch`] hands to [`Self::remember_observed`], which
+    /// decides what the read may do to an existing belief.
     read_ledger: Arc<crate::read::ReadLedger>,
     /// The workspace before-image for the turn in flight, when one was taken
     /// ([`ToolRegistry::begin_workspace_probe`]). `None` before the first
@@ -240,7 +248,7 @@ pub struct ToolRegistry {
     /// host attaches its session channel with [`ToolRegistry::attach_events`],
     /// and `record_touch` sends there directly; a verifier that wraps the
     /// *engine's* sender to tally `FileChange`s therefore sees none of them and
-    /// concludes nothing was touched (#973 — the judge was told
+    /// concludes nothing was touched (#973 — the verifier was told
     /// `file_change_events=0` with six in the stream). A counter on the
     /// recorder is readable no matter which channel the events went down, and
     /// unlike the ledger's length it never falls back when a file is touched
@@ -905,7 +913,7 @@ impl ToolRegistry {
 
         // Storage gate (docs/design/storage-map.md §8): if the call targets
         // storage-definition files, parse each proposed post-write content
-        // with the SAME adapter extraction the indexer uses and judge it
+        // with the SAME adapter extraction the indexer uses and verifier it
         // against the live storage map before anything lands. Objects a
         // target file already defines on disk are exempt — rewriting an
         // existing migration in place is not a duplicate. `write_file` /
@@ -1668,25 +1676,6 @@ impl ToolRegistry {
         Some(PendingTouch { path, op })
     }
 
-    /// Record what this session now knows `path` to hold, hashed from disk.
-    ///
-    /// Called for every successful touch, reads included: a read is how an
-    /// agent acquires the belief a later write acts on, so it is exactly as
-    /// load-bearing here as a write. A path that no longer exists drops its
-    /// entry — after a delete there is nothing left to clobber, and the next
-    /// agent to create the file is starting fresh rather than overwriting.
-    fn remember_observed(&self, path: &str) {
-        let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
-        match crate::rootfd::read_confined_bytes(&self.root, path) {
-            Some(bytes) => {
-                observed.insert(path.to_string(), crate::staleness::hex_sha256(&bytes));
-            }
-            None => {
-                observed.remove(path);
-            }
-        }
-    }
-
     /// This session's staleness map as JSON, for a durable host to persist.
     ///
     /// `BTreeMap`, so the bytes are a pure function of the contents: this is
@@ -1702,9 +1691,9 @@ impl ToolRegistry {
         if observed.is_empty() {
             return None;
         }
-        let ordered: std::collections::BTreeMap<&str, &str> = observed
+        let ordered: std::collections::BTreeMap<&str, String> = observed
             .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .map(|(k, v)| (k.as_str(), v.encode()))
             .collect();
         serde_json::to_string(&ordered).ok()
     }
@@ -1726,6 +1715,10 @@ impl ToolRegistry {
         let Ok(restored) = serde_json::from_str::<HashMap<String, String>>(json) else {
             return 0;
         };
+        let restored: HashMap<String, Belief> = restored
+            .into_iter()
+            .map(|(path, encoded)| (path, Belief::decode(&encoded)))
+            .collect();
         let mut observed = self.observed.lock().unwrap_or_else(|p| p.into_inner());
         // REPLACE, never merge. The restored map is this session's complete
         // belief about the tree, and the deck reuses one registry across a
@@ -1761,7 +1754,7 @@ impl ToolRegistry {
             .filter(|p| {
                 observed.get(&p.path).is_some_and(|seen| {
                     crate::rootfd::read_confined_bytes(&self.root, &p.path)
-                        .is_some_and(|bytes| crate::staleness::hex_sha256(&bytes) != *seen)
+                        .is_some_and(|bytes| crate::staleness::hex_sha256(&bytes) != seen.sha256)
                 })
             })
             .map(|p| p.path.clone())
@@ -1846,22 +1839,20 @@ impl ToolRegistry {
         // the guarantee, and a touch whose digest went unrecorded would leave
         // the NEXT write to this path unguarded.
         //
-        // A read only earns that belief if it showed the model the whole file.
-        // `remember_observed` hashes what is on DISK, so a ranged read — or one
-        // clipped by the per-line or payload cap — would otherwise record the
-        // agent as having seen bytes it was never shown, and a later write over
-        // that unseen tail would sail past `clobbered_paths` clean. `read_file`
-        // defaults to a 2000-line window and `read_symbol` reads a span, so the
-        // partial case is the common one, not the exotic one.
-        //
-        // Skipping is not the same as forgetting: an earlier complete read's
-        // digest stays, so the guard keeps whatever real belief it had rather
-        // than downgrading to "never looked".
-        let establishes_belief = !matches!(pending.op, FileOp::Read)
-            || self.read_ledger.saw_whole_file(&self.root, &pending.path);
-        if establishes_belief {
-            self.remember_observed(&pending.path);
-        }
+        // A read earns the WHOLE-file grade only if it showed the model every
+        // line: `read_file` defaults to a 2000-line window and `read_symbol`
+        // reads a span, so the partial case is the common one. A mutation
+        // always earns it — the agent authored what it just wrote, so there is
+        // no unseen remainder to be wrong about. What a partial read may then
+        // do to an existing belief is `remember_observed`'s rule.
+        let coverage = if !matches!(pending.op, FileOp::Read)
+            || self.read_ledger.saw_whole_file(&self.root, &pending.path)
+        {
+            Coverage::Whole
+        } else {
+            Coverage::Partial
+        };
+        self.remember_observed(&pending.path, coverage);
         let reason = input
             .get("reason")
             .and_then(|v| v.as_str())
@@ -1880,7 +1871,7 @@ impl ToolRegistry {
         // `post` rides alongside the counts so the authored-change ledger can
         // keep BOTH images of this write. It costs nothing extra to produce —
         // every arm below already computes it to render its own diff — and it
-        // is the difference between a judge that can read the agent's change
+        // is the difference between a verifier that can read the agent's change
         // and one that is handed a filename (see [`crate::authored_diff`]).
         let (lines_added, lines_removed, diff, post) = match pending.op {
             FileOp::Read => (0, 0, None, None),

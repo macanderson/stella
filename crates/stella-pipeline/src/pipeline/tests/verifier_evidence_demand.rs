@@ -1,11 +1,11 @@
-//! #1295: what happens when a model judge passes and *nothing deterministic*
+//! #1295: what happens when a model verifier passes and *nothing deterministic*
 //! stands behind it.
 //!
 //! The behaviour under test is deliberately conditional, and the condition is
 //! the whole design. Asking the worker for corroboration is only affordable
 //! where corroboration is reachable — which means where a tracked command
 //! exists, because the two facts that would clear
-//! [`crate::verify::LadderInputs::judge_pass_stands_alone`] (a fail→pass flip,
+//! [`crate::verify::LadderInputs::verifier_pass_stands_alone`] (a fail→pass flip,
 //! or touched tests green) are both observations of that command. With none
 //! resolved, the ask is unanswerable no matter how well the worker responds,
 //! and the turn it costs is pure loss. These scenarios pin both directions.
@@ -14,7 +14,7 @@ use super::*;
 
 /// Ports + config wiring shared by the scenarios below, so each test reads as
 /// its scripted inputs and its assertion rather than as thirty lines of
-/// boilerplate. `judge_evidence_demand` is left at whatever `config` says —
+/// boilerplate. `verifier_evidence_demand` is left at whatever `config` says —
 /// that flag is the subject here, never a default worth hiding.
 macro_rules! run_scenario {
     ($provider:expr, $runner:expr, $config:expr) => {{
@@ -66,13 +66,13 @@ macro_rules! run_scenario {
     }};
 }
 
-/// The case the feature exists for: the judge said "done", nothing backs it,
+/// The case the feature exists for: the verifier said "done", nothing backs it,
 /// and a tracked command is sitting right there that could. The pipeline
 /// spends one revision asking for the evidence — and when the worker produces
 /// it, the run finishes on a DETERMINISTIC rung instead of being filed as an
 /// unverified pass. This is the conversion the issue asks to be measured.
 #[tokio::test]
-async fn a_standalone_judge_pass_buys_one_revision_when_a_command_can_answer() {
+async fn a_standalone_verifier_pass_buys_one_revision_when_a_command_can_answer() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),
@@ -113,13 +113,13 @@ async fn a_standalone_judge_pass_buys_one_revision_when_a_command_can_answer() {
     );
     assert_eq!(
         calls, 4,
-        "triage, worker, judge, and the one demanded revision; a second judge \
+        "triage, worker, verifier, and the one demanded revision; a second verifier \
          call would mean the deterministic rung did not take"
     );
 }
 
 /// The measured failure mode from the first attempt (#1211 §1), pinned so it
-/// cannot come back: with no tracked command, `judge_pass_stands_alone` is
+/// cannot come back: with no tracked command, `verifier_pass_stands_alone` is
 /// true *by construction* — `touched_tests_passed` can only ever be `None`
 /// and the flip oracle never observes a candidate run — so an ask could not
 /// be satisfied by any worker on any turn. The pipeline must not buy one.
@@ -154,7 +154,7 @@ async fn no_tracked_command_means_no_ask_at_all() {
     );
     assert_eq!(
         calls, 3,
-        "triage, worker, judge — and nothing else: no revision turn"
+        "triage, worker, verifier — and nothing else: no revision turn"
     );
 }
 
@@ -190,19 +190,19 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(
         verdict.passed && !verdict.deterministic,
-        "an unanswered ask still records the judge's pass — as unverified, \
+        "an unanswered ask still records the verifier's pass — as unverified, \
          never as a failure"
     );
-    assert_eq!(outcome.revisions, 1, "one ask, not one per judge pass");
+    assert_eq!(outcome.revisions, 1, "one ask, not one per verifier pass");
     assert_eq!(
         calls, 5,
-        "triage, worker, judge, the single ask, and the judge re-reading the \
+        "triage, worker, verifier, the single ask, and the verifier re-reading the \
          revised turn — then it stops"
     );
 }
 
 /// Switched off, the pipeline is byte-for-byte the behaviour that shipped:
-/// relabel on the spot, no revision, no second judge call. The flag is what
+/// relabel on the spot, no revision, no second verifier call. The flag is what
 /// makes the measurement in #1295 a two-arm comparison rather than a rebuild.
 #[tokio::test]
 async fn the_demand_can_be_switched_off() {
@@ -218,7 +218,7 @@ async fn the_demand_can_be_switched_off() {
     let config = PipelineConfig {
         test_command: Some("cargo test -p x".into()),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-        judge_evidence_demand: false,
+        verifier_evidence_demand: false,
         ..PipelineConfig::default()
     };
 
@@ -227,5 +227,5 @@ async fn the_demand_can_be_switched_off() {
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed && !verdict.deterministic);
     assert_eq!(outcome.revisions, 0, "off means no ask");
-    assert_eq!(calls, 3, "triage, worker, judge");
+    assert_eq!(calls, 3, "triage, worker, verifier");
 }

@@ -24,7 +24,7 @@ fn slot_label(role: PipelineRole) -> &'static str {
     match role {
         PipelineRole::Triage => "think",
         PipelineRole::Worker => "work",
-        PipelineRole::Judge => "verify",
+        PipelineRole::Verifier => "verify",
     }
 }
 

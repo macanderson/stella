@@ -1,6 +1,6 @@
 //! The orchestrator: the staged turn flow that sits
 //! *above* `stella-core::Engine`. It sequences evaluate → enhance → route →
-//! execute → witness → verify → judge → revise over the injected ports,
+//! execute → witness → verify → verdict → revise over the injected ports,
 //! emitting a `Stage` event at every boundary and owning terminal
 //! success-or-failure signaling for outcome-producing runs (`Complete` or a
 //! non-retryable `Error`). Hard infrastructure failures return out of band as
@@ -55,8 +55,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, JudgeEvidence, LadderRung, LadderSnapshot, MessageRole,
-    ModelCallRole, ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind,
+    AgentEvent, CompletionMessage, LadderRung, LadderSnapshot, MessageRole, ModelCallRole,
+    ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind, VerdictEvidence,
 };
 
 use crate::candidate::{
@@ -89,10 +89,10 @@ use stella_protocol::ToolOutput;
 use crate::flip_halt::{FlipHalt, command_of};
 use crate::verify::coverage::DiffCoverage;
 use crate::verify::{
-    FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
+    FlipOracle, LadderDecision, LadderInputs, Verdict as ModelVerifierVerdict,
     deterministic_fail_evidence, deterministic_pass_evidence, evidence_demand_is_worth_a_turn,
-    guidance_prompt, heuristic_fallback, judge_prompt, ladder_decision, model_verdict_evidence,
-    nothing_attempted_evidence, parse_judge_response, unverifiable_evidence,
+    guidance_prompt, heuristic_fallback, ladder_decision, model_verdict_evidence,
+    nothing_attempted_evidence, parse_verifier_response, unverifiable_evidence, verifier_prompt,
 };
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
@@ -106,11 +106,11 @@ use crate::witness::{
 mod authored;
 mod disclosure;
 mod fanout_stage;
-mod judge_stage;
 mod raw_usage;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
+mod verifier_stage;
 mod verify_probes;
 mod witness_stage;
 use fanout_stage::SerialCreates;
@@ -124,7 +124,7 @@ use witness_stage::{BoundHookRunner, WitnessAuthoring};
 /// An empty diff is ambiguous: it can mean the agent genuinely changed
 /// nothing, OR that the diff machinery is blind to changes that DID happen
 /// (work that was committed, a baseline mismatch, an uncaptured file). Handed
-/// a bare empty string, a judge reads the second case as the first and
+/// a bare empty string, a verifier reads the second case as the first and
 /// concludes "no changes were made" — the archetypal verification lie that
 /// once drove an agent to reinitialize git to beat the check.
 ///
@@ -132,7 +132,7 @@ use witness_stage::{BoundHookRunner, WitnessAuthoring};
 /// ambiguity: `file_changes`, the count of `FileChange` events the turn
 /// emitted. When that is positive but the diff is empty, the honest report is
 /// "the tree changed but the diff could not be captured" — a *couldn't
-/// verify*, never a *verified nothing*. Every consumer (judge, guidance,
+/// verify*, never a *verified nothing*. Every consumer (verifier, guidance,
 /// evidence) then sees the truth.
 fn verification_honest_diff(diff_text: String, file_changes: u32) -> String {
     if file_changes > 0 && diff_text.trim().is_empty() {
@@ -232,7 +232,7 @@ const WITNESS_SYSTEM_PROMPT: &str = "You are a precise test author. You write mi
      behavior. You never modify production code and never fix the problem yourself.";
 
 /// Per-role request overrides for the pipeline's raw completion calls
-/// (triage / judge / guidance), resolved by the caller from
+/// (triage / verifier / guidance), resolved by the caller from
 /// `agent_engine_config`. Every field is optional and falls through to the
 /// engine config's value — the worker's settings are the pipeline-wide
 /// base; these refine one role. `prompt`, when set, is prepended as a
@@ -256,7 +256,7 @@ pub struct RoleCallOverrides {
 #[derive(Debug, Clone, Default)]
 pub struct PipelineRoleOverrides {
     pub triage: RoleCallOverrides,
-    pub judge: RoleCallOverrides,
+    pub verifier: RoleCallOverrides,
 }
 
 /// Tuning for the whole staged flow.
@@ -265,7 +265,7 @@ pub struct PipelineConfig {
     /// Passed to `stella-core::Engine` for every execute turn.
     pub engine: EngineConfig,
     /// Per-role request overrides (`agent_engine_config`) for the raw
-    /// triage/judge completion calls.
+    /// triage/verifier completion calls.
     pub role_overrides: PipelineRoleOverrides,
     /// Decision latency ceiling on the triage classification call (L-M4): if
     /// it doesn't answer within this, the in-flight call is dropped and
@@ -338,7 +338,7 @@ pub struct PipelineConfig {
     /// the time adoption happens.
     pub keep_witness: bool,
     /// Distress-triggered course-correction: on the *second consecutive*
-    /// deterministic verification failure, spend one judge call for guidance
+    /// deterministic verification failure, spend one verifier call for guidance
     /// that rides with the next revision prompt ([`crate::verify::guidance_prompt`]).
     /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded
     /// by `max_revisions` (at most `max_revisions - 1` guidance calls per
@@ -348,11 +348,11 @@ pub struct PipelineConfig {
     /// disables diff-size and zero-diff inspection.
     pub diff_diagnostic: Option<DiagnosticInvocation>,
     /// The diff-size budget in changed lines: a diff at or under this is
-    /// "small enough" to trust deterministic evidence without a judge (L-E11).
+    /// "small enough" to trust deterministic evidence without a verifier (L-E11).
     pub diff_budget_lines: u32,
     /// Regression veto strictness (#861): when `true`, NEW lint/typecheck
     /// warnings (not just errors) also block a deterministic fast-submit and
-    /// route to the judge. Off by default — a chatty linter would otherwise
+    /// route to the verifier. Off by default — a chatty linter would otherwise
     /// tax every submit — while new *errors* always veto.
     pub diagnostics_veto_warnings: bool,
     /// Maximum revision turns per candidate when verification fails.
@@ -373,32 +373,32 @@ pub struct PipelineConfig {
     /// which stays honest: the outcome is still `out_of_memory`, never a
     /// failing assertion.
     pub test_oom_retries: u32,
-    /// Escalate to the judge when the diff-coverage overlap could not be
+    /// Escalate to the verifier when the diff-coverage overlap could not be
     /// *measured* (#1291) — the strictest reading of "did the test run the
     /// changed lines?".
     ///
     /// Off by default, and note what the default does NOT mean: an unmeasured
     /// overlap is already scored `Unverified` rather than `DeterministicPass`
     /// (see the `SubmitFast` arm), so it never ships as a verified pass. What
-    /// this adds is *spending a judge call* on it.
+    /// this adds is *spending a verifier call* on it.
     ///
     /// The three positions, so the choice is legible:
     ///
     /// - measured overlap → deterministic pass, either way;
-    /// - measured NON-overlap → judge, either way (the flip is a coincidence,
+    /// - measured NON-overlap → verifier, either way (the flip is a coincidence,
     ///   and that is worth a second opinion);
     /// - unmeasured → scored unproven and shipped (off, the default), or
-    ///   escalated to the judge (on).
+    ///   escalated to the verifier (on).
     ///
     /// Off is the default for the reason `verify::coverage` records at
     /// length: most workspaces have no coverage tooling, so escalating would
-    /// route nearly every deterministic pass through a paid judge call to be
+    /// route nearly every deterministic pass through a paid verifier call to be
     /// told what the evidence already said — the "a gate that fires
     /// everywhere is a tax" result #1295 measured. Turning it on is for an
     /// operator who has the tooling and wants the overlap enforced rather
     /// than merely scored.
     pub require_diff_coverage: bool,
-    /// Ask for corroboration when a model judge passes and nothing
+    /// Ask for corroboration when a model verifier passes and nothing
     /// deterministic stands behind it (#1295): spend one revision demanding
     /// the evidence instead of recording the pass as UNVERIFIED on the spot.
     ///
@@ -409,7 +409,7 @@ pub struct PipelineConfig {
     /// tracked command the ladder has no channel that can *ever* answer the
     /// ask: `touched_tests_passed` stays `None` by construction and the flip
     /// oracle never observes a candidate run, so
-    /// [`crate::verify::LadderInputs::judge_pass_stands_alone`] is true no
+    /// [`crate::verify::LadderInputs::verifier_pass_stands_alone`] is true no
     /// matter what the worker does with the turn. That is the whole of why
     /// this was measured as a loss the first time (#1211 §1) — on
     /// Terminal-Bench, with no `--test-command` and the authored-witness rung
@@ -417,7 +417,7 @@ pub struct PipelineConfig {
     /// nearly every turn and the extra turn bought nothing on all of them.
     /// Gating on the command is what turns "fires everywhere, answerable
     /// nowhere" into "fires only where an answer exists".
-    pub judge_evidence_demand: bool,
+    pub verifier_evidence_demand: bool,
     /// Refuse the run when no witness author independent of the worker can
     /// be resolved, instead of degrading to the unauthored verify ladder.
     ///
@@ -497,9 +497,9 @@ impl Default for PipelineConfig {
             // On (#1295). Off is the historical setting, and the reason it was
             // off — the ask fired on turns that could never answer it — is now
             // a precondition of raising it at all rather than a property of
-            // the workload. See the field's docs and `bench/evidence/judge-
+            // the workload. See the field's docs and `bench/evidence/verifier-
             // evidence-demand-1295/README.md` for the measurement.
-            judge_evidence_demand: true,
+            verifier_evidence_demand: true,
             require_independent_witness: false,
             candidates: None,
             candidate_concurrency: None,
@@ -576,7 +576,7 @@ fn worktree_decision_without_asking(
 
 /// The final verification verdict a pipeline run produced, if verification
 /// ran. `deterministic` distinguishes a flip-oracle/ladder verdict from a
-/// model/heuristic judge's opinion (never conflated, L-E11).
+/// model/heuristic verifier's opinion (never conflated, L-E11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verdict {
     pub passed: bool,
@@ -584,13 +584,13 @@ pub struct Verdict {
     pub summary: String,
     /// The ladder input snapshot this verdict was decided from (#865), when
     /// verification ran far enough to take one. `replay` answers "why did
-    /// this run fast-submit / revise / judge?" from here without
+    /// this run fast-submit / revise / verifier?" from here without
     /// re-deriving.
     pub ladder: Option<Box<stella_protocol::LadderSnapshot>>,
 }
 
 impl Verdict {
-    fn from_evidence(passed: bool, evidence: &JudgeEvidence) -> Self {
+    fn from_evidence(passed: bool, evidence: &VerdictEvidence) -> Self {
         Self {
             passed,
             deterministic: evidence.deterministic,
@@ -660,9 +660,9 @@ struct ResolvedRole<'a> {
     model_ref: ModelRef,
     provider: &'a dyn Provider,
     fallback: Option<FallbackInfo>,
-    /// The router's resolution-quality caveat (L-M8) — today, only the judge
+    /// The router's resolution-quality caveat (L-M8) — today, only the verifier
     /// degrading to the worker's own provider family because no second family
-    /// is healthy. Surfaced by [`Pipeline::warn_judge_caveat`] at the calls
+    /// is healthy. Surfaced by [`Pipeline::warn_verifier_caveat`] at the calls
     /// whose independence it undermines; dropping it silently is exactly the
     /// "fallback is always visible" rule (L-M7) applied to a softer signal.
     caveat: Option<String>,
@@ -806,7 +806,7 @@ struct CandidateState {
     diff_coverage: DiffCoverage,
     revisions: u32,
     /// How many of those revisions were spent asking for corroboration of a
-    /// standalone judge pass rather than fixing a failure (#1295). Capped at
+    /// standalone verifier pass rather than fixing a failure (#1295). Capped at
     /// one per candidate: the second ask would be to a worker that already
     /// answered "there is no test surface here", and paying for that answer
     /// twice is the cost this feature was switched off for the first time.
@@ -828,7 +828,7 @@ impl CandidateState {
     fn into_verified(
         self,
         passed: bool,
-        evidence: &JudgeEvidence,
+        evidence: &VerdictEvidence,
         score: CandidateScore,
     ) -> CandidateResult {
         CandidateResult {
@@ -914,14 +914,14 @@ pub struct Pipeline<'a> {
     configured_test: Result<Option<TestInvocation>, crate::witness::TestInvocationError>,
     /// Monotonic `StepManifest::call_seq` for the management roles that call
     /// providers directly (`metered_raw_call`). They sit outside any step loop,
-    /// so nothing else keys their receipts apart — several judge calls in one
+    /// so nothing else keys their receipts apart — several verifier calls in one
     /// run would otherwise all land on the same primary key and overwrite each
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
-    /// Whether the judge's same-family degradation caveat (L-M8) has been
-    /// surfaced this run — see [`Pipeline::warn_judge_caveat`].
-    judge_caveat_warned: AtomicBool,
+    /// Whether the verifier's same-family degradation caveat (L-M8) has been
+    /// surfaced this run — see [`Pipeline::warn_verifier_caveat`].
+    verifier_caveat_warned: AtomicBool,
     /// Whether more than one candidate is currently writing to [`Self::events`]
     /// — set for the duration of a concurrent best-of-N fan-out and false
     /// everywhere else.
@@ -971,7 +971,7 @@ impl<'a> Pipeline<'a> {
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
-            judge_caveat_warned: AtomicBool::new(false),
+            verifier_caveat_warned: AtomicBool::new(false),
             shared_event_lane: AtomicBool::new(false),
         }
     }
@@ -979,7 +979,7 @@ impl<'a> Pipeline<'a> {
     /// Attach a boundary pause gate. Every engine the pipeline builds — the
     /// worker's execute/revise turns and the witness author's — parks at its
     /// step boundaries while the gate holds, and every management call
-    /// (triage, judge, guidance) parks before dispatch: the same safe
+    /// (triage, verifier, guidance) parks before dispatch: the same safe
     /// boundary as budget aborts, never mid-tool.
     ///
     /// This is the seam that lets a supervisor's pause reach a
@@ -1427,7 +1427,7 @@ impl<'a> Pipeline<'a> {
         if !resolved.conversational {
             self.emit_proof(ProofStep::Assurance {
                 witness: resolved.wants_witness(),
-                judge: resolved.wants_judge(),
+                verifier: resolved.wants_verifier(),
             });
         }
         Ok(resolved)
@@ -1844,7 +1844,7 @@ impl<'a> Pipeline<'a> {
         // decision — silent on purpose, never a second warning.
         let mut author_witness = author_witness;
         let witness_author = match author_witness
-            .then(|| self.resolve_provider(Role::Judge))
+            .then(|| self.resolve_provider(Role::Verifier))
             .and_then(Result::ok)
             .filter(|author| author.model_ref != worker.model_ref)
         {
@@ -2241,7 +2241,7 @@ impl<'a> Pipeline<'a> {
 
     /// Verify + bounded revise loop over an executed candidate: observe the
     /// tests, take the deterministic ladder decision (L-E11), and either
-    /// finish with a verdict, escalate to the model judge, or spend one of
+    /// finish with a verdict, escalate to the model verifier, or spend one of
     /// `max_revisions` on a revise pass and re-observe. Owns `state` because
     /// every exit moves it into the returned [`CandidateResult`].
     #[allow(clippy::too_many_arguments)]
@@ -2275,7 +2275,7 @@ impl<'a> Pipeline<'a> {
                 .await;
             // Tamper exclusion is an authority boundary, not evidence for a
             // model to weigh. Any post-baseline witness mutation hard-fails
-            // the candidate before a judge can override it.
+            // the candidate before a verifier can override it.
             let mut tampered = Vec::new();
             if let Some(witness) = witness {
                 for (path, expected) in &witness.files {
@@ -2334,7 +2334,7 @@ impl<'a> Pipeline<'a> {
             // Pre-submit audit (#859, #861): a deterministic pass is about
             // to be credited, so spend the two cheap checks that can refute
             // it — gated on the DECISION, not on the flip transition, so
-            // paths already headed to the judge pay nothing extra and the
+            // paths already headed to the verifier pay nothing extra and the
             // cost is bounded to one lint pass + one suite run per
             // verification round (a revised candidate re-enters the audit),
             // paid only where a credit is about to be spent.
@@ -2345,7 +2345,7 @@ impl<'a> Pipeline<'a> {
                 // Regression veto first (#861): the lint delta is cheaper
                 // than a suite re-run, and a veto makes the confirmation
                 // moot. New errors (or opted-in warnings) drop the
-                // fast-submit rung and the run escalates to the judge with
+                // fast-submit rung and the run escalates to the verifier with
                 // the delta in evidence.
                 let (new_errors, new_warnings, sample) = self.lint_delta(surface, &state).await;
                 inputs.new_diag_errors = new_errors;
@@ -2419,7 +2419,7 @@ impl<'a> Pipeline<'a> {
                 // has proven it constrains the change (stop early, credit
                 // stands). One that stays green under every mutant reacts to
                 // the change without constraining it — the flip may not buy
-                // a deterministic pass, and the judge is told why.
+                // a deterministic pass, and the verifier is told why.
                 if matches!(ladder_decision(&inputs), LadderDecision::SubmitFast)
                     && witness.is_some()
                     && let Some(probe) = surface.mutation
@@ -2485,20 +2485,20 @@ impl<'a> Pipeline<'a> {
 
             match ladder_decision(&inputs) {
                 LadderDecision::SubmitFast => {
-                    // Deterministic pass — judge SKIPPED (L-E11).
+                    // Deterministic pass — verifier SKIPPED (L-E11).
                     let mut evidence = deterministic_pass_evidence(
                         state.oracle.tracked_command(),
                         state.diff_lines,
                         state.diff_coverage,
                     );
                     evidence.ladder = Some(Box::new(snapshot.clone()));
-                    self.emit(AgentEvent::JudgeVerdict {
+                    self.emit(AgentEvent::Verdict {
                         passed: true,
                         evidence: evidence.clone(),
                     });
                     // #1291: the deterministic *badge* is earned only when
                     // something confirmed the test ran the changed lines. An
-                    // unmeasured overlap keeps the fast-submit — no judge
+                    // unmeasured overlap keeps the fast-submit — no verifier
                     // call, no extra turn, the run completes exactly as
                     // before — but scores `Unverified`, because "a test
                     // passed and nobody could check it touched this change"
@@ -2531,7 +2531,7 @@ impl<'a> Pipeline<'a> {
                     // never touched the task, and Harbor scored every one 0.0.
                     let mut evidence = nothing_attempted_evidence(&inputs);
                     evidence.ladder = Some(Box::new(snapshot.clone()));
-                    self.emit(AgentEvent::JudgeVerdict {
+                    self.emit(AgentEvent::Verdict {
                         passed: false,
                         evidence: evidence.clone(),
                     });
@@ -2557,7 +2557,7 @@ impl<'a> Pipeline<'a> {
                     }
                 }
                 LadderDecision::Unverifiable => {
-                    // Every channel was blind. The judge is not asked, because
+                    // Every channel was blind. The verifier is not asked, because
                     // the only thing it could do is guess from an empty record
                     // — which in the wild it did, returning `FAIL … the file
                     // likely does not exist` about a file that was in the
@@ -2584,7 +2584,7 @@ impl<'a> Pipeline<'a> {
                     let mut evidence = unverifiable_evidence(&inputs);
                     evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.unverifiable(&evidence.summary);
-                    self.emit(AgentEvent::JudgeVerdict {
+                    self.emit(AgentEvent::Verdict {
                         passed: true,
                         evidence: evidence.clone(),
                     });
@@ -2595,12 +2595,12 @@ impl<'a> Pipeline<'a> {
                     );
                 }
                 LadderDecision::Revise => {
-                    // Deterministic failure (touched tests red) — no judge.
+                    // Deterministic failure (touched tests red) — no verifier.
                     //
                     let (mut evidence, brief) =
                         Self::deterministic_disclosure(&mut state, &sealed, &test_tail);
                     evidence.ladder = Some(Box::new(snapshot.clone()));
-                    self.emit(AgentEvent::JudgeVerdict {
+                    self.emit(AgentEvent::Verdict {
                         passed: false,
                         evidence: evidence.clone(),
                     });
@@ -2613,18 +2613,18 @@ impl<'a> Pipeline<'a> {
                     }
                     // Distress trigger: a SECOND consecutive deterministic
                     // failure means the evidence alone didn't steer the
-                    // worker — spend one judge call on course-correction
+                    // worker — spend one verifier call on course-correction
                     // (event-triggered, never a fixed midpoint checkpoint).
                     // Counted from the deterministic-failure ledger
                     // (`deterministic_disclosure` just recorded this round's
-                    // fingerprint), not from `revisions`: a prior model-judge
+                    // fingerprint), not from `revisions`: a prior model-verifier
                     // FAIL also increments `revisions`, and gating on it paid
                     // a guidance call on the FIRST deterministic red while
-                    // telling the judge the agent had "failed twice in a row".
+                    // telling the verifier the agent had "failed twice in a row".
                     let mut reason = brief.message();
                     if self.config.distress_guidance && state.failures.len() >= 2 {
                         match self
-                            .judge_guidance(
+                            .verifier_guidance(
                                 goal,
                                 &state.diff_text,
                                 &evidence.summary,
@@ -2657,14 +2657,14 @@ impl<'a> Pipeline<'a> {
                 }
                 // Triage judged this result not worth a separate reviewer,
                 // and the warrant AGREES from the change itself
-                // (`judge_waiver_stands`) — the guard is load-bearing, because
+                // (`verifier_waiver_stands`) — the guard is load-bearing, because
                 // this arm is only reached when the ladder came back
                 // inconclusive, which falsifies the waiver's own premise. A
-                // prompt-time `JUDGE: no` must not strip the last reviewer
+                // prompt-time `VERIFIER: no` must not strip the last reviewer
                 // from a behavioral change nothing proved (§7.1:
                 // predict-then-commit is the bug).
-                LadderDecision::ModelJudge
-                    if !assessment.wants_judge() && Self::judge_waiver_stands(&state) =>
+                LadderDecision::ModelVerdict
+                    if !assessment.wants_verifier() && Self::verifier_waiver_stands(&state) =>
                 {
                     let evidence = self.waived_completion(&snapshot);
                     return state.into_verified(
@@ -2673,12 +2673,12 @@ impl<'a> Pipeline<'a> {
                         score_from_verification(false, None),
                     );
                 }
-                LadderDecision::ModelJudge => {
+                LadderDecision::ModelVerdict => {
                     // Escalate on evidence, not on prediction. "Inconclusive"
                     // here can mean two very different things: a real change
                     // nothing proved, or a change with nothing to prove. The
                     // diff tells them apart, and the prompt never could — so
-                    // ask it before buying a judge call to confirm the absence
+                    // ask it before buying a verifier call to confirm the absence
                     // of a test that was never warranted
                     // (docs/design/witness-protocol.md §7).
                     if let Some(evidence) = self.warranted_completion(&state, &snapshot) {
@@ -2688,8 +2688,8 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, None),
                         );
                     }
-                    // Inconclusive — escalate to the model judge (judge ≠
-                    // worker; a judge-call failure falls back to a heuristic).
+                    // Inconclusive — escalate to the model verifier (verifier ≠
+                    // worker; a verifier-call failure falls back to a heuristic).
                     let mut evidence_summary = format!(
                         "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {}); \
                          file_change_events={}",
@@ -2701,7 +2701,7 @@ impl<'a> Pipeline<'a> {
                     );
                     if let Some(label) = test_infra {
                         // #860: the run ended without observing an assertion.
-                        // Named so the judge reads "the suite timed out", not
+                        // Named so the verifier reads "the suite timed out", not
                         // "the suite failed".
                         evidence_summary
                             .push_str(&format!("; test_run={label} (no assertion observed)"));
@@ -2709,7 +2709,7 @@ impl<'a> Pipeline<'a> {
                     if state.oracle.is_unstable() {
                         // #859: a fail→pass flip WAS observed but could not
                         // be reproduced on the same tree — a different fact
-                        // from "the test never passed", and one the judge
+                        // from "the test never passed", and one the verifier
                         // should weigh explicitly.
                         evidence_summary.push_str(
                             "; unstable_flip=true (the flip's confirmation re-run did not pass)",
@@ -2718,7 +2718,7 @@ impl<'a> Pipeline<'a> {
                     if inputs.diff_coverage != DiffCoverage::Unmeasured {
                         // #1291: stated only when it was actually measured.
                         // An `unmeasured` line here would be pure noise in a
-                        // judge prompt — the ladder already escalated for some
+                        // verifier prompt — the ladder already escalated for some
                         // other reason, and "nobody looked" adds nothing to
                         // reason from. It stays on the snapshot either way.
                         evidence_summary.push_str("; ");
@@ -2737,7 +2737,7 @@ impl<'a> Pipeline<'a> {
                         // #867: the suite passed, but its own complete test
                         // listing did not contain the baseline's failing
                         // tests — the observed failure was not fixed, it
-                        // disappeared. The judge should treat the passing
+                        // disappeared. The verifier should treat the passing
                         // exit code accordingly.
                         evidence_summary.push_str(
                             "; flip_refused=the passing run's test listing does not contain \
@@ -2747,7 +2747,7 @@ impl<'a> Pipeline<'a> {
                     }
                     if inputs.new_diag_errors > 0 || inputs.new_diag_warnings > 0 {
                         // #861: the regression the veto saw, capped to a
-                        // 3-line sample so the judge reads the delta, not
+                        // 3-line sample so the verifier reads the delta, not
                         // the linter's whole opinion.
                         evidence_summary.push_str(&format!(
                             "; new_diagnostics={} error(s), {} warning(s) vs baseline",
@@ -2760,7 +2760,7 @@ impl<'a> Pipeline<'a> {
                     }
                     if !snapshot.oracle_trace.is_empty() {
                         // #864: the oracle trace, rendered compactly. The
-                        // judge sees WHY the ladder was inconclusive — which
+                        // verifier sees WHY the ladder was inconclusive — which
                         // runs happened, in order, and what each observed —
                         // instead of a diff cold.
                         evidence_summary.push_str(&format!(
@@ -2770,13 +2770,13 @@ impl<'a> Pipeline<'a> {
                     }
                     if snapshot.witness_intact == Some(true) {
                         // #864: the tamper-exclusion result, stated. A
-                        // tampered witness never reaches a judge, so what the
-                        // judge learns here is that the check RAN and the
+                        // tampered witness never reaches a verifier, so what the
+                        // verifier learns here is that the check RAN and the
                         // witness it is weighing is the authored one.
                         evidence_summary.push_str("; witness_tamper_check=intact");
                     }
                     let verdict = match self
-                        .judge(
+                        .verifier(
                             goal,
                             &state.diff_text,
                             &evidence_summary,
@@ -2793,12 +2793,12 @@ impl<'a> Pipeline<'a> {
                     };
                     let mut evidence = model_verdict_evidence(&verdict);
                     evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));
-                    self.emit(AgentEvent::JudgeVerdict {
+                    self.emit(AgentEvent::Verdict {
                         passed: verdict.passed,
                         evidence: evidence.clone(),
                     });
                     if verdict.passed {
-                        // Asymmetric trust (#871). "Not yet" from a judge is
+                        // Asymmetric trust (#871). "Not yet" from a verifier is
                         // cheap to be wrong about — it buys one more revision.
                         // "Done" ends the run, so it has to be corroborated by
                         // something that is not another model's opinion.
@@ -2811,7 +2811,7 @@ impl<'a> Pipeline<'a> {
                         // closed would report a correct run as broken. The
                         // `Unverified` score keeps it from tying a genuinely
                         // verified sibling in best-of-N.
-                        if inputs.judge_pass_stands_alone() {
+                        if inputs.verifier_pass_stands_alone() {
                             // Ask for the missing evidence once, if asking can
                             // be answered at all (#1295 — the predicate states
                             // why `effective_cmd` decides that).
@@ -2844,7 +2844,7 @@ impl<'a> Pipeline<'a> {
                             // unverified, per the comment above.
                             let mut abstained = evidence.clone();
                             abstained.summary = format!(
-                                "UNVERIFIED: judge passed with no deterministic \
+                                "UNVERIFIED: verifier passed with no deterministic \
                                  corroboration (no flip, no green test) — {}",
                                 abstained.summary
                             );
@@ -2868,12 +2868,12 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(false)),
                         );
                     }
-                    // The judge read the deterministic evidence summary, so
+                    // The verifier read the deterministic evidence summary, so
                     // its prose can carry the tail back. A reasoning that
                     // quotes sealed material degrades to the symptom rather
                     // than being forwarded (§4.3).
                     let feedback = self
-                        .airlock_forward(&verdict.reasoning, "judge_reasoning", &sealed)
+                        .airlock_forward(&verdict.reasoning, "verifier_reasoning", &sealed)
                         .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
                     if let Err(reason) = self
                         .revise_candidate(engine, surface, budget, &feedback, total, &mut state)
@@ -3191,7 +3191,7 @@ impl<'a> Pipeline<'a> {
     ///
     /// `git diff` cannot see untracked files, so a turn whose entire change is
     /// a NEW (or edited-untracked) file would read as "no diff" — skipping
-    /// verification via the zero-diff guard and showing the judge an empty
+    /// verification via the zero-diff guard and showing the verifier an empty
     /// diff. When the configured command is git's, untracked files that were
     /// **created or modified this turn** — present now with either no
     /// `untracked_before` entry or a changed fingerprint — are appended with
@@ -3294,7 +3294,7 @@ impl<'a> Pipeline<'a> {
     /// the engine's sender.
     ///
     /// This is the fix for the counter that read `0` while six `file_change`
-    /// events sat in the very stream the judge's run produced (#973). The two
+    /// events sat in the very stream the verifier's run produced (#973). The two
     /// numbers came from different wires: `ToolRegistry::record_touch` sends to
     /// the channel the *host* attached, and the tally lived on a sender the
     /// pipeline handed the *engine*, which no file tool ever uses.
@@ -3346,7 +3346,7 @@ impl<'a> Pipeline<'a> {
         // means "the configured probe could read the working tree", and the
         // ladder's blind-evidence rung is built on that exact claim. An
         // authored diff proves what was written, never what survived to sit on
-        // disk at the end of the turn — so it informs the judge without
+        // disk at the end of the turn — so it informs the verifier without
         // asserting that the tree was successfully re-read.
         state.diff_available = probe.available;
         state.diff_text = verification_honest_diff(
@@ -3386,16 +3386,17 @@ impl<'a> Pipeline<'a> {
         let Ok(worker) = self.resolve_provider(Role::Worker) else {
             return WitnessAuthorIndependence::WorkerUnresolvable;
         };
-        match self.resolve_provider(Role::Judge) {
-            Ok(judge) if judge.model_ref != worker.model_ref => {
+        match self.resolve_provider(Role::Verifier) {
+            Ok(verifier) if verifier.model_ref != worker.model_ref => {
                 WitnessAuthorIndependence::Independent
             }
             Ok(_) => WitnessAuthorIndependence::Unavailable(format!(
-                "no author independent of the worker (judge and worker both resolved to `{}`)",
+                "no author independent of the worker (verifier and worker both resolved to `{}`)",
                 worker.model_ref
             )),
             Err(_) => WitnessAuthorIndependence::Unavailable(
-                "no author independent of the worker (the judge role is unresolvable)".to_string(),
+                "no author independent of the worker (the verifier role is unresolvable)"
+                    .to_string(),
             ),
         }
     }
@@ -3404,7 +3405,7 @@ impl<'a> Pipeline<'a> {
     ///
     /// Losing the author costs the run its authored witness, never the task:
     /// a `false` here routes to the ordinary single-shot path and the
-    /// deterministic/judge verify ladder. Announced once, at the one point
+    /// deterministic/verifier verify ladder. Announced once, at the one point
     /// that decides it, so the run never pays for isolation it cannot use.
     ///
     /// A host that cannot afford that degradation sets

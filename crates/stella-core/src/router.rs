@@ -40,7 +40,7 @@ pub struct ProviderProfile {
     /// `stella_protocol::Provider::id()` and is the key `CircuitBreaker`
     /// tracks state under.
     pub id: String,
-    /// Cross-family grouping key for judge selection (§1: "prefer a
+    /// Cross-family grouping key for verifier selection (§1: "prefer a
     /// different family when ≥2 profiles with distinct family... are
     /// available"). Two profiles sharing a `family` are treated as the
     /// SAME family even if their `id`s differ — e.g. two OpenRouter-routed
@@ -55,23 +55,23 @@ pub struct ProviderProfile {
     /// the caller's choice when constructing the profile, not the router's
     /// concern.
     pub triage_model: ModelRef,
-    /// Model used when this provider is chosen as judge: "never the same
+    /// Model used when this provider is chosen as verifier: "never the same
     /// instance as worker" — a fresh, separate call even when it
     /// shares a slug with `worker_model`.
-    pub judge_model: ModelRef,
+    pub verifier_model: ModelRef,
 }
 
 impl ProviderProfile {
     /// Construct a profile with `family` defaulting to `id` (the common
     /// case: one key = one family). Call `.with_family(..)` to override for
     /// providers that front more than one underlying model family, or that
-    /// should be grouped with another profile for judge cross-family
+    /// should be grouped with another profile for verifier cross-family
     /// selection.
     pub fn new(
         id: impl Into<String>,
         worker_model: ModelRef,
         triage_model: ModelRef,
-        judge_model: ModelRef,
+        verifier_model: ModelRef,
     ) -> Self {
         let id = id.into();
         let family = id.clone();
@@ -80,7 +80,7 @@ impl ProviderProfile {
             family,
             worker_model,
             triage_model,
-            judge_model,
+            verifier_model,
         }
     }
 
@@ -274,7 +274,7 @@ impl CircuitBreaker {
 /// A breaker-forced provider substitution — maps directly onto
 /// `AgentEvent::ProviderFallback`'s fields. `stella-core` has no event
 /// channel; `stella-pipeline` is what turns this into the real event (see
-/// the module docs). Never constructed for an intentional routing choice (e.g. judge's
+/// the module docs). Never constructed for an intentional routing choice (e.g. verifier's
 /// cross-family preference) — only when the originally preferred provider
 /// was unavailable (L-M7: fallback is always visible, never silent).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,7 +294,7 @@ pub struct RouterDecision {
     pub fallback: Option<FallbackInfo>,
     /// A human-readable caveat about resolution quality that isn't a
     /// `fallback` (nothing was skipped due to a breaker) but is still worth
-    /// surfacing — e.g. judge degrading to a same-family instance because
+    /// surfacing — e.g. verifier degrading to a same-family instance because
     /// no second family is currently healthy (§5, L-M8: single-key BYOK
     /// must still fully work, just with this documented caveat).
     pub caveat: Option<String>,
@@ -406,7 +406,7 @@ impl Router {
         match role {
             Role::Worker | Role::Plan => self.resolve_tier(role, |p| &p.worker_model),
             Role::Triage => self.resolve_tier(role, |p| &p.triage_model),
-            Role::Judge => self.resolve_judge(),
+            Role::Verifier => self.resolve_verifier(),
             Role::Embed | Role::Vision | Role::Image | Role::Video => {
                 Err(RouterError::NoDefaultForRole { role })
             }
@@ -443,27 +443,29 @@ impl Router {
         Err(RouterError::AllProvidersUnavailable { role })
     }
 
-    /// Judge resolution (§1, §5, L-E11 "always on a different model than
+    /// Verifier resolution (§1, §5, L-E11 "always on a different model than
     /// the worker"): prefer a healthy provider whose `family` differs from the
     /// family Worker *actually* resolves to right now; degrade — with a
     /// caveat, never an error — to the same provider/family when it's the only
     /// healthy option (L-M8: a single configured provider must still yield a
-    /// working judge).
+    /// working verifier).
     ///
     /// Selection is by **family**, not by slug: this returns the chosen
-    /// profile's `judge_model`, which a single-provider setup may deliberately
+    /// profile's `verifier_model`, which a single-provider setup may deliberately
     /// point at the same slug as `worker_model` (see [`ProviderProfile`]) — a
     /// separate call, not a separate model. When that happens the `caveat` says
     /// so, so "different model than the worker" is a preference the router
     /// reports on, never a guarantee it can make from one key.
-    fn resolve_judge(&self) -> Result<RouterDecision, RouterError> {
+    fn resolve_verifier(&self) -> Result<RouterDecision, RouterError> {
         if self.profiles.is_empty() {
-            return Err(RouterError::NoProvidersConfigured { role: Role::Judge });
+            return Err(RouterError::NoProvidersConfigured {
+                role: Role::Verifier,
+            });
         }
 
         // Availability is checked FIRST so an all-breakers-open state reports a
-        // `Judge` failure — resolving Worker up front would propagate its `?`
-        // as `AllProvidersUnavailable { role: Worker }`, mislabeling a Judge
+        // `Verifier` failure — resolving Worker up front would propagate its `?`
+        // as `AllProvidersUnavailable { role: Worker }`, mislabeling a Verifier
         // resolution with the wrong role.
         let available: Vec<&ProviderProfile> = self
             .profiles
@@ -471,11 +473,13 @@ impl Router {
             .filter(|p| self.breaker.is_available(&p.id))
             .collect();
         let Some(&first_healthy) = available.first() else {
-            return Err(RouterError::AllProvidersUnavailable { role: Role::Judge });
+            return Err(RouterError::AllProvidersUnavailable {
+                role: Role::Verifier,
+            });
         };
 
         // What Worker actually resolves to right now (pin included) — the
-        // instance Judge must never repeat.
+        // instance Verifier must never repeat.
         let worker_decision = self.resolve(Role::Worker)?;
         let worker_family = self
             .profiles
@@ -499,7 +503,7 @@ impl Router {
         // A fallback (vs. an intentional cross-family choice) is only
         // reported when the most-preferred provider overall was skipped
         // because its breaker is open (L-M7: fallback events are for
-        // breaker-forced substitutions, never for ordinary judge routing).
+        // breaker-forced substitutions, never for ordinary verifier routing).
         let preferred = &self.profiles[0];
         let fallback = if !self.breaker.is_available(&preferred.id) && chosen.id != preferred.id {
             Some(self.fallback_from(preferred, chosen))
@@ -509,7 +513,7 @@ impl Router {
 
         let caveat = degraded_same_family.then(|| {
             format!(
-                "judge running on the same provider/family as worker (`{}`) — no distinct-family \
+                "verifier running on the same provider/family as worker (`{}`) — no distinct-family \
                  provider is currently healthy; cross-family bias-resistant judging is degraded \
                  until a second family is configured or its breaker recovers (L-M8)",
                 chosen.id
@@ -517,7 +521,7 @@ impl Router {
         });
 
         Ok(RouterDecision {
-            model_ref: chosen.judge_model.clone(),
+            model_ref: chosen.verifier_model.clone(),
             fallback,
             caveat,
         })
@@ -572,7 +576,7 @@ mod tests {
             "zai",
             model("zai", "glm-5.2"),
             model("zai", "glm-5.2-air"),
-            model("zai", "glm-5.2-judge"),
+            model("zai", "glm-5.2-verifier"),
         )
     }
 
@@ -620,7 +624,7 @@ mod tests {
     fn explicit_pin_wins_unconditionally_even_with_providers_and_open_breakers() {
         let mut table = RoleTable::new();
         let pinned = model("openrouter", "some/pinned-slug");
-        table.pin(Role::Judge, pinned.clone());
+        table.pin(Role::Verifier, pinned.clone());
 
         let clock = ManualClock::new(0);
         let mut breaker = breaker_with_clock(clock);
@@ -631,7 +635,7 @@ mod tests {
         }
 
         let router = Router::new(table, vec![zai_profile(), anthropic_profile()], breaker);
-        let decision = router.resolve(Role::Judge).expect("pin always resolves");
+        let decision = router.resolve(Role::Verifier).expect("pin always resolves");
         assert_eq!(decision.model_ref, pinned);
         assert_eq!(decision.fallback, None);
     }
@@ -649,7 +653,7 @@ mod tests {
     // -- Single-provider (BYOK-with-one-key, L-M8) ------------------------
 
     #[test]
-    fn single_provider_yields_a_fully_working_worker_triage_judge_set() {
+    fn single_provider_yields_a_fully_working_worker_triage_verifier_set() {
         let router = Router::new(
             RoleTable::new(),
             vec![zai_profile()],
@@ -663,14 +667,14 @@ mod tests {
         let triage = router.resolve(Role::Triage).expect("triage resolves");
         assert_eq!(triage.model_ref, model("zai", "glm-5.2-air"));
 
-        let judge = router
-            .resolve(Role::Judge)
-            .expect("judge must still resolve, not error, with only one provider");
-        assert_eq!(judge.model_ref, model("zai", "glm-5.2-judge"));
-        assert_eq!(judge.fallback, None);
+        let verifier = router
+            .resolve(Role::Verifier)
+            .expect("verifier must still resolve, not error, with only one provider");
+        assert_eq!(verifier.model_ref, model("zai", "glm-5.2-verifier"));
+        assert_eq!(verifier.fallback, None);
         assert!(
-            judge.caveat.is_some(),
-            "single-provider judge must flag the same-family degradation"
+            verifier.caveat.is_some(),
+            "single-provider verifier must flag the same-family degradation"
         );
     }
 
@@ -686,10 +690,10 @@ mod tests {
         assert_eq!(worker.model_ref, plan.model_ref);
     }
 
-    // -- Multi-provider cross-family judge --------------------------------
+    // -- Multi-provider cross-family verifier --------------------------------
 
     #[test]
-    fn multi_provider_judge_picks_a_different_family_than_worker() {
+    fn multi_provider_verifier_picks_a_different_family_than_worker() {
         let router = Router::new(
             RoleTable::new(),
             vec![zai_profile(), anthropic_profile()],
@@ -699,12 +703,12 @@ mod tests {
         let worker = router.resolve(Role::Worker).unwrap();
         assert_eq!(worker.model_ref, model("zai", "glm-5.2"));
 
-        let judge = router.resolve(Role::Judge).unwrap();
-        assert_eq!(judge.model_ref, model("anthropic", "claude-fable-5"));
-        assert_eq!(judge.fallback, None);
+        let verifier = router.resolve(Role::Verifier).unwrap();
+        assert_eq!(verifier.model_ref, model("anthropic", "claude-fable-5"));
+        assert_eq!(verifier.fallback, None);
         assert_eq!(
-            judge.caveat, None,
-            "cross-family judge selection needs no degradation caveat"
+            verifier.caveat, None,
+            "cross-family verifier selection needs no degradation caveat"
         );
     }
 
@@ -727,8 +731,10 @@ mod tests {
             RouterError::NoProvidersConfigured { role: Role::Triage }
         );
         assert_eq!(
-            router.resolve(Role::Judge).unwrap_err(),
-            RouterError::NoProvidersConfigured { role: Role::Judge }
+            router.resolve(Role::Verifier).unwrap_err(),
+            RouterError::NoProvidersConfigured {
+                role: Role::Verifier
+            }
         );
     }
 
@@ -892,10 +898,11 @@ mod tests {
     }
 
     #[test]
-    fn judge_reports_both_fallback_and_same_family_caveat_when_only_the_worker_family_is_healthy() {
+    fn verifier_reports_both_fallback_and_same_family_caveat_when_only_the_worker_family_is_healthy()
+     {
         // zai is broken; anthropic is the only healthy provider, and it's
         // also the family worker ends up resolving to (since zai is down).
-        // Judge must report the breaker fallback (zai -> anthropic) AND
+        // Verifier must report the breaker fallback (zai -> anthropic) AND
         // flag that it's degraded to worker's own family.
         let clock = ManualClock::new(0);
         let mut breaker = breaker_with_clock(clock);
@@ -908,13 +915,15 @@ mod tests {
             breaker,
         );
 
-        let judge = router.resolve(Role::Judge).unwrap();
-        assert_eq!(judge.model_ref, model("anthropic", "claude-fable-5"));
-        let fallback = judge.fallback.expect("breaker fallback must be reported");
+        let verifier = router.resolve(Role::Verifier).unwrap();
+        assert_eq!(verifier.model_ref, model("anthropic", "claude-fable-5"));
+        let fallback = verifier
+            .fallback
+            .expect("breaker fallback must be reported");
         assert_eq!(fallback.from, "zai");
         assert_eq!(fallback.to, "anthropic");
         assert!(
-            judge.caveat.is_some(),
+            verifier.caveat.is_some(),
             "same-family degradation must be flagged"
         );
     }

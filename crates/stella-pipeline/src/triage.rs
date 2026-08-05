@@ -7,13 +7,13 @@
 //!
 //! # Fast paths and correct downgrade (L-E2)
 //!
-//! - [`TaskClass::SimpleLookup`] skips both the planner and the judge — but
-//!   that judge-skip *self-revokes* if execution unexpectedly touches files
+//! - [`TaskClass::SimpleLookup`] skips both the planner and the verifier — but
+//!   that verifier-skip *self-revokes* if execution unexpectedly touches files
 //!   (the zero-diff guard, enforced in [`crate::pipeline`]).
 //! - [`TaskClass::SingleTask`] skips DAG planning (one execute turn) but is
 //!   still verified.
 //! - [`TaskClass::MultiStep`] takes the full plan → scope-review → execute →
-//!   verify → judge path.
+//!   verify → verdict path.
 //!
 //! Every fast path must **downgrade correctly**: a complex task *misclassified*
 //! as simple must still complete (just without the planning/verification
@@ -29,14 +29,14 @@
 /// planning, never remove it — L-E2 "errs toward planning").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TaskClass {
-    /// A lookup/read/explain prompt: no plan, no judge. Self-revoking on
+    /// A lookup/read/explain prompt: no plan, no verifier. Self-revoking on
     /// unexpected file mutations (zero-diff guard).
     SimpleLookup,
     /// One concrete change: skip DAG planning, one execute turn, still
     /// verified.
     SingleTask,
     /// Genuinely multi-step: full plan → scope review → execute → verify →
-    /// judge.
+    /// verifier.
     MultiStep,
 }
 
@@ -92,7 +92,7 @@ pub struct TaskAssessment {
     /// Whether an independently authored witness test is warranted.
     pub require_witness: Option<bool>,
     /// Whether a separate model reviewing the result is warranted.
-    pub require_judge: Option<bool>,
+    pub require_verifier: Option<bool>,
 }
 
 impl TaskAssessment {
@@ -103,7 +103,7 @@ impl TaskAssessment {
             class,
             conversational: false,
             require_witness: None,
-            require_judge: None,
+            require_verifier: None,
         }
     }
 
@@ -114,13 +114,13 @@ impl TaskAssessment {
             .unwrap_or_else(|| self.class.verifies_unconditionally())
     }
 
-    /// Whether a model judge is warranted.
+    /// Whether a model verifier is warranted.
     ///
     /// Defaults to `true`, unlike [`Self::wants_witness`]: this is only ever
     /// consulted once the verification ladder has already run and come back
-    /// *inconclusive*, so the class has had its say. Skipping the judge there
+    /// *inconclusive*, so the class has had its say. Skipping the verifier there
     /// has to be an explicit call from triage — a class-derived default would
-    /// silently drop the judge on exactly the path the zero-diff guard exists
+    /// silently drop the verifier on exactly the path the zero-diff guard exists
     /// to catch (a "lookup" that turned out to touch files).
     ///
     /// An explicit `no` is a *request*, not a decision: by the time it is
@@ -128,11 +128,11 @@ impl TaskAssessment {
     /// triage prompt offered for saying no ("success is self-evident or a
     /// test already proves it"). So the pipeline honors the waiver only when
     /// the post-execution warrant agrees the change has nothing a reviewer
-    /// could catch (`Pipeline::judge_waiver_stands`) — the same
+    /// could catch (`Pipeline::verifier_waiver_stands`) — the same
     /// evidence-over-prediction rule `resolve_witness`'s ceiling applies in
     /// the other direction.
-    pub fn wants_judge(&self) -> bool {
-        self.require_judge.unwrap_or(true)
+    pub fn wants_verifier(&self) -> bool {
+        self.require_verifier.unwrap_or(true)
     }
 }
 
@@ -145,8 +145,8 @@ fn parse_flag(lower: &str, key: &str) -> Option<bool> {
             continue;
         };
         // A word boundary must follow the key: `judgement …` is not the
-        // `judge` line, and treating it as one used to end the scan before a
-        // real `JUDGE: no` further down was ever read.
+        // `verifier` line, and treating it as one used to end the scan before a
+        // real `VERIFIER: no` further down was ever read.
         if rest
             .chars()
             .next()
@@ -257,7 +257,7 @@ pub fn parse_triage_response(text: &str) -> Option<TaskAssessment> {
         class,
         conversational,
         require_witness: parse_flag(&lower, "witness"),
-        require_judge: parse_flag(&lower, "judge"),
+        require_verifier: parse_flag(&lower, "verifier"),
     })
 }
 
@@ -421,7 +421,7 @@ pub fn resolve_witness(model_opinion: Option<bool>, class: TaskClass, goal: &str
 /// qualifier. Anything short of all three falls through to the normal path.
 ///
 /// Note this only turns off the *authored witness*. The verification ladder and
-/// the judge still run — deleting the wrong file stays a reviewable mistake.
+/// the verifier still run — deleting the wrong file stays a reviewable mistake.
 ///
 /// This is the **pre-execution** half of the question, and it has to guess from
 /// wording because no diff exists yet. [`crate::witness::warrant`] answers the
@@ -621,11 +621,11 @@ pub fn resolve_task_class(model_class: Option<TaskClass>, goal: &str) -> TaskCla
     // Triage read the goal; the floor only pattern-matched it, so triage may
     // route work onto a cheaper path than the keywords guessed — otherwise a
     // one-line fix whose description contains "and then" buys a full
-    // plan/witness/judge pipeline forever.
+    // plan/witness/verifier pipeline forever.
     //
     // But only one level cheaper. Triage is meant to be the weakest, fastest
     // tier, and the floor's keyword evidence is weak rather than worthless;
-    // letting a cheap model strip planning, witness, and judge in a single
+    // letting a cheap model strip planning, witness, and verifier in a single
     // step is a bigger bet than the speed is worth. Raising stays unbounded —
     // erring toward more work was never the risk.
     model.max(floor.one_level_cheaper())
@@ -908,7 +908,7 @@ fn has_action_request(goal: &str) -> bool {
 
 /// The prompt handed to the Role::Triage model to classify a user message. A
 /// tiny, fixed instruction for a cheap/fast tier: it asks for three labeled
-/// lines (`CLASS`/`WITNESS`/`JUDGE`), but the parser tolerates a bare class
+/// lines (`CLASS`/`WITNESS`/`VERIFIER`), but the parser tolerates a bare class
 /// token too ([`parse_triage_response`]). The first line offers `chat` so a
 /// non-task (a greeting, small talk) has somewhere to land instead of being
 /// forced onto the work path.
@@ -929,7 +929,7 @@ pub fn triage_prompt(goal: &str) -> String {
          nothing else:\n\
          CLASS: chat|lookup|single|multi\n\
          WITNESS: yes|no\n\
-         JUDGE: yes|no\n\n\
+         VERIFIER: yes|no\n\n\
          CLASS is what the message needs:\n\
          - `chat`    — asks for NOTHING to be done: a greeting (`hi`), thanks, \
          small talk, or a question about you. Reply conversationally; touch no \
@@ -952,7 +952,7 @@ pub fn triage_prompt(goal: &str) -> String {
          the new, and a removal leaves nothing to write that against. Prefer \
          `no` on small, self-evident work — ceremony that proves nothing \
          costs the user time and money.\n\
-         JUDGE is whether a separate model should review the result. It is \
+         VERIFIER is whether a separate model should review the result. It is \
          only consulted when no test settled the outcome, so say no ONLY \
          when a test will already prove the change or the result is \
          trivially checkable from its diff; when unsure, say yes.\n\n\

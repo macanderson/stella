@@ -5,7 +5,7 @@
 //! already giving every candidate its own replay cursor over the user's
 //! steers. Nothing about the *work* required them to run one after another;
 //! the only thing that did was the `&mut BudgetGuard` threaded through
-//! `run_candidate` → `verify_candidate` → `judge`. So `--candidates 3` cost
+//! `run_candidate` → `verify_candidate` → `verifier`. So `--candidates 3` cost
 //! the **sum** of three candidate runtimes instead of the slowest, which on a
 //! wall-clock-bounded harness is the difference between finishing and being
 //! killed (#1215).

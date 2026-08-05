@@ -124,7 +124,7 @@ Four things changed shape in the port. Everything else kept its name.
 | --- | --- | --- |
 | `enable_recap` (bare root key) | `[run].recap` | TOML attaches a bare key to whatever `[table]` precedes it — move one line in the file and it silently reassigns. Every scalar gets a table home; there are no bare keys at the document root. |
 | `agent_engine_config` | `[agents]` | Shorter, and the JSON name described the Rust struct rather than the thing it configures. |
-| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** — `default`, `worker`, `judge`, `triage` are struct fields, not map keys, so a per-agent table can never collide with a root field. |
+| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** — `default`, `worker`, `verifier`, `triage` are struct fields, not map keys, so a per-agent table can never collide with a root field. |
 | `agent_engine_config.allowed_models` | `[models].allowed` | Promoted out of the agents block — it's a statement about models, not about any one agent. Still replaces wholesale across scopes rather than concatenating. |
 
 `trace_capture` and `create_worktrees` needed no such move: both shipped straight into
@@ -214,25 +214,25 @@ allowed = ["anthropic/claude-fable-5", "zai/glm-5.2", "openrouter/openai/gpt-5.5
 The flattened, closed-set engine config — see
 [Agent engine config](/docs/configuration/agent-engine-config) for the full schema, model
 precedence, auto modes, and generation parameters, all unchanged. Flattening
-`[agents.judge]` (rather than the JSON nesting's `[agents.agents.judge]`) is safe only
+`[agents.verifier]` (rather than the JSON nesting's `[agents.agents.verifier]`) is safe only
 because exactly four names exist and none of them can collide with a root scalar like
 `default_model`.
 
 ```toml title="stella.toml"
 [agents]
 default_model         = "zai/glm-5.2"
-pipeline_judge_model  = "anthropic/claude-fable-5"
+pipeline_verifier_model  = "anthropic/claude-fable-5"
 pipeline_triage_model = "deepseek/deepseek-chat"
 auto_mode             = "off"
 effort_auto           = "on"
 
-[agents.judge]
+[agents.verifier]
 provider  = "openrouter"
 model     = "openai/gpt-5.5"
 effort    = "high"
 reasoning = "on"
 
-  [agents.judge.params]
+  [agents.verifier.params]
   temperature = 0.2
   max_tokens  = 4096
 ```
@@ -303,15 +303,15 @@ theme = "stella-light"
 
 What a finished turn's verdict is worth as a training label (#1043). Whole-block last-wins,
 like `[ui]`; carries no credential or egress authority, so a project setting a weight is
-stating an opinion about its own judge, not borrowing permission.
+stating an opinion about its own verifier, not borrowing permission.
 
 <CardGrid size="sm">
   <OptionCard name="reward.deterministic_weight" defaultValue="1.0">
     Magnitude of a deterministic pass or fail — the unit every other weight is measured
     against.
   </OptionCard>
-  <OptionCard name="reward.judge_weight" defaultValue="0.5">
-    Magnitude of a model judge's pass or fail. `0.0` **discards** judged turns from
+  <OptionCard name="reward.verifier_weight" defaultValue="0.5">
+    Magnitude of a model verifier's pass or fail. `0.0` **discards** judged turns from
     training rather than scoring them as zero — a discard is a refusal to claim anything; a
     zero is a claim that a neutral outcome was observed. A value above
     `deterministic_weight` is refused: a model's opinion may never outrank a test's
@@ -330,7 +330,7 @@ stating an opinion about its own judge, not borrowing permission.
 
 ```toml title="stella.toml"
 [reward]
-judge_weight = 0.3   # trust this workspace's judge less than the 0.5 default
+verifier_weight = 0.3   # trust this workspace's verifier less than the 0.5 default
 ```
 
 ### `[authority]` — managed scope only

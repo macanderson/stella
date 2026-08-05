@@ -1,5 +1,5 @@
 //! `screenshot` — capture the screen (or a window/region) to a PNG under
-//! `.stella/screenshots/`, for work verification: a judge or reviewer can
+//! `.stella/screenshots/`, for work verification: a verifier or reviewer can
 //! demand visual evidence that a UI change actually rendered.
 //!
 //! The capture lands on disk and the tool returns its path + size. With

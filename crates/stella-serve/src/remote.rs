@@ -131,7 +131,7 @@ impl Sleeper for TokioSleeper {
 pub(crate) struct RemoteProvider {
     id: String,
     /// What this provider's calls are FOR (#1297), stamped onto every request
-    /// frame so a host can route a judge or a sub-agent to a different model
+    /// frame so a host can route a verifier or a sub-agent to a different model
     /// than the worker. One per purpose: a turn that runs a judged goal loop
     /// builds two of these, not one shared instance with a mutable role.
     role: stella_protocol::ModelCallRole,
@@ -169,13 +169,13 @@ impl RemoteProvider {
         }
     }
 
-    /// The same remoted provider, announcing a different role — the judge of
+    /// The same remoted provider, announcing a different role — the verifier of
     /// a goal run, or a sub-agent's own calls (#1297).
     ///
     /// A separate instance rather than a setter: the role is stamped on every
     /// frame this provider emits, and two agents share one turn's frame sink,
     /// so a mutable role would be a race between the worker's next call and
-    /// the judge's.
+    /// the verifier's.
     pub(crate) fn with_role(mut self, role: stella_protocol::ModelCallRole) -> Self {
         self.role = role;
         self

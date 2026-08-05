@@ -267,7 +267,7 @@ string (an absolute path would make the shadow copy truncate the real file).
 
 The staged pipeline enforces the same contract at runtime: when no
 `--test-command` is configured, its **witness stage** has an independent model
-(the judge's resolution, never the worker) author the failing witness test up
+(the verifier's resolution, never the worker) author the failing witness test up
 front, tracks its fail→pass flip in the flip oracle, and refuses to credit the
 flip if the worker modified the witness files (tamper exclusion). The witness
 is **scaffolding for that one run**: it lives in the candidate workspace and is
@@ -302,7 +302,7 @@ the files you must plan around (see below).
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
-| Triage → … → judge orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
+| Triage → … → verifier orchestration plane | [`stella-pipeline`](crates/stella-pipeline/README.md) | |
 | MCP client (external tool servers) | [`stella-mcp`](crates/stella-mcp/README.md) | |
 | Multimodal generation | [`stella-media`](crates/stella-media/README.md) | |
 | Multi-agent fan-out, worktree isolation | [`stella-fleet`](crates/stella-fleet/README.md) | |
@@ -332,21 +332,23 @@ inputs, not review afterthoughts:
   an escape hatch for a genuinely irreducible line (a module declaration in
   an already-oversized `lib.rs`), never something a plan may assume.
 
-The workspace's Rust god files, by crate (ceiling in lines; the bench
-harness's Python offenders sit in the same baseline). The baseline file is
-normative — if this table and the baseline ever disagree, the baseline
-governs:
+The workspace's Rust god files, by crate (the bench harness's Python offenders
+sit in the same baseline). Each file's ceiling lives in
+`scripts/file-size-baseline.txt` and is deliberately not repeated here: that
+file is generated and gate-enforced, so it is the only copy that can stay
+correct. This table names *which* files are closed to growth, which is the part
+a plan needs and the part that rarely changes:
 
-| Crate | God files (ceiling) |
+| Crate | God files |
 |---|---|
-| `stella-cli` | `src/command_deck.rs` (4754), `src/agent.rs` (2270), `src/agent/tests.rs` (1747), `src/candidate_ws.rs` (1585), `src/fleet_cmd.rs` (1506) |
-| `stella-core` | `src/driver/tests.rs` (3672), `src/driver.rs` (2765), `src/bus.rs` (2129) |
-| `stella-model` | `src/openai.rs` (2072), `src/zai/tests.rs` (1815), `src/anthropic/tests.rs` (1677), `src/zai.rs` (1533) |
-| `stella-pipeline` | `src/pipeline.rs` (3691), `src/pipeline/tests.rs` (2621) |
-| `stella-protocol` | `src/event.rs` (2906) |
-| `stella-store` | `src/tests.rs` (2264), `src/lib.rs` (2080), `src/usage.rs` (1916) |
-| `stella-tools` | `src/registry.rs` (2326), `src/scripts.rs` (1839), `src/media.rs` (1569) |
-| `stella-tui` | `src/deck_ui.rs` (4068), `src/views/engine.rs` (1665), `src/views/session.rs` (1621), `src/deck_render.rs` (1600), `src/deck.rs` (1528) |
+| `stella-cli` | `src/command_deck.rs`, `src/agent.rs`, `src/agent/tests.rs`, `src/candidate_ws.rs`, `src/fleet_cmd.rs` |
+| `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
+| `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs`, `src/zai.rs` |
+| `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
+| `stella-protocol` | `src/event.rs` |
+| `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
+| `stella-tools` | `src/registry.rs`, `src/scripts.rs`, `src/media.rs` |
+| `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs`, `src/deck.rs` |
 
 The other twelve crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
@@ -429,7 +431,7 @@ this before assuming two of them mean the same thing:
 | **session** | `SessionRecord::id` | `crates/stella-store/src/sessions.rs` | One run of the CLI, tracked in the cross-process registry under `~/.stella/sessions/`. Stamped onto `executions.session_id` (schema v8) so `Store::session_events` can reassemble a session's whole journal across its turns. |
 | **execution** | `execution_id` | `crates/stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
 | **turn** | `turn_instance` | `crates/stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
-| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/judge/plan/guidance roles take 1, 2, … |
+| **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/verifier/plan/guidance roles take 1, 2, … |
 | **fleet run** | `run_id` | `crates/stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
 | **task** | `TaskId` / `tasks` row | `crates/stella-fleet/src/plan.rs`, [`stella-store`](crates/stella-store/README.md) | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
 

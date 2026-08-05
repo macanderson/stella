@@ -236,8 +236,8 @@ impl Catalog {
                 .with_max_output_tokens(Some(131_072)),
                 // The two roles a GLM pipeline needs that its *worker* cannot
                 // fill. A head-to-head pins the worker to the opponent's model,
-                // so judge and triage have to be somebody else — and the
-                // authored-witness tier refuses outright when the judge
+                // so verifier and triage have to be somebody else — and the
+                // authored-witness tier refuses outright when the verifier
                 // resolves to the worker, on the grounds that a model cannot
                 // independently corroborate itself. Seeded for exactly the
                 // reason given for `claude-sonnet-5` below: unlisted here is
@@ -246,7 +246,7 @@ impl Catalog {
                 // having emitted nothing to say why.
                 //
                 // `glm-5.1` is the strongest z.ai model that is not the worker,
-                // which is what a judge and witness author ought to be.
+                // which is what a verifier and witness author ought to be.
                 CatalogEntry::new(
                     "glm-5.1",
                     "zai",
@@ -609,7 +609,7 @@ impl Catalog {
                 // silently falls to the engine's global 16384 and truncates
                 // before the worker can emit a tool call.
                 .with_max_output_tokens(Some(131_072)),
-                // The judge and triage seats for that same gateway route. A
+                // The verifier and triage seats for that same gateway route. A
                 // pipeline is only a pipeline if all three roles resolve; seed
                 // the worker alone and the run dies at startup exactly as it
                 // does with no worker at all.
@@ -858,9 +858,9 @@ mod tests {
 
     use super::*;
 
-    /// A GLM pipeline needs a judge and a triage model that are *not* the
+    /// A GLM pipeline needs a verifier and a triage model that are *not* the
     /// worker: a head-to-head pins the worker to the opponent's model, and the
-    /// authored-witness tier refuses when the judge resolves to the worker.
+    /// authored-witness tier refuses when the verifier resolves to the worker.
     ///
     /// Seeding is what makes them reachable. A benchmark container runs with
     /// `STELLA_CATALOG_AUTO_REFRESH=0`, so an unseeded slug is not merely
@@ -1121,17 +1121,17 @@ mod tests {
     }
 
     /// The benchmark's roles must all resolve on one provider. A trial carries
-    /// exactly one credential, so a judge or triage model that only exists on
+    /// exactly one credential, so a verifier or triage model that only exists on
     /// a second provider is unreachable at run time — and an unresolvable
-    /// judge pin silently degrades to "judge is the worker", which is the
+    /// verifier pin silently degrades to "verifier is the worker", which is the
     /// weaker claim #1147 exists to refuse.
     #[test]
     fn every_benchmark_role_model_resolves_on_the_gateway_provider() {
         let catalog = Catalog::seed();
         for slug in [
             "anthropic/claude-sonnet-5",  // worker
-            "anthropic/claude-fable-5",   // judge, arm A
-            "moonshotai/kimi-k3",         // judge, arm B
+            "anthropic/claude-fable-5",   // verifier, arm A
+            "moonshotai/kimi-k3",         // verifier, arm B
             "anthropic/claude-haiku-4.5", // triage, both arms
         ] {
             catalog

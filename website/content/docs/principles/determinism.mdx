@@ -89,10 +89,10 @@ put frontier models to work. It is a statement about **where to spend
 them**:
 
 - Verification prefers the [flip oracle](/docs/inference-pipeline) — a
-  test that fails before and passes after — and escalates to a model judge
+  test that fails before and passes after — and escalates to a model verifier
   only when deterministic evidence is inconclusive. Evidence first, opinion
   as fallback.
-- When a model *is* asked to judge, the setup is engineered like a
+- When a model *is* asked to verifier, the setup is engineered like a
   mechanism: a different family than the worker (bias resistance), a
   strict output contract, read-only tools, a heuristic fallback if the
   call fails.
@@ -120,7 +120,7 @@ A CI gate can therefore insist on the mechanism and refuse the opinion:
 ```bash
 stella --output-format json run --test-command "make test" "$TASK" \
   | jq -e '.verdict.deterministic == true' >/dev/null \
-  || { echo "verified only by a model judge — holding this one for review" >&2; exit 1; }
+  || { echo "verified only by a model verifier — holding this one for review" >&2; exit 1; }
 ```
 
 <Callout type="info">

@@ -188,7 +188,7 @@ fn seed_fs_surfaces(dir: &TempDir) {
     .unwrap();
     std::fs::write(
             dot.join("settings.json"),
-            r#"{"providers":{"zai":{"api_key":"sk-live-topsecret","api_key_env":"ZAI_KEY"}},"agent_engine_config":{"agents":{"judge":{"model":"glm-5.2"}}}}"#,
+            r#"{"providers":{"zai":{"api_key":"sk-live-topsecret","api_key_env":"ZAI_KEY"}},"agent_engine_config":{"agents":{"verifier":{"model":"glm-5.2"}}}}"#,
         )
         .unwrap();
     let graph = Connection::open(dot.join("private/codegraph.db")).unwrap();

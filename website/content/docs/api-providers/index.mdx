@@ -65,7 +65,7 @@ failed:
 | `anthropic` | `thinking: {type: adaptive}` | `output_config.effort`, all five tiers 1:1 | Sampling params never sent on Claude 4.6+ and the 5-line |
 | `openai` | `reasoning.effort` | `low`/`medium`/`high`; **`xhigh` and `max` collapse to `high`** | Also honours `verbosity` and `service_tier` |
 | `gemini` / `vertex` | `thinkingConfig.thinkingLevel` | `low`; **everything else maps to `high`** | `reasoning: "off"` gives the *minimum* level, not zero |
-| `zai` | `thinking: {type: enabled\|disabled}` | **dropped** | Differentiate a GLM judge with `prompt`, not `effort` |
+| `zai` | `thinking: {type: enabled\|disabled}` | **dropped** | Differentiate a GLM verifier with `prompt`, not `effort` |
 | `xai` | `reasoning_effort` | `low`/`medium`/`high`; `xhigh`/`max` collapse | **Gated off entirely on `grok-4`** and its dated snapshots |
 | `deepseek` | not sent | **dropped** | Shape it with `prompt` and `params.max_tokens` |
 | `openrouter` | `reasoning` object | all five tiers 1:1 | Gateway translates per routed vendor; an unadvertised tier is normalized, not rejected |
@@ -178,7 +178,7 @@ $3.00 list price — the 10× discount on the byte-stable prefix the
 [context engine](/docs/context-engine) maintains.
 
 `params.max_tokens` defaults to **32000 with thinking on, 4096 with it off**. Adaptive
-thinking spends from the same output allowance as the answer, so a max-effort judge would
+thinking spends from the same output allowance as the answer, so a max-effort verifier would
 otherwise truncate mid-verdict. A value you set is honoured as-is.
 
 ### OpenAI
@@ -313,16 +313,16 @@ no configuration at all, an OpenRouter instance runs:
 | Role | Model | Why |
 | --- | --- | --- |
 | default | `moonshotai/kimi-k3` | long-context agentic driver, at `xhigh` effort with thinking on |
-| judge | `anthropic/claude-opus-5` | a different vendor's strongest reasoner — not the worker grading itself |
+| verifier | `anthropic/claude-opus-5` | a different vendor's strongest reasoner — not the worker grading itself |
 | triage | `z-ai/glm-5.2` | fast and cheap, and it runs on every turn |
 
-Note the judge is deliberately a different **family** from the driver. Stella already
+Note the verifier is deliberately a different **family** from the driver. Stella already
 treats cross-family judging as the goal (see `auto_mode`); this default just reaches it
 without asking you to configure anything.
 
 This is a *baseline*, not a lock. It composes underneath the whole
 [`agent_engine_config`](/docs/configuration/agent-engine-config) scope chain, so any
-field you set is yours — set `pipeline_judge_model` and the judge is whatever you said,
+field you set is yours — set `pipeline_verifier_model` and the verifier is whatever you said,
 while the rest of the posture stays. It also applies only when OpenRouter is the provider
 that actually got picked: run `--model anthropic/…` with an OpenRouter key present and you
 have an Anthropic session, with no part of this routed through the gateway.
@@ -339,7 +339,7 @@ have an Anthropic session, with no part of this routed through the gateway.
 
 ```bash
 stella --model openrouter/moonshotai/kimi-k3       run "tidy the changelog"
-stella --model openrouter/openai/gpt-5.5           run "review this diff as a strict judge"
+stella --model openrouter/openai/gpt-5.5           run "review this diff as a strict verifier"
 stella --model openrouter/anthropic/claude-fable-5 run "refactor the scheduler"
 stella --model openrouter/openrouter/auto          run "let the gateway pick per request"
 ```
@@ -364,7 +364,7 @@ Two routing forms:
 With `provider` set, `model` goes to that provider verbatim with no splitting — which is
 what lets an OpenRouter slug contain a `/` of its own.
 
-Judge-diversity logic does not treat "openrouter" as one family: an OpenRouter spec's
+Verifier-diversity logic does not treat "openrouter" as one family: an OpenRouter spec's
 family is the routed slug's **vendor prefix**, so `openrouter/openai/gpt-5.5` counts as
 OpenAI and cross-family preference works through the gateway.
 

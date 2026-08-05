@@ -77,7 +77,7 @@ happens if you don't have it.
 Stella's distinguishing behavior is not any single command — it is that **work
 ends on evidence rather than on the worker's own claim**. A test that failed
 before the change and passes after it. A diff that exists. A CI run whose latest
-attempt is green. A judge from a different model family than the worker, reading
+attempt is green. A verifier from a different model family than the worker, reading
 the diff and not the narration.
 
 That is worth knowing before the first guide, because it explains a shape you
@@ -86,7 +86,7 @@ Stella something deterministic to check.
 
 ```bash
 # The strongest flag on the CLI. It arms the fail→pass flip oracle, which
-# lets most runs finish on deterministic evidence and skip the judge entirely.
+# lets most runs finish on deterministic evidence and skip the verifier entirely.
 stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
 ```
 

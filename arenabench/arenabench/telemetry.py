@@ -225,7 +225,7 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
         "model_ms": 0,
         "cap_hits": 0,
         "complete": False,
-        "judge_passed": None,
+        "verifier_passed": None,
         "models": [],
     }
     seen_models: set[str] = set()
@@ -256,9 +256,9 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
                     if model and model not in seen_models:
                         seen_models.add(model)
                         totals["models"].append(model)
-                elif kind == "judge_verdict":
+                elif kind == "verdict":
                     passed = event.get("passed")
-                    totals["judge_passed"] = None if passed is None else bool(passed)
+                    totals["verifier_passed"] = None if passed is None else bool(passed)
                 elif kind == "complete":
                     totals["complete"] = True
     except OSError:
@@ -383,7 +383,7 @@ class MetricsReader:
 
         # One table, both seats. See pricing.py for why self-reported cost is
         # recorded but never compared. The configured seat model is tried first:
-        # a single process can log several roles' `step_usage` (judge, triage)
+        # a single process can log several roles' `step_usage` (verifier, triage)
         # into one stream, so the stream's first-seen model may name a role
         # rather than the seat — pricing on that would mis-cost the whole trial.
         for name in (configured, *metrics.models, ""):
@@ -720,13 +720,13 @@ class TranscriptReader:
                 )
             ]
 
-        if kind == "judge_verdict":
+        if kind == "verdict":
             passed = event.get("passed")
             return [
                 entry(
                     self._next_seq(state),
                     "verdict",
-                    "judge: pass" if passed else "judge: fail",
+                    "verifier: pass" if passed else "verifier: fail",
                     str(event.get("reasoning") or ""),
                     passed=passed,
                 )

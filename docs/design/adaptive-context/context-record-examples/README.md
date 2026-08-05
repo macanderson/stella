@@ -163,7 +163,7 @@ existing bitemporal model. Verdicts are three-valued:
 
 - `supported` — the probe ran and the claim held
 - `refuted` — the probe ran and the claim did not hold
-- `unfalsifiable` — no probe could judge this claim
+- `unfalsifiable` — no probe could verifier this claim
 
 `unfalsifiable` must stay visible in review surfaces and must never be folded
 into "passed." A refuter that reports OK for claims it never checked launders

@@ -31,7 +31,7 @@ const AUTHORED_SECTION_HEADER: &str =
 /// while the authored channel reports what the agent asked to be written
 /// (authoritative about INTENT, silent about whether a later step clobbered
 /// it). Concatenating them — probe first, since on-disk state is the stronger
-/// claim where it exists — is what lets a judge see both.
+/// claim where it exists — is what lets a verifier see both.
 ///
 /// The authored text is unified-diff shaped precisely so this concatenation is
 /// legal: every consumer downstream (`changed_paths`, `changed_lines`,

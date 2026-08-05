@@ -1,9 +1,9 @@
 ---
 title: stella calibration
-description: The judge's measured false-positive rate — every recorded pass verdict reconciled against the CI results observed after it.
+description: The verifier's measured false-positive rate — every recorded pass verdict reconciled against the CI results observed after it.
 ---
 
-Answer "how often does the judge approve work that CI later rejects?" from what the workspace has already recorded. Every verification verdict is persisted in the local event journal with the ladder snapshot it was decided from, and every PR/CI observation lands in the same stream — so calibration is a *reading*, not a new telemetry pipe. Entirely local; no API key, no network, and it never writes.
+Answer "how often does the verifier approve work that CI later rejects?" from what the workspace has already recorded. Every verification verdict is persisted in the local event journal with the ladder snapshot it was decided from, and every PR/CI observation lands in the same stream — so calibration is a *reading*, not a new telemetry pipe. Entirely local; no API key, no network, and it never writes.
 
 ## Synopsis
 
@@ -16,7 +16,7 @@ stella calibration --format json  # machine-readable tallies
 
 Two cohorts, deliberately side by side — a false-positive rate means nothing without the cohort it should be compared against:
 
-- **model judge** — `JudgeVerdict` events with `passed: true` from a model judge (the ladder escalated on inconclusive evidence).
+- **model verifier** — `VerifierVerdict` events with `passed: true` from a model verifier (the ladder escalated on inconclusive evidence).
 - **deterministic** — passes the ladder credited itself (fail→pass flip, green tests, budget, and every pre-submit audit).
 
 For each: how many passes were recorded, how many were **reconciled** — a terminal CI verdict (`Passing`/`Failing`) was observed later in the same session's stream — and how many of those reconciled passes failed CI. The rate is printed only over reconciled passes; with no CI ground truth yet, it is reported as **unmeasured**, never as zero.

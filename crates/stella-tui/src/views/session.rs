@@ -1266,7 +1266,7 @@ mod tests {
             event: AgentEvent::Proof {
                 step: ProofStep::Assurance {
                     witness: false,
-                    judge: false,
+                    verifier: false,
                 },
             },
         });

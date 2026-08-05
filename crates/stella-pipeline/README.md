@@ -1,7 +1,7 @@
 # stella-pipeline
 
 The orchestration plane above `stella-core::Engine`. It drives one prompt through the
-staged turn flow — **evaluate → enhance → route → execute → witness → verify → judge →
+staged turn flow — **evaluate → enhance → route → execute → witness → verify → verdict →
 revise** (the witness is authored on demand, after execution, once the warrant has read
 the diff) — over injected ports, emitting an `AgentEvent` at every stage boundary. This is
 the default `stella run` path.
@@ -25,10 +25,10 @@ which owns the port implementations and the `Router` itself. It builds no binary
 
 This crate owns the staged flow itself: which stages run for a given prompt, in what
 order, on what evidence — triage classification, plan shape, the scope gate, witness
-authoring and acceptance, the flip oracle and evidence ladder, judge prompting, the
+authoring and acceptance, the flip oracle and evidence ladder, verifier prompting, the
 revision policy, best-of-N selection. The decision rule: if a change alters what
 happens between a prompt arriving and a verdict being declared — a stage added or
-skipped, a gate's threshold, what a failure brief may disclose, when a judge call is
+skipped, a gate's threshold, what a failure brief may disclose, when a verifier call is
 bought — it lands here, with the judgement in a synchronous sibling module and only
 the sequencing in [`src/pipeline.rs`](src/pipeline.rs), per the two intro boundaries.
 
@@ -75,10 +75,8 @@ module under [`src/pipeline/tests/`](src/pipeline/tests) rather than in
 [`src/pipeline/tests.rs`](src/pipeline/tests.rs), which keeps only the shared fakes;
 and code you touch in either file is a candidate to extract.
 
-| God file | Ceiling (lines) |
-|---|---|
-| [`src/pipeline.rs`](src/pipeline.rs) | 3691 |
-| [`src/pipeline/tests.rs`](src/pipeline/tests.rs) | 2621 |
+- [`src/pipeline.rs`](src/pipeline.rs)
+- [`src/pipeline/tests.rs`](src/pipeline/tests.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a reviewable
 baseline diff justified like any other change — treat it as an escape hatch for an
@@ -92,14 +90,14 @@ as a planning assumption.
 | [`src/lib.rs`](src/lib.rs) | The index of design lessons the crate encodes (L-E2, L-E5–E8, L-E11, L-M4) and the public re-exports. Read it first — every claim below is stated there in one line. |
 | [`src/pipeline.rs`](src/pipeline.rs) | `Pipeline::run` and the whole stage sequence, `PipelineConfig`, `PipelineOutcome`. Open it when you need the *order* things happen in. |
 | [`src/pipeline/witness_stage.rs`](src/pipeline/witness_stage.rs) | The one stage that runs against the candidate's `witness_tools()` rather than the worker's executor: author → one bounded repair → artifact/invocation/identity acceptance. |
-| [`src/pipeline/raw_usage.rs`](src/pipeline/raw_usage.rs), [`src/pipeline/run_error.rs`](src/pipeline/run_error.rs), [`src/pipeline/stage_budget.rs`](src/pipeline/stage_budget.rs) | The metered direct-completion path for roles that bypass the engine (triage, judge, guidance) so their spend still lands in accounting; `PipelineError`/`PipelineRunError`; the budget-abort translation. |
+| [`src/pipeline/raw_usage.rs`](src/pipeline/raw_usage.rs), [`src/pipeline/run_error.rs`](src/pipeline/run_error.rs), [`src/pipeline/stage_budget.rs`](src/pipeline/stage_budget.rs) | The metered direct-completion path for roles that bypass the engine (triage, verifier, guidance) so their spend still lands in accounting; `PipelineError`/`PipelineRunError`; the budget-abort translation. |
 | [`src/ports.rs`](src/ports.rs) | Every trait the pipeline orchestrates over, plus the no-op defaults (`NoContextRecall`, `NoRepoStructure`, `NoRepoStatus`, `AlwaysAbortGate`). |
 | [`src/triage.rs`](src/triage.rs) | `TaskClass`, `TaskAssessment`, the response parser, and the deterministic pattern floor. |
 | [`src/plan.rs`](src/plan.rs) | The planner's split context (`build_planner_prompt`) and the JSON-then-numbered-list `parse_plan`. |
 | [`src/scope.rs`](src/scope.rs) | `ScopeThresholds` and the pure `needs_scope_review` / `apply_trim` / `build_proposal`. |
 | [`src/witness.rs`](src/witness.rs) | Witness prompts, the closed test-command vocabulary, and the artifact/invocation/identity validators. |
 | [`src/witness/airlock.rs`](src/witness/airlock.rs) | The feedback airlock: `DisclosureGrain`, `SymptomClass`, `FailureFingerprint`, and the `scrub`/`redact` pair that decide what a failure may tell the worker. |
-| [`src/verify.rs`](src/verify.rs) | `FlipOracle`, `ladder_decision`, judge prompting/parsing, `heuristic_fallback`, `guidance_prompt`. |
+| [`src/verify.rs`](src/verify.rs) | `FlipOracle`, `ladder_decision`, verifier prompting/parsing, `heuristic_fallback`, `guidance_prompt`. |
 | [`src/reward.rs`](src/reward.rs) | The ladder verdict as a training label (#1043): `RewardPolicy` (the per-workspace weights), `label`, and the `DiscardReason` set. Pure. Read it before changing what a rung is worth — most of the file is the argument for what the module refuses to claim. |
 | [`src/candidate.rs`](src/candidate.rs) | `CandidateScore` and `select_best_candidate` — best-of-N selection, pure. |
 | [`src/candidate_fanout.rs`](src/candidate_fanout.rs) | `fan_out_width` and `FanOutBudget` — how wide a fan-out runs and how one turn's money is split between candidates spending at the same time. Pure; the normative statement of the overshoot window. |
@@ -122,7 +120,7 @@ cannot vanish from accounting through cancellation.
 is ordered `SimpleLookup < SingleTask < MultiStep` and the derived `Ord` is load-bearing:
 `deterministic_floor` takes the `max` of the model's class and a pattern floor, so the floor
 can only ever *add* planning. A misclassified task must still complete, just more slowly —
-that is why `SimpleLookup`'s judge-skip self-revokes through the zero-diff guard
+that is why `SimpleLookup`'s verifier-skip self-revokes through the zero-diff guard
 (the `files_touched` / `should_verify` pair in `Pipeline::run_candidate`: a lookup is
 verified after all if `file_changes > 0` or the diff is non-empty). `TaskAssessment` carries `conversational` on its own field rather than as a
 fourth class, because "is this even a task" is a different axis from "how big is it"; a bare
@@ -130,7 +128,7 @@ fourth class, because "is this even a task" is a different axis from "how big is
 
 **The witness stage** ([`src/witness.rs`](src/witness.rs),
 [`src/pipeline/witness_stage.rs`](src/pipeline/witness_stage.rs)). When the user armed no
-`--test-command`, an independent model — the judge's resolution, so witness ≠ worker —
+`--test-command`, an independent model — the verifier's resolution, so witness ≠ worker —
 authors a test that must fail *now* and pass once the goal is met. The pipeline runs the
 authored command immediately; if it passes on unmodified code it proves nothing, so one
 bounded repair prompt is sent into the same thread and a second pass discards the witness.
@@ -150,20 +148,20 @@ where convergence comes from — so integrity comes from tamper exclusion instea
 time every recorded `ArtifactIdentity` is re-read and compared on bytes, type, mode and link
 count (the `witness_identity_matches` sweep at the top of `Pipeline::verify_candidate`'s
 loop). A mismatch aborts the candidate *before* the ladder runs. It is
-an authority boundary, not evidence for a model to weigh, and no judge can override it.
+an authority boundary, not evidence for a model to weigh, and no verifier can override it.
 
-**The evidence ladder decides before spending a judge call.** `ladder_decision` is a pure
+**The evidence ladder decides before spending a verifier call.** `ladder_decision` is a pure
 function of `(flip_achieved, touched_tests_passed, diff_lines, diff_budget)`: touched tests
-red → `Revise` (a red test is already deterministic; never pay a judge to confirm it); flip
-+ green + within budget → `SubmitFast` with the judge skipped; anything else →
-`ModelJudge`. `touched_tests_passed: None` means "couldn't run" — inconclusive, never a
-pass. Linters and typecheckers are never fed to `FlipOracle::observe`. A judge call that
+red → `Revise` (a red test is already deterministic; never pay a verifier to confirm it); flip
++ green + within budget → `SubmitFast` with the verifier skipped; anything else →
+`ModelVerifier`. `touched_tests_passed: None` means "couldn't run" — inconclusive, never a
+pass. Linters and typecheckers are never fed to `FlipOracle::observe`. A verifier call that
 fails or returns unparseable text falls back to `heuristic_fallback`, which passes only on
 observed-green tests, so an outage never degrades to a blanket pass. On the second
-consecutive deterministic failure, `distress_guidance` buys one judge call for
+consecutive deterministic failure, `distress_guidance` buys one verifier call for
 course-correction that rides with the next revision prompt — event-triggered, never a fixed
-mid-run checkpoint. When the judge PASSES on nothing but its own opinion,
-`judge_evidence_demand` buys one revision asking the worker for corroboration instead —
+mid-run checkpoint. When the verifier PASSES on nothing but its own opinion,
+`verifier_evidence_demand` buys one revision asking the worker for corroboration instead —
 once per candidate, and only where a tracked command exists to answer it, because with none
 resolved neither a flip nor a green touched test is reachable and the ask would be pure
 cost on every turn (#1295).
@@ -178,9 +176,9 @@ as the same `FailureFingerprint` repeats — a worker that has seen the same bri
 is not helped by a third copy, only given more surface to fit. The symptom sentences are
 compile-time literals, so that grain cannot quote the assertion by construction; `scrub`
 covers the rest and **fails closed**, degrading a brief rather than emitting it with a
-hole. Model prose arriving inbound (distress guidance, judge reasoning) goes through the
+hole. Model prose arriving inbound (distress guidance, verifier reasoning) goes through the
 same scrub, and a rejection emits `PolicyDecision { kind: Blocked }` carrying a token,
-never content. Two audiences, two texts: the operator's `JudgeVerdict` event keeps the
+never content. Two audiences, two texts: the operator's `VerifierVerdict` event keeps the
 real output, because the human is not the adversary.
 
 **A best-of-N fan-out runs its isolated candidates at once**
@@ -230,7 +228,7 @@ ran. Execution aborts (budget, loop, step-cap) keep their stop — the worker di
   seeded one would be fabricated.
 - **An empty diff is never reported as "nothing changed" when `FileChange` events fired.**
   `verification_honest_diff` substitutes an explicit "the change is real; the diff is blind
-  to it" note, because a judge reading a bare empty string concludes the agent did nothing —
+  to it" note, because a verifier reading a bare empty string concludes the agent did nothing —
   the failure mode that once drove an agent to reinitialize git to beat the check.
 - **A review waived by triage scores `Unverified`, not `DeterministicPass`** — claiming the
   strongest score would let a waived candidate tie a flip-verified sibling in best-of-N and
@@ -269,7 +267,7 @@ and port doubles — no API key, no network.
   proving `Flipped` is unreachable without a prior `Failing` of the same command.
 - **Replay fixtures** are two distinct things, deliberately kept apart.
   [`tests/fixtures/`](tests/fixtures) holds *synthetic*, hand-authored streams
-  (`single_task_flip.jsonl`, `judge_escalation.jsonl`, `torn_tail.jsonl`) exercising the
+  (`single_task_flip.jsonl`, `verifier_escalation.jsonl`, `torn_tail.jsonl`) exercising the
   invariants and the differ, driven from
   [`tests/replay_fixtures.rs`](tests/replay_fixtures.rs).
   [`tests/fixtures/golden/`](tests/fixtures/golden) holds real recordings of this
@@ -307,7 +305,7 @@ does* (candidate isolation, MCP pre-fetch) is an `Option`, so degradation stays 
 
 **Adding a stage**: add the variant to `StageKind` in `stella-protocol`, give it a rank in
 `stage_rank` ([`src/replay.rs`](src/replay.rs)) — `validate_stream` rejects any backward
-transition that is not the Verify/Judge → Execute revise back-edge — then re-record the
+transition that is not the Verify/Verdict → Execute revise back-edge — then re-record the
 goldens and read the fixture diff, because a change there changes the observable event
 contract.
 

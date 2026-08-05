@@ -8,8 +8,8 @@
 
 use serde_json::json;
 use stella_protocol::{
-    AgentEvent, ContextFrameRef, FileChangeKind, JudgeEvidence, ModelCallRole, PrStatus, ProofStep,
-    ProviderShare, ScopeProposal, StageKind, ToolCall, ToolOutput,
+    AgentEvent, ContextFrameRef, FileChangeKind, ModelCallRole, PrStatus, ProofStep, ProviderShare,
+    ScopeProposal, StageKind, ToolCall, ToolOutput, VerdictEvidence,
 };
 
 use crate::envelope::{AgentMeta, AgentStatus, Inbound};
@@ -276,7 +276,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             AgentEvent::Proof {
                 step: ProofStep::Assurance {
                     witness: true,
-                    judge: false,
+                    verifier: false,
                 },
             },
         ),
@@ -509,9 +509,9 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         ),
         ev(
             ci,
-            AgentEvent::JudgeVerdict {
+            AgentEvent::Verdict {
                 passed: true,
-                evidence: JudgeEvidence {
+                evidence: VerdictEvidence {
                     summary: "flip oracle: fail→pass on `pnpm --filter app test:unit`".into(),
                     deterministic: true,
                     evidence_refs: vec![],

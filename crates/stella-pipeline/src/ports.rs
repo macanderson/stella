@@ -269,7 +269,7 @@ pub trait RepoStatusPort: Send + Sync {
 /// It never saw one: `ToolRegistry::record_touch` sends to the channel the
 /// *host* attached, and the engine's sender is a different wire. So a turn that
 /// created and edited a file, and put six `file_change` events on the stream,
-/// told its judge `file_change_events=0` — which the judge reported as "the
+/// told its verifier `file_change_events=0` — which the verifier reported as "the
 /// file likely does not exist" while the file sat in the container (#973).
 ///
 /// Reading a counter on the recorder is immune to which channel the events
@@ -297,7 +297,7 @@ pub trait FileTouchPort: Send + Sync {
     /// * a task directory that is not a repository (every Terminal-Bench
     ///   image), where the probe can only report that it could not look; and
     /// * a newly created file, which git cannot see until it is staged — so
-    ///   the commonest shape of agent work reached the judge as a bare path
+    ///   the commonest shape of agent work reached the verifier as a bare path
     ///   and a line count, with none of its content.
     ///
     /// The recorder holds both images of every write it performed, so it can
@@ -439,7 +439,7 @@ pub enum CmdKind {
     /// unspawnable on every retry, so re-running it is spend with no
     /// information; a memory kill is exactly the outcome a human would simply
     /// *try again* (see `PipelineConfig::test_oom_retries`). Collapsing them
-    /// would make one of the two behaviors wrong, and the evidence a judge
+    /// would make one of the two behaviors wrong, and the evidence a verifier
     /// reads would say "infra_failure" where the honest word is
     /// "out_of_memory".
     OutOfMemory,
@@ -507,7 +507,7 @@ impl CmdOutcome {
     }
 
     /// A short label for evidence text when [`Self::assertion_result`] is
-    /// `None`, so a judge reads "the run timed out" instead of a bare
+    /// `None`, so a verifier reads "the run timed out" instead of a bare
     /// failure it would treat as an assertion.
     pub fn infra_label(&self) -> Option<&'static str> {
         match self.kind {
@@ -577,7 +577,7 @@ pub struct LintRecord {
 /// Lint/typecheck snapshots for the regression veto (#861). Lint is rightly
 /// excluded from the flip oracle — a lint pass verifies nothing — but it can
 /// *veto*: a candidate that flips its witness while introducing a fresh type
-/// error is exactly the inconclusive case the judge exists for.
+/// error is exactly the inconclusive case the verifier exists for.
 ///
 /// The host implementation resolves the workspace's own diagnostics plan
 /// (closed toolchain vocabulary, fixed argv — no model text crosses this
@@ -1068,7 +1068,7 @@ pub struct PipelinePorts<'a> {
     /// Untracked-file snapshots for the zero-diff guard (`git diff` can't see
     /// untracked files; this makes new/modified untracked files visible).
     pub repo_status: &'a dyn RepoStatusPort,
-    /// The file recorder's own mutation tally, for the evidence the judge is
+    /// The file recorder's own mutation tally, for the evidence the verifier is
     /// shown. Wire it from the registry the host attaches its event stream to;
     /// hosts with no recorder pass [`NoFileTouches`].
     pub touches: &'a dyn FileTouchPort,
@@ -1107,9 +1107,9 @@ pub struct PipelinePorts<'a> {
     /// messages injected as the model's next observation (`stella_core`'s
     /// `TurnSteering`). `None` on non-interactive paths (headless `run`,
     /// fleet). Attached to execute turns alone: triage, planning, the
-    /// witness author, and the judge are autonomous sub-steps with no
+    /// witness author, and the verifier are autonomous sub-steps with no
     /// user-facing "steer this" moment. The pipeline's stop remains the
-    /// caller's hard cancel — a pipeline is triage→…→judge, so a
+    /// caller's hard cancel — a pipeline is triage→…→verifier, so a
     /// mid-execute soft stop has no single obvious continuation.
     pub steering: Option<&'a dyn stella_core::ports::TurnSteering>,
 }
@@ -1169,7 +1169,7 @@ mod tests {
 
     /// #1294: an out-of-memory kill is its OWN outcome — not a failure, and
     /// not the same word as an unspawnable toolchain. The label is what a
-    /// judge reads, so it has to say which of the two happened.
+    /// verifier reads, so it has to say which of the two happened.
     #[test]
     fn an_out_of_memory_kill_is_its_own_outcome() {
         let oom = CmdOutcome {

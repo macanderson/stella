@@ -596,7 +596,7 @@ class TestForwardedEnv:
         )
         # `xhigh` matches the comparator and the raised cap travels with the
         # tier: at `xhigh` the 16384 default is spent before any tool call.
-        for role in ("default", "worker", "judge"):
+        for role in ("default", "worker", "verifier"):
             assert posture["agents"][role] == {
                 "effort": "xhigh",
                 "reasoning": "on",
@@ -608,7 +608,7 @@ class TestForwardedEnv:
         # edits land here deliberately. Keep it in step with the superseding
         # table in bench/READINESS.md, not the protocol's earlier `max` table.
         assert digest == (
-            "9d7ad135db12e32d4519f893b8d8ed9d918b0ef54c7a4e4d22d1398b0015785b"
+            "0d732c3e42a394a059be359de78ed153eb840477b946f167b8a0f3048023ff84"
         )
 
     def test_excludes_all_provider_keys_and_selects_only_effective_provider(

@@ -693,7 +693,7 @@ pub async fn run_deck_session(
         });
 
     // The deck drives turns through the staged pipeline by default (triage →
-    // recall → plan → scope → witness → execute → verify → judge); `/pipeline`
+    // recall → plan → scope → witness → execute → verify → verdict); `/pipeline`
     // toggles back to the raw `Engine::run_turn` loop (`run_lead_turn`). A
     // resumed session keeps whatever it last had — the same state the persona
     // choice above read, so driver and persona start the session agreeing.
@@ -838,7 +838,7 @@ pub async fn run_deck_session(
     let mut dispatch = HoldState::new();
     dispatch.held = resume_hold;
     // `/pipeline`: route lead turns through the staged pipeline (triage →
-    // witness → execute → verify → judge) instead of the raw engine loop.
+    // witness → execute → verify → verdict) instead of the raw engine loop.
     // Session-local, ON at start (the deck loads with the pipeline active)
     // unless a resumed session had toggled it — mirrored to the PIPELINE
     // stat box via `Inbound::Pipeline`.
@@ -1725,7 +1725,7 @@ pub async fn run_deck_session(
                                 // Pipeline turns accept mid-turn `>` steering
                                 // (the execute engine drains the tap) but the
                                 // STOP stays a hard cancel: a pipeline is
-                                // triage→…→judge, so a mid-execute soft stop
+                                // triage→…→verifier, so a mid-execute soft stop
                                 // has no single obvious continuation. Only the
                                 // step-loop turn soft-stops.
                                 if pipeline_on {
@@ -4070,7 +4070,7 @@ async fn run_deck_command(
             let _ = in_tx.send(Inbound::Pipeline(*pipeline_on));
             say(if *pipeline_on {
                 "staged pipeline ON — turns now run triage → recall → (plan → scope review) → \
-                 witness → execute → verify → judge, with bounded revision. Triage already \
+                 witness → execute → verify → verdict, with bounded revision. Triage already \
                  right-sizes each turn: chat answers in one completion, and only genuinely \
                  multi-step goals plan at all. The witness stage authors a failing test that \
                  must flip to green before work counts as done; a large plan raises the scope \
@@ -4421,7 +4421,7 @@ async fn run_lead_turn(
 /// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
 /// analogue of the `stella run` pipeline path — same tool stack, persistence,
 /// and event forwarding as [`run_lead_turn`], with `Pipeline::run` (triage →
-/// recall → plan → scope → witness → execute → verify → judge → revise) in
+/// recall → plan → scope → witness → execute → verify → verdict → revise) in
 /// place of the raw `Engine::run_turn`.
 ///
 /// Deck-mode seams, all named:
@@ -4431,7 +4431,7 @@ async fn run_lead_turn(
 ///   ask. It fails closed only if the deck itself goes away mid-gate.
 /// - **The session's system prompt stays.** It was assembled once at deck
 ///   startup (byte-stable for the cache prefix, L-E8); toggling `/pipeline`
-///   must not rewrite history. The pipeline's stage prompts (witness, judge,
+///   must not rewrite history. The pipeline's stage prompts (witness, verifier,
 ///   planner) are its own regardless of the worker's system prompt.
 /// - **Recall is the pipeline's port** (the workspace memory) — the driver
 ///   skips its own `inject_recall_block` for pipeline turns.
@@ -4512,7 +4512,7 @@ async fn run_lead_pipeline_turn(
         };
 
         let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-        // Role wiring from `agent_engine_config`: worker/triage/judge pins +
+        // Role wiring from `agent_engine_config`: worker/triage/verifier pins +
         // their adapters + per-role request overrides. Notices land in the
         // transcript — stderr is invisible under the alternate screen.
         let configured = crate::config::discover_configured_providers();

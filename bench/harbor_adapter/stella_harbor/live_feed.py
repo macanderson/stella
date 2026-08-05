@@ -98,7 +98,7 @@ class _EventsCache:
         in_tok = out_tok = cached_tok = cache_write_tok = 0
         cost = 0.0
         reported_finish = False
-        judge_passed: bool | None = None
+        verifier_passed: bool | None = None
         complete = False
         last_type = ""
         try:
@@ -143,9 +143,9 @@ class _EventsCache:
                             and not event.get("tool_calls")
                         ):
                             cap_hits += 1
-                    elif kind == "judge_verdict":
+                    elif kind == "verdict":
                         passed = event.get("passed")
-                        judge_passed = bool(passed) if passed is not None else None
+                        verifier_passed = bool(passed) if passed is not None else None
                     elif kind == "complete":
                         complete = True
         except OSError:
@@ -165,7 +165,7 @@ class _EventsCache:
             # signal, "inferred" is the output-size heuristic and carries its
             # false positives.
             "cap_hits_source": "reported" if reported_finish else "inferred",
-            "judge_passed": judge_passed,
+            "verifier_passed": verifier_passed,
             "complete": complete,
             "last_type": last_type,
         }
@@ -197,7 +197,7 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
         # None until an event stream is read: a trial with no telemetry has no
         # cap-hit count, by either route, and must not read as a truthful zero.
         "cap_hits_source": None,
-        "judge_passed": None,
+        "verifier_passed": None,
     }
 
     if trajectory is not None:
@@ -238,7 +238,7 @@ def trial_view(trial_dir: Path, events_cache: _EventsCache) -> dict[str, Any]:
             age_s=events["age_s"],
             cap_hits=events["cap_hits"],
             cap_hits_source=events["cap_hits_source"],
-            judge_passed=events["judge_passed"],
+            verifier_passed=events["verifier_passed"],
         )
         view["status"] = "done" if events["complete"] else "running"
 

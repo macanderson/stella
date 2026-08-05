@@ -1,7 +1,7 @@
 //! Cache-TTL-aware fleet scheduling (issue #269).
 //!
 //! When the fleet parks a session mid-conversation for longer than its
-//! provider's prompt-cache TTL — waiting on a judge, a queue slot, or a human
+//! provider's prompt-cache TTL — waiting on a verifier, a queue slot, or a human
 //! gate — the cached prefix expires and the next turn re-writes it at up to
 //! 1.25x input price. At fleet scale that is a recurring, invisible tax, and
 //! today the scheduler is TTL-blind. This module is the *decision* half: among

@@ -21,7 +21,7 @@
  * These are server components now and ship no JavaScript at all.
  *
  * The content is faithful, not fabricated: the states, the pipeline stages
- * (triage → plan → witness → execute → verify → judge), and the budget
+ * (triage → plan → witness → execute → verify → verdict), and the budget
  * accounting are Stella's own. The numbers illustrate a run; they are not a
  * benchmark claim.
  */
@@ -64,7 +64,7 @@ export function HeroTerminal() {
     <Terminal title="zsh — stella">
       <Prompt>export ANTHROPIC_API_KEY=…</Prompt>
       <Prompt>stella run &quot;fix the failing test&quot;</Prompt>
-      <Dim>{"  triage → plan → witness → execute → verify → judge\n"}</Dim>
+      <Dim>{"  triage → plan → witness → execute → verify → verdict\n"}</Dim>
       <Dim>{"  edited src/parser.rs · ran cargo test -p parser\n"}</Dim>
       <Ok>{"  ✓ verified — 1 test now green · $0.04 of $1.00\n"}</Ok>
     </Terminal>
@@ -82,7 +82,7 @@ export function FleetTerminal() {
       <Dim>{"  read release-prep.toml — 5 tasks, dependency-ordered into 3 waves\n\n"}</Dim>
       {"  lead          orchestrating              "}
       <Ok>{"done"}</Ok>
-      {"   $0.31  judge: all goals met\n"}
+      {"   $0.31  verifier: all goals met\n"}
       {"  parser-tests  unit tests for the parser  "}
       <Ok>{"done"}</Ok>
       {"   $0.34  PR #982 · CI green\n"}
