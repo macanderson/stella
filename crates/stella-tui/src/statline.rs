@@ -930,7 +930,7 @@ mod tests {
     fn the_role_word_is_the_one_the_deck_says_out_loud() {
         assert_eq!(role_word(PipelineRole::Triage), "triage");
         assert_eq!(role_word(PipelineRole::Worker), "worker");
-        // `Verifier` reads "verify" — the stage word the stepper already uses.
+        // `Judge` reads "verify" — the stage word the stepper already uses.
         assert_eq!(role_word(PipelineRole::Verifier), "verify");
     }
 
