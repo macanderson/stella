@@ -241,6 +241,9 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     let sidecar = registry.sidecar_dir(&run.id);
 
     let id = run.id.clone();
+    // Read before the stop: what the group probe below must see emptied is
+    // the group the child led while it was alive.
+    let group = run.pgid;
     stop(&registry, &id).expect("stop");
 
     assert_eq!(

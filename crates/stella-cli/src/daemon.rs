@@ -363,8 +363,8 @@ pub(crate) fn spawn(
     args: &[std::ffi::OsString],
     stdin: &[u8],
 ) -> Result<Supervised, String> {
-    // Minted before the spawn so the child can be told its own id, and so a
-    // failed spawn leaves a directory rather than a half-registered session.
+    // Minted before the launch so a failed spawn leaves a directory rather
+    // than a half-registered session.
     let mut record = SessionRecord::new(workspace, title);
     record.summary = title.to_string();
     launch(registry, record, program, args, stdin, Console::Fresh, None)
@@ -397,11 +397,15 @@ fn launch(
     registry: &SessionRegistry,
     mut record: SessionRecord,
     program: &Path,
-    args: &[std::ffi::OsString],
+    args: &[impl AsRef<std::ffi::OsStr>],
     stdin: &[u8],
     console: Console,
     cwd: Option<&Path>,
 ) -> Result<Supervised, String> {
+    // Forced back to in-progress up front: a fresh record is born live, but a
+    // resume's adopted record still carries the killed attempt's terminal
+    // reading, and the registration below must never show it.
+    record.status = SessionStatus::InProgress;
     let sidecar = registry
         .prepare_sidecar(&record.id)
         .map_err(|e| format!("cannot create the session directory: {e}"))?;
@@ -688,6 +692,16 @@ impl Tail {
         Ok(Self { file, offset: 0 })
     }
 
+    /// Skip whatever is already there — for a reader that only wants what
+    /// happens from now on.
+    fn seek_to_end(&mut self) -> Result<(), String> {
+        self.offset = self
+            .file
+            .seek(SeekFrom::End(0))
+            .map_err(|e| format!("cannot seek the console: {e}"))?;
+        Ok(())
+    }
+
     /// Start `lines` lines back from the end, or at the beginning if the file
     /// is shorter than that.
     ///
@@ -930,8 +944,16 @@ fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
         });
         let Ok(stat) = probe.metadata() else {
             continue;
-        };
-        if stat.dev() == lock.dev() && stat.ino() == lock.ino() {
+        }
+        // SAFETY: `fstat` returned success, so it initialized the struct.
+        let stat = unsafe { stat.assume_init() };
+        // `dev_t` is `u64` on Linux — where this cast is the identity the
+        // lint objects to — and `i32` on macOS, where `as` sign-extends
+        // exactly like std's own `MetadataExt::dev`, keeping both sides of
+        // the comparison in one convention on every platform.
+        #[allow(clippy::unnecessary_cast)]
+        let dev = stat.st_dev as u64;
+        if dev == lock.dev() && stat.st_ino == lock.ino() {
             return Some(fd);
         }
     }
@@ -1235,6 +1257,11 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
             }
             (false, status) => (status.label(), |s| s.normal()),
         };
+        // A crashed run earns the resume hint only if it actually left a
+        // resume point behind; a clean exit discarded its own on the way out.
+        if !live && run.status.is_live() && !any_resumable {
+            any_resumable = has_resume_point(&run);
+        }
         // Padded before it is painted. A width applied to a `ColoredString`
         // counts the ANSI escapes as characters, so every coloured cell comes
         // out its escape-length too narrow and the last column ragged.
@@ -1283,9 +1310,8 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
         approval::forward_pending_approval(&sidecar, interactive, &mut approval_noted);
         if lock_is_held(&sidecar) != Some(true) {
             // Same ordering as `follow`: drain after observing the end, so the
-            // last thing the run wrote is never the thing attach misses. One
-            // `Follower::pump` is bounded, so "everything that is left" is the
-            // loop rather than the single call.
+            // last thing the run wrote is never the thing attach misses. The
+            // pump is bounded, so draining is pumping until nothing moves.
             while console.pump(&mut std::io::stdout(), &mut std::io::stderr())? > 0 {}
             eprintln!("{} {} has finished", "▸".dimmed(), record.id.dimmed());
             return Ok(());
