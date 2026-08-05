@@ -4,9 +4,10 @@
 //! ([`crate::views::plan_rail`]).
 //!
 //! It **reuses** the shared renderers (`render_hud`, `render_transcript`,
-//! `render_scope_review`, `render_ask_user`, `entry_lines`), just scoped to
-//! whichever agent `ui.focused` points at. No transcript rendering is
-//! duplicated — there is one implementation of "draw a session".
+//! `render_ask_user`, `entry_lines`), just scoped to whichever agent
+//! `ui.focused` points at. No transcript rendering is duplicated — there is
+//! one implementation of "draw a session". (The scope gate renders as the
+//! modal plan-review dialog, [`crate::views::scope_dialog`], not as a band.)
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -22,7 +23,7 @@ use crate::deck_ui::DeckUi;
 use crate::model::{FileState, TranscriptEntry};
 use crate::render::{
     entry_lines, inner_height, inner_width, reasoning_is_live, render_ask_user, render_hud,
-    render_scope_review, render_transcript_window, streaming_lines,
+    render_transcript_window, streaming_lines,
 };
 use crate::theme;
 use crate::transcript_nav::TurnDigest;
@@ -336,11 +337,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // pending at once — nothing clears one when the other arrives — so they
     // render independently, band by band; an
     // ask-user question is never hidden behind a plan review.
-    let scope_h: u16 = if sm.pending_scope_review.is_some() {
-        8
-    } else {
-        0
-    };
+    //
+    // (The scope gate is the exception: it renders as the modal plan-review
+    // dialog over the whole frame — `views::scope_dialog`, drawn by
+    // `deck_render` — so it claims no band here.)
     let ask_h: u16 = match &sm.pending_ask_user {
         Some(p) => (p.options.len() as u16 + 5).min(12),
         None => 0,
@@ -368,7 +368,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // reads as interleaved lines (#1258) — stacks them above the transcript
     // instead, sized against the rows the gates left. Nothing is dropped.
     let split_rail = crate::views::plan_rail::rail_visible(ui.accessible, area.width);
-    let claimed = 1 + subs_h + hud_h + scope_h + ask_h + hunk_h + dispatch_h;
+    let claimed = 1 + subs_h + hud_h + ask_h + hunk_h + dispatch_h;
     let (stacked_plan_h, stacked_verify_h) = if split_rail {
         (0, 0)
     } else {
@@ -379,7 +379,6 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         Constraint::Length(1),                // identity header
         Constraint::Length(subs_h),           // nested subagent rows (0 = none)
         Constraint::Length(hud_h),            // stat box (+1 row for the vitals gauges)
-        Constraint::Length(scope_h),          // pending plan review (0 = collapsed)
         Constraint::Length(ask_h),            // pending ask-user (0 = collapsed)
         Constraint::Length(hunk_h),           // pending hunk review (0 = collapsed)
         Constraint::Length(dispatch_h),       // mid-turn routing (0 = collapsed)
@@ -398,10 +397,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             Constraint::Min(1),
             Constraint::Length(crate::views::plan_rail::rail_width(area.width)),
         ])
-        .split(bands[8]);
+        .split(bands[7]);
         (cols[0], Some(cols[1]))
     } else {
-        (bands[8], None)
+        (bands[7], None)
     };
 
     render_header(agent, model.now_ms, bands[0], buf);
@@ -409,17 +408,9 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         crate::views::subagents::render(model, ui, bands[1], buf);
     }
     render_hud(&sm.hud, bands[2], buf);
-    // `answered` flips the card to its "sent — awaiting engine…" form: the
-    // pending gate clears only on the engine's follow-on event, and until
-    // then the card must not keep advertising decision keys that would
-    // double-submit (the latch in `handle_focused_gates`).
-    if let Some(proposal) = &sm.pending_scope_review {
-        let answered = ui.scope_answered.contains(&agent.meta.id);
-        render_scope_review(proposal, answered, bands[3], buf);
-    }
     if let Some(prompt) = &sm.pending_ask_user {
         let answered = ui.ask_answered.contains(&agent.meta.id);
-        render_ask_user(prompt, answered, bands[4], buf);
+        render_ask_user(prompt, answered, bands[3], buf);
     }
     if let Some(proposal) = &sm.pending_hunk_review {
         let answered = ui.hunk_answered.contains(&agent.meta.id);
@@ -427,19 +418,20 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             proposal,
             ui.hunk_marks.get(&agent.meta.id),
             answered,
-            bands[5],
+            bands[4],
             buf,
         );
     }
     if let Some(pending) = &ui.pending_dispatch {
-        crate::views::dispatch_card::render(pending, bands[6], buf);
+        crate::views::dispatch_card::render(pending, bands[5], buf);
     }
+    let animate = !ui.no_anim;
     match rail_area {
-        Some(rail) => crate::views::plan_rail::render(sm, rail, buf),
+        Some(rail) => crate::views::plan_rail::render(sm, model.now_ms, animate, rail, buf),
         None => {
             // Stacked: same two panels, same order, full width.
-            crate::views::plan_rail::render_plan(&sm.plan, bands[7], buf);
-            crate::views::plan_rail::render_verification(&sm.proof, bands[9], buf);
+            crate::views::plan_rail::render_plan(&sm.plan, model.now_ms, animate, bands[6], buf);
+            crate::views::plan_rail::render_verification(&sm.proof, bands[8], buf);
         }
     }
 

@@ -688,6 +688,15 @@ pub enum WorkspaceInput {
     /// Drop every not-yet-dispatched prompt (the deck confirms with a second
     /// `ctrl+d` before sending this).
     QueueClear,
+    /// `/clear`, as an event rather than a queued prompt: reset the session to
+    /// its seq-0 state NOW — even mid-turn, where the driver cancels the
+    /// in-flight turn first. The deck sends this instead of enqueueing the
+    /// text, because a reset that waits behind the backlog is not a reset (the
+    /// user watched `/clear` sit in the queue popup as "pending"). The driver
+    /// answers with [`Inbound::SessionReset`] once its own history is blanked;
+    /// the deck's only optimistic mirror is dropping its queue view, since a
+    /// session reset to seq-0 has no backlog by definition.
+    SessionClear,
     /// Pause / resume / stop / restart a specific agent.
     Control {
         agent: AgentId,

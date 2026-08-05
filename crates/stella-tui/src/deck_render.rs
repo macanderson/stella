@@ -141,7 +141,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     if ui.queue_open {
         guarded_overlay(buf, area, "queue", |b| {
-            render_queue_popup(model, ui, area, b)
+            views::queue_popup::render(model, ui, area, b)
         });
     }
     // The STATE overlay (`⌃s`): the expansion of the Session tab's one-row
@@ -194,6 +194,15 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
 
+    // The plan-review dialog: modal while the focused agent's scope gate is
+    // pending and unanswered. Above the cards (it is the surface that halts
+    // the session), below the notice and help.
+    if let Some(proposal) = views::scope_dialog::pending(model, ui) {
+        guarded_overlay(buf, area, "plan review", |b| {
+            views::scope_dialog::render(proposal, ui.scope_note.as_deref(), area, b)
+        });
+    }
+
     // Startup system notifications: a transient dialog over the deck, drawn
     // last but one so help — which the user asked for — still wins the top.
     // It is a no-op once dismissed or expired — asked here rather than left to
@@ -229,6 +238,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         // The routing card holds the user's words and owns every key until
         // they say where they go — it is checked first in `handle_deck_key`.
         || ui.pending_dispatch.is_some()
+        // The plan-review dialog answers on a single keypress — the caret
+        // must not sit in the composer while it is up (`gates.rs`).
+        || views::scope_dialog::pending(model, ui).is_some()
         // The INSTALLED AGENTS sub-modes (editor / create flow / version
         // picker) are modal text inputs while open.
         || ui.installed.mode != InstalledMode::Browse
@@ -311,72 +323,8 @@ fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
     Widget::render(tabs, area, buf);
 }
 
-/// The queue editor popup: every waiting prompt as a navigable list, newest
-/// last, with the edit/delete/clear legend (and the armed clear-all warning).
-fn render_queue_popup(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
-    let pending = model.queue.pending();
-    let w = area.width.min(64);
-    let h = ((pending + 4).min(14) as u16).min(area.height);
-    let popup = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
-    Clear.render(popup, buf);
-
-    let selected = ui.queue_sel.min(pending.saturating_sub(1));
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    if pending == 0 {
-        lines.push(Line::from(Span::styled("queue is empty", theme::muted())));
-    }
-    // Keep the selected row in view on long queues.
-    let visible_rows = (h as usize).saturating_sub(4).max(1);
-    let start = selected
-        .saturating_sub(visible_rows.saturating_sub(1) / 2)
-        .min(pending.saturating_sub(visible_rows));
-    for (i, item) in model
-        .queue
-        .items
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(visible_rows)
-    {
-        let is_sel = i == selected;
-        let marker = if is_sel { "▸ " } else { "  " };
-        let mut style = theme::body();
-        if is_sel {
-            style = style.add_modifier(Modifier::REVERSED);
-        }
-        let text: String = item
-            .text
-            .chars()
-            .take((w as usize).saturating_sub(6))
-            .collect();
-        lines.push(Line::from(vec![
-            Span::styled(format!("{marker}{}. ", i + 1), style.fg(theme::ACCENT)),
-            Span::styled(text, style),
-        ]));
-    }
-    lines.push(Line::default());
-    lines.push(if ui.queue_confirm_clear {
-        Line::from(Span::styled(
-            " press ctrl+d again to clear ALL queued prompts",
-            theme::body().fg(theme::WARN).add_modifier(Modifier::BOLD),
-        ))
-    } else {
-        Line::from(Span::styled(
-            " ↑/↓ select · enter edit · ctrl+x delete · ctrl+d ctrl+d clear · esc close",
-            theme::muted(),
-        ))
-    });
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(format!(" queue · {pending} pending "));
-    Paragraph::new(lines).block(block).render(popup, buf);
-}
+// The queue editor popup lives in `views::queue_popup` (split out beside the
+// other popup renderers under the god-file rule).
 
 /// The SESSIONS overlay (empty-prompt `←`, `/sessions`): every stella
 /// session on this machine from the cross-process registry, grouped by

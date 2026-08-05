@@ -472,7 +472,7 @@ fn queue_popup_lists_prompts_and_arms_the_clear_confirm() {
     ui.queue_sel = 1;
     let area = Rect::new(0, 0, 80, 20);
     let mut buf = Buffer::empty(area);
-    render_queue_popup(&model, &ui, area, &mut buf);
+    crate::views::queue_popup::render(&model, &ui, area, &mut buf);
     let text = buffer_text(&buf);
     assert!(text.contains("queue · 2 pending"), "title:\n{text}");
     assert!(text.contains("write the tests"), "row 1:\n{text}");
@@ -481,7 +481,7 @@ fn queue_popup_lists_prompts_and_arms_the_clear_confirm() {
     // Armed confirm swaps the legend for the warning.
     ui.queue_confirm_clear = true;
     let mut buf2 = Buffer::empty(area);
-    render_queue_popup(&model, &ui, area, &mut buf2);
+    crate::views::queue_popup::render(&model, &ui, area, &mut buf2);
     let warned = buffer_text(&buf2);
     assert!(
         warned.contains("press ctrl+d again"),
