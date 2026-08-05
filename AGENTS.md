@@ -58,17 +58,19 @@ A red gate is an automatic "not yet":
 
 ```bash
 make gate                # = no-scratch + action-pins + cargo-install-pins
-                         #   + license-allowlist-parity + shellcheck
-                         #   + invariants + doc-links + file-size
-                         #   + wire-schema + rustdoc -D warnings + fmt --check
+                         #   + license-allowlist-parity + repro-wiring
+                         #   + shellcheck + invariants + doc-links
+                         #   + command-docs + file-size + wire-schema
+                         #   + rustdoc -D warnings + fmt --check
                          #   + clippy -D warnings + test --workspace
 ```
 
-CI enforces the same thirteen steps split across two workflows:
+CI enforces the same fifteen steps split across two workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`
-and `doc-links`, and adds a release smoke build (thin LTO); `docs-guards.yml`
-runs those two, because they trigger on the `docs/**` and `*.md` paths `ci.yml`
-ignores.
+and `doc-links`, and adds a `Cargo.lock` sync check, the prompt-cache golden
+fixtures, `stella context validate`, and a release smoke build (thin LTO);
+`docs-guards.yml` runs those two plus a second run of `command-docs`, because
+all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores.
 
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
@@ -88,7 +90,7 @@ Three rungs, each a superset of the one above:
 
 | Target | Runs | Honours `CARGO_SCOPE` |
 | --- | --- | --- |
-| `make guards` | global guards + `fmt --check` — nothing compiles | — |
+| `make guards` | every global guard + `fmt --check` — nothing compiles beyond `wire-schema`'s two exporters | — |
 | `make check` | ...plus clippy | clippy |
 | `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
 
@@ -278,6 +280,34 @@ loop, and the `/pipeline` deck toggle.
 
 ---
 
+## Nothing left behind — every finding becomes a fix or a GitHub issue
+
+The standing rule for every session, human or agent, and the companion to the
+witness-test contract above: work is not finished while anything you noticed
+lives only in your head, a chat transcript, or a worktree that is about to be
+deleted.
+
+- **Fix what you can inside the change you are already making.** A bug you can
+  fix safely within your current scope gets fixed, not filed.
+- **Everything else becomes a GitHub issue before you finish** — a bug you saw
+  and did not fix, a defect you worked around, a missing test, an idea worth
+  keeping, dead or unwired code you noticed, and the logical next step of the
+  work you just completed. If your change ships scaffolding that something else
+  must later wire up, file the issue for that wiring in the same breath as the
+  PR — unwired code with no tracking issue is exactly the failure mode this
+  rule exists to prevent.
+- **Write every issue as a handoff.** Assume the reader is a fresh agent with
+  none of your session's context: state the problem, the files involved (paths,
+  not descriptions), how to reproduce or verify, the constraints you already
+  discovered (gates, invariants, related PRs and issues), and what "done" looks
+  like. A one-line issue that needs your memory to interpret is a note to
+  yourself, not a handoff.
+- **Search before filing** (`gh issue list`, `gh search issues`) and link
+  related issues instead of duplicating them. Reference the issues you filed
+  from your PR description so the residue of the work is auditable.
+
+---
+
 ## Workspace layout — where a change goes
 
 Twenty crates, every one under the `crates/` directory (`crates/stella-core`,
@@ -420,7 +450,7 @@ the identity that scopes it.
 
 ## Glossary — the identifiers that look alike
 
-Five different ids in this workspace can all be read as "one thing the agent
+Six different ids in this workspace can all be read as "one thing the agent
 did", and they are genuinely distinct entities owned by different crates. The
 join keys are correct today (`crates/stella-observatory/src/db.rs` joins both
 `execution_id` and `run_id`), so this is a naming hazard, not a bug — but read

@@ -1,0 +1,50 @@
+name: Issue triage
+
+# Every issue starts life as a request in `triage`. Converting it to a type is
+# just adding the type label — `gh issue edit N --add-label bug` or one click in
+# the sidebar — and this workflow clears `triage` in response.
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  issues: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  ISSUE: ${{ github.event.issue.number }}
+  REPO: ${{ github.repository }}
+  # Space-separated; adding any of these counts as typing the issue.
+  TYPE_LABELS: bug feature epic documentation question
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: New issues start in triage
+        if: github.event.action == 'opened'
+        run: |
+          # Issues opened outside the template (gh issue create, the API) carry
+          # no labels at all — those are exactly the ones this catches.
+          typed=$(jq -r --arg types "$TYPE_LABELS" \
+            '[.issue.labels[].name] | map(select(. as $l | $types | split(" ") | index($l))) | length' \
+            "$GITHUB_EVENT_PATH")
+          if [ "$typed" -gt 0 ]; then
+            echo "already typed, skipping triage"
+          else
+            gh issue edit "$ISSUE" --repo "$REPO" --add-label triage
+          fi
+
+      - name: Typing an issue clears triage
+        if: github.event.action == 'labeled'
+        run: |
+          added=$(jq -r '.label.name' "$GITHUB_EVENT_PATH")
+          case " $TYPE_LABELS " in
+            *" $added "*)
+              gh issue edit "$ISSUE" --repo "$REPO" --remove-label triage
+              ;;
+            *)
+              echo "'$added' is not a type label, nothing to do"
+              ;;
+          esac
