@@ -793,6 +793,97 @@ pub fn model_verdict_evidence(verdict: &Verdict) -> VerdictEvidence {
 /// is reading an excerpt rather than the whole change.
 const VERIFIER_DIFF_BUDGET_CHARS: usize = 40_000;
 
+/// A diff with the authored witness's own file chunks removed, plus the
+/// paths that were removed — see [`strip_witness_hunks`].
+pub struct StrippedDiff {
+    pub diff: String,
+    pub omitted: Vec<String>,
+}
+
+/// Remove the authored witness's file chunks from a diff bound for a
+/// verifier-facing prompt.
+///
+/// The witness artifact is grafted into the candidate tree before
+/// verification, so the working-tree diff carries the verifier's OWN test
+/// under the prompt's "worker-authored data" heading — misattributed, and
+/// billed against the diff budget on every escalated verdict and guidance
+/// call. What the verifier needs to know about the witness it already gets
+/// from the trusted evidence summary (`witness_tamper_check`,
+/// `witness_tautological`, the oracle trace); the test's text says nothing
+/// about the change under review.
+///
+/// Paths are matched the way [`coverage::changed_lines`] excludes them: each
+/// chunk's first `+++ ` header, `b/`-stripped, compared exactly. The omitted
+/// paths are RETURNED, not written into the diff — the caller names them in
+/// the evidence summary, which is the trusted zone; an in-band note would sit
+/// in the region the verifier is told to treat as forgeable worker data.
+pub fn strip_witness_hunks(diff: &str, witness_paths: &[String]) -> StrippedDiff {
+    if witness_paths.is_empty() || diff.is_empty() {
+        return StrippedDiff {
+            diff: diff.to_string(),
+            omitted: Vec::new(),
+        };
+    }
+    let mut out = String::with_capacity(diff.len());
+    let mut omitted: Vec<String> = Vec::new();
+    let mut chunk = String::new();
+    let mut chunk_path: Option<String> = None;
+
+    fn flush(
+        out: &mut String,
+        omitted: &mut Vec<String>,
+        witness_paths: &[String],
+        chunk: &mut String,
+        chunk_path: &mut Option<String>,
+    ) {
+        if chunk.is_empty() {
+            return;
+        }
+        let dropped = chunk_path
+            .as_deref()
+            .is_some_and(|path| witness_paths.iter().any(|w| w == path));
+        if dropped {
+            omitted.push(chunk_path.take().expect("dropped chunks carry a path"));
+        } else {
+            out.push_str(chunk);
+        }
+        chunk.clear();
+        *chunk_path = None;
+    }
+
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            flush(
+                &mut out,
+                &mut omitted,
+                witness_paths,
+                &mut chunk,
+                &mut chunk_path,
+            );
+        }
+        // First `+++ ` per chunk only: the real new-file header lands right
+        // after `--- `, before any content line can start with `+++ `.
+        if chunk_path.is_none()
+            && let Some(path) = line.strip_prefix("+++ ")
+        {
+            let path = path.strip_prefix("b/").unwrap_or(path).trim();
+            if path != "/dev/null" {
+                chunk_path = Some(path.to_string());
+            }
+        }
+        chunk.push_str(line);
+        chunk.push('\n');
+    }
+    flush(
+        &mut out,
+        &mut omitted,
+        witness_paths,
+        &mut chunk,
+        &mut chunk_path,
+    );
+    StrippedDiff { diff: out, omitted }
+}
+
 /// Clamp a worker-authored diff to `VERIFIER_DIFF_BUDGET_CHARS` for prompt
 /// interpolation: keep the head and tail, elide the middle, and say so where
 /// the cut was made. Char-based, not byte-based, so a multi-byte diff can
