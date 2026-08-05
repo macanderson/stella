@@ -77,11 +77,21 @@ impl Tool for CiStatus {
             };
         }
 
+        // A pr target's head, resolved ONCE per execute (#1526). Before
+        // this, the resolution rode inside the composed sub-queries as
+        // `$(gh pr view …)` — once in the failure-log scope, once in its
+        // SHA filter, and once per POLL ITERATION inside the wait loop,
+        // each a fresh subprocess and forge round trip.
+        let pr_head = match input.get("pr").and_then(|v| v.as_u64()) {
+            Some(pr) => resolve_pr_head(pr, root, timeout_secs).await,
+            None => None,
+        };
+
         // The `gh run list` scope shared by the wait-loop and the
         // failure-log attach below, so both report on the SAME target the
         // top-level query resolved — an unscoped sub-query used to watch or
         // attach logs from an UNRELATED branch's most-recent run.
-        let scope = gh_run_scope(input);
+        let scope = gh_run_scope(input, pr_head.as_ref());
 
         // Optionally block until EVERY run for THIS target has completed
         // (not just the newest-created one — #1466), then re-list.
@@ -94,10 +104,13 @@ impl Tool for CiStatus {
 
         // Attach failure logs for THIS target's most recent failed run at
         // its CURRENT head commit, if any (#1470).
-        let (_, failed_logs) =
-            exec::run_github(&failure_log_command(&scope, input), root, timeout_secs)
-                .await
-                .unwrap_or((0, String::new()));
+        let (_, failed_logs) = exec::run_github(
+            &failure_log_command(&scope, input, pr_head.as_ref()),
+            root,
+            timeout_secs,
+        )
+        .await
+        .unwrap_or((0, String::new()));
 
         ToolOutput::Ok {
             content: if failed_logs.trim().is_empty() {
@@ -109,10 +122,10 @@ impl Tool for CiStatus {
     }
 
     // A `bash -c` composer joins the `command.started` fence (#804). The
-    // gate sees the primary query line; the wait-watch and failure-log
-    // sub-queries are same-target derivatives of the same input
-    // ([`gh_run_scope`]) riding the same approval, and the `command -v gh`
-    // probe is a constant.
+    // gate sees the primary query line; the pr-head resolution, wait-watch
+    // and failure-log sub-queries are same-target derivatives of the same
+    // input ([`resolve_pr_head`], [`gh_run_scope`]) riding the same
+    // approval, and the `command -v gh` probe is a constant.
     async fn command_for_gate(&self, input: &Value, _root: &std::path::Path) -> Option<String> {
         Some(primary_command(input))
     }
@@ -144,14 +157,57 @@ fn primary_command(input: &Value) -> String {
     }
 }
 
+/// A `pr` target's head, resolved once per `execute` (#1526): the branch
+/// name scopes the `gh run list` sub-queries, the head OID filters the
+/// failure-log attach. `None` when the lookup fails — callers then fall
+/// back to embedding the resolution as a shell substitution, preserving
+/// the pre-#1526 shape (and its failure behavior) exactly.
+struct PrHead {
+    branch: String,
+    oid: String,
+}
+
+/// One `gh pr view` for both fields the sub-queries need. Any failure —
+/// nonzero exit, unparseable payload, missing field — degrades to `None`
+/// rather than erroring the call: the composed fallback expressions carry
+/// the same tolerance today, and a status report should not die on the
+/// optional half of its answer.
+async fn resolve_pr_head(pr: u64, root: &std::path::Path, timeout_secs: u64) -> Option<PrHead> {
+    let cmd = format!("gh pr view {pr} --json headRefName,headRefOid");
+    let (code, out) = exec::run_github(&cmd, root, timeout_secs).await.ok()?;
+    if code != 0 {
+        return None;
+    }
+    let payload: Value = serde_json::from_str(out.trim()).ok()?;
+    let field = |name: &str| {
+        payload
+            .get(name)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    Some(PrHead {
+        branch: field("headRefName")?,
+        oid: field("headRefOid")?,
+    })
+}
+
 /// The `gh run list` filter flag that scopes a sub-query to the same target
 /// (`--branch` / `--commit`, or a PR's resolved head branch) the top-level
 /// `ci_status` query used — so the wait-loop and failure-log sub-queries can
 /// never report on an unrelated branch's runs.
-fn gh_run_scope(input: &Value) -> String {
+fn gh_run_scope(input: &Value, pr_head: Option<&PrHead>) -> String {
     if let Some(pr) = input.get("pr").and_then(|v| v.as_u64()) {
-        // Resolve the PR's head branch at run time (gh has no run-list-by-PR).
-        format!("--branch \"$(gh pr view {pr} --json headRefName --jq .headRefName 2>/dev/null)\"")
+        match pr_head {
+            // Resolved once in `execute`, embedded as a literal — the wait
+            // loop re-runs its scope every poll, so an embedded substitution
+            // here was a forge round trip per iteration (#1526).
+            Some(head) => format!("--branch {}", shell_quote(&head.branch)),
+            None => format!(
+                "--branch \"$(gh pr view {pr} --json headRefName --jq .headRefName 2>/dev/null)\""
+            ),
+        }
     } else if let Some(commit) = input.get("commit").and_then(|v| v.as_str()) {
         format!("--commit {}", shell_quote(commit))
     } else {
@@ -197,18 +253,20 @@ fn wait_command(scope: &str) -> String {
 /// that SHA, so no extra filter is needed.
 ///
 /// A `pr` target's head can move independently of `gh run list`'s creation
-/// ordering, so it is read directly off the PR (`headRefOid`, resolved once,
-/// same as `gh_run_scope`'s `headRefName` lookup for that target). A branch
-/// target has no single authoritative "current" SHA short of another `gh`
-/// round trip, so it falls back to the newest run's own `headSha` field —
-/// `gh run list` already returns it for free.
-fn head_sha_expr(input: &Value, scope: &str) -> Option<String> {
+/// ordering, so it is read directly off the PR (`headRefOid`, resolved once
+/// per execute — the literal arm below — with the embedded lookup kept only
+/// as the resolution-failed fallback, #1526). A branch target has no single
+/// authoritative "current" SHA short of another `gh` round trip, so it
+/// falls back to the newest run's own `headSha` field — `gh run list`
+/// already returns it for free.
+fn head_sha_expr(input: &Value, scope: &str, pr_head: Option<&PrHead>) -> Option<String> {
     if input.get("commit").and_then(|v| v.as_str()).is_some() {
         None
     } else if let Some(pr) = input.get("pr").and_then(|v| v.as_u64()) {
-        Some(format!(
-            "$(gh pr view {pr} --json headRefOid --jq .headRefOid 2>/dev/null)"
-        ))
+        Some(match pr_head {
+            Some(head) => shell_quote(&head.oid),
+            None => format!("$(gh pr view {pr} --json headRefOid --jq .headRefOid 2>/dev/null)"),
+        })
     } else {
         Some(format!(
             "$(gh run list {scope} --limit 1 --json headSha --jq '.[0].headSha' 2>/dev/null)"
@@ -220,8 +278,8 @@ fn head_sha_expr(input: &Value, scope: &str) -> Option<String> {
 /// run and tail its logs, scoped to the target's current head commit
 /// (#1470) — so a stale run from a since-superseded commit is never
 /// attached beneath a fresh (possibly still-pending) status.
-fn failure_log_command(scope: &str, input: &Value) -> String {
-    match head_sha_expr(input, scope) {
+fn failure_log_command(scope: &str, input: &Value, pr_head: Option<&PrHead>) -> String {
+    match head_sha_expr(input, scope, pr_head) {
         Some(sha_expr) => format!(
             "sha={sha_expr}; \
              id=$(gh run list {scope} --limit 15 --json databaseId,conclusion,headSha \
@@ -254,21 +312,71 @@ mod tests {
     fn sub_queries_are_scoped_to_the_requested_target() {
         // A branch request scopes by that branch…
         assert_eq!(
-            gh_run_scope(&serde_json::json!({ "branch": "feat/x" })),
+            gh_run_scope(&serde_json::json!({ "branch": "feat/x" }), None),
             "--branch 'feat/x'"
         );
         // …a commit request by that commit…
         assert_eq!(
-            gh_run_scope(&serde_json::json!({ "commit": "abc123" })),
+            gh_run_scope(&serde_json::json!({ "commit": "abc123" }), None),
             "--commit 'abc123'"
         );
-        // …a PR by its resolved head branch (never an unscoped list)…
+        // …a PR by its resolved head branch (never an unscoped list) — the
+        // embedded lookup being the resolution-failed FALLBACK since #1526…
         assert!(
-            gh_run_scope(&serde_json::json!({ "pr": 42 })).contains("gh pr view 42"),
+            gh_run_scope(&serde_json::json!({ "pr": 42 }), None).contains("gh pr view 42"),
             "PR scope must resolve the head branch"
         );
         // …and an empty request defaults to main, still scoped (not global).
-        assert_eq!(gh_run_scope(&serde_json::json!({})), "--branch 'main'");
+        assert_eq!(
+            gh_run_scope(&serde_json::json!({}), None),
+            "--branch 'main'"
+        );
+    }
+
+    // --- #1526: a pr target's head is resolved once per execute; the ---
+    // --- composed sub-queries embed the RESULT, never the lookup. ----------
+
+    #[test]
+    fn a_resolved_pr_head_leaves_no_embedded_pr_view_round_trips() {
+        let input = serde_json::json!({ "pr": 42, "wait": true });
+        let head = PrHead {
+            branch: "feat/x".into(),
+            oid: "abc123def".into(),
+        };
+        let scope = gh_run_scope(&input, Some(&head));
+        // The scope is the literal branch, exactly as a branch target's is —
+        // so the wait loop, which re-runs its scope EVERY poll iteration, no
+        // longer pays a forge round trip per poll.
+        assert_eq!(scope, "--branch 'feat/x'");
+        let wait = wait_command(&scope);
+        let logs = failure_log_command(&scope, &input, Some(&head));
+        assert!(
+            !wait.contains("gh pr view") && !logs.contains("gh pr view"),
+            "no composed sub-query may re-resolve the PR head:\n{wait}\n{logs}"
+        );
+        // The failure-log SHA filter uses the resolved OID as a literal, and
+        // stays conjoined with the failure selection (#1470's semantics).
+        assert!(logs.contains("sha='abc123def'"), "{logs}");
+        assert!(
+            logs.contains(r#".conclusion=="failure" and .headSha==$sha"#),
+            "{logs}"
+        );
+    }
+
+    /// A shell-metacharacter branch name or OID reaches the composed line
+    /// through the crate's single-quote escaper, exactly like every other
+    /// ref — resolution must not open an injection hole the embedded form
+    /// never had.
+    #[test]
+    fn a_resolved_pr_head_is_shell_quoted_into_the_composed_commands() {
+        let input = serde_json::json!({ "pr": 7 });
+        let head = PrHead {
+            branch: "a'b".into(),
+            oid: "o'id".into(),
+        };
+        assert_eq!(gh_run_scope(&input, Some(&head)), r"--branch 'a'\''b'");
+        let logs = failure_log_command(&gh_run_scope(&input, Some(&head)), &input, Some(&head));
+        assert!(logs.contains(r"sha='o'\''id'"), "{logs}");
     }
 
     #[test]
@@ -339,8 +447,8 @@ mod tests {
     #[test]
     fn failure_log_command_filters_by_head_sha_for_a_branch_target() {
         let input = serde_json::json!({ "branch": "feat/x" });
-        let scope = gh_run_scope(&input);
-        let cmd = failure_log_command(&scope, &input);
+        let scope = gh_run_scope(&input, None);
+        let cmd = failure_log_command(&scope, &input, None);
         // The pre-fix bug: the failure query had no SHA filter at all, so it
         // could attach logs from a since-superseded commit's run.
         assert!(cmd.contains("headSha"), "must select on headSha: {cmd}");
@@ -352,9 +460,11 @@ mod tests {
 
     #[test]
     fn failure_log_command_resolves_pr_head_via_head_ref_oid() {
+        // With no resolved head (the #1526 fallback), the embedded lookup
+        // still reads the SHA off the PR itself, exactly as before.
         let input = serde_json::json!({ "pr": 42 });
-        let scope = gh_run_scope(&input);
-        let cmd = failure_log_command(&scope, &input);
+        let scope = gh_run_scope(&input, None);
+        let cmd = failure_log_command(&scope, &input, None);
         assert!(
             cmd.contains("gh pr view 42 --json headRefOid"),
             "a PR target's head SHA must be read off the PR itself: {cmd}"
@@ -367,9 +477,9 @@ mod tests {
         // that commit — no extra client-side filter is needed, since there
         // is nothing else for a "current head" to mean here.
         let input = serde_json::json!({ "commit": "abc123" });
-        let scope = gh_run_scope(&input);
-        let cmd = failure_log_command(&scope, &input);
+        let scope = gh_run_scope(&input, None);
+        let cmd = failure_log_command(&scope, &input, None);
         assert!(!cmd.contains("headSha"), "{cmd}");
-        assert_eq!(head_sha_expr(&input, &scope), None);
+        assert_eq!(head_sha_expr(&input, &scope, None), None);
     }
 }
