@@ -111,7 +111,9 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         Ok(()) => recorder.finish(SessionOutcome::Completed),
         Err(_) => recorder.finish(SessionOutcome::Aborted),
     }
-    result
+    // The arena scores from its journal, not the process exit, so the typed
+    // exit-code split deliberately stops here: any failure stays exit 1.
+    result.map_err(|failure| failure.message().to_string())
 }
 
 /// Persistent agent memory across episodes: the workspace `.stella` store is

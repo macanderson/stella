@@ -139,9 +139,12 @@ impl From<TurnOutcome> for TurnOutcomeWire {
             TurnOutcome::Completed { text, cost_usd } => {
                 TurnOutcomeWire::Completed { text, cost_usd }
             }
-            TurnOutcome::Aborted { reason, cost_usd } => {
-                TurnOutcomeWire::Aborted { reason, cost_usd }
-            }
+            // The wire frame deliberately does not carry `kind` yet — a
+            // serve-surface field is a spec + conformance change, tracked
+            // separately. The reason string still travels.
+            TurnOutcome::Aborted {
+                reason, cost_usd, ..
+            } => TurnOutcomeWire::Aborted { reason, cost_usd },
         }
     }
 }
@@ -351,6 +354,7 @@ mod tests {
     fn aborted_turn_wire_retains_settled_cost() {
         let wire = TurnOutcomeWire::from(TurnOutcome::Aborted {
             reason: "budget exceeded".into(),
+            kind: stella_core::AbortKind::DeliberateStop,
             cost_usd: 1.25,
         });
 

@@ -4625,7 +4625,7 @@ async fn run_lead_pipeline_turn(
             PipelineStatus::VerificationFailed { verdict } => {
                 Err(format!("verification failed: {}", verdict.summary))
             }
-            PipelineStatus::Aborted { reason } => Err(reason),
+            PipelineStatus::Aborted { reason, .. } => Err(reason),
         },
         Err(e) => Err(e.to_string()),
     }

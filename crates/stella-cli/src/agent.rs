@@ -131,7 +131,7 @@ pub async fn run_one_shot(
     use_pipeline: bool,
     test_command: Option<&str>,
     keep_witness: bool,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
@@ -236,7 +236,7 @@ async fn run_pipeline_one_shot(
     format: OutputFormat,
     test_command: Option<&str>,
     keep_witness: bool,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let registry_options = registry_options(cfg);
@@ -678,7 +678,7 @@ async fn run_pipeline_one_shot(
                 };
                 summary.emit();
             }
-            Err(e.to_string())
+            Err(crate::failure::CliFailure::error(e.to_string()))
         }
     }
 }
@@ -1134,10 +1134,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
 /// same way as reflection so trivial conversational turns write nothing.
 /// `pub(crate)`: the Command Deck's turn driver records through the same
 /// helper.
-pub(crate) async fn record_turn_episode(
+pub(crate) async fn record_turn_episode<E>(
     memory: &Option<SessionMemory>,
     prompt: &str,
-    result: &Result<(), String>,
+    result: &Result<(), E>,
     registry: &ToolRegistry,
     files_before: usize,
     started_unix: i64,
@@ -1174,13 +1174,13 @@ pub(crate) async fn record_turn_episode(
 /// is excluded (`should_reflect_on`, issue #373 item 7). The gate reads only
 /// this turn's message slice (`turn_start..`) so a conversational turn never
 /// spends a model call.
-async fn reflect_on_interactive_turn(
+async fn reflect_on_interactive_turn<E: std::fmt::Display>(
     provider: &dyn Provider,
     cfg: &Config,
     memory: &mut Option<SessionMemory>,
     messages: &[CompletionMessage],
     turn_start: usize,
-    result: &Result<(), String>,
+    result: &Result<(), E>,
     budget: &mut BudgetGuard,
 ) {
     if should_reflect_on(result)
@@ -2064,7 +2064,7 @@ async fn run_turn(
     // reflects with the same memory afterwards, and a reflection that cannot
     // name its execution files an id-less row (NULL `self_rating`).
     session_memory: Option<&mut SessionMemory>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
@@ -2180,9 +2180,9 @@ async fn run_turn(
             TurnOutcome::Completed { text, cost_usd } => {
                 ("completed", Some(text.clone()), Some(*cost_usd), None)
             }
-            TurnOutcome::Aborted { reason, cost_usd } => {
-                ("aborted", None, Some(*cost_usd), Some(reason.clone()))
-            }
+            TurnOutcome::Aborted {
+                reason, cost_usd, ..
+            } => ("aborted", None, Some(*cost_usd), Some(reason.clone())),
         };
         let summary = RawRunSummary {
             schema_version: crate::SUMMARY_SCHEMA_VERSION,
@@ -2216,7 +2216,9 @@ async fn run_turn(
             }
             Ok(())
         }
-        TurnOutcome::Aborted { reason, .. } => Err(reason),
+        TurnOutcome::Aborted { reason, kind, .. } => {
+            Err(crate::failure::CliFailure::from_abort(reason, kind))
+        }
     }
 }
 

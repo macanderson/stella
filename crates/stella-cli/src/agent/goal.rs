@@ -14,7 +14,7 @@ pub(crate) async fn run_raw_one_shot(
     prompt: &str,
     budget_limit: Option<f64>,
     format: OutputFormat,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     let provider = build_provider(cfg)?;
     let registry_options = registry_options(cfg);
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
@@ -769,7 +769,7 @@ async fn run_goal_pipeline_turn(
                             )));
                             break;
                         }
-                        PipelineStatus::Aborted { reason } => {
+                        PipelineStatus::Aborted { reason, .. } => {
                             result = Some(Err(format!(
                                 "goal not met: working round aborted: {reason}"
                             )));

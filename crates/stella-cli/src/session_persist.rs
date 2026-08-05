@@ -991,6 +991,7 @@ mod tests {
             total_cost_usd: 0.25,
             calibration_model: None,
             loop_steered: false,
+            loop_steered_pattern: Vec::new(),
             transcript_rewrites: 0,
         };
         (checkpoint.to_json().expect("encode"), history)

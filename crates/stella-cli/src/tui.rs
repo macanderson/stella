@@ -316,7 +316,7 @@ pub fn recap_panel(
         PipelineStatus::VerificationFailed { verdict } => {
             format!("✗ verification failed — {}", verdict.summary)
         }
-        PipelineStatus::Aborted { reason } => format!("⚠ aborted — {reason}"),
+        PipelineStatus::Aborted { reason, .. } => format!("⚠ aborted — {reason}"),
     };
 
     let mut created = 0usize;
