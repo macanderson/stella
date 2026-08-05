@@ -343,8 +343,8 @@ JSON
 
 queue_numbers() { # queue_numbers <limit>
   env PATH="$STUB_BIN:$PATH" GH_FIX_QUEUE="$QFIX" FULLAUTO_STATE_DIR="$ROOT/qr" \
-    "$FA" queue --json --limit "$1" \
-    | python3 -c 'import json,sys;print(" ".join(str(i["number"]) for i in json.load(sys.stdin)))'
+    "$FA" queue --format json --limit "$1" \
+    | python3 -c 'import json,sys;print(" ".join(str(i["number"]) for i in json.load(sys.stdin)["rows"]))'
 }
 
 # 104 is oldest of all yet ranks last, and 105 never appears: rank beats age
