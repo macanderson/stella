@@ -50,6 +50,34 @@ pub(crate) struct Cli {
     pub(crate) command: Option<Command>,
 }
 
+impl Cli {
+    /// The output format this invocation promised its caller.
+    ///
+    /// `--output-format` stopped being global in #1493: 34 of 36 subcommands
+    /// never consulted it, which made the flag a promise the CLI mostly broke.
+    /// It now exists only on the commands that keep it — but three
+    /// process-wide decisions in `main` still need one answer for ANY
+    /// command: whether interactive credential prompts are forbidden, whether
+    /// the env-file announcement may print, and whether a failure gets a
+    /// machine-readable error envelope on stdout.
+    ///
+    /// `Run` and `Fleet` answer with their declared flag. `Arena` has no flag
+    /// to consult because its contract IS stream-json (the runner is the only
+    /// reader), so it answers that — which also closes the hole where an
+    /// arena run could block on a masked credential prompt no runner would
+    /// ever see. Every other command renders human text; their machine
+    /// surfaces are their own `--format` flags.
+    pub(crate) fn output_format(&self) -> OutputFormat {
+        match &self.command {
+            Some(Command::Run { output_format, .. } | Command::Fleet { output_format, .. }) => {
+                *output_format
+            }
+            Some(Command::Arena { .. }) => OutputFormat::StreamJson,
+            _ => OutputFormat::Text,
+        }
+    }
+}
+
 // The two paragraphs below are `//` and not `///` deliberately. clap derive
 // lifts a flattened `Args` struct's doc comment into the *parent's*
 // `long_about` when the parent sets none, which is exactly how these notes —
@@ -73,7 +101,7 @@ pub(crate) struct Cli {
 // in src/tests.rs enforces uniqueness (it is why `connect linear` pastes
 // a key via `--paste-key`, not `--api-key`).
 /// Session-wide flags shared by every subcommand — model routing,
-/// credentials, output shape, spend limit, UI toggles.
+/// credentials, spend limit, UI toggles.
 #[derive(clap::Args)]
 // Heading rather than clap's default "Options": these are the flags that hold
 // for the whole session and are accepted on either side of the subcommand
@@ -106,16 +134,6 @@ pub(crate) struct GlobalArgs {
     /// other provider, where it routes through a proxy.
     #[arg(long, global = true, env = "STELLA_BASE_URL", hide_short_help = true)]
     pub(crate) base_url: Option<String>,
-
-    /// Output shape: text, json, or stream-json
-    #[arg(
-        long,
-        global = true,
-        env = "STELLA_OUTPUT_FORMAT",
-        value_enum,
-        default_value = "text"
-    )]
-    pub(crate) output_format: OutputFormat,
 
     /// Hard USD spend limit for the whole session
     ///
@@ -295,6 +313,17 @@ pub(crate) enum Command {
         /// Pass this to promote it to a real test you can commit.
         #[arg(long)]
         keep_witness: bool,
+
+        /// Output shape: text, json, or stream-json
+        ///
+        /// Declared here rather than globally because this is a promise about
+        /// what reaches stdout, and only the commands that keep it may make it
+        /// (#1493). `json` prints one summary object; `stream-json` prints one
+        /// JSON line per AgentEvent. Both also turn every failure into a
+        /// machine-readable error envelope and refuse interactive credential
+        /// prompts.
+        #[arg(long, env = "STELLA_OUTPUT_FORMAT", value_enum, default_value = "text")]
+        output_format: OutputFormat,
     },
 
     /// arena-bench adapter, invoked by the benchmark runner
@@ -304,6 +333,9 @@ pub(crate) enum Command {
     /// with the protocol's replay oracles. Speaks the adapter contract
     /// (--task-dir/--journal/--state-dir/--resume); see
     /// <https://github.com/macanderson/arena-bench>.
+    ///
+    /// Output is fixed stream-json — the runner is the only intended reader,
+    /// so there is no --output-format here to promise otherwise (#1493).
     Arena {
         /// The episode workspace; the prompt is read from TASK.md inside it.
         #[arg(long)]
@@ -483,6 +515,15 @@ pub(crate) enum Command {
         /// a hung worker on a piped or CI run. Unset = unbounded.
         #[arg(long, value_name = "SECS")]
         task_timeout: Option<u64>,
+
+        /// Output shape: text, json, or stream-json
+        ///
+        /// Anything but `text` keeps the live grid off and the run headless,
+        /// with machine-readable error envelopes and no interactive credential
+        /// prompts. Declared per-command, not globally, so it exists exactly
+        /// where it is honoured (#1493).
+        #[arg(long, env = "STELLA_OUTPUT_FORMAT", value_enum, default_value = "text")]
+        output_format: OutputFormat,
     },
 
     /// Query the code graph — definitions, references, callers, imports

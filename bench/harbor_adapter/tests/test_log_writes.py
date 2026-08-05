@@ -138,4 +138,5 @@ def test_run_instruction_binds_after_double_dash(monkeypatch: pytest.MonkeyPatch
     cmd = agent._build_command("- start with a dash")
 
     run_at = cmd.index("run")
-    assert cmd[run_at:] == ["run", "--", "- start with a dash"]
+    tail = ["run", "--output-format", "stream-json", "--", "- start with a dash"]
+    assert cmd[run_at:] == tail

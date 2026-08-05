@@ -101,7 +101,7 @@ fn trusted_engine_config_override() -> Result<Option<crate::settings::AgentEngin
 /// should pass `false` and get a clean `NotFound` instead of hanging on a read
 /// from a stdin that isn't there." Nothing honoured it. Every `--model
 /// provider/slug` path passed `true` unconditionally, so
-/// `stella --model anthropic/… --output-format json run '…'` launched from an
+/// `stella --model anthropic/… run --output-format json '…'` launched from an
 /// attached terminal with no key stopped dead on a password prompt while the
 /// caller waited on a JSON object that could never arrive — the machine
 /// interface deadlocked on a human one.

@@ -60,7 +60,7 @@ A pass also names the model and where it came from, which is half of what people
 
 Diagnosis never writes. The check opens the database immutably — no locks, no `-shm`, zero bytes written — and escalates to a read-write open only when a first verdict already looks bad and a `-wal` sibling exists. Being asked a question is not a reason to create a `.stella/` that wasn't there.
 
-`stella doctor` runs *before* stella loads your configuration, on purpose: a workspace whose store is corrupt has to stay diagnosable without a working model config. One consequence is that `--output-format` does not apply to it — there is no JSON form of this output.
+`stella doctor` runs *before* stella loads your configuration, on purpose: a workspace whose store is corrupt has to stay diagnosable without a working model config. One consequence is that there is no JSON form of this output — `--output-format` is a flag of `run` and `fleet`, and `doctor` does not take it.
 
 ## Flags
 

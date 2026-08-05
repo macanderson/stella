@@ -52,7 +52,7 @@ The exit code is `1`, the same as any other failure. If you need to distinguish
 *budget stopped this* from *this failed*, read the JSON:
 
 ```bash
-stella --budget 2.00 --output-format json run "…" | jq '{status, cost_usd, verdict}'
+stella --budget 2.00 run --output-format json "…" | jq '{status, cost_usd, verdict}'
 ```
 
 <Callout type="info">

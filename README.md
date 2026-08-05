@@ -454,11 +454,14 @@ stella inspect   # the exact context a past model call was sent, rebuilt from
 ### Global flags
 
 `--model provider/id` · `--api-key` · `--base-url` · `--budget <usd>` ·
-`--output-format text|json|stream-json` · `--accessible` · `--plain` ·
-`--no-anim` (also as `STELLA_MODEL`, `STELLA_BASE_URL`, `STELLA_BUDGET`,
-`STELLA_OUTPUT_FORMAT`, `STELLA_ACCESSIBLE`, `STELLA_PLAIN`, `STELLA_NO_ANIM`). All of them are registered with every
-subcommand, so they parse before _or_ after the subcommand token. The `json` /
-`stream-json` formats are for headless one-shot `stella run`; interactive
+`--accessible` · `--plain` · `--no-anim` (also as `STELLA_MODEL`,
+`STELLA_BASE_URL`, `STELLA_BUDGET`, `STELLA_ACCESSIBLE`, `STELLA_PLAIN`,
+`STELLA_NO_ANIM`). All of them are registered with every subcommand, so they
+parse before _or_ after the subcommand token.
+`--output-format text|json|stream-json` (env `STELLA_OUTPUT_FORMAT`) is
+deliberately **not** global: it is declared by the commands that honor it —
+`stella run` and `stella fleet` — and goes after the subcommand token
+(`stella run "…" --output-format json`); interactive
 `chat` / `goal` / `monitor` modes render human-readable output. `stella run`
 uses the staged pipeline by default; `--no-pipeline` falls back to the raw
 step-loop. In pipeline mode, `--test-command <cmd>` arms deterministic

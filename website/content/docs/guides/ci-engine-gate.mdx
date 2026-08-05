@@ -112,8 +112,8 @@ for e in stella claude; do rm -rf "work/$e"; git worktree add -f "work/$e" HEAD;
 
 ```bash
 # Stella — one JSON object on stdout.
-( cd work/stella && stella --budget 1.00 --output-format json \
-  run "$(cat "../../$task/TASK.md")" ) > work/stella/stella.json
+( cd work/stella && stella --budget 1.00 \
+  run --output-format json "$(cat "../../$task/TASK.md")" ) > work/stella/stella.json
 
 # Claude Code — a JSON *array*; the result is the last element.
 ( cd work/claude && claude -p --output-format json --permission-mode acceptEdits \

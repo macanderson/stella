@@ -27,7 +27,7 @@ Usage examples
 
 Stella is invoked one-shot as::
 
-    <stella-bin> --model <model> --budget <usd> --output-format json run "<problem>"
+    <stella-bin> --model <model> --budget <usd> run --output-format json "<problem>"
 
 inside a pristine checkout of the target repo at ``base_commit``. The model's
 patch is collected as the ``git diff`` of the working tree after the run.
@@ -301,9 +301,10 @@ def build_stella_cmd(
 ) -> list[str]:
     """Build the headless one-shot Stella argv.
 
-    Global flags precede the ``run`` subcommand — they are top-level Stella CLI
-    flags, not flags of ``run``. ``--output-format json`` keeps output stable
-    and machine-parseable for cost capture.
+    Global flags precede the ``run`` subcommand — they are top-level Stella
+    CLI flags. ``--output-format`` is a flag *of* ``run`` (demoted from
+    global by stella#1493), and ``json`` keeps output stable and
+    machine-parseable for cost capture.
     """
     cmd = [
         stella_bin,
@@ -311,8 +312,6 @@ def build_stella_cmd(
         model,
         "--budget",
         str(budget),
-        "--output-format",
-        "json",
     ]
     if base_url:
         cmd.extend(["--base-url", base_url])
@@ -321,7 +320,7 @@ def build_stella_cmd(
     # flag and Stella exits 2 before the turn starts — the Harbor adapter
     # fixed exactly this after a trial scored 0 that way (2026-07-31,
     # pytorch-model-recovery).
-    cmd.extend(["run", "--", prompt])
+    cmd.extend(["run", "--output-format", "json", "--", prompt])
     return cmd
 
 

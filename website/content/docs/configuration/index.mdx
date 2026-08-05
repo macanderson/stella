@@ -137,7 +137,7 @@ follows is the complete map; each card links to its detail page.
     href="/docs/scripting"
     meta={[
       { label: "Surface", value: "--output-format · STELLA_OUTPUT_FORMAT" },
-      { label: "Example", value: "stella --output-format json run …" },
+      { label: "Example", value: "stella run --output-format json … (run/fleet only)" },
     ]}
   >
     `text`, `json`, or `stream-json`.
@@ -322,7 +322,7 @@ Full walkthrough: the [coding-plan recipe](/docs/api-providers#zai).
 
 ```bash
 STELLA_MODEL=anthropic/claude-fable-5 STELLA_BUDGET=5 \
-  stella --output-format json run "port the utils module to the new API"
+  stella run --output-format json "port the utils module to the new API"
 ```
 
 **Ship org-wide defaults every project inherits** (a gateway URL + team key), leaving

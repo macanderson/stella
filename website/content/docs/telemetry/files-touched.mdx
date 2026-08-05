@@ -137,7 +137,7 @@ Which keys the final JSON object carries depends on which execution path ran:
 So a script that asserts on exactly what a run changed must pass `--no-pipeline`:
 
 ```bash
-stella --output-format json run --no-pipeline "add a --health flag and wire the readiness probe" \
+stella run --output-format json --no-pipeline "add a --health flag and wire the readiness probe" \
   | jq '.files_touched.files_touched[] | {path, crud_events, lines_added, lines_removed}'
 ```
 
@@ -165,14 +165,14 @@ it stays entirely on your machine.
 **Fail CI when a run edits files outside a directory.**
 
 ```bash
-touched=$(stella --output-format json run --no-pipeline "$TASK" | jq -r '.files_touched.files_touched[].path')
+touched=$(stella run --output-format json --no-pipeline "$TASK" | jq -r '.files_touched.files_touched[].path')
 echo "$touched" | grep -qv '^src/' && { echo "run touched files outside src/"; exit 1; }
 ```
 
 **Get a one-line change summary of a run.**
 
 ```bash
-stella --output-format json run --no-pipeline "$TASK" \
+stella run --output-format json --no-pipeline "$TASK" \
   | jq -r '.files_touched.files_touched[] | "\(.crud_events|join("")) \(.path) (+\(.lines_added) -\(.lines_removed))"'
 # RU src/router.rs (+18 -4)
 # C  src/health.rs (+22 -0)

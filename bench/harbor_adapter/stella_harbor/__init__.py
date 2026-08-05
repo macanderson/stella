@@ -1706,10 +1706,12 @@ class StellaAgent(BaseInstalledAgent):
     ) -> list[str]:
         """Build the headless one-shot Stella argument vector.
 
-        Global flags (``--model``, ``--budget``, ``--base-url``,
-        ``--output-format``) precede the ``run`` subcommand — they are top-level
-        CLI flags in Stella, not flags of ``run``. Returning an argv preserves
-        the instruction as one literal argument without shell quoting/parsing.
+        Global flags (``--model``, ``--budget``, ``--base-url``) precede the
+        ``run`` subcommand — they are top-level CLI flags in Stella.
+        ``--output-format`` is a flag *of* ``run`` since stella#1493 demoted
+        it from global (it was a promise most subcommands ignored), so it
+        rides after the subcommand token. Returning an argv preserves the
+        instruction as one literal argument without shell quoting/parsing.
         """
         model = model or self._effective_model()
         budget = self._configured_budget()
@@ -1726,8 +1728,6 @@ class StellaAgent(BaseInstalledAgent):
             # Omit-when-absent, same discipline and same reason as `--budget`:
             # an absent flag is "no deadline", an empty value exits 2.
             *(["--turn-budget", turn_budget] if turn_budget is not None else []),
-            "--output-format",
-            "stream-json",
         ]
         if base_url:
             base_url = _validated_public_base_url(base_url)
@@ -1737,7 +1737,7 @@ class StellaAgent(BaseInstalledAgent):
         # instead of parsing as a flag. Without it, `stella run '- foo'`
         # exits 2 before the agent starts — one 2026-07-31 trial
         # (pytorch-model-recovery) died exactly this way and scored 0.
-        parts += ["run", "--", instruction]
+        parts += ["run", "--output-format", "stream-json", "--", instruction]
         return parts
 
     def _selected_provider_credentials(self) -> SelectedProviderCredentials:

@@ -47,6 +47,11 @@ For anything beyond a handful of independent prompts, use a plan file (`--plan`)
   <OptionCard name="--no-pipeline">
     Workers run the raw step loop instead of the staged pipeline.
   </OptionCard>
+  <OptionCard name="--output-format <text|json|stream-json>" defaultValue="text">
+    `json` / `stream-json` keep the run headless — the live grid stays off and stdout
+    stays machine-readable, including the error envelope on failure. A flag of `fleet`
+    itself, after the subcommand token. Env `STELLA_OUTPUT_FORMAT`.
+  </OptionCard>
 </CardGrid>
 
 ## Budget
