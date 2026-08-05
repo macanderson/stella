@@ -7,6 +7,7 @@
     "goal",
     "resume",
     "init",
+    "daemon",
     "---Run many at once---",
     "fleet",
     "monitor",
