@@ -46,7 +46,7 @@ pub struct ZaiProvider {
     /// List pricing for `model`, resolved from the catalog at construction so
     /// `cost_usd` is computed on the real request path. `None` when the slug
     /// isn't in the catalog — for seeded providers `build_provider`
-    /// (`agent.rs`) rejects that case up front; for gateway providers with
+    /// (`factory.rs`) rejects that case up front; for gateway providers with
     /// free-form slugs (OpenRouter) it is legitimately `None` and the cost
     /// comes from the gateway's own usage accounting instead.
     pricing: Option<Pricing>,
