@@ -438,9 +438,11 @@ fn main() -> ExitCode {
 
     // A machine-readable run has nobody to answer a masked password prompt,
     // and its caller is blocked reading stdout for an object that would never
-    // come. Decided here, once, while the requested format is in hand.
+    // come. Decided here, once, from the command's own declaration (#1493) —
+    // which is also what finally covers `arena`, whose fixed stream-json
+    // contract never passed through the old global flag.
     if matches!(
-        cli.globals.output_format,
+        cli.output_format(),
         OutputFormat::Json | OutputFormat::StreamJson
     ) {
         config::forbid_interactive_credentials();
@@ -473,11 +475,11 @@ fn main() -> ExitCode {
 
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
     // a human output format so it never pollutes json/stream-json.
-    env_files::announce(&loaded_env, cli.globals.output_format);
+    env_files::announce(&loaded_env, cli.output_format());
 
     // Captured before `cli` moves into `run`: the catch-all below needs the
     // requested format to honour the machine-readable error contract.
-    let output_format = cli.globals.output_format;
+    let output_format = cli.output_format();
 
     match run(cli, &loaded_env) {
         Ok(()) => ExitCode::SUCCESS,
@@ -869,6 +871,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             no_pipeline,
             test_command,
             keep_witness,
+            output_format,
         } => {
             let prompt = prompt_source::resolve(
                 prompt,
@@ -881,7 +884,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     &cfg,
                     &prompt,
                     cli.globals.budget,
-                    cli.globals.output_format,
+                    output_format,
                     !no_pipeline,
                     test_command.as_deref(),
                     keep_witness,
@@ -930,6 +933,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             watch,
             no_pipeline,
             task_timeout,
+            output_format,
         } => {
             signals::block_on_interruptible(
                 rt()?,
@@ -943,7 +947,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     watch,
                     !no_pipeline,
                     task_timeout.map(std::time::Duration::from_secs),
-                    cli.globals.output_format,
+                    output_format,
                 ),
             )?;
         }

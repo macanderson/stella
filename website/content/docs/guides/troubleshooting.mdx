@@ -271,8 +271,9 @@ salvaged database, and your next session starts fresh. Every quarantine is
 undoable with `mv`.
 
 `doctor` runs before configuration loads, on purpose: a workspace whose store is
-corrupt has to stay diagnosable without a working model config. One consequence
-is that `--output-format` does not apply to it.
+corrupt has to stay diagnosable without a working model config. There is no JSON
+form of its output — `--output-format` is a flag of `run` and `fleet`, and
+`doctor` does not take it.
 
 ## "The run ended without doing anything"
 

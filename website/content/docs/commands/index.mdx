@@ -167,7 +167,7 @@ Two of them are specialized rather than day-to-day. `stella arena` is a benchmar
 
 The following flags apply to **every** command. Most have a corresponding environment variable so you can set it once for a shell session or in your CI configuration — the exception is `--api-key`, which is intentionally env-less (use `credentials.toml` or a provider key env var such as `ANTHROPIC_API_KEY` instead).
 
-Every one of them is registered with every subcommand, so **either position parses** — `stella --output-format json run "…"` and `stella run "…" --output-format json` are equivalent. (That is not clap's default: a plain root-level flag is only accepted before the subcommand token, which is why `main.rs` marks each of these `global = true` and a test asserts no new one is added without it.) Because the flag names are reserved CLI-wide, no subcommand reuses them — `stella connect linear` pastes a key with `--paste-key`, not `--api-key`.
+Every one of them is registered with every subcommand, so **either position parses** — `stella --budget 5 run "…"` and `stella run "…" --budget 5` are equivalent. (That is not clap's default: a plain root-level flag is only accepted before the subcommand token, which is why `main.rs` marks each of these `global = true` and a test asserts no new one is added without it.) Because the flag names are reserved CLI-wide, no subcommand reuses them — `stella connect linear` pastes a key with `--paste-key`, not `--api-key`.
 
 <CardGrid size="md">
   <OptionCard name="--model <provider/model_id>" defaultValue="auto-detected">
@@ -181,10 +181,6 @@ Every one of them is registered with every subcommand, so **either position pars
   <OptionCard name="--base-url <url>" defaultValue="provider default">
     Required with `--model local/<model>` to point at a local OpenAI-compatible server; an
     optional proxy override for any other provider. Env `STELLA_BASE_URL`.
-  </OptionCard>
-  <OptionCard name="--output-format <text|json|stream-json>" defaultValue="text">
-    Response rendering mode, honored by `stella run` — the interactive `chat`, `goal`, and
-    `monitor` modes always render text. Env `STELLA_OUTPUT_FORMAT`.
   </OptionCard>
   <OptionCard name="--budget <usd>" defaultValue="none (observed)">
     Hard USD spend cap for the whole run or session. Must be positive and finite. Env
@@ -209,7 +205,9 @@ Every one of them is registered with every subcommand, so **either position pars
 Prefer an environment variable or `credentials.toml` for anything long-lived. A key passed with `--api-key` is visible in your shell history and in `ps` output.
 </Callout>
 
-### `--output-format` values
+### `--output-format` (a flag of `run` and `fleet`, not a global)
+
+`--output-format <text|json|stream-json>` (env `STELLA_OUTPUT_FORMAT`) is deliberately **not** in the table above: it is a promise about what reaches stdout, and only the commands that keep that promise declare it — [`stella run`](/docs/commands/run) and [`stella fleet`](/docs/commands/fleet). As a subcommand flag it goes after the subcommand token — `stella run "…" --output-format json` — and passing it anywhere else is a parse error, not a silently ignored flag. [`stella arena`](/docs/commands/arena) emits stream-json unconditionally (the benchmark runner is its only reader), the interactive `chat`, `goal`, and `monitor` modes render text, and query commands with a machine shape declare their own flag (`stella stats --format json`, `stella inspect --format json`, `stella memory list --format json`).
 
 <CardGrid size="sm">
   <OptionCard name="text">

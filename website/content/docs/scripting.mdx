@@ -9,7 +9,12 @@ an environment-variable equivalent for CI.
 
 ## Output formats
 
-`--output-format` (env `STELLA_OUTPUT_FORMAT`) takes one of three values:
+`--output-format` (env `STELLA_OUTPUT_FORMAT`) is a flag of the two commands that honor
+it — [`stella run`](/docs/commands/run) and [`stella fleet`](/docs/commands/fleet) — so it
+goes **after** the subcommand token. It is deliberately not a global flag: on any other
+command it is a parse error rather than a promise the output silently breaks
+([#1493](https://github.com/macanderson/stella/issues/1493)). It takes one of three
+values:
 
 <CardGrid size="md">
   <OptionCard name="text">
@@ -43,10 +48,10 @@ preview — the `text` event that follows carries the full step text and is auth
 
 ```bash
 # One final JSON object
-stella --output-format json run "list the public API of the auth module"
+stella run --output-format json "list the public API of the auth module"
 
 # Newline-delimited event stream, parsed as it arrives
-stella --output-format stream-json run "fix the failing test" | while IFS= read -r line; do
+stella run --output-format stream-json "fix the failing test" | while IFS= read -r line; do
   echo "$line" | jq -r '.type // "event"'
 done
 ```
@@ -142,7 +147,7 @@ Two practical consequences for a consumer:
 
 ```bash
 # Refuse to parse a shape this script was not written for
-stella --output-format json run "…" | jq -e '
+stella run --output-format json "…" | jq -e '
   if .schema_version == 1 then .status else error("unsupported schema_version") end'
 ```
 
@@ -164,7 +169,9 @@ editing the command line:
     through a proxy.
   </OptionCard>
   <OptionCard name="STELLA_OUTPUT_FORMAT" defaultValue="text">
-    Equivalent to `--output-format`: `text`, `json`, or `stream-json`.
+    Equivalent to `--output-format`: `text`, `json`, or `stream-json`. Read
+    exactly where the flag exists — `run` and `fleet` — so exporting it for a
+    whole session never garbles the other commands' output.
   </OptionCard>
   <OptionCard name="STELLA_BUDGET">
     Equivalent to `--budget`. Hard USD cap for the whole run. Unset means
@@ -209,7 +216,7 @@ skipped when there is no TTY:
 
 ```bash
 export ANTHROPIC_API_KEY="$SECRET_ANTHROPIC_KEY"
-stella --output-format json run "generate release notes from the diff since the last tag"
+stella run --output-format json "generate release notes from the diff since the last tag"
 ```
 
 <Callout type="warn">
@@ -224,7 +231,7 @@ Pair headless runs with an [enforced budget](/docs/telemetry#budget-observed-vs-
 so an automated job can never overspend:
 
 ```bash
-stella --budget 3 --output-format json run "port the utils module to the new client"
+stella --budget 3 run --output-format json "port the utils module to the new client"
 ```
 
 Work aborts cleanly once the cap is reached — never mid-tool — so the workspace is left in
@@ -255,7 +262,7 @@ stella --budget 10 fleet --plan cleanup.toml --max-concurrency 4
 </CardGrid>
 
 ```bash
-stella --budget 3 --output-format json run \
+stella --budget 3 run --output-format json \
   --test-command "cargo test -p stella-store" \
   "make the store migration idempotent on an already-v2 file" > result.json
 case $? in
@@ -337,7 +344,7 @@ pipelines worth keeping:
 
 ```bash
 # Gate a script on deterministic evidence only — refuse a verifier-only pass.
-stella --output-format json run --test-command "make test" "$TASK" \
+stella run --output-format json --test-command "make test" "$TASK" \
   | jq -e '.status == "completed" and .verdict.deterministic == true' >/dev/null \
   || { echo "no deterministic proof — not merging" >&2; exit 1; }
 ```
@@ -346,7 +353,7 @@ stella --output-format json run --test-command "make test" "$TASK" \
 # Every file the raw step loop touched, with its line delta. Note the nesting:
 # the summary's `files_touched` key holds the telemetry payload object, whose
 # own `files_touched` key holds the array.
-stella --output-format json run --no-pipeline "tidy up the error types in stella-store" \
+stella run --output-format json --no-pipeline "tidy up the error types in stella-store" \
   | jq -r '.files_touched.files_touched[] | "\(.path)\t+\(.lines_added)/-\(.lines_removed)"'
 ```
 
@@ -354,14 +361,14 @@ stella --output-format json run --no-pipeline "tidy up the error types in stella
 # Watch the stages go by, live, without parsing anything else. Stage names are
 # snake_case: triage, context_recall, plan, scope_review, witness, execute,
 # verify, verifier.
-stella --output-format stream-json run "$TASK" \
+stella run --output-format stream-json "$TASK" \
   | jq -r --unbuffered 'select(.type == "stage") | "→ \(.name)"'
 ```
 
 ```bash
 # Which tools the run actually reached for, most-used first. A tool_start event
 # carries its call under `call`, so the name is `.call.name`.
-stella --output-format json run "$TASK" \
+stella run --output-format json "$TASK" \
   | jq -r '.events[] | select(.type == "tool_start") | .call.name' \
   | sort | uniq -c | sort -rn
 ```

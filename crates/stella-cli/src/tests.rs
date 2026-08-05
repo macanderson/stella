@@ -421,18 +421,80 @@ fn session_flags_parse_after_subcommand() {
 /// both positions, not moved.
 #[test]
 fn session_flags_parse_before_subcommand() {
-    let cli = Cli::try_parse_from([
-        "stella",
-        "--budget",
-        "2.5",
-        "--output-format",
-        "json",
-        "run",
-        "hi",
-    ])
-    .expect("session flags before the subcommand must keep parsing");
+    let cli = Cli::try_parse_from(["stella", "--budget", "2.5", "run", "hi"])
+        .expect("session flags before the subcommand must keep parsing");
     assert_eq!(cli.globals.budget, Some(2.5));
-    assert_eq!(cli.globals.output_format, OutputFormat::Json);
+}
+
+/// #1493's witness. `--output-format` is a promise about what reaches
+/// stdout, so it exists only on the commands that keep it. Under the old
+/// `global = true` declaration every invocation below parsed cleanly and
+/// was then ignored — the scripted caller got coloured human text where it
+/// was promised JSON, with a JSON error envelope appended on failure.
+#[test]
+fn output_format_is_rejected_where_it_was_never_honoured() {
+    for argv in [
+        vec!["stella", "memory", "list", "--output-format", "json"],
+        vec!["stella", "stats", "--output-format", "json"],
+        vec!["stella", "goal", "ship it", "--output-format", "json"],
+        // The root position dies with the global: a value parsed at the
+        // root has no command bound to honour it. `stella run
+        // --output-format …` is the surviving spelling; the bench adapters
+        // and docs moved in the same PR.
+        vec!["stella", "--output-format", "json", "run", "hi"],
+    ] {
+        assert!(
+            Cli::try_parse_from(argv.clone()).is_err(),
+            "{argv:?} must be a parse error, not a silently ignored flag"
+        );
+    }
+}
+
+/// The two commands that honour the flag still declare it (same name, same
+/// `STELLA_OUTPUT_FORMAT` env), and the effective format `main`'s
+/// process-wide decisions read comes from the command, not a root slot.
+#[test]
+fn run_and_fleet_declare_output_format() {
+    let run = Cli::try_parse_from(["stella", "run", "hi", "--output-format", "json"])
+        .expect("run declares --output-format");
+    assert_eq!(run.output_format(), OutputFormat::Json);
+
+    let fleet = Cli::try_parse_from(["stella", "fleet", "task", "--output-format", "stream-json"])
+        .expect("fleet declares --output-format");
+    assert_eq!(fleet.output_format(), OutputFormat::StreamJson);
+
+    // No subcommand at all (the chat default): human text.
+    let chat = Cli::try_parse_from(["stella"]).expect("bare invocation parses");
+    assert_eq!(chat.output_format(), OutputFormat::Text);
+}
+
+/// `arena` output is the adapter contract, not a choice: there is no flag
+/// to promise otherwise (`--output-format text` used to parse and silently
+/// yield stream-json), and the effective format — what gates interactive
+/// credential prompts and the machine error envelope — is stream-json
+/// without one.
+#[test]
+fn arena_is_stream_json_by_contract_not_by_flag() {
+    let args = |extra: &[&str]| {
+        let mut argv = vec![
+            "stella",
+            "arena",
+            "--task-dir",
+            "t",
+            "--journal",
+            "j",
+            "--state-dir",
+            "s",
+        ];
+        argv.extend_from_slice(extra);
+        argv
+    };
+    assert!(
+        Cli::try_parse_from(args(&["--output-format", "text"])).is_err(),
+        "arena must reject --output-format rather than silently emit stream-json"
+    );
+    let arena = Cli::try_parse_from(args(&[])).expect("the adapter contract parses");
+    assert_eq!(arena.output_format(), OutputFormat::StreamJson);
 }
 
 /// `--budget`'s value parser still guards after a subcommand: a

@@ -53,10 +53,9 @@ The most relevant global flags here:
     Pin the worker model instead of relying on auto-detection.
   </OptionCard>
   <OptionCard name="--output-format <text|json|stream-json>" defaultValue="text">
-    Use `json` or `stream-json` for machine-readable, headless output. Like every global
-    flag it is registered with the subcommand too, so either position parses —
-    `stella --output-format json run "…"` and `stella run "…" --output-format json` are
-    the same command.
+    Use `json` or `stream-json` for machine-readable, headless output. A flag of `run`
+    itself (not a global), so it goes after the subcommand token:
+    `stella run "…" --output-format json`. Env `STELLA_OUTPUT_FORMAT`.
   </OptionCard>
   <OptionCard name="--budget <usd>">
     Cap total spend for the run; work aborts cleanly once the cap is exceeded.
@@ -74,15 +73,15 @@ stella run "Add a docstring to every public function in src/utils.py"
 Pin a specific model and emit a single JSON object for a script to parse. Global flags read most clearly before the subcommand, though [either position parses](/docs/commands#global-flags):
 
 ```bash
-stella --model anthropic/claude-fable-5 --output-format json \
-  run "Summarize the changes on this branch"
+stella --model anthropic/claude-fable-5 \
+  run --output-format json "Summarize the changes on this branch"
 ```
 
 Cap spend at two US dollars and stream events as they happen (useful in CI logs):
 
 ```bash
-stella --output-format stream-json --budget 2.00 \
-  run "Fix the failing unit tests in the payments module"
+stella --budget 2.00 \
+  run --output-format stream-json "Fix the failing unit tests in the payments module"
 ```
 
 Point at a local OpenAI-compatible server:

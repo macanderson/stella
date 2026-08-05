@@ -110,7 +110,7 @@ And because the distinction is structural rather than rhetorical, it is
 machine-readable. Every verified run says which kind of evidence it stood on:
 
 ```bash
-stella --output-format json run --test-command "cargo test -p stella-core" \
+stella run --output-format json --test-command "cargo test -p stella-core" \
   "make the loop detector count identical no-op calls as progress-free" \
   | jq '{deterministic: .verdict.deterministic, evidence: .verdict.summary}'
 ```
@@ -118,7 +118,7 @@ stella --output-format json run --test-command "cargo test -p stella-core" \
 A CI gate can therefore insist on the mechanism and refuse the opinion:
 
 ```bash
-stella --output-format json run --test-command "make test" "$TASK" \
+stella run --output-format json --test-command "make test" "$TASK" \
   | jq -e '.verdict.deterministic == true' >/dev/null \
   || { echo "verified only by a model verifier — holding this one for review" >&2; exit 1; }
 ```

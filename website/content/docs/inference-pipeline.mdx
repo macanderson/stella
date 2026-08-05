@@ -276,7 +276,7 @@ You can read that distinction back out of any headless run. `verdict.determinist
 is `true` exactly when the ladder answered without a verifier call:
 
 ```bash
-stella --output-format json run --test-command "cargo test -p pager" \
+stella run --output-format json --test-command "cargo test -p pager" \
   "fix the off-by-one in the pager" \
   | jq '{status, deterministic: .verdict.deterministic, evidence: .verdict.summary, cost_usd}'
 ```

@@ -186,8 +186,8 @@ different requirements (a non-TTY surface, JSON output, an explicit scope-review
 bypass):
 
 ```bash
-stella --output-format json --budget 2.00 \
-  run --test-command "cargo test --workspace" "fix the failing tests" \
+stella --budget 2.00 \
+  run --output-format json --test-command "cargo test --workspace" "fix the failing tests" \
   | jq -e '.status == "completed" and .verdict.deterministic == true'
 ```
 
