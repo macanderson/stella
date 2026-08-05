@@ -170,6 +170,28 @@ pub enum ReasoningPosture {
         /// Name of the test function that proves the control reaches the
         /// request body; checked for existence by this module's tests.
         witness: &'static str,
+        /// Effort tiers this adapter cannot express distinctly, as
+        /// `(requested, served)` — empty when every tier reaches the wire as
+        /// itself.
+        ///
+        /// `Controllable` used to mean "the effort is honoured", and four of
+        /// the eight rows quietly did not honour it: they map the finer tiers
+        /// onto a coarser set the routed model is guaranteed to accept, which
+        /// is the right wire posture and the wrong thing to stay silent about
+        /// (#1499). A user who pinned `max` on OpenAI was told nothing and
+        /// served `high`.
+        ///
+        /// That matters more here than it would in most codebases: effort was
+        /// the single largest measured variable in this repo's own paid arena
+        /// runs, so serving a different tier than the one configured makes a
+        /// benchmark comparison quietly untrue rather than merely surprising.
+        ///
+        /// Declared rather than computed because the mappings live in each
+        /// adapter as separate functions over different wire vocabularies.
+        /// This module's `collapsed_effort_tiers_match_the_adapters` test
+        /// calls those functions and pins this list against what they really
+        /// return, so a declaration and its adapter cannot drift apart.
+        collapses: &'static [(&'static str, &'static str)],
     },
     /// The provider always reasons and the depth cannot be pinned from the
     /// request. Declared for taxonomy completeness — no id in the current
@@ -204,6 +226,7 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
             mechanism: "extended-thinking budget (thinking.budget_tokens) + output_config.effort \
                         — all five effort tiers map to distinct budgets",
             witness: "reasoning_true_enables_thinking_raises_max_tokens_and_omits_temperature",
+            collapses: &[],
         },
     ),
     (
@@ -213,6 +236,7 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
                         budget_tokens}) — the Anthropic legacy thinking shape, effort tiers \
                         mapped to budgets by the same anthropic.rs mapping",
             witness: "reasoning_true_sends_reasoning_config_and_raises_max_tokens",
+            collapses: &[],
         },
     ),
     (
@@ -221,6 +245,7 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
             mechanism: "normalized reasoning object ({effort} / {enabled}), translated by the \
                         gateway to whatever the routed upstream vendor calls it",
             witness: "openrouter_identity_maps_reasoning_to_the_gateway_object",
+            collapses: &[],
         },
     ),
     (
@@ -229,6 +254,7 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
             mechanism: "Responses API reasoning.effort (low/medium/high; finer model-dependent \
                         tiers — minimal/xhigh/max — collapse to the universally-safe high)",
             witness: "reasoning_true_without_effort_defaults_to_medium",
+            collapses: &[("xhigh", "high"), ("max", "high")],
         },
     ),
     (
@@ -237,6 +263,7 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
             mechanism: "thinkingConfig.thinkingLevel (low/high; medium/minimal exist only on some \
                         Gemini 3.x models, so the adapter maps to the portable low/high pair)",
             witness: "complete_sends_generation_config_params_on_the_wire",
+            collapses: &[("medium", "high"), ("xhigh", "high"), ("max", "high")],
         },
     ),
     (
@@ -245,6 +272,7 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
             mechanism: "thinkingConfig.thinkingLevel via the shared gemini generation-config \
                         builder",
             witness: "complete_sends_shared_generation_config_params_on_the_wire",
+            collapses: &[("medium", "high"), ("xhigh", "high"), ("max", "high")],
         },
     ),
     (
@@ -257,6 +285,7 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
                         reasoning tokens. A caller who pins no effort still sends no field, so \
                         the model keeps its own default depth",
             witness: "zai_identity_maps_pinned_effort_to_reasoning_effort",
+            collapses: &[("xhigh", "high"), ("max", "high")],
         },
     ),
     (
@@ -266,6 +295,7 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
                         the xai identity on the shared adapter — and, within xai, skipped for the \
                         original grok-4, which reasons but 400s on the param (retiring 2026-08-15)",
             witness: "xai_identity_maps_effort_to_reasoning_effort",
+            collapses: &[("xhigh", "high"), ("max", "high")],
         },
     ),
     (
@@ -294,6 +324,31 @@ pub fn reasoning_posture(provider_id: &str) -> Option<&'static ReasoningPosture>
         .iter()
         .find(|(id, _)| *id == provider_id)
         .map(|(_, posture)| posture)
+}
+
+/// The tier `effort` is really served as by `provider_id`, when the adapter
+/// cannot put that tier on the wire distinctly — `None` when it reaches the
+/// wire as itself.
+///
+/// The question `Controllable` alone could not answer (#1499). A caller that
+/// reads only the posture learns the provider *has* a reasoning control, not
+/// whether the level it asked for survived the mapping; four of the eight
+/// controllable rows collapse the finer tiers onto a coarser set the routed
+/// model is guaranteed to accept. This is the difference between "honoured"
+/// and "accepted and quietly downgraded", and it is the input a notice needs.
+///
+/// `None` also for an unknown id and for every non-`Controllable` posture: a
+/// provider with no reasoning control at all does not *downgrade* an effort,
+/// it drops it, which is [`ReasoningPosture::Unsupported`]'s story to tell.
+#[must_use]
+pub fn downgraded_effort(provider_id: &str, effort: &str) -> Option<&'static str> {
+    match reasoning_posture(provider_id)? {
+        ReasoningPosture::Controllable { collapses, .. } => collapses
+            .iter()
+            .find(|(requested, _)| *requested == effort)
+            .map(|(_, served)| *served),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -346,6 +401,79 @@ mod tests {
                 sources.iter().any(|source| source.contains(&needle)),
                 "cache-posture witness for `{id}` not found in adapter sources: {witness}"
             );
+        }
+    }
+
+    /// Every declared effort collapse is what the adapter really sends.
+    ///
+    /// The matrix says which tiers a provider cannot express; the adapters
+    /// decide it. Declaring by hand is how the two drift, so this calls the
+    /// real mapping functions and compares. It fails in both directions: an
+    /// undeclared collapse (the #1499 bug — a tier silently downgraded with
+    /// nothing to notify from) and a declared one the adapter does not
+    /// actually make (a notice that would lie the other way).
+    #[test]
+    fn collapsed_effort_tiers_match_the_adapters() {
+        use stella_protocol::ReasoningEffort;
+
+        const TIERS: &[(&str, ReasoningEffort)] = &[
+            ("low", ReasoningEffort::Low),
+            ("medium", ReasoningEffort::Medium),
+            ("high", ReasoningEffort::High),
+            ("xhigh", ReasoningEffort::Xhigh),
+            ("max", ReasoningEffort::Max),
+        ];
+
+        /// The tier→tier renames we can call directly.
+        ///
+        /// `None` for the rows with no string mapping to compare: anthropic
+        /// and bedrock map onto token *budgets* (five distinct values, so no
+        /// tier is lost), and openrouter hands the tier to the gateway
+        /// untouched. Those must therefore declare no collapses at all, which
+        /// is asserted below rather than skipped.
+        fn served(provider: &str, effort: ReasoningEffort) -> Option<&'static str> {
+            match provider {
+                "openai" => Some(crate::openai::map_reasoning_effort(effort)),
+                "gemini" | "vertex" => Some(crate::gemini::map_thinking_level(effort)),
+                "zai" => Some(crate::zai::effort::map_zai_effort(effort)),
+                "xai" => Some(crate::zai::effort::map_xai_effort(effort)),
+                _ => None,
+            }
+        }
+
+        for (provider, posture) in REASONING_POSTURE {
+            let ReasoningPosture::Controllable { collapses, .. } = posture else {
+                continue;
+            };
+
+            if served(provider, ReasoningEffort::Low).is_none() {
+                assert!(
+                    collapses.is_empty(),
+                    "{provider} has no tier→tier rename to lose a level in, so it must \
+                     declare no collapses; it declares {collapses:?}"
+                );
+                continue;
+            }
+
+            for (name, tier) in TIERS {
+                let actual = served(provider, *tier).expect("checked directly above");
+                let declared = downgraded_effort(provider, name);
+                if actual == *name {
+                    assert_eq!(
+                        declared, None,
+                        "{provider}: '{name}' reaches the wire as itself, but the matrix \
+                         declares it collapsed — a notice here would be wrong"
+                    );
+                } else {
+                    assert_eq!(
+                        declared,
+                        Some(actual),
+                        "{provider}: '{name}' is really served as '{actual}'. An \
+                         undeclared collapse is the #1499 bug: the user is told nothing \
+                         and gets a tier they did not pin"
+                    );
+                }
+            }
         }
     }
 

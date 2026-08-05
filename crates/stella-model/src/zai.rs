@@ -19,7 +19,7 @@ use crate::http;
 use crate::provider::{Provider, ToolCallObserver};
 use crate::sse::SseDecoder;
 
-mod effort;
+pub(crate) mod effort;
 use effort::{xai_reasoning_effort, xai_supports_reasoning_effort, zai_reasoning_effort};
 // `map_zai_effort` is asserted on directly by the wire tests, which reach it
 // through this module's namespace like every other helper here. Its xAI sibling

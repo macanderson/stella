@@ -195,9 +195,12 @@ climbing count means a host is minting per-request provider ids.
   `execute_tool_calls`), and the host's advertised `read_only` flags drive that
   partitioning. Answer by `request_id`, in any order — a host that assumes one
   outstanding request at a time will stall the group.
-- **`request_id`s are per-turn counters** (`prov-0`, `tool-0`), unique only within
-  a turn. They are safe because the resolve routes are scoped by turn id — do not
-  treat them as global handles.
+- **`request_id`s are instance-tagged per-turn counters** (`prov-0-0`, `tool-0-0`),
+  unique only within a turn. The middle field disambiguates the several ports that
+  can share one turn's registry — a worker and a sub-agent build their own provider
+  and tool ports, and a bare counter had them both minting `tool-0` (#1496). Treat
+  the whole string as opaque rather than parsing its shape. They are safe because
+  the resolve routes are scoped by turn id — do not treat them as global handles.
 - **A turn's event stream is exclusive and one-shot.** The second
   `GET /v1/turns/{id}/events` gets 409, and the registry entry is removed when a
   stream ends — or when the turn is cancelled. A *live* turn created and never

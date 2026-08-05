@@ -38,7 +38,9 @@ use serde_json::Value;
 use stella_protocol::schema_export::{UnsupportedSchema, typescript_declarations_with_header};
 
 use crate::engine_overrides::EngineOverrides;
-use crate::frame::{ProviderDeltaIn, ProviderResultIn, ServerFrame, ToolResultIn};
+use crate::frame::{
+    ProviderDeltaIn, ProviderResultIn, ScopeReviewResultIn, ServerFrame, ToolResultIn,
+};
 
 /// The JSON Schema (2020-12) for one outbound frame.
 #[must_use]
@@ -62,6 +64,19 @@ pub fn provider_result_schema() -> Value {
 #[must_use]
 pub fn provider_delta_schema() -> Value {
     schemars::schema_for!(ProviderDeltaIn).to_value()
+}
+
+/// The JSON Schema for the scope-review decision a host POSTs back.
+///
+/// The answer to a [`ServerFrame::ScopeReviewRequest`], sent to
+/// `POST /v1/turns/{id}/approve`. It was missing from the published contract
+/// until #1497: the outbound schema described the *request* frame in six
+/// places while the inbound document offered no type for the reply, so a host
+/// generating a client from these artifacts could parse the question and had
+/// nothing to construct the answer from.
+#[must_use]
+pub fn scope_review_result_schema() -> Value {
+    schemars::schema_for!(ScopeReviewResultIn).to_value()
 }
 
 /// The JSON Schema for the optional `engine` object on `POST /v1/turns` and
@@ -90,7 +105,9 @@ pub fn inbound_schema() -> Value {
              answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers \
              POST /v1/turns/{id}/provider-result; ProviderDeltaIn optionally \
              streams fragments of an in-flight provider answer to \
-             POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn. \
+             POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn; \
+             ScopeReviewResultIn answers POST /v1/turns/{id}/approve, carrying \
+             the human's decision on a scope_review_request frame. \
              Each is keyed by the request_id carried on the frame it answers. \
              EngineOverrides is not a reverse-request answer at all: it is the \
              optional `engine` object on POST /v1/turns and \
@@ -101,6 +118,7 @@ pub fn inbound_schema() -> Value {
             "ToolResultIn": tool_result_schema(),
             "ProviderResultIn": provider_result_schema(),
             "ProviderDeltaIn": provider_delta_schema(),
+            "ScopeReviewResultIn": scope_review_result_schema(),
             "EngineOverrides": engine_overrides_schema(),
         },
     })
@@ -132,6 +150,10 @@ pub fn artifacts() -> Result<Vec<(&'static str, String)>, UnsupportedSchema> {
     ts.push_str(&typescript_declarations_with_header(
         &provider_delta_schema(),
         DELTA_HEADER,
+    )?);
+    ts.push_str(&typescript_declarations_with_header(
+        &scope_review_result_schema(),
+        SCOPE_REVIEW_HEADER,
     )?);
     ts.push_str(&typescript_declarations_with_header(
         &engine_overrides_schema(),
@@ -235,6 +257,19 @@ const DELTA_HEADER: &str = "
 /// Rides above `EngineOverrides` in the printed `.d.ts`: this is a request
 /// sub-object, not a reverse-request answer, and its clamp semantics live
 /// outside what the schema can say.
+const SCOPE_REVIEW_HEADER: &str = "
+// ── inbound: answering a scope review ───────────────────────────────────────
+//
+// The engine parks a turn on a `scope_review_request` frame when a plan needs
+// a human decision before it executes. The host answers by POSTing this body
+// to `POST /v1/turns/{id}/approve`, keyed by the frame's request_id.
+//
+// `decision` is an internally-tagged union: approve executes the plan as
+// proposed, trim executes only the listed step indices, and the note-carrying
+// arm re-plans with the reviewer's words folded in — an empty note reads as
+// abort, the same collapse the stdio gate makes for a bare \"no\".
+";
+
 const ENGINE_HEADER: &str = "
 // ── request-side: the optional `engine` object on POST /v1/turns ────────────
 //
@@ -263,3 +298,67 @@ const INBOUND_HEADER: &str = "
 // than `oldest_retained` — to rediscover what it owes; obligations announced
 // in frames the ring has already evicted cannot be re-learned this way.
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every inbound body a host can POST is published, by name.
+    ///
+    /// Asserted as an exact set rather than a contains-check, because the
+    /// failure this guards is an **omission**, and a contains-check cannot see
+    /// one. `ScopeReviewResultIn` was missing here while the outbound schema
+    /// described its `scope_review_request` counterpart in six places (#1497):
+    /// the generated contract told a host to expect the question and gave it no
+    /// type to build the answer from. Nothing failed — the exporter ran, the
+    /// artifacts committed, and the hole was only visible to someone diffing
+    /// the two documents by hand.
+    ///
+    /// Adding an inbound body means adding it here, which is the point: an
+    /// exact set turns "I forgot to export it" into a failing test rather than
+    /// a silently incomplete contract.
+    #[test]
+    fn every_inbound_body_is_published_in_the_contract() {
+        let schema = inbound_schema();
+        let defs = schema["$defs"]
+            .as_object()
+            .expect("the inbound document is a $defs container");
+
+        let mut published: Vec<&str> = defs.keys().map(String::as_str).collect();
+        published.sort_unstable();
+
+        assert_eq!(
+            published,
+            [
+                "EngineOverrides",
+                "ProviderDeltaIn",
+                "ProviderResultIn",
+                "ScopeReviewResultIn",
+                "ToolResultIn",
+            ],
+            "the published inbound bodies drifted from the ones a host can POST"
+        );
+    }
+
+    /// The scope-review body is a real schema, not an empty placeholder.
+    ///
+    /// A `$defs` key alone would satisfy the test above while publishing `{}`,
+    /// which is a contract that accepts anything — worse than the omission it
+    /// replaced, because it looks answered.
+    #[test]
+    fn the_scope_review_body_carries_its_fields() {
+        let schema = scope_review_result_schema();
+        let props = schema["properties"]
+            .as_object()
+            .expect("ScopeReviewResultIn is an object schema");
+
+        assert!(
+            props.contains_key("request_id"),
+            "the answer must be keyed by the request_id of the frame it answers: {props:?}"
+        );
+        assert!(
+            props.contains_key("decision"),
+            "the answer must carry the human's decision: {props:?}"
+        );
+    }
+}

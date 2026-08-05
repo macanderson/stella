@@ -585,8 +585,8 @@ pub async fn run_deck_session(
     // one-line notice instead of a silently-dropped setting. Keyed on the
     // explicit settings pin for the lead (Default kind), never the
     // auto-resolved effort — session chrome, re-checked every boot, never
-    // journaled.
-    if let Some(notice) = crate::engine_config::unsupported_effort_notice(
+    // journaled. Also covers a pin accepted at a coarser tier (#1499).
+    for notice in crate::engine_config::effort_notices(
         cfg.provider.id,
         cfg.provider.display_name,
         cfg.engine_settings

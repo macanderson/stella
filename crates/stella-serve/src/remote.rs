@@ -944,6 +944,61 @@ mod tests {
         (port, seen)
     }
 
+    /// Two executors sharing one registry never mint the same request id.
+    ///
+    /// This is the sub-agent boundary (#1496). `run_session` builds a second
+    /// [`RemoteToolExecutor`] over a **clone** of the parent's [`Pending`] —
+    /// and cloning shares the map — so before the instance tag both counters
+    /// started at zero and both first calls were `tool-0`.
+    /// [`Pending::register_tool`] inserts with `HashMap::insert`, which
+    /// replaces rather than rejects, so the collision was silent in the worst
+    /// way: the parent's parked sender dropped, its waiter woke claiming the
+    /// host had abandoned the call, and the host's single answer for `tool-0`
+    /// resolved whichever request registered second.
+    ///
+    /// Both dispatches here time out — the point is the ids on the frames that
+    /// went out, not the answers that never come back.
+    #[tokio::test]
+    async fn two_executors_over_one_registry_mint_distinct_request_ids() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::backlog::FrameSink::new(
+            tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        );
+        let pending = Pending::new(
+            crate::observe::null_observer(),
+            TurnRef::new("turn-subagent-boundary"),
+        );
+        let timeout = std::time::Duration::from_millis(20);
+
+        // The parent's port and the sub-agent view's, over the same registry.
+        let parent =
+            RemoteToolExecutor::new(Vec::new(), sink.clone(), pending.clone(), timeout, None);
+        let child = RemoteToolExecutor::new(Vec::new(), sink, pending, timeout, None);
+
+        let _ = parent.dispatch("parent_tool", &serde_json::json!({})).await;
+        let _ = child.dispatch("child_tool", &serde_json::json!({})).await;
+
+        let mut ids = Vec::new();
+        while let Ok(frame) = rx.try_recv() {
+            if let ServerFrame::ToolRequest { request_id, .. } = frame {
+                ids.push(request_id);
+            }
+        }
+
+        assert_eq!(
+            ids.len(),
+            2,
+            "both dispatches emit a request frame: {ids:?}"
+        );
+        assert_ne!(
+            ids[0], ids[1],
+            "a sub-agent's tool call collided with its parent's in the shared \
+             Pending registry — one of these two answers would resolve the \
+             wrong request"
+        );
+    }
+
     /// A `tool.call.started` with no outcome after it leaves an observer
     /// holding a call that never closes — and it would do so on precisely the
     /// paths worth watching, the ones where the host went away. The bracket is

@@ -49,7 +49,7 @@ pub(super) fn xai_supports_reasoning_effort(model: &str) -> bool {
 /// posture as `openai.rs::map_reasoning_effort`: never drop the hint, never
 /// panic on a variant Grok doesn't model — the finer `xhigh`/`max` tiers are
 /// model-dependent on xAI, so they collapse to the universally-safe `high`.
-pub(super) fn map_xai_effort(effort: ReasoningEffort) -> &'static str {
+pub(crate) fn map_xai_effort(effort: ReasoningEffort) -> &'static str {
     match effort {
         ReasoningEffort::Low => "low",
         ReasoningEffort::Medium => "medium",
@@ -89,7 +89,7 @@ pub(super) fn xai_reasoning_effort(
 /// reasoning off is the `thinking` object's job, and only when the caller says
 /// so. Same collapse posture as [`map_xai_effort`]: `xhigh`/`max` fold into the
 /// ceiling GLM models rather than inventing a rung it does not have.
-pub(super) fn map_zai_effort(effort: ReasoningEffort) -> &'static str {
+pub(crate) fn map_zai_effort(effort: ReasoningEffort) -> &'static str {
     match effort {
         ReasoningEffort::Low => "low",
         ReasoningEffort::Medium => "medium",
