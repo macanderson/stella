@@ -77,6 +77,32 @@ impl TaskBoard {
         self.items.last().expect("just pushed")
     }
 
+    /// Seed the board from an approved plan's steps — one `Pending` task per
+    /// step, in plan order, so the ordinal ids the model addresses (`"3"`) are
+    /// the ordinals the user approved.
+    ///
+    /// # Why this exists
+    ///
+    /// Without it the two halves of the same idea never met. The user approved
+    /// a list of steps; the board those steps' progress would be recorded
+    /// against started empty, so `task_start "3"` answered `UnknownTask` and
+    /// the only way to get a populated board was for the model to *re-type the
+    /// plan* into `task_create`. It reliably did not, and the deck's checklist
+    /// was permanently empty as a result.
+    ///
+    /// A no-op on a board that already has rows: seeding is how a plan becomes
+    /// a board, never a way to overwrite work already in flight. Returns
+    /// whether anything was seeded.
+    pub fn seed_from_plan<S: AsRef<str>>(&mut self, steps: &[S]) -> bool {
+        if !self.items.is_empty() || steps.is_empty() {
+            return false;
+        }
+        for step in steps {
+            self.create(step.as_ref(), None);
+        }
+        true
+    }
+
     /// Move a task to a new status. Terminal tasks (completed / cancelled)
     /// reject every transition; re-asserting the same open status is a no-op
     /// that succeeds (idempotent `task_complete` retries stay terminal-safe
@@ -155,6 +181,45 @@ mod tests {
                 }
             );
         }
+    }
+
+    /// The join that makes the plan and the board one system: seeding numbers
+    /// the steps exactly as the approval gate did, so `task_start "2"` moves
+    /// the step the user read as 2.
+    #[test]
+    fn seeding_numbers_steps_as_the_plan_did() {
+        let mut board = TaskBoard::new();
+        assert!(board.seed_from_plan(&["read the layout", "fold the rail", "test it"]));
+        let ids: Vec<&str> = board.items().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["1", "2", "3"]);
+        assert_eq!(board.items()[1].subject, "fold the rail");
+        assert!(
+            board
+                .items()
+                .iter()
+                .all(|t| t.status == TaskStatus::Pending)
+        );
+        board.set_status("2", TaskStatus::InProgress).unwrap();
+        assert_eq!(board.items()[1].status, TaskStatus::InProgress);
+    }
+
+    /// Seeding is how a plan becomes a board, never a way to overwrite work
+    /// already in flight.
+    #[test]
+    fn seeding_never_disturbs_a_board_that_has_rows() {
+        let mut board = TaskBoard::new();
+        board.create("already here", None);
+        board.set_status("1", TaskStatus::Completed).unwrap();
+        assert!(!board.seed_from_plan(&["a", "b"]));
+        assert_eq!(board.items().len(), 1);
+        assert_eq!(board.items()[0].subject, "already here");
+    }
+
+    #[test]
+    fn seeding_an_empty_plan_does_nothing() {
+        let mut board = TaskBoard::new();
+        assert!(!board.seed_from_plan::<&str>(&[]));
+        assert!(board.is_empty());
     }
 
     #[test]

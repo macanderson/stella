@@ -24,10 +24,12 @@ from arenabench.agents import (
     missing_credentials,
     resolve_agent,
 )
+from arenabench.config import match_from_toml, match_to_toml_dict, required_env
 from arenabench.harbor_agent import arena_posture
 from arenabench.model import (
     DIMENSIONS,
     DIMENSIONS_BY_KEY,
+    ROLES,
     Contestant,
     Engine,
     MatchSpec,
@@ -85,9 +87,18 @@ def trial(tmp_path: Path) -> Path:
             {"type": "stage", "name": "execute"},
             {"type": "reasoning", "delta": "let me look "},
             {"type": "reasoning", "delta": "at the reflog"},
-            {"type": "tool_start", "call": {"id": "c1", "name": "bash", "arguments": {"cmd": "git reflog"}}},
+            {
+                "type": "tool_start",
+                "call": {"id": "c1", "name": "bash", "arguments": {"cmd": "git reflog"}},
+            },
             {"type": "tool_result", "call_id": "c1", "output": "abc123 HEAD@{0}"},
-            usage(input_tokens=8000, output_tokens=900, cached_input_tokens=6000, cache_write_tokens=1500, cost_usd=0.042),
+            usage(
+                input_tokens=8000,
+                output_tokens=900,
+                cached_input_tokens=6000,
+                cache_write_tokens=1500,
+                cost_usd=0.042,
+            ),
             {"type": "text", "delta": "Recovered the commit."},
             {"type": "complete", "model": "openrouter/z-ai/glm-5.2", "cost_usd": 0.042},
         ],
@@ -143,7 +154,9 @@ class TestEngine:
         assert bare.qualified_model == already.qualified_model == "openrouter/z-ai/glm-5.2"
 
     def test_a_role_inherits_the_baseline_unless_it_overrides(self):
-        engine = Engine(effort="xhigh", reasoning=True, roles={"verifier": RoleConfig(effort="low")})
+        engine = Engine(
+            effort="xhigh", reasoning=True, roles={"verifier": RoleConfig(effort="low")}
+        )
         assert engine.effective_role("worker").effort == "xhigh"
         assert engine.effective_role("verifier").effort == "low"
         assert engine.effective_role("verifier").reasoning is True
@@ -221,16 +234,28 @@ class TestLeaders:
         clock 0 and tokens 0 — so a naive "lowest wins" hands it four crowns
         for the first minutes of every match."""
         totals = {
-            "spent": {"judged": 4, "passed": 3, "solve_rate": 75.0, "total_cost": 2.0, "clock_time": 300, "tokens_in": 10, "tokens_out": 10, "cache_read": 5},
-            "idle": {"judged": 0, "passed": 0, "solve_rate": 0.0, "total_cost": 0.0, "clock_time": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0},
+            "spent": {
+                "judged": 4, "passed": 3, "solve_rate": 75.0, "total_cost": 2.0,
+                "clock_time": 300, "tokens_in": 10, "tokens_out": 10, "cache_read": 5,
+            },
+            "idle": {
+                "judged": 0, "passed": 0, "solve_rate": 0.0, "total_cost": 0.0,
+                "clock_time": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0,
+            },
         }
         won = leaders(totals, DIMENSIONS)
         assert all(winners == ["spent"] for winners in won.values()), won
 
     def test_ties_return_every_tied_contestant(self):
         totals = {
-            "a": {"judged": 1, "solve_rate": 50.0, "total_cost": 1.0, "clock_time": 5, "tokens_in": 1, "tokens_out": 1, "cache_read": 1},
-            "b": {"judged": 1, "solve_rate": 50.0, "total_cost": 1.0, "clock_time": 5, "tokens_in": 1, "tokens_out": 1, "cache_read": 1},
+            "a": {
+                "judged": 1, "solve_rate": 50.0, "total_cost": 1.0, "clock_time": 5,
+                "tokens_in": 1, "tokens_out": 1, "cache_read": 1,
+            },
+            "b": {
+                "judged": 1, "solve_rate": 50.0, "total_cost": 1.0, "clock_time": 5,
+                "tokens_in": 1, "tokens_out": 1, "cache_read": 1,
+            },
         }
         assert sorted(leaders(totals, DIMENSIONS)["solve_rate"]) == ["a", "b"]
 
@@ -438,7 +463,9 @@ class TestPosture:
     def test_a_role_model_is_qualified_with_the_workers_provider(self):
         """A pin typed as a bare slug is silently dropped by the engine, so
         the provider is inferred from the model that *is* routed."""
-        engine = Engine(model="z-ai/glm-5.2", roles={"verifier": RoleConfig(model="openai/gpt-5.5")})
+        engine = Engine(
+            model="z-ai/glm-5.2", roles={"verifier": RoleConfig(model="openai/gpt-5.5")}
+        )
         posture, _, _ = arena_posture("openrouter/z-ai/glm-5.2", engine)
         assert posture["pipeline_verifier_model"] == "openrouter/openai/gpt-5.5"
         assert "openrouter/openai/gpt-5.5" in posture["allowed_models"]
@@ -465,7 +492,10 @@ class TestPosture:
             "pipeline_triage_model", "allowed_models", "auto_mode", "effort_auto",
             "reasoning_auto", "headless_scope_bypass", "agents",
         }
-        engine = Engine(model="m", roles={r: RoleConfig(model="x") for r in ("worker", "verifier", "triage")})
+        engine = Engine(
+            model="m",
+            roles={r: RoleConfig(model="x") for r in ("worker", "verifier", "triage")},
+        )
         posture, _, _ = arena_posture("openrouter/m", engine)
         assert set(posture) <= allowed
 
@@ -483,19 +513,28 @@ class TestAgentRegistry:
 
     def test_a_knob_the_agent_ignores_is_reported(self):
         spec = resolve_agent("aider")
-        missed = spec.unhonoured(Engine(model="m", roles={"verifier": RoleConfig(effort="low")}))
+        missed = spec.unhonoured(
+            Engine(model="m", roles={"verifier": RoleConfig(effort="low")})
+        )
         assert any("pipeline" in m for m in missed)
 
     def test_an_unset_knob_is_not_reported(self):
         assert resolve_agent("aider").unhonoured(Engine(model="m")) == []
 
     def test_a_missing_credential_is_named(self):
-        seat = Contestant.from_json({"name": "s", "agent": "stella", "engine": {"api": "anthropic"}})
+        seat = Contestant.from_json(
+            {"name": "s", "agent": "stella", "engine": {"api": "anthropic"}}
+        )
         assert missing_credentials(seat) == ["ANTHROPIC_API_KEY"]
 
     def test_any_one_of_several_alternatives_satisfies(self):
         seat = Contestant.from_json(
-            {"name": "s", "agent": "gemini-cli", "engine": {"api": "google"}, "env": "GOOGLE_API_KEY=x"}
+            {
+                "name": "s",
+                "agent": "gemini-cli",
+                "engine": {"api": "google"},
+                "env": "GOOGLE_API_KEY=x",
+            }
         )
         assert missing_credentials(seat) == []
 
@@ -810,6 +849,22 @@ class TestSubscriptionCredential:
         })
         assert missing_credentials(seat) == []
 
+    def test_required_env_names_the_subscription_alternative(self):
+        """The CLI collects seat env against `required_env`. If that list
+        carries only the provider key, an OAuth-only seat aborts at preflight
+        and the token would never be forwarded — so the agent's own token
+        variables must appear as candidates alongside the provider's."""
+        spec = match_from_toml({
+            "match": {"dataset": "terminal-bench-2.1"},
+            "contestant": [{
+                "agent": "claude-code",
+                "engine": {"api": "anthropic", "model": "claude-fable-5"},
+            }],
+        })
+        candidates = required_env(spec)[spec.contestants[0].id]
+        assert "ANTHROPIC_API_KEY" in candidates
+        assert "CLAUDE_CODE_OAUTH_TOKEN" in candidates
+
     def test_a_subscription_token_is_never_written_to(self, tmp_path: Path):
         """It is not a provider bearer token. Aliasing a provider key into it
         would produce a seat that cannot authenticate at all — so it counts as
@@ -980,3 +1035,51 @@ class TestOfflineTaskSource:
         command = self._launched_command(tmp_path, monkeypatch, export=False)
         assert "--dataset" in command and "--path" not in command
         assert command[command.index("--include-task-name") + 1] == "terminal-bench/alpha"
+
+
+class TestMatchTemplateRoles:
+    """A role override in a committed match file must reach the engine.
+
+    This is the silent shape this file exists for. A loader that files a role
+    under a key nothing reads does not raise, does not fail, and does not stop
+    the match: the seat runs with that role inheriting the baseline while the
+    scoreboard reports it as configured, so the contest publishes a number for
+    a pairing it never ran. `arenabench.toml` and Stella's engine spelled this
+    role differently for one release and the translation between them outlived
+    the difference, which is exactly how such a key survives review.
+    """
+
+    @staticmethod
+    def _spec(role_name: str) -> MatchSpec:
+        return match_from_toml(
+            {
+                "match": {"name": "t", "dataset": "terminal-bench-2.1"},
+                "contestant": [
+                    {
+                        "id": "stella",
+                        "agent": "stella",
+                        "engine": {
+                            "model": "z-ai/glm-5.2",
+                            "effort": "medium",
+                            "roles": {role_name: {"model": "openai/gpt-5.5"}},
+                        },
+                    }
+                ],
+            }
+        )
+
+    def test_a_role_override_lands_on_a_key_the_engine_reads(self):
+        engine = self._spec("verifier").contestants[0].engine
+        stray = set(engine.roles) - set(ROLES)
+        assert not stray, f"{stray} is outside ROLES, so nothing reads it"
+        assert engine.effective_role("verifier").model == "openai/gpt-5.5"
+
+    def test_the_retired_spelling_still_loads(self):
+        # A match file committed before the rename must keep running.
+        engine = self._spec("judge").contestants[0].engine
+        assert engine.effective_role("verifier").model == "openai/gpt-5.5"
+
+    def test_nothing_writes_the_retired_spelling_back_out(self):
+        raw = match_to_toml_dict(self._spec("judge"))
+        roles = raw["contestant"][0]["engine"]["roles"]
+        assert "verifier" in roles and "judge" not in roles

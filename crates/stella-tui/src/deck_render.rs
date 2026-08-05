@@ -148,21 +148,6 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // The STATE overlay (`⌃s`): the expansion of the Session tab's one-row
     // state strip. Drawn from the focused agent, so it says nothing at all
     // when there is no agent to say it about.
-    if ui.state_open
-        && let Some(agent) = model.agents.get(ui.focused)
-    {
-        let sm = &agent.model;
-        let scroll = ui.state_scroll;
-        // Measured during render (where the popup's real height is known) and
-        // read by the next keypress's clamp — the same contract every other
-        // scrolling surface in the deck uses. A panic inside the guard leaves
-        // the previous frame's measure, which the next frame overwrites.
-        let mut rows = ui.state_rows;
-        guarded_overlay(buf, area, "state", |b| {
-            rows = views::work_rail::render_overlay(sm, scroll, area, b);
-        });
-        ui.state_rows = rows;
-    }
     if ui.graph_picker_open {
         guarded_overlay(buf, area, "graph picker", |b| {
             render_graph_picker(ui, area, b)
@@ -190,20 +175,14 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             render_inspect_overlay(ui, area, b)
         });
     }
-    // The floating cards (`/tasks` · `/scope` · `/witness` · `/models` ·
-    // `/budget`): at most one is up (`CardState::raise` lowers the rest);
-    // help and the startup notice still win the top of the stack below.
+    // The floating cards (`/plan` · `/models` · `/budget`): at most one is up
+    // (`CardState::raise` lowers the rest); help and the startup notice still
+    // win the top of the stack below.
     if let Some(card) = ui.cards.open {
         use crate::deck_ui::cards::Card;
         match card {
-            Card::Tasks => guarded_overlay(buf, area, "tasks card", |b| {
-                views::task_card::render(model, ui, area, b)
-            }),
-            Card::Scope => guarded_overlay(buf, area, "scope card", |b| {
-                views::scope_card::render(model, ui, area, b)
-            }),
-            Card::Witness => guarded_overlay(buf, area, "witness panel", |b| {
-                views::witness_card::render(model, ui, area, b)
+            Card::Plan => guarded_overlay(buf, area, "plan card", |b| {
+                views::plan_card::render(model, ui, area, b)
             }),
             Card::Models => guarded_overlay(buf, area, "models card", |b| {
                 views::models_card::render(model, ui, area, b)
@@ -278,21 +257,12 @@ fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)
         hints.push(("/inbox".to_string(), format!("{unread} unread")));
     }
     if let Some(agent) = model.agents.get(ui.focused) {
-        let tasks = &agent.model.tasks;
-        if !tasks.is_empty() {
-            let done = tasks
-                .iter()
-                .filter(|t| t.status == stella_protocol::TaskStatus::Completed)
-                .count();
+        let plan = &agent.model.plan;
+        if !plan.is_empty() {
+            let (done, total) = plan.progress();
             hints.push((
-                "/tasks".to_string(),
-                format!("task board — {done} of {} done", tasks.len()),
-            ));
-        }
-        if !agent.model.proof.is_empty() {
-            hints.push((
-                "/witness".to_string(),
-                crate::views::witness_card::phase_label(&agent.model.proof),
+                "/plan".to_string(),
+                format!("{} — {done} of {total} steps done", plan.state.label()),
             ));
         }
     }

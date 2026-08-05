@@ -699,7 +699,7 @@ fn entry_body(
             estimated_files,
         } => {
             push_note(
-                "⏸ scope",
+                "⏸ plan",
                 loud(theme::WARNING_BRIGHT),
                 vec![
                     Span::styled(summary.clone(), value()),
@@ -803,7 +803,7 @@ fn entry_body(
             if let Some(subject) = active {
                 spans.push(Span::styled(format!("  ·  {subject}"), quiet()));
             }
-            push_note("☰ tasks", loud(theme::VIOLET), spans, width, out);
+            push_note("☰ plan", loud(theme::VIOLET), spans, width, out);
         }
         TranscriptEntry::Error { message, retryable } => {
             push_note(

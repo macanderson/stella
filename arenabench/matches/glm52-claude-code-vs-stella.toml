@@ -1,0 +1,109 @@
+# arenabench match template
+#
+#   arenabench run matches/glm52-claude-code-vs-stella.toml --progress
+#
+# Claude Code vs Stella on ONE worker model (GLM-5.2), so the variable under
+# test is the agent architecture rather than the model. Both seats run on the
+# z.ai coding plan — same provider, same quota, no metered spend, and no
+# upstream-routing confound between the arms.
+#
+# This file carries no secrets. Export ZAI_API_KEY before running.
+#
+# ---------------------------------------------------------------------------
+# Why z.ai and not OpenRouter, measured 2026-08-04
+# ---------------------------------------------------------------------------
+# OpenRouter *does* serve an Anthropic-shaped /v1/messages (verified HTTP 200
+# from inside a task container, correct `type: message` envelope). Claude Code
+# 2.1.222 nonetheless refuses every model against it — including a plain
+# `claude-sonnet-5` — with "It may not exist or you may not have access to it"
+# and no diagnostic, before issuing any request. Against z.ai's Anthropic
+# endpoint the identical setup completes a turn. So the endpoint choice here is
+# a hard requirement of the agent, not a preference.
+#
+# The two z.ai endpoints are NOT interchangeable, and each agent needs its own:
+#   Claude Code  Anthropic Messages   https://api.z.ai/api/anthropic
+#   Stella       OpenAI completions   https://api.z.ai/api/coding/paas/v4
+# The `/coding/` segment is load-bearing: the metered path returns
+# HTTP 429 "Insufficient balance" even on a healthy coding plan.
+
+[match]
+name = "glm-5.2: claude code vs stella"
+dataset = "terminal-bench-2.1"
+tasks = [
+  "fix-git",
+  "regex-log",
+  "sqlite-with-gcov",
+  "large-scale-text-editing",
+  "make-mips-interpreter",
+]
+attempts = 1
+# 1 per contestant = 2 task containers (~2GB each) + 2 recorders. Colima is
+# 10GB; raising this to 2 needs ~13GB and will thrash.
+concurrency = 1
+record_video = true
+# Claude Code installs itself per trial: apt-get + the claude.ai installer
+# measured at 229s in an emulated amd64 container, against a 360s default.
+# 1.6x headroom disappears the moment two arms install at once — this was the
+# actual cause of the AgentSetupTimeoutError failures, not a slow network.
+setup_timeout_multiplier = 4.0
+
+[[contestant]]
+id = "claude-code"
+name = "Claude Code"
+agent = "claude-code"
+color = "#FF6B9D"
+
+  [contestant.engine]
+  api = "zai"
+  # Bare slug, no provider prefix: the runner sends `bare_model` to any seat
+  # routed at its own endpoint, which is what this endpoint expects.
+  model = "glm-5.2"
+  reasoning = true
+  effort = "medium"
+  base_url = "https://api.z.ai/api/anthropic"
+
+  [contestant.env]
+  # Names only — never values.
+  required = ["ZAI_API_KEY"]
+
+[[contestant]]
+id = "stella"
+name = "Stella (pipeline)"
+agent = "stella"
+color = "#FFB000"
+
+  [contestant.engine]
+  api = "zai"
+  model = "glm-5.2"
+  reasoning = true
+  # `medium`, not `xhigh`: measured 2026-08-03, xhigh scored 0/5 on these exact
+  # tasks with every failure a wall-clock timeout at 13-22s per step. Medium ran
+  # 3.8-7.1s per step and took the same set to 4/5.
+  effort = "medium"
+  # The model's real output ceiling. 64000 was carried over from a stale
+  # constant that claimed to be "the model's own ceiling".
+  max_tokens = 128000
+  budget_usd = 6.0
+  base_url = "https://api.z.ai/api/coding/paas/v4"
+
+  # Per-role overrides — this is the "full pipeline" arm. Every model named
+  # here must exist in Stella's OFFLINE seed catalog for this provider: the
+  # adapter pins STELLA_CATALOG_AUTO_REFRESH=0, and a role pinned to an
+  # unlisted slug refuses the run rather than silently falling back.
+    [contestant.engine.roles.verifier]
+    # A different model from the worker, so verification is independent of the
+    # thing being verified. Same provider, because one credential reaches the
+    # container.
+    model = "glm-5.1"
+    effort = "high"
+    reasoning = "on"
+
+    [contestant.engine.roles.triage]
+    # Cheap by design: triage emits a three-line classification and never
+    # touches the workspace.
+    model = "glm-4.5-air"
+    effort = "low"
+    reasoning = "off"
+
+  [contestant.env]
+  required = ["ZAI_API_KEY"]

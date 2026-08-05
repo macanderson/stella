@@ -1,0 +1,31 @@
+{
+  "name": "arenabench-ui",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ArenaBench's web client. Built to static files and committed into arenabench/web/, so the Python package never needs Node at runtime.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "next dev --port 3900",
+    "build": "next build && node scripts/sync-web.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.7.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.28.0",
+    "next": "^16.3.0",
+    "next-themes": "^0.4.6",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
+  }
+}

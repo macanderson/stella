@@ -27,6 +27,7 @@ stdlib only, and read-only with respect to everything it displays.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -99,10 +100,8 @@ class Screen:
         self.body_bottom = self.rows - self.FOOTER_ROWS
         self.body_height = max(1, self.body_bottom - self.body_top + 1)
         self.out = sys.stdout
-        try:
+        with contextlib.suppress(AttributeError, ValueError):  # pragma: no cover
             self.out.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, ValueError):  # pragma: no cover
-            pass
         #: What is currently on each row, so a repaint can skip unchanged ones.
         self._painted: dict[int, str] = {}
 
@@ -115,16 +114,12 @@ class Screen:
         self.flush()
 
     def write(self, text: str) -> None:
-        try:
+        with contextlib.suppress(BrokenPipeError, ValueError):  # pragma: no cover
             self.out.write(text)
-        except (BrokenPipeError, ValueError):  # pragma: no cover
-            pass
 
     def flush(self) -> None:
-        try:
+        with contextlib.suppress(BrokenPipeError, ValueError):  # pragma: no cover
             self.out.flush()
-        except (BrokenPipeError, ValueError):  # pragma: no cover
-            pass
 
     def row(self, index: int, text: str) -> None:
         """Paint one absolute row, but only if its content changed."""
@@ -170,7 +165,15 @@ class Renderer:
         self.screen = Screen()
         self.started = time.time()
         self.offset = 0
-        self.totals = {"steps": 0, "tools": 0, "tin": 0, "tout": 0, "cread": 0, "cwrite": 0, "cost": 0.0}
+        self.totals = {
+            "steps": 0,
+            "tools": 0,
+            "tin": 0,
+            "tout": 0,
+            "cread": 0,
+            "cwrite": 0,
+            "cost": 0.0,
+        }
         self.model = ""
         self.state = "waiting"
         #: Rendered body lines. Bounded: a long trial can emit tens of

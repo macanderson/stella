@@ -23,19 +23,20 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 __all__ = [
     "ARENA_COLORS",
-    "Contestant",
     "DIMENSIONS",
     "DIMENSIONS_BY_KEY",
-    "Dimension",
     "EFFORTS",
+    "ROLES",
+    "Contestant",
+    "Dimension",
     "Engine",
     "MatchSpec",
-    "ROLES",
     "RoleConfig",
     "parse_dotenv",
     "slugify",
@@ -165,7 +166,7 @@ class RoleConfig:
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "RoleConfig":
+    def from_json(cls, raw: dict[str, Any]) -> RoleConfig:
         def _opt_bool(value: Any) -> bool | None:
             if value in (None, "", "inherit"):
                 return None
@@ -291,7 +292,7 @@ class Engine:
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "Engine":
+    def from_json(cls, raw: dict[str, Any]) -> Engine:
         raw_roles = raw.get("roles") if isinstance(raw.get("roles"), dict) else {}
         roles: dict[str, RoleConfig] = {}
         for name in ROLES:
@@ -365,7 +366,7 @@ class Contestant:
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any], seat: int = 0) -> "Contestant":
+    def from_json(cls, raw: dict[str, Any], seat: int = 0) -> Contestant:
         name = str(raw.get("name") or "").strip()
         agent = str(raw.get("agent") or "stella").strip()
         env = raw.get("env")
@@ -428,7 +429,7 @@ class MatchSpec:
         }
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> "MatchSpec":
+    def from_json(cls, raw: dict[str, Any]) -> MatchSpec:
         contestants = tuple(
             Contestant.from_json(entry, seat)
             for seat, entry in enumerate(raw.get("contestants") or [])

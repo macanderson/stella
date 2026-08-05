@@ -246,30 +246,34 @@ fn without_a_pending_card_a_submission_is_still_an_ordinary_prompt() {
 /// The complaint this overlay answers: an approved scope had no way back.
 /// `⌃S` is the way back, and it toggles from anywhere.
 #[test]
-fn ctrl_s_opens_and_closes_the_state_overlay() {
+fn ctrl_s_opens_and_closes_the_plan_card() {
     let model = model_with(&["lead"]);
     let mut ui = ready_ui();
-    assert!(!ui.state_open);
+    assert!(!ui.cards.is_open());
     assert_eq!(
         handle_deck_key(ctrl('s'), &model, &mut ui),
         DeckAction::Handled
     );
-    assert!(ui.state_open, "ctrl+s opens it");
+    assert_eq!(
+        ui.cards.open,
+        Some(crate::deck_ui::cards::Card::Plan),
+        "ctrl+s raises the plan"
+    );
     assert_eq!(
         handle_deck_key(ctrl('s'), &model, &mut ui),
         DeckAction::Handled
     );
-    assert!(!ui.state_open, "a second ctrl+s closes it");
+    assert!(!ui.cards.is_open(), "a second ctrl+s lowers it");
 }
 
-/// Every way in has a way out — Esc closes it like every other overlay.
+/// Every way in has a way out — Esc closes it like every other card.
 #[test]
-fn esc_closes_the_state_overlay() {
+fn esc_closes_the_plan_card() {
     let model = model_with(&["lead"]);
     let mut ui = ready_ui();
     handle_deck_key(ctrl('s'), &model, &mut ui);
     handle_deck_key(KeyEvent::from(KeyCode::Esc), &model, &mut ui);
-    assert!(!ui.state_open);
+    assert!(!ui.cards.is_open());
 }
 
 /// Modal while open: a keystroke must not reach the composer behind it, or
@@ -288,8 +292,8 @@ fn the_state_overlay_owns_the_keyboard_while_it_is_up() {
 }
 
 /// The collision this binding has to avoid: `ctrl+s` is the *save* chord in the
-/// SKILLS and SETTINGS editors, and those are modal. The overlay is dispatched
-/// after them on purpose — a save must never be stolen by a recall surface.
+/// SKILLS and SETTINGS editors, and those are modal. The card is dispatched
+/// after them on purpose — a save must never be stolen by a detail surface.
 #[test]
 fn ctrl_s_still_saves_inside_a_modal_editor() {
     let model = model_with(&["lead"]);
@@ -298,8 +302,8 @@ fn ctrl_s_still_saves_inside_a_modal_editor() {
     ui.engine.focused = true;
     handle_deck_key(ctrl('s'), &model, &mut ui);
     assert!(
-        !ui.state_open,
-        "the STATE overlay stole the engine panel's save chord"
+        !ui.cards.is_open(),
+        "the plan card stole the engine panel's save chord"
     );
 }
 

@@ -16,7 +16,9 @@ arenabench serve
 # -> http://127.0.0.1:8900
 ```
 
-Zero Python dependencies. No build step. The whole client is three files.
+Zero Python dependencies. The server is standard library only, and the web
+client ships pre-built inside the package — installing and running ArenaBench
+never needs Node. Light and dark mode, defaulting to dark.
 
 ---
 
@@ -136,10 +138,11 @@ agent = "claude-code"
 name; values arrive from the environment at launch. That is what makes the file
 safe to commit.
 
-**`verifier` here is Stella's internal judge role** — the one that checks its
+**`verifier` here is Stella's own internal role** — the one that checks its
 own work. It is *not* the benchmark's verifier, which is Harbor's and decides
-the reward. The file uses `verifier`; the Stella wire key stays
-`pipeline_judge_model`.
+the reward. The file and the Stella wire key agree on the name
+(`pipeline_verifier_model`); a template written against the older `judge`
+spelling still loads.
 
 **Seating one agent on another vendor's model.** Set `base_url` and the runner
 routes that seat there — Claude Code reads `ANTHROPIC_BASE_URL`, and because
@@ -315,9 +318,28 @@ arenabench/
   telemetry.py     artifact -> metrics + transcripts; incremental, cached
   recorder.py      MP4 sidecar supervisor
   server.py        stdlib HTTP + SSE
-  web/             the arena UI (3 files, no build step)
+  web/             the arena UI, BUILT — generated from ui/, committed so
+                   `pip install arenabench` needs no Node. Do not edit.
+ui/                the arena UI, SOURCE — Next.js App Router, Tailwind v4,
+                   shadcn-style components on Base UI, dark/light themes
 recorder/          Dockerfile + record.sh + render.py
 ```
+
+### Developing the UI
+
+The client is a static export: the Python server owns every `/api` route and
+serves `web/` as plain files, so the built app has no Node runtime, no SSR,
+and no server of its own.
+
+```bash
+arenabench serve --no-browser        # the API, on :8900
+cd ui && npm install && npm run dev  # live-reload dev server on :3900,
+                                     # /api proxied to :8900
+npm run build                        # export + sync into arenabench/web/
+```
+
+Commit the regenerated `web/` together with the `ui/` change that produced
+it — the committed export is what pip users run.
 
 **Everything displayed is read from files the run already writes.** Nothing
 talks to a container, an agent, or a provider. That is why the same code

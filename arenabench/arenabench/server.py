@@ -2,10 +2,13 @@
 # Copyright (c) 2026 the ArenaBench authors
 """The arena's HTTP API and live streams.
 
-Standard library only — no framework, no build step, no dependency to audit.
-That is a deliberate constraint for a benchmark tool: the thing measuring your
-agent should be small enough to read in an afternoon, and installing it should
-never be the reason a comparison did not happen.
+Standard library only — no framework, no dependency to audit. That is a
+deliberate constraint for a benchmark tool: the thing measuring your agent
+should be small enough to read in an afternoon, and installing it should
+never be the reason a comparison did not happen. The client it serves from
+``web/`` is a pre-built static export (source in ``ui/``); at runtime it is
+plain files, so the constraint holds where it matters — in the process that
+owns credentials and produces numbers.
 
 Two live channels, both Server-Sent Events over a threading HTTP server:
 
@@ -36,11 +39,12 @@ import threading
 import time
 import tomllib
 import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .agents import AGENTS
@@ -369,7 +373,13 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-cache")
+            # The exported client's chunks are content-hashed: same path,
+            # same bytes, forever. Everything else (index.html especially)
+            # must revalidate so a rebuilt UI is picked up on reload.
+            if rel.lstrip("/").startswith("_next/static/"):
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            else:
+                self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(body)
 
@@ -420,7 +430,7 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
 
         # -- routing ------------------------------------------------------
 
-        def do_GET(self) -> None:  # noqa: N802 - http.server contract
+        def do_GET(self) -> None:
             parsed = urlparse(self.path)
             parts = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
             try:
@@ -487,7 +497,7 @@ def _handler_factory(arena: ArenaServer) -> type[BaseHTTPRequestHandler]:
                 case _:
                     self._error(HTTPStatus.NOT_FOUND, "unknown endpoint")
 
-        def do_POST(self) -> None:  # noqa: N802 - http.server contract
+        def do_POST(self) -> None:
             parsed = urlparse(self.path)
             parts = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
             length = int(self.headers.get("Content-Length") or 0)
