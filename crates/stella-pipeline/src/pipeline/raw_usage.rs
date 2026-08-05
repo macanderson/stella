@@ -18,6 +18,22 @@ pub(super) struct RawCall<'r, 'a> {
     pub(super) messages: Vec<CompletionMessage>,
     pub(super) policy: RetryPolicy,
     pub(super) overrides: &'r RoleCallOverrides,
+    /// The per-call wall clock, normally `EngineConfig::model_timeout` — the
+    /// same posture-keyed ceiling the worker path got in #1211/#1277.
+    ///
+    /// **Every management role passes it.** `None` means "no clock at all",
+    /// and the retry policy is not one: a provider that accepts the request
+    /// and then dribbles never trips a retry, so an unbounded management call
+    /// parks a headless run with no exit short of a hard cancel.
+    ///
+    /// The reason this is a field on the shared call rather than a default
+    /// inside [`Pipeline::metered_raw_call`] is that the *consequence* of the
+    /// deadline is per-role, and each role already has one written down:
+    /// Verdict falls back to the deterministic heuristic, DistressGuidance to
+    /// evidence-only revision, Plan and PlanRepair to the single-step plan.
+    /// Those fallbacks are the point. Leaving `timeout: None` did not just
+    /// risk a hang — it made the fallback arm unreachable code, so the run
+    /// lost the degraded result it was designed to take (#1483, #1501).
     pub(super) timeout: Option<Duration>,
 }
 
