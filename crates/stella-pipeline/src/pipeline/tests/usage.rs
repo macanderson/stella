@@ -416,14 +416,18 @@ async fn distress_guidance_and_engine_revisions_keep_distinct_envelopes() {
 
 #[tokio::test]
 async fn model_verdict_call_is_metered_separately_from_worker() {
+    // The worker genuinely dispatches a mutating call: since #1553 a diff
+    // with zero dispatched calls is foreign motion and no longer revokes the
+    // lookup's verifier skip.
     let provider = ScriptedProvider::new(vec![
         text_result("lookup"),
+        writing_tool_result("editing"),
         text_result("done"),
         text_result("PASS verified"),
     ]);
     let resolver = OneProvider(&provider);
     let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
-    let tools = EmptyTools;
+    let tools = OneWritingTool;
     let recall = NoContextRecall;
     let repo = NoRepoStructure;
     let repo_status = NoRepoStatus;
@@ -468,7 +472,8 @@ async fn model_verdict_call_is_metered_separately_from_worker() {
         usage_roles(&drain(&mut rx)),
         // `verdict` is the ModelCallRole — the job the call did. `verifier`
         // is the Role, the model slot. Two enums, and the rename sweep
-        // conflated them here.
-        ["triage", "worker", "verdict"]
+        // conflated them here. Two `worker` steps: the tool-dispatching call
+        // and the completion after its result.
+        ["triage", "worker", "worker", "verdict"]
     );
 }

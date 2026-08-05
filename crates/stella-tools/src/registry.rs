@@ -19,6 +19,7 @@ use crate::file_touch::{
 
 mod belief;
 mod process_tools;
+mod turn_probe;
 
 use belief::{Belief, Coverage};
 
@@ -164,6 +165,13 @@ pub struct ToolRegistry {
     /// settling one turn and arming the next, the per-call probe must stay
     /// off or it would re-attribute what the turn probe just recorded.
     turn_bracketing: std::sync::atomic::AtomicBool,
+    /// Opaque (mutating-capable, op-undeclared) calls executed since the
+    /// current bracket was armed. [`Self::settle_workspace_probe`] refuses to
+    /// attribute the bracket's tree delta when this is zero: with no call
+    /// that could have written, an observed change is foreign — a concurrent
+    /// edit in a shared worktree — and recording it would fabricate a
+    /// `FileChange` for work nothing in this session did (#1553).
+    bracket_opaque_calls: std::sync::atomic::AtomicU32,
     /// The session's memory-citation ledger, shared with the registered
     /// `cite_memory` tool instance and drained per execution by
     /// [`ToolRegistry::take_memory_citations`].
@@ -541,6 +549,7 @@ impl ToolRegistry {
             workspace_probe: std::sync::Mutex::new(None),
             authored: std::sync::Mutex::new(crate::authored_diff::AuthoredDiffLedger::default()),
             turn_bracketing: std::sync::atomic::AtomicBool::new(false),
+            bracket_opaque_calls: std::sync::atomic::AtomicU32::new(0),
             citations,
             agent_uses: std::sync::Mutex::new(crate::agent_use::AgentUseLedger::default()),
             mcp_usage,
@@ -1061,12 +1070,21 @@ impl ToolRegistry {
         // shell calls against a 900s trial kill — makes per-call probing cost
         // more than the trial it is meant to observe. Hosts that never bracket
         // keep this path, so nothing regresses for them.
-        let shell_probe = (pending_ops.is_empty()
-            && !self
-                .turn_bracketing
-                .load(std::sync::atomic::Ordering::Relaxed)
-            && !tool.as_ref().map(|t| t.schema().read_only).unwrap_or(false))
-        .then(|| crate::shell_touch::WorkspaceProbe::capture(&self.root));
+        let opaque_call =
+            pending_ops.is_empty() && !tool.as_ref().map(|t| t.schema().read_only).unwrap_or(false);
+        let bracketing = self
+            .turn_bracketing
+            .load(std::sync::atomic::Ordering::Relaxed);
+        // A bracketing host gets no per-call probe, but the settle still has
+        // to know whether any call this bracket COULD have written — that
+        // count is what stops a foreign mid-turn edit being attributed to a
+        // turn that dispatched nothing opaque (#1553).
+        if opaque_call && bracketing {
+            self.bracket_opaque_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        let shell_probe = (opaque_call && !bracketing)
+            .then(|| crate::shell_touch::WorkspaceProbe::capture(&self.root));
 
         let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
@@ -1120,34 +1138,13 @@ impl ToolRegistry {
         // describe the tree as it is, not as the exit code implies.
         if let Some(before) = shell_probe {
             let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
-            for touch in before.diff(&after) {
-                // The probe walks the tree itself, but its keys still go
-                // through the naming gate before the ledger records them.
-                if crate::resolve_within_root(&self.root, &touch.path).is_none() {
-                    continue;
-                }
-                // An unmeasurable update carries its own post-image as the
-                // pre-image, yielding 0/0. The alternative — an empty
-                // pre-image — would render a same-file rewrite as a
-                // whole-file insertion, which is a louder lie than silence.
-                let pre_content = match (touch.counts_measurable, touch.op) {
-                    (true, _) => touch.pre_content,
-                    (false, FileOp::Update | FileOp::Delete) => {
-                        crate::rootfd::read_confined_lossy(&self.root, &touch.path)
-                    }
-                    (false, _) => None,
-                };
-                self.record_touch(
-                    PendingTouch {
-                        path: touch.path,
-                        op: touch.op,
-                    },
-                    pre_content,
-                    name,
-                    &serde_json::json!({ "reason": format!("attributed to `{name}`") }),
-                    bus.as_ref(),
-                );
-            }
+            self.record_probe_delta(
+                &before,
+                &after,
+                name,
+                &serde_json::json!({ "reason": format!("attributed to `{name}`") }),
+                bus.as_ref(),
+            );
         }
         if !output.is_error() {
             // The write landed, so the objects it creates now exist: grow
@@ -2043,94 +2040,6 @@ impl ToolRegistry {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .render()
-    }
-
-    /// Take a before-image of the workspace for the turn about to run.
-    ///
-    /// Paired with [`Self::settle_workspace_probe`]. `classify_file_op` reads
-    /// a tool's *input*, which cannot describe what `bash` will touch, so the
-    /// tree is asked instead — see [`crate::shell_touch`] for the measurement
-    /// that motivated it (757 of 1,063 Terminal-Bench tool calls were shell
-    /// calls, and the ledger recorded none of them).
-    ///
-    /// Bracketing the TURN rather than each call is deliberate and measured:
-    /// one walk of a 20,000-entry tree costs ~1s, a turn issues hundreds of
-    /// shell calls, and the harness kills a trial at 900s. Per-call probing
-    /// would have spent the entire trial budget watching itself work. The
-    /// cost is that a change is attributed to the turn rather than to the
-    /// exact call within it — which is all the ledger and the ladder ever
-    /// read.
-    /// Latches this session as turn-bracketing, which is what turns the
-    /// per-call probe in [`Self::execute`] off. Calling this once commits the
-    /// session to turn granularity; the two never run together.
-    pub fn begin_workspace_probe(&self) {
-        self.turn_bracketing
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        let probe = crate::shell_touch::WorkspaceProbe::capture(&self.root);
-        *self
-            .workspace_probe
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = Some(probe);
-    }
-
-    /// Attribute anything this turn changed that no tool schema described,
-    /// then re-arm for the next turn from the same walk.
-    ///
-    /// Re-arming here rather than making the caller call
-    /// [`Self::begin_workspace_probe`] again is what keeps the cost at one
-    /// walk per settle: the after-image of this turn *is* the before-image of
-    /// the next one, taken at the only instant where both are true. Walking
-    /// twice in a row to produce two snapshots of the same tree would double
-    /// the probe's cost to re-learn what it just measured.
-    ///
-    /// Routed through `record_touch` so a `FileChange` keeps exactly
-    /// one birthplace. Paths the CRUD tools already recorded are re-recorded
-    /// here as the same op on the same path — the ledger is keyed by path and
-    /// folds repeats, so an edit that a tool declared and the tree confirms
-    /// stays one entry rather than becoming two.
-    pub fn settle_workspace_probe(&self) {
-        let Some(before) = self
-            .workspace_probe
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take()
-        else {
-            return;
-        };
-        let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
-        for touch in before.diff(&after) {
-            if crate::resolve_within_root(&self.root, &touch.path).is_none() {
-                continue;
-            }
-            // Identical to the per-call path above, and deliberately so: the
-            // probe captured a real pre-image for every file it could hold
-            // within budget, and that is what makes the line counts honest.
-            // An *unmeasurable* update falls back to its own post-image,
-            // yielding 0 added / 0 removed — because the alternative, an
-            // empty pre-image, would render a same-file rewrite as a
-            // whole-file insertion, which is a louder lie than silence.
-            let pre_content = match (touch.counts_measurable, touch.op) {
-                (true, _) => touch.pre_content,
-                (false, FileOp::Update | FileOp::Delete) => {
-                    crate::rootfd::read_confined_lossy(&self.root, &touch.path)
-                }
-                (false, _) => None,
-            };
-            self.record_touch(
-                PendingTouch {
-                    path: touch.path,
-                    op: touch.op,
-                },
-                pre_content,
-                crate::shell_touch::PROBE_TOOL_LABEL,
-                &serde_json::json!({ "reason": "observed in the workspace" }),
-                None,
-            );
-        }
-        *self
-            .workspace_probe
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = Some(after);
     }
 
     /// Snapshot of every file touched this session, insertion-ordered,

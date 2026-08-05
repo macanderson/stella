@@ -91,6 +91,13 @@ Work in coherent groups — **at most `$FULLAUTO_PARALLEL` worktrees at once**, 
 PR per group, at most ~5 issues per PR. Twenty fixes in one PR is not reviewable
 and will not be reviewed.
 
+**A cycle wants a worktree to itself.** The verify stage observes the WORKING
+TREE, and while a run that dispatches no mutating call now disowns foreign
+motion (#1553), a cycle that runs shell commands in a tree a human is also
+editing cannot tell its own writes from theirs — no verifier can. Do not share
+the cycle's worktree; if you must look, look read-only, or take your edits to
+another worktree.
+
 For each group:
 
 - Branch from the freshly-fetched `origin/main`.
