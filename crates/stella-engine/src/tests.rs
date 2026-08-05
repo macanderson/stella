@@ -455,7 +455,16 @@ async fn a_mid_turn_cancel_stops_at_the_next_boundary_with_a_valid_transcript() 
     // Step 1 never reaches the provider.
     let outcome = engine.run_step(&mut state, &events).await;
     match outcome {
-        StepOutcome::Aborted { reason, cost_usd } => {
+        StepOutcome::Aborted {
+            reason,
+            kind,
+            cost_usd,
+        } => {
+            assert_eq!(
+                kind,
+                stella_core::AbortKind::DeliberateStop,
+                "a host cancel is a decision, not a crash"
+            );
             assert_eq!(reason, CANCELLED_REASON);
             assert!(
                 (cost_usd - 0.0001).abs() < 1e-12,
@@ -510,7 +519,7 @@ async fn a_cancel_before_the_first_step_costs_nothing() {
     let outcome = engine.run_step(&mut state, &events).await;
     assert!(matches!(
         outcome,
-        StepOutcome::Aborted { ref reason, cost_usd } if reason == CANCELLED_REASON && cost_usd == 0.0
+        StepOutcome::Aborted { ref reason, cost_usd, .. } if reason == CANCELLED_REASON && cost_usd == 0.0
     ));
     assert_eq!(provider_calls.load(Ordering::SeqCst), 0);
     assert_eq!(state.step(), 0);

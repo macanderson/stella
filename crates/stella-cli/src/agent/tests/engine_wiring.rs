@@ -1143,3 +1143,39 @@ fn a_zero_per_model_cap_is_ignored_rather_than_sent() {
         "a zero cap falls back to the model's own maximum",
     );
 }
+
+/// #1585: a supervised child gets the sidecar transport in EVERY output
+/// format — its stdin is a staged file and its stdout a console log, so the
+/// terminal tests can never pass, and before the sidecar existed that meant
+/// supervision silently removed the scope-review answer a terminal run had.
+/// The prompt rides the attached terminal's stderr, so a machine-format
+/// caller's stdout stays parseable — format does not gate this capability.
+#[test]
+fn approval_capability_for_a_supervised_child_is_sidecar_in_every_format() {
+    for is_text in [true, false] {
+        for stdin_tty in [true, false] {
+            for stdout_tty in [true, false] {
+                assert_eq!(
+                    approval_capability_for(true, is_text, stdin_tty, stdout_tty),
+                    PipelineApprovalCapability::Sidecar,
+                );
+            }
+        }
+    }
+    // And the wired config consults the gate rather than failing headless:
+    // this is the witness that a supervised plan which expands scope parks
+    // instead of dying at the named headless error.
+    let cfg = cfg_for("zai");
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let config = pipeline_config_for_approval_capability(
+        &cfg,
+        PipelineApprovalCapability::Sidecar,
+        None,
+        &model_ref,
+    );
+    assert!(
+        !config.headless,
+        "a supervised run has an approver — the sidecar — and must consult it"
+    );
+    assert!(!config.headless_bypass_scope_review);
+}

@@ -7,14 +7,21 @@ dist/
 build/
 *.egg-info/
 
-# UI toolchain — arenabench/web/ (the built client) IS committed on purpose,
-# so `pip install arenabench` works without Node. Everything the build uses
-# to get there is not.
+# UI toolchain — arenabench/web/ (the built client) is generated from ui/ by
+# `npm run build` and never tracked. Build it before packaging; pyproject's
+# hatch `artifacts` entry ships it in the wheel despite this ignore.
+arenabench/web/
 ui/node_modules/
 ui/.next/
 ui/out/
 ui/next-env.d.ts
 ui/*.tsbuildinfo
+
+# Fixture matches are tracked as one archive per match; tests/conftest.py
+# extracts the trees, so individual result files never enter the index. The
+# re-include overrides the monorepo root's blanket `*.zip`.
+tests/fixtures/matches/*/
+!tests/fixtures/matches/*.zip
 
 # Local run artifacts
 .arenabench/

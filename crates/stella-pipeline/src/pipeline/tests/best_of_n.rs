@@ -236,7 +236,7 @@ async fn an_adoption_conflict_aborts_loudly_and_preserves_the_winner_workspace()
         run_isolated(&provider, &port, isolated_config(2), "Fix the failing test").await;
     let outcome = outcome.expect("an adoption conflict is a loud abort, not a panic");
     match &outcome.status {
-        PipelineStatus::Aborted { reason } => {
+        PipelineStatus::Aborted { reason, .. } => {
             assert!(
                 reason.contains("src/conflict.rs"),
                 "the abort names the conflicting paths: {reason}"

@@ -24,6 +24,7 @@ from harbor.models.agent.context import AgentContext  # noqa: E402
 
 from stella_harbor import (  # noqa: E402 - after importorskip by design
     _INSTALL_PATH,
+    DeliberateStopError,
     SelfReportedVerificationFailureError,
     StellaAgent,
 )
@@ -417,3 +418,69 @@ class TestVerificationFailureIsNotACrash:
         # A green verdict that still exits nonzero is an anomaly, not a
         # self-report, and must keep the loud generic class.
         assert type(raised.value) is NonZeroAgentExitCodeError
+
+
+class _DeliberateStopEnvironment(_SigkilledEnvironment):
+    """A trial Stella ended on purpose: exit 3, the typed deliberate stop."""
+
+    def __init__(self, *, return_code: int = 3) -> None:
+        super().__init__()
+        self._return_code_value = return_code
+
+    async def _stella_secure_exec_with_stdin(
+        self, *, command: list[str], env: dict[str, str], stdin: bytes
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            stdout=_stream_cut_mid_step(),
+            stderr=None,
+            return_code=self._return_code_value,
+        )
+
+
+class TestDeliberateStopIsNotACrash:
+    """Exit 3 is Stella choosing to stop, and only Stella exits 3 (#1524).
+
+    A loop escalation past its steering warning, an enforced budget or
+    deadline, or the step cap ends the run through the CLI's typed
+    deliberate-stop path. Before the split, that exited 1 and Harbor recorded
+    a correct loop-abort as ``NonZeroAgentExitCodeError`` — the same row as a
+    segfault.
+    """
+
+    def test_a_deliberate_stop_at_exit_three_gets_its_own_class(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test-secret")
+        agent = _sigkilled_agent(tmp_path)
+
+        with pytest.raises(DeliberateStopError) as raised:
+            asyncio.run(
+                StellaAgent.run.__wrapped__(
+                    agent,
+                    "Fix the task.",
+                    _DeliberateStopEnvironment(),
+                    AgentContext(),
+                )
+            )
+
+        # Still the class Harbor scores by — only the recorded name changes.
+        assert isinstance(raised.value, NonZeroAgentExitCodeError)
+        assert "deliberate" in str(raised.value)
+
+    def test_other_exit_codes_do_not_classify_as_deliberate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test-secret")
+        agent = _sigkilled_agent(tmp_path)
+
+        with pytest.raises(NonZeroAgentExitCodeError) as raised:
+            asyncio.run(
+                StellaAgent.run.__wrapped__(
+                    agent,
+                    "Fix the task.",
+                    _DeliberateStopEnvironment(return_code=2),
+                    AgentContext(),
+                )
+            )
+
+        assert not isinstance(raised.value, DeliberateStopError)
