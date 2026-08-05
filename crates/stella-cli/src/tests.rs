@@ -475,7 +475,11 @@ fn run_and_fleet_declare_output_format() {
 /// without one.
 #[test]
 fn arena_is_stream_json_by_contract_not_by_flag() {
-    let args = |extra: &[&str]| {
+    // `&'static` so the closure's return type unifies with the literals it
+    // extends: an unannotated `&[&str]` param makes the returned Vec borrow
+    // from the closure argument, which cannot outlive the call (E0521 — the
+    // error that broke main's clippy tier when #1567 merged unverified).
+    let args = |extra: &[&'static str]| {
         let mut argv = vec![
             "stella",
             "arena",
