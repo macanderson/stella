@@ -536,8 +536,8 @@ fn warmth_spans(remaining_secs: Option<u64>) -> Vec<Span<'static>> {
     )]
 }
 
-/// The MODELS row: the pin serving each of triage / worker / judge, with the
-/// role that most recently served drawn in the brand accent.
+/// The MODELS row: the pin serving each of triage / worker / verifier, with
+/// the role that most recently served drawn in the brand accent.
 ///
 /// Its own row because the cell row cannot hold it — three `provider/model`
 /// slugs measured 210 columns inside the cell row against the 160 the row is
@@ -546,8 +546,8 @@ fn warmth_spans(remaining_secs: Option<u64>) -> Vec<Span<'static>> {
 /// visible at every width instead of none of them.
 ///
 /// A role that has not served yet reads `—` rather than borrowing another
-/// role's pin. In a scored run "the judge is pinned to X" and "the judge ran
-/// on X" are different claims, and only the second is evidence.
+/// role's pin. In a scored run "the verifier is pinned to X" and "the verifier
+/// ran on X" are different claims, and only the second is evidence.
 fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
     let label = Style::new().fg(theme::TEXT_TERTIARY);
     let val = Style::new().fg(theme::TEXT_PRIMARY);
@@ -571,8 +571,8 @@ fn models_spans(model: &WorkspaceModel, highlight: bool) -> Vec<Span<'static>> {
                     val
                 } else {
                     // Configured but not yet reached. Drawn at label weight so
-                    // intent never reads as evidence — a judge that has not run
-                    // must not look like one that has.
+                    // intent never reads as evidence — a verifier that has not
+                    // run must not look like one that has.
                     label
                 };
                 // Same gateway-stripped form the MODEL cell uses, so the two
@@ -691,7 +691,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
     }
 
     // MODELS is permanent by design: which pins are serving triage, worker
-    // and judge is the thing a scored run is read against, so it must never
+    // and verifier is the thing a scored run is read against, so it must never
     // be the row that got dropped. Guarded on height so a caller handing this
     // function a bare 2-row area gets the pair, not a clipped third row.
     if area.height >= 3 {
@@ -930,7 +930,7 @@ mod tests {
     fn the_role_word_is_the_one_the_deck_says_out_loud() {
         assert_eq!(role_word(PipelineRole::Triage), "triage");
         assert_eq!(role_word(PipelineRole::Worker), "worker");
-        // `Judge` reads "verify" — the stage word the stepper already uses.
+        // `Verifier` reads "verify" — the stage word the stepper already uses.
         assert_eq!(role_word(PipelineRole::Verifier), "verify");
     }
 

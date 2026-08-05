@@ -524,8 +524,11 @@ _POSTURE, _POSTURE_JSON, _POSTURE_SHA256 = analysis_module.canonical_engine_post
     _READINESS_POSTURE_JSON,
     _READINESS_POSTURE_SHA256,
 ) = analysis_module.canonical_engine_posture(_READINESS_MODEL)
+# Moved from 8530a36f by the judge -> verifier rename (#1394) and nothing else:
+# the digest hashes the `agents` key names along with the values. Runs published
+# under 8530a36f still ran the posture it describes — see READINESS 8.4.4.
 assert _POSTURE_SHA256 == (
-    "8530a36f8fe064d59a64b6b732d57d9e9d9613c0fee27da9b5a6f1501551ffe9"
+    "8ce2e82029af25d9c9ee5d3f0f024f6e97c08fe39543486edb66926cb55b84a9"
 )
 
 
