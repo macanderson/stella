@@ -93,6 +93,7 @@ fn spec_with_deadline(prompt: &str, deadline: Duration) -> SessionSpec {
 fn aborted_outcome_preserves_incurred_cost_on_wire() {
     let wire = TurnOutcomeWire::from(TurnOutcome::Aborted {
         reason: "budget exhausted".to_string(),
+        kind: stella_core::AbortKind::DeliberateStop,
         cost_usd: 1.25,
     });
 

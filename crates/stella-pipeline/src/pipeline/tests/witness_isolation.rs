@@ -497,7 +497,7 @@ async fn authored_witness_isolation_failure_degrades_to_a_bare_run() {
     assert!(
         !matches!(
             outcome.status,
-            PipelineStatus::Aborted { ref reason } if reason.contains("isolation")
+            PipelineStatus::Aborted { ref reason, .. } if reason.contains("isolation")
         ),
         "an isolation failure must not end the turn: {outcome:?}"
     );
@@ -522,7 +522,7 @@ async fn authored_witness_isolation_failure_degrades_to_a_bare_run() {
 /// "the fixture ran out of responses one turn earlier", and a reordering of the
 /// pipeline silently converts these guards into tests of the fixture.
 fn assert_aborted_because(status: &PipelineStatus, expected: &str) {
-    let PipelineStatus::Aborted { reason } = status else {
+    let PipelineStatus::Aborted { reason, .. } = status else {
         panic!("expected an aborted run, got {status:?}");
     };
     assert!(
@@ -986,7 +986,7 @@ async fn a_tampered_witness_file_hard_fails_before_verifier_evaluation() {
     let (outcome, events, _) = run_isolated(&provider, &port, config, "Fix the retry bug").await;
     let outcome = outcome.expect("run succeeds");
 
-    let PipelineStatus::Aborted { reason } = &outcome.status else {
+    let PipelineStatus::Aborted { reason, .. } = &outcome.status else {
         panic!("tamper must abort the candidate, got {:?}", outcome.status);
     };
     assert!(

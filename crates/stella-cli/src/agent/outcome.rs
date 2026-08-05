@@ -14,6 +14,8 @@
 use stella_context::EpisodeOutcome;
 use stella_pipeline::{PipelineOutcome, PipelineRunError, PipelineStatus};
 
+use crate::failure::CliFailure;
+
 /// Spend settled between two reads of the same cumulative counter, floored at
 /// zero. The floor is not defensive noise: a cancelled turn reads the guard
 /// after the dispatch it is unwinding, and a provider whose reported total
@@ -51,7 +53,7 @@ pub(super) fn pipeline_failure_reason(status: &PipelineStatus) -> Option<String>
         PipelineStatus::VerificationFailed { verdict } => {
             Some(format!("verification failed: {}", verdict.summary))
         }
-        PipelineStatus::Aborted { reason } => Some(reason.clone()),
+        PipelineStatus::Aborted { reason, .. } => Some(reason.clone()),
     }
 }
 
@@ -63,13 +65,16 @@ pub(super) fn pipeline_episode_outcome(status: &PipelineStatus) -> EpisodeOutcom
     }
 }
 
-pub(super) fn pipeline_status_result(status: &PipelineStatus) -> Result<(), String> {
+pub(super) fn pipeline_status_result(status: &PipelineStatus) -> Result<(), CliFailure> {
     match status {
         PipelineStatus::Completed => Ok(()),
-        PipelineStatus::VerificationFailed { verdict } => {
-            Err(format!("verification failed: {}", verdict.summary))
+        PipelineStatus::VerificationFailed { verdict } => Err(CliFailure::error(format!(
+            "verification failed: {}",
+            verdict.summary
+        ))),
+        PipelineStatus::Aborted { reason, kind } => {
+            Err(CliFailure::from_abort(reason.clone(), *kind))
         }
-        PipelineStatus::Aborted { reason } => Err(reason.clone()),
     }
 }
 

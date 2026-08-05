@@ -236,7 +236,9 @@ impl<'a> Pipeline<'a> {
                 *total += cost_usd;
                 text
             }
-            TurnOutcome::Aborted { reason, cost_usd } => {
+            TurnOutcome::Aborted {
+                reason, cost_usd, ..
+            } => {
                 *total += cost_usd;
                 if let Some(abort) = budget_abort(budget.evaluate()) {
                     return Err(WitnessAbort::rejected(abort.reason));
@@ -298,7 +300,9 @@ impl<'a> Pipeline<'a> {
                     *total += cost_usd;
                     text
                 }
-                TurnOutcome::Aborted { reason, cost_usd } => {
+                TurnOutcome::Aborted {
+                    reason, cost_usd, ..
+                } => {
                     *total += cost_usd;
                     if let Some(abort) = budget_abort(budget.evaluate()) {
                         return Err(WitnessAbort::rejected(abort.reason));

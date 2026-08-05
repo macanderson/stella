@@ -1176,7 +1176,9 @@ async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
     match outcome {
-        TurnOutcome::Aborted { reason, cost_usd } => {
+        TurnOutcome::Aborted {
+            reason, cost_usd, ..
+        } => {
             assert!(
                 reason.contains("budget exceeded"),
                 "the parent must abort on the CHILDREN's spend, got: {reason}"
