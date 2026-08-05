@@ -1,25 +1,20 @@
 //! Pure rendering: `(model, ui) -> frame`. Every panel is drawn by a function
 //! that reads only `&SessionModel` / small `Copy` view values, so the whole
 //! surface is a deterministic function of the event log plus the ephemeral
-//! scroll/compose state (L-T1) — the replay-determinism proptest at the bottom
-//! renders two independently-folded models and asserts identical backing cell
-//! buffers.
+//! scroll/compose state (L-T1).
 //!
 //! # Panel panic boundary (L-T7)
 //!
-//! Each panel is drawn through `guarded_panel`, a thin `Frame`-shaped
-//! wrapper over `panel_guard::guarded_band` — the crate's single
-//! boundary, shared with the deck. The panel renders into its own scratch
-//! [`Buffer`]; a panic mid-write discards it and paints an error card in its
-//! place, and the app keeps running with input alive.
+//! Nothing here takes the boundary itself. These are leaf panels the deck
+//! draws *inside* its own guarded bands (`deck_render` → `panel_guard`), so a
+//! panic in one is caught by the band that called it and painted as an error
+//! card over that band's rectangle, with input alive.
 //!
-//! On *this* path the `AssertUnwindSafe` needs no recoverability argument at
-//! all: the draw closures below capture only immutable references
-//! (`&SessionModel` and `Copy` values — no interior mutability) and the sole
-//! mutable state they touch is the scratch buffer, which is thrown away on
-//! panic. `ui.metrics` is written by `render` itself, outside every guard. The
-//! deck's closures do capture `&mut DeckUi`, and the argument for those lives
-//! with the boundary in `panel_guard`.
+//! That is also why no recoverability argument is owed on this path: every
+//! function below takes `&`-only inputs (`&SessionModel` and `Copy` values —
+//! no interior mutability) plus the scratch [`Buffer`] the guard throws away
+//! on panic. The deck's own closures do capture `&mut DeckUi`, and the
+//! argument for those lives with the boundary in `panel_guard`.
 
 use std::ops::Range;
 

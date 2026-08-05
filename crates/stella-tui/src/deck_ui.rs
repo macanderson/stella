@@ -772,8 +772,8 @@ pub struct DeckUi {
     /// the detail can say "reconstructing…" instead of rendering an empty
     /// transcript that reads like "the model was sent nothing".
     pub inspect_pending: bool,
-    /// The floating card overlays (`/tasks` · `/scope` · `/witness` ·
-    /// `/models` · `/budget`): which one is up, plus the task card's
+    /// The floating card overlays (`/plan` · `/models` ·
+    /// `/budget`): which one is up, plus the plan card's
     /// selection and the budget editor's input buffer. One struct so the
     /// mutual-exclusion rule (raising one lowers the others) lives in one
     /// place — see [`cards::CardState`].
@@ -1474,9 +1474,9 @@ pub mod cards;
 /// surface claims Esc ahead of rules 3 onward, at the gate that hands it the
 /// keyboard: the INSTALLED AGENTS sub-modes, the ISSUES sub-modes, the Graph
 /// file picker, the ENGINE panel, the SESSIONS / INBOX / CONTEXT / INSPECT
-/// overlays, the floating cards (`/tasks` · `/scope` · `/witness` ·
-/// `/models` · `/budget` — Esc closes the topmost card before anything else
-/// it currently does; see [`cards::handle_card_key`]), and the SKILLS
+/// overlays, the floating cards (`/plan` · `/models` · `/budget` — Esc closes
+/// the topmost card before anything else it currently does; see
+/// [`cards::handle_card_key`]), and the SKILLS
 /// preview/prompt overlays. (The SKILLS *panes* are the exception: they
 /// claim typing but not Esc, so it reaches the rules below.)
 ///
@@ -1746,7 +1746,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     if ui.inspect_open {
         return handle_inspect_key(key, ui);
     }
-    // The floating cards (`/tasks` · `/scope` · `/witness` · `/models` ·
+    // The floating cards (`/plan` · `/models` ·
     // `/budget`) are modal exactly like the overlays above: the topmost card
     // claims every key — Esc closes it before any other Esc meaning fires.
     if let Some(action) = cards::handle_card_key(key, model, ui) {

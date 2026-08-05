@@ -333,10 +333,10 @@ pub struct WorkspaceModel {
     pub now_ms: u64,
     /// Global system CPU utilization percent — the second labeled out-of-band
     /// field (sampled by [`crate::resource::ResourceMonitor`], not folded from
-    /// events). Drives the status-bar gauge and dispatch backpressure.
+    /// events). Drives the status-bar gauge (and, later, dispatch backpressure).
     pub global_cpu_pct: f32,
     /// Whether the session drives turns through the staged pipeline (triage →
-    /// witness → execute → verify → verdict) rather than the raw engine loop.
+    /// plan → execute → witness → verify → verdict), not the raw engine loop.
     /// Surfaced as the `PIPELINE` stat box. Seeded from
     /// `DeckOptions::pipeline` and toggled live by [`Inbound::Pipeline`]
     /// (the driver's `/pipeline` command).

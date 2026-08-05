@@ -555,7 +555,7 @@ pub fn color_mode(no_color: bool, colorterm: Option<&str>, term: Option<&str>) -
 
 /// Read `NO_COLOR`/`COLORTERM`/`TERM` from the real process environment once and
 /// decide the [`ColorMode`] via [`color_mode`]. Call once at startup (see
-/// `shell::run` / `deck_shell::run_deck`) and thread the result through — never
+/// `deck_shell::run_deck` / `fleet_dashboard::run`) and thread it through — never
 /// per-frame or per-token.
 pub fn detect_color_mode() -> ColorMode {
     color_mode(
@@ -665,7 +665,7 @@ pub fn resolve(color: Color, mode: ColorMode) -> Color {
 /// This is the *only* place a fallback is applied, once per frame right after
 /// the widgets render — which lets every other call site in the crate keep
 /// referencing `theme::TOKEN` directly, unaware a lesser terminal is watching.
-/// See `shell::run` / `deck_shell::run_deck` for the call sites.
+/// See `deck_shell::run_deck` / `fleet_dashboard::run` for the call sites.
 pub fn degrade_buffer(buf: &mut ratatui::buffer::Buffer, mode: ColorMode) {
     if mode.is_truecolor() {
         return;

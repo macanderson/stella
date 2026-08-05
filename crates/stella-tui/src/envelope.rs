@@ -178,7 +178,7 @@ pub enum Inbound {
     /// custom commands/skills so the menu reflects them without a restart.
     SlashCommands(Vec<crate::composer::SlashCommand>),
     /// The driver toggled staged-pipeline routing (`/pipeline`): subsequent
-    /// turns run triage → witness → execute → verify → verdict instead of the
+    /// turns run triage → plan → execute → witness → verify → verdict, not the
     /// raw engine loop. Folded into [`crate::deck::WorkspaceModel::pipeline`]
     /// so the `PIPELINE` stat box flips live.
     Pipeline(bool),
@@ -882,12 +882,12 @@ pub enum WorkspaceInput {
         step: u64,
         call_seq: u64,
     },
-    /// Task card (`/tasks`): ask the driver to skip one still-open task on
-    /// `agent`'s board. Send-and-forget — the row's state changes only when
+    /// Plan card (`/plan`), `x`: ask the driver to skip one still-open step on
+    /// `agent`'s plan. Send-and-forget — the row's state changes only when
     /// the driver's next `TaskUpdate` snapshot folds back, so the card can
     /// never show a skip the engine refused.
     TaskSkip { agent: AgentId, id: String },
-    /// Scope card (`/scope`), post-approval `e`: ask the driver to open a
+    /// Plan card (`/plan`), post-approval `e`: ask the driver to open a
     /// scope-change proposal for `agent`'s locked scope. The deck never edits
     /// scope locally — a granted change arrives back as a fresh
     /// `ScopeReview` fold.

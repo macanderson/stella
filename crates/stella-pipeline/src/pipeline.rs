@@ -1140,8 +1140,8 @@ impl<'a> Pipeline<'a> {
         // Triage classified this as chat, not a software task (a greeting,
         // small talk, a question about the agent), and the deterministic floor
         // saw no task signal to overrule it (triage::resolve_conversational).
-        // Answer in one plain, tool-less completion and skip plan → witness →
-        // execute → verify entirely. This is the fix for "typing `hi` authored
+        // Answer in one plain, tool-less completion and skip plan → execute →
+        // witness → verify entirely. This is the fix for "typing `hi` authored
         // a witness test": a non-task must never enter the work pipeline.
         if assessment.conversational {
             return self

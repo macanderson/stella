@@ -557,8 +557,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             },
         ),
         // ── lead proposes a larger scope change (gate) ──────────────────
-        // Carries the full scope-card grid facts (repo/branch, globs, shell
-        // policy) so `/scope` renders every labeled row from scripted data.
+        // Carries the full envelope grid facts (repo/branch, globs, shell
+        // policy) so `/plan` renders every labeled row from scripted data.
         ev(
             lead,
             AgentEvent::ScopeReview {

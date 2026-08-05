@@ -82,7 +82,7 @@ pub enum FleetMsg {
 /// not depend on `stella-fleet`, and keeping the view a pure fold of its
 /// inbound stream is what makes it testable without a terminal. So the three
 /// control verbs travel the other way down this channel, and the driver
-/// (`stella-cli/src/fleet_cmd.rs`) applies them to the real `Fleet`.
+/// (`crates/stella-cli/src/fleet_cmd.rs`) applies them to the real `Fleet`.
 ///
 /// The verbs map one-to-one onto `Fleet::pause_task` / `Fleet::resume_task` /
 /// `Fleet::stop_task`. Each is a no-op against a task with no live worker, so
