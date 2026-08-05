@@ -381,9 +381,8 @@ fn model_spans(model: &WorkspaceModel, dim: Style, val: Style) -> Vec<Span<'stat
 /// The pipeline role as the deck says it out loud: triage / worker / verify.
 ///
 /// `Verifier` reads "verify" because that is the stage word the stepper and
-/// the rail's DONE VERIFICATION panel already use for the same step;
-/// `Verifier` names the model, and two words for one thing is one too many on
-/// a glanceable row.
+/// the witness panel already use for the same step; "verifier" is the role
+/// name, and two words for one thing is one too many on a glanceable row.
 fn role_word(role: PipelineRole) -> &'static str {
     match role {
         PipelineRole::Triage => "triage",
@@ -930,7 +929,7 @@ mod tests {
     fn the_role_word_is_the_one_the_deck_says_out_loud() {
         assert_eq!(role_word(PipelineRole::Triage), "triage");
         assert_eq!(role_word(PipelineRole::Worker), "worker");
-        // `Judge` reads "verify" — the stage word the stepper already uses.
+        // `Verifier` reads "verify" — the stage word the stepper already uses.
         assert_eq!(role_word(PipelineRole::Verifier), "verify");
     }
 
