@@ -879,7 +879,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             let Some(Command::Daemon { cmd }) = &cli.command else {
                 unreachable!("matched Command::Daemon")
             };
-            return daemon::run(cmd);
+            return daemon::run(cmd).map_err(failure::CliFailure::from);
         }
         _ => {}
     }
@@ -979,7 +979,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &prompt),
                     prompt.as_bytes(),
                     scope_review_lost,
-                );
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1030,7 +1030,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &goal),
                     goal.as_bytes(),
                     scope_review_lost,
-                );
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1060,7 +1060,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     ),
                     &[],
                     scope_review_lost,
-                );
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1087,7 +1087,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &format!("monitor {target}")),
                     &[],
                     scope_review_lost,
-                );
+                ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status
             // itself) ends the loop only on a fully green latest run.
