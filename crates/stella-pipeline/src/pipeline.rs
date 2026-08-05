@@ -1388,7 +1388,7 @@ impl<'a> Pipeline<'a> {
                 RawCall {
                     role: ModelCallRole::Triage,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(triage_prompt(goal))],
+                    messages: triage_prompt(goal).into_messages(),
                     policy: RetryPolicy::deterministic(),
                     overrides: &self.config.role_overrides.triage,
                     timeout: Some(self.config.triage_latency_ceiling),

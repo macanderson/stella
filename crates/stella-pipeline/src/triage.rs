@@ -23,6 +23,8 @@
 //! the execute engine's own tool loop can still drive a complex task to
 //! completion inside a single turn.
 
+use crate::management_prompt::ManagementPrompt;
+
 /// How much orchestration a prompt needs. Ordered least → most work; the
 /// derived `Ord` is load-bearing (`deterministic_floor` takes the `max` of
 /// the model's class and the pattern floor, so the floor can only ever add
@@ -921,45 +923,49 @@ fn has_action_request(goal: &str) -> bool {
 /// Stella was pointed at, so the split that matters is *does this ask for
 /// anything to be done*, not *is this about source files*. See
 /// [`resolve_conversational`] for the deterministic backstop.
-pub fn triage_prompt(goal: &str) -> String {
-    format!(
-        "Classify the following user message, and decide what assurance its \
-         result actually warrants. Do NOT assume it is a software task — it may \
-         just be conversation. Answer with EXACTLY these three lines and \
-         nothing else:\n\
-         CLASS: chat|lookup|single|multi\n\
-         WITNESS: yes|no\n\
-         VERIFIER: yes|no\n\n\
-         CLASS is what the message needs:\n\
-         - `chat`    — asks for NOTHING to be done: a greeting (`hi`), thanks, \
-         small talk, or a question about you. Reply conversationally; touch no \
-         files, write no plan, no test.\n\
-         - `lookup`  — a read/explain/search/explore question about the \
-         workspace that changes no files\n\
-         - `single`  — one concrete change\n\
-         - `multi`   — genuinely multi-step work spanning several changes\n\n\
-         The workspace is not always code. Exploring, organizing, renaming, \
-         sorting, cleaning up or summarizing ANY files — documents, notes, \
-         data, photos — is real work: classify it `lookup`, `single` or `multi` \
-         like any other task. Use `chat` ONLY when the message asks you to do \
-         nothing at all. If it asks you to look at, decide about, or change \
-         anything, it is never `chat`.\n\n\
-         WITNESS is whether a failing test should be written first to pin the \
-         intended behavior. Say no when the change is mechanical, when \
-         correctness is already obvious from the diff, or when the project \
-         has no way to run such a test. Always say no when the ask is to \
-         DELETE something — a witness must fail on the old code and pass on \
-         the new, and a removal leaves nothing to write that against. Prefer \
-         `no` on small, self-evident work — ceremony that proves nothing \
-         costs the user time and money.\n\
-         VERIFIER is whether a separate model should review the result. It is \
-         only consulted when no test settled the outcome, so say no ONLY \
-         when a test will already prove the change or the result is \
-         trivially checkable from its diff; when unsure, say yes.\n\n\
-         Task:\n{goal}\n\n\
-         Answer:"
-    )
+pub fn triage_prompt(goal: &str) -> ManagementPrompt {
+    ManagementPrompt {
+        instructions: TRIAGE_INSTRUCTIONS,
+        payload: format!("Task:\n{goal}\n\nAnswer:"),
+    }
 }
+
+/// The triage protocol block (#1434): fully literal, so it is a plain
+/// `&'static str` — byte-identical on every triage call, riding as the
+/// system message the provider adapters can cache-mark.
+const TRIAGE_INSTRUCTIONS: &str = "Classify the following user message, and decide what assurance its \
+     result actually warrants. Do NOT assume it is a software task — it may \
+     just be conversation. Answer with EXACTLY these three lines and \
+     nothing else:\n\
+     CLASS: chat|lookup|single|multi\n\
+     WITNESS: yes|no\n\
+     VERIFIER: yes|no\n\n\
+     CLASS is what the message needs:\n\
+     - `chat`    — asks for NOTHING to be done: a greeting (`hi`), thanks, \
+     small talk, or a question about you. Reply conversationally; touch no \
+     files, write no plan, no test.\n\
+     - `lookup`  — a read/explain/search/explore question about the \
+     workspace that changes no files\n\
+     - `single`  — one concrete change\n\
+     - `multi`   — genuinely multi-step work spanning several changes\n\n\
+     The workspace is not always code. Exploring, organizing, renaming, \
+     sorting, cleaning up or summarizing ANY files — documents, notes, \
+     data, photos — is real work: classify it `lookup`, `single` or `multi` \
+     like any other task. Use `chat` ONLY when the message asks you to do \
+     nothing at all. If it asks you to look at, decide about, or change \
+     anything, it is never `chat`.\n\n\
+     WITNESS is whether a failing test should be written first to pin the \
+     intended behavior. Say no when the change is mechanical, when \
+     correctness is already obvious from the diff, or when the project \
+     has no way to run such a test. Always say no when the ask is to \
+     DELETE something — a witness must fail on the old code and pass on \
+     the new, and a removal leaves nothing to write that against. Prefer \
+     `no` on small, self-evident work — ceremony that proves nothing \
+     costs the user time and money.\n\
+     VERIFIER is whether a separate model should review the result. It is \
+     only consulted when no test settled the outcome, so say no ONLY \
+     when a test will already prove the change or the result is \
+     trivially checkable from its diff; when unsure, say yes.";
 
 #[cfg(test)]
 mod tests;
