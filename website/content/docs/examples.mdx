@@ -8,7 +8,7 @@ Pick the profile that matches the keys you hold, paste its file whole, and verif
 fragment.
 
 <Callout type="info">
-This page answers *how do I set Stella up*. For *how do I get this done* — a red CI
+This page answers *how do I set stella up*. For *how do I get this done* — a red CI
 run, an unfamiliar repository, a budget you have to hold — see the
 **[Guides](/docs/guides)**.
 </Callout>
@@ -51,7 +51,7 @@ Three consequences:
 2. **A flagship verifier is cheap insurance.** One verifier call is a few thousand input tokens
    and under a thousand out — 1–2¢ on `gpt-5.5`, 2–3¢ on `claude-fable-5`. Make it a
    *different family* than the worker. Arm `--test-command` and many runs skip it.
-3. **Prompt caching does the heavy lifting.** Stella keeps the system prefix byte-stable
+3. **Prompt caching does the heavy lifting.** stella keeps the system prefix byte-stable
    so most execute-step input bills at the cached rate, 4–10× cheaper. See the
    [context engine](/docs/context-engine).
 
@@ -333,7 +333,7 @@ the first-slash split and the `openrouter/openrouter/auto` doubling.
 
 ## Local and air-gapped
 
-Point Stella at any OpenAI-compatible local server. No key, no metering, no cloud.
+Point stella at any OpenAI-compatible local server. No key, no metering, no cloud.
 
 ```bash
 # Ollama
@@ -382,7 +382,7 @@ stella doctor    # checks the local session store's integrity; reads local state
 Community/default telemetry stays in `.stella/private/store.db`, the
 [Observatory](/docs/telemetry/dashboard) binds `127.0.0.1`, memories and the code graph
 are files in your workspace, and `stella init` works offline with a heuristic fallback.
-To keep it that way, leave both telemetry-egress paths unconfigured — Stella has
+To keep it that way, leave both telemetry-egress paths unconfigured — stella has
 [exactly two](/docs/telemetry): leave
 [Oxagen Enterprise telemetry](/docs/telemetry#oxagen-enterprise-managed-export)
 unenrolled, and write no `drain` block into `~/.stella/cloud.json` (without one,
@@ -402,7 +402,7 @@ in auto-detection, so pin them explicitly. Setup and credential rules are in
 [API providers](/docs/api-providers#google-vertex-ai); this is the org-wide half.
 
 The **org-managed scope** is the enterprise deployment surface: a `settings.json` outside
-any repo, shipped by MDM, that every Stella on the machine inherits.
+any repo, shipped by MDM, that every stella on the machine inherits.
 
 ```json title="/Library/Application Support/stella/settings.json (macOS) · /etc/stella/settings.json (Linux)"
 {

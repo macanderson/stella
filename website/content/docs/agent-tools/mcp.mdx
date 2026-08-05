@@ -1,13 +1,13 @@
 ---
 title: MCP Servers
-description: Connect Model Context Protocol servers to Stella so their tools merge into the agent at session start.
+description: Connect Model Context Protocol servers to stella so their tools merge into the agent at session start.
 ---
 
-Stella can connect to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and merge their tools into the agent. This lets you extend the agent with capabilities that live outside your workspace — without writing a [custom script tool](/docs/agent-tools/custom-tools) for each one.
+stella can connect to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and merge their tools into the agent. This lets you extend the agent with capabilities that live outside your workspace — without writing a [custom script tool](/docs/agent-tools/custom-tools) for each one.
 
 ## Configuration
 
-MCP servers are configured in `.stella/mcp.toml` in your workspace. Stella connects to each configured server at **session start** and merges the tools it exposes into the agent, alongside the [built-in tools](/docs/agent-tools) and any custom tools.
+MCP servers are configured in `.stella/mcp.toml` in your workspace. stella connects to each configured server at **session start** and merges the tools it exposes into the agent, alongside the [built-in tools](/docs/agent-tools) and any custom tools.
 
 The quickest way to add a server is the [`stella mcp`](/docs/commands/mcp) command family — no hand-editing:
 
@@ -36,7 +36,7 @@ Because the tools are added at session start, connecting a new server takes effe
   name an arbitrary `cmd` that runs at session start — the `git clone && stella`
   remote-execution hole — or an attacker-controlled `url` that workspace content gets
   sent to, which is the same risk class as [project hooks](/docs/agent-tools/hooks).
-  Untrusted, Stella connects nothing and prints the reason once. Opt in per repo:
+  Untrusted, stella connects nothing and prints the reason once. Opt in per repo:
 
   ```bash
   export STELLA_TRUST_PROJECT=1
@@ -70,7 +70,7 @@ A server entry needs a `transport` discriminant — `stdio` or `http` — and th
     on it.
   </OptionCard>
   <OptionCard name="cmd">
-    stdio only, required there. The executable Stella launches, speaking
+    stdio only, required there. The executable stella launches, speaking
     JSON-RPC over the child's stdio.
   </OptionCard>
   <OptionCard name="args" defaultValue="[]">
@@ -80,7 +80,7 @@ A server entry needs a `transport` discriminant — `stdio` or `http` — and th
     stdio only. The variables the child receives — see the scrub note below.
   </OptionCard>
   <OptionCard name="url">
-    http only, required there. A streamable-HTTP endpoint Stella POSTs JSON-RPC
+    http only, required there. A streamable-HTTP endpoint stella POSTs JSON-RPC
     to.
   </OptionCard>
   <OptionCard name="headers" defaultValue="{}">
@@ -94,7 +94,7 @@ A server entry needs a `transport` discriminant — `stdio` or `http` — and th
   </OptionCard>
 </CardGrid>
 
-Either way, Stella merges the tools the server reports for the session. Each is advertised as `mcp__<server>__<tool>`, so two servers exposing a `search` tool never collide, and the entry's name in `mcp.toml` is what shows up in the middle segment.
+Either way, stella merges the tools the server reports for the session. Each is advertised as `mcp__<server>__<tool>`, so two servers exposing a `search` tool never collide, and the entry's name in `mcp.toml` is what shows up in the middle segment.
 
 <Callout type="warn">
 A stdio MCP subprocess runs with a **scrubbed environment** — ambient shell variables (including credentials like `ANTHROPIC_API_KEY` or `GITHUB_TOKEN`) are **not** inherited. Any variable the server needs must be listed explicitly in the entry's `env` table, e.g. `env = { GITHUB_TOKEN = "…" }`. The single exception is `PATH`, which is inherited so a bare runner (`npx`, `uvx`, `docker`) can resolve at all; an `env` entry named `PATH` overrides it.
@@ -137,14 +137,14 @@ checked are genuinely read-only and cwd-independent.
 Speculative execution is off the table entirely for MCP tools: they register
 as mutating (`read_only: false`) and never claim `speculation_safe`, so the
 engine runs each call exactly once, at dispatch — an external server's
-request count and rate limit are not Stella's to spend twice.
+request count and rate limit are not stella's to spend twice.
 
 Two things follow from a server being `candidate_safe`:
 
 - Every candidate's engine can call that server's tools live, mid-turn,
   through the same already-connected session client (no extra subprocess
   per candidate).
-- Before the fan-out starts, Stella calls that server's zero-argument tools
+- Before the fan-out starts, stella calls that server's zero-argument tools
   **once** and folds the results into every candidate's starting context —
   covering the common case where every candidate would otherwise ask the
   same read-only question (a schema listing, say) N times over. A tool that

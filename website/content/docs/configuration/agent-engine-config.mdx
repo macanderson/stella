@@ -300,7 +300,7 @@ cross-family as your lineup changes:
 
 ## Output token ceilings
 
-**By default every model is asked for its own maximum.** Stella reads that
+**By default every model is asked for its own maximum.** stella reads that
 ceiling from the model catalog, which learns it from the provider's own
 `/models` endpoint, so you never have to configure anything to get a
 full-length answer. A cap set below the model's ceiling decides where work
@@ -375,7 +375,7 @@ read: it means the output cap on some gateways and the whole context window on
 others, and reading it the wrong way round would seed a ceiling several times
 the model's real one.
 
-Bedrock and Vertex publish no listing Stella can read, so those rows carry a
+Bedrock and Vertex publish no listing stella can read, so those rows carry a
 seeded value instead. `stella models refresh` (and the startup sync) replaces
 seeded numbers with the provider's own wherever one is published.
 
@@ -413,7 +413,7 @@ maps reasoning to the provider's native mechanism:
   >
     The normalized reasoning object. Some upstreams OpenRouter fronts make
     reasoning mandatory and answer `reasoning: {enabled: false}` with a hard
-    400 — Stella resends once without the object rather than losing the call,
+    400 — stella resends once without the object rather than losing the call,
     since "off" is an economy preference, not a correctness requirement.
   </SpecCard>
   <SpecCard
@@ -439,7 +439,7 @@ maps reasoning to the provider's native mechanism:
     meta={[{ label: "Reasoning", value: "reasoning.effort" }]}
   >
     Plus `text.verbosity` and `service_tier` from `params`. `temperature` and
-    `top_p` are omitted for reasoning models — an API rule, not a Stella
+    `top_p` are omitted for reasoning models — an API rule, not a stella
     choice.
   </SpecCard>
   <SpecCard

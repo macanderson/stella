@@ -1,6 +1,6 @@
 ---
-title: How to use Stella as the Agent Engine in your GenAI app
-description: Run Stella's agent loop inside your own product — the engine orchestrates, your app owns every model call, tool call, and credential. Includes an 80-line working host.
+title: How to use stella as the Agent Engine in your GenAI app
+description: Run stella's agent loop inside your own product — the engine orchestrates, your app owns every model call, tool call, and credential. Includes an 80-line working host.
 ---
 
 Writing an agent loop that survives contact with production is a grind. You
@@ -9,12 +9,12 @@ fills, per-turn spend limits, retry classification that knows a rate limit from
 a bad request, and loop detection for the model that calls the same tool nine
 times. None of that is your product. All of it is on your critical path.
 
-Stella already does it, and you can run it inside your own app without giving
+stella already does it, and you can run it inside your own app without giving
 up control of your models, your tools, or your data.
 
 ## What you get, and what you keep
 
-| Stella handles | You keep |
+| stella handles | You keep |
 |---|---|
 | The step loop: model call, tool dispatch, repeat until done | Every model call. Your gateway, your keys, your routing |
 | History compaction and token budgeting | Every tool call. Your sandbox, your RBAC, your database |
@@ -27,7 +27,7 @@ up control of your models, your tools, or your data.
 This is the part worth understanding before you write any code, because it
 inverts the usual shape.
 
-Stella's engine does not call your tools. It **asks you to call them**, then
+stella's engine does not call your tools. It **asks you to call them**, then
 waits. Same for the model: it does not hold an API key and it does not make an
 HTTP request. It emits a request and parks until your app answers.
 
@@ -427,7 +427,7 @@ Re-verified absent as of 0.6.10, so design around them rather than discovering t
 
 ## Licensing: AGPL or commercial
 
-Stella is **dual-licensed**. You choose the track.
+stella is **dual-licensed**. You choose the track.
 
 | | Open source track | Commercial track |
 |---|---|---|
@@ -439,10 +439,10 @@ Stella is **dual-licensed**. You choose the track.
 
 ### You do not need a commercial license to
 
-- Use Stella as a developer tool, at work, on proprietary code. **Using Stella
+- Use stella as a developer tool, at work, on proprietary code. **Using stella
   to write closed-source software does not make that software AGPL.** The
-  license covers Stella and works derived from it, not the output of running it.
-- Run **unmodified** Stella internally, including on your own servers.
+  license covers stella and works derived from it, not the output of running it.
+- Run **unmodified** stella internally, including on your own servers.
 - Evaluate, benchmark, audit, or study it.
 - Build on the [Context Graph
   Protocol](https://github.com/macanderson/context-graph-protocol), which is a
@@ -451,11 +451,11 @@ Stella is **dual-licensed**. You choose the track.
 
 ### You do need one to
 
-- Ship Stella, or anything derived from it, inside a product whose source you do
+- Ship stella, or anything derived from it, inside a product whose source you do
   not publish.
-- Offer a **modified** Stella to third parties over a network without publishing
+- Offer a **modified** stella to third parties over a network without publishing
   your modifications. This is AGPL section 13, and hosting is not a loophole.
-- Keep a proprietary fork private, or sublicense Stella to your own customers
+- Keep a proprietary fork private, or sublicense stella to your own customers
   under other terms.
 
 ### Where the sidecar lands
@@ -489,7 +489,7 @@ answer about whether you need a license at all, including "you do not."
 1. **Email [licensing@oxagen.sh](mailto:licensing@oxagen.sh).** One message starts it. There is no portal
    and no sales sequence.
 2. **Tell us what you are building and roughly how you will deploy it.** What
-   the product does, whether Stella is linked in or run as a sidecar, whether
+   the product does, whether stella is linked in or run as a sidecar, whether
    you modify it, and rough scale (self-hosted or SaaS, number of environments,
    order of magnitude of users). Pricing depends on scope and deployment size,
    so this is what determines the number.
@@ -507,7 +507,7 @@ releases (everything up to v0.5.14 remains perpetually available under
 
 ## Where to go next
 
-- [Drop Stella in as your agent engine](/docs/guides/embed-the-engine): the
+- [Drop stella in as your agent engine](/docs/guides/embed-the-engine): the
   guide-shaped version of this page — which shape to pick, how to port an
   existing feature onto the engine in an afternoon, and the integration test
   that exercises the whole loop with no API key.

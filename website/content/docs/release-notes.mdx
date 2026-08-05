@@ -1,9 +1,9 @@
 ---
 title: Release notes
-description: What's new in Stella, per minor release — the user-facing changes behind each version, with the commit-level changelog linked on its GitHub Release.
+description: What's new in stella, per minor release — the user-facing changes behind each version, with the commit-level changelog linked on its GitHub Release.
 ---
 
-Stella follows [semantic versioning](https://semver.org). Every merge to `main`
+stella follows [semantic versioning](https://semver.org). Every merge to `main`
 cuts a release and publishes prebuilt binaries plus a Homebrew formula, so
 `brew upgrade stella` always tracks the latest build.
 
@@ -103,7 +103,7 @@ all, because work still in flight has not been judged.
 
 ### Brand: one identity, written down
 
-`docs/brand/BRAND.md` is now the normative source for Stella's visual identity —
+`docs/brand/BRAND.md` is now the normative source for stella's visual identity —
 electric blue and gold on deep space — and the terminal palette, the brand assets, the
 docs site tokens, and the Observatory dashboard all mirror it. Four surfaces had drifted
 to three different identities, and the drift was possible because nothing was normative.
@@ -112,11 +112,11 @@ theme, and the `--stella-sky*` token names they shipped under.
 
 ## 0.6.0
 
-The `0.6.x` line opens with the feature the `0.5.x` series was building toward: **Stella now learns from working in your codebase, and shows its work.** The adaptive context lifecycle is complete and on by default. Alongside it, this release gathers a large security and reliability pass, streaming on every provider that supports it, a rebuilt transcript, and a relicense.
+The `0.6.x` line opens with the feature the `0.5.x` series was building toward: **stella now learns from working in your codebase, and shows its work.** The adaptive context lifecycle is complete and on by default. Alongside it, this release gathers a large security and reliability pass, streaming on every provider that supports it, a rebuilt transcript, and a relicense.
 
 ### Adaptive context — the loop closes
 
-Stella has always recalled memories. What it could not do was tell you *why* a memory was chosen, whether it helped, or stop selecting one that never did. All four phases of that work landed in this line.
+stella has always recalled memories. What it could not do was tell you *why* a memory was chosen, whether it helped, or stop selecting one that never did. All four phases of that work landed in this line.
 
 - **Every turn is accountable.** The step manifest is now a compiled context frame with a deterministic identity and a content hash, and recall is decomposed into one block per item instead of a single undifferentiated blob. For any past turn you can see exactly which memories entered it, in what order, at what token cost, and where each came from.
 - **`stella inspect`** reconstructs the exact message array any past model call was sent, verified against the digests taken at emission, and reports coverage gaps and digest mismatches separately rather than papering over them. `Ctrl-G` opens the same view inside the deck.
@@ -158,7 +158,7 @@ Stella has always recalled memories. What it could not do was tell you *why* a m
 
 - **`git clone && stella` is no longer arbitrary code execution.** A repo's `.env` could set `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, `BASH_ENV`, `GIT_SSH_COMMAND` or a redirected `PATH`. Loader, interpreter and config-redirect names are refused from project `.env` files and printed on stderr; a live shell env still wins, so `LD_PRELOAD=… stella …` works when a human means it.
 - **Ambient authority scrubbed from model-controlled subprocesses**, including git's config/SSH/proxy hooks and `SSH_AUTH_SOCK`. Escape hatch: `STELLA_SUBPROCESS_ENV_ALLOW`.
-- Secrets are zeroized on drop and no longer dumpable via `{:?}`; files Stella creates are owner-only; `run_tests`' `filter` is quoted per token, closing a command-injection path; a stored-XSS hole in the exported dashboard is closed; MCP servers are bounded on every axis (an MCP server streaming without a newline used to OOM-kill Stella).
+- Secrets are zeroized on drop and no longer dumpable via `{:?}`; files stella creates are owner-only; `run_tests`' `filter` is quoted per token, closing a command-injection path; a stored-XSS hole in the exported dashboard is closed; MCP servers are bounded on every axis (an MCP server streaming without a newline used to OOM-kill stella).
 - **Releases carry build-provenance attestation** covering both the tarballs and `SHA256SUMS`, and `install.sh` verifies it. A *contradicted* attestation always aborts; set `STELLA_REQUIRE_PROVENANCE=1` to make *unverifiable* abort too.
 - A new [threat model](https://github.com/macanderson/stella/blob/main/docs/spec/threat-model.md) records nine residual risks — including that "bash is off" was never the same claim as "the agent cannot run code."
 
@@ -182,7 +182,7 @@ A mobile-first overhaul turned reference tables into card grids and added diagra
 
 ### Licensing
 
-Stella is relicensed from `MIT OR Apache-2.0` to **`AGPL-3.0-only`**, dual-licensed with commercial licenses from Oxagen, Inc. Two carve-outs worth stating plainly: **using Stella to write proprietary code does not make that code AGPL**, and **releases up to v0.5.14 remain perpetually available under MIT/Apache**, including the right to fork from that point. Contributions now require a CLA. The Context Graph Protocol stays Apache-2.0.
+stella is relicensed from `MIT OR Apache-2.0` to **`AGPL-3.0-only`**, dual-licensed with commercial licenses from Oxagen, Inc. Two carve-outs worth stating plainly: **using stella to write proprietary code does not make that code AGPL**, and **releases up to v0.5.14 remain perpetually available under MIT/Apache**, including the right to fork from that point. Contributions now require a CLA. The Context Graph Protocol stays Apache-2.0.
 
 ### Upgrading — what changes under you
 
@@ -217,7 +217,7 @@ fleet-scale telemetry.
 
 - **read→edit drift oracle.** `edit_file` now keeps a per-file record of the
   content the model last *saw* (via a read, or its own successful write). When
-  an edit's `old_string` no longer matches, Stella distinguishes an
+  an edit's `old_string` no longer matches, stella distinguishes an
   out-of-band change to the file from a genuine not-found, echoes the current
   content, and lets the model recover — instead of blindly retrying a stale
   edit.
@@ -225,7 +225,7 @@ fleet-scale telemetry.
   of edits across many files atomically, with a dry-run preflight that reports
   exactly what would change before anything is written. Either the whole batch
   applies or none of it does.
-- **`run_tests scope:"impacted"`.** Test selection is now graph-driven: Stella
+- **`run_tests scope:"impacted"`.** Test selection is now graph-driven: stella
   walks the tree-sitter code graph from your changes to the tests that actually
   exercise them, so a focused change runs a focused suite.
 - **graph-derived planner context.** The planner localizes a goal to the
@@ -234,7 +234,7 @@ fleet-scale telemetry.
 
 ### Context engine
 
-- **Adaptive-context baseline (Phase 0 & 1).** The foundation of Stella's
+- **Adaptive-context baseline (Phase 0 & 1).** The foundation of stella's
   durable memory: a typed record taxonomy with scope and temporal axes, and
   canonical JCS hashing for stable content identity. Context receipts now emit
   **typed decision events** (loop-detection, budget, retry, and policy

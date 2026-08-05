@@ -206,7 +206,7 @@ pub use receipts::{
     StepManifestRow,
 };
 pub use reconstruct::Reconstruction;
-pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
+pub use sessions::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo, supervised};
 pub use telemetry::{SourceTelemetryRow, TelemetryRow};
 pub use tool_calls::{ToolCallAnswer, ToolCallRow, ToolCallState};
 

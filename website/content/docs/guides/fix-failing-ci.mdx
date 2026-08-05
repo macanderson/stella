@@ -116,7 +116,7 @@ the new root cause. That is what the round loop is for.
 ### The same failure comes back
 
 A revision that has already deterministically failed triggers **distress
-guidance**: Stella spends one verifier call producing a course-correction note that
+guidance**: stella spends one verifier call producing a course-correction note that
 rides along with the next revision prompt, rather than letting the worker keep
 digging in the same direction. You will see the same-failure case resolve or
 change shape rather than repeat identically.
@@ -136,7 +136,7 @@ the diff — read on.
 ### It cannot be fixed from the code
 
 Some red CI is not a code problem: an expired token, a billing cap, a runner
-that no longer exists, a required check whose workflow file never starts. Stella
+that no longer exists, a required check whose workflow file never starts. stella
 will keep proposing code changes because code changes are what it can make. The
 tell is a `ci_status` conclusion that never reaches the test step at all — a job
 that fails in setup, or a run whose conclusion is `startup_failure`.
@@ -182,7 +182,7 @@ command, and gate on `verdict.deterministic` — the
 ## Running it *from* CI instead of *at* CI
 
 `monitor` watches a remote pipeline from your machine. The other arrangement —
-Stella running headlessly *inside* a CI job — is a different setup with
+stella running headlessly *inside* a CI job — is a different setup with
 different requirements (a non-TTY surface, JSON output, an explicit scope-review
 bypass):
 

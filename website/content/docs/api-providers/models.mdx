@@ -3,9 +3,9 @@ title: Model guide
 description: The master model catalog — context windows, list prices per million tokens, release timing, and which model to use for which role in the pipeline.
 ---
 
-This is the master list. Every model Stella seeds into its catalog, with the numbers you
+This is the master list. Every model stella seeds into its catalog, with the numbers you
 need to make a decision — context window, list price, and what the model is actually good
-at. The pricing figures come from **Stella's seed catalog**; prices are list
+at. The pricing figures come from **stella's seed catalog**; prices are list
 **$/Mtok** (input / output / cached-input). The **Released** and **Best for** columns are
 editorial — context these docs add, not fields the catalog stores or syncs. Verify with
 your provider before budgeting — prices and lineups drift.
@@ -27,14 +27,14 @@ your provider before budgeting — prices and lineups drift.
 | <ProviderMark id="gemini" /> `gemini-3-pro` | `gemini` (also `vertex`) | 1M | 1.25 | 10.00 | 0.31 | Q4 2025 | The 1M-token window: whole-repo comprehension, long-log analysis. Solid worker, good verifier. |
 | <ProviderMark id="xai" /> `grok-4` | `xai` | 256k | 3.00 | 15.00 | 0.75 | Q3 2025 | Strong reasoning; a distinct model family, useful as an alternate verifier. |
 | <ProviderMark id="deepseek" /> `deepseek-chat` | `deepseek` | 128k | 0.27 | 1.10 | 0.07 | Q4 2024 (V3 line, revised through 2025) | The price/performance outlier. Ideal triage model; a very capable budget worker. |
-| <ProviderMark id="zai" /> `glm-5.2` | `zai` | 200k | 0.60 | 2.20 | 0.11 | 2026 | Excellent coding at a fraction of flagship price — Stella's default worker tier. The coding-plan endpoint makes it a subscription workhorse. |
+| <ProviderMark id="zai" /> `glm-5.2` | `zai` | 200k | 0.60 | 2.20 | 0.11 | 2026 | Excellent coding at a fraction of flagship price — stella's default worker tier. The coding-plan endpoint makes it a subscription workhorse. |
 | <ProviderMark id="bedrock" /> `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | `bedrock` | 200k | 3.00 | 15.00 | 0.30 | Sep 2025 | Claude under AWS governance — for orgs that must keep inference inside their cloud account. |
 | <ProviderMark id="openrouter" /> `moonshotai/kimi-k3` | `openrouter` | 1M | 3.00 | 15.00 | 0.30 | 2026 | Long-context agentic driver, and the OpenRouter default — a 1M window that holds a whole repo while it works. Runs at `xhigh` effort with thinking on. |
 | <ProviderMark id="openrouter" /> `openrouter/auto` | `openrouter` | 128k | gateway-priced | gateway-priced | — | rolling | OpenRouter's meta-router; and any `vendor/model` slug on the gateway routes verbatim (one key, every vendor). |
 
 ## Which model for which role
 
-Stella's [pipeline](/docs/inference-pipeline) runs three distinct roles, and they want
+stella's [pipeline](/docs/inference-pipeline) runs three distinct roles, and they want
 different things from a model:
 
 - **Worker** — writes the code. It wants the strongest coding model you can afford; this
@@ -73,7 +73,7 @@ stella models list --provider anthropic    # browse valid slugs + live pricing
 ```
 
 - **Master list, locally.** One public, unauthenticated document covering every provider
-  Stella can select (plus ~160 more) lands in a user-tier SQLite catalog
+  stella can select (plus ~160 more) lands in a user-tier SQLite catalog
   (`catalog.db`, next to `usage.db`): **model cards** keyed per API provider, and
   **model card versions** holding each pricing configuration. A refresh appends a new
   version only when pricing actually changed — the version history is real change
@@ -107,7 +107,7 @@ stella models list --provider anthropic    # browse valid slugs + live pricing
 
   - **Each configured provider's own `/models` listing** auto-syncs whenever it is stale,
     **including the very first time** — this is what surfaces new releases as they ship.
-    That traffic is BYOK-clean: it goes to a provider you already gave Stella a key for,
+    That traffic is BYOK-clean: it goes to a provider you already gave stella a key for,
     the same host your next turn calls anyway. No credential for a provider means nothing
     is fetched for it.
   - **The models.dev master list** is a third party, so the no-phone-home rule forbids
@@ -128,7 +128,7 @@ Only the models.dev master list is keyless.
 
 ## Prompt caching changes the math
 
-The **cached-input** column is what most worker input actually costs mid-run. Stella keeps
+The **cached-input** column is what most worker input actually costs mid-run. stella keeps
 the prompt prefix byte-stable on purpose — the [context engine](/docs/context-engine)
 appends rather than rewrites — so after the first turn, the bulk of every request is a
 cache hit billed at the cached-input rate: a 10x–20x discount depending on provider. This

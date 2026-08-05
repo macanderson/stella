@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import arenabench.pricing as pricing
-from arenabench.pricing import price_for, price_for_route, trial_cost
+from arenabench.pricing import price_for, price_for_route, price_on_route, trial_cost
 
 
 class TestPricing:
@@ -37,6 +37,10 @@ class TestPricing:
         assert price_for("z-ai/glm-5.1").input == 0.966
         fable = price_for("claude-fable-5")
         assert (fable.input, fable.output) == (10.0, 50.0)
+        # The committed GLM match's triage role. Unpriced, it would blank the
+        # cost of every pipeline trial in that match (#1566).
+        air = price_for("glm-4.5-air")
+        assert (air.input, air.output, air.cache_read) == (0.13, 0.85, 0.025)
 
     def test_one_recorded_id_resolves_to_one_rate_however_it_was_routed(self):
         """A routed seat is launched with the bare model id and an unrouted one
@@ -89,6 +93,18 @@ class TestRoutePricing:
     def test_a_wholly_unknown_route_reports_nothing(self):
         assert price_for_route("acme/mystery-1") is None
         assert price_for_route("") is None
+
+    def test_a_role_model_prices_on_the_seats_recorded_route(self):
+        """A pipeline's roles ride the seat's provider — a role config has no
+        api of its own — so the record's api qualifies every model the seat's
+        stream logged, whatever spelling the stream used (#1566). The spelling
+        identifies the *model*; only the recorded api carries the route."""
+        assert price_on_route("zai", "glm-5.2") == price_for_route("zai/glm-5.2")
+        assert price_on_route("zai", "openrouter/z-ai/glm-5.2").input == 0.60
+        assert price_on_route("openrouter", "z-ai/glm-5.2") == price_for("glm-5.2")
+        assert price_on_route("zai", "glm-5.1") == price_for("glm-5.1")
+        assert price_on_route("", "glm-5.2") == price_for("glm-5.2")
+        assert price_on_route("zai", "mystery-9") is None
 
     def test_an_override_keyed_by_route_pins_that_route_alone(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

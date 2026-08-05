@@ -1,6 +1,6 @@
 ---
 title: stella chat
-description: Start an interactive session with Stella — the Command Deck TUI by default, an accessible mode of the same deck, or a plain line REPL.
+description: Start an interactive session with stella — the Command Deck TUI by default, an accessible mode of the same deck, or a plain line REPL.
 ---
 
 Start an interactive session. This is the **default** command: running `stella` with no subcommand is exactly the same as running `stella chat`.
@@ -109,7 +109,7 @@ path.
 
 ### Multimodal input
 
-Prompts are multimodal: mention a path to an image, PDF, audio, or video file in your message and Stella attaches the file itself as model input alongside your text. In the deck, **Ctrl-V** pastes an image straight from the clipboard as an attachment.
+Prompts are multimodal: mention a path to an image, PDF, audio, or video file in your message and stella attaches the file itself as model input alongside your text. In the deck, **Ctrl-V** pastes an image straight from the clipboard as an attachment.
 
 <Callout type="info">
 All [global flags](/docs/commands) apply, in either position — `stella --model openai/gpt-5.5 chat` pins the worker model for the whole session, and `stella chat --model openai/gpt-5.5` does the same thing.
@@ -208,7 +208,7 @@ Open a tab or run an action:
     Search the MCP registry and install servers without leaving the deck.
   </OptionCard>
   <OptionCard name="/sessions">
-    Every Stella session on this machine, grouped by status. Also reachable with `←` on an
+    Every stella session on this machine, grouped by status. Also reachable with `←` on an
     empty prompt.
   </OptionCard>
   <OptionCard name="/context">
@@ -226,7 +226,7 @@ Open a tab or run an action:
     Export session telemetry to a ZIP plus an HTML dashboard.
   </OptionCard>
   <OptionCard name="/donate">
-    Support Stella — become a GitHub Sponsor.
+    Support stella — become a GitHub Sponsor.
   </OptionCard>
 </CardGrid>
 
@@ -258,17 +258,17 @@ Parsing is deliberately conservative: one recognized token (plus `refresh --forc
 
 Run `/profile` with no argument to see which profile your current settings match, what this session is running, and what each profile would pick right now.
 
-**How the models are chosen.** Stella's catalog carries no capability tier, so a profile ranks the reachable models by list output price — the same proxy `auto_mode` already uses to pick a verifier. This means the choice tracks catalog refreshes instead of going stale, but it is a proxy: a cheap frontier model ranks low until its price says otherwise. The confirmation names every model it picked, so you can always see what you got. Models the catalog has no price for (gateway rows like `openrouter/auto`, which bill at whatever they route to) are left out of the ranking rather than treated as free.
+**How the models are chosen.** stella's catalog carries no capability tier, so a profile ranks the reachable models by list output price — the same proxy `auto_mode` already uses to pick a verifier. This means the choice tracks catalog refreshes instead of going stale, but it is a proxy: a cheap frontier model ranks low until its price says otherwise. The confirmation names every model it picked, so you can always see what you got. Models the catalog has no price for (gateway rows like `openrouter/auto`, which bill at whatever they route to) are left out of the ranking rather than treated as free.
 
 The four roles are not tuned identically. Triage stays below the worker in every profile — it is a short classification under a latency ceiling, and spending your best model on it buys nothing.
 
-The verifier is the interesting one, because two goals pull against each other: a verifier from the worker's own family lets a shared blind spot pass review twice, but a verifier well below the worker's tier cannot follow the work it grades and rubber-stamps. Stella resolves it in the order that gives up least. A model that is both independent and at least as capable wins outright. If nothing clears that bar but the strongest independent model is only one rung down the price list, independence is worth the single rung. Only when the best independent option is further down than that does capability take over — and then the confirmation tells you the review is correlated with the work.
+The verifier is the interesting one, because two goals pull against each other: a verifier from the worker's own family lets a shared blind spot pass review twice, but a verifier well below the worker's tier cannot follow the work it grades and rubber-stamps. stella resolves it in the order that gives up least. A model that is both independent and at least as capable wins outright. If nothing clears that bar but the strongest independent model is only one rung down the price list, independence is worth the single rung. Only when the best independent option is further down than that does capability take over — and then the confirmation tells you the review is correlated with the work.
 
 **What it writes, and what it leaves alone.** A profile owns the per-role model, effort, thinking switch, verbosity, and service tier, saved to your user settings. It deliberately turns `effort_auto`, `reasoning_auto`, and `auto_mode` **off**: those switches override per-agent effort, so leaving them on would let `/profile ultra` print `max` and run `medium`. Everything else survives untouched — custom per-agent prompts, pinned providers, temperatures, seeds, and your `allowed_models` list.
 
 `/profile auto` is the way back out. It restores all three switches and drops the per-role effort, thinking, verbosity, and service-tier pins a profile wrote, handing those choices to the engine again. Model pins are left alone: one may well predate the profile, and `auto_mode` re-picks the verifier on its own.
 
-**Effort, and the providers that cannot express it.** The five-rung ladder is Stella's vocabulary, not every provider's: Gemini and Vertex offer only `low` and `high`, the OpenAI shapes stop at `high`, and Z.ai has no request-level effort control at all (its thinking switch is on/off). A pick whose provider cannot express the level the profile asked for is written at the highest rung it does support.
+**Effort, and the providers that cannot express it.** The five-rung ladder is stella's vocabulary, not every provider's: Gemini and Vertex offer only `low` and `high`, the OpenAI shapes stop at `high`, and Z.ai has no request-level effort control at all (its thinking switch is on/off). A pick whose provider cannot express the level the profile asked for is written at the highest rung it does support.
 
 Clamping alone would flatten the ladder — on a two-rung provider both `fast` and `balanced` land on `low` — so the missing rung is bought back on the axis that can still carry it: among models at the same price, the one whose provider *can* express the requested level wins. That is a tiebreak and nothing more. The search never leaves the price band, so a profile cannot overspend its tier to buy a knob, and it takes the cheapest qualifying model rather than the best. Where nothing at that price can express the level, the clamp stands and the confirmation says which levels moved.
 
@@ -310,7 +310,7 @@ The line REPL has a smaller, different set:
     Change the accent color, for multi-window setups.
   </OptionCard>
   <OptionCard name="exit  /exit  /quit">
-    Leave Stella. **Ctrl-D** does the same.
+    Leave stella. **Ctrl-D** does the same.
   </OptionCard>
 </CardGrid>
 

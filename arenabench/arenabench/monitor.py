@@ -251,9 +251,11 @@ def _stall(m: TrialMetrics, t: Thresholds) -> Detection | None:
     """A running trial that has written nothing for the threshold window.
 
     A hung agent burns its time allowance in silence and surfaces as an
-    ordinary timeout loss an hour later. Only observable for agents that
-    stream events (``age_s`` rides the stream's mtime); a trajectory-only
-    arm writes once, at the end, and is silent by construction.
+    ordinary timeout loss an hour later. ``age_s`` is the freshest write
+    across the trial's liveness allowlist
+    (:data:`~arenabench.telemetry.LIVENESS_NAMES`), not the event stream
+    alone — so an arm that only tees its stdout, i.e. every non-Stella
+    contestant, is watched exactly like one that streams (#1571).
     """
     if m.status != "running" or m.age_s is None:
         return None

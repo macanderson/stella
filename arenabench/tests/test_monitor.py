@@ -337,6 +337,68 @@ class TestRuleGuards:
         fired = MatchWatcher(match_dir, thresholds=Thresholds(stall_minutes=10)).scan()
         assert [(d.task, d.rule) for d in fired] == [("stalled", "stall")]
 
+    def test_a_trajectory_only_arm_that_goes_silent_fires_stall(self, tmp_path):
+        """The hole #1571 closes: an arm that streams no events — every
+        non-Stella arm — still tees its stdout incrementally. A stale tee,
+        no event stream, no verdict: the trial is hung, and before the fix
+        it could burn its whole time allowance without a detection."""
+        match_dir, job_dir = match_tree(tmp_path)
+        tee = job_dir / "hung__1" / "agent" / "claude-code.txt"
+        tee.parent.mkdir(parents=True)
+        tee.write_text("booted\n", encoding="utf-8")
+        old = time.time() - 20 * 60
+        os.utime(tee, (old, old))
+
+        fired = MatchWatcher(match_dir, thresholds=Thresholds(stall_minutes=10)).scan()
+        assert [(d.task, d.rule) for d in fired] == [("hung", "stall")]
+
+    def test_a_trajectory_only_arm_still_writing_does_not_stall(self, tmp_path):
+        match_dir, job_dir = match_tree(tmp_path)
+        tee = job_dir / "busy__1" / "agent" / "claude-code.txt"
+        tee.parent.mkdir(parents=True)
+        tee.write_text("working\n", encoding="utf-8")
+
+        watcher = MatchWatcher(match_dir, thresholds=Thresholds(stall_minutes=10))
+        assert watcher.scan() == []
+
+    def test_liveness_is_the_allowlist_not_the_tree(self, tmp_path):
+        """A fresh write by the arena's own side must not read as agent
+        liveness — the freshest mtime of the whole tree would count the
+        recorder and the verifier as the agent's pulse, and a hung arm
+        being *watched* would never stall."""
+        match_dir, job_dir = match_tree(tmp_path)
+        trial = job_dir / "hung__1"
+        tee = trial / "agent" / "claude-code.txt"
+        tee.parent.mkdir(parents=True)
+        tee.write_text("booted\n", encoding="utf-8")
+        old = time.time() - 20 * 60
+        os.utime(tee, (old, old))
+        (trial / "arena").mkdir()
+        (trial / "arena" / "recording.mp4").write_bytes(b"")
+
+        fired = MatchWatcher(match_dir, thresholds=Thresholds(stall_minutes=10)).scan()
+        assert [(d.task, d.rule) for d in fired] == [("hung", "stall")]
+
+    def test_a_fresh_session_transcript_is_liveness_despite_a_stale_tee(
+        self, tmp_path
+    ):
+        """Appending to a transcript under agent/sessions/ touches no
+        directory mtime — only the file's own. The probe must look inside,
+        or an arm whose stdout went quiet while its session log still grows
+        would fire a false stall."""
+        match_dir, job_dir = match_tree(tmp_path)
+        agent = job_dir / "quiet__1" / "agent"
+        sessions = agent / "sessions" / "project"
+        sessions.mkdir(parents=True)
+        (agent / "claude-code.txt").write_text("quiet\n", encoding="utf-8")
+        (sessions / "session.jsonl").write_text("{}\n", encoding="utf-8")
+        old = time.time() - 20 * 60
+        for stale in (agent / "claude-code.txt", sessions, sessions.parent):
+            os.utime(stale, (old, old))
+
+        watcher = MatchWatcher(match_dir, thresholds=Thresholds(stall_minutes=10))
+        assert watcher.scan() == []
+
 
 class TestSubscription:
     """What makes --follow a subscription rather than a report."""

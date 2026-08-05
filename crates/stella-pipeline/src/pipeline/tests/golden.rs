@@ -142,14 +142,17 @@ async fn golden_single_task_deterministic_flip() {
 async fn golden_verifier_escalation_without_a_test_command() {
     let provider = ScriptedProvider::new(vec![
         text_result("lookup"),
+        writing_tool_result("editing"),
         text_result("done"),
         text_result("PASS looks right"),
     ]);
     let resolver = OneProvider(&provider);
-    // A non-empty diff means files were touched, so the zero-diff guard revokes
-    // the lookup fast path's verifier-skip.
+    // A non-empty diff from a turn that dispatched a mutating call means
+    // files were touched, so the zero-diff guard revokes the lookup fast
+    // path's verifier-skip. (Since #1553 the dispatch is required: a diff
+    // with zero dispatched calls is foreign motion and keeps the skip.)
     let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
-    let tools = EmptyTools;
+    let tools = OneWritingTool;
     let recall = NoContextRecall;
     let repo = NoRepoStructure;
     let repo_status = NoRepoStatus;

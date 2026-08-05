@@ -525,11 +525,12 @@ fn query_commands_share_one_format_idiom() {
 /// without one.
 #[test]
 fn arena_is_stream_json_by_contract_not_by_flag() {
-    // `&'static` so the closure's return type unifies with the literals it
-    // extends: an unannotated `&[&str]` param makes the returned Vec borrow
-    // from the closure argument, which cannot outlive the call (E0521 — the
-    // error that broke main's clippy tier when #1567 merged unverified).
-    let args = |extra: &[&'static str]| {
+    // A nested `fn`, not a closure. The returned `Vec` borrows from `extra`,
+    // and a closure cannot say so: it gets a higher-ranked signature with a
+    // fresh input lifetime and an unconstrained output, which rustc rejects
+    // however the return type is annotated. Only an item can name the
+    // lifetime that relates them.
+    fn args<'a>(extra: &[&'a str]) -> Vec<&'a str> {
         let mut argv = vec![
             "stella",
             "arena",
@@ -542,7 +543,7 @@ fn arena_is_stream_json_by_contract_not_by_flag() {
         ];
         argv.extend_from_slice(extra);
         argv
-    };
+    }
     assert!(
         Cli::try_parse_from(args(&["--output-format", "text"])).is_err(),
         "arena must reject --output-format rather than silently emit stream-json"

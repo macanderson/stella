@@ -104,13 +104,13 @@ No `.versions/` entry is created until the first edit, so hand-authored
 agents stay exactly as you wrote them. Editing an agent that was adopted as
 a symlink (see below) replaces the symlink with a real file in the agents
 directory — the original stays untouched, and your edit lives on the
-Stella side from then on.
+stella side from then on.
 
 ## Adopted from .claude/ and .agents/ on init
 
 Ecosystem tools already maintain `.claude/{commands,skills,agents}` and
 `.agents/{commands,skills,agents}`. On `stella init` (and `/init`),
-definitions found there are **symlinked** into the matching Stella
+definitions found there are **symlinked** into the matching stella
 directory — adopted, not copied, so edits stay in one place and your
 existing setup carries over instead of being rewritten:
 
@@ -145,7 +145,7 @@ directories.) Three rules keep the adoption sane:
    so the sync is idempotent and your own definitions always win.
 3. **Never follow a symlink.** Other tools symlink between these
    directories too (e.g. `.claude/agents/x → ../../.agents/agents/x`);
-   Stella links each definition from its *real* home exactly once. A
+   stella links each definition from its *real* home exactly once. A
    directory entry with no `AGENT.md` inside is also skipped — and
    reported, so nothing disappears silently.
 

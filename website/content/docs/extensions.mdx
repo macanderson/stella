@@ -1,18 +1,18 @@
 ---
 title: Extension hooks
-description: A typed, in-process event bus that lets extensions observe Stella's activity and gate sensitive actions with allow, modify, deny, or require-approval.
+description: A typed, in-process event bus that lets extensions observe stella's activity and gate sensitive actions with allow, modify, deny, or require-approval.
 ---
 
-Stella's engine (`stella-core`) exposes a typed **event bus** that extensions and embedders
+stella's engine (`stella-core`) exposes a typed **event bus** that extensions and embedders
 use to *observe* everything the agent does and, on an explicit allowlist of
 policy-sensitive actions, to *intercept* it. Every event flows through one uniform
 envelope, and every subscription is disposable and cleanup-safe.
 
 <Callout type="info">
-  Two different things are both called "hooks" in Stella. **[Lifecycle hooks](/docs/agent-tools/hooks)**
+  Two different things are both called "hooks" in stella. **[Lifecycle hooks](/docs/agent-tools/hooks)**
   are shell commands you declare in `settings.json` — no code required. **Extension hooks**
   (this page) are the *programmatic* in-process bus you register handlers against when you
-  embed Stella's engine as a library. They share the event vocabulary but not the wiring.
+  embed stella's engine as a library. They share the event vocabulary but not the wiring.
 </Callout>
 
 ## The event envelope
@@ -206,7 +206,7 @@ than discovering it in a quarantine event.
 ## Relationship to file-touch telemetry
 
 The bus is how you react to file changes *as they happen*: the same
-[file-touch telemetry](/docs/telemetry/files-touched) that Stella records also drives `file.created`,
+[file-touch telemetry](/docs/telemetry/files-touched) that stella records also drives `file.created`,
 `file.updated`, `file.deleted`, and `files_touched.updated` events, each carrying the path,
 reason, and line deltas of the touch (never the file contents).
 

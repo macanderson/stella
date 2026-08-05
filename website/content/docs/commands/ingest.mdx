@@ -1,9 +1,9 @@
 ---
 title: stella ingest
-description: Turn markdown you already wrote — AGENTS.md, CLAUDE.md, or any file you name — into reviewable context-record proposals Stella can check, cite, and retire.
+description: Turn markdown you already wrote — AGENTS.md, CLAUDE.md, or any file you name — into reviewable context-record proposals stella can check, cite, and retire.
 ---
 
-`stella ingest` reads markdown you already wrote and turns it into steering Stella can check, cite, and retire. It has two halves, and which one runs depends entirely on whether you name a file.
+`stella ingest` reads markdown you already wrote and turns it into steering stella can check, cite, and retire. It has two halves, and which one runs depends entirely on whether you name a file.
 
 With **no arguments** it scans the workspace and shows you what it found, grouped by tier. That half is offline and needs no API key. Name **one or more paths** and it extracts them: one model call per document splits it into atomic claims, each claim is mapped to a context record, run through a deterministic safety gate, probed against the tree for staleness, and written to `.stella/proposals/` as a reviewable TOML file. Nothing you ingest steers anything until you review it.
 

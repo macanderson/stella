@@ -1150,18 +1150,24 @@ async fn a_queued_steer_is_injected_into_the_execute_turn() {
 /// The zero-diff guard: triage misclassifies a file-touching task as a
 /// lookup, but the non-empty diff revokes the verifier-skip and the task is
 /// verified via the model verifier — it still completes ("correct downgrade").
+///
+/// The worker genuinely dispatches a mutating call: since #1553 a diff with
+/// ZERO dispatched tool calls is foreign motion (someone else's edit in a
+/// shared tree) and deliberately does not revoke the skip — the guard fires
+/// only for motion the run could have caused.
 #[tokio::test]
 async fn misclassified_lookup_that_touches_files_still_gets_verified() {
-    // triage → "lookup"; worker → "done"; verifier → "PASS".
+    // triage → "lookup"; worker → writes, then "done"; verifier → "PASS".
     let provider = ScriptedProvider::new(vec![
         text_result("lookup"),
+        writing_tool_result("editing"),
         text_result("done"),
         text_result("PASS looks right"),
     ]);
     let resolver = OneProvider(&provider);
-    // Non-empty diff → files were touched. No test command.
+    // Non-empty diff → files were touched, by the call above. No test command.
     let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
-    let tools = EmptyTools;
+    let tools = OneWritingTool;
     let recall = NoContextRecall;
     let repo = NoRepoStructure;
     let repo_status = NoRepoStatus;
@@ -2340,7 +2346,7 @@ fn isolated_config(n: u32) -> PipelineConfig {
 /// the shared infra (`run_isolated`, `isolated_config`, ...) stays here.
 #[cfg(test)]
 mod verification_honesty {
-    use super::super::verification_honest_diff;
+    use super::super::verify_probes::verification_honest_diff;
 
     /// The archetypal lie: the turn emitted file-change events, but the diff
     /// came back empty (committed work, a baseline miss, an uncaptured file).
@@ -2395,6 +2401,7 @@ mod golden;
 /// `super::*`.
 mod mcp_prefetch;
 mod scope_gate_interactive;
+mod shared_worktree;
 mod terminal_outcomes;
 mod usage;
 /// Bounded repair after a refuted success claim (#1479).
@@ -2588,51 +2595,4 @@ fn recalled_frames_are_bounded_with_visible_markers() {
     let small = super::bound_recalled_frames(vec![frame("s", "ok".into())]);
     assert_eq!(small.len(), 1);
     assert_eq!(small[0].content, "ok");
-}
-
-/// `create_worktrees` precedence, without a gate in the way.
-///
-/// The case that matters most is the first one: a lookup never raises the
-/// question. `ask` is the default, so a policy that asked before knowing the
-/// class would put a prompt in front of every `stella "what does this do"` —
-/// about relocating work the run is never going to do.
-#[test]
-fn the_worktree_policy_defers_to_the_class_then_to_what_is_available() {
-    use crate::pipeline::{Decided, worktree_decision_without_asking as decide};
-    use crate::ports::WorktreePolicy::{Always, Ask, Never};
-
-    // A run that changes nothing is never isolated and never asks — not even
-    // under `always`.
-    for policy in [Always, Ask, Never] {
-        assert_eq!(
-            decide(policy, false, true),
-            Decided::No,
-            "{policy:?} must not isolate a run that changes nothing"
-        );
-    }
-
-    // No isolation available: silent for the two policies that did not ask for
-    // it, and told for the one that did.
-    assert_eq!(decide(Ask, true, false), Decided::No);
-    assert_eq!(decide(Never, true, false), Decided::No);
-    assert!(
-        matches!(decide(Always, true, false), Decided::NoAndSayWhy(_)),
-        "an operator who configured `always` and cannot have it must be told"
-    );
-
-    // And with everything available, the policy decides.
-    assert_eq!(decide(Always, true, true), Decided::Yes);
-    assert_eq!(decide(Never, true, true), Decided::No);
-    assert_eq!(decide(Ask, true, true), Decided::MustAsk);
-}
-
-/// An approval gate that cannot ask answers "no", so an unwired or headless
-/// host keeps doing exactly what it did before the question existed.
-#[tokio::test]
-async fn a_gate_with_nobody_behind_it_declines_to_relocate_the_work() {
-    use crate::ports::{AlwaysAbortGate, ApprovalGate};
-    assert!(
-        !AlwaysAbortGate.confirm("anything at all").await,
-        "a headless run must not silently relocate somebody's work"
-    );
 }
