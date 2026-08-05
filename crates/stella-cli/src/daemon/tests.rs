@@ -248,20 +248,10 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
         Some(false),
         "the run must actually be over"
     );
-    // "Gone" is eventually-true, not instantly-true: the TERM'd `sleep` was
-    // orphaned when `sh` died, so it lingers as a zombie until PID 1 reaps
-    // it — and a zombie still answers a group probe. launchd reaps before
-    // the next statement on a laptop; a CI container's init can lose that
-    // race, which is a fact about reap latency, not about `stop`.
-    assert!(
-        eventually(Duration::from_secs(10), || {
-            // SAFETY: probing a group with signal 0 sends nothing. The
-            // parentheses are load-bearing: a bare `unsafe { … }` opening a
-            // statement ends the statement at the block, orphaning the `!=`.
-            (unsafe { libc::kill(-group, 0) }) != 0
-        }),
-        "the whole process group must be gone"
-    );
+    // No `kill(-pgid, 0)` probe beside it: the doc comment above explains why
+    // the lock is the assertion and the group probe was retired (#1609). A
+    // zombie is still a group member, so the probe reports a group of one dead
+    // process as alive — deterministically, on Actions.
 
     // Reap our own child so the test leaves no zombie of its own behind.
     let _ = run.child.wait();
@@ -520,7 +510,10 @@ fn a_resumed_launch_keeps_the_record_and_the_crashed_console() {
         &registry,
         record,
         Path::new("/bin/sh"),
-        &["-c".to_string(), "echo the resumed attempt".to_string()],
+        &[
+            std::ffi::OsString::from("-c"),
+            std::ffi::OsString::from("echo the resumed attempt"),
+        ],
         b"",
         Console::Preserve,
         None,
