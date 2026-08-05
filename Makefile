@@ -31,7 +31,7 @@ CARGO_SCOPE ?= --workspace
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
-                    command-docs file-size
+                    command-docs brand-case file-size
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 .PHONY: help
@@ -185,6 +185,10 @@ doc-adopt: ## Scaffold frontmatter onto a document so it can be cited: make doc-
 .PHONY: command-docs
 command-docs: ## Assert every stella subcommand has a listed reference page (#993)
 	@./scripts/check-command-docs.sh
+
+.PHONY: brand-case
+brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
+	@./scripts/check-brand-case.sh
 
 .PHONY: wire-schema
 wire-schema: ## Assert docs/wire/ still describes the AgentEvent wire format (#971)

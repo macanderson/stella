@@ -1,6 +1,6 @@
 ---
 title: No agent silently overwrites another's work
-description: Stella refuses a write that would land on top of a change it never saw — without a lock, a daemon, or any knowledge that the other party exists. How the guarantee works, what it deliberately does not claim, and why it survives a crash.
+description: stella refuses a write that would land on top of a change it never saw — without a lock, a daemon, or any knowledge that the other party exists. How the guarantee works, what it deliberately does not claim, and why it survives a crash.
 ---
 
 Point two agents at one repository and the failure is not a corrupted file.
@@ -10,7 +10,7 @@ person in an editor — changed the same file. A's write succeeds. Nothing
 errors. B's work is gone, and the only record that it existed is a diff
 nobody is going to read.
 
-Stella refuses that write.
+stella refuses that write.
 
 ## The guarantee
 
@@ -57,7 +57,7 @@ There is no registry, no daemon, no lease, and no channel between agents.
 That is not a simplification — it is the point. *Agent B's write is what makes
 agent A's memory stale*, so A detects it locally, with no knowledge that B
 exists. Two processes, two containers, a CI job, and a human typing in Vim are
-all the same case, and none of them has to be running Stella.
+all the same case, and none of them has to be running stella.
 
 Reads count. A read is how an agent acquires the belief a later write acts on,
 so it is recorded exactly as a write is. A delete drops the entry — after a
@@ -93,8 +93,8 @@ on content it believed it knew, while the guard, having forgotten the read
 ever happened, waved the overwrite through. Precisely the combination the
 guard exists to prevent.
 
-So the map is now written down. It lives in Stella's durable work record — a
-git store kept in Stella's own directory, never in your repository — and is
+So the map is now written down. It lives in stella's durable work record — a
+git store kept in stella's own directory, never in your repository — and is
 restored when the session [resumes](/docs/commands/resume), before anything can
 touch a file. A resumed session is exactly as guarded as the one that died.
 

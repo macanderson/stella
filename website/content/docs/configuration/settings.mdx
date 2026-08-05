@@ -3,7 +3,7 @@ title: settings.json
 description: Configure providers, agents, tools, context, and managed authority across project, org-managed, and user scopes.
 ---
 
-`settings.json` is Stella's configuration file. It has ten top-level sections, each with
+`settings.json` is stella's configuration file. It has ten top-level sections, each with
 its own merge rule across the [scope hierarchy](#the-scope-hierarchy):
 
 <Callout type="info">
@@ -97,7 +97,7 @@ its own merge rule across the [scope hierarchy](#the-scope-hierarchy):
 </CardGrid>
 
 <Callout type="info">
-  `authority_policy` is **not** a file key. It is the effective authority Stella computes
+  `authority_policy` is **not** a file key. It is the effective authority stella computes
   while loading the scope chain, and it is skipped during parsing precisely so repository
   text cannot supply it.
 </Callout>
@@ -162,7 +162,7 @@ model selection) rather than being ignored; only `api_key` treats empty as unset
 <Callout type="info">
   `providers` both overrides built-ins and **defines brand-new providers**: use an id that
   isn't built-in, set the required `base_url`, and optionally a `dialect` (defaults to
-  `openai-compatible`). That is how you point Stella at any OpenAI-compatible gateway from
+  `openai-compatible`). That is how you point stella at any OpenAI-compatible gateway from
   config alone.
 </Callout>
 
@@ -289,7 +289,7 @@ The merged result for `zai` — **with the project trusted** (`STELLA_TRUST_PROJ
 `api_key` &gt; `~/.stella/credentials.toml` &gt; interactive prompt. See the
 [credential chain](/docs/getting-started/providers#the-credential-chain).
 
-An API key configured **only** in `settings.json` is enough for Stella to auto-detect and
+An API key configured **only** in `settings.json` is enough for stella to auto-detect and
 run that provider — no provider-specific environment variable required.
 
 ## The Z.ai coding-plan example
@@ -343,7 +343,7 @@ so a project can point at a different registry than the user default.
 
 ## The `tools` section
 
-Stella ships with **every tool on**, `bash` and the web family included. The top-level
+stella ships with **every tool on**, `bash` and the web family included. The top-level
 `tools` section is the one way to turn something off, and it works identically for
 built-ins, MCP-server tools, and tools you registered yourself:
 
@@ -738,7 +738,7 @@ schema, the sink-authorization rules, and the closed event envelope are document
 
 A repository you just cloned can carry a `<workspace>/.stella/settings.json` — and an
 untrusted repo must not be able to run commands on your machine or route your API keys to
-a server it controls. Stella therefore holds back the dangerous parts of a project-scope
+a server it controls. stella therefore holds back the dangerous parts of a project-scope
 file until you opt in with **`STELLA_TRUST_PROJECT=1`**:
 
 - **Hooks.** Project-scope `hooks` load only when the project is trusted. (The legacy

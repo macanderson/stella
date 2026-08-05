@@ -1,9 +1,9 @@
 ---
 title: API Providers
-description: Every provider Stella speaks to — the matrix, the auto-detection order, the credential chain, and the per-provider differences that actually matter.
+description: Every provider stella speaks to — the matrix, the auto-detection order, the credential chain, and the per-provider differences that actually matter.
 ---
 
-Stella is BYOK and vendor-agnostic: no proxy in the middle, no markup, and each
+stella is BYOK and vendor-agnostic: no proxy in the middle, no markup, and each
 provider's native wire dialect spoken directly. Switching vendors is a `--model` flag.
 
 <ProviderGrid />
@@ -77,12 +77,12 @@ failed:
   `temperature`, `top_p`, and `top_k` are omitted unconditionally on `anthropic`.
   Turning `reasoning` off does not buy temperature control back. Claude 4.5 and below
   use the legacy `thinking: {type: enabled, budget_tokens: N}` shape and do accept
-  sampling; Stella classifies by model id and sends whichever the generation requires.
+  sampling; stella classifies by model id and sends whichever the generation requires.
 </Callout>
 
 ## Auto-detection
 
-With no `--model` and no configured default, Stella picks the first provider in the
+With no `--model` and no configured default, stella picks the first provider in the
 matrix above that has a resolvable credential.
 
 <Callout type="info">
@@ -90,7 +90,7 @@ matrix above that has a resolvable credential.
 
   OpenRouter sits first because `OPENROUTER_API_KEY` is gateway-specific — nobody has one
   exported by accident — and it reaches every other vendor in the matrix. An instance
-  holding one has already decided how it wants to route, so Stella gives it a whole
+  holding one has already decided how it wants to route, so stella gives it a whole
   [default engine posture](#the-default-posture), not just a default model.
 
   Vertex and Bedrock sit last for the mirror-image reason: they key off generic cloud
@@ -172,7 +172,7 @@ Everything above is shared. These are the differences worth knowing.
 
 ### Anthropic
 
-Prompt caching is first-class: Stella meters both cache reads and cache writes, so
+Prompt caching is first-class: stella meters both cache reads and cache writes, so
 Observatory figures reflect the true bill. Cached input bills at $0.30/Mtok against a
 $3.00 list price — the 10× discount on the byte-stable prefix the
 [context engine](/docs/context-engine) maintains.
@@ -236,7 +236,7 @@ export AWS_REGION=us-east-1         # or AWS_DEFAULT_REGION; default us-east-1
 ```
 
 <Callout type="warn">
-  Stella reads **only these environment variables** — it does not walk the AWS credential
+  stella reads **only these environment variables** — it does not walk the AWS credential
   chain. `AWS_PROFILE`, `~/.aws/credentials`, SSO caches, and IMDS/instance roles are
   never consulted. On a profile or SSO setup, materialize env vars first:
   `eval "$(aws configure export-credentials --profile dev --format env)"`.
@@ -293,7 +293,7 @@ Or, durably, in **user scope**:
   personal, so put it in user scope.
 </Callout>
 
-On a coding plan the `$` figures in `stella stats` are notional — Stella prices tokens at
+On a coding plan the `$` figures in `stella stats` are notional — stella prices tokens at
 catalog list rates, and you pay the flat subscription. Token counts, step counts, and
 cross-model $/resolved comparisons stay meaningful; absolute dollars for `zai/*` do not.
 `--budget` caps meter against those notional prices too.
@@ -302,7 +302,7 @@ cross-model $/resolved comparisons stay meaningful; absolute dollars for `zai/*`
 
 One key, every vendor. Gateway slugs are `vendor/model` and pass through **unseeded** —
 any slug the gateway serves works verbatim, and a typo fails with OpenRouter's own
-400/404 rather than a Stella error. The default model is `moonshotai/kimi-k3`.
+400/404 rather than a stella error. The default model is `moonshotai/kimi-k3`.
 
 #### The default posture
 
@@ -316,7 +316,7 @@ no configuration at all, an OpenRouter instance runs:
 | verifier | `anthropic/claude-opus-5` | a different vendor's strongest reasoner — not the worker grading itself |
 | triage | `z-ai/glm-5.2` | fast and cheap, and it runs on every turn |
 
-Note the verifier is deliberately a different **family** from the driver. Stella already
+Note the verifier is deliberately a different **family** from the driver. stella already
 treats cross-family judging as the goal (see `auto_mode`); this default just reaches it
 without asking you to configure anything.
 
@@ -350,7 +350,7 @@ stella --model openrouter/openrouter/auto          run "let the gateway pick per
   Every OpenRouter model id is `vendor/model`, and the meta-router's own id is
   `openrouter/auto` — so the full spec is `openrouter` + `/` + `openrouter/auto`. Write
   `--model openrouter/auto` and the wire slug becomes a bare `auto`, which OpenRouter
-  does not serve; Stella warns on stderr that it is missing the vendor namespace, but the
+  does not serve; stella warns on stderr that it is missing the vendor namespace, but the
   warning is advisory and the run still fails at the gateway.
 </Callout>
 
@@ -370,7 +370,7 @@ OpenAI and cross-family preference works through the gateway.
 
 <Callout type="info">
   **Cost telemetry comes from the gateway, not the catalog.** Gateway slugs are unseeded,
-  so there is no local list price. Stella requests OpenRouter's usage accounting on every
+  so there is no local list price. stella requests OpenRouter's usage accounting on every
   call — and sends app-attribution headers — and takes the gateway's reported per-call
   cost as authoritative. If a call's final usage frame carries no cost, that call falls
   back to `$0`; treat the OpenRouter dashboard as the reconciliation source of record.

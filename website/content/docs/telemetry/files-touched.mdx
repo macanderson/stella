@@ -1,9 +1,9 @@
 ---
 title: Files touched
-description: Every file Stella reads, creates, updates, or deletes — a per-session CRUD ledger with reasons and line deltas, live in the TUI, in JSON, and in the store.
+description: Every file stella reads, creates, updates, or deletes — a per-session CRUD ledger with reasons and line deltas, live in the TUI, in JSON, and in the store.
 ---
 
-Every time Stella touches a file through one of its file tools, it records the touch in a
+Every time stella touches a file through one of its file tools, it records the touch in a
 per-session **file-touch ledger**: which file, what happened (**C**reate / **R**ead /
 **U**pdate / **D**elete), *why*, and how many lines it added and removed. The ledger is
 surfaced live in the TUI, included in `--output-format json` output on raw
@@ -12,7 +12,7 @@ have an auditable record of exactly what a run changed.
 
 ## What gets recorded
 
-Only Stella's dedicated file tools are attributable. Shell commands are opaque — Stella
+Only stella's dedicated file tools are attributable. Shell commands are opaque — stella
 cannot see what a `bash` command did to the filesystem, which is one reason the file tools
 exist and the agent is steered toward them.
 
@@ -51,7 +51,7 @@ out-of-workspace path never produces a ledger entry.
 
 Each of `read_file`, `write_file`, `edit_file`, and `delete_file` accepts an optional
 `reason` string. It is stored (trimmed of surrounding whitespace) in the audit log so the
-ledger reads like a changelog rather than a list of paths. When omitted, Stella fills in a per-operation
+ledger reads like a changelog rather than a list of paths. When omitted, stella fills in a per-operation
 default (`"file updated (no reason given)"`, etc.).
 
 ```jsonc
@@ -155,9 +155,9 @@ stella run --output-format json --no-pipeline "add a --health flag and wire the 
 
 ### Persisted to the local store
 
-Every execution's file-touch ledger is written to Stella's local session store at
+Every execution's file-touch ledger is written to stella's local session store at
 `<workspace>/.stella/private/store.db` (one row per touched path, with the CRUD letters, line-delta
-totals, and the JSON audit log). Like the rest of [Stella's telemetry](/docs/telemetry),
+totals, and the JSON audit log). Like the rest of [stella's telemetry](/docs/telemetry),
 it stays entirely on your machine.
 
 ## Common tasks

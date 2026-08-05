@@ -1,6 +1,6 @@
 ---
 title: Hooks
-description: Run shell commands on Stella's agent lifecycle events — SessionStart, PreToolUse, and PostToolUse — configured under the hooks key in settings.json.
+description: Run shell commands on stella's agent lifecycle events — SessionStart, PreToolUse, and PostToolUse — configured under the hooks key in settings.json.
 ---
 
 Hooks are shell commands that fire on agent lifecycle events. They are configured under the `hooks` key in your `settings.json` and follow Claude Code parity, so existing hook knowledge carries over.
@@ -10,13 +10,13 @@ Each hook receives the event payload as **JSON on stdin**, so your command can r
 <Callout type="info">
   This page covers the **config-driven shell hooks** — the `hooks` key in `settings.json`,
   no code required. For the *programmatic* in-process event bus (observe every event, gate
-  actions with allow / modify / deny / require-approval, in code when you embed Stella's
+  actions with allow / modify / deny / require-approval, in code when you embed stella's
   engine), see [Extension hooks](/docs/extensions).
 </Callout>
 
 ## Events
 
-Stella fires hooks on three lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
+stella fires hooks on three lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
 
 <HookLifecycleDiagram />
 
