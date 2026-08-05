@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# UI toolchain — arenabench/web/ (the built client) IS committed on purpose,
+# so `pip install arenabench` works without Node. Everything the build uses
+# to get there is not.
+ui/node_modules/
+ui/.next/
+ui/out/
+ui/next-env.d.ts
+ui/*.tsbuildinfo
+
+# Local run artifacts
+.arenabench/
+*.local
+.env
+.env.*

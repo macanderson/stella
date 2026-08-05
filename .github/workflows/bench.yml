@@ -113,18 +113,13 @@ jobs:
         if: steps.scope.outputs.changed == 'true'
         run: uv run --with pytest --no-project pytest -q bench/evidence/frontier/tests
 
-      # ArenaBench. Ungated until now, and it showed: the trajectory reader was
-      # reading `total_input_tokens`/`total_output_tokens`, which are not ATIF
-      # field names. Reading a key that does not exist does not raise, it
-      # returns zero — so every contestant that publishes only a trajectory
-      # posted 0 tokens and $0.00 and swept every efficiency dimension on the
-      # scoreboard. A benchmark tool reporting confident wrong numbers is worse
-      # than one that is down, and nothing was running the test that catches it.
-      #
-      # `--no-project` like the two above: ArenaBench has zero dependencies by
-      # design, and `pythonpath` in its pyproject makes the package importable
-      # from the source tree without an install.
-      - name: arenabench — pytest
+      # ArenaBench is being prepared for ejection into its own repository and
+      # carries its own workflow at arenabench/.github/workflows/ci.yml, which
+      # becomes active the moment that folder becomes a repo root. Until the
+      # split lands, run its suite from here so the gate never lapses — the
+      # last time this suite went unwatched, a wrong-field trajectory reader
+      # posted $0.00 for every contestant and swept the scoreboard.
+      - name: arenabench — pytest (until ejection)
         if: steps.scope.outputs.changed == 'true'
         working-directory: arenabench
         run: uv run --with pytest --no-project pytest -q
