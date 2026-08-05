@@ -32,6 +32,9 @@ scoreboard dimensions and re-parses a file only when its size changes, so an
 idle dashboard costs ``stat()`` calls. :class:`TranscriptReader` keeps a byte
 offset per file and yields only what is new, which is what the SSE endpoint
 streams.
+
+:mod:`arenabench.monitor` reduces the same metrics one step further, to
+failure detections a supervising process can act on while the match runs.
 """
 
 from __future__ import annotations
@@ -193,6 +196,19 @@ class TrialMetrics:
     cap_hits: int = 0
     models: tuple[str, ...] = ()
     has_video: bool = False
+    #: ``True`` when the agent's own event stream said ``complete`` — the
+    #: agent *claimed* to be finished. Distinct from :attr:`status`, which
+    #: ``result.json`` also forces to "done": a trial Harbor tore down is
+    #: done, but only the agent can have declared itself complete.
+    declared_complete: bool = False
+    #: ``usage_incomplete`` events observed — model calls whose tokens and
+    #: cost never made it into the totals (#1467). A nonzero count means
+    #: every spend figure on this trial is a floor, not a measurement.
+    usage_incomplete: int = 0
+    #: The last ``error`` message that no further step followed — the run's
+    #: final word, when that word was an error. Empty when the agent worked
+    #: on after its most recent error.
+    late_error: str = ""
 
     @property
     def cache_hit_rate(self) -> float | None:
@@ -233,6 +249,9 @@ class TrialMetrics:
             "cap_hits": self.cap_hits,
             "models": list(self.models),
             "has_video": self.has_video,
+            "declared_complete": self.declared_complete,
+            "usage_incomplete": self.usage_incomplete,
+            "late_error": self.late_error,
         }
 
 
@@ -255,6 +274,8 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
         "complete": False,
         "verifier_passed": None,
         "models": [],
+        "usage_incomplete": 0,
+        "late_error": "",
     }
     seen_models: set[str] = set()
     try:
@@ -284,6 +305,13 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
                     if model and model not in seen_models:
                         seen_models.add(model)
                         totals["models"].append(model)
+                    # A step after an error means the agent kept working, so
+                    # that error was not the run's last word.
+                    totals["late_error"] = ""
+                elif kind == "error":
+                    totals["late_error"] = str(event.get("message") or "")[:400]
+                elif kind == "usage_incomplete":
+                    totals["usage_incomplete"] += 1
                 elif kind == "verdict":
                     passed = event.get("passed")
                     totals["verifier_passed"] = None if passed is None else bool(passed)
@@ -384,6 +412,9 @@ class MetricsReader:
             metrics.models = tuple(events["models"])
             metrics.age_s = age
             metrics.status = "done" if events["complete"] else "running"
+            metrics.declared_complete = events["complete"]
+            metrics.usage_incomplete = events["usage_incomplete"]
+            metrics.late_error = events["late_error"]
 
         configured = ""
         result = _load_json(trial_dir / RESULT_NAME)
@@ -426,6 +457,27 @@ class MetricsReader:
             )
             if configured and configured not in metrics.models:
                 metrics.models = (*metrics.models, configured)
+
+        # A trial that "ran" without one observed token was never a fair
+        # attempt. Some agents swallow their own 401/429 and exit nonzero, so
+        # Harbor names the trial `NonZeroAgentExitCodeError` — deliberately an
+        # agent failure — and the `AuthenticationError` guard in
+        # :data:`INFRASTRUCTURE_FAILURES` never sees the credential problem.
+        # The scoreboard then reads "lost N tasks" when the truth is "never
+        # made a single model call", which is the inverted conclusion a
+        # benchmark must not produce (match dd52a57a6f49: three such trials,
+        # `api_error_status:429`, scored as Claude Code losses — #1480).
+        # Classified on *observed spend* rather than on the exception name
+        # because the exception name is exactly what lied.
+        if (
+            metrics.resolved is False
+            and metrics.steps > 0
+            and metrics.tokens_in == 0
+            and metrics.tokens_out == 0
+            and metrics.total_cost == 0.0
+        ):
+            metrics.infrastructure = True
+            metrics.resolved = None
 
         # One table, both seats. See pricing.py for why self-reported cost is
         # recorded but never compared. The seat's launch record outranks every

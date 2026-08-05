@@ -54,12 +54,48 @@ missing — an unauthenticated arm scores zero, and a zero is indistinguishable
 from a real result on a scoreboard. Override with `--allow-missing-env` if you
 genuinely mean it.
 
+While the match runs, `run` also applies the [watch rules](#watch-a-running-match-for-the-failures-that-invalidate-it)
+inline (`!!` lines in the log) and exits `3` if a detection invalidated the
+match — so a CI job fails at the failure, not at the publish step.
+
 ```yaml
 # .github/workflows/bench.yml
 - run: arenabench run matches/nightly.toml --results results.json
   env:
     OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 ```
+
+### Watch a running match for the failures that invalidate it
+
+```bash
+arenabench watch <match-id>                      # scan once; exit 3 if invalid
+arenabench watch <match-id> --follow             # keep watching, ^C to stop
+arenabench watch <match-id> --format jsonl       # for a subscribing process
+```
+
+Every failure worth catching in a live match is visible in the artifacts the
+run is already writing — an arm whose credentials never worked (steps but
+zero tokens, scored as *losses*), a confident three-step "complete" that
+passed nothing, a verification failure as a trial's final word, a hung trial
+burning its allowance. `watch` tails those artifacts and prints one line per
+detection (`<severity> <arm> <task> <rule> <evidence>`), read-only with
+respect to the run, and exits `3` when a detection invalidates the match —
+so CI fails the publish step instead of publishing an inverted scoreboard.
+
+`--format jsonl` emits **agent monitor protocol** events (one JSON object
+per line) instead — a deliberately ArenaBench-agnostic envelope any
+supervising process can subscribe to and any run-watching tool can emit; the
+normative spec lives in the Stella repository as
+`docs/spec/agent-monitor-protocol.md` (`doc:agent-monitor-protocol`).
+Rules: `zero-token`, `premature-complete`, `late-verdict`, `stall` by
+default, `usage-incomplete` opt-in via `--rules`; thresholds via
+`--min-steps`, `--min-output-tokens`, `--stall-minutes`.
+
+The zero-token signature is also wired into scoring itself: a finished trial
+with a nonzero step count and zero observed spend is counted as an
+infrastructure void (unjudged), never as a loss — the agent that swallows
+its own 401/429 and exits nonzero must not hand its opponent a win nobody
+can defend once the logs are opened.
 
 ### Prepare the host
 
@@ -382,6 +418,8 @@ arenabench/
   harbor_agent.py  ArenaBench's Stella adapter (swaps the frozen posture)
   runner.py        one `harbor run` per contestant; credential isolation
   telemetry.py     artifact -> metrics + transcripts; incremental, cached
+  monitor.py       failure detection over telemetry; emits the agent
+                   monitor protocol (`arenabench watch`)
   recorder.py      MP4 sidecar supervisor
   server.py        stdlib HTTP + SSE
   web/             the arena UI, BUILT — generated from ui/, committed so

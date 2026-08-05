@@ -48,6 +48,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     import time
 
     from .config import MatchTemplateError, load_match, required_env
+    from .monitor import MatchWatcher
     from .runner import MatchRunner
     from .server import ArenaServer
 
@@ -92,8 +93,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     match = runner.create(spec)
     runner.start(match)
+    # The built-in supervisor: the same rules `arenabench watch` runs from
+    # another process, reported inline so a CI log shows a dead arm at the
+    # minute it died rather than in the postmortem (#1480).
+    watcher = MatchWatcher(match.workspace)
     while match.status == "running":
         time.sleep(args.poll)
+        for detection in watcher.scan():
+            print(f"  !! {detection.to_line()}")
         if args.progress:
             snapshot = match.snapshot()
             parts = [
@@ -101,6 +108,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 for c in snapshot["contestants"]
             ]
             print(f"  [{snapshot['elapsed'] / 60:5.1f}m] " + "  ".join(parts))
+    for detection in watcher.scan():
+        print(f"  !! {detection.to_line()}")
 
     snapshot = match.snapshot()
     print(f"\nfinished in {snapshot['elapsed'] / 60:.1f}m")
@@ -124,6 +133,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
             json.dumps(snapshot, indent=2), encoding="utf-8"
         )
         print(f"  results -> {args.results}")
+    if watcher.invalidating:
+        # Same contract as `arenabench watch`: exit 3 means these numbers
+        # must not be published, which outranks "an arm judged nothing".
+        print("match invalidated — see the !! lines above", file=sys.stderr)
+        return 3
     return worst
 
 
@@ -348,6 +362,91 @@ def _cmd_flip(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_watch(args: argparse.Namespace) -> int:
+    """Tail a match's artifacts and emit one line per detection.
+
+    The supervising process is the customer: CI greps text lines and acts on
+    the exit code; a subscriber (the fullauto loop, a ``Monitor``) reads
+    ``--format jsonl`` — agent monitor protocol events, one per line — and
+    reacts while the match is still running. Read-only with respect to the
+    run, like everything else in the arena: a watched contestant's number
+    cannot change because someone was watching.
+
+    Exit codes: 0 = nothing invalidating (warnings and notices may still have
+    printed), 2 = usage error, 3 = at least one critical detection — the
+    match's numbers must not be published.
+    """
+    import time
+
+    from .monitor import DEFAULT_RULES, MatchWatcher, Thresholds, stream_event
+
+    # A match id resolves inside the workspace; a path is taken as-is, which
+    # is what lets the same command run against an archive or a fixture tree.
+    target = Path(args.match).expanduser()
+    match_dir = (
+        target
+        if (target / "jobs").is_dir()
+        else Path(args.workspace).expanduser() / "matches" / args.match
+    )
+    if not (match_dir / "jobs").is_dir():
+        print(f"no such match: {args.match} (looked at {match_dir})", file=sys.stderr)
+        return 2
+
+    rules = (
+        tuple(part.strip() for part in args.rules.split(",") if part.strip())
+        if args.rules
+        else DEFAULT_RULES
+    )
+    thresholds = Thresholds(
+        min_steps=args.min_steps,
+        min_output_tokens=args.min_output_tokens,
+        stall_minutes=args.stall_minutes,
+    )
+    try:
+        watcher = MatchWatcher(match_dir, rules=rules, thresholds=thresholds)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    jsonl = args.format == "jsonl"
+    if jsonl:
+        print(
+            json.dumps(
+                stream_event(
+                    "watching",
+                    source="arenabench",
+                    run=watcher.run,
+                    rules=list(rules),
+                )
+            ),
+            flush=True,
+        )
+
+    try:
+        while True:
+            for detection in watcher.scan():
+                line = (
+                    json.dumps(
+                        detection.to_event(source="arenabench", run=watcher.run)
+                    )
+                    if jsonl
+                    else detection.to_line()
+                )
+                print(line, flush=True)
+            if not args.follow:
+                break
+            time.sleep(args.poll)
+    except KeyboardInterrupt:
+        # A follow subscription ends when its supervisor says so; ^C is the
+        # normal way to say it, not a crash — so the summary and the exit
+        # code still happen.
+        pass
+
+    if jsonl:
+        print(watcher.summary_json(), flush=True)
+    return 3 if watcher.invalidating else 0
+
+
 def _cmd_build_recorder(args: argparse.Namespace) -> int:
     if not docker_available():
         print("docker is not available", file=sys.stderr)
@@ -480,6 +579,56 @@ def main(argv: list[str] | None = None) -> int:
         help="snapshots to re-probe before the bisected answer (default: 3)",
     )
     flip_parser.set_defaults(func=_cmd_flip)
+
+    watch_parser = subparsers.add_parser(
+        "watch",
+        help="tail a match's artifacts and report failure signatures live",
+    )
+    watch_parser.add_argument(
+        "match", help="a match id in the workspace, or a path to a match directory"
+    )
+    watch_parser.add_argument("--workspace", default=str(default_workspace()))
+    watch_parser.add_argument(
+        "--rules",
+        help="comma-separated rule list (default: zero-token,premature-complete,"
+             "late-verdict,stall; also available: usage-incomplete)",
+    )
+    watch_parser.add_argument(
+        "--format",
+        choices=("text", "jsonl"),
+        default="text",
+        help="text = one human-readable line per detection; jsonl = agent "
+             "monitor protocol events for a subscribing process",
+    )
+    watch_parser.add_argument(
+        "--follow",
+        action="store_true",
+        help="keep watching and emit new detections as they appear (^C to stop)",
+    )
+    watch_parser.add_argument(
+        "--poll", type=float, default=15.0, help="seconds between scans with --follow"
+    )
+    watch_parser.add_argument(
+        "--min-steps",
+        type=int,
+        default=5,
+        help="premature-complete floor: steps a completed-and-failed trial "
+             "should have taken (default: 5)",
+    )
+    watch_parser.add_argument(
+        "--min-output-tokens",
+        type=int,
+        default=300,
+        help="premature-complete floor: output tokens likewise (default: 300)",
+    )
+    watch_parser.add_argument(
+        "--stall-minutes",
+        type=float,
+        default=10.0,
+        help="minutes of silence before a running trial counts as stalled "
+             "(default: 10)",
+    )
+    watch_parser.set_defaults(func=_cmd_watch)
 
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)
