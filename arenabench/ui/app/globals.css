@@ -1,0 +1,173 @@
+/* ==========================================================================
+   arenabench — styled on the stella brand kit v1.0, now in two schemes.
+   One colour, owned: Phosphor Gold. Dark is the brand's home; light maps the
+   same tokens onto Paper, with gold deepened to keep its contrast honest.
+   ========================================================================== */
+
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* The brand voice is JetBrains Mono, self-hosted so it renders the same on a
+   machine that has never installed it. Licence: /fonts/LICENSE-OFL.txt. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 500; font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal; font-weight: 800; font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-800-normal.woff2") format("woff2");
+}
+
+/* ------------------------------------------------------------ scheme tokens
+   Semantic first: components speak `background`, `panel`, `accent` — never a
+   hex. Light is :root so a pre-hydration flash degrades to readable-on-paper;
+   next-themes stamps `.dark` on <html> before first paint anyway. */
+
+:root {
+  --background: #f2efe7;   /* Paper, as a surface */
+  --panel:      #faf8f2;
+  --panel-2:    #e9e5da;
+  --line:       #d8d3c4;
+  --line-soft:  #e4e0d3;
+  --foreground: #1c1b16;
+  --muted:      #6e6a5f;
+  --dim:        #98948a;
+
+  --accent:     #a37200;   /* gold that passes contrast on light */
+  --ok:         #1c7c43;
+  --bad:        #c0343c;
+  --warn:       #8a6d00;
+  --acc-cyan:   #0b7285;
+  --acc-violet: #7048a8;
+  --acc-rose:   #c2255c;
+  --acc-citron: #8a6d00;
+
+  /* Seat colours arrive as data (each contestant carries a hex). As fills
+     they work on both schemes; as *text* on paper they need ink mixed in. */
+  --seat-fg: color-mix(in srgb, var(--seat, #a37200) 62%, #1c1b16);
+
+  --glow-gold: 0 0 24px rgb(163 114 0 / 0.18), 0 0 96px rgb(163 114 0 / 0.08);
+}
+
+.dark {
+  --background: #0b0b0c;   /* Ink: the terminal, not pure black */
+  --panel:      #131315;
+  --panel-2:    #1a1a1d;
+  --line:       #232327;
+  --line-soft:  #17171a;
+  --foreground: #f4f1ea;   /* Paper, as text */
+  --muted:      #9b9890;
+  --dim:        #6e6a5f;
+
+  --accent:     #ffb000;   /* Phosphor Gold — the only owned colour */
+  --ok:         #5ce68a;
+  --bad:        #f2545b;
+  --warn:       #ffe066;
+  --acc-cyan:   #37d5f2;
+  --acc-violet: #c77dff;
+  --acc-rose:   #ff6b9d;
+  --acc-citron: #ffe066;
+
+  --seat-fg: var(--seat, #ffb000);
+
+  --glow-gold: 0 0 24px rgb(255 176 0 / 0.28), 0 0 96px rgb(255 176 0 / 0.12);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-dim: var(--dim);
+  --color-accent: var(--accent);
+  --color-ok: var(--ok);
+  --color-bad: var(--bad);
+  --color-warn: var(--warn);
+  --color-acc-cyan: var(--acc-cyan);
+  --color-acc-violet: var(--acc-violet);
+  --color-acc-rose: var(--acc-rose);
+  --color-acc-citron: var(--acc-citron);
+
+  /* Gold as a FILL is the same in both schemes; ink is what sits on it. */
+  --color-gold: #ffb000;
+  --color-ink: #0b0b0c;
+
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Motion — "assemble, don't spin". */
+  --ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ------------------------------------------------------------------- base */
+
+html, body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A faint grid gives the page a "stage floor" without costing contrast. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(var(--foreground) 1px, transparent 1px),
+    linear-gradient(90deg, var(--foreground) 1px, transparent 1px);
+  background-size: 56px 56px;
+  opacity: 0.03;
+  mask-image: radial-gradient(ellipse 120% 80% at 50% 0%, #000 30%, transparent 78%);
+}
+body > * { position: relative; z-index: 1; }
+
+h1, h2, h3 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-transform: lowercase;
+}
+code {
+  font-size: 0.92em;
+  color: var(--acc-citron);
+}
+
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* Assemble on load: the trail arrives, then the star lands. */
+@media (prefers-reduced-motion: no-preference) {
+  .comet-trail { animation: trail-in 180ms var(--ease-arrive) both; }
+  .comet-trail:nth-of-type(2) { animation-delay: 40ms; }
+  .comet-trail:nth-of-type(3) { animation-delay: 80ms; }
+  .comet-star { animation: star-land 280ms var(--ease-pop) 120ms both; }
+}
+@keyframes trail-in { from { opacity: 0; transform: translateX(-6px); } }
+@keyframes star-land { from { opacity: 0; transform: scale(0.4); } }
+
+@keyframes cell-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+/* Respect a stated preference for less motion: the pulse and bar easing are
+   decoration, and a benchmark dashboard is something people stare at. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

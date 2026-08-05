@@ -21,6 +21,7 @@ names only.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -46,7 +47,7 @@ from .recorder import RecorderSupervisor
 from .registry import Dataset, Registry
 from .telemetry import MetricsReader, TrialMetrics, aggregate, leaders
 
-__all__ = ["Match", "MatchRunner", "ContestantRun"]
+__all__ = ["ContestantRun", "Match", "MatchRunner"]
 
 log = logging.getLogger("arenabench.runner")
 
@@ -526,9 +527,7 @@ class MatchRunner:
                 # running and the job directory growing after "cancel".
                 os.killpg(os.getpgid(process.pid), 15)
             except (OSError, ProcessLookupError):
-                try:
+                with contextlib.suppress(OSError):
                     process.terminate()
-                except OSError:
-                    pass
         if match.recorder is not None:
             match.recorder.stop()

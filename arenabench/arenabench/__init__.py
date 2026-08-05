@@ -17,7 +17,7 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
-from .model import (  # noqa: E402
+from .model import (
     ARENA_COLORS,
     DIMENSIONS,
     EFFORTS,
@@ -28,7 +28,7 @@ from .model import (  # noqa: E402
     MatchSpec,
     RoleConfig,
 )
-from .registry import DEFAULT_REGISTRY, Dataset, Registry, Task  # noqa: E402
+from .registry import DEFAULT_REGISTRY, Dataset, Registry, Task
 
 __all__ = [
     "ARENA_COLORS",

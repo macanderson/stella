@@ -31,10 +31,11 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .pricing import price_for, trial_cost
 
@@ -47,7 +48,6 @@ __all__ = [
     "TrialMetrics",
     "aggregate",
     "leaders",
-    "priced_cost",
 ]
 
 EVENTS_NAME = "agent/stella-events.jsonl"

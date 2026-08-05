@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ArenaBench CI. This workflow is written against the layout of THIS folder
+# as a repository root: while arenabench still lives inside the stella
+# monorepo, GitHub never reads a nested .github/ and this file is inert —
+# the interim gate is the "arenabench — pytest (until ejection)" step in the
+# monorepo's bench.yml. The moment the folder is ejected, this file is the
+# whole gate, with no edits needed.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python — pytest + ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+
+      # ArenaBench is standard-library only, so there is no project to sync:
+      # `pythonpath` in pyproject.toml makes the package importable straight
+      # from the source tree.
+      - name: pytest
+        run: uv run --with pytest --no-project pytest -q
+
+      - name: ruff
+        run: uv run --with ruff --no-project ruff check .
+
+  ui:
+    name: ui — build the static client
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: npm ci
+        working-directory: ui
+        run: npm ci
+
+      # `build` exports the Next.js app and syncs it into arenabench/web/ —
+      # the directory the Python server serves and the wheel ships. The build
+      # output is committed, so `pip install arenabench` never needs Node;
+      # this job proves the committed client still builds from source.
+      - name: build
+        working-directory: ui
+        run: npm run build
+
+      - name: the export landed where the server serves from
+        run: test -f arenabench/web/index.html

@@ -187,16 +187,14 @@ def load_match(path: Path, *, match_id: str | None = None) -> MatchSpec:
     return match_from_toml(data, match_id=match_id)
 
 
-def required_env(spec: MatchSpec, declared: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
-    """Environment variable *candidates* each seat accepts, by contestant id.
+def required_env(
+    spec: MatchSpec, declared: dict[str, list[str]] | None = None
+) -> dict[str, list[str]]:
+    """Environment variables each seat needs, by contestant id.
 
-    Derived from each seat's provider and agent unless the template declared
-    its own list. The names are alternatives — the same "any one of these"
-    contract as :func:`.agents.missing_credentials` — because an agent that
-    reads its own token variable (or accepts a subscription token) is
-    legitimately credentialled without the provider-named key ever being set.
-    This is what turns "no secrets in the file" from a restriction into a
-    contract: the template still says exactly what must be supplied.
+    Derived from each seat's provider unless the template declared its own
+    list. This is what turns "no secrets in the file" from a restriction into
+    a contract: the template still says exactly what must be supplied.
     """
     from .agents import credential_env_for, resolve_agent
 

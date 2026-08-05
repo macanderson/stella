@@ -29,9 +29,9 @@ from typing import Any
 from .model import Contestant, Engine
 
 __all__ = [
-    "AgentSpec",
     "AGENTS",
     "API_CREDENTIALS",
+    "AgentSpec",
     "credential_env_for",
     "launch_flags",
     "launch_model",

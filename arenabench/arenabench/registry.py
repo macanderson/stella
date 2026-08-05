@@ -26,15 +26,16 @@ import os
 import random
 import subprocess
 import tomllib
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 __all__ = [
-    "Task",
+    "DEFAULT_REGISTRY",
     "Dataset",
     "Registry",
-    "DEFAULT_REGISTRY",
+    "Task",
     "export_root",
     "harbor_cache_root",
     "sample_tasks",
@@ -223,7 +224,7 @@ class Registry:
     #: Optional explicit export directories, keyed by dataset key.
     export_dirs: dict[str, Path] = field(default_factory=dict)
 
-    def add(self, dataset: Dataset) -> "Registry":
+    def add(self, dataset: Dataset) -> Registry:
         self.datasets[dataset.key] = dataset
         return self
 
@@ -236,7 +237,8 @@ class Registry:
         explicit = self.export_dirs.get(dataset.key)
         if explicit:
             roots.append(Path(explicit))
-        env_override = os.environ.get(f"ARENABENCH_TASKS_{dataset.key.upper().replace('-', '_')}")
+        env_key = f"ARENABENCH_TASKS_{dataset.key.upper().replace('-', '_')}"
+        env_override = os.environ.get(env_key)
         if env_override:
             roots.append(Path(env_override).expanduser())
         roots.append(harbor_cache_root() / dataset.namespace)
