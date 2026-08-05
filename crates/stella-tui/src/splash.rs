@@ -17,7 +17,7 @@
 //!
 //! - **Pure function of elapsed time.** Two renders at the same `t` produce
 //!   byte-identical buffers; a dropped frame scrubs instead of stalling.
-//!   Animation time is additionally quantized to [`FRAME_MS`] so a recording
+//!   Animation time is additionally quantized to `FRAME_MS` so a recording
 //!   repaints on a stable grid.
 //! - **Any key skips, immediately.** The assemble is never modal.
 //! - **Reduced (`--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`) is one static
@@ -26,7 +26,7 @@
 //!   and still narrows through `theme::degrade_buffer`.
 //!
 //! One contract **did** change, deliberately: a held splash whose init
-//! finishes early now plays the assemble out to [`ASSEMBLE`] before handing
+//! finishes early now plays the assemble out to `ASSEMBLE` before handing
 //! off, instead of cutting mid-build. The launch mark is the one place the
 //! brand is allowed a beat of screen time; a key press still cuts it
 //! instantly, and reduced mode never waits.
@@ -172,7 +172,7 @@ impl SplashState {
 
     /// Init finished — hand off once the assemble completes.
     ///
-    /// A release after [`ASSEMBLE`] hands off immediately. A release before it
+    /// A release after `ASSEMBLE` hands off immediately. A release before it
     /// lets the mark finish assembling first: the launch mark is the one
     /// deliberate beat of brand screen time, and it is still never modal —
     /// any key skips it at once, and reduced mode never waits. Idempotent;
@@ -355,7 +355,7 @@ fn render_large(
         } else if revealed < LETTERS.len() {
             true
         } else {
-            ((t.saturating_sub(BLINK_BASE_MS)) / BLINK_HALF_MS) % 2 == 0
+            ((t.saturating_sub(BLINK_BASE_MS)) / BLINK_HALF_MS).is_multiple_of(2)
         };
 
         let mut shown = String::new();
