@@ -285,6 +285,119 @@ class TestMetrics:
         metrics = MetricsReader().read(trial, "fix-git")
         assert metrics.priced_cost == pytest.approx(0.004538)
 
+    @staticmethod
+    def _zai_record(job_dir: Path) -> None:
+        seat_manifest_path(job_dir).write_text(
+            json.dumps({"schema": 1, "api": "zai", "qualified_model": "zai/glm-5.2"}),
+            encoding="utf-8",
+        )
+
+    def test_a_pipeline_trial_costs_the_sum_of_its_role_subtotals(
+        self, tmp_path: Path
+    ):
+        """The committed GLM match's pipeline arm runs three models at three
+        rates: worker glm-5.2, verifier glm-5.1, triage glm-4.5-air, all on
+        the seat's z.ai route. 1M input tokens on each is
+        $0.60 + $0.966 + $0.13 — not 3M tokens at the worker's rate ($1.80),
+        which is what one-rate pricing published, and the error landed only
+        on the pipeline arm because a single-model arm has no role tokens
+        (#1566)."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(model="zai/glm-5.2", input_tokens=1_000_000, output_tokens=0),
+                usage(
+                    role="verifier",
+                    model="zai/glm-5.1",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+                usage(
+                    role="triage",
+                    model="zai/glm-4.5-air",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+            ],
+        )
+        self._zai_record(trial_dir.parent)
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost == pytest.approx(0.60 + 0.966 + 0.13)
+
+    def test_an_unpriced_role_blanks_the_trial_rather_than_underbilling(
+        self, tmp_path: Path
+    ):
+        """Summing only the priced share would publish a cost that is
+        confidently short, and billing the unpriced role at the worker's rate
+        is the guess this issue exists to remove. Missing beats wrong: one
+        unpriced role model and the trial has no comparable cost at all."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(model="zai/glm-5.2", input_tokens=1_000_000, output_tokens=0),
+                usage(
+                    role="verifier",
+                    model="acme/mystery-1",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+            ],
+        )
+        self._zai_record(trial_dir.parent)
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost is None
+
+    def test_without_a_launch_record_role_subtotals_price_route_blind(
+        self, tmp_path: Path
+    ):
+        """An archive predating the launch record still gets per-model
+        pricing, at the gateway tier each — route stays uninferred from the
+        stream's spellings (#1498), but a verifier token no longer bills at
+        the worker's rate."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(
+                    model="openrouter/z-ai/glm-5.2",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+                usage(
+                    role="verifier",
+                    model="z-ai/glm-5.1",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+            ],
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost == pytest.approx(0.76 + 0.966)
+
+    def test_a_step_that_names_no_model_prices_at_the_seat_rate(
+        self, tmp_path: Path
+    ):
+        """A step_usage without a model field cannot join a per-model bucket;
+        its tokens bill the way the whole trial used to — at the seat's own
+        rate — rather than vanishing or blanking the trial."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(model="", input_tokens=1_000_000, output_tokens=0),
+                usage(
+                    role="verifier",
+                    model="zai/glm-5.1",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                ),
+            ],
+        )
+        self._zai_record(trial_dir.parent)
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost == pytest.approx(0.60 + 0.966)
 
 
 class TestAggregate:

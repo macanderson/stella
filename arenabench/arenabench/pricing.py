@@ -49,6 +49,7 @@ __all__ = [
     "load_overrides",
     "price_for",
     "price_for_route",
+    "price_on_route",
     "trial_cost",
 ]
 
@@ -111,6 +112,11 @@ PRICES: dict[str, Price] = {
     "glm-5.1": Price(input=0.966, output=3.036, cache_read=0.1794),
     "glm-5": Price(input=0.95, output=2.55, cache_read=0.20),
     "glm-5-turbo": Price(input=1.20, output=4.00, cache_read=0.24),
+    # The committed GLM match's triage role. Seated in every pipeline run of
+    # that match, and a trial's cost is the sum of its role subtotals (#1566),
+    # so leaving this row out would blank the whole trial's cost rather than
+    # merely one role's share. Same numbers on both routes, per the catalog.
+    "glm-4.5-air": Price(input=0.13, output=0.85, cache_read=0.025),
     "claude-fable-5": Price(
         input=10.0, output=50.0, cache_read=1.0, cache_write=12.50
     ),
@@ -215,6 +221,28 @@ def price_for_route(qualified_model: str) -> Price | None:
         return None
     exact = PRICES.get(qualified_model.strip().lower())
     return exact if exact is not None else price_for(qualified_model)
+
+
+def price_on_route(route_api: str, model: str) -> Price | None:
+    """The price for any model logged by a seat whose recorded api is known.
+
+    A pipeline seat's stream carries several models — worker, verifier,
+    triage — and every one of them rode the seat's provider: a role config
+    has no ``api`` or ``base_url`` of its own (`model.RoleConfig`), so the
+    seat's launch record speaks for the whole stream. The model id is
+    collapsed to its bare form first — its spelling varies with how the seat
+    was launched, which is the #1498 trap — and the *recorded* api then
+    requalifies it. A route row for that pair wins; otherwise the bare
+    gateway tier; otherwise ``None``.
+
+    ``route_api`` must come from the seat's launch record. With no record
+    there is no route fact, and the caller should use :func:`price_for`.
+    """
+    bare = _normalise(model)
+    if not bare:
+        return None
+    exact = PRICES.get(f"{route_api.strip().lower()}/{bare}")
+    return exact if exact is not None else PRICES.get(bare)
 
 
 def trial_cost(
