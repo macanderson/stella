@@ -2870,7 +2870,18 @@ impl<'a> Pipeline<'a> {
                             .await
                         {
                             Ok(verdict) => {
-                                state.last_verdict = Some((inputs_digest, verdict.clone()));
+                                // Only pin a real model verdict for reuse. A
+                                // heuristic fallback is a transient-outage
+                                // stand-in (unresolvable provider, unparseable
+                                // response, failed/timed-out call), not the
+                                // opinion this candidate bought: caching it
+                                // would suppress recovery on the next round
+                                // (the verifier may have come back) and graft
+                                // the "no new model call was made" reuse note
+                                // onto a fallback that never made one.
+                                if !verdict.heuristic {
+                                    state.last_verdict = Some((inputs_digest, verdict.clone()));
+                                }
                                 verdict
                             }
                             Err(abort) => {
