@@ -61,6 +61,7 @@ mod fleet_cmd;
 mod fleet_commits;
 mod fleet_spend;
 mod fleet_warmth;
+mod fullauto_cmd;
 mod ingest_cmd;
 mod init_fx;
 mod inspect;
@@ -95,6 +96,7 @@ mod storage_cmd;
 mod subagent;
 mod subsession;
 mod term_policy;
+mod timefmt;
 mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
@@ -756,6 +758,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads .stella/private/store.db only.
             return scoreboard_cmd::run();
         }
+        Some(Command::Fullauto { cmd }) => {
+            // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
+            // of the defect queue) — works with zero API keys.
+            return fullauto_cmd::run(cmd);
+        }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
             // (promote) — works with zero API keys.
@@ -1181,6 +1188,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Cloud { .. }
         | Command::Telemetry { .. }
         | Command::Memory { .. }
+        | Command::Fullauto { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
         | Command::Mcp { .. }

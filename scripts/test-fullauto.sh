@@ -22,6 +22,12 @@
 # half of the same contract is tested in
 # crates/stella-observatory/src/fullauto.rs.
 #
+# Since #1548 the ported verbs delegate to `stella fullauto`, so the one thing
+# this suite needs beyond a shell is a stella binary (located or built by
+# `locate_stella` below; pin one with STELLA_BIN). The same checks that pinned
+# the shell implementation now pin the Rust port through the delegation map —
+# this file is the behavioral golden for the port.
+#
 # The `bench h2h --rig` money path is rehearsed the same way (#1550): stub
 # aws/ssh/scp record every call they receive, so the dry run, the stop trap,
 # and the no-phantom-results contract are witnessed without an instance ever
@@ -52,6 +58,30 @@ check_eq() {
   local want="$1" got="$2" what="$3"
   if [ "$want" = "$got" ]; then ok "$what"; else bad "$what (want '$want', got '$got')"; fi
 }
+
+# The ported verbs delegate to `stella fullauto` (#1548), so this suite is an
+# end-to-end test of the BINARY through the wrapper's exec map — the same
+# checks that pinned the shell implementation now pin the Rust one. Locate a
+# binary, or build one (debug: correctness, not speed, is under test here).
+locate_stella() {
+  if [ -n "${STELLA_BIN:-}" ]; then printf '%s' "$STELLA_BIN"; return 0; fi
+  local root candidate
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  for candidate in "$root/target/release/stella" "$root/target/debug/stella"; do
+    [ -x "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+  done
+  echo "fullauto-test: no stella binary found; building one (cargo build -p stella-cli)…" >&2
+  (cd "$root" && cargo build -q -p stella-cli --bin stella) >&2 || return 1
+  printf '%s' "$root/target/debug/stella"
+}
+STELLA="$(locate_stella)" || { echo "fullauto-test: cannot obtain a stella binary" >&2; exit 1; }
+mkdir -p "$ROOT/stella-bin"
+ln -sf "$STELLA" "$ROOT/stella-bin/stella"
+# In front of the system PATH so the wrapper's `stella` resolves to the build
+# under test; the per-case stub bin still prepends in front of THIS, so the
+# stub gh/aws/ssh/scp keep winning where a case plants them.
+PATH="$ROOT/stella-bin:$PATH"
+export PATH
 
 # A stub `gh` first on PATH keeps the demand half of `plan` and the whole of
 # `queue` off the network — the real `gh` is installed on the dev box, and
