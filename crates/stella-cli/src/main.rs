@@ -506,6 +506,18 @@ fn main() -> ExitCode {
         .names
         .retain(|name| !stella_tools::exec::is_sensitive_env_name(name));
 
+    // A supervised child's console becomes bounded and indexed from here on
+    // (#1588): everything this process prints below flows through the pump
+    // threads, which enforce the byte budget and write the ordering index.
+    // Installed after `startup.close()` — the pumps are threads, and threads
+    // before that boundary would race the env mutations it fences — and
+    // drained as this function's last act so the final lines land.
+    let console = daemon::supervised_id().and_then(|id| {
+        daemon::console::install_bounded(
+            &stella_store::SessionRegistry::open_default().sidecar_dir(&id),
+        )
+    });
+
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
     // a human output format so it never pollutes json/stream-json.
     env_files::announce(&loaded_env, cli.output_format());
@@ -514,7 +526,7 @@ fn main() -> ExitCode {
     // requested format to honour the machine-readable error contract.
     let output_format = cli.output_format();
 
-    match run(cli, &loaded_env) {
+    let code = match run(cli, &loaded_env) {
         Ok(()) => {
             daemon::record_outcome_if_supervised(true);
             // A supervisor's own exit code says only whether it managed to
@@ -550,7 +562,13 @@ fn main() -> ExitCode {
                 None => ExitCode::FAILURE,
             }
         }
+    };
+    // After the last print of every path above: restore the raw fds and join
+    // the pumps, so the console files carry this process's final lines.
+    if let Some(console) = console {
+        console.drain();
     }
+    code
 }
 
 /// The deck's presentation, resolved from the flags and their env synonyms.

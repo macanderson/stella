@@ -80,6 +80,7 @@ use stella_store::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo
 use crate::DaemonCmd;
 
 pub(crate) mod approval;
+pub(crate) mod console;
 
 /// Carries the supervised session's registry id into the child.
 ///
@@ -464,12 +465,11 @@ impl Supervised {
     /// see [`stella_store::supervised::STDOUT_LOG`].
     pub(crate) async fn follow(&mut self) -> Result<Option<u8>, String> {
         use std::io::IsTerminal;
-        let mut out = Tail::open(&self.sidecar.join(supervised::STDOUT_LOG))?;
-        let mut err = Tail::open(&self.sidecar.join(supervised::STDERR_LOG))?;
+        let mut console = console::Follower::open(&self.sidecar)?;
         let interactive = std::io::stdin().is_terminal();
         let mut approval_noted = false;
         loop {
-            let moved = out.pump(&mut std::io::stdout())? + err.pump(&mut std::io::stderr())?;
+            let moved = console.pump(&mut std::io::stdout(), &mut std::io::stderr())?;
             // The launching terminal is the first surface a parked scope
             // review reaches (#1585) — this is the exact capability the
             // supervisor used to take away.
@@ -483,8 +483,7 @@ impl Supervised {
                     // Ordered after the wait on purpose: this drain catches
                     // whatever the child wrote between the pump above and its
                     // exit, and once it has exited nothing more can appear.
-                    out.pump(&mut std::io::stdout())?;
-                    err.pump(&mut std::io::stderr())?;
+                    console.pump(&mut std::io::stdout(), &mut std::io::stderr())?;
                     return Ok(exit_code(&status));
                 }
                 None if moved == 0 => tokio::time::sleep(POLL).await,
@@ -503,13 +502,10 @@ impl Supervised {
     pub(crate) async fn interrupt_and_drain(&mut self) -> Result<(), String> {
         signal_group(self.pgid, libc::SIGTERM);
         let deadline = Instant::now() + STOP_GRACE;
-        let mut out = Tail::open(&self.sidecar.join(supervised::STDOUT_LOG))?;
-        let mut err = Tail::open(&self.sidecar.join(supervised::STDERR_LOG))?;
-        out.seek_to_end()?;
-        err.seek_to_end()?;
+        let mut console = console::Follower::open(&self.sidecar)?;
+        console.skip_to_now()?;
         while Instant::now() < deadline {
-            out.pump(&mut std::io::stdout())?;
-            err.pump(&mut std::io::stderr())?;
+            console.pump(&mut std::io::stdout(), &mut std::io::stderr())?;
             if matches!(self.child.try_wait(), Ok(Some(_))) {
                 return Ok(());
             }
@@ -1017,8 +1013,7 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
     use std::io::IsTerminal;
     let record = resolve(registry, id)?;
     let sidecar = registry.sidecar_dir(&record.id);
-    let mut out = Tail::open(&sidecar.join(supervised::STDOUT_LOG))?;
-    let mut err = Tail::open(&sidecar.join(supervised::STDERR_LOG))?;
+    let mut console = console::Follower::open(&sidecar)?;
     let interactive = std::io::stdin().is_terminal();
     let mut approval_noted = false;
     eprintln!(
@@ -1028,15 +1023,14 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
         record.title
     );
     loop {
-        let moved = out.pump(&mut std::io::stdout())? + err.pump(&mut std::io::stderr())?;
+        let moved = console.pump(&mut std::io::stdout(), &mut std::io::stderr())?;
         // Attaching to a parked run is the issue's headline path (#1585):
         // `daemon list` says Needs Input, attach asks the question.
         approval::forward_pending_approval(&sidecar, interactive, &mut approval_noted);
         if lock_is_held(&sidecar) != Some(true) {
             // Same ordering as `follow`: drain after observing the end, so the
             // last thing the run wrote is never the thing attach misses.
-            out.pump(&mut std::io::stdout())?;
-            err.pump(&mut std::io::stderr())?;
+            console.pump(&mut std::io::stdout(), &mut std::io::stderr())?;
             eprintln!("{} {} has finished", "▸".dimmed(), record.id.dimmed());
             return Ok(());
         }
@@ -1049,6 +1043,18 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
 fn logs(registry: &SessionRegistry, id: Option<&str>, lines: usize) -> Result<(), String> {
     let record = resolve(registry, id)?;
     let sidecar = registry.sidecar_dir(&record.id);
+    // An indexed console replays in true cross-stream order (#1588). A
+    // session recorded before the index existed cannot be ordered — the raw
+    // files carry no timestamps — so it keeps the old two-block tail, which
+    // stays the honest answer for exactly those sessions.
+    if console::replay_logs(
+        &sidecar,
+        lines,
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+    )? {
+        return Ok(());
+    }
     let mut out = Tail::open(&sidecar.join(supervised::STDOUT_LOG))?;
     let mut err = Tail::open(&sidecar.join(supervised::STDERR_LOG))?;
     out.seek_back_lines(lines)?;
