@@ -23,6 +23,7 @@ from arenabench.telemetry import (
     TranscriptReader,
     TrialMetrics,
     aggregate,
+    leaders,
     seat_manifest_path,
 )
 
@@ -431,6 +432,113 @@ class TestAggregate:
         """Not 0.0 — that is a free run, which is a claim, and a false one."""
         trials = [TrialMetrics("a", "a__1", resolved=True, total_cost=9.0)]
         assert aggregate(trials)["priced_cost"] is None
+
+
+class TestFlip:
+    """`arenabench flip` writes `arena/flip.json`; the scoreboard reads it.
+
+    Solve rate says whether an agent got there; these say how well. The file
+    exists only for trials an operator captured snapshots for *and* replayed,
+    so every reader here must treat absence as the normal case — and the
+    dimension must crown nobody when nobody was measured (#1536).
+    """
+
+    def _write_flip(self, trial_dir: Path, payload: dict) -> None:
+        (trial_dir / "arena").mkdir(parents=True, exist_ok=True)
+        (trial_dir / "arena" / "flip.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    def test_a_replayed_trial_surfaces_when_it_passed_and_what_came_after(
+        self, trial: Path
+    ):
+        self._write_flip(
+            trial,
+            {
+                "flip_index": 6,
+                "flip_elapsed": 180.0,
+                "wasted_elapsed": 510.0,
+                "snapshots": 24,
+                "probes": 5,
+                "unknown": 0,
+            },
+        )
+        metrics = MetricsReader().read(trial, "fix-git")
+        assert metrics.flip_elapsed == 180.0
+        assert metrics.wasted_elapsed == 510.0
+
+    def test_a_trial_without_a_replay_reads_none_and_stays_unmeasured(
+        self, trial: Path
+    ):
+        """The overwhelming majority of trials: no capture, no replay, no
+        file. That must read as *unmeasured*, never as zero — zero would be
+        the best possible score on a lower-is-better dimension."""
+        metrics = MetricsReader().read(trial, "fix-git")
+        assert metrics.flip_elapsed is None
+        assert metrics.wasted_elapsed is None
+        totals = aggregate([metrics])
+        assert totals["wasted_time"] is None
+        assert totals["flip_trials"] == 0
+
+    def test_a_replay_that_never_found_a_pass_stays_unmeasured(self, trial: Path):
+        """A flip.json with `flip_index: null` means the replay ran and no
+        snapshot passed. There is no "after solving" without a solve, so the
+        trial carries no wasted time rather than a fabricated one."""
+        self._write_flip(
+            trial,
+            {
+                "flip_index": None,
+                "flip_elapsed": None,
+                "wasted_elapsed": None,
+                "snapshots": 24,
+                "probes": 5,
+                "unknown": 0,
+            },
+        )
+        metrics = MetricsReader().read(trial, "fix-git")
+        assert metrics.flip_elapsed is None
+        assert metrics.wasted_elapsed is None
+
+    def test_aggregate_reports_the_denominator_beside_the_sum(self):
+        """510s of waste across 2 replayed trials and across 30 are different
+        findings; the count must travel with the sum."""
+        trials = [
+            TrialMetrics(
+                "a", "a__1", resolved=True, flip_elapsed=180.0, wasted_elapsed=510.0
+            ),
+            TrialMetrics("b", "b__1", resolved=True, wasted_elapsed=90.0),
+            TrialMetrics("c", "c__1", resolved=True),
+        ]
+        totals = aggregate(trials)
+        assert totals["wasted_time"] == pytest.approx(600.0)
+        assert totals["flip_trials"] == 2
+
+    def test_leaders_crown_nobody_on_wasted_time_without_flip_data(self):
+        """Both seats judged, neither replayed: the dimension exists and
+        crowns nobody. An empty dimension that silently crowns whoever has a
+        zero is worse than no dimension. Fails on `main`, where the
+        dimension does not exist at all."""
+        from arenabench.model import DIMENSIONS, DIMENSIONS_BY_KEY
+
+        assert DIMENSIONS_BY_KEY["wasted_time"].direction == "lower"
+        totals = {
+            "a": aggregate([TrialMetrics("t", "t__1", resolved=True)]),
+            "b": aggregate([TrialMetrics("t", "t__2", resolved=True)]),
+        }
+        assert "wasted_time" not in leaders(totals, DIMENSIONS)
+
+    def test_less_wasted_time_wins_when_both_seats_were_replayed(self):
+        from arenabench.model import DIMENSIONS
+
+        totals = {
+            "tight": aggregate(
+                [TrialMetrics("t", "t__1", resolved=True, wasted_elapsed=30.0)]
+            ),
+            "loose": aggregate(
+                [TrialMetrics("t", "t__2", resolved=True, wasted_elapsed=510.0)]
+            ),
+        }
+        assert leaders(totals, DIMENSIONS)["wasted_time"] == ["tight"]
 
 
 class TestTranscript:

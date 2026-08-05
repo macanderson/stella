@@ -65,7 +65,7 @@ Two diagnoses worth knowing by heart:
 ```bash
 # Everything with a suspiciously cold cache, as JSON.
 stella stats --format json |
-  jq '.[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
+  jq '.rows[] | select(.cache_hit_rate < 0.2) | {provider, model, cache_hit_rate, cache_expired_rewrites}'
 ```
 
 <Callout type="info">

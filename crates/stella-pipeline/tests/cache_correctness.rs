@@ -56,6 +56,10 @@ struct Manifest {
     turn_instance: u32,
     step: usize,
     call_seq: u64,
+    /// The model-call role (`triage`, `worker`, `verdict`, …) — the unit a
+    /// stable prefix is stable *within* since #1474 gave every management
+    /// call its own byte-stable, cache-markable system prefix.
+    role: stella_protocol::ModelCallRole,
     blocks: Vec<ManifestEntry>,
 }
 
@@ -143,6 +147,7 @@ fn manifests() -> Vec<Manifest> {
                         turn_instance,
                         step,
                         call_seq,
+                        role,
                         blocks,
                         ..
                     } => Some(Manifest {
@@ -150,6 +155,7 @@ fn manifests() -> Vec<Manifest> {
                         turn_instance,
                         step,
                         call_seq,
+                        role,
                         blocks,
                     }),
                     _ => None,
@@ -287,48 +293,70 @@ fn the_stable_prefix_leads_its_manifest_and_is_unique() {
     }
 }
 
-/// Every stable-prefix block in the whole corpus shares one content address.
+/// Every stable-prefix block in the corpus shares one content address — per
+/// model-call role.
 ///
 /// This is the sharpest instrument available here. Block ids are
-/// content-addressed, so identical bytes produce an identical id — and the
-/// system prefix is, by construction, the one span that must be byte-identical
-/// on every call for caching to work at all. Across independent recordings of
-/// different tasks it must therefore resolve to a single id.
+/// content-addressed, so identical bytes produce an identical id — and a
+/// role's system prefix is, by construction, the one span that must be
+/// byte-identical on every call *of that role* for caching to work at all.
+/// Across independent recordings of different tasks, each role must therefore
+/// resolve to a single id.
 ///
-/// A second id appearing is the signature of a silent invalidator: a timestamp,
-/// a session or run id, a per-task detail, or a non-deterministic iteration
-/// order that reached the prefix. That change costs a full-price prompt on
-/// every call and produces no error anywhere — it is precisely the defect the
-/// hit-rate threshold in `cache_economics.rs` can only notice after the fact,
-/// from spend.
+/// Per role, not corpus-wide, since #1474: the worker's prefix is the
+/// session's system prompt, while triage and the verdict ship their own
+/// byte-stable management prefixes precisely so the adapters can cache-mark
+/// them. Those are different bytes by design, so demanding one id across
+/// roles would fail on correct recordings — the invariant that catches real
+/// defects is one id *within* each role.
+///
+/// A second id appearing within a role is the signature of a silent
+/// invalidator: a timestamp, a session or run id, a per-task detail, or a
+/// non-deterministic iteration order that reached the prefix. That change
+/// costs a full-price prompt on every call and produces no error anywhere —
+/// it is precisely the defect the hit-rate threshold in `cache_economics.rs`
+/// can only notice after the fact, from spend.
 #[test]
-fn every_stable_prefix_block_shares_one_content_address() {
-    let mut ids: BTreeSet<String> = BTreeSet::new();
+fn every_stable_prefix_block_shares_one_content_address_per_role() {
+    let mut ids_by_role: std::collections::BTreeMap<String, BTreeSet<String>> =
+        std::collections::BTreeMap::new();
     let mut witnesses: Vec<String> = Vec::new();
 
     for manifest in manifests() {
         for block in &manifest.blocks {
-            if block.cache_zone == CacheZone::StablePrefix && ids.insert(block.block_id.clone()) {
-                witnesses.push(format!("{} -> {}", manifest.at(), block.block_id));
+            if block.cache_zone == CacheZone::StablePrefix
+                && ids_by_role
+                    .entry(format!("{:?}", manifest.role))
+                    .or_default()
+                    .insert(block.block_id.clone())
+            {
+                witnesses.push(format!(
+                    "{} ({:?}) -> {}",
+                    manifest.at(),
+                    manifest.role,
+                    block.block_id
+                ));
             }
         }
     }
 
     assert!(
-        !ids.is_empty(),
+        !ids_by_role.is_empty(),
         "no stable_prefix block anywhere in the golden corpus. Either the system \
          prefix stopped being zoned, or every recording is now single-message — \
          both make this gate blind."
     );
-    assert_eq!(
-        ids.len(),
-        1,
-        "the system prefix resolved to {} distinct content addresses, so it is not \
-         byte-stable across calls. Something volatile reached the cached prefix. \
-         First sighting of each:\n  {}",
-        ids.len(),
-        witnesses.join("\n  "),
-    );
+    for (role, ids) in &ids_by_role {
+        assert_eq!(
+            ids.len(),
+            1,
+            "role `{role}`'s system prefix resolved to {} distinct content addresses, \
+             so it is not byte-stable across calls. Something volatile reached the \
+             cached prefix. First sighting of each:\n  {}",
+            ids.len(),
+            witnesses.join("\n  "),
+        );
+    }
 }
 
 /// Reported cache reads never exceed the reported input they are drawn from.

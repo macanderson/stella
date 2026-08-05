@@ -15,8 +15,9 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, ingest_cmd,
-    inspect, memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd, usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, daemon, dataset_cmd,
+    ingest_cmd, inspect, memory_cmd, proposals_cmd, scripts_cmd, stats, storage_cmd, tune_cmd,
+    usage_cmd,
 };
 
 #[derive(Parser)]
@@ -372,6 +373,15 @@ pub(crate) enum Command {
         /// Pass this to promote it to a real test you can commit.
         #[arg(long)]
         keep_witness: bool,
+
+        /// Run detached: supervised in the background, surviving this
+        /// terminal. Prints the session id; `stella daemon attach <id>`
+        /// streams the run, `stella daemon stop <id>` ends it. The run's
+        /// stdin is closed, so anything interactive must be answerable
+        /// headlessly. A prompt piped on stdin is passed to the detached run
+        /// as an argument (visible in `ps`, like an inline prompt).
+        #[arg(long)]
+        detach: bool,
 
         /// Output shape: text, json, or stream-json
         ///
@@ -733,9 +743,9 @@ pub(crate) enum Command {
         #[arg(long = "call-seq", default_value_t = 0)]
         call_seq: u64,
 
-        /// Output format
+        /// Output format: text, or json under the versioned query envelope
         #[arg(long, value_enum, default_value = "text")]
-        format: inspect::InspectFormat,
+        format: query_format::QueryFormat,
 
         /// Print message bodies in full instead of eliding long ones
         #[arg(long)]
@@ -770,9 +780,9 @@ pub(crate) enum Command {
     /// Reads .stella/private/store.db only; needs no API key and never
     /// writes.
     Calibration {
-        /// Output format
+        /// Output format: text, or json under the versioned query envelope
         #[arg(long, value_enum, default_value = "text")]
-        format: inspect::InspectFormat,
+        format: query_format::QueryFormat,
     },
 
     /// Cost, tokens, and resolve rate per provider and model
@@ -781,9 +791,10 @@ pub(crate) enum Command {
     /// local telemetry (.stella/private/store.db) — $/resolved-task receipts.
     /// `stella stats prune` bounds that store's growth
     Stats {
-        /// Output format: table (aligned, with TOTAL row), json, or csv
-        #[arg(long, value_enum, default_value = "table")]
-        format: stats::StatsFormat,
+        /// Output format: text (aligned table with TOTAL row), json under
+        /// the versioned query envelope, or csv
+        #[arg(long, value_enum, default_value = "text")]
+        format: query_format::StatsFormat,
 
         /// Only show executions for this provider id (e.g. zai, anthropic,
         /// local)
@@ -801,6 +812,18 @@ pub(crate) enum Command {
     Usage {
         #[command(subcommand)]
         cmd: Option<usage_cmd::UsageCmd>,
+    },
+
+    /// Supervise detached runs: list, attach, stop, logs
+    ///
+    /// Supervise runs started with `stella run --detach`: list this
+    /// machine's sessions, stream a detached run's output, stop one
+    /// gracefully, or print its log path. A detached run lives in its own
+    /// process group, so closing the terminal that launched it never kills
+    /// the work.
+    Daemon {
+        #[command(subcommand)]
+        cmd: daemon::DaemonCmd,
     },
 
     /// Cloud account registration (stub)

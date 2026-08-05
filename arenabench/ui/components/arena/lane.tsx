@@ -158,6 +158,18 @@ export function Lane({
             self-rep <b className="font-medium text-foreground">{fmtMoney(cell.total_cost)}</b>
           </span>
           <span>{fmtClock(cell.clock_time)}</span>
+          {/* Only a replayed trial (`arenabench flip`) knows when the reward
+              actually appeared; everything after that moment could only lose. */}
+          {cell.flip_elapsed != null && (
+            <span>
+              passed at <b className="font-medium text-ok">{fmtClock(cell.flip_elapsed)}</b>
+            </span>
+          )}
+          {cell.wasted_elapsed != null && cell.wasted_elapsed > 0 ? (
+            <span className="text-warn">
+              ⚠ ran {fmtClock(cell.wasted_elapsed)} after passing
+            </span>
+          ) : null}
           {cell.cap_hits ? <span className="text-warn">⚠ {cell.cap_hits} output-cap</span> : null}
         </div>
       )}

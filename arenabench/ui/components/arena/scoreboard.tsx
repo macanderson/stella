@@ -13,8 +13,15 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
   }
   const top = Math.max(0, ...Object.values(crowns));
   // Neutral dimensions are reported but crown nobody, so they are not part of
-  // the denominator a seat is being scored out of.
-  const crownable = snapshot.dimensions.filter((d) => d.direction !== "neutral").length;
+  // the denominator a seat is being scored out of. Neither is a dimension
+  // nobody has a number for — wasted time in a match nobody replayed with
+  // `arenabench flip` can crown nobody, and counting it would score every
+  // seat out of a total that includes an unwinnable column.
+  const crownable = snapshot.dimensions.filter(
+    (d) =>
+      d.direction !== "neutral" &&
+      snapshot.contestants.some((c) => c.totals[d.key] != null),
+  ).length;
 
   return (
     <section className="mb-2 grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(230px,1fr))]">
@@ -90,6 +97,15 @@ export function Scoreboard({ snapshot }: { snapshot: Snapshot }) {
             </div>
             <div className="grid grid-cols-2 gap-x-3.5 gap-y-[7px]">
               {stat("clock_time", "clock", fmtClock(t.clock_time))}
+              {/* Exists only when someone ran `arenabench flip`. The label
+                  carries the denominator because a sum over an unknown number
+                  of replayed trials reads as a measurement of the whole run. */}
+              {t.wasted_time != null &&
+                stat(
+                  "wasted_time",
+                  `wasted (${t.flip_trials ?? 0} replayed)`,
+                  fmtClock(t.wasted_time),
+                )}
               {/* The comparable figure carries the label; what the agent said
                   it spent sits beside it, named, and crowns nobody — the two
                   come from different price tables. */}
