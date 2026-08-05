@@ -1,8 +1,0 @@
-{
-  "id": "2",
-  "subject": "Understand doomgeneric platform/syscall layer",
-  "description": "Read doomgeneric.c/h, start.c, fake_fs.c, doomgeneric_img.c, and the Makefile+map to learn how this MIPS build does I/O, syscalls, and frame output.",
-  "status": "pending",
-  "blocks": [],
-  "blockedBy": []
-}

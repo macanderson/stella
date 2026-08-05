@@ -1,9 +1,0 @@
-{
-  "id": "1",
-  "subject": "Diagnose GC crash in pool_sweep",
-  "description": "Find the bug in the run-length free space compression in the major heap sweeper (runtime/shared_heap.c pool_sweep) that crashes the bootstrap.",
-  "activeForm": "Diagnosing GC crash",
-  "status": "completed",
-  "blocks": [],
-  "blockedBy": []
-}

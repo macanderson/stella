@@ -1,9 +1,0 @@
-{
-  "id": "2",
-  "subject": "Fix NumPy 2.0 removed aliases across package",
-  "description": "Replace removed numpy aliases np.int/n.float/n.bool/n.complex/n.long and n.* variants with builtins across all .py and .pyx files.",
-  "activeForm": "Fixing NumPy removed aliases",
-  "status": "in_progress",
-  "blocks": [],
-  "blockedBy": []
-}

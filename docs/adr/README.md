@@ -7,7 +7,7 @@ outside it; an ADR that is not part of the Phase 0 series says so in its own
 header.
 
 (A bare "ADR-033" in `stella-serve` is not from this directory at all. It means
-the *Oxagen* ADR in the private `oxagen-platform` repository; `docs/design/serve-surface.md`
+the *Oxagen* ADR in the private `oxagen-platform` repository; `docs/spec/serve-surface.md`
 is the self-contained Stella-side account.)
 
 ## Phase 0 — Adaptive Context (0001–0012)
