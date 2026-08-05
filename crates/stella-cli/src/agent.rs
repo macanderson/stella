@@ -34,9 +34,8 @@ use stella_tools::hook_runner::ShellHookRunner;
 use stella_tools::validate;
 use tokio::sync::mpsc;
 
-use crate::OutputFormat;
-use crate::config::Config;
 use crate::domains::{Domains, heuristic_domains, infer_domains};
+use crate::failure::CliFailure;
 use crate::interactive::{InteractiveToolSet, SkillRegistry, default_ask_io};
 use crate::memory::{
     ReflectionReport, SessionMemory, inject_recall_block, should_reflect_on,
@@ -44,6 +43,7 @@ use crate::memory::{
 };
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
+use crate::{OutputFormat, config::Config};
 use stella_context::EpisodeOutcome;
 
 mod coverage;
@@ -131,7 +131,7 @@ pub async fn run_one_shot(
     use_pipeline: bool,
     test_command: Option<&str>,
     keep_witness: bool,
-) -> Result<(), crate::failure::CliFailure> {
+) -> Result<(), CliFailure> {
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
@@ -236,7 +236,7 @@ async fn run_pipeline_one_shot(
     format: OutputFormat,
     test_command: Option<&str>,
     keep_witness: bool,
-) -> Result<(), crate::failure::CliFailure> {
+) -> Result<(), CliFailure> {
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let registry_options = registry_options(cfg);
@@ -678,7 +678,7 @@ async fn run_pipeline_one_shot(
                 };
                 summary.emit();
             }
-            Err(crate::failure::CliFailure::error(e.to_string()))
+            Err(CliFailure::error(e.to_string()))
         }
     }
 }
@@ -2064,7 +2064,7 @@ async fn run_turn(
     // reflects with the same memory afterwards, and a reflection that cannot
     // name its execution files an id-less row (NULL `self_rating`).
     session_memory: Option<&mut SessionMemory>,
-) -> Result<(), crate::failure::CliFailure> {
+) -> Result<(), CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
@@ -2216,9 +2216,7 @@ async fn run_turn(
             }
             Ok(())
         }
-        TurnOutcome::Aborted { reason, kind, .. } => {
-            Err(crate::failure::CliFailure::from_abort(reason, kind))
-        }
+        TurnOutcome::Aborted { reason, kind, .. } => Err(CliFailure::from_abort(reason, kind)),
     }
 }
 

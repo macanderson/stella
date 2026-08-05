@@ -2059,18 +2059,16 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
-    match outcome {
-        TurnOutcome::Aborted {
-            reason, cost_usd, ..
-        } => {
-            assert!(reason.contains("budget"));
-            assert!(
-                (cost_usd - 0.0001).abs() < 1e-9,
-                "the abort must retain the settled over-cap call: {cost_usd}"
-            );
-        }
-        other => panic!("expected a budget abort, got {other:?}"),
-    }
+    let TurnOutcome::Aborted {
+        reason, cost_usd, ..
+    } = outcome
+    else {
+        panic!("expected a budget abort, got {outcome:?}")
+    };
+    assert!(
+        reason.contains("budget") && (cost_usd - 0.0001).abs() < 1e-9,
+        "the abort must name the budget and retain the settled over-cap call: {reason} @ {cost_usd}"
+    );
     let events = drain_events(&mut rx);
     assert!(
         events
