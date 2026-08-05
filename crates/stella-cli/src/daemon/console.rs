@@ -933,24 +933,26 @@ pub(crate) fn replay_logs(
         }
     }
 
-    // `-n`: each stream keeps its newest `lines` lines, order preserved.
-    for stream in [Stream::Stdout, Stream::Stderr] {
-        let total_lines: usize = ordered
+    // `-n`: each stream keeps its newest `lines` lines — computed per
+    // stream, but emitted in ONE pass over the index order, because that
+    // order is the point. A per-stream emit loop here would regroup the
+    // replay into the whole-stdout-then-whole-stderr shape the index exists
+    // to end.
+    let newest = |stream: Stream| -> usize {
+        ordered
             .iter()
             .filter(|(s, _)| *s == stream)
             .map(|(_, b)| bytecount_lines(b))
-            .sum();
-        let mut skip = total_lines.saturating_sub(lines);
-        for (s, bytes) in &ordered {
-            if *s != stream {
-                continue;
-            }
-            let sink: &mut dyn Write = match stream {
-                Stream::Stdout => out,
-                Stream::Stderr => err,
-            };
-            emit_after_skipping(bytes, &mut skip, sink);
-        }
+            .sum()
+    };
+    let mut skip_out = newest(Stream::Stdout).saturating_sub(lines);
+    let mut skip_err = newest(Stream::Stderr).saturating_sub(lines);
+    for (s, bytes) in &ordered {
+        let (sink, skip): (&mut dyn Write, &mut usize) = match s {
+            Stream::Stdout => (out, &mut skip_out),
+            Stream::Stderr => (err, &mut skip_err),
+        };
+        emit_after_skipping(bytes, skip, sink);
     }
     let _ = out.flush();
     let _ = err.flush();
