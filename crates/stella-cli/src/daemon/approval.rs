@@ -154,6 +154,56 @@ impl ApprovalGate for SidecarApprovalGate {
     }
 }
 
+/// The one-shot pipeline's approval gate, selected by capability — the three
+/// surfaces a `stella run` can answer scope review on, as one value the call
+/// site can borrow for the pipeline's lifetime.
+///
+/// An enum rather than a `Box<dyn ApprovalGate>` so the selection is a total
+/// match the compiler re-checks when a capability is added — precisely the
+/// spot a squash-merge once collapsed to a bare `is_text` check.
+pub(crate) enum OneShotApprovalGate {
+    Stdio(stella_pipeline::StdioApprovalGate),
+    Sidecar(SidecarApprovalGate),
+    Headless(stella_pipeline::AlwaysAbortGate),
+}
+
+impl OneShotApprovalGate {
+    /// The gate `capability` names. `Sidecar` degrades to headless when this
+    /// process turns out not to be a supervised child after all — the two are
+    /// computed from the same predicate, so that arm is a defensive
+    /// impossibility, and failing closed is what a missing approver means.
+    pub(crate) fn select(capability: crate::agent::PipelineApprovalCapability) -> Self {
+        use crate::agent::PipelineApprovalCapability as Capability;
+        match capability {
+            Capability::Stdio => Self::Stdio(stella_pipeline::StdioApprovalGate),
+            Capability::Sidecar => match SidecarApprovalGate::for_supervised_child() {
+                Some(gate) => Self::Sidecar(gate),
+                None => Self::Headless(stella_pipeline::AlwaysAbortGate),
+            },
+            Capability::Unavailable => Self::Headless(stella_pipeline::AlwaysAbortGate),
+        }
+    }
+}
+
+#[async_trait]
+impl ApprovalGate for OneShotApprovalGate {
+    async fn review(&self, proposal: &ScopeProposal) -> ScopeDecision {
+        match self {
+            Self::Stdio(gate) => gate.review(proposal).await,
+            Self::Sidecar(gate) => gate.review(proposal).await,
+            Self::Headless(gate) => gate.review(proposal).await,
+        }
+    }
+
+    async fn confirm(&self, question: &str) -> bool {
+        match self {
+            Self::Stdio(gate) => gate.confirm(question).await,
+            Self::Sidecar(gate) => gate.confirm(question).await,
+            Self::Headless(gate) => gate.confirm(question).await,
+        }
+    }
+}
+
 /// The attached-terminal side: answer a parked scope review, if one is
 /// pending and this terminal can.
 ///

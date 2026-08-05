@@ -397,3 +397,58 @@ fn a_partial_last_line_is_still_a_line() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// #1586: a resume relaunches under the SAME record — same id, same sidecar —
+/// and preserves the killed attempt's console rather than truncating it. On
+/// `main`, `launch` does not exist and every spawn mints a fresh record, so a
+/// resumed run would strand its checkpoint, its sidecar, and its history
+/// under an id nothing references.
+#[test]
+fn a_resumed_launch_keeps_the_record_and_the_crashed_console() {
+    let (_dir, registry) = temp_registry("resume-console");
+    let mut record = SessionRecord::new("/tmp/workspace", "resume");
+    record.summary = "resume".into();
+    // The killed attempt: a terminal-less status and a console tail a human
+    // still wants to read.
+    record.status = SessionStatus::Error;
+    let id = record.id.clone();
+    let sidecar = registry.prepare_sidecar(&id).unwrap();
+    std::fs::write(
+        sidecar.join(supervised::STDOUT_LOG),
+        b"the killed attempt's tail\n",
+    )
+    .unwrap();
+
+    let run = launch(
+        &registry,
+        record,
+        Path::new("/bin/sh"),
+        &["-c".to_string(), "echo the resumed attempt".to_string()],
+        b"",
+        Console::Preserve,
+        None,
+    )
+    .expect("relaunch");
+    assert_eq!(
+        run.id, id,
+        "resume must continue the session, not mint a second one"
+    );
+    assert!(
+        eventually(Duration::from_secs(10), || {
+            std::fs::read_to_string(sidecar.join(supervised::STDOUT_LOG))
+                .is_ok_and(|s| s.contains("the resumed attempt"))
+        }),
+        "the relaunched child's console must land"
+    );
+    let console = std::fs::read_to_string(sidecar.join(supervised::STDOUT_LOG)).unwrap();
+    assert!(
+        console.starts_with("the killed attempt's tail\n"),
+        "Console::Preserve must keep the crashed attempt's output: {console:?}"
+    );
+    let stored = registry.get(&id).unwrap();
+    assert_eq!(
+        stored.status,
+        SessionStatus::InProgress,
+        "a relaunch re-owns the record as live"
+    );
+}

@@ -24,7 +24,7 @@ use stella_model::provider::Provider;
 use stella_pipeline::{
     AlwaysAbortGate, CmdOutcome, ContextRecallPort, McpPrefetchPort, NoContextRecall, Pipeline,
     PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStatusPort,
-    RepoStructurePort, StdioApprovalGate,
+    RepoStructurePort,
 };
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
@@ -55,6 +55,7 @@ mod output;
 mod persistence;
 mod presence;
 mod prompt;
+pub(crate) mod resume;
 mod tools;
 
 pub(crate) use engine::*;
@@ -415,10 +416,7 @@ async fn run_pipeline_one_shot(
         // witness promotion is a one-shot `--keep-witness` concern only.
         pipeline_config.keep_witness = keep_witness;
 
-        let stdio_gate = StdioApprovalGate;
-        // Present exactly when this process is a supervised child; the
-        // capability above says Sidecar in exactly that case (#1585).
-        let sidecar_gate = crate::daemon::approval::SidecarApprovalGate::for_supervised_child();
+        let approval_gate = crate::daemon::approval::OneShotApprovalGate::select(approval_capability);
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the pipeline's recall port so the
         // split-context planner sees the same durable lessons the worker's
@@ -441,11 +439,7 @@ async fn run_pipeline_one_shot(
             lint: Some(&ws_ports.lint_probe),
             mutation: Some(&ws_ports.mutation_probe),
             coverage: Some(&ws_ports.coverage_probe),
-            approvals: match (approval_capability, &sidecar_gate) {
-                (PipelineApprovalCapability::Stdio, _) => &stdio_gate,
-                (PipelineApprovalCapability::Sidecar, Some(gate)) => gate,
-                _ => &HEADLESS_APPROVAL_GATE,
-            },
+            approvals: &approval_gate,
             sleeper: &TokioSleeper,
             hooks: cfg
                 .hooks

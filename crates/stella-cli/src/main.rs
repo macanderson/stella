@@ -576,6 +576,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         daemon::hold_liveness_lock(&stella_store::SessionRegistry::open_default(), &id);
     }
 
+    // Above the keyless dispatch because `daemon resume`'s parent half needs
+    // a runtime (it streams the child it spawns) while staying keyless.
+    let rt = || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to start runtime: {e}"))
+    };
+
     // Models and Version don't need a configured provider/key.
     match &cli.command {
         Some(Command::Models { cmd }) => {
@@ -851,17 +860,22 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             let Some(Command::Daemon { cmd }) = &cli.command else {
                 unreachable!("matched Command::Daemon")
             };
-            return daemon::run(cmd);
+            match cmd {
+                // `daemon resume` splits (#1586): the parent half below only
+                // spawns and streams, so it too works keyless from any
+                // directory — while the `--foreground` child half does the
+                // interrupted turn's actual work and falls through to
+                // provider resolution, its cwd already pinned to the
+                // record's workspace by the parent's launch.
+                DaemonCmd::Resume { id } if !cli.globals.foreground => {
+                    return daemon::resume_supervised(rt()?, id.as_deref());
+                }
+                DaemonCmd::Resume { .. } => {}
+                _ => return daemon::run(cmd),
+            }
         }
         _ => {}
     }
-
-    let rt = || {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to start runtime: {e}"))
-    };
 
     // Everything past here resolves a provider (and may build one), so the
     // model catalog must be live first: open catalog.db, auto-sync each
@@ -1132,6 +1146,18 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     deck_presentation(&cli.globals),
                     Some(request),
                 ),
+            )?;
+        }
+        // The `--foreground` child half of `daemon resume` (#1586): cfg has
+        // resolved from the record's workspace (the parent pinned the cwd),
+        // and the interrupted turn continues from its checkpoint. Every other
+        // daemon verb returned from the keyless dispatch above.
+        Command::Daemon {
+            cmd: DaemonCmd::Resume { id },
+        } => {
+            signals::block_on_interruptible(
+                rt()?,
+                agent::resume::run_resume(&cfg, id.as_deref()),
             )?;
         }
         // Models/Version (and Tools) short-circuit in the first match at the
