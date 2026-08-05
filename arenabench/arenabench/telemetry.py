@@ -114,6 +114,14 @@ INFRASTRUCTURE_FAILURES: frozenset[str] = frozenset(
         "AuthenticationError",
         "OAuthCallbackError",
         "RefreshTokenExpiredError",
+        # The run was killed out from under the agent. Distinct from
+        # `AgentTimeoutError`, where the agent had its full budget and spent
+        # it: here the clock was stopped early by something outside the
+        # contest, so the trial has no result to report in either direction.
+        # Observed for real — an operator restarted the match server and every
+        # in-flight trial landed as a loss against a contestant that was still
+        # working, which is the exact mis-scoring this set exists to prevent.
+        "CancelledError",
         # The verifier broke, so no verdict exists to record either way.
         "VerifierTimeoutError",
         "VerifierOutputParseError",
