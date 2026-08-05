@@ -679,32 +679,11 @@ impl Follower {
         Ok(moved)
     }
 
-    /// Skip everything already written — for a reader that only wants what
-    /// happens from now on (the interrupt drain).
-    pub(crate) fn skip_to_now(&mut self) -> Result<(), String> {
-        for record in self.new_records()? {
-            match record {
-                IndexRecord::Geometry { s, g } => self.stream_mut(s).adopt(g),
-                IndexRecord::Write { s, c, n, .. } => {
-                    let stream = self.stream_mut(s);
-                    stream.consumed = stream.consumed.max(c + n);
-                }
-                IndexRecord::Closed { s, total } => {
-                    let stream = self.stream_mut(s);
-                    stream.closed_at = Some(total);
-                    stream.consumed = stream.consumed.max(total);
-                }
-            }
-        }
-        for stream in [Stream::Stdout, Stream::Stderr] {
-            let followed = self.stream_mut(stream);
-            match followed.geometry {
-                Some(geometry) => followed.tail.offset = geometry.file_offset(followed.consumed),
-                None => followed.tail.seek_to_end()?,
-            }
-        }
-        Ok(())
-    }
+    // There is deliberately no `skip_to_now` here. `interrupt_and_drain` was
+    // its only caller, and #1632 removed that call as a defect: seeking past
+    // everything already written threw away the run's shutdown output, which
+    // on the Ctrl-C path is precisely what the person who pressed the key is
+    // waiting to read.
 
     fn stream_mut(&mut self, stream: Stream) -> &mut FollowedStream {
         match stream {

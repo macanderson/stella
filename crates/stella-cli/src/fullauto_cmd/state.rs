@@ -337,10 +337,10 @@ impl LoopState {
             if let Some(c) = cycle {
                 doc.insert("cycle".into(), c.into());
             }
-            if let Some(t) = tier {
-                if !t.is_empty() {
-                    doc.insert("tier".into(), t.into());
-                }
+            if let Some(t) = tier
+                && !t.is_empty()
+            {
+                doc.insert("tier".into(), t.into());
             }
             doc.entry("started_at".to_string())
                 .or_insert_with(|| Value::String(now.clone()));
