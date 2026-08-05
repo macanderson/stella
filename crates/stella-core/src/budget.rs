@@ -36,6 +36,26 @@
 //! number of calls is negligible at USD-cent granularity; callers needing
 //! exact reconciliation should do so against the authoritative usage log,
 //! not this guard.
+//!
+//! # Wall clock is per task, dollars are per turn/session (#1481)
+//!
+//! [`BudgetGuard::task_deadline`] closes a gap the dollar axes cannot: a
+//! benchmark harness enforces a wall-clock ceiling on the whole *task*, which
+//! can span several turns, while every dollar limit above resets
+//! (`begin_turn`) or is sized per turn. Several turns that each honestly fit
+//! their own dollar budget can still blow the task's wall clock, and nothing
+//! above would ever notice. The deadline is deliberately an absolute
+//! [`std::time::Instant`] rather than a duration-since-turn-start: only an
+//! absolute point in time survives correctly across a `begin_turn` reset, so
+//! a caller computes it once (`Instant::now() + task_allowance`) and threads
+//! the same guard — or a `carve`d child, which inherits it — through every
+//! turn of the task. [`BudgetGuard::check_deadline`] is pure and takes `now`
+//! as a parameter for the same reason [`BudgetGuard::evaluate`] takes none:
+//! this module has zero I/O, so the caller reads the real clock and hands in
+//! an owned value (mirroring `crate::driver::truncation::ContinuationBudget`,
+//! which does the same for the existing per-turn `turn_budget`).
+
+use std::time::{Duration, Instant};
 
 use stella_protocol::BudgetMode;
 
@@ -84,6 +104,28 @@ pub enum BudgetOutcome {
     },
 }
 
+/// The result of comparing the current time against a configured
+/// [`BudgetGuard::task_deadline`].
+///
+/// Deliberately its own type rather than a third [`BudgetAxis`]: dollars and
+/// wall-clock seconds are different units, and every existing
+/// `BudgetOutcome::AbortTurn { spent_usd, limit_usd, .. }` match arm in this
+/// workspace assumes USD — folding a [`std::time::Duration`] into those same
+/// fields would make those reads silently wrong rather than fail to compile.
+/// Same "recommendation, not enforcement" contract as [`BudgetOutcome`]: this
+/// module has zero I/O and cannot itself abort anything (see module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeadlineOutcome {
+    /// No deadline configured, or `now` is still before it.
+    Continue,
+    /// `now` is at or past the configured deadline.
+    Exceeded {
+        /// How long ago the deadline passed (zero if `now` lands exactly on
+        /// it).
+        overrun: Duration,
+    },
+}
+
 /// Tracks USD spend against an optional per-turn limit and an optional
 /// per-session limit, and reports a [`BudgetOutcome`] after every recorded
 /// cost.
@@ -99,6 +141,11 @@ pub struct BudgetGuard {
     session_limit_usd: Option<f64>,
     turn_spent_usd: f64,
     session_spent_usd: f64,
+    /// Wall-clock ceiling for the whole task (see module docs, #1481). Unlike
+    /// every field above, this is never reset by [`begin_turn`](Self::begin_turn)
+    /// or gated by `mode` — a deadline is a hard backstop the caller opted
+    /// into, the same way `EngineConfig::tool_timeout`/`model_timeout` are.
+    task_deadline: Option<Instant>,
 }
 
 impl BudgetGuard {
@@ -116,6 +163,7 @@ impl BudgetGuard {
             session_limit_usd,
             turn_spent_usd: 0.0,
             session_spent_usd: 0.0,
+            task_deadline: None,
         }
     }
 
@@ -229,6 +277,36 @@ impl BudgetGuard {
         self.mode
     }
 
+    /// Set (or clear, with `None`) the per-task wall-clock deadline (#1481,
+    /// module docs). An absolute point in time, not a duration — the caller
+    /// computes `Instant::now() + task_allowance` exactly once, at the start
+    /// of the task, and calls this on every turn's guard for that task (a
+    /// fresh `BudgetGuard::new` per turn would otherwise lose it, unlike
+    /// `session_spent_usd`, which the caller already threads across turns by
+    /// convention). Never gated by `mode` — see [`Self::check_deadline`].
+    pub fn set_task_deadline(&mut self, deadline: Option<Instant>) {
+        self.task_deadline = deadline;
+    }
+
+    /// The configured task deadline, if any.
+    pub fn task_deadline(&self) -> Option<Instant> {
+        self.task_deadline
+    }
+
+    /// Compare `now` against [`Self::task_deadline`]. Pure — never reads the
+    /// clock itself; the caller supplies `now` from its own boundary read
+    /// (module docs). `None` configured or `now` still before it both report
+    /// [`DeadlineOutcome::Continue`].
+    #[must_use]
+    pub fn check_deadline(&self, now: Instant) -> DeadlineOutcome {
+        match self.task_deadline {
+            Some(deadline) if now >= deadline => DeadlineOutcome::Exceeded {
+                overrun: now.saturating_duration_since(deadline),
+            },
+            _ => DeadlineOutcome::Continue,
+        }
+    }
+
     /// Remaining headroom before the *tightest* configured limit trips, or
     /// `None` when no axis bounds this guard at all.
     ///
@@ -282,6 +360,15 @@ impl BudgetGuard {
     /// child's whole life is one turn, and nothing calls
     /// [`begin_turn`](Self::begin_turn) on it, so a session-axis limit is the
     /// one that cannot be reset out from under the guarantee.
+    ///
+    /// # The task deadline always carries over
+    ///
+    /// Unlike the dollar ceiling, [`task_deadline`](Self::task_deadline) is
+    /// never re-derived from a request — it is inherited verbatim,
+    /// unconditionally, regardless of `mode`. A sub-agent spawned from a
+    /// parent whose task is out of wall clock must stop too; a mode-gated or
+    /// re-carved deadline would let a child outlive the very task ceiling it
+    /// was spawned under.
     #[must_use]
     pub fn carve(&self, requested_usd: Option<f64>) -> BudgetGuard {
         let ceiling = match (requested_usd, self.headroom_usd()) {
@@ -295,6 +382,7 @@ impl BudgetGuard {
             session_limit_usd: ceiling.map(|c| c.max(0.0)),
             turn_spent_usd: 0.0,
             session_spent_usd: 0.0,
+            task_deadline: self.task_deadline,
         }
     }
 
@@ -785,6 +873,92 @@ mod tests {
             BudgetGuard::new(BudgetMode::Enforced, None, None)
                 .carve(None)
                 .is_viable_carve()
+        );
+    }
+
+    // ---- task deadline (#1481) ----------------------------------------
+
+    #[test]
+    fn no_deadline_configured_never_exceeds() {
+        let guard = BudgetGuard::new(BudgetMode::Enforced, None, None);
+        assert_eq!(guard.task_deadline(), None);
+        assert_eq!(
+            guard.check_deadline(Instant::now()),
+            DeadlineOutcome::Continue
+        );
+    }
+
+    #[test]
+    fn a_future_deadline_continues_and_a_past_one_reports_its_overrun() {
+        let now = Instant::now();
+        let mut guard = BudgetGuard::new(BudgetMode::Off, None, None);
+
+        guard.set_task_deadline(Some(now + Duration::from_secs(60)));
+        assert_eq!(guard.check_deadline(now), DeadlineOutcome::Continue);
+
+        // Landing exactly on the deadline counts as exceeded (matches
+        // `BudgetGuard`'s own axis checks, which treat `spent == limit` as
+        // NOT a breach — deadlines are the opposite convention deliberately:
+        // a task must stop AT its ceiling, not float past it waiting for the
+        // next tick to notice).
+        guard.set_task_deadline(Some(now));
+        match guard.check_deadline(now) {
+            DeadlineOutcome::Exceeded { overrun } => assert_eq!(overrun, Duration::ZERO),
+            other => panic!("expected Exceeded at the exact deadline, got {other:?}"),
+        }
+
+        guard.set_task_deadline(Some(now - Duration::from_secs(5)));
+        match guard.check_deadline(now) {
+            DeadlineOutcome::Exceeded { overrun } => {
+                assert_eq!(overrun, Duration::from_secs(5));
+            }
+            other => panic!("expected Exceeded with a 5s overrun, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clearing_the_deadline_restores_continue() {
+        let now = Instant::now();
+        let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, None);
+        guard.set_task_deadline(Some(now - Duration::from_secs(1)));
+        assert!(matches!(
+            guard.check_deadline(now),
+            DeadlineOutcome::Exceeded { .. }
+        ));
+
+        guard.set_task_deadline(None);
+        assert_eq!(guard.check_deadline(now), DeadlineOutcome::Continue);
+    }
+
+    #[test]
+    fn deadline_is_never_gated_by_mode() {
+        // Unlike the dollar axes, a deadline breach is not a "would this mode
+        // enforce it" question — `Off` and `Observed` still report Exceeded;
+        // the mode-independence is what makes it a hard backstop rather than
+        // another dollar-shaped policy knob.
+        let now = Instant::now();
+        for mode in [BudgetMode::Off, BudgetMode::Observed, BudgetMode::Enforced] {
+            let mut guard = BudgetGuard::new(mode, None, None);
+            guard.set_task_deadline(Some(now - Duration::from_secs(1)));
+            assert!(
+                matches!(guard.check_deadline(now), DeadlineOutcome::Exceeded { .. }),
+                "{mode:?} must still report the deadline as exceeded"
+            );
+        }
+    }
+
+    #[test]
+    fn carve_inherits_the_parents_task_deadline_unconditionally() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(30);
+        let mut parent = BudgetGuard::new(BudgetMode::Enforced, None, Some(10.0));
+        parent.set_task_deadline(Some(deadline));
+
+        let child = parent.carve(Some(1.0));
+        assert_eq!(
+            child.task_deadline(),
+            Some(deadline),
+            "a sub-agent must inherit the task's wall-clock ceiling, not just its dollars"
         );
     }
 }

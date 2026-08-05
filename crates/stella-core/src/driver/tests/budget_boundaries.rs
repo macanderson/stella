@@ -151,6 +151,62 @@ async fn an_existing_budget_breach_stops_before_paid_compaction() {
 }
 
 #[tokio::test]
+async fn a_past_task_deadline_stops_the_turn_before_the_next_call_with_partial_work() {
+    // The witness for #1481: the dollar budget is per turn/session, but a
+    // benchmark's limit is per TASK — several turns that each honestly fit
+    // their own dollar budget can still blow the task's wall clock. A task
+    // deadline closes that gap: checked at the exact same safe boundary as
+    // the dollar budget (never mid-tool), a task already past its deadline
+    // must stop before paying for the next call — exactly like the
+    // already-over-cap dollar budget above.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result(
+            "must never be called — the task deadline already passed",
+        ))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let provider_calls = provider.calls.clone();
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("the task"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    // The same shape a benchmark harness computes once at task start and
+    // threads into every turn's guard for that task (`crate::budget` module
+    // docs) — already in the past here, simulating a task whose wall clock
+    // ran out mid-session.
+    budget.set_task_deadline(Some(
+        std::time::Instant::now() - std::time::Duration::from_secs(1),
+    ));
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    match outcome {
+        TurnOutcome::Aborted { reason, cost_usd } => {
+            assert!(
+                reason.contains("deadline"),
+                "reason should name the deadline: {reason}"
+            );
+            assert_eq!(cost_usd, 0.0, "must stop before paying for any call");
+        }
+        other => panic!("expected a deadline abort with partial (zero) work, got {other:?}"),
+    }
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        0,
+        "a task past its deadline must stop at the safe boundary before the next provider \
+         call — never mid-tool, and never by finishing the script anyway"
+    );
+}
+
+#[tokio::test]
 async fn cancellation_after_billed_completion_before_speculation_finishes_keeps_the_cost() {
     let provider_completed = Arc::new(tokio::sync::Notify::new());
     let provider = BilledResultWithBlockedSpeculation {
