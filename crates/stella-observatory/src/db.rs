@@ -363,9 +363,13 @@ impl Observatory {
     /// This is the second sanctioned read of `events` (after
     /// `recall_timings`) and it obeys the same bargain: the filter is
     /// `execution_id`-first, which the store's `UNIQUE (execution_id, seq)`
-    /// index serves directly, and the route is fetched once on drawer-open —
-    /// never on the 5 s poll. A cross-execution transcript view would need a
-    /// projection, not a wider `WHERE`.
+    /// index serves directly. The whole transcript is fetched once on
+    /// drawer-open; while the execution is still running, the drawer polls
+    /// back with `after_seq` set to the highest `seq` it already has
+    /// (#1476), so a long run's transcript is never re-downloaded in full —
+    /// the same `(execution_id, seq)` index serves `seq > ?` directly. A
+    /// cross-execution transcript view would need a projection, not a wider
+    /// `WHERE`.
     ///
     /// `text_delta` rows never appear: the journal's `text` event is the
     /// authoritative full answer and the deltas are a live-preview artifact.
@@ -373,28 +377,43 @@ impl Observatory {
     /// filter is contract, not assumption. Bodies are clipped to
     /// `JOURNAL_BODY_CLIP` chars unless `full`; a clipped entry says so
     /// (`truncated: true`) instead of presenting the elision as the data.
-    pub fn execution_journal(&self, id: i64, full: bool) -> Result<Value, DbError> {
+    pub fn execution_journal(
+        &self,
+        id: i64,
+        full: bool,
+        after_seq: Option<i64>,
+    ) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(Value::Array(Vec::new()));
         };
-        let rows = collect_rows_for(
-            &conn,
-            id,
-            "SELECT seq, ts, event_type, payload
+        // `-1` rather than `0` when unfiltered: `seq` starts at 0
+        // (`Store::record_event`'s first call), and a sentinel of 0 would
+        // silently drop that opening row from every unfiltered fetch.
+        let after = after_seq.unwrap_or(-1);
+        let sql = "SELECT seq, ts, event_type, payload
              FROM events
              WHERE execution_id = ?1
+               AND seq > ?2
                AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
                                   'tool_result', 'speculation_discarded')
-             ORDER BY seq ASC",
-            |r| {
-                Ok(json!({
-                    "seq": r.get::<_, i64>(0)?,
-                    "ts": r.get::<_, String>(1)?,
-                    "type": r.get::<_, String>(2)?,
-                    "payload": r.get::<_, String>(3)?,
-                }))
-            },
-        )?;
+             ORDER BY seq ASC";
+        let mut stmt = match conn.prepare(sql) {
+            Ok(stmt) => stmt,
+            Err(e) if is_missing_schema(&e) => return Ok(Value::Array(Vec::new())),
+            Err(e) => return Err(e.into()),
+        };
+        let mapped = stmt.query_map([id, after], |r| {
+            Ok(json!({
+                "seq": r.get::<_, i64>(0)?,
+                "ts": r.get::<_, String>(1)?,
+                "type": r.get::<_, String>(2)?,
+                "payload": r.get::<_, String>(3)?,
+            }))
+        })?;
+        let mut rows = Vec::new();
+        for row in mapped {
+            rows.push(row?);
+        }
         Ok(Value::Array(
             rows.into_iter()
                 .map(|row| journal_entry(row, full))
