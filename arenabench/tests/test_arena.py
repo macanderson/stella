@@ -926,6 +926,26 @@ class TestInfrastructureFailuresAreNotLosses:
         m = self._trial(tmp_path, "VerifierTimeoutError")
         assert m.infrastructure is True and m.resolved is None
 
+    def test_a_trial_killed_by_the_host_is_not_a_loss(self, tmp_path: Path):
+        """Restarting the match server cancels every in-flight trial. Those
+        agents were mid-task and on course — one of them had already made the
+        verifier pass — so scoring the cancellation 0 marks a contestant down
+        for something the operator did. Unlike `AgentTimeoutError`, the agent
+        never got the budget it was promised."""
+        m = self._trial(tmp_path, "CancelledError")
+        assert m.infrastructure is True
+        assert m.resolved is None, "unjudged, not lost"
+
+    def test_a_cancelled_trial_does_not_dilute_the_solve_rate(self, tmp_path: Path):
+        """The bug this pins: two arms each solved every task they were
+        allowed to finish, and both boards read 75% because the host killed
+        the fourth."""
+        solved = [
+            TrialMetrics(task=f"t{i}", trial=f"t{i}", resolved=True) for i in range(3)
+        ]
+        killed = self._trial(tmp_path, "CancelledError")
+        assert aggregate([*solved, killed])["solve_rate"] == 100.0
+
     def test_infrastructure_trials_leave_the_solve_rate_alone(self, tmp_path: Path):
         """Eight of ten never started; the arm won both it actually ran. The
         rate must say 100% of 2 judged, and the count of the missing eight must
