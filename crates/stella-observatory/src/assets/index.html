@@ -286,6 +286,16 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 #drawer .close:hover{color:var(--text);border-color:var(--accent)}
 #drawer h2{font:600 var(--fs-md)/1.4 var(--mono);margin:6px 0 2px;max-width:85%}
 #drawer .sect{margin-top:var(--sp3)}
+#drawer .jrnl{margin:10px 0;border-left:2px solid var(--hairline);padding-left:10px}
+#drawer .jrnl.err{border-left-color:var(--bad)}
+#drawer .jrnl-body{font:var(--fs-sm)/1.5 var(--mono);color:var(--text-2);margin:4px 0 0;
+  white-space:pre-wrap;word-break:break-word;max-height:320px;overflow-y:auto}
+#drawer .jrnl-stage{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3);
+  text-transform:uppercase;letter-spacing:.08em;margin:12px 0 2px}
+#drawer .jrnl-full{background:none;border:1px solid var(--hairline);color:var(--text-2);
+  font:var(--fs-micro)/1 var(--mono);padding:6px 10px;border-radius:var(--radius-sm);
+  cursor:pointer;margin-top:8px}
+#drawer .jrnl-full:hover{color:var(--text);border-color:var(--accent)}
 .step-row{display:grid;grid-template-columns:34px minmax(0,1fr) 160px;gap:var(--sp2);
           align-items:center;font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3);padding:3px 0}
 .step-row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1125,7 +1135,7 @@ function showDrawer(html) {
   $("scrim").classList.add("open");
   el.focus();
 }
-async function openDrawer(id) {
+async function openDrawer(id, full = false) {
   if (!Number.isFinite(id)) return;
   drawerReturn = document.activeElement;
   let d = null;
@@ -1138,6 +1148,31 @@ async function openDrawer(id) {
       indicator in the masthead reports the connection.</p>`);
     return;
   }
+  /* The transcript replay: the run's answer text, reasoning and tool
+     traffic, folded server-side from the events journal. Fetched once per
+     drawer-open (never on the 5 s poll); `full` lifts the per-body clip.
+     Every string field here is model/workspace output — the page's most
+     attacker-influenced text — so each one goes through esc(). */
+  let j = null;
+  try { j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}${full ? "&full=1" : ""}`); } catch { j = null; }
+  const entries = Array.isArray(j) ? j : [];
+  const jrnl = entries.map(e => {
+    if (e.type === "stage") return `<div class="jrnl-stage">stage · ${esc(e.label ?? "")}</div>`;
+    if (e.type === "speculation_discarded")
+      return `<div class="jrnl"><div class="kick">◌ speculative ${esc(e.name ?? "")} discarded · ${esc(e.reason ?? "")}</div></div>`;
+    const head =
+      e.type === "tool_start" ? `▸ ${esc(e.name ?? "")}` :
+      e.type === "tool_result" ? `${e.ok ? "✓" : "✕"} result${e.duration_ms != null ? ` · ${fmtMs(e.duration_ms)}` : ""}${e.speculated ? " · speculated" : ""}` :
+      e.type === "reasoning" ? "reasoning" : "answer";
+    return `<div class="jrnl${e.type === "tool_result" && !e.ok ? " err" : ""}">
+      <div class="kick">${head}${e.truncated ? ` · <span style="color:var(--warn)">clipped</span>` : ""}</div>
+      ${e.body ? `<pre class="jrnl-body">${esc(e.body)}</pre>` : ""}</div>`;
+  }).join("");
+  const jrnlSect = jrnl
+    ? `<div class="sect"><div class="kick">Transcript${full ? " · full" : ""}</div>${jrnl}${
+        entries.some(e => e.truncated)
+          ? `<button class="jrnl-full" id="jrnl-full">show full bodies</button>` : ""}</div>`
+    : "";
   const tok = (s) => num(s.input_tokens) + num(s.output_tokens);
   const maxTok = Math.max(...(d.steps ?? []).map(tok), 1);
   const steps = (d.steps ?? []).map(s => {
@@ -1178,9 +1213,12 @@ async function openDrawer(id) {
     ${steps ? `<div class="sect"><div class="kick">Per-step tokens and latency</div>${steps}</div>`
             : `<div class="sect"><div class="kick">Per-step tokens and latency</div>
                <div class="empty">No steps recorded for this run.</div></div>`}
+    ${jrnlSect}
     ${tools ? `<div class="sect"><div class="kick">Tool calls</div>${tools}</div>` : ""}
     ${files ? `<div class="sect"><div class="kick">Files touched</div>${files}</div>` : ""}
     ${refl}`);
+  const fullBtn = $("jrnl-full");
+  if (fullBtn) fullBtn.addEventListener("click", () => openDrawer(id, true));
 }
 function closeDrawer() {
   const el = $("drawer");
