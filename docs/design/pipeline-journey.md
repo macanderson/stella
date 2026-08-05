@@ -301,7 +301,8 @@ to fire under a single-model posture, the condition held on nearly every turn
 and the extra turn bought nothing on all of them. Capped at one ask per
 candidate and drawn from the same `max_revisions` budget a real failure spends.
 The measurement that switched it back on is in
-`bench/evidence/verifier-evidence-demand-1295/`.
+`bench/evidence/judge-evidence-demand-1295/` — the directory keeps the old word
+because `bench/evidence/` is frozen at the vocabulary each run was recorded in.
 
 ## 11. Revise: bounded retries with escalating candor
 

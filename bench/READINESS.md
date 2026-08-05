@@ -493,12 +493,12 @@ the parity loop and run at the engine's global 16384.
 
 #### 8.4.4 The verifier rename moved every digest in the table above
 
-The non-worker verification model was called `verifier` in five places and
+The non-worker verification model was called `judge` in five places and
 `witness author` / `test author` / `author` in the rest. It is now `verifier`
 everywhere, and the posture key it is pinned with went with it:
 
-    pipeline_verifier_model  ->  pipeline_verifier_model
-    agents.verifier          ->  agents.verifier
+    pipeline_judge_model  ->  pipeline_verifier_model
+    agents.judge          ->  agents.verifier
 
 **Every digest in 8.4.2 moved, and none of the postures behind them changed.**
 The digest is a hash over the posture dict *including its key names*, so a
@@ -506,22 +506,34 @@ rename with no behavioral content still re-hashes. This is the one case 8.4.3
 was careful to avoid and could not be avoided here: the key name *is* the
 vocabulary being fixed.
 
-| model | published as (`verifier`) | now (`verifier`) |
+Both columns below are keyed by the **exact** model string the posture was built
+from, `openrouter/` prefix and all. The prefix is part of the hashed dict, so
+`z-ai/glm-5.1` and `openrouter/z-ai/glm-5.1` are two different postures with two
+different digests; an abbreviated label here is what let three rows pair a
+prefixed left column with a bare right one.
+
+| model | published as (`judge`) | now (`verifier`) |
 |---|---|---|
-| deepseek-v4-pro | `9d7ad135…` | `0d732c3e…` |
-| z-ai/glm-5.2 | `7e9da633…` | `ce79d6b9…` |
-| x-ai/grok-4.5 | `19c4d345…` | `0a59db13…` |
-| z-ai/glm-5.1 | `8530a36f…` | `9242ff5a…` |
-| anthropic/claude-sonnet-5 | `3c428a22…` | `c8536200…` |
-| anthropic/claude-fable-5 | `5d42e236…` | `642746e4…` |
-| openrouter/anthropic/claude-fable-5 | `18a1ba22…` | `e5059092…` |
+| `openrouter/deepseek/deepseek-v4-pro` | `9d7ad135…` | `0d732c3e…` |
+| `openrouter/z-ai/glm-5.2` | `7e9da633…` | `41f9be3b…` |
+| `openrouter/x-ai/grok-4.5` | `19c4d345…` | `4505a9f8…` |
+| `openrouter/z-ai/glm-5.1` | `8530a36f…` | `8ce2e820…` |
+| `anthropic/claude-sonnet-5` | `3c428a22…` | `c8536200…` |
+| `anthropic/claude-fable-5` | `5d42e236…` | `642746e4…` |
+| `openrouter/anthropic/claude-fable-5` | `18a1ba22…` | `e5059092…` |
+
+Every left-column value reproduces from the pre-rename `_benchmark_engine_posture`
+for the model string on its row, and every right-column value from the current
+one. `bench/terminal-bench-2.1-protocol.md` records the same model strings for
+the first three.
 
 What this does and does not invalidate:
 
 - **No published number is wrong.** Every run recorded under the left column
   ran the posture that column describes. `bench/evidence/` is untouched — the
-  run manifests, per-trial rows, and the `verifier-evidence-demand-1295` record
-  keep their original digests and their original vocabulary.
+  run manifests, per-trial rows, and the `judge-evidence-demand-1295` record
+  keep their original digests and their original vocabulary, which is why that
+  directory name still says `judge`.
 - **What is lost is cross-boundary digest equality.** A post-rename run of an
   arm that is behaviorally identical to a pre-rename one will not produce a
   matching digest, so "same posture as #950" can no longer be shown by
