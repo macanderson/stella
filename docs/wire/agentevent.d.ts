@@ -265,44 +265,12 @@ export interface HunkProposal {
 }
 
 /**
- * Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the
- * flip-oracle/tests ladder from a model judge's opinion — the two are
- * never conflated (L-E11).
- */
-export interface JudgeEvidence {
-  /**
-   * `true` when the verdict came from the deterministic ladder (a
-   * fail→pass flip of the same normalized test command, touched-tests
-   * green, diff budget) rather than a model judge.
-   */
-  deterministic: boolean;
-  /**
-   * Pointers to the underlying artifacts (`trace:t1#verify`, a test
-   * command, a diff), so a reader can go check the summary rather than
-   * take it on faith.
-   */
-  evidence_refs?: string[];
-  /**
-   * The full ladder input snapshot this verdict was decided from (#865).
-   * `replay` answers "why did this run fast-submit / revise / judge?"
-   * from here without re-deriving, and a judge escalation renders it into
-   * the prompt (#864) so the judge sees *why* the ladder was inconclusive
-   * rather than a diff cold. Absent on events recorded before it existed.
-   */
-  ladder?: LadderSnapshot | null;
-  /**
-   * One line naming what was checked and what it showed.
-   */
-  summary: string;
-}
-
-/**
- * Which rung of the evidence ladder a `JudgeVerdict` actually came to rest
+ * Which rung of the evidence ladder a `Verdict` actually came to rest
  * on (#1043).
  *
  * # Why the rung is on the wire instead of inferred
  *
- * `JudgeEvidence` already carries `passed` and `deterministic`, and for a
+ * `VerdictEvidence` already carries `passed` and `deterministic`, and for a
  * while that looked like enough. It is not, and the gap is not academic:
  *
  * - `deterministic: true, passed: false` is emitted by **two** rungs — a red
@@ -314,14 +282,14 @@ export interface JudgeEvidence {
  *   where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a
  *   reader inferring "deterministic pass" from those two flags would label a
  *   turn nothing checked as the ladder's strongest possible result.
- * - `deterministic: false` covers a real model judge, a heuristic verdict
- *   after the judge call *failed*, and the abstain rung. The first is soft
+ * - `deterministic: false` covers a real model verifier, a heuristic verdict
+ *   after the verifier call *failed*, and the abstain rung. The first is soft
  *   signal, the second is not signal at all, and the only thing separating
  *   them in the old shape was the wording of a summary string.
  *
  * Re-deriving the rung by re-running the ladder over
  * [`LadderSnapshot`] cannot close any of that: it reproduces the *decision*
- * but not which of the three ways the judge arm resolved, and it silently
+ * but not which of the three ways the verifier arm resolved, and it silently
  * disagrees with reality whenever the run's `veto_warnings` setting differed
  * from the reader's assumption. So the pipeline states the rung it took.
  *
@@ -329,7 +297,7 @@ export interface JudgeEvidence {
  * vocabulary in this crate: a reader that meets a rung it does not know fails
  * the event rather than laundering it (see the [`crate::event`] docs).
  */
-export type LadderRung = "submit_fast" | "revise" | "nothing_attempted" | "unverifiable" | "model_judge" | "heuristic_fallback" | "waived";
+export type LadderRung = "submit_fast" | "revise" | "nothing_attempted" | "unverifiable" | "model_verdict" | "heuristic_fallback" | "waived";
 
 /**
  * The deterministic evidence the ladder decided a verdict from, snapshotted
@@ -544,7 +512,7 @@ export type MediaKind = "image" | "svg" | "video";
  * one-directional change in a way adding an [`AgentEvent`] variant no longer
  * is.
  */
-export type ModelCallRole = "unknown" | "triage" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "judge" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
+export type ModelCallRole = "unknown" | "triage" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "verdict" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
 
 /**
  * One flip-oracle observation, in the order the pipeline made it — together
@@ -586,11 +554,11 @@ export type PrStatus = "draft" | "open" | "merged" | "closed";
  * module docs on nested vocabularies).
  */
 export type ProofStep = {
-  /**
-   * Whether a model judge was called for on inconclusive evidence.
-   */
-  judge: boolean;
   kind: "assurance";
+  /**
+   * Whether a model verifier was called for on inconclusive evidence.
+   */
+  verifier: boolean;
   /**
    * Whether an independently authored witness test was called for.
    */
@@ -750,7 +718,7 @@ export interface ScopeProposal {
  * exists in this workspace — never duplicated per-crate (the TS-era
  * `StageKind` duplication this structurally forbids, L-E1).
  */
-export type StageKind = "triage" | "context_recall" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "judge" | "reflect" | "context_write" | "complete";
+export type StageKind = "triage" | "context_recall" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verifier" | "reflect" | "context_write" | "complete";
 
 /**
  * One point in a sub-agent's lifecycle. Exactly one `Started` and exactly
@@ -914,6 +882,38 @@ export type ToolOutput = {
  * envelope. Error bodies and prompts are deliberately unrepresentable.
  */
 export type UsageIncompleteReason = "provider_error" | "timeout" | "cancelled";
+
+/**
+ * Evidence backing a `Verdict`. `deterministic` distinguishes the
+ * flip-oracle/tests ladder from a model verifier's opinion — the two are
+ * never conflated (L-E11).
+ */
+export interface VerdictEvidence {
+  /**
+   * `true` when the verdict came from the deterministic ladder (a
+   * fail→pass flip of the same normalized test command, touched-tests
+   * green, diff budget) rather than a model verifier.
+   */
+  deterministic: boolean;
+  /**
+   * Pointers to the underlying artifacts (`trace:t1#verify`, a test
+   * command, a diff), so a reader can go check the summary rather than
+   * take it on faith.
+   */
+  evidence_refs?: string[];
+  /**
+   * The full ladder input snapshot this verdict was decided from (#865).
+   * `replay` answers "why did this run fast-submit / revise / verifier?"
+   * from here without re-deriving, and a verifier escalation renders it into
+   * the prompt (#864) so the verifier sees *why* the ladder was inconclusive
+   * rather than a diff cold. Absent on events recorded before it existed.
+   */
+  ladder?: LadderSnapshot | null;
+  /**
+   * One line naming what was checked and what it showed.
+   */
+  summary: string;
+}
 
 /**
  * One event in the turn's stream. Every stage boundary emits an event;
@@ -1334,7 +1334,7 @@ export type AgentEvent = {
    * Disambiguates the several model calls that can share one
    * `(turn_instance, step)`. The engine's own worker call is always 0;
    * auxiliary calls that ride the same step — the overflow summarizer,
-   * and the pipeline's triage/judge/plan/guidance roles — take 1, 2, …
+   * and the pipeline's triage/verifier/plan/guidance roles — take 1, 2, …
    * from a per-execution counter. Without it a summarizer receipt and
    * the worker receipt it precedes collide on the primary key and the
    * auxiliary one is silently replaced. `serde(default)` so manifests
@@ -1380,9 +1380,9 @@ export type AgentEvent = {
   step: ProofStep;
   type: "proof";
 } | {
-  evidence: JudgeEvidence;
+  evidence: VerdictEvidence;
   passed: boolean;
-  type: "judge_verdict";
+  type: "verdict";
 } | {
   proposal: ScopeProposal;
   type: "scope_review";
@@ -1471,7 +1471,7 @@ export type KnownTypeTag =
   | "block_registered"
   | "step_manifest"
   | "proof"
-  | "judge_verdict"
+  | "verdict"
   | "scope_review"
   | "hunk_review"
   | "ask_user"

@@ -639,7 +639,7 @@
           "type": "object"
         },
         {
-          "description": "A judge model's assessment of a goal-driven loop after one working\nround. `met == true` ends the loop; `met == false` feeds `reasoning`\nback to the worker as course-correction. `cost_usd` is the judge\ncall's own spend.",
+          "description": "A verifier model's assessment of a goal-driven loop after one working\nround. `met == true` ends the loop; `met == false` feeds `reasoning`\nback to the worker as course-correction. `cost_usd` is the verifier\ncall's own spend.",
           "properties": {
             "cost_usd": {
               "format": "double",
@@ -891,7 +891,7 @@
             },
             "call_seq": {
               "default": 0,
-              "description": "Disambiguates the several model calls that can share one\n`(turn_instance, step)`. The engine's own worker call is always 0;\nauxiliary calls that ride the same step — the overflow summarizer,\nand the pipeline's triage/judge/plan/guidance roles — take 1, 2, …\nfrom a per-execution counter. Without it a summarizer receipt and\nthe worker receipt it precedes collide on the primary key and the\nauxiliary one is silently replaced. `serde(default)` so manifests\npersisted before this field existed still decode (as the worker 0).",
+              "description": "Disambiguates the several model calls that can share one\n`(turn_instance, step)`. The engine's own worker call is always 0;\nauxiliary calls that ride the same step — the overflow summarizer,\nand the pipeline's triage/verifier/plan/guidance roles — take 1, 2, …\nfrom a per-execution counter. Without it a summarizer receipt and\nthe worker receipt it precedes collide on the primary key and the\nauxiliary one is silently replaced. `serde(default)` so manifests\npersisted before this field existed still decode (as the worker 0).",
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
@@ -976,16 +976,16 @@
           "type": "object"
         },
         {
-          "description": "A verification verdict — from the deterministic ladder (flip oracle,\ntouched-tests-green) or the model judge (L-E11: deterministic-first;\nmodel judges handle only inconclusive evidence).",
+          "description": "A verification verdict — from the deterministic ladder (flip oracle,\ntouched-tests-green) or the model verifier (L-E11: deterministic-first;\nmodel verifiers handle only inconclusive evidence).",
           "properties": {
             "evidence": {
-              "$ref": "#/$defs/JudgeEvidence"
+              "$ref": "#/$defs/VerdictEvidence"
             },
             "passed": {
               "type": "boolean"
             },
             "type": {
-              "const": "judge_verdict",
+              "const": "verdict",
               "type": "string"
             }
           },
@@ -1908,53 +1908,17 @@
       ],
       "type": "object"
     },
-    "JudgeEvidence": {
-      "description": "Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the\nflip-oracle/tests ladder from a model judge's opinion — the two are\nnever conflated (L-E11).",
-      "properties": {
-        "deterministic": {
-          "description": "`true` when the verdict came from the deterministic ladder (a\nfail→pass flip of the same normalized test command, touched-tests\ngreen, diff budget) rather than a model judge.",
-          "type": "boolean"
-        },
-        "evidence_refs": {
-          "description": "Pointers to the underlying artifacts (`trace:t1#verify`, a test\ncommand, a diff), so a reader can go check the summary rather than\ntake it on faith.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "ladder": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LadderSnapshot"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The full ladder input snapshot this verdict was decided from (#865).\n`replay` answers \"why did this run fast-submit / revise / judge?\"\nfrom here without re-deriving, and a judge escalation renders it into\nthe prompt (#864) so the judge sees *why* the ladder was inconclusive\nrather than a diff cold. Absent on events recorded before it existed."
-        },
-        "summary": {
-          "description": "One line naming what was checked and what it showed.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "summary",
-        "deterministic"
-      ],
-      "type": "object"
-    },
     "LadderRung": {
-      "description": "Which rung of the evidence ladder a `JudgeVerdict` actually came to rest\non (#1043).\n\n# Why the rung is on the wire instead of inferred\n\n`JudgeEvidence` already carries `passed` and `deterministic`, and for a\nwhile that looked like enough. It is not, and the gap is not academic:\n\n- `deterministic: true, passed: false` is emitted by **two** rungs — a red\n  touched test ([`LadderRung::Revise`], a genuine failure) and a turn that\n  dispatched nothing ([`LadderRung::NothingAttempted`], where the honest\n  label is \"no evidence\", not \"wrong\").\n- `deterministic: true, passed: true` is emitted both by the full\n  deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review\n  where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a\n  reader inferring \"deterministic pass\" from those two flags would label a\n  turn nothing checked as the ladder's strongest possible result.\n- `deterministic: false` covers a real model judge, a heuristic verdict\n  after the judge call *failed*, and the abstain rung. The first is soft\n  signal, the second is not signal at all, and the only thing separating\n  them in the old shape was the wording of a summary string.\n\nRe-deriving the rung by re-running the ladder over\n[`LadderSnapshot`] cannot close any of that: it reproduces the *decision*\nbut not which of the three ways the judge arm resolved, and it silently\ndisagrees with reality whenever the run's `veto_warnings` setting differed\nfrom the reader's assumption. So the pipeline states the rung it took.\n\nWire-compatible in the additive direction only, like every nested\nvocabulary in this crate: a reader that meets a rung it does not know fails\nthe event rather than laundering it (see the [`crate::event`] docs).",
+      "description": "Which rung of the evidence ladder a `Verdict` actually came to rest\non (#1043).\n\n# Why the rung is on the wire instead of inferred\n\n`VerdictEvidence` already carries `passed` and `deterministic`, and for a\nwhile that looked like enough. It is not, and the gap is not academic:\n\n- `deterministic: true, passed: false` is emitted by **two** rungs — a red\n  touched test ([`LadderRung::Revise`], a genuine failure) and a turn that\n  dispatched nothing ([`LadderRung::NothingAttempted`], where the honest\n  label is \"no evidence\", not \"wrong\").\n- `deterministic: true, passed: true` is emitted both by the full\n  deterministic pass ([`LadderRung::SubmitFast`]) and by a *waived* review\n  where the warrant found nothing to prove ([`LadderRung::Waived`]) — so a\n  reader inferring \"deterministic pass\" from those two flags would label a\n  turn nothing checked as the ladder's strongest possible result.\n- `deterministic: false` covers a real model verifier, a heuristic verdict\n  after the verifier call *failed*, and the abstain rung. The first is soft\n  signal, the second is not signal at all, and the only thing separating\n  them in the old shape was the wording of a summary string.\n\nRe-deriving the rung by re-running the ladder over\n[`LadderSnapshot`] cannot close any of that: it reproduces the *decision*\nbut not which of the three ways the verifier arm resolved, and it silently\ndisagrees with reality whenever the run's `veto_warnings` setting differed\nfrom the reader's assumption. So the pipeline states the rung it took.\n\nWire-compatible in the additive direction only, like every nested\nvocabulary in this crate: a reader that meets a rung it does not know fails\nthe event rather than laundering it (see the [`crate::event`] docs).",
       "oneOf": [
         {
           "const": "submit_fast",
-          "description": "Deterministic pass: a fail→pass flip of the tracked command, touched\ntests green, diff within budget, no fresh diagnostics. The judge was\nskipped because nothing was left to ask.",
+          "description": "Deterministic pass: a fail→pass flip of the tracked command, touched\ntests green, diff within budget, no fresh diagnostics. The verifier was\nskipped because nothing was left to ask.",
           "type": "string"
         },
         {
           "const": "revise",
-          "description": "Deterministic failure: the touched tests were red. No judge call — the\nfailure was already conclusive.",
+          "description": "Deterministic failure: the touched tests were red. No verifier call — the\nfailure was already conclusive.",
           "type": "string"
         },
         {
@@ -1968,13 +1932,13 @@
           "type": "string"
         },
         {
-          "const": "model_judge",
-          "description": "A model judge answered on genuinely inconclusive evidence.",
+          "const": "model_verdict",
+          "description": "The verifier answered on genuinely inconclusive evidence. Named for\nthe *evidence class* — a model's opinion — not for the model: it is\ndeliberately not called `ModelVerifier`, because the whole ladder is\nverification and this is the one rung that is only an opinion.",
           "type": "string"
         },
         {
           "const": "heuristic_fallback",
-          "description": "The judge call itself failed or returned something unparseable, and the\nconservative heuristic verdict stood in for it. A verdict about the\njudge's availability, not about the work.",
+          "description": "The verdict call itself failed or returned something unparseable, and\nthe conservative heuristic verdict stood in for it. A verdict about the\nverifier's availability, not about the work.",
           "type": "string"
         },
         {
@@ -2335,8 +2299,8 @@
           "type": "string"
         },
         {
-          "const": "judge",
-          "description": "The model judge, reached only on inconclusive deterministic evidence.",
+          "const": "verdict",
+          "description": "The verifier's verdict call, reached only on inconclusive\ndeterministic evidence.",
           "type": "string"
         },
         {
@@ -2440,13 +2404,13 @@
         {
           "description": "What assurance this turn is going to buy, stated by triage **before**\nany of it happens.\n\nEmitted first, and the reason the rail can be honest at all. Every\nother step reports something that *did* happen, so a turn where the\nanswer is \"we decided not to\" produced no steps and left the surface\nwith nothing to say — which is exactly the case that dominates in\npractice. A declared plan turns that silence into a statement: the\nwitness row reads \"waived by triage\" from the first second of the\nturn instead of implying a test is still coming.",
           "properties": {
-            "judge": {
-              "description": "Whether a model judge was called for on inconclusive evidence.",
-              "type": "boolean"
-            },
             "kind": {
               "const": "assurance",
               "type": "string"
+            },
+            "verifier": {
+              "description": "Whether a model verifier was called for on inconclusive evidence.",
+              "type": "boolean"
             },
             "witness": {
               "description": "Whether an independently authored witness test was called for.",
@@ -2456,7 +2420,7 @@
           "required": [
             "kind",
             "witness",
-            "judge"
+            "verifier"
           ],
           "type": "object"
         },
@@ -2536,7 +2500,7 @@
           "type": "object"
         },
         {
-          "description": "**Every** evidence channel was blind, so the ladder abstained rather\nthan judging: no flip oracle, no test result, a working tree the diff\nprobe could not read, and no recorded file change.\n\nDistinct from a failing verdict, and the distinction is the point. The\nturn this exists for ended with a judge asserting a file \"likely does\nnot exist\" while the file sat in the container — a claim about the\n*instruments* delivered as a claim about the *work* (#973). Without a\nstep of its own, an abstention reaches the rail as `✓ passed · model\njudge`, which is the same silent outcome in the other direction.",
+          "description": "**Every** evidence channel was blind, so the ladder abstained rather\nthan judging: no flip oracle, no test result, a working tree the diff\nprobe could not read, and no recorded file change.\n\nDistinct from a failing verdict, and the distinction is the point. The\nturn this exists for ended with a verifier asserting a file \"likely does\nnot exist\" while the file sat in the container — a claim about the\n*instruments* delivered as a claim about the *work* (#973). Without a\nstep of its own, an abstention reaches the rail as `✓ passed · model\nverifier`, which is the same silent outcome in the other direction.",
           "properties": {
             "kind": {
               "const": "verification_unavailable",
@@ -2824,7 +2788,7 @@
         },
         {
           "const": "witness",
-          "description": "Witness authoring: before the worker executes, an independent model\n(the judge's resolution, never the worker's transcript) writes the\nwitness test — a test that FAILS on the current code and will pass\nonce the goal is met — arming the deterministic flip oracle (L-E11).\nThe witness is visible to the worker (iterating against a failing\ntest is where convergence comes from); integrity comes from tamper\nexclusion at verify time, not from hiding the test.",
+          "description": "Witness authoring: before the worker executes, an independent model\n(the verifier's resolution, never the worker's transcript) writes the\nwitness test — a test that FAILS on the current code and will pass\nonce the goal is met — arming the deterministic flip oracle (L-E11).\nThe witness is visible to the worker (iterating against a failing\ntest is where convergence comes from); integrity comes from tamper\nexclusion at verify time, not from hiding the test.",
           "type": "string"
         },
         {
@@ -2838,8 +2802,8 @@
           "type": "string"
         },
         {
-          "const": "judge",
-          "description": "The model judge, reached only when the deterministic ladder came back\ninconclusive (L-E11).",
+          "const": "verifier",
+          "description": "The model verifier, reached only when the deterministic ladder came back\ninconclusive (L-E11).",
           "type": "string"
         },
         {
@@ -3256,6 +3220,42 @@
           "type": "string"
         }
       ]
+    },
+    "VerdictEvidence": {
+      "description": "Evidence backing a `Verdict`. `deterministic` distinguishes the\nflip-oracle/tests ladder from a model verifier's opinion — the two are\nnever conflated (L-E11).",
+      "properties": {
+        "deterministic": {
+          "description": "`true` when the verdict came from the deterministic ladder (a\nfail→pass flip of the same normalized test command, touched-tests\ngreen, diff budget) rather than a model verifier.",
+          "type": "boolean"
+        },
+        "evidence_refs": {
+          "description": "Pointers to the underlying artifacts (`trace:t1#verify`, a test\ncommand, a diff), so a reader can go check the summary rather than\ntake it on faith.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ladder": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LadderSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The full ladder input snapshot this verdict was decided from (#865).\n`replay` answers \"why did this run fast-submit / revise / verifier?\"\nfrom here without re-deriving, and a verifier escalation renders it into\nthe prompt (#864) so the verifier sees *why* the ladder was inconclusive\nrather than a diff cold. Absent on events recorded before it existed."
+        },
+        "summary": {
+          "description": "One line naming what was checked and what it showed.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "deterministic"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3302,7 +3302,7 @@
       "type": "object"
     },
     {
-      "description": "The engine needs the host to run a model completion and POST the result\nback ([`ProviderResultIn`]) keyed by `request_id`. The host owns the\nmodel call (metering, gateway, BYOK); the engine only orchestrates.\n\n`provider_id` and `role` say **which agent** is asking (#1297). One\nturn used to mean one model, so neither was needed; a judged goal run\nand a turn that spawns sub-agents both put several agents behind one\nturn id, and a host that cannot tell them apart cannot route the judge\nto a different family — which is the entire point of an independent\njudge. Both are additive: a host that ignores them behaves exactly as\nbefore, answering every request with the turn's one model.",
+      "description": "The engine needs the host to run a model completion and POST the result\nback ([`ProviderResultIn`]) keyed by `request_id`. The host owns the\nmodel call (metering, gateway, BYOK); the engine only orchestrates.\n\n`provider_id` and `role` say **which agent** is asking (#1297). One\nturn used to mean one model, so neither was needed; a judged goal run\nand a turn that spawns sub-agents both put several agents behind one\nturn id, and a host that cannot tell them apart cannot route the verifier\nto a different family — which is the entire point of an independent\nverifier. Both are additive: a host that ignores them behaves exactly as\nbefore, answering every request with the turn's one model.",
       "properties": {
         "provider_id": {
           "description": "The provider the caller asked to serve THIS call: the turn's own\n`provider_id`, or the override on its goal/sub-agent block.",
