@@ -29,7 +29,7 @@ use serde::Deserialize;
 
 use crate::config::{McpTransport, ServerCard as McpServerCard};
 use crate::error::McpError;
-use crate::http::truncate;
+use crate::http::{read_capped_body, truncate};
 
 /// The official MCP Registry — the default when `mcp.registry_url` is unset.
 /// The API shape is the generic "MCP Server Registry API" standard, so any
@@ -576,19 +576,15 @@ impl RegistryClient {
             .map_err(|e| McpError::Transport(format!("registry request to `{url}` failed: {e}")))?;
 
         let status = response.status();
+        let body = read_capped_body(response, &self.base_url).await;
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
             return Err(McpError::Transport(format!(
                 "registry `{}` returned HTTP {status}: {}",
                 self.base_url,
-                truncate(&body, 300)
+                truncate(&body.unwrap_or_default(), 300)
             )));
         }
-
-        let body = response.text().await.map_err(|e| {
-            McpError::Transport(format!("reading registry response body failed: {e}"))
-        })?;
-        Self::parse_page(&body)
+        Self::parse_page(&body?)
     }
 
     /// Parse a raw list-endpoint JSON body into a normalized page. Split from

@@ -541,6 +541,14 @@ fn is_etxtbsy(e: &std::io::Error) -> bool {
 /// Never returns `Err` — every failure mode is a named [`ToolOutput::Error`],
 /// because tool failures are model-visible data, not engine faults.
 async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> ToolOutput {
+    // A self-authored tool was approved for the bytes it had when the gate
+    // ruled on it, once, at discovery. The script is a file in the repository
+    // and this is the point of use, so the approval is checked against what is
+    // about to be spawned rather than against what was scanned.
+    if let Err(message) = crate::foundry_gate::recheck_before_launch(tool, workspace_root) {
+        return ToolOutput::Error { message };
+    }
+
     let mut cmd = Command::new(&tool.command[0]);
     cmd.args(&tool.command[1..]);
     cmd.current_dir(workspace_root);

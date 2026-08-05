@@ -685,7 +685,11 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("plain.rs"), "fn main() {}\nlet x = 1;\n").unwrap();
-        std::fs::write(dir.path().join("wide.min.js"), "x".repeat(4 * MAX_LINE_BYTES)).unwrap();
+        std::fs::write(
+            dir.path().join("wide.min.js"),
+            "x".repeat(4 * MAX_LINE_BYTES),
+        )
+        .unwrap();
         let dump = std::iter::repeat_n("y".repeat(4096), 800)
             .collect::<Vec<_>>()
             .join("\n");

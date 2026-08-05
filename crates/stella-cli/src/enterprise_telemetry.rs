@@ -78,7 +78,10 @@ fn store_process_free_authority(value: u8) {
     PROCESS_FREE_AUTHORITY.set(value);
 }
 
-const PRIVILEGED_ENV_NAMES: &[&str] = &[
+/// The names the startup rollback restores after a project dotenv file has
+/// run. `env_files` refuses every one of them outright — the rollback is the
+/// backstop behind that deny-list, and its own test holds the two in step.
+pub(crate) const PRIVILEGED_ENV_NAMES: &[&str] = &[
     "STELLA_MANAGED_SETTINGS",
     "STELLA_DATA_DIR",
     "STELLA_TRUST_PROJECT",

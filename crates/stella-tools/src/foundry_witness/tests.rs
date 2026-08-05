@@ -81,6 +81,7 @@ fn staged(root: &Path, name: &str, body: &str, witness_input: Value) -> CustomTo
             signature: format!("{name} <str>"),
             occurrences: 3,
             witness_input,
+            approved: None,
         }),
     }
 }

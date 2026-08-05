@@ -105,6 +105,7 @@ pub fn author(proposal: &ProposedTool) -> Result<AuthoredTool, String> {
             signature: proposal.signature.clone(),
             occurrences: proposal.occurrences as u32,
             witness_input: witness_input_for(&proposal.parameters),
+            approved: None,
         },
         input_schema: input_schema_for(&proposal.parameters),
     };
