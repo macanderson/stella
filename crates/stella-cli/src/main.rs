@@ -83,6 +83,7 @@ mod profile;
 mod prompt_source;
 mod proposals_cmd;
 mod query_format;
+mod resume_frame;
 mod rules;
 mod runtime;
 mod scripts_cmd;

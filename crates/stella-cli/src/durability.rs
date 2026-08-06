@@ -78,6 +78,16 @@ pub struct SessionDurability {
 struct Bound {
     journal: Arc<WorkJournal>,
     registry: Arc<stella_tools::ToolRegistry>,
+    /// The staged-pipeline frame every checkpoint of this session rides with,
+    /// or `None` while the session is running plain engine turns.
+    ///
+    /// Held here, beside the journal, rather than written once when the
+    /// pipeline starts: a pipeline runs *several* turns (worker, verifier,
+    /// revision), and every turn that ends discards its checkpoint — which
+    /// retracts the frame with it. A frame written once would therefore be
+    /// gone by the second turn, and the turn most likely to be killed is not
+    /// the first one.
+    pipeline: Arc<RwLock<Option<String>>>,
 }
 
 /// `ToolRegistry` is not `Debug` (it holds trait objects), and
@@ -100,7 +110,33 @@ impl SessionDurability {
         *slot = Some(Bound {
             journal: Arc::new(journal),
             registry,
+            pipeline: Arc::new(RwLock::new(None)),
         });
+    }
+
+    /// Declare that this session's turns are running inside a staged pipeline,
+    /// so every checkpoint from here on carries the frame describing it
+    /// ([`stella_store::work_journal::PIPELINE_BLOB`]).
+    ///
+    /// Called once per pipeline run, before the first stage. Silently ignored
+    /// on an unbound handle, like everything else here: a session with no
+    /// durable record has no checkpoint for a frame to ride on either.
+    pub fn set_pipeline_frame(&self, json: String) {
+        let bound = self.bound.read().unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(bound) = bound {
+            *bound.pipeline.write().unwrap_or_else(|p| p.into_inner()) = Some(json);
+        }
+    }
+
+    /// The staged-pipeline frame the interrupted turn was running inside, or
+    /// `None` when it was a plain engine turn.
+    ///
+    /// The read side of [`Self::set_pipeline_frame`], and the reason
+    /// `stella daemon resume` can tell an operator which stages a resumed run
+    /// is *not* getting back (#1615) instead of quietly finishing as a bare
+    /// turn.
+    pub fn pipeline_frame(&self) -> Option<String> {
+        self.journal()?.pipeline_frame()
     }
 
     /// The sink to hand [`stella_core::EngineConfig::checkpoint_sink`], or
@@ -213,10 +249,16 @@ impl CheckpointSink for JournalCheckpointSink {
     /// exactly as recoverable as it was before the sink existed.
     fn persist(&self, json: &str) {
         let observed = self.bound.registry.observed_snapshot();
-        let _ = self
+        let pipeline = self
             .bound
-            .journal
-            .record_checkpoint(json, observed.as_deref());
+            .pipeline
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let _ =
+            self.bound
+                .journal
+                .record_checkpoint(json, observed.as_deref(), pipeline.as_deref());
     }
 
     /// Idempotent by [`WorkJournal::clear_checkpoint`]'s own contract, and free
@@ -350,6 +392,72 @@ mod tests {
             record.checkpoint().is_none(),
             "a turn that ended leaves no resume point behind"
         );
+    }
+
+    /// **The #1615 witness (capture half).** A session running staged-pipeline
+    /// turns carries the frame describing them on *every* checkpoint commit,
+    /// and the frame is retracted with the checkpoint — so the next turn of
+    /// the same pipeline re-declares it and a turn that ended leaves nothing
+    /// claiming a pipeline is still running.
+    ///
+    /// The second half is the one with teeth: a pipeline drives several turns
+    /// (worker, verifier, revision) and each terminal path discards, so a
+    /// frame written once at the start would be gone by the second turn — and
+    /// the turn most likely to be killed is not the first one.
+    #[test]
+    fn a_pipeline_frame_rides_every_checkpoint_and_retires_with_it() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let record = journal(store.path(), ws.path(), "ses-frame");
+        let durability = SessionDurability::default();
+        durability.bind(record.clone(), registry(ws.path()));
+        durability.set_pipeline_frame(r#"{"version":1}"#.to_string());
+        let sink = durability.sink().expect("bound");
+
+        sink.persist(r#"{"step":1}"#);
+        assert_eq!(
+            durability.pipeline_frame().as_deref(),
+            Some(r#"{"version":1}"#)
+        );
+        sink.persist(r#"{"step":2}"#);
+        assert_eq!(
+            durability.pipeline_frame().as_deref(),
+            Some(r#"{"version":1}"#),
+            "the frame is re-stated at every step boundary, not only the first"
+        );
+
+        sink.discard();
+        assert!(record.checkpoint().is_none());
+        assert!(
+            durability.pipeline_frame().is_none(),
+            "a frame that outlived its turn would tell the next resume it is \
+             re-entering a pipeline nobody is running"
+        );
+
+        // The pipeline's next turn checkpoints, and the frame is back — this
+        // is what a frame written once could not do.
+        sink.persist(r#"{"step":1,"turn":2}"#);
+        assert_eq!(
+            durability.pipeline_frame().as_deref(),
+            Some(r#"{"version":1}"#)
+        );
+    }
+
+    /// A plain engine turn declares no frame, so nothing beside its checkpoint
+    /// claims it lost a pipeline. The delta the witness above is measured
+    /// against.
+    #[test]
+    fn a_bare_turn_leaves_no_pipeline_frame() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let record = journal(store.path(), ws.path(), "ses-bare");
+        let durability = SessionDurability::default();
+        durability.bind(record.clone(), registry(ws.path()));
+
+        durability.sink().expect("bound").persist(r#"{"step":1}"#);
+
+        assert!(record.checkpoint().is_some());
+        assert_eq!(durability.pipeline_frame(), None);
     }
 
     #[test]
