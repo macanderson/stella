@@ -30,6 +30,7 @@ impl CandidateState {
         ChangeSignals {
             file_changes: self.file_changes,
             mutating_actions: self.mutating_actions,
+            opaque_actions: self.opaque_actions,
         }
     }
 
