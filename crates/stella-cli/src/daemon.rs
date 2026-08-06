@@ -692,16 +692,6 @@ impl Tail {
         Ok(Self { file, offset: 0 })
     }
 
-    /// Skip whatever is already there — for a reader that only wants what
-    /// happens from now on.
-    fn seek_to_end(&mut self) -> Result<(), String> {
-        self.offset = self
-            .file
-            .seek(SeekFrom::End(0))
-            .map_err(|e| format!("cannot seek the console: {e}"))?;
-        Ok(())
-    }
-
     /// Start `lines` lines back from the end, or at the beginning if the file
     /// is shorter than that.
     ///

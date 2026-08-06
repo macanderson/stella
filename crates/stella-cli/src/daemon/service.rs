@@ -46,7 +46,7 @@
 //!   silent no-show at boot.
 //!
 //! A service-run stella has no controlling terminal, so
-//! [`super::should_supervise`] (correctly) says no and the command runs in
+//! [`crate::daemon::should_supervise`] (correctly) says no and the command runs in
 //! this process — the service manager *is* its supervisor, and wrapping a
 //! second one inside it would give launchd a child that exits the moment it
 //! hands the work off. It follows that a registered run is not a *supervised*
@@ -95,11 +95,21 @@ const LABEL_MAX: usize = 32;
 /// A value, not a `cfg` fence, so every planning and rendering function below
 /// compiles and is tested on every platform — the one `cfg` decision is
 /// [`ServiceManager::current`], and everything downstream of it is data.
+///
+/// That design is exactly what `dead_code` misreads: [`ServiceManager::current`]
+/// is the only constructor, and it is `cfg`-selected, so on any one target the
+/// *other* platform's variant is never constructed even though every function
+/// below still matches on it. The exemption is per-variant and points at the
+/// target that cannot construct it, so each variant stays lint-checked on the
+/// platform that can — a variant that went genuinely dead on its own target
+/// would still be caught.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ServiceManager {
     /// macOS: a launchd agent in the user's `gui` domain.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Launchd,
     /// Linux: a `systemd --user` unit.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     SystemdUser,
 }
 
