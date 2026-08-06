@@ -898,6 +898,7 @@ async fn complete_computes_nonzero_cost_from_catalog_pricing() {
             output_tokens: 500,
             cached_input_tokens: 0,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         });
     assert!(result.cost_usd > 0.0, "cost must be non-zero");
     assert_eq!(result.cost_usd, expected);
@@ -945,6 +946,7 @@ async fn complete_surfaces_cached_tokens_and_bills_them_at_the_cached_rate() {
             output_tokens: 500,
             cached_input_tokens: 200,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         });
     assert_eq!(result.cost_usd, expected, "200 cached tokens bill cheaper");
 }
@@ -986,6 +988,84 @@ async fn xai_identity_surfaces_cached_tokens_in_usage() {
         .expect("should succeed");
     assert_eq!(result.usage.input_tokens, 900);
     assert_eq!(result.usage.cached_input_tokens, 600);
+}
+
+/// The reasoning share of the output, which OpenRouter reports for every
+/// reasoning model as `completion_tokens_details.reasoning_tokens` and which
+/// this adapter discarded until #1430. It is the only measurement that
+/// separates "the model thought harder" from "the agent wrote more code" —
+/// two regressions that are indistinguishable in `output_tokens` alone, and
+/// that call for opposite fixes.
+#[tokio::test]
+async fn openrouter_reasoning_tokens_reach_the_usage_envelope() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":18,\"completion_tokens\":63,\"completion_tokens_details\":{\"reasoning_tokens\":41}}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-test"), "anthropic/claude-fable-5")
+        .with_base_url(server.uri());
+    let result = provider
+        .complete(CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        })
+        .await
+        .expect("should succeed");
+    assert_eq!(result.usage.reasoning_tokens, Some(41));
+    // Reasoning is a SUBSET of output, never an addition to it — the provider
+    // already billed it inside `completion_tokens`, so adding it to a cost
+    // line would double-charge every thinking turn.
+    assert_eq!(result.usage.output_tokens, 63);
+}
+
+/// An endpoint that reports usage but no reasoning breakdown must leave the
+/// field `None`, not `Some(0)`. Every Anthropic Messages API call lands here
+/// (thinking is folded into `output_tokens` with no split), so a `0` would
+/// read as "this route never thinks" across the entire comparator arm — the
+/// same class of error as publishing an unfilled placeholder as a measurement.
+#[tokio::test]
+async fn a_usage_frame_without_the_breakdown_reports_none_not_zero() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":18,\"completion_tokens\":63}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider =
+        ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+    let result = provider
+        .complete(CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        })
+        .await
+        .expect("should succeed");
+    assert!(result.usage.reported, "the usage frame was present");
+    assert_eq!(result.usage.reasoning_tokens, None);
 }
 
 #[tokio::test]

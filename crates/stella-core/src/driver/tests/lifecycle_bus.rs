@@ -85,6 +85,7 @@ impl Provider for OneShotProvider {
                 output_tokens: 7,
                 cached_input_tokens: 0,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
             },
             model: "mock-1".to_string(),
             cost_usd: 0.25,

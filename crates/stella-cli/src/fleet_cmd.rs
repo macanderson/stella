@@ -1284,6 +1284,7 @@ mod tests {
             false,
         );
         tx.send(AgentEvent::StepUsage {
+            reasoning_tokens: None,
             output_text: None,
             step: 0,
             role: stella_protocol::ModelCallRole::Worker,

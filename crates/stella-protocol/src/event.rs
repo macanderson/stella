@@ -556,6 +556,17 @@ pub enum AgentEvent {
         /// still parse.
         #[serde(default)]
         cache_write_tokens: u64,
+        /// The reasoning share of `output_tokens`, when the provider breaks it
+        /// out (`CompletionUsage::reasoning_tokens`). Already inside
+        /// `output_tokens` — a diagnostic split, never its own cost line.
+        ///
+        /// Absent means the provider does not report it (every Anthropic
+        /// Messages API call, which folds thinking into `output_tokens`);
+        /// `0` means it reported no reasoning on this call. A consumer that
+        /// reads absent as zero would conclude the entire Anthropic-direct
+        /// route never thinks, so this stays `Option` rather than defaulting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_tokens: Option<u64>,
         /// The engine's RAW (uncalibrated) pre-call estimate of the input it
         /// sent — paired with `input_tokens` (plus cache-write tokens, which
         /// are real prompt tokens split out only for pricing) this is one
@@ -2327,6 +2338,7 @@ mod tests {
             output_tokens: 450,
             cached_input_tokens: 9_000,
             cache_write_tokens: 2_500,
+            reasoning_tokens: None,
             estimated_input_tokens: 11_200,
             cost_usd: 0.0042,
             duration_ms: 1_830,

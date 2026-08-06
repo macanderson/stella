@@ -989,6 +989,7 @@ mod tests {
                 output_tokens: 1,
                 cached_input_tokens: 0,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
                 estimated_input_tokens: 0,
                 cost_usd: 0.0,
                 duration_ms: 1,
