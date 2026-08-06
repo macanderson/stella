@@ -417,8 +417,8 @@ fn execution_journal_replays_transcript_without_deltas() {
 #[test]
 fn execution_journal_after_seq_returns_only_newer_rows() {
     let ws = seeded_workspace();
-    // Seq 3 is the tool_start row; only tool_result (4) and text (5) — both
-    // > 3 — should come back.
+    // Seq 3 is the tool_start row; only tool_result (4) and the two text
+    // rows (5, 6) — all > 3 — should come back.
     let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=3");
     let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let seqs: Vec<i64> = v
@@ -427,7 +427,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
         .iter()
         .map(|e| e["seq"].as_i64().unwrap())
         .collect();
-    assert_eq!(seqs, [4, 5], "only rows with seq > 3 come back");
+    assert_eq!(seqs, [4, 5, 6], "only rows with seq > 3 come back");
     // A cursor past every seeded row degrades to empty, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=1&after_seq=99");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
@@ -438,7 +438,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
     let v: serde_json::Value = serde_json::from_slice(&all.body).unwrap();
     assert_eq!(
         v.as_array().unwrap().len(),
-        5,
+        6,
         "seq 0 survives after_seq=-1"
     );
 }

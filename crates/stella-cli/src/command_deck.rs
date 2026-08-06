@@ -3947,7 +3947,7 @@ async fn run_deck_command(
     let say = |text: String| {
         let _ = in_tx.send(Inbound::Event {
             agent: LEAD.to_string(),
-            event: AgentEvent::Text { text: text },
+            event: AgentEvent::Text { text },
         });
     };
     match trimmed {
