@@ -877,6 +877,103 @@ class TestMatchTemplateRoles:
         assert "verifier" in roles and "judge" not in roles
 
 
+class TestFailedMatchStatus:
+    """A match whose every seat died before a single trial ran must land
+    `failed`, never `finished`.
+
+    Witnessed against match 1eb525153bc5: Docker was down, both Harbor
+    processes exited in two seconds with one log line each, and the arena
+    stamped the run `finished` — a green pill over 0/0 trials. `failed` had
+    been in the status enum from the start; nothing ever set it.
+    """
+
+    def _match(self, tmp_path: Path):
+        from arenabench.runner import Match
+
+        spec = MatchSpec.from_json(
+            {
+                "id": "deadbeef0000",
+                "name": "kvk",
+                "dataset": "terminal-bench-2.1",
+                "contestants": [
+                    {
+                        "id": "st",
+                        "name": "Stella",
+                        "agent": "stella",
+                        "engine": {"api": "anthropic", "model": "claude-sonnet-5"},
+                    },
+                    {
+                        "id": "cc",
+                        "name": "Claude Code",
+                        "agent": "claude-code",
+                        "engine": {"api": "anthropic", "model": "claude-sonnet-5"},
+                    },
+                ],
+            }
+        )
+        dataset = DEFAULT_REGISTRY.get("terminal-bench-2.1")
+        match = Match(spec, dataset, tmp_path / "ws")
+        match.status = "running"
+        return match
+
+    def _run_for(self, match, contestant, **kwargs) -> ContestantRun:
+        job_name = f"{match.spec.id}-{contestant.slug}"
+        return ContestantRun(
+            contestant=contestant,
+            job_name=job_name,
+            job_dir=match.jobs_root / job_name,
+            log_path=match.workspace / f"{contestant.slug}.log",
+            **kwargs,
+        )
+
+    def test_seats_that_never_launched_fail_the_match(self, tmp_path: Path):
+        match = self._match(tmp_path)
+        for contestant in match.spec.contestants:
+            match.runs[contestant.id] = self._run_for(
+                match, contestant, error="harbor: command not found"
+            )
+        MatchRunner(DEFAULT_REGISTRY, tmp_path)._await_completion(match)
+        assert match.status == "failed"
+        assert "no trial ever ran" in match.note
+        assert "harbor: command not found" in match.note
+
+    def test_instant_nonzero_exits_fail_the_match_with_the_logged_reason(
+        self, tmp_path: Path
+    ):
+        import subprocess
+
+        match = self._match(tmp_path)
+        for contestant in match.spec.contestants:
+            run = self._run_for(match, contestant)
+            run.log_path.write_text(
+                "Docker daemon is not running. Please start Docker and try again.\n",
+                encoding="utf-8",
+            )
+            run.process = subprocess.Popen(["/bin/sh", "-c", "exit 1"])
+            run.process.wait()
+            match.runs[contestant.id] = run
+        MatchRunner(DEFAULT_REGISTRY, tmp_path)._await_completion(match)
+        assert match.status == "failed"
+        # The operator learns why from the match itself, not the seat logs.
+        assert "Docker daemon is not running" in match.note
+
+    def test_a_match_that_produced_trials_still_finishes(self, tmp_path: Path):
+        """Harbor can exit nonzero after real trials ran; that contest is
+        still worth reading, and the seat badges carry the crash."""
+        import subprocess
+
+        match = self._match(tmp_path)
+        for contestant in match.spec.contestants:
+            run = self._run_for(match, contestant)
+            (run.job_dir / "fix-git__1").mkdir(parents=True)
+            run.process = subprocess.Popen(["/bin/sh", "-c", "exit 1"])
+            run.process.wait()
+            match.runs[contestant.id] = run
+        MatchRunner(DEFAULT_REGISTRY, tmp_path)._await_completion(match)
+        assert match.status == "finished"
+        assert match.note == ""
+
+
 class TestSnapshotDetections:
     """The monitor's verdicts ride the snapshot the web UI renders (#1569).
 
