@@ -188,17 +188,25 @@ fn deck_renders_every_tab_with_real_content() {
     }
 }
 
-/// #1633: a pending plan review is **modal**, so it is drawn over whatever tab
-/// happens to be up rather than only over SESSION.
+/// #1633: a pending plan review is **modal over its own tab** — drawn on
+/// SESSION, and never painted over a tab that is answering a different
+/// question.
 ///
-/// Reachable exactly as rendered here: a reviewer browsing AGENTS is still
-/// browsing it when the lead proposes a plan, and the gate that halts the
-/// session has to be the thing they see. Every other test in this file answers
-/// the gate through [`answered_ui`] so it can assert on a tab body; this one
-/// leaves it pending, which is what keeps the modality a tested property
-/// rather than an accident of where the dialog lands.
+/// This test asserted the opposite when it landed (#1650), because it and the
+/// Session scoping (`views::scope_dialog::pending`) were written in parallel
+/// and merged within hours of each other: one decided a frame-sized overlay
+/// blanking AGENTS / TRACES / GRAPH / FILES / MCP was the defect, the other
+/// decided it was the feature. The scoping is what shipped and what the
+/// goldens were re-blessed against, so this is the half that moves.
+///
+/// Both halves are asserted, because either alone is satisfiable by a bug: a
+/// dialog that never draws passes the AGENTS half, and one that always draws
+/// passes the SESSION half. Every other test in this file answers the gate
+/// through [`answered_ui`] so it can assert on a tab body; this one leaves it
+/// pending, which is what keeps the reach a tested property rather than an
+/// accident of where the dialog lands.
 #[test]
-fn a_pending_plan_review_is_modal_over_the_tab_body() {
+fn a_pending_plan_review_is_modal_over_its_own_tab_only() {
     let model = folded_model();
     assert!(
         model
@@ -210,21 +218,32 @@ fn a_pending_plan_review_is_modal_over_the_tab_body() {
     );
 
     // Deliberately NOT `answered_ui`: the unanswered gate is the subject.
-    let mut ui = DeckUi::default();
-    ui.splash.skip();
-    ui.tab = DeckTab::Agents;
-    let mut terminal = Terminal::new(TestBackend::new(240, 20)).unwrap();
-    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
-    let text = buffer_text(terminal.backend().buffer());
+    let render_on = |tab: DeckTab| {
+        let mut ui = DeckUi::default();
+        ui.splash.skip();
+        ui.tab = tab;
+        let mut terminal = Terminal::new(TestBackend::new(240, 20)).unwrap();
+        terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+        buffer_text(terminal.backend().buffer())
+    };
 
+    let session = render_on(DeckTab::Session);
     assert!(
-        text.contains("plan review"),
-        "the pending gate must draw its dialog over the AGENTS tab:\n{text}"
+        session.contains("plan review"),
+        "the pending gate must draw its dialog on SESSION — the surface that \
+         halts the session:\n{session}"
     );
     assert!(
-        text.contains("one keypress decides"),
-        "the dialog's own legend is what tells the reviewer it is answerable \
-         where they stand:\n{text}"
+        session.contains("one keypress decides"),
+        "the dialog's own legend is what tells the reviewer it is \
+         answerable:\n{session}"
+    );
+
+    let agents = render_on(DeckTab::Agents);
+    assert!(
+        !agents.contains("plan review"),
+        "the dialog must not paint over a tab that answers a different \
+         question — the reach it lost in the #1633 residue fix:\n{agents}"
     );
 }
 
