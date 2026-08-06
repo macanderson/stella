@@ -102,15 +102,22 @@ fn input_lines(input: &ScopeInput, inner_w: usize) -> Vec<Line<'static>> {
     };
     let width = inner_w.saturating_sub(label.chars().count() + 1).max(8);
 
-    // Explicit newlines first, then soft-wrap each of those on width.
+    // Explicit newlines first, then soft-wrap each of those on width. The
+    // column count is carried rather than re-measured per character: paste
+    // lands here verbatim now, so the buffer is only bounded by the
+    // clipboard, and `chars().count()` inside the loop would make a large
+    // paste quadratic on every frame.
     let mut rows: Vec<String> = Vec::new();
     for paragraph in body.split('\n') {
         let mut row = String::new();
+        let mut cols = 0usize;
         for c in paragraph.chars() {
-            if row.chars().count() == width {
+            if cols == width {
                 rows.push(std::mem::take(&mut row));
+                cols = 0;
             }
             row.push(c);
+            cols += 1;
         }
         rows.push(row);
     }
@@ -361,6 +368,28 @@ mod tests {
         assert!(frame.contains("refine ▸ drop step 2"), "{frame}");
         assert!(frame.contains("and re-scope 3"), "{frame}");
         assert!(frame.contains("⌥⏎ newline"), "{frame}");
+    }
+
+    /// A note past the row budget keeps its **tail**: the text under the
+    /// cursor is the text being typed, and a note that scrolled away from
+    /// what you are writing would be worse than the single line this
+    /// replaced. The plan is what the decision is about, so the note is
+    /// capped rather than allowed to push the steps off the frame.
+    #[test]
+    fn an_overlong_note_keeps_the_end_it_is_being_typed_at() {
+        let note = ScopeInput::Refine((1..=20).map(|i| format!("line {i}\n")).collect());
+        let lines = input_lines(&note, 64);
+        assert_eq!(lines.len(), NOTE_MAX_ROWS, "the note is capped");
+
+        let frame = flat(Rect::new(0, 0, 80, 40), |buf| {
+            render(&proposal(), Some(&note), Rect::new(0, 0, 80, 40), buf);
+        });
+        assert!(frame.contains("line 20"), "the tail survives:\n{frame}");
+        assert!(!frame.contains("line 1 "), "the head folds:\n{frame}");
+        assert!(
+            frame.contains("1. read the layout"),
+            "the plan is still readable under a long note:\n{frame}"
+        );
     }
 
     /// The shell field names itself and offers "run", not "send" — it does not
