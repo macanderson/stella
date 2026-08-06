@@ -1160,6 +1160,7 @@ mod tests {
             output_tokens: 200_000,
             cached_input_tokens: 400_000,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         };
         assert!((pricing.cost_usd(&usage) - 4.92).abs() < 1e-9);
     }
@@ -1180,6 +1181,7 @@ mod tests {
             output_tokens: 0,
             cached_input_tokens: 1_000,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         };
         // All 100 input tokens billed as cached (clamped), never negative.
         let expected = (100.0 / 1_000_000.0) * 0.30;
@@ -1232,6 +1234,7 @@ mod tests {
             output_tokens: 0,
             cached_input_tokens: 0,
             cache_write_tokens: 100_000,
+            reasoning_tokens: None,
         };
         // Derived from the entry's OWN rate rather than a copied constant: a
         // hardcoded figure re-fails this test every time a price is corrected,

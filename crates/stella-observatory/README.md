@@ -58,6 +58,14 @@ free one). This crate builds no binary —
 | `src/assets/mark.svg`, `src/assets/wordmark.svg` | Favicon and header lockup, served from `/assets/`. |
 | [`examples/serve.rs`](examples/serve.rs) | `cargo run -p stella-observatory --example serve -- <root> <port>` — serve any workspace without building the CLI. |
 
+## God files — do not add lines
+
+This crate has no god files: no file exceeds the gate's 1500-line ratchet
+(`scripts/check-file-size.sh`), and none may appear — a new file crossing
+1500 lines fails the gate outright, and `scripts/file-size-baseline.txt`
+accepts no new entries. When a file here approaches the limit, split it before
+it crosses.
+
 ## Key concepts
 
 ### The three boundaries, and what actually enforces each

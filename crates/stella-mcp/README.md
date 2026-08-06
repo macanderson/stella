@@ -39,6 +39,14 @@ builds its own binary, `mcp-fixture-server`, which exists purely for
 | [`src/error.rs`](src/error.rs) | `McpError` and `user_message()` — the length-bounded, credential-free rendering that reaches the model. |
 | [`src/bin/mcp-fixture-server.rs`](src/bin/mcp-fixture-server.rs) | The canned MCP server the integration tests spawn, with its fault-injection flags. |
 
+## God files — do not add lines
+
+This crate has no god files: no file exceeds the gate's 1500-line ratchet
+(`scripts/check-file-size.sh`), and none may appear — a new file crossing
+1500 lines fails the gate outright, and `scripts/file-size-baseline.txt`
+accepts no new entries. When a file here approaches the limit, split it before
+it crosses.
+
 ## Key concepts
 
 **One integration point, one namespace.** `McpToolSet` implements the same

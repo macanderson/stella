@@ -80,6 +80,10 @@ pin just the verifier model while your user scope keeps everything else.
     // long steps stop on the timeout instead of the cap.
     "model_timeout_secs": 816,
 
+    // Seconds a supervised run may sit parked on a scope review nobody
+    // answers before it aborts. 0 (the default) parks until answered.
+    "approval_wait_secs": 0,
+
     // Per-agent deep config. Set a field and it goes on the wire; leave it
     // out and the provider default applies.
     "agents": {
@@ -266,6 +270,18 @@ Set any of the three autos to `"on"` and stop thinking about it:
     budget: a step allowed 128,000 output tokens against a timeout sized for
     64,000 stops on the timeout, which looks like a model that could not
     finish rather than a ceiling nobody scaled.
+  </OptionCard>
+  <OptionCard name="approval_wait_secs" defaultValue="0">
+    Seconds a **supervised** run (`stella run` under the daemon) may sit parked
+    on a scope review before it gives up. `0` or absent parks until somebody
+    answers, which is the default and usually the right one: the parked run is
+    discoverable as `Needs Input` in `stella daemon list`, and waiting costs
+    nothing but a session slot.
+
+    When it expires the run **aborts** — never approves. It is a human's yes
+    that failed to arrive, and a timer here may only ever stop work. Set it
+    where nobody is watching: an overnight batch, a CI supervisor, a harness
+    that must not hold a worktree hostage.
   </OptionCard>
 </CardGrid>
 
