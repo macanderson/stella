@@ -64,7 +64,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + command-docs + brand-case + file-size
                          #   + god-files
                          #   + gate-parity + left-behind + role-names
-                         #   + stat-portability
+                         #   + stat-portability + module-reachability
                          #   + wire-schema
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
