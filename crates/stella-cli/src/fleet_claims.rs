@@ -209,10 +209,7 @@ fn human_ms(ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
-
     use super::*;
-    use crate::cli::{Cli, Command};
 
     fn claim(key: &str, owner: &str, acquired_at_ms: u64, expires_at_ms: u64) -> DispatchClaim {
         DispatchClaim {
