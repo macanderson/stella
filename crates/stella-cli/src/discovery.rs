@@ -792,6 +792,14 @@ impl ToolExecutor for DiscoveryToolSet<'_> {
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.inner.drain_wait_request()
     }
+
+    /// Forwarded: letting the empty default stand would silently serialize the
+    /// inner executor's sibling spawns (see the port's contract). No lean-mode
+    /// intersection — hiding is a prompt-budget measure, and a hidden tool
+    /// called by name still executes above.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
 }
 
 /// Split an advertised `mcp__server__tool` name into (server, tool).

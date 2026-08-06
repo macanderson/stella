@@ -463,6 +463,13 @@ impl ToolExecutor for HunkGate<'_> {
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.inner.drain_wait_request()
     }
+
+    /// Forwarded — letting the empty default stand would silently serialize
+    /// the inner executor's sibling spawns (see the port's contract); the
+    /// spawn tool is not in `GATED_TOOLS`, so the gate never reviews it.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
 }
 
 #[cfg(test)]
