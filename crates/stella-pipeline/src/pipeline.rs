@@ -282,12 +282,12 @@ pub struct PipelineConfig {
     /// unchanged either way, since the witness has already done its job by
     /// the time adoption happens.
     pub keep_witness: bool,
-    /// Distress-triggered course-correction: on the *second consecutive*
-    /// deterministic verification failure, spend one verifier call for guidance
-    /// that rides with the next revision prompt ([`crate::verify::guidance_prompt`]).
-    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded
-    /// by `max_revisions` (at most `max_revisions - 1` guidance calls per
-    /// candidate).
+    /// Distress-triggered course-correction: on a candidate's *second*
+    /// deterministic verification failure — cumulative, not necessarily
+    /// consecutive (#868) — spend one verifier call for guidance that rides
+    /// with the next revision prompt ([`crate::verify::guidance_prompt`]).
+    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded by
+    /// `max_revisions` (at most `max_revisions - 1` guidance calls per candidate).
     pub distress_guidance: bool,
     /// The closed diagnostic that reports what the turn changed. `None`
     /// disables diff-size and zero-diff inspection.
@@ -2612,16 +2612,16 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(false)),
                         );
                     }
-                    // Distress trigger: a SECOND consecutive deterministic
-                    // failure means the evidence alone didn't steer the
-                    // worker — spend one verifier call on course-correction
+                    // Distress trigger: a SECOND deterministic failure of this
+                    // candidate — the ledger is cumulative, so the two need not
+                    // be consecutive (#868) — means the evidence alone didn't
+                    // steer the worker: spend one verifier call on course-correction
                     // (event-triggered, never a fixed midpoint checkpoint).
-                    // Counted from the deterministic-failure ledger
-                    // (`deterministic_disclosure` just recorded this round's
-                    // fingerprint), not from `revisions`: a prior model-verifier
-                    // FAIL also increments `revisions`, and gating on it paid
-                    // a guidance call on the FIRST deterministic red while
-                    // telling the verifier the agent had "failed twice in a row".
+                    // Counted from that ledger (`deterministic_disclosure` just
+                    // recorded this round's fingerprint), not from `revisions`:
+                    // a prior model-verifier FAIL also increments `revisions`,
+                    // and gating on it paid a guidance call on the FIRST deterministic
+                    // red while telling the verifier the agent had "failed twice in a row".
                     let mut reason = brief.message();
                     if self.config.distress_guidance && state.failures.len() >= 2 {
                         // Same witness exclusion as the verdict call (#1433):
