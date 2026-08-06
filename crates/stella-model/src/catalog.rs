@@ -1182,7 +1182,10 @@ mod tests {
                 .resolve_for(provider, slug)
                 .unwrap_or_else(|_| panic!("{provider}/{slug} is not in the seed catalog"));
             assert_eq!(entry.pricing.input_usd_per_mtok, 5.00, "{slug} input price");
-            assert_eq!(entry.pricing.output_usd_per_mtok, 25.00, "{slug} output price");
+            assert_eq!(
+                entry.pricing.output_usd_per_mtok, 25.00,
+                "{slug} output price"
+            );
             assert_eq!(entry.context_window, 1_000_000, "{slug} context window");
             assert_eq!(
                 entry.max_output_tokens,
