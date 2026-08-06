@@ -785,6 +785,13 @@ impl ToolExecutor for DiscoveryToolSet<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.drain_wait_request()
+    }
 }
 
 /// Split an advertised `mcp__server__tool` name into (server, tool).

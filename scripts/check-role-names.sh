@@ -52,7 +52,23 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
 fail=0
-note() { printf 'check-role-names: %s\n' "$1" >&2; }
+
+# The verdict is decided before anything is written (#1815). Failure lines are
+# buffered while the checks run and emitted in one final write: a guard that
+# prints as it scans dies mid-report when its reader exits early, and under
+# `set -euo pipefail` whatever partial state it had reached becomes the exit
+# status. scripts/check-file-size.sh is the shape being copied.
+report=""
+note() { report="${report}check-role-names: $1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
+}
 
 # Retired spellings, and the modern role each maps to. A producer may mention
 # one of these only as an alias — never as a member of its own role set.
@@ -64,6 +80,7 @@ rust_home="crates/stella-cli/src/config_wiring.rs"
 
 if [ ! -f "$rust_home" ]; then
   note "FAIL — $rust_home does not exist; role_key() is the normative home."
+  emit
   exit 1
 fi
 
@@ -84,6 +101,7 @@ if [ -z "$roles" ]; then
   note "     If that function moved or changed shape, repoint this guard;"
   note "     do not delete it. It is the only thing holding four languages"
   note "     to one spelling."
+  emit
   exit 1
 fi
 
@@ -134,27 +152,25 @@ expect_exact_set() {
 # Every role named in a `pipeline_<role>_model` key anywhere in a file must be a
 # real role. A subset check, not an exact one: `default` has no flat key by
 # design (`default_model` is its key), so the set is legitimately smaller.
+#
+# Redirected rather than piped, like producer 5 below: a `while read` on the
+# right of a pipe runs in a subshell, where `fail=1` and the buffered note
+# would be set and then thrown away.
 expect_flat_keys_known() {
   path="$1"
   [ -f "$path" ] || return 0
-  sed -n 's/.*pipeline_\([a-z_][a-z_]*\)_model.*/\1/p' "$path" | LC_ALL=C sort -u |
-    while IFS= read -r r; do
-      [ -n "$r" ] || continue
-      # Not a role name — these are the pipeline's own numeric settings.
-      case "$r" in
-      max_revisions | candidates) continue ;;
-      esac
-      if ! is_role "$r"; then
-        note "FAIL — $path writes pipeline_${r}_model, and '$r' is not a role."
-        printf 'x' >>"$flagfile"
-      fi
-    done
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    # Not a role name — these are the pipeline's own numeric settings.
+    case "$r" in
+    max_revisions | candidates) continue ;;
+    esac
+    if ! is_role "$r"; then
+      note "FAIL — $path writes pipeline_${r}_model, and '$r' is not a role."
+      fail=1
+    fi
+  done < <(sed -n 's/.*pipeline_\([a-z_][a-z_]*\)_model.*/\1/p' "$path" | LC_ALL=C sort -u)
 }
-
-# `while read` in a pipeline runs in a subshell, so `fail=1` set inside one
-# would not survive. A marker file is the portable way to carry it back.
-flagfile="$(mktemp "${TMPDIR:-/tmp}/stella-role-names.XXXXXX")"
-trap 'rm -f "$flagfile"' EXIT
 
 # ── The producers ────────────────────────────────────────────────────────────
 #
@@ -232,18 +248,16 @@ for old in $retired_spellings; do
   fi
 done
 
-if [ -s "$flagfile" ]; then
-  fail=1
-fi
-
 if [ "$fail" -ne 0 ]; then
   note ""
   note "The role names live in role_key() in $rust_home."
   note "Renaming one is a cross-language change: the Rust compiler will not"
   note "find the Python dict or the JavaScript literal, and neither will your"
   note "tests. Update every producer named above in the same PR."
+  emit
   exit 1
 fi
 
+emit
 printf 'check-role-names: OK — %d role(s) [%s] consistent across every producer.\n' \
-  "$(printf '%s\n' "$roles" | wc -l | tr -d ' ')" "$(printf '%s' "$roles_flat" | sed 's/ $//')"
+  "$(printf '%s\n' "$roles" | wc -l | tr -d ' ')" "$(printf '%s' "$roles_flat" | sed 's/ $//')" || true

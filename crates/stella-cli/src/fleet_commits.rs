@@ -131,6 +131,13 @@ impl ToolExecutor for CommitObserver<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.drain_wait_request()
+    }
 }
 
 /// One attempt's commits, oldest first — and the two ways of knowing which
@@ -317,6 +324,10 @@ mod tests {
             Vec::new()
         }
 
+        fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+            std::collections::HashSet::from(["task".to_string()])
+        }
+
         async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
             if name == "repo_commit" {
                 let mut script = self.script.lock().unwrap();
@@ -347,6 +358,21 @@ mod tests {
 
     fn shas(commits: &[CommitRecord]) -> Vec<&str> {
         commits.iter().map(|c| c.sha.as_str()).collect()
+    }
+
+    /// The observer wraps every shared-tree fleet worker's stack, so one that
+    /// swallowed the claim (the default is empty) would serialize sibling
+    /// spawns for the whole fleet no matter what the registry advertised.
+    #[test]
+    fn the_commit_observer_forwards_parallel_safe_names() {
+        let tree = Arc::new(SharedTree::default());
+        let tools = CommittingTools::new(tree.clone(), Vec::new());
+        assert!(
+            observer(&tools, &tree, "t1")
+                .parallel_safe_names()
+                .contains("task"),
+            "the inner executor's concurrency claim must survive the observer"
+        );
     }
 
     /// The witness for #1216's first half. Two shared-tree workers commit
