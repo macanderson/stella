@@ -316,9 +316,15 @@ mod tests {
         assert_eq!(row.expires_in_ms, -120_000);
         assert!(!row.live);
 
-        // A claim minted by a clock ahead of ours must not wrap into the past.
+        // A claim minted by a clock ahead of ours must not wrap: an expiry in
+        // the far future stays far in the future (positive, saturated rather
+        // than overflowed), and an acquisition in the far future reads as
+        // negative time held — which is nonsense to a human, and exactly the
+        // nonsense that says "these two clocks disagree" instead of quietly
+        // presenting a lapsed claim as live.
         let skewed = ClaimRow::read(&claim("issue:1", "run-a", u64::MAX, u64::MAX), 0);
-        assert!(skewed.expires_in_ms < 0 && skewed.held_for_ms < 0);
+        assert_eq!(skewed.expires_in_ms, i64::MAX);
+        assert!(skewed.held_for_ms < 0);
     }
 
     #[test]
