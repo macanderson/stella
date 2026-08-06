@@ -17,17 +17,17 @@
 │00:00  lead  [tool] read_file()                                                                                                                               │
 │00:00  lead  [tool] ok in 42ms                                                                                                                                │
 │00:00  lead  [file] modified apps/app/automations/page.tsx +4/-1                                                                                              │
-│00:00  lead  [spend] glm-5.2 $0.0180      ┌ plan review ───────────────────────────────────────────────────────────┐                                          │
-│00:00  lead  [spend] $0.0390              │Refactor the automations store into a shared workspace package          │                                          │
-│00:00  lead  [verdict] oracle: pass on new│                                                                        │                                          │
-│00:00  lead  [verdict] oracle: pass on new│ ○  1. extract types                                                    │                                          │
-│00:00  lead  [·] tasks 5/7                │ ○  2. move hooks                                                       │                                          │
-│00:00  sub:auth  [stage] wire the automati│ ○  3. update 9 imports                                                 │                                          │
-│00:00  sub:auth  [stage] execute          │                                                                        │                                          │
-│00:00  sub:auth  [tool] grep()            │3 steps  ·  ~11 files  ·  est. ~$0.42                                   │                                          │
-│00:00  sub:auth  [file] created apps/api/r│                                                                        │                                          │
-│00:00  sub:auth  [spend] glm-5.2 $0.0110  │a approve    t trim    r refine    x abort                              │                                          │
-│00:00  sub:auth  [spend] $0.0110          └───────────────────────────────────── one keypress decides · esc aborts ┘                                          │
+│00:00  lead  [spend] glm-5.2 $0.0180                                                                                                                          │
+│00:00  lead  [spend] $0.0390                                                                                                                                  │
+│00:00  lead  [verdict] oracle: pass on new                                                                                                                    │
+│00:00  lead  [verdict] oracle: pass on new                                                                                                                    │
+│00:00  lead  [·] tasks 5/7                                                                                                                                    │
+│00:00  sub:auth  [stage] wire the automations triggers API                                                                                                    │
+│00:00  sub:auth  [stage] execute                                                                                                                              │
+│00:00  sub:auth  [tool] grep()                                                                                                                                │
+│00:00  sub:auth  [file] created apps/api/routes/v1/automations.ts +3/-0                                                                                       │
+│00:00  sub:auth  [spend] glm-5.2 $0.0110                                                                                                                      │
+│00:00  sub:auth  [spend] $0.0110                                                                                                                              │
 │00:00  sub:auth  [·] Which auth guard should the triggers route use?                                                                                          │
 │00:00  sub:ci  [stage] verify                                                                                                                                 │
 │00:00  sub:ci  [verdict] passed                                                                                                                               │

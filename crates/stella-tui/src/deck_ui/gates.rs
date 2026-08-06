@@ -95,7 +95,13 @@ pub(super) fn handle_focused_gates(
     // same carve-out the hunk card makes. (`!` shell lines, which the typed
     // flow used to carve out, do not: the composer is unreachable while a
     // modal owns the keyboard. Abort first, or answer.)
-    if entry.model.pending_scope_review.is_some() && !ui.scope_answered.contains(agent) {
+    // Asked through `pending` rather than re-derived here. The predicate's own
+    // doc promises the renderer, this handler and the cursor-suppression check
+    // "can never disagree", and that only holds if all three ask it — a copy of
+    // the condition is a promise that decays on the next edit to either. It
+    // also carries the Session-tab scope, so the dialog can never own the
+    // keyboard on a tab that is not drawing it.
+    if crate::views::scope_dialog::pending(model, ui).is_some() {
         // Note-entry (`r` was pressed): the dialog is a text input until `⏎`
         // sends the note or Esc returns to the options.
         if let Some(note) = ui.scope_note.as_mut() {
