@@ -41,7 +41,7 @@ GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 # CONTRIBUTING.md to the real list instead of a hand-copied one. Both documents
 # had already re-rotted twice, in the same direction each time: a guard was
 # added here and the prose kept the old count (#1437).
-GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test
+GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test self-driving-test
 
 .PHONY: help
 help: ## Show this help
@@ -297,8 +297,15 @@ impacted-test: ## Test the gate-scoping script (hermetic; not part of `gate`)
 	./scripts/test-impacted-crates.sh
 
 .PHONY: self-driving-test
-self-driving-test: ## Test the self-driving control logic — digest, AIMD, aperture, run lifecycle (hermetic; not part of `gate`)
-	./scripts/test-self-driving.sh
+# Pins STELLA_BIN rather than letting the harness locate one. Its own
+# `locate_stella` prefers target/release over target/debug, so a stale release
+# build silently wins over the code under test — three cases went red against a
+# months-old binary that predated the command they exercised, and the harness
+# does not say which binary it measured (#1753). The gate must test what the
+# gate just built.
+self-driving-test: ## Test the self-driving control logic — digest, AIMD, aperture, run lifecycle (hermetic)
+	cargo build -q -p stella-cli --bin stella
+	STELLA_BIN="$(CURDIR)/target/debug/stella" ./scripts/test-self-driving.sh
 
 .PHONY: smoke-artifact-test
 smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic broken artifacts (hermetic; not part of `gate`)
