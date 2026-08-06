@@ -150,6 +150,42 @@ def test_manifest_missing_is_empty_not_an_error(tmp_path):
     assert load_manifest(tmp_path) == []
 
 
+def test_the_workspace_round_trips(tmp_path):
+    """Replay must apply a patch where it was taken, not where it guesses.
+
+    Capture probes a container the agent has lived in; replay probes a fresh
+    one from the pristine image, where a directory the agent created does not
+    exist. When the two disagreed, the patch applied cleanly to the wrong
+    directory and every probe read "did not pass" — reported as
+    `flip_index=None`, i.e. "the agent never solved it".
+    """
+    snap = tmp_path / SNAPSHOT_DIRNAME
+    snap.mkdir(parents=True)
+    entry = SnapshotEntry(
+        index=0, at=1.0, sha="abc", patch="0000.patch", elapsed=0.0, workspace="/app"
+    )
+    (snap / "manifest.jsonl").write_text(
+        json.dumps(entry.to_json()) + "\n", encoding="utf-8"
+    )
+    assert load_manifest(tmp_path)[0].workspace == "/app"
+
+
+def test_a_manifest_without_a_workspace_still_loads(tmp_path):
+    """Manifests written before the field existed must keep working."""
+    snap = tmp_path / SNAPSHOT_DIRNAME
+    snap.mkdir(parents=True)
+    (snap / "manifest.jsonl").write_text(
+        json.dumps(
+            {"index": 0, "at": 1.0, "sha": "abc", "patch": None, "elapsed": 0.0}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    loaded = load_manifest(tmp_path)
+    assert len(loaded) == 1
+    assert loaded[0].workspace == ""  # replay falls back to probing
+
+
 def test_unpatched_indices_flags_snapshots_identical_to_the_first():
     entries = list(_entries(3))
     entries[0] = SnapshotEntry(index=0, at=1.0, sha="a", patch=None, elapsed=0.0)
