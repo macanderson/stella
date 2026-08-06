@@ -990,28 +990,35 @@ const LOCK_FD_SCAN_LIMIT: i32 = 64;
 ///
 /// A no-op in an unsupervised process, and harmless where a surface already
 /// wrote its own answer: `SessionPresence::finish` runs first on the two paths
-/// that have one, and writes the same value. This is what covers the paths
-/// that do not — `stella fleet`, and any future long-running verb that is
-/// handed to the supervisor before it grows a session presence.
-pub(crate) fn record_outcome_if_supervised(ok: bool) {
+/// that have one, and this write lands after it (agreeing on every outcome
+/// except a deliberate stop, where this one knows better — the presence sees
+/// only a bool, #1653). This is what covers the paths that do not —
+/// `stella fleet`, and any future long-running verb that is handed to the
+/// supervisor before it grows a session presence.
+pub(crate) fn record_outcome_if_supervised(outcome: Result<(), &crate::failure::CliFailure>) {
     let Some(id) = supervised_id() else {
         return;
     };
-    let _ = SessionRegistry::open_default().set_status(&id, outcome_status(ok));
+    let _ = SessionRegistry::open_default().set_status(&id, outcome_status(outcome));
 }
 
-/// The terminal status a finished run records.
+/// The terminal status a finished run records, from the run's own terminal
+/// answer — not a bool, which is exactly the collapse that used to record a
+/// deliberate stop as a crash (#1653).
 ///
 /// A signal is not a failure: the run was stopped, and recording it as an
 /// error would put a deliberate `stella daemon stop` in the registry beside
-/// the runs that genuinely broke. Shared with the resume driver
-/// (`crate::agent::resume`), which writes its own terminal status for the
-/// hand-run `--foreground` case no supervised env var covers.
-pub(crate) fn outcome_status(ok: bool) -> SessionStatus {
-    match (ok, crate::signals::interrupted_exit_code()) {
+/// the runs that genuinely broke. The same reasoning gives a deliberate stop
+/// (stuck-loop escalation, step cap, enforced budget — the failures that exit
+/// `3`) its own status beside `Cancelled`, never `Error`. Shared with the
+/// resume driver (`crate::agent::resume`), which writes its own terminal
+/// status for the hand-run `--foreground` case no supervised env var covers.
+pub(crate) fn outcome_status(outcome: Result<(), &crate::failure::CliFailure>) -> SessionStatus {
+    match (outcome, crate::signals::interrupted_exit_code()) {
         (_, Some(_)) => SessionStatus::Cancelled,
-        (true, None) => SessionStatus::Complete,
-        (false, None) => SessionStatus::Error,
+        (Ok(()), None) => SessionStatus::Complete,
+        (Err(failure), None) if failure.is_deliberate_stop() => SessionStatus::Stopped,
+        (Err(_), None) => SessionStatus::Error,
     }
 }
 
