@@ -9,8 +9,10 @@
 //! drives) a real, typed verdict it can act on early: steer or abort with
 //! a clear reason instead of grinding to the cap.
 //!
-//! Three failure modes are detected, matching real agent stuck-loop
-//! signatures:
+//! Four failure modes are detected, matching real agent stuck-loop
+//! signatures. The first three read a **contiguous suffix** and reset at the
+//! first mismatch; the fourth exists because that is a blind spot they all
+//! share (#1851):
 //!
 //! 1. **Exact repeat** — the same tool called with byte-identical input,
 //!    over and over (`read_file` on the same path, `bash` re-running the
@@ -31,6 +33,16 @@
 //!    reshuffling (`a|b|c|a|b` → `a|b|c|a`), 38 consecutive calls returning
 //!    the same 906 bytes. Varying the arguments is not progress; learning
 //!    something is, and byte-identical output proves nothing was learned.
+//! 4. **Interleaved repeat** — one identical call (same tool, same input,
+//!    same output) recurring across the window with *other work in between*.
+//!    Invisible to all three above precisely because they read a contiguous
+//!    suffix: an agent alternating a failing `cargo test` with a varying
+//!    `read_file` has period 2 with one varying element, so every one of them
+//!    resets at offset 1 and the turn spins to `max_steps` unsteered. This is
+//!    the shape a real wedge takes — re-run the failing test, peek at a
+//!    different file, repeat. It is guarded by `window_is_progressing` so it
+//!    cannot fire on correct polling, where a repeating spacer sits beside a
+//!    query that IS answering differently each round.
 //!
 //! **Progress is part of the loop definition.** A repeat or cycle only
 //! counts when the *outputs* are byte-identical too: identical input with
@@ -131,6 +143,17 @@ pub struct LoopDetectionConfig {
     /// detector will speak. Six consecutive searches that each came back
     /// with the same bytes is a model turning knobs, not one exploring.
     pub stagnation_threshold: usize,
+    /// Occurrences of one identical call — same tool, same input, same output
+    /// — anywhere in the window, required to flag an interleaved repeat.
+    /// `0` or `1` disable the check.
+    ///
+    /// Equal to [`Self::exact_repeat_threshold`], not looser, and that is the
+    /// point. Each occurrence is exactly as strong as an exact repeat's: the
+    /// same call producing the same result taught the model nothing, whether
+    /// or not something else happened in between. Interleaving does not
+    /// weaken the evidence — it only hides it from a scan that reads a
+    /// contiguous suffix, which is what every other check here does.
+    pub interleaved_repeat_threshold: usize,
 }
 
 impl Default for LoopDetectionConfig {
@@ -153,6 +176,7 @@ impl Default for LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 3,
             stagnation_threshold: 6,
+            interleaved_repeat_threshold: 3,
         }
     }
 }
@@ -196,6 +220,22 @@ pub enum LoopVerdict {
     /// no claim about the *shape* of the repetition, only that the tool
     /// stopped being informative.
     Stagnant { tool: String, count: usize },
+    /// One identical call — same tool, same input, byte-identical output —
+    /// recurring across the window with other work in between.
+    ///
+    /// The shape every other check here is blind to, because they all read a
+    /// contiguous suffix and reset at the first mismatch. An agent
+    /// alternating a failing `cargo test` with a varying `read_file` has
+    /// period 2 with one varying element: exact-repeat resets at offset 1,
+    /// short-cycle breaks on the mismatched element, stagnation's run ends
+    /// there too — and the turn spins to `max_steps` unsteered. That is what
+    /// a real wedge looks like: re-run the failing test, peek at a different
+    /// file, repeat (#1851).
+    InterleavedRepeat {
+        tool: String,
+        input: serde_json::Value,
+        count: usize,
+    },
 }
 
 impl LoopVerdict {
@@ -237,6 +277,14 @@ impl LoopVerdict {
                  returned byte-identical output — varying the arguments is not learning \
                  anything, so this tool has nothing left to tell you here"
             )),
+            LoopVerdict::InterleavedRepeat { tool, input, count } => Some(format!(
+                "the same `{tool}` call with identical arguments has run {count} times in \
+                 this turn — not consecutively, but with other work in between — and \
+                 returned byte-identical output every time. The calls between it are not \
+                 making it say anything new, so repeating it cannot be what unblocks you \
+                 (input: {})",
+                truncate(&input.to_string(), MAX_DESCRIBED_INPUT)
+            )),
         }
     }
 
@@ -263,6 +311,15 @@ impl LoopVerdict {
             LoopVerdict::Stagnant { tool, .. } => Some(LoopIdentity {
                 tools: vec![tool.clone()],
                 inputs: Some(Vec::new()),
+            }),
+            // Same identity shape as an exact repeat, and deliberately so: it
+            // is the same loop, seen through a scan that tolerates gaps. A
+            // turn that steers on the interleaved rung and then trips the
+            // contiguous one must be recognised as the SAME loop, or the
+            // escalation ladder would restart and steer twice for one wedge.
+            LoopVerdict::InterleavedRepeat { tool, input, .. } => Some(LoopIdentity {
+                tools: vec![tool.clone()],
+                inputs: Some(vec![input.to_string()]),
             }),
         }
     }
@@ -422,10 +479,84 @@ pub fn detect_loop(records: &[CallRecord<'_>], config: LoopDetectionConfig) -> L
     if let Some(verdict) = detect_short_cycle(records, config.short_cycle_repeats) {
         return verdict;
     }
+    if let Some(verdict) = detect_interleaved_repeat(records, config.interleaved_repeat_threshold) {
+        return verdict;
+    }
     if let Some(verdict) = detect_stagnation(records, config.stagnation_threshold) {
         return verdict;
     }
     LoopVerdict::NoLoop
+}
+
+/// Count occurrences of the last record ANYWHERE in the window — not only in
+/// a trailing run — and report `InterleavedRepeat` if that count is
+/// `>= threshold`. `threshold < 2` and empty `records` both return `None`.
+///
+/// The one check here that does not read a contiguous suffix, which is the
+/// whole reason it exists: every other detector resets at the first mismatch,
+/// so a single interleaved call blinds all three (#1851).
+///
+/// Placed AFTER exact-repeat and short-cycle and BEFORE stagnation, which is
+/// the same "tightest description of the evidence wins" ordering the rest of
+/// `detect_loop` follows. A contiguous run is already an exact repeat and is
+/// reported as one; this claims strictly more than stagnation (identical
+/// input AND output, versus same tool and output with the arguments moving),
+/// so it would be swallowed if stagnation ran first.
+///
+/// `same_record` carries the unresolved-output rule, so a trailing call whose
+/// result is not in the window counts zero and never fires — a loop is only
+/// ever PROVEN by observed outputs.
+fn detect_interleaved_repeat(records: &[CallRecord<'_>], threshold: usize) -> Option<LoopVerdict> {
+    if threshold < 2 {
+        return None;
+    }
+    let last = records.last()?;
+    let count = records
+        .iter()
+        .filter(|record| same_record(record, last))
+        .count();
+    if count < threshold {
+        return None;
+    }
+    if window_is_progressing(records) {
+        return None;
+    }
+    Some(LoopVerdict::InterleavedRepeat {
+        tool: last.call.name.clone(),
+        input: last.call.input.clone(),
+        count,
+    })
+}
+
+/// Whether anything in this window is producing NEW information: the same
+/// query, asked twice, answering differently.
+///
+/// This is the guard that keeps the gap-tolerant rung from steering a working
+/// agent, and it is not hypothetical — the existing suite caught the shape.
+/// Correct polling alternates `read_output` (same handle, new bytes every
+/// time) with `bash sleep 5` (same command, empty output every time). The
+/// sleep is a SPACER: it repeats identically by design, so counting its
+/// occurrences flags a turn that is streaming a build log perfectly well.
+///
+/// The discriminator is not "did anything repeat" but "did any repeated query
+/// answer differently". A `read_output` whose bytes change is a turn learning
+/// something; a `read_file` on a *different* path each round is not the same
+/// query at all, and so is not evidence of progress — which is exactly why
+/// the wedge shape (re-run the failing test, peek at a different file) still
+/// trips the rung.
+///
+/// O(n²) over a window of a few dozen records, which is what
+/// [`detect_loop`]'s contract already assumes callers hand in.
+fn window_is_progressing(records: &[CallRecord<'_>]) -> bool {
+    records.iter().enumerate().any(|(i, a)| {
+        records[i + 1..].iter().any(|b| {
+            a.call.name == b.call.name
+                && a.call.input == b.call.input
+                && a.output.is_some()
+                && b.output.is_some()
+                && !same_output(a, b)
+        })
+    })
 }
 
 /// Count the trailing run of records identical (by [`same_record`]) to the

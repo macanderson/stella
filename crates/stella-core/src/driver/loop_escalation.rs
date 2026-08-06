@@ -74,6 +74,14 @@ pub(super) fn check_loop_detection(
             *repeats,
         ),
         LoopVerdict::Stagnant { tool, count } => ("stagnation", vec![tool.clone()], *count),
+        // A distinct `kind` rather than folding into `exact_repeat`: a
+        // receipt reading these should be able to tell "the same call three
+        // times in a row" from "three times with other work between them",
+        // because they are different pathologies and the second is the one
+        // no contiguous scan can see (#1851).
+        LoopVerdict::InterleavedRepeat { tool, count, .. } => {
+            ("interleaved_repeat", vec![tool.clone()], *count)
+        }
     };
     let evidence = verdict
         .evidence()
