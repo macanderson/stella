@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Hermetic tests for the fullauto control logic.
+# Hermetic tests for the self-driving control logic.
 #
-# Everything here runs against a throwaway $FULLAUTO_STATE_DIR: no network, no
+# Everything here runs against a throwaway $SELF_DRIVING_STATE_DIR: no network, no
 # `gh`, no writes outside the temp tree. Deliberately NOT part of `make gate` —
 # same posture as `impacted-test` and `dev-env-test`.
 #
-#   make fullauto-test        # or: scripts/test-fullauto.sh
+#   make self-driving-test        # or: scripts/test-self-driving.sh
 #
 # The cases here are the ones whose failure modes are SILENT and PERMANENT: a
 # digest that over-normalizes merges two defects and the second is never filed;
@@ -16,13 +16,13 @@
 #
 # Covers #1547: the seen-digest dedup oracle, the AIMD controller, the
 # per-lens dry streak, the governor's whole tier ladder (the probes are pinned
-# with FULLAUTO_PROBE_* so the same cases pass on a loaded laptop and a bare
+# with SELF_DRIVING_PROBE_* so the same cases pass on a loaded laptop and a bare
 # CI runner), and queue ranking (a stub `gh` first on PATH serves fixtures, so
 # "no network" holds even where the real `gh` is installed). The observatory
 # half of the same contract is tested in
-# crates/stella-observatory/src/fullauto.rs.
+# crates/stella-observatory/src/self-driving.rs.
 #
-# Since #1548 the ported verbs delegate to `stella fullauto`, so the one thing
+# Since #1548 the ported verbs delegate to `stella self-driving`, so the one thing
 # this suite needs beyond a shell is a stella binary (located or built by
 # `locate_stella` below; pin one with STELLA_BIN). The same checks that pinned
 # the shell implementation now pin the Rust port through the delegation map —
@@ -34,7 +34,7 @@
 # starting.
 set -uo pipefail
 
-FA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/fullauto.sh"
+FA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/self-driving.sh"
 readonly FA
 ROOT="$(mktemp -d)"
 readonly ROOT
@@ -51,7 +51,7 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 # seen-set or ledger decide a later one's result.
 fa() {
   local case_dir="$1"; shift
-  FULLAUTO_STATE_DIR="$ROOT/$case_dir" "$FA" "$@"
+  SELF_DRIVING_STATE_DIR="$ROOT/$case_dir" "$FA" "$@"
 }
 
 check_eq() {
@@ -59,7 +59,7 @@ check_eq() {
   if [ "$want" = "$got" ]; then ok "$what"; else bad "$what (want '$want', got '$got')"; fi
 }
 
-# The ported verbs delegate to `stella fullauto` (#1548), so this suite is an
+# The ported verbs delegate to `stella self-driving` (#1548), so this suite is an
 # end-to-end test of the BINARY through the wrapper's exec map — the same
 # checks that pinned the shell implementation now pin the Rust one. Locate a
 # binary, or build one (debug: correctness, not speed, is under test here).
@@ -70,11 +70,11 @@ locate_stella() {
   for candidate in "$root/target/release/stella" "$root/target/debug/stella"; do
     [ -x "$candidate" ] && { printf '%s' "$candidate"; return 0; }
   done
-  echo "fullauto-test: no stella binary found; building one (cargo build -p stella-cli)…" >&2
+  echo "self-driving-test: no stella binary found; building one (cargo build -p stella-cli)…" >&2
   (cd "$root" && cargo build -q -p stella-cli --bin stella) >&2 || return 1
   printf '%s' "$root/target/debug/stella"
 }
-STELLA="$(locate_stella)" || { echo "fullauto-test: cannot obtain a stella binary" >&2; exit 1; }
+STELLA="$(locate_stella)" || { echo "self-driving-test: cannot obtain a stella binary" >&2; exit 1; }
 mkdir -p "$ROOT/stella-bin"
 ln -sf "$STELLA" "$ROOT/stella-bin/stella"
 # In front of the system PATH so the wrapper's `stella` resolves to the build
@@ -91,11 +91,19 @@ export PATH
 # $GH_FIX_QUEUE. The `:?` on the queue fixture is a tripwire: a case that
 # reaches it without declaring a fixture is a case that thought it was not
 # touching gh at all.
+#
+# The `--version` arm answers a PROBE, not a query: `demand()` gates every
+# count behind `gh_available()`, which shells out to `gh --version` and reads
+# the exit status. Without this arm the stub fell through to its catch-all and
+# exited 1, so `plan` saw an empty queue and skipped the clamp entirely — the
+# three demand-rung cases below were red for that reason alone, and neither
+# the clamp nor the P0 rescue they name was ever actually exercised.
 STUB_BIN="$ROOT/bin"
 mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/gh" <<'SH'
 #!/bin/sh
 case "$*" in
+  *"--version"*)              echo "gh version 2.0.0 (stub)" ;;
   *"--label bug --label P0"*) printf '%s\n' "${GH_FIX_P0:-0}" ;;
   *"--label bug"*)            printf '%s\n' "${GH_FIX_BUGS:-0}" ;;
   *"issue list"*)             cat "${GH_FIX_QUEUE:?stub gh: no queue fixture declared}" ;;
@@ -194,7 +202,7 @@ fa runs cycle-end --cycle 1 --fixed 2 --new 1 --outcome ok >/dev/null 2>&1
 still="$(fa runs runs | awk '/^r-/ {print $2}')"
 check_eq "running" "$still" "a completed CYCLE does not end the RUN"
 
-# The bug a live fullauto cycle found in this file: `str.isdigit()` is true for
+# The bug a live self-driving cycle found in this file: `str.isdigit()` is true for
 # characters `int()` refuses (superscripts), the ValueError took the whole
 # record with it, and the run then read `crashed` to every reader forever.
 fa sup run start >/dev/null 2>&1
@@ -223,7 +231,7 @@ head_ "daemon — a stop that does not stop costs real money"
 # including an orphan a previous failing run of this test left behind. That
 # turns a working daemon into a red test and sends the reader hunting a bug
 # that is not there. (Both happened while writing this.)
-FULLAUTO_STATE_DIR="$ROOT/dmn" FULLAUTO_CYCLE_CMD="sleep 120" \
+SELF_DRIVING_STATE_DIR="$ROOT/dmn" SELF_DRIVING_CYCLE_CMD="sleep 120" \
   "$FA" daemon start 60 >/dev/null 2>&1
 sleep 3
 cycle_pid="$(python3 -c 'import json,sys
@@ -235,7 +243,7 @@ else
   bad "the daemon never started (or never recorded) its cycle child"
 fi
 
-stop_out="$(FULLAUTO_STATE_DIR="$ROOT/dmn" "$FA" daemon stop 2>&1)"
+stop_out="$(SELF_DRIVING_STATE_DIR="$ROOT/dmn" "$FA" daemon stop 2>&1)"
 sleep 1
 if [ -n "$cycle_pid" ] && kill -0 "$cycle_pid" 2>/dev/null; then
   bad "daemon stop ORPHANED the in-flight cycle (pid $cycle_pid still running, still spending)"
@@ -250,7 +258,7 @@ else
   ok "daemon stop lets the shutdown handler finish instead of racing it"
 fi
 
-dmn_status="$(FULLAUTO_STATE_DIR="$ROOT/dmn" "$FA" runs | awk '/^r-/ {print $2}')"
+dmn_status="$(SELF_DRIVING_STATE_DIR="$ROOT/dmn" "$FA" runs | awk '/^r-/ {print $2}')"
 check_eq "cancelled" "$dmn_status" "a hand-stopped run records cancelled, not crashed"
 
 # ---------------------------------------------------------------------------
@@ -267,19 +275,19 @@ want_plan() { # want_plan <name> <case_dir> "<tier build par scope bench batch a
   local name="$1" dir="$2" want="$3"
   shift 3
   local got
-  got="$(env PATH="$STUB_BIN:$PATH" FULLAUTO_STATE_DIR="$ROOT/$dir" \
-      FULLAUTO_PROBE_CPU=8 FULLAUTO_PROBE_LOAD1=1 \
-      FULLAUTO_PROBE_MEM_TOTAL_GB=16 FULLAUTO_PROBE_MEM_FREE_GB=8 \
-      FULLAUTO_PROBE_DISK_FREE_GB=50 FULLAUTO_PROBE_ON_BATTERY=0 \
-      FULLAUTO_PROBE_CONTENTION=0 "$@" "$FA" plan \
+  got="$(env PATH="$STUB_BIN:$PATH" SELF_DRIVING_STATE_DIR="$ROOT/$dir" \
+      SELF_DRIVING_PROBE_CPU=8 SELF_DRIVING_PROBE_LOAD1=1 \
+      SELF_DRIVING_PROBE_MEM_TOTAL_GB=16 SELF_DRIVING_PROBE_MEM_FREE_GB=8 \
+      SELF_DRIVING_PROBE_DISK_FREE_GB=50 SELF_DRIVING_PROBE_ON_BATTERY=0 \
+      SELF_DRIVING_PROBE_CONTENTION=0 "$@" "$FA" plan \
     | awk -F= '
-        $1 == "FULLAUTO_TIER"        { t = $2 }
-        $1 == "FULLAUTO_LOCAL_BUILD" { b = $2 }
-        $1 == "FULLAUTO_PARALLEL"    { p = $2 }
-        $1 == "FULLAUTO_SCOPE"       { s = $2 }
-        $1 == "FULLAUTO_BENCH"       { n = $2 }
-        $1 == "FULLAUTO_BATCH"       { a = $2 }
-        $1 == "FULLAUTO_AUDIT"       { d = $2 }
+        $1 == "SELF_DRIVING_TIER"        { t = $2 }
+        $1 == "SELF_DRIVING_LOCAL_BUILD" { b = $2 }
+        $1 == "SELF_DRIVING_PARALLEL"    { p = $2 }
+        $1 == "SELF_DRIVING_SCOPE"       { s = $2 }
+        $1 == "SELF_DRIVING_BENCH"       { n = $2 }
+        $1 == "SELF_DRIVING_BATCH"       { a = $2 }
+        $1 == "SELF_DRIVING_AUDIT"       { d = $2 }
         END { print t, b, p, s, n, a, d }')"
   check_eq "$want" "$got" "$name"
 }
@@ -289,26 +297,26 @@ want_plan "a healthy mid box runs a normal cycle at the calibrated ceilings" \
   g-n1 "normal 1 2 impacted loop 20 deep"
 want_plan "a big idle box earns the heavy tier and the measured match" \
   g-h1 "heavy 1 2 workspace h2h 20 deep" \
-  FULLAUTO_PROBE_MEM_TOTAL_GB=64 FULLAUTO_PROBE_MEM_FREE_GB=32 FULLAUTO_PROBE_DISK_FREE_GB=200
+  SELF_DRIVING_PROBE_MEM_TOTAL_GB=64 SELF_DRIVING_PROBE_MEM_FREE_GB=32 SELF_DRIVING_PROBE_DISK_FREE_GB=200
 want_plan "...but only when it is actually idle (load at cpu/2 is not)" \
   g-h2 "normal 1 2 impacted loop 20 deep" \
-  FULLAUTO_PROBE_MEM_TOTAL_GB=64 FULLAUTO_PROBE_MEM_FREE_GB=32 FULLAUTO_PROBE_DISK_FREE_GB=200 \
-  FULLAUTO_PROBE_LOAD1=4
+  SELF_DRIVING_PROBE_MEM_TOTAL_GB=64 SELF_DRIVING_PROBE_MEM_FREE_GB=32 SELF_DRIVING_PROBE_DISK_FREE_GB=200 \
+  SELF_DRIVING_PROBE_LOAD1=4
 want_plan "a breached disk floor forbids the local build and sheds the bench" \
-  g-d1 "light 0 2 ci off 5 deep" FULLAUTO_PROBE_DISK_FREE_GB=5
+  g-d1 "light 0 2 ci off 5 deep" SELF_DRIVING_PROBE_DISK_FREE_GB=5
 want_plan "the floor outranks heavy-class hardware — the first rung wins" \
   g-d2 "light 0 2 ci off 5 deep" \
-  FULLAUTO_PROBE_MEM_TOTAL_GB=64 FULLAUTO_PROBE_MEM_FREE_GB=32 FULLAUTO_PROBE_DISK_FREE_GB=5
+  SELF_DRIVING_PROBE_MEM_TOTAL_GB=64 SELF_DRIVING_PROBE_MEM_FREE_GB=32 SELF_DRIVING_PROBE_DISK_FREE_GB=5
 want_plan "the floor itself is a knob — raised above real free space it trips" \
-  g-d3 "light 0 2 ci off 5 deep" FULLAUTO_DISK_FLOOR_GB=999999
+  g-d3 "light 0 2 ci off 5 deep" SELF_DRIVING_DISK_FLOOR_GB=999999
 want_plan "a busy box gives up the build AND drops to serial" \
-  g-b1 "light 0 1 ci off 5 deep" FULLAUTO_PROBE_CONTENTION=1
+  g-b1 "light 0 1 ci off 5 deep" SELF_DRIVING_PROBE_CONTENTION=1
 want_plan "a breached memory floor reads like a busy box" \
-  g-m1 "light 0 1 ci off 5 deep" FULLAUTO_PROBE_MEM_FREE_GB=2
+  g-m1 "light 0 1 ci off 5 deep" SELF_DRIVING_PROBE_MEM_FREE_GB=2
 want_plan "battery sheds compute but keeps the local build" \
-  g-p1 "light 1 1 impacted off 5 deep" FULLAUTO_PROBE_ON_BATTERY=1
+  g-p1 "light 1 1 impacted off 5 deep" SELF_DRIVING_PROBE_ON_BATTERY=1
 want_plan "a saturated box narrows concurrency and nothing else" \
-  g-l1 "light 1 1 impacted loop 5 deep" FULLAUTO_PROBE_LOAD1=8
+  g-l1 "light 1 1 impacted loop 5 deep" SELF_DRIVING_PROBE_LOAD1=8
 
 # Demand rungs: the queue can shrink the batch, and a P0 can rescue a light
 # cycle — but demand never upgrades the tier and never widens the batch.
@@ -316,11 +324,11 @@ want_plan "the queue clamps the batch — 3 open defects never earn a batch of 2
   g-q1 "normal 1 2 impacted loop 3 deep" GH_FIX_BUGS=3
 want_plan "a P0 on a light tier buys a minimal fast cycle, not a skipped one" \
   g-q2 "light 1 1 impacted off 2 fast" \
-  FULLAUTO_PROBE_ON_BATTERY=1 GH_FIX_BUGS=3 GH_FIX_P0=2
+  SELF_DRIVING_PROBE_ON_BATTERY=1 GH_FIX_BUGS=3 GH_FIX_P0=2
 want_plan "a P0 on a healthy box changes nothing — the rescue is light-only" \
   g-q3 "normal 1 2 impacted loop 3 deep" GH_FIX_BUGS=3 GH_FIX_P0=2
 want_plan "the light tier caps the batch at 5 whatever the queue holds" \
-  g-q4 "light 1 1 impacted off 5 deep" FULLAUTO_PROBE_ON_BATTERY=1 GH_FIX_BUGS=9
+  g-q4 "light 1 1 impacted off 5 deep" SELF_DRIVING_PROBE_ON_BATTERY=1 GH_FIX_BUGS=9
 
 # ---------------------------------------------------------------------------
 head_ "queue — ranked P0 > P1 > P2, oldest first inside a rank"
@@ -342,7 +350,7 @@ cat > "$QFIX" <<'JSON'
 JSON
 
 queue_numbers() { # queue_numbers <limit>
-  env PATH="$STUB_BIN:$PATH" GH_FIX_QUEUE="$QFIX" FULLAUTO_STATE_DIR="$ROOT/qr" \
+  env PATH="$STUB_BIN:$PATH" GH_FIX_QUEUE="$QFIX" SELF_DRIVING_STATE_DIR="$ROOT/qr" \
     "$FA" queue --format json --limit "$1" \
     | python3 -c 'import json,sys;print(" ".join(str(i["number"]) for i in json.load(sys.stdin)["rows"]))'
 }
@@ -407,8 +415,8 @@ rig_h2h() { # rig_h2h <case_dir> [VAR=v ...] -- [extra h2h flags ...]
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
   [ "${1:-}" = "--" ] && shift
   mkdir -p "$ROOT/$dir"
-  env PATH="$STUB_BIN:$PATH" FULLAUTO_STATE_DIR="$ROOT/$dir" \
-      FULLAUTO_RIG_KEY="$RIG_FIX_KEY" FULLAUTO_MATCH="$RIG_FIX_MATCH" \
+  env PATH="$STUB_BIN:$PATH" SELF_DRIVING_STATE_DIR="$ROOT/$dir" \
+      SELF_DRIVING_RIG_KEY="$RIG_FIX_KEY" SELF_DRIVING_MATCH="$RIG_FIX_MATCH" \
       STUB_LOG="$ROOT/$dir/stub.log" \
       ${envs[@]+"${envs[@]}"} "$FA" bench h2h --rig "$@"
 }
@@ -490,8 +498,8 @@ fi
 # ---------------------------------------------------------------------------
 printf '\n'
 if [ "$fail_n" -eq 0 ]; then
-  printf '\033[32mfullauto-test: OK\033[0m — %s checks passed\n' "$pass_n"
+  printf '\033[32mself-driving-test: OK\033[0m — %s checks passed\n' "$pass_n"
   exit 0
 fi
-printf '\033[31mfullauto-test: FAILED\033[0m — %s passed, %s failed\n' "$pass_n" "$fail_n"
+printf '\033[31mself-driving-test: FAILED\033[0m — %s passed, %s failed\n' "$pass_n" "$fail_n"
 exit 1

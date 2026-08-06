@@ -32,7 +32,7 @@ CARGO_SCOPE ?= --workspace
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
-                    role-names
+                    role-names stat-portability
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The whole gate, in order, as one name. `gate` below is defined *from* this
@@ -277,6 +277,10 @@ left-behind-update: ## Regenerate the left-behind baseline (it should stay empty
 role-names: ## Assert the agent-config role names match across Rust, Python and JS (#1449)
 	@./scripts/check-role-names.sh
 
+.PHONY: stat-portability
+stat-portability: ## Assert file identity is read through MetadataExt, not a raw libc::stat (#1758)
+	@./scripts/check-stat-portability.sh
+
 .PHONY: god-files
 god-files: ## Assert AGENTS.md and the crate READMEs name the baselined god files (#1435)
 	@./scripts/check-god-files.sh
@@ -292,9 +296,17 @@ impacted: ## Print the cargo scope for a diff (RANGE=origin/main..HEAD)
 impacted-test: ## Test the gate-scoping script (hermetic; not part of `gate`)
 	./scripts/test-impacted-crates.sh
 
-.PHONY: fullauto-test
-fullauto-test: ## Test the fullauto control logic — digest, AIMD, aperture, run lifecycle (hermetic; not part of `gate`)
-	./scripts/test-fullauto.sh
+.PHONY: self-driving-test
+self-driving-test: ## Test the self-driving control logic — digest, AIMD, aperture, run lifecycle (hermetic; not part of `gate`)
+	./scripts/test-self-driving.sh
+
+.PHONY: smoke-artifact-test
+smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic broken artifacts (hermetic; not part of `gate`)
+	./scripts/test-smoke-artifact.sh
+
+.PHONY: automerge-nudge-test
+automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not part of `gate`)
+	./scripts/test-automerge-nudge.sh
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)

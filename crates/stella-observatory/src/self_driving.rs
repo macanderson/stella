@@ -1,7 +1,7 @@
-//! The fullauto view: every perpetual-delivery run on this machine, its cycles,
+//! The self-driving view: every perpetual-delivery run on this machine, its cycles,
 //! and the evidence that the loop is improving itself.
 //!
-//! Read from `~/.stella/fullauto/<slug>/`, which fullauto writes as plain JSONL
+//! Read from `~/.stella/self-driving/<slug>/`, which self-driving writes as plain JSONL
 //! and small JSON documents. Nothing here opens a database, and nothing here
 //! writes — the same two rules the rest of this crate lives under, for the same
 //! reason: an observer that mutates what it observes is not an observer.
@@ -27,7 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-/// Loop directories scanned under `~/.stella/fullauto`.
+/// Loop directories scanned under `~/.stella/self-driving`.
 ///
 /// One per repository the user runs the loop against, so a real machine holds a
 /// handful. The bound keeps a pathological or mispointed directory from
@@ -45,18 +45,18 @@ const MAX_JSONL_LINES: usize = 20_000;
 
 /// Seconds without a heartbeat after which a `running` run is reported crashed.
 ///
-/// Generous on purpose, and deliberately equal to fullauto's own
-/// `FULLAUTO_STALE_AFTER_SECS` default: a single model call inside an audit
+/// Generous on purpose, and deliberately equal to self-driving's own
+/// `SELF_DRIVING_STALE_AFTER_SECS` default: a single model call inside an audit
 /// phase legitimately runs for minutes, and calling a live run dead is a worse
 /// error than noticing a dead one late.
 const STALE_AFTER_SECS: i64 = 900;
 
-/// `~/.stella/fullauto` — the root every loop's state directory sits under.
+/// `~/.stella/self-driving` — the root every loop's state directory sits under.
 ///
 /// Resolved through `stella-home` rather than re-derived, so `STELLA_HOME`
 /// moves the observatory's view and the loop's writes together.
 fn state_root() -> Option<PathBuf> {
-    stella_home::stella_home().map(|home| home.join("fullauto"))
+    stella_home::stella_home().map(|home| home.join("self-driving"))
 }
 
 fn now_unix() -> i64 {
@@ -174,7 +174,7 @@ fn load_loops() -> Vec<Loop> {
 ///    *different* run has been orphaned — nothing is driving it.
 /// 2. A run that still holds the live pointer but whose heartbeat has gone
 ///    stale has crashed. The heartbeat is the witness, never the pid: every
-///    fullauto subcommand is its own short-lived process, so a recorded pid is
+///    self-driving subcommand is its own short-lived process, so a recorded pid is
 ///    dead moments after it is written and would declare every run crashed.
 fn fold_runs(l: &Loop) -> Vec<Value> {
     let mut folded: BTreeMap<String, Value> = BTreeMap::new();
@@ -272,7 +272,7 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
 /// completely between them and a dashboard that only said "health: poor" would
 /// send a reader to re-derive all of this by hand.
 ///
-/// Deliberately the same four signals `fullauto metrics` reports, so the page
+/// Deliberately the same four signals `self-driving metrics` reports, so the page
 /// and the terminal never disagree about whether the loop is in trouble.
 fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
     let n = cycles.len() as i64;
@@ -334,7 +334,7 @@ fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
     })
 }
 
-/// `/api/fullauto` — every loop and every run on this machine.
+/// `/api/self-driving` — every loop and every run on this machine.
 ///
 /// The workspace root is used only to mark which loop belongs to the project
 /// the dashboard is currently pointed at; every other loop is still listed,
@@ -389,7 +389,7 @@ pub fn runs(workspace_root: &Path) -> Value {
     })
 }
 
-/// `/api/fullauto-run?id=<run_id>` — the rich drill for one run.
+/// `/api/self-driving-run?id=<run_id>` — the rich drill for one run.
 ///
 /// Returns the run header, every cycle it contains in order, the controller's
 /// trajectory across those cycles, and the self-improvement signals computed
@@ -468,7 +468,7 @@ mod tests {
 
     /// Build a loop state dir under a temporary `STELLA_HOME`.
     ///
-    /// Mirrors exactly what `scripts/fullauto.sh` writes: append-only
+    /// Mirrors exactly what `scripts/self-driving.sh` writes: append-only
     /// `runs.jsonl` and `ledger.jsonl`, plus the single live pointer.
     fn seed(dir: &Path, runs: &[&str], cycles: &[&str], live: Option<&str>) {
         std::fs::create_dir_all(dir).unwrap();
@@ -511,7 +511,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         let stale = now_unix() - (STALE_AFTER_SECS + 60);
         seed(
             &dir,
@@ -542,7 +542,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         let fresh = now_unix();
         seed(
             &dir,
@@ -571,7 +571,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         let fresh = now_unix();
         seed(
             &dir,
@@ -603,7 +603,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         seed(
             &dir,
             &[
@@ -642,7 +642,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         seed(
             &dir,
             &[&run_rec("r-1", "completed")],
