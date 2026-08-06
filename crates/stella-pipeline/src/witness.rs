@@ -499,18 +499,25 @@ fn dotnet_invocation_is_exact(path: &str, args: &[String]) -> bool {
 /// identity must have been observed at the accepted path itself — an
 /// observation the adapter attests was resolved elsewhere (or could not
 /// locate at all) is not the accepted artifact.
+///
+/// Returns the identity it accepted rather than `()`, so the caller that needs
+/// the pinned value gets it *from the proof* instead of re-unwrapping the same
+/// `Option` afterwards (#1789). The unwrap was locally sound and one line from
+/// what proved it, which is exactly how it survived review; making the
+/// signature carry the proof means no future edit between the two lines can
+/// make it unsound again.
 pub fn validate_witness_identity(
     path: &str,
     expected_fingerprint: &str,
-    identity: Option<&ArtifactIdentity>,
-) -> Result<(), WitnessArtifactError> {
+    identity: Option<ArtifactIdentity>,
+) -> Result<ArtifactIdentity, WitnessArtifactError> {
     match identity {
         Some(identity)
             if identity.is_regular_single_link()
                 && identity.path == path
                 && identity.fingerprint == expected_fingerprint =>
         {
-            Ok(())
+            Ok(identity)
         }
         _ => Err(WitnessArtifactError::InvalidIdentity(path.to_string())),
     }
@@ -1214,7 +1221,7 @@ mod tests {
             validate_witness_identity(
                 "tests/authority_witness.rs",
                 "w1",
-                Some(&observed_at_accepted_path)
+                Some(observed_at_accepted_path)
             )
             .is_ok()
         );
@@ -1223,13 +1230,36 @@ mod tests {
             ..identity("w1")
         };
         assert!(
-            validate_witness_identity(
-                "tests/authority_witness.rs",
-                "w1",
-                Some(&observed_elsewhere)
-            )
-            .is_err(),
+            validate_witness_identity("tests/authority_witness.rs", "w1", Some(observed_elsewhere))
+                .is_err(),
             "an identity the adapter attests was resolved elsewhere is not the accepted artifact"
+        );
+    }
+
+    /// **Witness (#1789).** Acceptance hands back the identity it accepted.
+    ///
+    /// The witness stage pinned the grafted artifact by calling this and then
+    /// unwrapping the same `Option` again. That unwrap was sound — this
+    /// function rejects `None` — but soundness proved one line away is the
+    /// shape that decays: any edit between the check and the unwrap makes it a
+    /// panic in the one stage whose entire contract is to degrade rather than
+    /// discard a finished change. Returning the value removes the second read.
+    ///
+    /// Fails to compile on the old signature, which returned `()`.
+    #[test]
+    fn acceptance_yields_the_identity_it_pinned() {
+        let observed = identity("w1");
+        let pinned = validate_witness_identity("tests/authority_witness.rs", "w1", Some(observed))
+            .expect("the identity was observed at the accepted path");
+        assert_eq!(
+            pinned,
+            identity("w1"),
+            "the caller must pin the identity acceptance proved, never a second observation"
+        );
+        assert!(
+            validate_witness_identity("tests/authority_witness.rs", "w1", None).is_err(),
+            "an absent observation is a rejection, which is what makes the caller's \
+             re-unwrap removable rather than merely unlikely"
         );
     }
 
