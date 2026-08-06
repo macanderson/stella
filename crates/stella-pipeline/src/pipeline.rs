@@ -3026,6 +3026,11 @@ impl<'a> Pipeline<'a> {
     /// `mutating_actions` answers "was anything even asked to change", which
     /// nothing can defeat, because it is counted off the calls this pipeline
     /// dispatched rather than off any look at the world.
+    // The eighth parameter (#1798's `opaque_actions`) tipped this over the
+    // lint's threshold; the three tallies are independent by design (doc
+    // comment above), so grouping them to satisfy the count would be shape
+    // without meaning. Tracked for a real revisit in #1809.
+    #[allow(clippy::too_many_arguments)]
     async fn run_engine_turn(
         &self,
         engine: &Engine<'_>,
