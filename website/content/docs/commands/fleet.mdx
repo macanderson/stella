@@ -10,10 +10,11 @@ Run many tasks in parallel in **one shared working tree**, coordinated by cooper
 ```bash
 stella fleet <task>... [--plan <FILE>] [--max-concurrency <N>] [--base-ref <ref>] [--watch] [--no-pipeline]
 stella fleet clean [--dry-run] [--force] [--age <DAYS>] [--base-ref <ref>]
+stella fleet claims [--all] [--format <text|json>]
 ```
 
 <Callout type="info">
-A prompt whose **first word** is exactly a subcommand name (`clean`) is read as that subcommand. Put the prompts after `--` when that happens: `stella fleet -- clean up the dead code`.
+A prompt whose **first word** is exactly a subcommand name (`clean`, `claims`) is read as that subcommand. Put the prompts after `--` when that happens: `stella fleet -- clean up the dead code`.
 </Callout>
 
 ## What it does
@@ -107,6 +108,47 @@ stella fleet clean --age 30 --force   # also month-old dirty/unmerged work — d
     sweep stops rather than guessing if none of the defaults resolve.
   </OptionCard>
 </CardGrid>
+
+## stella fleet claims
+
+A dispatch claim stops two sessions taking the same task, but a claim nobody can read is a claim somebody collides with by hand — which is the failure this machinery was built for. `stella fleet claims` is the read surface: what is claimed, who holds it, how long they have held it, and when the lease lapses.
+
+```bash
+stella fleet claims                   # what this workspace is currently working on
+stella fleet claims --all             # including keys whose holder died or moved on
+stella fleet claims --format json     # the same rows under the versioned query envelope
+```
+
+```text
+Stella — fleet dispatch claims
+
+    ● task:fix-1136   run-8f21a3-41207  held  3m 00s  expires in 12m 00s
+    ○ issue:1136      run-2b90cc-41999  held 18m 04s  lapsed 2m 10s ago
+
+  2 claim(s), 1 live
+```
+
+Read-only and offline: it opens `.stella/private/fleet.db`, never writes to it, and needs no API key. A workspace where no fan-out has ever run reports no claims rather than an error.
+
+There is deliberately **no flag to break someone else's claim**. A lease expires on its own — a session that is killed outright stops holding its keys once the TTL lapses, with nothing to clean up by hand — so "unwedge a stuck claim" is not an operation that needs to exist, and one that did would be a supported way to hand the same task to two workers.
+
+<CardGrid size="md">
+  <OptionCard name="--all">
+    Also list lapsed claims. A live listing answers "what is being worked on"; only this
+    answers "who was last on this, and did they die holding it" — the question a killed
+    session leaves behind. A claim that was *released* cleanly leaves no row at all.
+  </OptionCard>
+  <OptionCard name="--format <text|json>" defaultValue="text">
+    `text` (default) prints the aligned table above; `json` rides the versioned query
+    envelope (`schema_version`, then `rows`), each row carrying `live`, `expires_in_ms`
+    (negative once lapsed) and `held_for_ms` computed against the clock the listing was
+    read with.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="info">
+The claim key is opaque to the lease: a fan-out claims `task:<id>`, and a dispatcher working from a tracker would claim `issue:<n>`. The ledger is **per-workspace**, so it coordinates the sessions sharing one checkout — not two clones on two machines.
+</Callout>
 
 ## Examples
 

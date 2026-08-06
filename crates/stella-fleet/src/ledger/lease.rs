@@ -276,8 +276,7 @@ impl Ledger {
         let claim = self
             .conn
             .query_row(
-                "SELECT claim_key, owner, fence, acquired_at_ms, renewed_at_ms, expires_at_ms \
-                 FROM dispatch_claims WHERE claim_key = ?1",
+                &format!("{CLAIM_SELECT} WHERE claim_key = ?1"),
                 params![claim_key],
                 row_to_claim,
             )
@@ -286,13 +285,40 @@ impl Ledger {
     }
 
     /// Every claim still live at `now_ms`, soonest expiry first — what a
-    /// dispatcher (or a human) reads to see what the fleet is already on.
+    /// dispatcher (or a human, via `stella fleet claims`) reads to see what
+    /// the fleet is already on.
     pub fn live_dispatch_claims(&self, now_ms: u64) -> Result<Vec<DispatchClaim>, LedgerError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT claim_key, owner, fence, acquired_at_ms, renewed_at_ms, expires_at_ms \
-             FROM dispatch_claims WHERE expires_at_ms > ?1 ORDER BY expires_at_ms, claim_key",
-        )?;
-        let rows = stmt.query_map(params![now_ms as i64], row_to_claim)?;
+        self.claims_where(
+            &format!("{CLAIM_SELECT} WHERE expires_at_ms > ?1 ORDER BY expires_at_ms, claim_key"),
+            params![now_ms as i64],
+        )
+    }
+
+    /// Every claim row, live **or lapsed**, soonest expiry first — the read
+    /// behind `stella fleet claims --all`.
+    ///
+    /// The lapsed rows are the reason this exists next to
+    /// [`live_dispatch_claims`](Self::live_dispatch_claims): "who last held
+    /// this, and when did it lapse" is precisely what a human deciding what
+    /// to hand out next asks after a session dies, and a lapsed row survives
+    /// until something re-claims or releases the key. Nothing here is a
+    /// permission — judge each row with [`DispatchClaim::is_live_at`].
+    pub fn all_dispatch_claims(&self) -> Result<Vec<DispatchClaim>, LedgerError> {
+        self.claims_where(
+            &format!("{CLAIM_SELECT} ORDER BY expires_at_ms, claim_key"),
+            params![],
+        )
+    }
+
+    /// Run one `CLAIM_SELECT`-shaped query and collect its rows, so the two
+    /// list readers share their error handling as well as their columns.
+    fn claims_where(
+        &self,
+        sql: &str,
+        args: impl rusqlite::Params,
+    ) -> Result<Vec<DispatchClaim>, LedgerError> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(args, row_to_claim)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -300,6 +326,13 @@ impl Ledger {
         Ok(out)
     }
 }
+
+/// The column list every claim reader selects, in the order [`row_to_claim`]
+/// reads them back. Hoisted for the same reason `row_to_claim` exists: three
+/// readers spelling the same six columns is three chances for one of them to
+/// drift, and a swapped column reads as a valid row rather than an error.
+const CLAIM_SELECT: &str = "SELECT claim_key, owner, fence, acquired_at_ms, renewed_at_ms, \
+                            expires_at_ms FROM dispatch_claims";
 
 /// The one place a `dispatch_claims` row becomes a [`DispatchClaim`], so the
 /// two readers cannot drift in column order.
@@ -582,6 +615,56 @@ mod tests {
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].claim_key, "issue:2");
         assert!(ledger.dispatch_claim("issue:1").unwrap().is_some());
+    }
+
+    /// `all_dispatch_claims` is the lapsed-inclusive listing behind
+    /// `stella fleet claims --all`: the live view answers "what is being
+    /// worked on", and only this one answers "who was last on this, and did
+    /// they die holding it" — the question that survives the session.
+    #[test]
+    fn the_full_listing_keeps_lapsed_claims_the_live_one_drops() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        for (key, ttl) in [("issue:2", 30_000), ("issue:1", 10_000)] {
+            granted(ledger.claim_dispatch(key, "run-a", 1_000, ttl).unwrap());
+        }
+
+        // At 11s `issue:1` has lapsed: the live listing has forgotten it, the
+        // full listing still names its holder.
+        assert_eq!(
+            ledger
+                .live_dispatch_claims(11_000)
+                .unwrap()
+                .iter()
+                .map(|c| c.claim_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["issue:2"]
+        );
+        let all = ledger.all_dispatch_claims().unwrap();
+        assert_eq!(
+            all.iter().map(|c| c.claim_key.as_str()).collect::<Vec<_>>(),
+            vec!["issue:1", "issue:2"],
+            "the full listing keeps lapsed rows, soonest expiry first"
+        );
+        assert!(!all[0].is_live_at(11_000), "issue:1 lapsed at 11s");
+        assert!(all[1].is_live_at(11_000), "issue:2 runs to 31s");
+        assert_eq!(all[0].owner, "run-a");
+
+        // A released key leaves nothing behind — released is not lapsed.
+        let lease = granted(
+            ledger
+                .claim_dispatch("issue:1", "run-b", 11_000, 10_000)
+                .unwrap(),
+        );
+        assert!(ledger.release_dispatch(&lease).unwrap());
+        assert_eq!(
+            ledger
+                .all_dispatch_claims()
+                .unwrap()
+                .iter()
+                .map(|c| c.claim_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["issue:2"]
+        );
     }
 
     /// The claims table reaches a ledger that already exists on disk — the

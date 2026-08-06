@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fleet_gc,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fleet_verbs,
     fullauto_cmd, ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats,
     storage_cmd, tune_cmd, usage_cmd,
 };
@@ -638,13 +638,14 @@ pub(crate) enum Command {
     /// branch is left in place for review — until `stella fleet clean`
     /// reclaims the finished ones.
     ///
-    /// A prompt whose first word is exactly a subcommand name (`clean`) is
-    /// read as that subcommand; pass the prompts after `--` when that bites.
+    /// A prompt whose first word is exactly a subcommand name (`clean`,
+    /// `claims`) is read as that subcommand; pass the prompts after `--`
+    /// when that bites.
     #[command(subcommand_negates_reqs = true)]
     Fleet {
-        /// Maintenance verbs (`clean`) — omit to run a fan-out
+        /// Verbs (`clean`, `claims`) — omit to run a fan-out
         #[command(subcommand)]
-        cmd: Option<fleet_gc::FleetCmd>,
+        cmd: Option<fleet_verbs::FleetCmd>,
 
         /// Task prompts — each becomes an independent task in the SHARED
         /// tree (cooperative claims coordinate writers; pass a plan file
