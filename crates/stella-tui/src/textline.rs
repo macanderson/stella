@@ -664,7 +664,7 @@ pub fn stage_label(stage: StageKind) -> &'static str {
         StageKind::Witness => "witness",
         StageKind::Execute => "execute",
         StageKind::Verify => "verify",
-        StageKind::Verdict => "verifier",
+        StageKind::Verdict => "verdict",
         StageKind::Reflect => "reflect",
         StageKind::ContextWrite => "context write",
         StageKind::Complete => "complete",
@@ -929,6 +929,17 @@ mod tests {
         );
         assert_eq!(file_change_verb(FileChangeKind::Created), "created");
         assert_eq!(crud_letter(FileChangeKind::Deleted), "D");
+    }
+
+    /// The stage after `verify` is `verdict` — never `verifier`, which is the
+    /// *model* that produces it. Naming the stage after its model recreates the
+    /// `verify → verifier` adjacency #1394's rename existed to remove, and it
+    /// put the HUD one word away from the statline, which has always said
+    /// `VERDICT` (#1465).
+    #[test]
+    fn the_verdict_stage_is_never_labelled_after_the_model_that_runs_it() {
+        assert_eq!(stage_label(StageKind::Verify), "verify");
+        assert_eq!(stage_label(StageKind::Verdict), "verdict");
     }
 
     // ── Dispatch coverage ────────────────────────────────────────────────
