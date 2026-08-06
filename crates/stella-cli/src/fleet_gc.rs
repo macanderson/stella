@@ -9,7 +9,7 @@
 //! part of `stella fleet` calls it for you.
 //!
 //! Everything that decides *what may go* lives in
-//! [`stella_fleet::gc`](stella_fleet::gc) behind the `GitCli` port; this
+//! [`stella_fleet::gc`] behind the `GitCli` port; this
 //! module is the flag surface, the ledger read, and the printed report. It is
 //! a sibling of `fleet_cmd.rs` rather than a section of it because that file
 //! is a grandfathered god file closed to growth (AGENTS.md § *God files*).
