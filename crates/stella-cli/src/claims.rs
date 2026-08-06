@@ -379,10 +379,26 @@ mod tests {
                 content: "ok".into(),
             }
         }
+        fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+            std::collections::HashSet::from(["task".to_string()])
+        }
     }
 
     fn store() -> Arc<Store> {
         Arc::new(Store::in_memory().unwrap())
+    }
+
+    /// The tap sits directly under the engine in every deck lane, so a tap
+    /// that swallowed the claim (the default is empty) would serialize
+    /// sibling spawns no matter what the registry advertised.
+    #[test]
+    fn the_claim_tap_forwards_parallel_safe_names() {
+        let inner = Passthrough(Default::default());
+        let tap = ClaimTap::new(&inner, None, "ses-1/lead");
+        assert!(
+            tap.parallel_safe_names().contains("task"),
+            "the inner executor's concurrency claim must survive the tap"
+        );
     }
 
     #[tokio::test]

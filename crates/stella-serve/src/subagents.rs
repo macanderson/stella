@@ -515,6 +515,55 @@ fn slug(description: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A host executor claiming one parallel-safe name.
+    struct ClaimingHost;
+
+    #[async_trait]
+    impl ToolExecutor for ClaimingHost {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
+        fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+            std::collections::HashSet::from(["host_task".to_string()])
+        }
+    }
+
+    /// A dispatcher that refuses everything — the wrapper under test never
+    /// dispatches in this test, so any answer would do.
+    struct RefusingDispatcher;
+
+    #[async_trait]
+    impl SubAgentDispatcher for RefusingDispatcher {
+        async fn dispatch(&self, _spec: SubAgentSpec) -> SubAgentOutcome {
+            SubAgentOutcome::Refused {
+                reason: "not in this test".into(),
+            }
+        }
+    }
+
+    /// The wrapper sits between the served engine and the host's executor, so
+    /// one that swallowed the claim (the default is empty) would serialize
+    /// the host's sibling spawns on every served turn.
+    #[test]
+    fn delegating_tools_forward_parallel_safe_names() {
+        let host = ClaimingHost;
+        let tools = DelegatingTools::new(
+            &host,
+            Arc::new(RefusingDispatcher),
+            4,
+            stella_core::subagent::SubAgentSpendLedger::default(),
+        );
+        assert!(
+            tools.parallel_safe_names().contains("host_task"),
+            "the host executor's concurrency claim must survive the wrapper"
+        );
+    }
+
     /// The operator's ceilings bound every caller-settable knob, and a
     /// deployment that has not opted in gets no children whatever the request
     /// asks for.

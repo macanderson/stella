@@ -34,6 +34,11 @@ impl ToolExecutor for LedgerBase {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         stella_core::subagent::drain_sub_agent_spend(&self.0)
     }
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        // The registry claims exactly this for the `task` tool
+        // (`Tool::parallel_safe`); the stand-in reports it the same way.
+        std::collections::HashSet::from(["task".to_string()])
+    }
 }
 
 struct NeverProvider;

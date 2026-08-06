@@ -168,6 +168,9 @@ mod tests {
                 content: format!("ran {name}"),
             }
         }
+        fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+            std::collections::HashSet::from(["task".to_string()])
+        }
     }
 
     fn names(set: &PolicyToolSet<'_>) -> Vec<String> {
@@ -263,6 +266,32 @@ mod tests {
         assert_eq!(
             disabled_by(&policy, "start_process").as_deref(),
             Some("process")
+        );
+    }
+
+    /// The concurrency claim survives the decorator when the policy allows
+    /// the tool — a set that forgot to forward would silently serialize
+    /// sibling spawns in every real session (the default is empty).
+    #[test]
+    fn parallel_safe_names_are_forwarded_when_the_policy_allows() {
+        let fake = Fake;
+        let set = PolicyToolSet::new(&fake, ToolPolicy::allow_all());
+        assert!(
+            set.parallel_safe_names().contains("task"),
+            "the inner executor's claim must survive the policy layer"
+        );
+    }
+
+    /// The other half of the two-sided shape: a tool the policy withholds is
+    /// refused by `execute`, so advertising it as parallel-safe would claim
+    /// concurrency for a call this decorator will never run.
+    #[test]
+    fn a_disabled_tool_is_not_advertised_as_parallel_safe() {
+        let fake = Fake;
+        let set = PolicyToolSet::new(&fake, ToolPolicy::from_switches([("task".into(), false)]));
+        assert!(
+            set.parallel_safe_names().is_empty(),
+            "a withheld tool must not be advertised as parallel-safe"
         );
     }
 

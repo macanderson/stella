@@ -538,6 +538,20 @@ mod tests {
         serde_json::json!({ "path": path, "old_string": old, "new_string": new })
     }
 
+    /// The gate wraps the registry in every reviewed session, so one that
+    /// swallowed the claim (the default is empty) would serialize sibling
+    /// spawns exactly where review mode ships. Asserted over the real
+    /// registry, whose `task` tool is the one shipped claimant.
+    #[test]
+    fn the_gate_forwards_parallel_safe_names() {
+        let (dir, reg, _) = fixture();
+        let gate = HunkGate::new(&reg, None, dir.path().to_path_buf());
+        assert!(
+            gate.parallel_safe_names().contains("task"),
+            "the registry's concurrency claim must survive the gate"
+        );
+    }
+
     /// The issue's acceptance criterion, end to end and through the real
     /// `apply_edits` transaction: two hunks proposed, one declined, exactly one
     /// applied.

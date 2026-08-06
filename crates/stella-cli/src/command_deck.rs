@@ -128,6 +128,7 @@ use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::spawn_forwarder;
 use scope_gate::DeckApprovalGate;
 use sessions_view::sessions_inbound;
+use task_tap::TaskTap;
 
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
