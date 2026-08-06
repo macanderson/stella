@@ -25,7 +25,6 @@ import contextlib
 import json
 import logging
 import os
-import shutil
 import subprocess
 import threading
 import time
@@ -33,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import harbor
 from .agents import (
     credential_env_for,
     launch_flags,
@@ -395,11 +395,13 @@ class MatchRunner:
         for knob in spec.unhonoured(contestant.engine):
             run.warnings.append(f"{spec.title} ignores {knob}")
 
-        if shutil.which("harbor") is None:
-            raise RuntimeError(
-                "`harbor` is not on PATH. Install it, or point ArenaBench at a "
-                "virtualenv that has it."
-            )
+        # Resolve Harbor and check it is new enough to grade THIS dataset
+        # before anything is launched. A Harbor that predates a task setting
+        # discards it and produces a complete run with a wrong score, so this
+        # is a refusal, not a warning (see `arenabench.harbor`).
+        harbor_exe = harbor.harbor_bin()
+        harbor.require_for_dataset(match.dataset.min_harbor, match.dataset.title)
+        run.notes.append(f"harbor {harbor.harbor_version()} ({harbor_exe})")
 
         # Prefer an offline export. Given a registry ref, Harbor resolves
         # every task against its backend at run time, and one failed lookup
@@ -420,7 +422,7 @@ class MatchRunner:
             )
 
         command = [
-            "harbor", "run",
+            harbor_exe, "run",
             "--env", "docker",
             *source,
             *launch_flags(contestant),

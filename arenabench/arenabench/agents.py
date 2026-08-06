@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import harbor
 from .model import Contestant, Engine
 
 __all__ = [
@@ -265,10 +266,19 @@ def resolve_agent(slug: str) -> AgentSpec:
 
 
 def launch_flags(contestant: Contestant) -> list[str]:
-    """The ``harbor run`` flags that select this contestant's agent."""
+    """The ``harbor run`` flags that select this contestant's agent.
+
+    ``--agent-import-path`` was folded into ``--agent`` — which takes a
+    built-in name *or* a ``module:Class`` path — in a Harbor newer than 0.6.1.
+    Which flag to send is asked of the installed binary rather than derived
+    from its version number, so this keeps working across the fold in both
+    directions (:func:`arenabench.harbor.supports_agent_import_path`).
+    """
     spec = resolve_agent(contestant.agent)
     if spec.import_path:
-        return ["--agent-import-path", spec.import_path]
+        if harbor.supports_agent_import_path():
+            return ["--agent-import-path", spec.import_path]
+        return ["--agent", spec.import_path]
     if spec.harbor_agent:
         return ["--agent", spec.harbor_agent]
     raise ValueError(f"agent {spec.slug!r} declares no launch mechanism")

@@ -44,6 +44,24 @@ from arenabench.registry import DEFAULT_REGISTRY, Task, sample_tasks
 from arenabench.runner import ContestantRun, MatchRunner, _base_environment
 from arenabench.telemetry import seat_manifest_path
 
+
+def _fake_harbor(monkeypatch, *, version: str = "0.20.0", import_path_flag: bool = False):
+    """Stand in for an installed Harbor.
+
+    `_launch` resolves the binary and asks it for a version and a flag list
+    before it builds any argv, so a test that never touches Harbor still needs
+    those three answers. They are stubbed at the `arenabench.harbor` seam
+    rather than at `shutil.which`, because the version and the CLI shape are
+    the things the launch actually branches on — stubbing the lookup alone
+    would leave the real binary (or its absence) deciding the test's outcome.
+    """
+    monkeypatch.setattr("arenabench.harbor.harbor_bin", lambda: "/usr/bin/harbor")
+    monkeypatch.setattr("arenabench.harbor.harbor_version", lambda: version)
+    monkeypatch.setattr(
+        "arenabench.harbor.supports_agent_import_path", lambda: import_path_flag
+    )
+
+
 # --------------------------------------------------------------------------
 # model
 # --------------------------------------------------------------------------
@@ -638,6 +656,18 @@ class TestOfflineTaskSource:
         from arenabench.registry import TERMINAL_BENCH_21
         assert TERMINAL_BENCH_21.package_dir == "terminal-bench-2-1"
 
+    def test_frontier_bench_declares_the_harbor_it_needs_to_grade_correctly(self):
+        """The floor is the point of the entry, not a nicety.
+
+        Every Frontier-Bench task sets `environment_mode = "separate"`, which
+        Harbor 0.6.1 drops silently — the run finishes and reports a score
+        graded against the wrong container topology. An entry without this
+        field would be an invitation to publish that number.
+        """
+        from arenabench.registry import FRONTIER_BENCH
+        assert FRONTIER_BENCH.min_harbor == "0.20.0"
+        assert DEFAULT_REGISTRY.get("frontier-bench") is not None
+
     def _launched_command(self, tmp_path: Path, monkeypatch, export: bool) -> list[str]:
         """The argv `_launch` actually hands Harbor, with the process stubbed."""
         if export:
@@ -645,7 +675,7 @@ class TestOfflineTaskSource:
             monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
         else:
             monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path / "nope"))
-        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+        _fake_harbor(monkeypatch)
 
         seen: dict = {}
 
@@ -695,7 +725,7 @@ class TestSeatLaunchRecord:
     def test_the_route_is_recorded_beside_the_job_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+        _fake_harbor(monkeypatch)
 
         class _Fake:
             def __init__(self, command, **kwargs):
