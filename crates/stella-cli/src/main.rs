@@ -527,6 +527,14 @@ fn main() -> ExitCode {
             &stella_store::SessionRegistry::open_default().sidecar_dir(&id),
         )
     });
+    // A panic unwinds past the drain below, and the pump threads die with the
+    // process holding whatever the pipe still had — usually the panic message
+    // itself, which is the one line a postmortem is looking for. The hook
+    // chains onto the diagnostics hook installed above, so the message is
+    // printed first and drained second (#1616).
+    if let Some(console) = &console {
+        daemon::console::arm_panic_drain(console);
+    }
 
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
     // a human output format so it never pollutes json/stream-json.
