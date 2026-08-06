@@ -45,13 +45,18 @@ Anything below that would weaken these is out of scope by construction.
 
 ## 2. The defects this document fixes
 
-Each is present in the shipping code, and each is already named in
-[`ROADMAP.md`](../../ROADMAP.md).
+Each was present in the shipping code when this document was approved, and
+each is named in [`ROADMAP.md`](../../ROADMAP.md).
 
-**D1 and D3 are fixed by §4 of this document.** D2, D4, and D5 are recorded
-here because they are real and because the airlock's machinery makes two of
-them cheap to reach later — but they are separate changes and do not land
-together. One logical change per PR.
+**Status.** D1 and D3 are fixed by §4 of this document. D4 and D5 have since
+been fixed in code: verdicts carry their `LadderSnapshot` (the `ladder` field
+on `VerdictEvidence`, #865/#1043) so a pass can be replayed to its inputs,
+and `verifier_prompt` frames the diff as delimited worker-authored data
+placed last in the message (`UNTRUSTED_DIFF_PREAMBLE`, #1206/#1214/#1240) so
+a comment addressed to the reviewer arrives inside the declared-data region.
+D2 remains open by decision — §4.2 records why the fingerprint deliberately
+does not tighten the flip oracle yet, and the narrower same-failure rule
+(#867) covers the disappearing-test shape in the meantime.
 
 **D1 — The failure channel leaks the detector.** On a deterministic failure the
 worker receives `"touched tests failed after execution: {tail}"` — the raw

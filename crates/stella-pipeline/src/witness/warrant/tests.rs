@@ -51,6 +51,7 @@ fn a_turn_that_dispatched_a_mutating_call_still_needs_one() {
             ChangeSignals {
                 file_changes: 0,
                 mutating_actions: 10,
+                ..ChangeSignals::default()
             }
         ),
         WitnessWarrant::Required,
@@ -67,15 +68,16 @@ fn only_a_turn_that_neither_touched_nor_tried_is_nothing_changed() {
     for signals in [
         ChangeSignals {
             file_changes: 1,
-            mutating_actions: 0,
+            ..ChangeSignals::default()
         },
         ChangeSignals {
-            file_changes: 0,
             mutating_actions: 1,
+            ..ChangeSignals::default()
         },
         ChangeSignals {
             file_changes: 1,
             mutating_actions: 1,
+            ..ChangeSignals::default()
         },
     ] {
         assert_eq!(
@@ -97,6 +99,71 @@ fn docs_only_needs_no_test() {
         warrant(&d, observed(2)),
         WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly)
     );
+}
+
+/// #1701's recurrence path. The empty-diff branch reads `mutating_actions`,
+/// but the same ten shell calls PLUS one README edit gave the diff a path —
+/// and the path rules never consulted the signals, so the change classified
+/// `DocsOnly` and completed waived (`passed: true, deterministic: true`)
+/// over effects that landed in `/etc`, exactly the outcome #1701 closed for
+/// the pathless shape. An opaque dispatched call voids the premise every
+/// path waiver rests on: that the diff IS the change.
+#[test]
+fn an_opaque_call_forfeits_every_path_waiver() {
+    let escaped = ChangeSignals {
+        mutating_actions: 10,
+        opaque_actions: 9,
+        ..ChangeSignals::default()
+    };
+    for (name, d) in [
+        ("docs", diff(&["README.md"], "+configure nginx on 8080\n")),
+        (
+            "tests",
+            diff(&["tests/x_test.py"], "+assert port == 8080\n"),
+        ),
+        ("config", diff(&["Cargo.toml"], "+serde = \"1\"\n")),
+        ("comments", diff(&["src/lib.rs"], "+// a comment\n")),
+        ("removal", diff(&["src/lib.rs"], "-let x = 1;\n")),
+    ] {
+        assert_eq!(
+            warrant(&d, escaped),
+            WitnessWarrant::Required,
+            "a {name}-shaped diff beside opaque calls must not waive the witness"
+        );
+    }
+    // The other direction keeps the warrant useful: an ordinary docs edit is
+    // made OF mutating calls (`edit_file` is not read-only), and every one of
+    // them is diff-accountable — the waiver stands.
+    let accounted = ChangeSignals {
+        mutating_actions: 3,
+        ..ChangeSignals::default()
+    };
+    assert_eq!(
+        warrant(&diff(&["README.md"], "+Some new prose.\n"), accounted),
+        WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly),
+        "file-tool mutations are what a docs edit is; they must not cost the waiver"
+    );
+}
+
+/// The classifier the tally rides on: only the file-CRUD and session-local
+/// bookkeeping tools are diff-accountable, and an unknown name fails closed
+/// as opaque.
+#[test]
+fn only_workspace_file_tools_are_diff_accountable() {
+    for accountable in ["write_file", "edit_file", "apply_edits", "delete_file"] {
+        assert!(diff_accountable_mutator(accountable), "{accountable}");
+    }
+    for opaque in [
+        "bash",
+        "run_tests",
+        "start_process",
+        "repo_push",
+        "web_download",
+        "mcp_anything",
+        "some_custom_tool",
+    ] {
+        assert!(!diff_accountable_mutator(opaque), "{opaque} must be opaque");
+    }
 }
 
 #[test]

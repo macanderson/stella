@@ -9,9 +9,12 @@
 //!
 //! # Visible, not hidden — integrity by tamper exclusion
 //!
-//! The witness is deliberately **visible to the worker**: iterating against a
-//! failing test is where convergence comes from, and a test file on disk is
-//! discoverable by any worker with a shell anyway. Integrity comes instead
+//! The witness is deliberately **visible to the worker** once it exists:
+//! authoring runs after the execute turn (demand-driven, gated on the
+//! warrant), so the execute turn never sees it, but every revise turn
+//! iterates with the failing test on disk — which is where convergence comes
+//! from, and a test file is discoverable by any worker with a shell anyway.
+//! Integrity comes instead
 //! from *tamper exclusion* — the complete filesystem identity of the one test
 //! artifact the witness turn created is snapshotted. A flip is only credited
 //! when its bytes, type, mode, link count, and path remain unchanged at verify
@@ -71,6 +74,13 @@ pub enum WitnessArtifactError {
     /// Existing tracked content was changed or removed.
     #[error("witness author modified tracked file(s): {}", .0.join(", "))]
     TrackedMutation(Vec<String>),
+    /// The author emitted a `TEST_COMMAND` but never created any file at all.
+    /// Its own variant because the two failures deserve different fates: an
+    /// absent artifact is a *cannot-author* condition the pipeline degrades
+    /// past (the worker's change is real and already done), while a wrong or
+    /// multiple-file delta is an integrity violation that stays fail-closed.
+    #[error("witness author emitted a test command but created no file")]
+    NothingCreated,
     /// The untracked delta was not exactly one newly created test artifact.
     #[error("witness author must create exactly one new test file; changed: {}", .0.join(", "))]
     InvalidArtifact(Vec<String>),
@@ -261,6 +271,9 @@ pub fn validate_witness_artifact(
         return Err(WitnessArtifactError::TrackedMutation(tracked));
     }
     let changed = changed_paths(untracked_before, untracked_after);
+    if changed.is_empty() {
+        return Err(WitnessArtifactError::NothingCreated);
+    }
     let accepted = match changed.as_slice() {
         [path]
             if !untracked_before.contains_key(path)
@@ -559,6 +572,13 @@ pub struct Witness {
     /// Tracked edits, non-test files, and edits to pre-existing untracked
     /// files are rejected before candidate execution.
     pub files: HashMap<String, ArtifactIdentity>,
+    /// The accepted failing baseline run's combined output tail. Carried so
+    /// the transplanted observation arms the oracle through
+    /// [`crate::verify::FlipOracle::observe_run`] — which records the
+    /// baseline's failing test names and thereby arms the same-failure rule
+    /// (#867) — instead of the name-blind `observe`, which left that guard
+    /// inert for every authored witness.
+    pub baseline_output: String,
 }
 
 /// Whether the current no-follow filesystem observation is exactly the
@@ -622,7 +642,6 @@ pub fn witness_prompt(
     goal: &str,
     recall: &[RecalledFrame],
     repo_structure: &str,
-    project_test_command: Option<&str>,
     available_runners: &[String],
 ) -> String {
     let mut s = String::from(
@@ -659,31 +678,21 @@ pub fn witness_prompt(
          - End your reply with exactly one line:\n\
          TEST_COMMAND: <the direct, artifact-specific test command>\n",
     );
-    if let Some(command) = project_test_command
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
-    {
-        // The strongest available evidence that a runner exists, and the only
-        // one that is a fact rather than an inference: this project names this
-        // command, so its toolchain is installed here. Given first, above the
-        // file listing, because it settles the choice the listing can only hint
-        // at.
-        s.push_str(&format!(
-            "\n## This project's own test command\n`{command}`\nIts runner is installed \
-             and working here. Author for that runner, and shape your TEST_COMMAND like \
-             this one — narrowed to your single new test.\n"
-        ));
-    }
     if !available_runners.is_empty() {
         // Probed fact, not inference (#1539): the pipeline spawned each
         // vocabulary runner's version probe in this very workspace. The
         // author's TEST_COMMAND is checked against this set, so naming a
-        // runner outside it discards the witness.
+        // runner outside it discards the witness. The wording stays honest
+        // about the probe's granularity: `npx --version` answering says
+        // nothing about `vitest` being installed, so the set is a ceiling
+        // on runner *programs*, never a warranty for their subcommands.
         s.push_str(&format!(
-            "\n## Test runners available in this workspace\n{}\nThese are the ONLY \
-             runners installed here — your TEST_COMMAND must use one of them. The \
-             repository listing below tells you which of them this project actually \
-             uses.\n",
+            "\n## Test runners available in this workspace\n{}\nEach of these answered a \
+             version probe here, and your TEST_COMMAND must use one of them — any other \
+             runner discards your witness. The probe is program-level only: it cannot \
+             vouch for a subcommand or a package the program would have to fetch (`cargo \
+             nextest`, `npx vitest`), so prefer an invocation the repository listing \
+             below evidences the project already using.\n",
             available_runners.join(", ")
         ));
     }
@@ -716,7 +725,9 @@ pub fn witness_repair_prompt(command: &str) -> String {
         "Your witness test PASSED on the current, unmodified code — it proves nothing, \
          because only a fail→pass flip counts as verification. Rewrite the test so it fails \
          NOW for the right reason (it must exercise the behavior the goal will add or fix). \
-         The command that just passed was:\n{command}\n\n\
+         Call `create_witness_test` again with the corrected file — it REPLACES your \
+         previous artifact, which is discarded. The command that just passed was:\n\
+         {command}\n\n\
          End your reply with the corrected `TEST_COMMAND:` line."
     )
 }
@@ -1003,6 +1014,23 @@ mod tests {
         }
     }
 
+    /// The absent-artifact case is its own variant so the stage can degrade
+    /// past it: an author that emitted a `TEST_COMMAND` but never created a
+    /// file is a cannot-author condition, and mapping it to the same
+    /// fail-closed rejection as an integrity violation discarded a completed
+    /// worker change for want of scaffolding.
+    #[test]
+    fn an_absent_artifact_is_nothing_created_not_an_integrity_violation() {
+        let error = validate_witness_artifact(
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(error, WitnessArtifactError::NothingCreated));
+    }
+
     #[test]
     fn witness_artifact_rejects_tracked_production_edits() {
         let error = validate_witness_artifact(
@@ -1251,7 +1279,7 @@ mod tests {
             id: None,
             content_digest: None,
         }];
-        let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", None, &[]);
+        let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", &[]);
         assert!(p.contains("TEST_COMMAND:"));
         assert!(p.contains("fix the retry bug"));
         assert!(p.contains("src/"));
@@ -1271,7 +1299,7 @@ mod tests {
     /// that choosing a runner is a decision made from evidence, not a default.
     #[test]
     fn the_author_is_told_it_cannot_probe_and_must_pick_an_evidenced_runner() {
-        let p = witness_prompt("add a parser", &[], "go.mod\nmain.go", None, &[]);
+        let p = witness_prompt("add a parser", &[], "go.mod\nmain.go", &[]);
         assert!(
             p.contains("CHOOSE A RUNNER THIS REPOSITORY ALREADY USES"),
             "{p}"
@@ -1290,27 +1318,6 @@ mod tests {
         );
     }
 
-    /// The one anchor that is a fact rather than an inference: this project
-    /// names this command, so its runner is installed on this machine.
-    #[test]
-    fn a_configured_test_command_anchors_the_authors_runner_choice() {
-        let anchored = witness_prompt("add a parser", &[], "go.mod", Some("go test ./..."), &[]);
-        assert!(anchored.contains("`go test ./...`"), "{anchored}");
-        assert!(
-            anchored.contains("Its runner is installed and working here"),
-            "the whole value of the anchor is that it is observed, not guessed: {anchored}"
-        );
-
-        // Nothing to anchor on: the section must be absent rather than empty.
-        let bare = witness_prompt("add a parser", &[], "go.mod", None, &[]);
-        assert!(!bare.contains("This project's own test command"), "{bare}");
-        let blank = witness_prompt("add a parser", &[], "go.mod", Some("   "), &[]);
-        assert!(
-            !blank.contains("This project's own test command"),
-            "a whitespace command anchors nothing: {blank}"
-        );
-    }
-
     #[test]
     fn repair_prompt_names_the_passing_command() {
         let p = witness_repair_prompt("cargo test -p x");
@@ -1324,7 +1331,7 @@ mod tests {
     #[test]
     fn probed_runner_availability_reaches_the_author_as_a_constraint() {
         let available = vec!["cargo".to_string(), "pytest".to_string()];
-        let p = witness_prompt("add a parser", &[], "Cargo.toml", None, &available);
+        let p = witness_prompt("add a parser", &[], "Cargo.toml", &available);
         assert!(
             p.contains("Test runners available in this workspace"),
             "{p}"
@@ -1335,7 +1342,7 @@ mod tests {
             "a constraint, not a hint: {p}"
         );
 
-        let bare = witness_prompt("add a parser", &[], "Cargo.toml", None, &[]);
+        let bare = witness_prompt("add a parser", &[], "Cargo.toml", &[]);
         assert!(
             !bare.contains("Test runners available in this workspace"),
             "no probes, no section: {bare}"

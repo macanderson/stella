@@ -443,12 +443,14 @@ fn migrate_legacy_state(new_dir: &Path, slug: &str, stella_home: &Path) {
     if new_dir.exists() {
         return;
     }
-    // Through `crate::paths`, never straight out of the process environment —
-    // that indirection is what lets a test redirect the anchor without mutating
+    // `crate::paths::home()`, never `std::env::var_os("HOME")` — that
+    // indirection is what lets a test redirect the anchor without mutating
     // process-global state (#1139), and
     // `nothing_else_in_this_crate_reads_a_home_out_of_the_environment` enforces
-    // it. That guard matches raw source text, so naming the forbidden call here
-    // would trip it on the very comment describing the rule.
+    // it. Naming the forbidden call here used to trip that guard on the very
+    // comment describing the rule, so the comment was reworded around it
+    // instead (#1747); the guard now reads code and not prose (#1748), and this
+    // is the clearer sentence.
     let roots = stella_home::resolve_legacy_self_driving_roots(
         Some(stella_home.to_path_buf()),
         crate::paths::home(),
