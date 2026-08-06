@@ -20,7 +20,7 @@
 # CI runner), and queue ranking (a stub `gh` first on PATH serves fixtures, so
 # "no network" holds even where the real `gh` is installed). The observatory
 # half of the same contract is tested in
-# crates/stella-observatory/src/self-driving.rs.
+# crates/stella-observatory/src/self_driving.rs.
 #
 # Since #1548 the ported verbs delegate to `stella self-driving`, so the one thing
 # this suite needs beyond a shell is a stella binary (located or built by
@@ -493,6 +493,70 @@ if grep -q 'ec2 stop-instances' "$ROOT/rg-ok/stub.log" 2>/dev/null; then
   ok "the stop trap fires on success as well — ALWAYS stop"
 else
   bad "the stop trap missed the success path"
+fi
+
+# ---------------------------------------------------------------------------
+head_ "install-commands — the rename must not leave a broken /fullauto behind"
+
+# #1763: install wrote the new tree but never removed the old one, so a user
+# who had run install-commands before #1757 kept a `/fullauto` that still
+# autocompletes and still tells the agent to run `scripts/fullauto.sh` — a
+# script that no longer exists. Nothing warned them.
+CMDS="$ROOT/commands"
+mkdir -p "$CMDS/fullauto"
+: > "$CMDS/fullauto.md"
+: > "$CMDS/fullauto/audit.md"
+: > "$CMDS/fullauto/bench.md"
+# Two files this project never installed: one the user wrote by hand, and one
+# belonging to some other tool. Neither is ours to delete.
+: > "$CMDS/fullauto/my-own-notes.md"
+: > "$CMDS/unrelated-tool.md"
+
+SELF_DRIVING_COMMAND_DIR="$CMDS" "$FA" install-commands >/dev/null 2>&1
+
+if [ -f "$CMDS/self-driving.md" ] && [ -f "$CMDS/self-driving/audit.md" ]; then
+  ok "the current /self-driving tree is installed"
+else
+  bad "install-commands did not install /self-driving"
+fi
+if [ ! -e "$CMDS/fullauto.md" ]; then
+  ok "the stale /fullauto command is removed"
+else
+  bad "the stale /fullauto command survived — it still names scripts/fullauto.sh"
+fi
+if [ ! -e "$CMDS/fullauto/audit.md" ] && [ ! -e "$CMDS/fullauto/bench.md" ]; then
+  ok "the stale /fullauto:<verb> commands are removed"
+else
+  bad "a stale /fullauto:<verb> command survived"
+fi
+if [ -f "$CMDS/fullauto/my-own-notes.md" ]; then
+  ok "a file this project never installed is left alone"
+else
+  bad "install-commands deleted a user file it did not install (data loss)"
+fi
+if [ -f "$CMDS/unrelated-tool.md" ]; then
+  ok "another tool's command in the shared dir is untouched"
+else
+  bad "install-commands deleted another tool's command"
+fi
+
+# Second run: the prune must be idempotent, not an error once the tree is gone.
+if SELF_DRIVING_COMMAND_DIR="$CMDS" "$FA" install-commands >/dev/null 2>&1; then
+  ok "a second install-commands is a clean no-op"
+else
+  bad "install-commands is not idempotent"
+fi
+
+# A directory left empty by the prune is removed; one holding a stranger's
+# file is not.
+rm -f "$CMDS/fullauto/my-own-notes.md"
+mkdir -p "$CMDS/fullauto"
+: > "$CMDS/fullauto/scale.md"
+SELF_DRIVING_COMMAND_DIR="$CMDS" "$FA" install-commands >/dev/null 2>&1
+if [ ! -d "$CMDS/fullauto" ]; then
+  ok "the legacy directory is removed once the prune empties it"
+else
+  bad "an empty legacy directory was left behind"
 fi
 
 # ---------------------------------------------------------------------------
