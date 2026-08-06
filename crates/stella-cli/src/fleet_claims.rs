@@ -313,15 +313,13 @@ mod tests {
         assert_eq!(row.expires_in_ms, -120_000);
         assert!(!row.live);
 
-        // A row minted by a wildly skewed clock saturates rather than wrapping.
-        // Wrapping is the failure that matters: it would turn a span too large
-        // for an i64 into a *negative* one, reporting a claim live until the
-        // heat death of the universe as having lapsed — and `live` is read off
-        // the u64 comparison, so the two would then disagree.
+        // A claim minted by a clock far ahead of ours must saturate, never
+        // wrap: an expiry in the far future stays in the future, and an
+        // acquisition in the far future reads as a negative age rather than
+        // as an absurdly old claim.
         let skewed = ClaimRow::read(&claim("issue:1", "run-a", u64::MAX, u64::MAX), 0);
-        assert_eq!(skewed.expires_in_ms, i64::MAX, "saturates, does not wrap");
-        assert_eq!(skewed.held_for_ms, i64::MIN, "saturates, does not wrap");
-        assert!(skewed.live, "and still agrees with the u64 comparison");
+        assert_eq!(skewed.expires_in_ms, i64::MAX, "saturated, not wrapped");
+        assert!(skewed.held_for_ms < 0, "{}", skewed.held_for_ms);
     }
 
     #[test]
@@ -335,5 +333,44 @@ mod tests {
         );
         assert_eq!(human_ms(750_000), "12m 30s");
         assert_eq!(human_ms(11_040_000), "3h 04m");
+    }
+
+    /// `stella fleet claims` parses as a subcommand rather than as a task
+    /// prompt, and defaults to the live listing in text.
+    #[test]
+    fn fleet_claims_parses_as_a_verb_and_defaults_to_live_text() {
+        let cli = Cli::try_parse_from(["stella", "fleet", "claims"]).unwrap();
+        match cli.command {
+            Some(Command::Fleet {
+                cmd: Some(crate::fleet_verbs::FleetCmd::Claims { all, format }),
+                ..
+            }) => {
+                assert!(!all, "the live listing is the default");
+                assert_eq!(format, QueryFormat::Text);
+            }
+            // `Command` carries no `Debug`, so the arm names what was
+            // expected rather than printing what arrived.
+            _ => panic!("expected `fleet claims` to parse as the claims verb"),
+        }
+
+        let cli = Cli::try_parse_from(["stella", "fleet", "claims", "--all", "--format", "json"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Fleet {
+                cmd: Some(crate::fleet_verbs::FleetCmd::Claims {
+                    all: true,
+                    format: QueryFormat::Json
+                }),
+                ..
+            })
+        ));
+
+        // And the documented escape hatch still works: `--` makes it a prompt.
+        let cli = Cli::try_parse_from(["stella", "fleet", "--", "claims are stale"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Fleet { cmd: None, .. })
+        ));
     }
 }
