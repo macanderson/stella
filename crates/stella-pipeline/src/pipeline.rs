@@ -161,10 +161,6 @@ const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software e
      no test. Do not invent a task. If it fits, add one short line inviting \
      them to describe a change, bug, or question about their codebase.";
 
-/// Small fixed system prompt for the independent witness author.
-const WITNESS_SYSTEM_PROMPT: &str = "You are a precise test author. You write minimal failing tests that pin down intended \
-     behavior. You never modify production code and never fix the problem yourself.";
-
 /// Per-role request overrides for the pipeline's raw completion calls
 /// (triage / verifier / guidance), resolved by the caller from
 /// `agent_engine_config`. Every field is optional and falls through to the

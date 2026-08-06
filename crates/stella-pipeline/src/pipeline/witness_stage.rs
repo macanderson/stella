@@ -7,7 +7,7 @@
 
 use super::*;
 
-use crate::witness::{RUNNER_VOCABULARY, runner_probe};
+use crate::witness::{RUNNER_VOCABULARY, WITNESS_SYSTEM_PROMPT, runner_probe};
 
 /// Which of the closed vocabulary's runners this workspace can actually
 /// spawn (#1539) — the fact the capability-minimal author cannot discover

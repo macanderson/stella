@@ -554,8 +554,7 @@ mod tests {
         std::fs::create_dir(root.path().join("tests")).unwrap();
         std::fs::write(root.path().join("src.rs"), "source").unwrap();
         let registry: Arc<dyn ToolExecutor> = Arc::new(
-            ToolRegistry::new_detected(root.path().to_path_buf(), RegistryOptions::default())
-                .await,
+            ToolRegistry::new_detected(root.path().to_path_buf(), RegistryOptions::default()).await,
         );
         let policied: Arc<dyn ToolExecutor> = Arc::new(crate::agent::PolicyToolSet::new_owned(
             registry,
