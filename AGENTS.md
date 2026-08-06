@@ -62,14 +62,15 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
                          #   + command-docs + brand-case + file-size
-                         #   + gate-parity + left-behind + wire-schema
+                         #   + gate-parity + left-behind + role-names
+                         #   + wire-schema
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
 ```
 
-That is twenty steps, and the list is not maintained by hand: it is
+That is twenty-one steps, and the list is not maintained by hand: it is
 `GATE_STEPS` in the `Makefile`, and `gate-parity` (`scripts/check-gate-parity.sh`)
 fails if this block or CONTRIBUTING.md's stops matching it. The block had
 already drifted twice before that guard existed, both times by under-reporting

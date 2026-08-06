@@ -172,6 +172,16 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-brand-case.sh
 
+      # Also toolchain-free. #1394 renamed an agent-config role and the Rust
+      # compiler found every Rust call site and none of the others — a Python
+      # dict and a JavaScript literal kept the old spelling, and the arenabench
+      # one failed *silently*: the seat ran with the verifier inheriting the
+      # worker baseline while the scoreboard reported it as configured. A wrong
+      # measurement, not a crash (#1449).
+      - name: role names agree across Rust, Python and JavaScript
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-role-names.sh
+
       # Also toolchain-free. AGENTS.md requires that anything noticed and not
       # fixed becomes an issue written as a handoff; nothing checked it, and an
       # unenforced standard reads as one the codebase is meeting. The decidable

@@ -31,7 +31,7 @@ CARGO_SCOPE ?= --workspace
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
-                    command-docs brand-case file-size gate-parity left-behind
+                    command-docs brand-case file-size gate-parity left-behind role-names
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The whole gate, in order, as one name. `gate` below is defined *from* this
@@ -271,6 +271,10 @@ left-behind: ## Assert every TODO/FIXME/XXX/HACK in code names a tracking issue 
 .PHONY: left-behind-update
 left-behind-update: ## Regenerate the left-behind baseline (it should stay empty)
 	@./scripts/check-left-behind.sh --update
+
+.PHONY: role-names
+role-names: ## Assert the agent-config role names match across Rust, Python and JS (#1449)
+	@./scripts/check-role-names.sh
 
 .PHONY: check
 check: $(GATE_GUARDS) format-check lint ## Reduced pre-push gate: every guard + fmt + clippy, no rustdoc and no tests
