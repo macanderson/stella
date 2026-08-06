@@ -138,7 +138,7 @@ fn a_settled_thought_reverts_to_its_head() {
         delta: numbered_thought(9),
     });
     model.apply(&AgentEvent::Text {
-        delta: "here is the answer".into(),
+        text: "here is the answer".into(),
     });
     assert!(
         !reasoning_is_live(&model.transcript, &model.streaming_text),
@@ -202,7 +202,7 @@ fn the_collapsed_row_budget_survives_a_single_paragraph_thought() {
     );
     // Settling must not change the height.
     model.apply(&AgentEvent::Text {
-        delta: "done".into(),
+        text: "done".into(),
     });
     let settled = row_texts(&transcript_lines(&model, false, 60));
     let settled_block = first_block(&settled);
@@ -227,7 +227,7 @@ fn a_thought_inside_the_budget_renders_whole_either_way() {
     });
     let live = row_texts(&transcript_lines(&model, false, 0));
     assert_eq!(live, vec!["⏵ thinking  2 lines", "alpha", "beta", ""]);
-    model.apply(&AgentEvent::Text { delta: "x".into() });
+    model.apply(&AgentEvent::Text { text: "x".into() });
     let settled = row_texts(&transcript_lines(&model, false, 0));
     assert_eq!(&settled[..4], &live[..4], "no marker, no reflow");
 }

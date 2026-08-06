@@ -1197,7 +1197,7 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            AgentEvent::Text { delta } if delta == "Hi! How can I help with your codebase?"
+            AgentEvent::Text { text: delta } if delta == "Hi! How can I help with your codebase?"
         )),
         "the conversational reply is emitted as text"
     );

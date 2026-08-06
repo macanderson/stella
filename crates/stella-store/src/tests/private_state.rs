@@ -31,7 +31,7 @@ fn store_db_is_private_inside_permissive_dot_stella_without_chmodding_project_fi
             execution,
             0,
             &AgentEvent::Text {
-                delta: "private transcript".into(),
+                text: "private transcript".into(),
             },
         )
         .unwrap();

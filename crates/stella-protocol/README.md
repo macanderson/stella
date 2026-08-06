@@ -200,12 +200,13 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
 
 ## Gotchas
 
-- **`AgentEvent::Text { delta }` is not a delta.** The field name is
-  wire-frozen legacy; the value is the step's *full* answer text and is
-  authoritative. `AgentEvent::TextDelta { text }` is the live fragment stream.
-  Consumers must **replace** any accumulated preview with `Text`, never append
-  — a retried model call re-streams its deltas from the start and there is no
-  reset marker.
+- **`AgentEvent::Text { text }` is the full answer; `TextDelta { delta }` is
+  the live fragment.** Consumers must **replace** any accumulated preview with
+  `Text`, never append — a retried model call re-streams its deltas from the
+  start and there is no reset marker. Streams recorded before #1886 spell the
+  fields crossed (`text` carried `delta`, `text_delta` carried `text`); the
+  serde aliases keep those parsing, and raw-JSONL readers must stay bilingual
+  the same way.
 - **`LifecycleEventEnvelope::decode` never fails, which cuts both ways.** A
   *recognized* `event_type` whose payload doesn't deserialize degrades to
   `LifecycleEvent::Unknown` rather than erroring, so a renamed payload field

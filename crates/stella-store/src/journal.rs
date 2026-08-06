@@ -214,7 +214,7 @@ impl SessionJournal {
                 return Ok(());
             }
             let (kind, delta) = match event {
-                AgentEvent::Text { delta } => (DeltaKind::Text, delta),
+                AgentEvent::Text { text } => (DeltaKind::Text, text),
                 AgentEvent::Reasoning { delta } => (DeltaKind::Reasoning, delta),
                 _ => {
                     self.flush_pending()?;
@@ -251,7 +251,7 @@ impl SessionJournal {
             return Ok(());
         };
         let event = match p.kind {
-            DeltaKind::Text => AgentEvent::Text { delta: p.buf },
+            DeltaKind::Text => AgentEvent::Text { text: p.buf },
             DeltaKind::Reasoning => AgentEvent::Reasoning { delta: p.buf },
         };
         self.write_line_unsynced(&JournalRecord::Event {
@@ -490,9 +490,7 @@ mod tests {
     fn text(agent: &str, delta: &str) -> JournalRecord {
         JournalRecord::Event {
             agent: agent.into(),
-            event: AgentEvent::Text {
-                delta: delta.into(),
-            },
+            event: AgentEvent::Text { text: delta.into() },
         }
     }
 
@@ -532,7 +530,9 @@ mod tests {
             // the pending run — the run below must still coalesce whole.
             j.write(&JournalRecord::Event {
                 agent: "lead".into(),
-                event: AgentEvent::TextDelta { text: "hel".into() },
+                event: AgentEvent::TextDelta {
+                    delta: "hel".into(),
+                },
             })
             .unwrap();
             j.write(&text("lead", "lo")).unwrap();

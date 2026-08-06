@@ -415,14 +415,14 @@ async fn a_concurrent_fan_out_mutes_previews_but_never_the_authoritative_text() 
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, AgentEvent::Text { delta } if *delta == expected)),
+                .any(|e| matches!(e, AgentEvent::Text { text: delta } if *delta == expected)),
             "every candidate's authoritative text still reaches the consumer: {events:?}"
         );
     }
     assert!(
         events.iter().any(|e| matches!(
             e,
-            AgentEvent::Text { delta } if delta.contains("candidates at once")
+            AgentEvent::Text { text: delta } if delta.contains("candidates at once")
         )),
         "the fan-out says why the stream went quiet: {events:?}"
     );
@@ -445,7 +445,7 @@ async fn a_sequential_fan_out_still_streams_its_previews() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, AgentEvent::TextDelta { text } if text == "frag-a")),
+            .any(|e| matches!(e, AgentEvent::TextDelta { delta: text } if text == "frag-a")),
         "width 1 keeps the live preview: {events:?}"
     );
 }
