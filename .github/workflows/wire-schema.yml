@@ -1,0 +1,75 @@
+name: wire-schema
+
+# The server-side half of the hole described in #1439.
+#
+# `docs/wire/` is generated from the types and committed, and
+# `scripts/check-wire-schema.sh` is what makes committing it worth anything: it
+# regenerates into a temp directory and fails on any difference. That guard runs
+# in ci.yml -- but ci.yml carries `paths-ignore: docs/**`, so a pull request
+# that touches *only* `docs/wire/` never starts it. Nothing else covered the
+# gap: docs-guards.yml is deliberately toolchain-free (four shell/python guards,
+# five-minute timeout) and adding a Rust build to it would cost every prose PR a
+# toolchain it has no use for.
+#
+# So the guard gets its own workflow, triggered on exactly the paths that can
+# invalidate the artifacts. A prose PR starts nothing here; a hand-edit to a
+# generated schema starts this and reddens.
+#
+# The same path list appears in `.githooks/pre-push`, which uses it to decide
+# between `make guards-fast` and `make guards` for a push that reaches no crate.
+# Both answer the same question -- "could this diff have moved the wire
+# contract?" -- and neither is derived from the other, so they are kept in sync
+# by hand and by this comment.
+on:
+  pull_request:
+    paths:
+      - "docs/wire/**"
+      - "crates/stella-protocol/**"
+      - "crates/stella-serve/**"
+      - "scripts/export-agentevent-schema.sh"
+      - "scripts/check-wire-schema.sh"
+      - ".github/workflows/wire-schema.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/wire/**"
+      - "crates/stella-protocol/**"
+      - "crates/stella-serve/**"
+      - "scripts/export-agentevent-schema.sh"
+      - "scripts/check-wire-schema.sh"
+      - ".github/workflows/wire-schema.yml"
+  workflow_dispatch:
+
+# Checkout plus a read-only regeneration into a temp directory.
+permissions:
+  contents: read
+
+concurrency:
+  group: wire-schema-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: docs/wire still matches the types
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Despite the action's name this does not build on `stable`:
+      # rust-toolchain.toml pins the repo to a concrete toolchain and rustup
+      # honors it for every cargo invocation inside the checkout. This step
+      # exists to put *a* rustup on PATH.
+      - name: Install Rust (rustup; the build uses the rust-toolchain.toml pin)
+        id: rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # Runs the two exporters under `--features schema` and diffs the result
+      # against the committed tree. Regeneration is one command, named in the
+      # failure output: `make wire-schema-update`.
+      - name: docs/wire/ still matches the types
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: ./scripts/check-wire-schema.sh

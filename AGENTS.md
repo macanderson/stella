@@ -57,20 +57,34 @@ make watch-lint          # re-run clippy on every save
 A red gate is an automatic "not yet":
 
 ```bash
-make gate                # = no-scratch + action-pins + cargo-install-pins
+make gate                # = no-scratch + no-secrets + design-refs
+                         #   + action-pins + cargo-install-pins
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
-                         #   + command-docs + file-size + wire-schema
-                         #   + rustdoc -D warnings + fmt --check
-                         #   + clippy -D warnings + test --workspace
+                         #   + command-docs + brand-case + file-size
+                         #   + gate-parity + wire-schema
+                         #   + doc-warnings (rustdoc -D warnings)
+                         #   + format-check (fmt --check)
+                         #   + lint (clippy -D warnings)
+                         #   + test (test --workspace)
 ```
 
-CI enforces the same fifteen steps split across two workflows:
+That is nineteen steps, and the list is not maintained by hand: it is
+`GATE_STEPS` in the `Makefile`, and `gate-parity` (`scripts/check-gate-parity.sh`)
+fails if this block or CONTRIBUTING.md's stops matching it. The block had
+already drifted twice before that guard existed, both times by under-reporting
+a newly added guard, which is the direction that misleads — a reader runs the
+short list, sees green, and believes the gate is green (#1437).
+
+CI enforces the same steps split across three workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`
 and `doc-links`, and adds a `Cargo.lock` sync check, the prompt-cache golden
 fixtures, `stella context validate`, and a release smoke build (thin LTO);
 `docs-guards.yml` runs those two plus a second run of `command-docs`, because
-all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores.
+all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
+`wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
+because a PR that hand-edits a generated schema and nothing else starts neither
+of the other two (#1439).
 
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
@@ -86,13 +100,22 @@ This replaces two path-based guards (`check-normative-home.sh`,
 was, and that only ever read Rust comments — 16 dead markdown-to-markdown links
 had accumulated underneath them.
 
-Three rungs, each a superset of the one above:
+Four rungs, each a superset of the one above:
 
 | Target | Runs | Honours `CARGO_SCOPE` |
 | --- | --- | --- |
-| `make guards` | every global guard + `fmt --check` — nothing compiles beyond `wire-schema`'s two exporters | — |
+| `make guards-fast` | the toolchain-free guards + `fmt --check` — nothing compiles at all | — |
+| `make guards` | ...plus `wire-schema`, whose two schema exporters do compile | — |
 | `make check` | ...plus clippy | clippy |
 | `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
+
+`guards-fast` is not a rung you choose by hand; the pre-push hook picks it for
+a push that reaches no crate *and* cannot have touched the wire contract — a
+website-only or workflow-only push, which used to pay for a cargo build it had
+no use for (#1439). `wire-schema` is conditional there, never dropped:
+`docs/wire/` is generated and committed, so a hand-edit to it still takes the
+dearer rung, and `.github/workflows/wire-schema.yml` covers the same paths
+server-side because `ci.yml` ignores `docs/**`.
 
 `CARGO_SCOPE` narrows only the compile tiers, and defaults to `--workspace`, so
 `make gate` and CI are unchanged unless a caller asks for less (#1135):

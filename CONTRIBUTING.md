@@ -68,6 +68,8 @@ A red gate is an automatic "not yet":
 
 ```bash
 ./scripts/check-no-scratch.sh
+./scripts/check-no-secrets.sh
+./scripts/check-design-refs.sh
 ./scripts/check-action-pins.sh
 ./scripts/check-cargo-install-pins.sh
 ./scripts/check-license-allowlist-parity.sh
@@ -76,7 +78,9 @@ shellcheck install.sh scripts/*.sh .githooks/*
 ./scripts/check-invariants.sh
 python3 ./scripts/check-doc-links.py check
 ./scripts/check-command-docs.sh
+./scripts/check-brand-case.sh
 ./scripts/check-file-size.sh
+./scripts/check-gate-parity.sh
 ./scripts/check-wire-schema.sh
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo fmt --check
@@ -84,12 +88,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Or just `make gate`, which is the fifteen of them in order.
+Or just `make gate`, which is the nineteen of them in order.
 
-CI enforces the same steps, split across `ci.yml` (plus a release smoke build)
-and `docs-guards.yml`, which runs the prose guards — `invariants`, `doc-links`,
+Do not maintain that list by hand. It is `GATE_STEPS` in the `Makefile`, and
+`./scripts/check-gate-parity.sh` — itself one of the steps — fails if this fence
+or AGENTS.md's block stops matching it. Before that guard existed both had
+drifted, each missing three guards that had been added without the prose being
+touched (#1437).
+
+CI enforces the same steps, split across `ci.yml` (plus a release smoke build);
+`docs-guards.yml`, which runs the prose guards — `invariants`, `doc-links`,
 and `command-docs` — on their own because they trigger on the `docs/**` and
-`*.md` paths that `ci.yml` deliberately ignores.
+`*.md` paths that `ci.yml` deliberately ignores; and `wire-schema.yml`, for the
+same reason in the other direction — a PR that only hand-edits a generated
+schema under `docs/wire/` starts neither of the others (#1439).
 
 **Cite a document by its id, not its path.** `doc:context-reuse §4` resolves no
 matter where the file moves; a document with no frontmatter `id` is not citable

@@ -31,8 +31,16 @@ CARGO_SCOPE ?= --workspace
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
-                    command-docs brand-case file-size
+                    command-docs brand-case file-size gate-parity
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
+
+# The whole gate, in order, as one name. `gate` below is defined *from* this
+# variable rather than restating it, and `make print-gate-steps` prints it —
+# which is what lets scripts/check-gate-parity.sh hold AGENTS.md and
+# CONTRIBUTING.md to the real list instead of a hand-copied one. Both documents
+# had already re-rotted twice, in the same direction each time: a guard was
+# added here and the prose kept the old count (#1437).
+GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test
 
 .PHONY: help
 help: ## Show this help
@@ -221,19 +229,40 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 	docker build -f packaging/docker/Dockerfile.serve -t stella-serve:ci .
 	@./scripts/smoke-serve-image.sh stella-serve:ci
 
-# The three tiers of the gate, from cheapest to dearest. Each is a superset of
+# The four tiers of the gate, from cheapest to dearest. Each is a superset of
 # the one above it, and only the compile tiers honour CARGO_SCOPE.
 #
-#   guards  every global guard + rustfmt. Only wire-schema's two schema
-#           exporters compile, so there is still nothing to scope.
-#   check   ...plus clippy. The graduated fallback: a reduced gate, not no gate.
-#   gate    ...plus rustdoc and the test suite. What CI runs, unscoped.
+#   guards-fast  the toolchain-free guards + rustfmt. Nothing compiles at all.
+#   guards       ...plus wire-schema, whose two schema exporters do compile.
+#   check        ...plus clippy. The graduated fallback: a reduced gate, not no gate.
+#   gate         ...plus rustdoc and the test suite. What CI runs, unscoped.
+#
+# `guards-fast` exists for the one push shape where `guards` is provably
+# wasted work: a diff that reaches no crate AND cannot have touched the wire
+# contract — a website-only or workflow-only push. Every guard in
+# GATE_GUARDS_FAST is a shell script over the tree, and `cargo fmt --check`
+# parses rather than builds, so this rung needs no build at all. The pre-push
+# hook picks between the two by grepping the pushed diff (#1439); wire-schema
+# is not optional, it is *conditional*, and the condition is in one place.
+.PHONY: guards-fast
+guards-fast: $(GATE_GUARDS_FAST) format-check ## Toolchain-free guards + fmt (no cargo build at all)
 
 .PHONY: guards
 guards: $(GATE_GUARDS) format-check ## Global guards + fmt only (nothing compiles beyond the wire-schema exporters; nothing to scope)
 
 .PHONY: gate
-gate: $(GATE_GUARDS) doc-warnings format-check lint test ## Full CI gate: guards + rustdoc + fmt-check + clippy + test
+gate: $(GATE_STEPS) ## Full CI gate: guards + rustdoc + fmt-check + clippy + test
+
+# Consumed by scripts/check-gate-parity.sh. Printing the variable is the whole
+# point: a guard that re-parsed this Makefile with a regex would be one more
+# hand-maintained copy of the thing it is guarding.
+.PHONY: print-gate-steps
+print-gate-steps:
+	@echo $(GATE_STEPS)
+
+.PHONY: gate-parity
+gate-parity: ## Assert AGENTS.md and CONTRIBUTING.md list the real gate steps (#1437)
+	@./scripts/check-gate-parity.sh
 
 .PHONY: check
 check: $(GATE_GUARDS) format-check lint ## Reduced pre-push gate: every guard + fmt + clippy, no rustdoc and no tests

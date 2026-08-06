@@ -172,6 +172,15 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-brand-case.sh
 
+      # Also toolchain-free. AGENTS.md and CONTRIBUTING.md each restate what
+      # `make gate` runs, and both had drifted twice — each time by omitting a
+      # newly added guard, which is the direction that misleads a reader into
+      # thinking a short green list means a green gate (#1437). The list is
+      # `GATE_STEPS` in the Makefile; this holds the prose to it.
+      - name: the documented gate is the real gate
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-gate-parity.sh
+
       # Also toolchain-free (shellcheck ships preinstalled on ubuntu-latest).
       # install.sh is fetched over the network and piped into `sh` by
       # strangers before Stella is installed; the guard scripts are what the
