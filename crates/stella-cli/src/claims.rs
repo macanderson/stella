@@ -349,6 +349,14 @@ impl ToolExecutor for ClaimTap<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded: letting the empty default stand would silently serialize the
+    /// inner executor's sibling spawns (see the port's contract). The spawn
+    /// tool names no mutating path and no transient lane, so concurrent
+    /// siblings pass through `execute` above without touching a claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
 }
 
 #[cfg(test)]
@@ -372,10 +380,26 @@ mod tests {
                 content: "ok".into(),
             }
         }
+        fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+            std::collections::HashSet::from(["task".to_string()])
+        }
     }
 
     fn store() -> Arc<Store> {
         Arc::new(Store::in_memory().unwrap())
+    }
+
+    /// The tap sits directly under the engine in every deck lane, so a tap
+    /// that swallowed the claim (the default is empty) would serialize
+    /// sibling spawns no matter what the registry advertised.
+    #[test]
+    fn the_claim_tap_forwards_parallel_safe_names() {
+        let inner = Passthrough(Default::default());
+        let tap = ClaimTap::new(&inner, None, "ses-1/lead");
+        assert!(
+            tap.parallel_safe_names().contains("task"),
+            "the inner executor's concurrency claim must survive the tap"
+        );
     }
 
     #[tokio::test]

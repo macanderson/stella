@@ -527,6 +527,13 @@ impl ToolExecutor for InteractiveToolSet<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded: letting the empty default stand would silently serialize the
+    /// inner executor's sibling spawns (see the port's contract). The tools
+    /// added here (`ask_user`, skills) make no concurrency claim of their own.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
 }
 
 #[cfg(test)]
