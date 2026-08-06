@@ -4,11 +4,11 @@
 //! `stella daemon resume-all` and `stella daemon install --resume-all`:
 //! resume-at-boot (#1627).
 //!
-//! [`super::service`] (#1587) registers one explicit invocation with launchd /
+//! [`crate::daemon::service`] (#1587) registers one explicit invocation with launchd /
 //! `systemd --user`, and a service manager re-**starts** what it registered —
 //! a fresh turn and a fresh spend at every boot. That is the wrong verb for
 //! the machine that rebooted mid-turn: the killed run left a resume point at
-//! its last committed step, and [`super::resume_supervised`] (#1586) continues
+//! its last committed step, and [`crate::daemon::resume_supervised`] (#1586) continues
 //! from it. This module is the wire between the two, so a rebooted machine
 //! comes back **continuing** its work rather than repeating it.
 //!
@@ -25,7 +25,7 @@
 //!
 //! Exactly the rows `stella daemon list` paints `Crashed ↩`: a **supervised**
 //! run whose stored status is still *live*
-//! ([`stella_store::SessionStatus::is_live`]) while its liveness lock is not
+//! (`SessionStatus::is_live`) while its liveness lock is not
 //! held, whose workspace still exists, and which left a resume point this
 //! build can see.
 //!
@@ -55,7 +55,7 @@
 //! - That is not enough when the *resumed* turn is itself killed, because it
 //!   writes a fresh resume point before it dies. So every continued run is
 //!   counted in a durable ledger at `~/.stella/services/resume-boot.json`
-//!   **before** it is spawned, and the [`MAX_BOOT_ATTEMPTS`]th failure retires
+//!   **before** it is spawned, and the `MAX_BOOT_ATTEMPTS`th failure retires
 //!   it: the row is still listed, still says why, and is still resumable by
 //!   hand with `stella daemon resume <id>` — a human deciding to try again is
 //!   exactly what the bound exists to require.
@@ -145,7 +145,7 @@ pub(super) enum SkipReason {
     NoResumePoint,
     /// The workspace is gone; a resumed turn must run where its work is.
     WorkspaceGone,
-    /// [`MAX_BOOT_ATTEMPTS`] boot-time resumes have already been spent.
+    /// `MAX_BOOT_ATTEMPTS` boot-time resumes have already been spent.
     AttemptsExhausted,
 }
 
@@ -177,7 +177,7 @@ impl SkipReason {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BootDecision {
     /// Continue the interrupted turn from its last committed step boundary,
-    /// via [`super::resume_supervised`].
+    /// via [`crate::daemon::resume_supervised`].
     Continue,
     Skip(SkipReason),
 }
@@ -277,7 +277,7 @@ fn ledger_path() -> Result<PathBuf, String> {
     Ok(super::service::ensure_service_log_dir()?.join(LEDGER_FILE))
 }
 
-/// Read one registry record into the facts [`decide`] needs.
+/// Read one registry record into the facts `decide` needs.
 fn candidate(
     registry: &SessionRegistry,
     record: &SessionRecord,

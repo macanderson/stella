@@ -27,7 +27,7 @@
 //! implicitly: an ordinary terminal run is supervised, never installed.
 //!
 //! The one command for which restarting is the *wrong* verb has its own flag:
-//! `--resume-all` registers [`super::boot`]'s sweep (#1627), which continues
+//! `--resume-all` registers [`crate::daemon::boot`]'s sweep (#1627), which continues
 //! the turns the reboot killed from their last committed step boundary
 //! instead of starting anything over. It is still explicit, still one
 //! registered invocation, and still removed by `uninstall`.
@@ -288,7 +288,7 @@ pub(crate) fn uninstall(label: &str) -> Result<(), String> {
 /// *not* restart, so it names its own verb and refuses to be combined with
 /// either an explicit command (which of the two would boot run?) or
 /// `--keep-alive` (a sweep restarted every minute would re-enter its own
-/// attempt bound forever — see [`super::boot`]).
+/// attempt bound forever — see [`crate::daemon::boot`]).
 fn resolve_command(
     resume_all: bool,
     keep_alive: bool,
