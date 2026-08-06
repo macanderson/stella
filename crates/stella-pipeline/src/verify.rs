@@ -694,9 +694,9 @@ pub fn unverifiable_evidence(inputs: &LadderInputs) -> VerdictEvidence {
             "UNVERIFIABLE — this turn dispatched {} call(s) able to change the workspace, and the \
              diff probe then read the tree and found it unchanged, so nothing here observed the \
              work and nothing is claimed about it (this is NOT a finding that the work is absent \
-             or wrong): the effects landed outside what this run collects. Flip oracle not armed \
-             (no test command); touched tests not run; file-change events recorded = 0. Verify \
-             the result on its own merits.",
+             or wrong): the effects landed outside what this run collects. No fail→pass flip was \
+             observed; no touched-test result; file-change events recorded = 0. Verify the result \
+             on its own merits.",
             inputs.mutating_actions
         )
     } else {
