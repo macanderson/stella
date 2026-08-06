@@ -102,7 +102,9 @@ async fn the_main_checkout_and_foreign_worktrees_are_never_candidates() {
     // And nothing named the main checkout or the hand-made worktree.
     for call in gc.git.calls() {
         assert!(
-            !call.iter().any(|a| a == "/repo/hand-made" || a == "my-feature"),
+            !call
+                .iter()
+                .any(|a| a == "/repo/hand-made" || a == "my-feature"),
             "a foreign worktree/branch reached git: {call:?}"
         );
     }
@@ -254,7 +256,9 @@ async fn age_keeps_a_recent_worktree_and_an_undatable_one() {
 #[tokio::test]
 async fn a_loose_unmerged_fleet_branch_is_kept_and_a_merged_one_is_deleted() {
     let gc = scripted(|args| match (arg(args, 0), arg(args, 1)) {
-        ("worktree", "list") => GitOutput::ok("worktree /repo\nHEAD 1111\nbranch refs/heads/main\n"),
+        ("worktree", "list") => {
+            GitOutput::ok("worktree /repo\nHEAD 1111\nbranch refs/heads/main\n")
+        }
         ("for-each-ref", _) => GitOutput::ok("fleet/done-1\nfleet/wip-2\n"),
         // Only the first branch is contained in the base ref.
         ("merge-base", _) => {
@@ -336,7 +340,10 @@ async fn seed_repo(dir: &Path) -> String {
         assert!(out.success, "git {args:?} failed: {}", out.stderr);
     }
     std::fs::write(dir.join("README.md"), "seed\n").unwrap();
-    for args in [vec!["add", "--", "README.md"], vec!["commit", "-q", "-m", "seed"]] {
+    for args in [
+        vec!["add", "--", "README.md"],
+        vec!["commit", "-q", "-m", "seed"],
+    ] {
         let out = git.run(dir, &args).await.unwrap();
         assert!(out.success, "git {args:?} failed: {}", out.stderr);
     }

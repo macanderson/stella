@@ -104,7 +104,9 @@ impl std::fmt::Display for KeepReason {
             Self::UnmergedCommits => f.write_str("commits not in the base ref (use --force)"),
             Self::Detached => f.write_str("detached checkout, no branch to judge"),
             Self::ForeignBranch => f.write_str("branch is outside the fleet/ namespace"),
-            Self::TooRecent { age_days } => write!(f, "finished {age_days}d ago, younger than --age"),
+            Self::TooRecent { age_days } => {
+                write!(f, "finished {age_days}d ago, younger than --age")
+            }
             Self::AgeUnknown => f.write_str("no recorded finish time, age unknown"),
         }
     }
@@ -286,8 +288,12 @@ impl<G: GitCli> Gc<G> {
             ensure_ok(out, "worktree prune").map_err(GcError::from)?;
         }
 
-        let worktrees = self.sweep_worktrees(activity, opts, &base_ref, now_ms).await?;
-        let branches = self.sweep_loose_branches(&worktrees, opts, &base_ref).await?;
+        let worktrees = self
+            .sweep_worktrees(activity, opts, &base_ref, now_ms)
+            .await?;
+        let branches = self
+            .sweep_loose_branches(&worktrees, opts, &base_ref)
+            .await?;
 
         Ok(GcReport {
             base_ref,
@@ -318,11 +324,18 @@ impl<G: GitCli> Gc<G> {
             // worktree a human made outside `.stella/worktrees/` — this is the
             // namespace rule, and it is checked before anything else so no
             // later branch of the logic can reach a `git` mutation for them.
-            if !entry.path.starts_with(&self.worktrees_root) {
+            if !self.under_worktrees_root(&entry.path) {
                 continue;
             }
             let action = self
-                .judge_worktree(&entry.path, entry.branch.as_deref(), activity, opts, base_ref, now_ms)
+                .judge_worktree(
+                    &entry.path,
+                    entry.branch.as_deref(),
+                    activity,
+                    opts,
+                    base_ref,
+                    now_ms,
+                )
                 .await?;
             let action = match action {
                 Verdict::Keep(reason) => WorktreeAction::Kept(reason),
@@ -349,6 +362,32 @@ impl<G: GitCli> Gc<G> {
         Ok(verdicts)
     }
 
+    /// Whether `path` names something inside `.stella/worktrees/` — the
+    /// namespace test, and the only thing standing between a sweep and the
+    /// main checkout.
+    ///
+    /// Compared on canonical paths when both sides resolve, because `git
+    /// worktree list` reports the *resolved* path while the workspace root a
+    /// caller hands us may travel through a symlink (macOS `/var` →
+    /// `/private/var` is the everyday case, and a repo under a symlinked home
+    /// is the same shape). A textual comparison there answers "outside the
+    /// namespace" for every fleet worktree in the repository, which is safe
+    /// but useless — it collects nothing. When either side cannot be resolved
+    /// the raw comparison still has to agree, so an unresolvable path is
+    /// never *promoted* into the namespace.
+    fn under_worktrees_root(&self, path: &Path) -> bool {
+        if path.starts_with(&self.worktrees_root) {
+            return true;
+        }
+        let (Ok(root), Ok(candidate)) = (
+            std::fs::canonicalize(&self.worktrees_root),
+            std::fs::canonicalize(path),
+        ) else {
+            return false;
+        };
+        candidate.starts_with(&root)
+    }
+
     /// The per-worktree decision. Split out so every "keep" has exactly one
     /// place it can come from.
     async fn judge_worktree(
@@ -370,7 +409,9 @@ impl<G: GitCli> Gc<G> {
         // In flight beats everything, `--force` included: force is a judgment
         // about work at rest, never a licence to yank the tree out from under
         // a running worker.
-        let record = activity.iter().find(|a| Path::new(&a.worktree_path) == path);
+        let record = activity
+            .iter()
+            .find(|a| same_worktree(Path::new(&a.worktree_path), path));
         if record.is_some_and(|a| a.unfinished_attempts > 0) {
             return Ok(Verdict::Keep(KeepReason::InFlight));
         }
@@ -470,7 +511,11 @@ impl<G: GitCli> Gc<G> {
             let action = if opts.dry_run {
                 BranchAction::WouldDelete
             } else {
-                match self.git.run(&self.repo_root, &["branch", "-D", branch]).await {
+                match self
+                    .git
+                    .run(&self.repo_root, &["branch", "-D", branch])
+                    .await
+                {
                     Ok(out) if out.success => BranchAction::Deleted,
                     Ok(out) => BranchAction::Failed(out.stderr.trim().to_string()),
                     Err(e) => BranchAction::Failed(e.to_string()),
@@ -522,7 +567,12 @@ impl<G: GitCli> Gc<G> {
             .git
             .run(
                 &self.repo_root,
-                &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+                &[
+                    "symbolic-ref",
+                    "--quiet",
+                    "--short",
+                    "refs/remotes/origin/HEAD",
+                ],
             )
             .await
             .map_err(WorktreeError::from)?;
@@ -546,6 +596,35 @@ impl<G: GitCli> Gc<G> {
             }
         }
         Err(GcError::NoBaseRef)
+    }
+}
+
+/// Whether a ledger-stamped worktree path and a `git worktree list` path name
+/// the same checkout.
+///
+/// Three rungs, widest last, because a *missed* match is the dangerous
+/// direction: it hides an in-flight attempt and the sweep would then judge a
+/// live worktree on its files alone. Textual equality, then canonical
+/// equality (the ledger stamps the path the dispatching fleet built from the
+/// workspace root; git reports the resolved one — they differ under any
+/// symlink, `/var` → `/private/var` on macOS being the everyday case), and
+/// finally the directory name, which is a run-scope+task-id hash suffixed
+/// slug and therefore already unique per workspace. An over-match on that last
+/// rung only ever attributes *more* history to a worktree, which keeps it.
+fn same_worktree(ledger_path: &Path, listed: &Path) -> bool {
+    if ledger_path == listed {
+        return true;
+    }
+    if let (Ok(a), Ok(b)) = (
+        std::fs::canonicalize(ledger_path),
+        std::fs::canonicalize(listed),
+    ) && a == b
+    {
+        return true;
+    }
+    match (ledger_path.file_name(), listed.file_name()) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
     }
 }
 

@@ -431,7 +431,8 @@ impl Ledger {
                 last_finished_ms: row.get::<_, Option<i64>>(2)?.map(|ms| ms as u64),
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(LedgerError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(LedgerError::from)
     }
 
     /// When a task last finished an attempt, across **every** run in this
@@ -867,6 +868,65 @@ mod tests {
         assert_eq!(ledger.total_spend("run").unwrap(), 0.0);
         assert!(ledger.commits_for_task("run", "t1").unwrap().is_empty());
         assert!(ledger.lineage_children("run").unwrap().is_empty());
+    }
+
+    /// The GC's ledger half (#1217): a worktree whose attempt never finished
+    /// must report as in flight, and a finished one must carry the finish
+    /// time the `--age` arithmetic reads.
+    #[test]
+    fn worktree_activity_separates_in_flight_from_finished() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        seed_run(&ledger, "run1");
+        let live = ledger
+            .start_attempt(&AttemptStart {
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                worktree_path: "/wt/live".into(),
+                branch: "fleet/live".into(),
+                started_at_ms: 10,
+            })
+            .unwrap();
+        let done = ledger
+            .start_attempt(&AttemptStart {
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                worktree_path: "/wt/done".into(),
+                branch: "fleet/done".into(),
+                started_at_ms: 11,
+            })
+            .unwrap();
+        ledger
+            .finish_attempt(&AttemptFinish {
+                attempt_id: done,
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                finished_at_ms: 42,
+                success: true,
+                summary: "done".into(),
+                commits: vec![],
+                cost_usd: 0.0,
+                spend_at_ms: 42,
+            })
+            .unwrap();
+        assert!(!ledger.attempt_is_finished(live).unwrap());
+
+        let mut activity = ledger.worktree_activity().unwrap();
+        activity.sort_by(|a, b| a.worktree_path.cmp(&b.worktree_path));
+        assert_eq!(
+            activity,
+            vec![
+                WorktreeActivity {
+                    worktree_path: "/wt/done".into(),
+                    unfinished_attempts: 0,
+                    last_finished_ms: Some(42),
+                },
+                WorktreeActivity {
+                    worktree_path: "/wt/live".into(),
+                    unfinished_attempts: 1,
+                    last_finished_ms: None,
+                },
+            ]
+        );
     }
 
     #[test]
