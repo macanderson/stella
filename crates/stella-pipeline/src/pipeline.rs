@@ -1701,7 +1701,7 @@ impl<'a> Pipeline<'a> {
         total: &mut f64,
     ) -> Result<(CandidateResult, Option<String>, u32), PipelineError> {
         // Orchestrator pre-fetch (issue #248) — see `crate::mcp_prefetch::fold`.
-        let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, goal, n, base_messages).await;
+        let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, n, base_messages).await;
         let base_messages: &[CompletionMessage] = prefetched.as_deref().unwrap_or(base_messages);
         let Some(port) = self.candidate_workspaces else {
             if author_witness {
