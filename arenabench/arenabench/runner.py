@@ -347,6 +347,53 @@ class Match:
         return self.trial_dirs(contestant_id).get(task)
 
 
+def _no_trial_ever_ran(match: Match) -> bool:
+    """True when every seat died without producing a single trial directory.
+
+    Both halves are required. A seat that exits nonzero after real trials
+    (Harbor can fail late) still leaves a contest worth reading, and a seat
+    that succeeded at all makes the match a contest by definition — neither
+    is a failed match, however the other seat fared.
+    """
+    if not match.runs:
+        return True
+    every_seat_died = all(
+        run.state in ("error", "failed") for run in match.runs.values()
+    )
+    return every_seat_died and not any(
+        match.trial_dirs(contestant.id) for contestant in match.spec.contestants
+    )
+
+
+def _seat_failure_reason(run: ContestantRun) -> str:
+    """The most specific one-line account of why a seat produced nothing."""
+    if run.error:
+        return run.error
+    try:
+        lines = run.log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    # The last non-empty line: a traceback ends with its exception, and a
+    # one-line refusal ("Docker daemon is not running…") is its own last line.
+    for line in reversed(lines):
+        if line.strip():
+            return line.strip()[:300]
+    return f"exited with code {run.exit_code} and wrote nothing to its log"
+
+
+def _failure_note(match: Match) -> str:
+    """Why the match failed, phrased for the operator, not the seat logs."""
+    reasons = {
+        run.contestant.name: _seat_failure_reason(run)
+        for run in match.runs.values()
+    }
+    unique = sorted(set(reasons.values()))
+    if len(unique) == 1:
+        return f"no trial ever ran — every seat failed: {unique[0]}"
+    per_seat = "; ".join(f"{name}: {reason}" for name, reason in reasons.items())
+    return f"no trial ever ran — {per_seat}"
+
+
 class MatchRunner:
     """Launches and supervises matches."""
 
@@ -655,8 +702,18 @@ class MatchRunner:
 
         match.finished_at = time.time()
         if match.status != "cancelled":
-            match.status = "finished"
-        log.info("match %s finished", match.spec.id)
+            # "finished" is a claim that a contest happened. A match whose
+            # every seat died without producing a single trial — Docker down,
+            # a bad Harbor, a refused launch — proved nothing, and stamping it
+            # finished puts a green pill over 0/0 trials two seconds in. That
+            # match failed, and the note says why so the operator does not
+            # have to open the seat logs to learn it.
+            if _no_trial_ever_ran(match):
+                match.status = "failed"
+                match.note = _failure_note(match)
+            else:
+                match.status = "finished"
+        log.info("match %s %s", match.spec.id, match.status)
 
     def cancel(self, match: Match) -> None:
         match.status = "cancelled"
