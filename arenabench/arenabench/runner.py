@@ -158,7 +158,10 @@ class ContestantRun:
         if self.error:
             return "error"
         if self.process is None:
-            return "pending"
+            # No process and a finish stamp is a run restored from disk after
+            # a server restart (#1885) — history, not a seat that never
+            # launched.
+            return "done" if self.finished_at is not None else "pending"
         if self.process.poll() is None:
             return "running"
         return "done" if self.exit_code in (0, None) else "failed"
@@ -394,6 +397,57 @@ def _failure_note(match: Match) -> str:
     return f"no trial ever ran — {per_seat}"
 
 
+def _synthesize_spec(match_id: str, match_dir: Path) -> MatchSpec | None:
+    """A spec rebuilt from what a finished match left behind.
+
+    Matches created before ``spec.json`` existed (#1885) still restore: the
+    seat manifests carry each seat's engine and agent, the job directories
+    carry the slugs and the tasks, and provenance carries the dataset. Good
+    enough to read history by — never to launch, which a restored match
+    never does.
+    """
+    jobs_root = match_dir / "jobs"
+    contestants: list[dict[str, Any]] = []
+    tasks: set[str] = set()
+    for job_dir in sorted(p for p in jobs_root.iterdir() if p.is_dir()):
+        slug = job_dir.name.removeprefix(f"{match_id}-")
+        raw: dict[str, Any] = {}
+        manifest = seat_manifest_path(job_dir)
+        if manifest.is_file():
+            try:
+                parsed = json.loads(manifest.read_text(encoding="utf-8"))
+                raw = parsed if isinstance(parsed, dict) else {}
+            except ValueError:
+                raw = {}
+        contestants.append(
+            {
+                "id": raw.get("contestant") or slug,
+                "name": slug.replace("-", " "),
+                "agent": raw.get("agent") or "stella",
+                "engine": {
+                    "api": raw.get("api") or "openrouter",
+                    "model": raw.get("model") or "",
+                    "base_url": raw.get("base_url"),
+                },
+            }
+        )
+        for trial in job_dir.iterdir():
+            if trial.is_dir():
+                tasks.add(trial.name.rsplit("__", 1)[0])
+    if not contestants:
+        return None
+    record = provenance.read_match(match_dir)
+    return MatchSpec.from_json(
+        {
+            "id": match_id,
+            "name": match_id,
+            "dataset": record.dataset_key if record else "",
+            "tasks": sorted(tasks),
+            "contestants": contestants,
+        }
+    )
+
+
 class MatchRunner:
     """Launches and supervises matches."""
 
@@ -402,6 +456,91 @@ class MatchRunner:
         self.workspace = workspace
         self.matches: dict[str, Match] = {}
         self._lock = threading.Lock()
+
+    # -- restoring --------------------------------------------------------
+
+    def restore_from_disk(self) -> int:
+        """Re-list finished matches from the workspace, after a restart.
+
+        The runner's live state is memory-only, so before this every restart
+        silently erased the UI's history while the artifacts sat intact on
+        disk (#1885). A restored match is history: no process, no supervisor,
+        no recorder — every reader (snapshot, metrics, transcripts, files)
+        already works straight off the job directories.
+        """
+        root = self.workspace / "matches"
+        if not root.is_dir():
+            return 0
+        restored = 0
+        for match_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            match_id = match_dir.name
+            if match_id in self.matches or not (match_dir / "jobs").is_dir():
+                continue
+            try:
+                match = self._restore_one(match_id, match_dir)
+            except Exception:  # one unreadable match must not hide the rest
+                log.exception("could not restore match %s", match_id)
+                continue
+            if match is None:
+                continue
+            with self._lock:
+                self.matches.setdefault(match_id, match)
+            restored += 1
+        if restored:
+            log.info("restored %d finished match(es) from disk", restored)
+        return restored
+
+    def _restore_one(self, match_id: str, match_dir: Path) -> Match | None:
+        spec: MatchSpec | None = None
+        spec_path = match_dir / "spec.json"
+        if spec_path.is_file():
+            try:
+                spec = MatchSpec.from_json(
+                    json.loads(spec_path.read_text(encoding="utf-8"))
+                )
+            except (ValueError, TypeError, KeyError):
+                spec = None  # fall through to the synthesized shape
+        if spec is None:
+            spec = _synthesize_spec(match_id, match_dir)
+        if spec is None or not spec.contestants:
+            return None
+
+        # An unknown dataset key must not hide the match: any registry entry
+        # lets the snapshot render, and the provenance record beside the
+        # trials keeps saying what actually graded them.
+        dataset = self.registry.get(spec.dataset) or next(
+            iter(self.registry.datasets.values()), None
+        )
+        if dataset is None:
+            return None
+
+        match = Match(spec, dataset, match_dir)
+        record_path = match_dir / "provenance.json"
+        started = (
+            record_path.stat().st_mtime
+            if record_path.is_file()
+            else match_dir.stat().st_mtime
+        )
+        finished = started
+        for result in match_dir.glob("jobs/*/*/result.json"):
+            finished = max(finished, result.stat().st_mtime)
+        match.created_at = match.started_at = min(started, finished)
+        match.finished_at = finished
+        match.status = "finished"
+        match.provenance = provenance.read_match(match_dir)
+        match.note = "restored from artifacts on disk after a server restart"
+        for contestant in spec.contestants:
+            job_name = f"{match_id}-{contestant.slug}"
+            run = ContestantRun(
+                contestant=contestant,
+                job_name=job_name,
+                job_dir=match.jobs_root / job_name,
+                log_path=match_dir / f"{contestant.slug}.log",
+            )
+            run.started_at = match.started_at
+            run.finished_at = finished
+            match.runs[contestant.id] = run
+        return match
 
     # -- launching --------------------------------------------------------
 
@@ -413,6 +552,17 @@ class MatchRunner:
         if dataset is None:
             raise ValueError(f"unknown dataset: {spec.dataset}")
         match = Match(spec, dataset, self.workspace / "matches" / spec.id)
+        # The spec is what a restart cannot rebuild from job directories alone
+        # (names, colors, task order). `to_json` serializes seats through
+        # `redacted()`, so credential values never touch disk. Best-effort: a
+        # match that cannot write its spec still runs, and restores later
+        # through the synthesized path.
+        try:
+            (match.workspace / "spec.json").write_text(
+                json.dumps(spec.to_json(), indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError:
+            log.warning("could not persist spec.json for match %s", spec.id)
         with self._lock:
             self.matches[spec.id] = match
         return match

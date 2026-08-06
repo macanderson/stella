@@ -152,6 +152,9 @@ class ArenaServer:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.registry = registry or DEFAULT_REGISTRY
         self.runner = MatchRunner(self.registry, workspace)
+        # History first: finished matches on disk are listed before any new
+        # one starts, so a restart never erases what the workspace remembers.
+        self.runner.restore_from_disk()
         self.recorder_status: tuple[bool, str] = (False, "not checked")
 
     # -- API handlers -----------------------------------------------------
