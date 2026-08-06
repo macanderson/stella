@@ -68,7 +68,7 @@ pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 ///
 /// Ingest already caps each tool individually — `MAX_TOOLS_PER_SERVER` (256),
 /// `MAX_TOOL_DESCRIPTION_CHARS` (2,000) and a per-tool `inputSchema` budget in
-/// [`crate::client::ingest`]. What none of them bounds is the **aggregate**:
+/// `crate::client::ingest`. What none of them bounds is the **aggregate**:
 /// 256 tools times a 2,000-character description is ~512 KB of third-party
 /// prose from a single server, at position 0 of every request, before its
 /// schemas are counted (#1856).
