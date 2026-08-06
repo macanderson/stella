@@ -281,6 +281,12 @@ pub struct OutcomeAssessed {
 }
 
 /// Stable-ID payload of `compiled_context_frame_built`.
+///
+/// The compiled frame is *stella's own artifact*, distinct from the
+/// provider-emitted `ContextFrame` it is named after — the distinction, and the
+/// 2026-07-26 amendment folding the compiled frame into the step manifest
+/// rather than a parallel aggregate, are
+/// `doc:adr/0006-contextframe-vs-compiledcontextframe`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CompiledContextFrameBuilt {

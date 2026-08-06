@@ -1,7 +1,7 @@
 ---
 id: audit/2026-08-ultraudit-round-3
 title: Ultraudit round 3 — 2026-08-04
-status: living
+status: archived
 ---
 
 # Ultraudit round 3 — 2026-08-04
