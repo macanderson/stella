@@ -56,6 +56,7 @@ mod persistence;
 mod presence;
 mod prompt;
 pub(crate) mod resume;
+mod skill_usage;
 mod tools;
 
 pub(crate) use engine::*;
@@ -76,6 +77,7 @@ pub(crate) use persistence::{
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
+pub(crate) use skill_usage::stamp_execution_and_record_skill_usage;
 // `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
 // session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".
 pub(crate) use crate::tool_policy::PolicyToolSet;
@@ -331,20 +333,17 @@ async fn run_pipeline_one_shot(
         // is refused with a reason (#453).
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
-        // Tell memory which execution this run reflects on, before the turn
-        // runs — the post-turn self-review is stored 1:1 with an execution,
-        // so a path that skips this files id-less reflection rows (NULL
-        // `self_rating`), which is exactly what happened on this, the primary
-        // headless surface, while only the deck was wired.
-        if let Some((_, id)) = &execution {
-            m.set_execution_id(*id);
-        }
         // The A/B control, armed before anything recalls (#1221): a control
         // turn leaves BOTH the block below and the pipeline's own recall port
         // frameless, and the durable schedule is what lets a
         // one-turn-per-process surface produce an arm at all.
         m.arm_recall_control();
     }
+    // The shared seam (#1872): stamp the execution onto memory (reflection
+    // stores the self-review 1:1 with it) and record the skills the block
+    // below will inject — after the arm above, so a control turn that
+    // injects nothing records nothing.
+    stamp_execution_and_record_skill_usage(&execution, memory.as_mut(), prompt, &cfg.workspace_root);
     if let Some(m) = &memory {
         // Frames ride the pipeline's own recall port below (`recall:` in the
         // ports), which recalls once, renders them into the goal message, and
@@ -2059,17 +2058,16 @@ async fn run_turn(
     // would double the retrieval cost of every interactive turn.
     recall_event: Option<AgentEvent>,
     // The caller's session memory, borrowed for the duration of the turn so
-    // this execution's id can be stamped before the turn runs — the caller
-    // reflects with the same memory afterwards, and a reflection that cannot
-    // name its execution files an id-less row (NULL `self_rating`).
+    // the execution seam can stamp this execution's id and record its
+    // skill-version usage before the turn runs — the caller reflects with the
+    // same memory afterwards, and a reflection that cannot name its execution
+    // files an id-less row (NULL `self_rating`).
     session_memory: Option<&mut SessionMemory>,
 ) -> Result<(), CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
-        m.set_execution_id(*id);
-    }
+    stamp_execution_and_record_skill_usage(&execution, session_memory, prompt, &cfg.workspace_root);
     let files_before = registry.files_touched().len();
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
