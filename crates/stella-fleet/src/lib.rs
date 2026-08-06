@@ -13,6 +13,11 @@
 //!   tasks run in the repo root), plus commit helpers that *always* use
 //!   explicit pathspecs (a fleet worker can never sweep a sibling's staged
 //!   files).
+//! - [`gc`] — **reclaiming what a run leaves behind** (issue #1217): the
+//!   conservative sweep over `.stella/worktrees/` and the `fleet/` branch
+//!   namespace that `stella fleet clean` drives. Nothing in flight, dirty, or
+//!   carrying unmerged commits is removed without `--force`, and every kept
+//!   candidate reports why.
 //! - [`ledger`] — the **commit ledger**: one embedded SQLite file recording
 //!   every run, task, attempt, commit, lineage edge, and per-task USD spend.
 //! - [`monitor`] — the **PR/CI monitor** over the [`GhCli`] port: live PR
@@ -64,6 +69,7 @@
 
 pub mod cache_schedule;
 pub mod fleet;
+pub mod gc;
 pub mod git;
 pub mod ledger;
 pub mod monitor;
@@ -73,6 +79,10 @@ pub use cache_schedule::{RunnableSession, warmest_first};
 pub use fleet::{
     CacheWarmthLookup, Fleet, FleetConfig, FleetError, FleetRunReport, FleetWorker, TaskHandle,
     WorkerControls, WorkerOutcome,
+};
+pub use gc::{
+    BranchAction, BranchVerdict, Gc, GcError, GcOptions, GcReport, KeepReason, WorktreeAction,
+    WorktreeActivity, WorktreeVerdict,
 };
 pub use git::{
     GitCli, GitError, GitOutput, RemoveOutcome, SystemGitCli, Worktree, WorktreeEntry,

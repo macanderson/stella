@@ -1,7 +1,7 @@
-//! Shared chrome for the floating cards (`/tasks` · `/scope` · `/witness` ·
-//! `/models` · `/budget`): one bordered block floated above the composer,
+//! Shared chrome for the floating cards (`/plan` · `/models` · `/budget`):
+//! one bordered block floated above the composer,
 //! max-width ~56 cells, title row = accent-colored name + dimmed context +
-//! right-aligned dim key hints; body rows below. Implemented once so the five
+//! right-aligned dim key hints; body rows below. Implemented once so the three
 //! cards read as one system, and so the selection convention — a `▸` marker
 //! glyph **plus** the background tint — is structural: the golden suite
 //! strips style, so a style-only selection would be invisible to it (the
@@ -19,7 +19,9 @@ use crate::theme;
 pub(crate) const CARD_MAX_W: u16 = 56;
 
 /// Rows of deck chrome under the content area the card floats above
-/// (trace strip 2 + progress 1 + composer 1 + footer 1 + statline 1).
+/// (trace strip 2 + progress 1 + composer 1 + footer 1 + statline 1). The
+/// statline is really 2 rows (3 with a cache diagnosis), so this is one short
+/// and a card's bottom border lands on the trace strip — as the goldens pin it.
 const CHROME_BELOW: u16 = 6;
 
 /// Where a card floats: horizontally centered, bottom-anchored just above
@@ -30,8 +32,8 @@ const CHROME_BELOW: u16 = 6;
 /// In accessible mode (`full_width`) the card spans the frame instead: the
 /// float is a visual affordance, and a labeled record clipped at a float's
 /// right border is a record a reader never hears the end of. `max_w` is the
-/// card's own width cap — [`CARD_MAX_W`] for most; the witness panel runs
-/// wider because its records are fixed product copy that may not elide.
+/// card's own width cap — [`CARD_MAX_W`] for most; the `/models` card runs
+/// wider because a model slug and the key that chose it may not elide.
 pub(crate) fn card_area(frame: Rect, body_rows: u16, max_w: u16, full_width: bool) -> Rect {
     let w = if full_width {
         frame.width
@@ -138,8 +140,8 @@ pub(crate) fn mini_fraction_bar(
     ]
 }
 
-/// Format a millisecond span as `m:ss` (the per-record elapsed the witness
-/// and task cards show).
+/// Format a millisecond span as `m:ss` (the elapsed each subagent block
+/// shows — `crate::views::subagents`).
 pub(crate) fn fmt_mss(ms: u64) -> String {
     let secs = ms / 1000;
     format!("{}:{:02}", secs / 60, secs % 60)

@@ -269,9 +269,15 @@ string (an absolute path would make the shadow copy truncate the real file).
 
 The staged pipeline enforces the same contract at runtime: when no
 `--test-command` is configured, its **witness stage** has an independent model
-(the verifier's resolution, never the worker) author the failing witness test up
-front, tracks its fail→pass flip in the flip oracle, and refuses to credit the
-flip if the worker modified the witness files (tamper exclusion). The witness
+(the verifier's resolution, never the worker) author the failing witness test,
+tracks its fail→pass flip in the flip oracle, and refuses to credit the flip if
+the worker modified the witness files (tamper exclusion). Authoring is
+**demand-driven and runs after execution** — once the warrant has read the
+executed diff and found something worth proving — so the stage order is
+triage → recall → plan → scope → **execute → witness** → verify → verdict
+(`stage_rank` in `crates/stella-pipeline/src/replay.rs` is the canonical
+ordering; the revise back-edges land on execute, so re-execution never
+re-authors). The witness
 is **scaffolding for that one run**: it lives in the candidate workspace and is
 discarded with it, so an already-satisfied test is never left behind in the
 project's test tree. `stella run --keep-witness` promotes it instead. See

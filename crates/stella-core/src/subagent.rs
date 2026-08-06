@@ -87,12 +87,13 @@
 //! # Nesting
 //!
 //! [`SubAgentSpec::depth`] is checked against [`MAX_SUB_AGENT_DEPTH`] before
-//! the first model call. There is deliberately no engine-level depth
-//! counter: nothing a *model* can call spawns a sub-agent today, so recursion
-//! is not reachable from a prompt. A future spawn tool MUST thread
-//! `parent_depth + 1` into the spec it builds — that is the contract this
-//! cap enforces, and `depth` rides the `Started` event so a violation is
-//! visible in any journal.
+//! the first model call. There is deliberately no engine-level depth counter:
+//! the one model-callable spawn surface (`stella-tools`' `task` tool) pins
+//! `depth: 1`, and a child runs behind [`ReadOnlyTools`], which never
+//! advertises that tool — so recursion is not reachable from a prompt. Any
+//! further spawn surface MUST thread `parent_depth + 1` into the spec it
+//! builds — that is the contract this cap enforces, and `depth` rides the
+//! `Started` event so a violation is visible in any journal.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

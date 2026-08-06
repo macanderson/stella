@@ -1141,7 +1141,7 @@ mod tests {
         // so a call_id that RECURS collapsed every result carrying it onto the
         // LAST occurrence's id and they all compared equal. Gemini and Vertex
         // mint ids as `call_{ordinal}` counted per RESPONSE
-        // (`stella-model/src/gemini.rs`), so `call_0` comes back on every
+        // (`crates/stella-model/src/gemini.rs`), so `call_0` comes back on every
         // assistant step: below, three reads of three different files return
         // three different outputs, all answering `call_0`. The middle one was
         // replaced by the dedup stub — text asserting the model has already
