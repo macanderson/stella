@@ -24,7 +24,7 @@
 //!
 //! - `a` — approve the plan as proposed
 //! - `t` — approve, trimmed to the scope thresholds
-//! - `r` — send it back: type a refinement note (`⇧⏎` for a new line, `⏎`
+//! - `r` — send it back: type a refinement note (`⌥⏎` for a new line, `⏎`
 //!   sends it to the planner)
 //! - `x` / `Esc` — abort the plan
 //! - `!` — run a shell line without leaving the dialog, and without answering
