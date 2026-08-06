@@ -3,6 +3,7 @@
 //! private surface (`CandidateSurface`, `Pipeline::gather_diff`, ...)
 //! stays reachable via `super::*`.
 
+mod conversational_window;
 mod management_accounting;
 mod telemetry;
 

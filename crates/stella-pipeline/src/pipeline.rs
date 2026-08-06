@@ -157,6 +157,49 @@ const DEFAULT_SYSTEM_PROMPT: &str =
 /// The system prompt for the conversational fast path. Swapped in for
 /// [`DEFAULT_SYSTEM_PROMPT`] when triage classified the input as chat so the
 /// reply reads as a normal, brief conversational turn rather than a work plan.
+/// How many trailing messages the conversational reply is given, beyond the
+/// leading system message.
+///
+/// Chat needs the thread of the conversation, not the engineering transcript
+/// under it. Twelve messages is roughly the last half-dozen exchanges — enough
+/// that "and the other one?" still resolves, and enough that a follow-up reads
+/// as continuous.
+const CONVERSATIONAL_HISTORY_MESSAGES: usize = 12;
+
+/// The messages a conversational reply is dispatched with: the leading system
+/// message, then the last [`CONVERSATIONAL_HISTORY_MESSAGES`].
+///
+/// Unbounded, this call re-billed the whole running transcript at the full
+/// input rate for a two-sentence answer. It dispatches with `tools:
+/// Vec::new()` and a replaced system message, so not one byte of the prefix
+/// matches the worker's cached one — a 90k-token session where the user types
+/// "thanks" paid for all 90k plus the 1.25x cache-write premium, and every
+/// chat interjection in a long session paid it again (#1840).
+///
+/// Bounding the input is the fix that holds regardless of caching. The
+/// issue's other option — keep the worker's system message so the prefix
+/// matches — cannot deliver a hit on its own while the tool array is empty:
+/// the tools block is part of the same cached prefix, so a matching system
+/// message with no tools still misses. That half is worth doing, and needs
+/// adapter-level work to verify rather than assume.
+///
+/// The system message is kept because the caller's first message may not be
+/// one (`run` seeds it when history is empty, but nothing enforces it for a
+/// caller that seeded its own); dropping a non-system first message here
+/// would silently destroy context the window is meant to preserve.
+fn conversational_window(messages: &[CompletionMessage]) -> Vec<CompletionMessage> {
+    let leads_with_system = messages
+        .first()
+        .is_some_and(|message| matches!(message.role, MessageRole::System));
+    let (head, rest) = if leads_with_system {
+        messages.split_at(1)
+    } else {
+        messages.split_at(0)
+    };
+    let tail = rest.len().saturating_sub(CONVERSATIONAL_HISTORY_MESSAGES);
+    head.iter().chain(&rest[tail..]).cloned().collect()
+}
+
 const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software engineering agent. The user's latest \
      message is a greeting, small talk, or a question about you — not a coding \
      task. Reply briefly and warmly in plain prose: no tools, no code, no plan, \
@@ -1444,7 +1487,7 @@ impl<'a> Pipeline<'a> {
         // silently destroyed — prepend in front of it instead. The swap is
         // local to `convo`, so the caller's own prefix — and its prompt-cache
         // hits, L-E8 — survive the turn untouched.
-        let mut convo = messages.clone();
+        let mut convo = conversational_window(messages);
         let leads_with_system = convo
             .first()
             .is_some_and(|message| matches!(message.role, MessageRole::System));
