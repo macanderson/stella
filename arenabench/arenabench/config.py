@@ -35,7 +35,14 @@ from pathlib import Path
 from typing import Any
 
 from .agents import resolve_agent
-from .model import ARENA_COLORS, Contestant, Engine, MatchSpec, RoleConfig
+from .model import (
+    ARENA_COLORS,
+    Contestant,
+    Engine,
+    MatchSpec,
+    RoleConfig,
+    is_credential_name,
+)
 
 __all__ = [
     "MatchTemplateError",
@@ -73,6 +80,43 @@ class MatchTemplateError(ValueError):
 def _role_key(name: str) -> str:
     """Normalise a role name from a template to its member of :data:`.ROLES`."""
     return _ROLE_ALIASES.get(name.strip().lower(), name.strip().lower())
+
+
+def _declared_env(
+    raw: dict[str, Any], problems: list[str], where: str
+) -> tuple[str, ...]:
+    """The ``required = [...]`` declaration of a ``[contestant.env]`` table.
+
+    Names only, never values: any other key is a value smuggled into a file
+    that promises to carry none (see module docstring), and a name outside
+    :func:`.model.screen_env`'s credential shapes would let a committed
+    template pull an arbitrary host variable into a seat's subprocess. Both
+    are template faults, reported like any other — loudly, before any
+    container starts (#1777).
+    """
+    names: tuple[str, ...] = ()
+    for key, value in raw.items():
+        if key != "required":
+            problems.append(
+                f"{where}: [contestant.env] carries {key!r} — names only, never "
+                'values; declare `required = ["NAME"]` and supply the value in '
+                "the environment (or the saved credential set) at launch"
+            )
+            continue
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) for item in value
+        ):
+            problems.append(f"{where}: env.required must be a list of variable names")
+            continue
+        bad = [item for item in value if not is_credential_name(item)]
+        if bad:
+            problems.append(
+                f"{where}: env.required names {', '.join(map(repr, bad))} are not "
+                "credential-shaped and would never be honoured (see screen_env)"
+            )
+            continue
+        names = tuple(dict.fromkeys(value))
+    return names
 
 
 def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> Engine:
@@ -146,14 +190,23 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
         if not engine.model:
             problems.append(f"{where}: engine.model is required")
 
+        env_raw = entry.get("env")
+        declared: tuple[str, ...] = ()
+        if env_raw is not None:
+            if not isinstance(env_raw, dict):
+                problems.append(f"{where}: [contestant.env] must be a table")
+            else:
+                declared = _declared_env(env_raw, problems, where)
+
         contestants.append(
             Contestant(
                 id=str(entry.get("id") or f"seat{seat + 1}"),
                 name=str(entry.get("name") or agent or f"seat {seat + 1}"),
                 agent=agent or "stella",
                 engine=engine,
-                env={},  # never from a file — see module docstring
+                env={},  # never values from a file — see module docstring
                 color=str(entry.get("color") or ARENA_COLORS[seat % len(ARENA_COLORS)]),
+                required_env=declared,
             )
         )
 
@@ -189,22 +242,22 @@ def load_match(path: Path, *, match_id: str | None = None) -> MatchSpec:
     return match_from_toml(data, match_id=match_id)
 
 
-def required_env(
-    spec: MatchSpec, declared: dict[str, list[str]] | None = None
-) -> dict[str, list[str]]:
+def required_env(spec: MatchSpec) -> dict[str, list[str]]:
     """Environment variables each seat needs, by contestant id.
 
-    Derived from each seat's provider unless the template declared its own
-    list. This is what turns "no secrets in the file" from a restriction into
-    a contract: the template still says exactly what must be supplied.
+    Derived from each seat's provider unless the seat declared its own list
+    (``[contestant.env] required = [...]``), which is then the seat's whole
+    contract — declaring only the subscription token is how a template keeps a
+    metered key out of a seat on purpose (#1777). This is what turns "no
+    secrets in the file" from a restriction into a contract: the template
+    still says exactly what must be supplied.
     """
     from .agents import credential_env_for, resolve_agent
 
     out: dict[str, list[str]] = {}
     for contestant in spec.contestants:
-        explicit = (declared or {}).get(contestant.id)
-        if explicit:
-            out[contestant.id] = list(explicit)
+        if contestant.required_env:
+            out[contestant.id] = list(contestant.required_env)
             continue
         candidates = list(credential_env_for(contestant.engine.api))
         agent_spec = resolve_agent(contestant.agent)
@@ -260,6 +313,8 @@ def match_to_toml_dict(spec: MatchSpec) -> dict[str, Any]:
                 "name": c.name,
                 "agent": c.agent,
                 "color": c.color,
+                # The declaration round-trips; values never exist to round-trip.
+                **({"env": {"required": list(c.required_env)}} if c.required_env else {}),
                 "engine": {
                     **{
                         k: v
