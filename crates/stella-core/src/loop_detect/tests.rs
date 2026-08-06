@@ -82,7 +82,9 @@ fn history_shorter_than_exact_repeat_threshold_is_not_a_loop() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100, // disable short-cycle for this test
-        stagnation_threshold: 0,  // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -93,7 +95,9 @@ fn exact_repeat_at_threshold_is_detected() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     let verdict = detect_loop(&records, config);
     assert_eq!(
@@ -115,7 +119,9 @@ fn exact_repeat_above_threshold_reports_full_count() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     match detect_loop(&records, config) {
         LoopVerdict::ExactRepeat { count, .. } => assert_eq!(count, 5),
@@ -166,7 +172,9 @@ fn different_arguments_to_the_same_tool_is_not_a_loop() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -184,7 +192,9 @@ fn call_id_is_ignored_when_comparing_calls() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert!(detect_loop(&records, config).is_loop());
 }
@@ -212,7 +222,9 @@ fn matching_identities_outrank_outputs_rewritten_since() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert!(
         detect_loop(&records, config).is_loop(),
@@ -239,7 +251,9 @@ fn differing_identities_outrank_outputs_collapsed_since() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -258,7 +272,9 @@ fn an_identity_never_resurrects_an_unresolved_output() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -276,7 +292,9 @@ fn one_sided_identity_falls_back_to_comparing_outputs() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 3,
         short_cycle_repeats: 100,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert!(detect_loop(&records, config).is_loop());
 }
@@ -288,7 +306,9 @@ fn short_cycle_below_threshold_is_not_a_loop() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 100, // disable exact-repeat for this test
         short_cycle_repeats: 3,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -308,7 +328,9 @@ fn short_cycle_at_threshold_is_detected() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 100,
         short_cycle_repeats: 3,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     let verdict = detect_loop(&records, config);
     match &verdict {
@@ -332,7 +354,9 @@ fn short_cycle_above_threshold_reports_full_repeat_count() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 100,
         short_cycle_repeats: 3,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     match detect_loop(&records, config) {
         LoopVerdict::ShortCycle { repeats, .. } => assert_eq!(repeats, 5),
@@ -379,7 +403,9 @@ fn period_three_cycle_with_identical_outputs_is_detected() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 100,
         short_cycle_repeats: 3,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     let verdict = detect_loop(&records, config);
     match &verdict {
@@ -412,7 +438,9 @@ fn period_three_cycle_with_differing_outputs_is_not_a_loop() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 100,
         short_cycle_repeats: 2,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -435,7 +463,9 @@ fn period_four_cycle_with_identical_outputs_is_detected() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 100,
         short_cycle_repeats: 2,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     match detect_loop(&records, config) {
         LoopVerdict::ShortCycle { pattern, repeats } => {
@@ -467,7 +497,9 @@ fn period_five_cycle_is_beyond_the_detector() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 100,
         short_cycle_repeats: 2,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -482,7 +514,9 @@ fn identical_calls_repeated_are_not_misreported_as_a_short_cycle() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 0, // disabled
         short_cycle_repeats: 1,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -574,8 +608,10 @@ fn zero_or_one_exact_repeat_threshold_disables_that_check() {
     for threshold in [0, 1] {
         let config = LoopDetectionConfig {
             exact_repeat_threshold: threshold,
-            short_cycle_repeats: 0,  // also disabled, so overall NoLoop
-            stagnation_threshold: 0, // ditto
+            short_cycle_repeats: 0, // also disabled, so overall NoLoop
+            stagnation_threshold: 0,
+            // Disabled: this case isolates another detector (#1851).
+            interleaved_repeat_threshold: 0, // ditto
         };
         assert_eq!(
             detect_loop(&records, config),
@@ -598,7 +634,9 @@ fn zero_short_cycle_repeats_disables_that_check() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: 0,
         short_cycle_repeats: 0,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -612,7 +650,9 @@ fn pathological_thresholds_do_not_overflow_the_cycle_arithmetic() {
     let config = LoopDetectionConfig {
         exact_repeat_threshold: usize::MAX,
         short_cycle_repeats: usize::MAX,
-        stagnation_threshold: 0, // disabled: this test isolates another check
+        stagnation_threshold: 0,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0, // disabled: this test isolates another check
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -819,6 +859,8 @@ fn identical_calls_are_reported_as_an_exact_repeat_not_stagnation() {
         exact_repeat_threshold: 0,
         short_cycle_repeats: 0,
         stagnation_threshold: 3,
+        // Disabled: this case isolates another detector (#1851).
+        interleaved_repeat_threshold: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -844,6 +886,8 @@ fn zero_or_one_stagnation_threshold_disables_that_check() {
             exact_repeat_threshold: 0,
             short_cycle_repeats: 0,
             stagnation_threshold: threshold,
+            // Disabled: this case isolates another detector (#1851).
+            interleaved_repeat_threshold: 0,
         };
         assert_eq!(
             detect_loop(&records, config),
@@ -917,7 +961,7 @@ proptest! {
         short_cycle_repeats in 0usize..8,
         stagnation_threshold in 0usize..8,
     ) {
-        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold };
+        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0 };
         let verdict = detect_loop(&records, config);
         // Whatever the verdict, `is_loop`/`evidence` must not panic either.
         let _ = verdict.is_loop();
@@ -938,7 +982,7 @@ proptest! {
             && records.len() < 2 * short_cycle_repeats
             && records.len() < stagnation_threshold
         {
-            let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold };
+            let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0 };
             prop_assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
         }
     }
@@ -964,7 +1008,193 @@ proptest! {
                 record
             })
             .collect();
-        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold };
+        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0 };
         prop_assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
+}
+
+// ---- interleaved repeat: the shape a contiguous scan cannot see ---------
+
+/// **Witness (#1851).** A-B-A-B-A, where A is identical every time and B
+/// varies, is a wedge that every contiguous scan misses.
+///
+/// This is what a real stall looks like: re-run the failing test, peek at a
+/// different file, repeat. Exact-repeat's `take_while` resets at offset 1,
+/// short-cycle breaks on the differing element, and stagnation's trailing run
+/// ends there too — so before this rung the turn spun to `max_steps` with no
+/// steer at all.
+#[test]
+fn an_identical_call_interleaved_with_varying_work_is_a_loop() {
+    let failing = || {
+        record(
+            "bash",
+            serde_json::json!({ "command": "cargo test" }),
+            Some(ToolOutput::Error {
+                message: "1 failed".into(),
+            }),
+        )
+    };
+    // Each `read` names a DIFFERENT file, so the interleaved element genuinely
+    // varies — nothing here is a contiguous run of anything.
+    let records = vec![failing(), read("a.rs"), failing(), read("b.rs"), failing()];
+
+    let contiguous_only = LoopDetectionConfig {
+        exact_repeat_threshold: 3,
+        short_cycle_repeats: 3,
+        stagnation_threshold: 6,
+        interleaved_repeat_threshold: 0, // the old behaviour
+    };
+    assert_eq!(
+        detect_loop(&records, contiguous_only),
+        LoopVerdict::NoLoop,
+        "precondition: every contiguous detector is blind to this"
+    );
+
+    let with_rung = LoopDetectionConfig {
+        interleaved_repeat_threshold: 3,
+        ..contiguous_only
+    };
+    match detect_loop(&records, with_rung) {
+        LoopVerdict::InterleavedRepeat { tool, count, .. } => {
+            assert_eq!(tool, "bash");
+            assert_eq!(count, 3, "all three occurrences counted, gaps included");
+        }
+        other => panic!("expected an interleaved repeat, got {other:?}"),
+    }
+}
+
+/// The other direction, and the one that decides whether this rung is safe to
+/// enable: an interleave that is genuinely PROGRESSING must stay silent.
+///
+/// Same A-B-A-B-A shape, same tool, same arguments — but A's output changes
+/// each round, which is exactly what "the test is now failing differently"
+/// looks like. A detector that fired here would steer an agent that is
+/// working.
+#[test]
+fn an_interleave_whose_results_keep_changing_is_not_a_loop() {
+    let attempt = |n: u32| {
+        record(
+            "bash",
+            serde_json::json!({ "command": "cargo test" }),
+            Some(ToolOutput::Error {
+                message: format!("{n} failed"),
+            }),
+        )
+    };
+    let records = vec![
+        attempt(3),
+        read("a.rs"),
+        attempt(2),
+        read("b.rs"),
+        attempt(1),
+    ];
+
+    let config = LoopDetectionConfig {
+        exact_repeat_threshold: 3,
+        short_cycle_repeats: 3,
+        stagnation_threshold: 6,
+        interleaved_repeat_threshold: 3,
+    };
+    assert_eq!(
+        detect_loop(&records, config),
+        LoopVerdict::NoLoop,
+        "shrinking failures are progress, not a loop"
+    );
+}
+
+/// A contiguous run is still reported as an EXACT repeat, not as the weaker
+/// gap-tolerant claim — the "tightest description of the evidence wins"
+/// ordering the rest of `detect_loop` follows.
+#[test]
+fn a_contiguous_run_still_reports_as_an_exact_repeat() {
+    let records = vec![read("a.rs"), read("a.rs"), read("a.rs")];
+    let config = LoopDetectionConfig {
+        exact_repeat_threshold: 3,
+        short_cycle_repeats: 100,
+        stagnation_threshold: 0,
+        interleaved_repeat_threshold: 3,
+    };
+    assert!(
+        matches!(
+            detect_loop(&records, config),
+            LoopVerdict::ExactRepeat { .. }
+        ),
+        "an exact repeat must not be demoted to the gap-tolerant verdict"
+    );
+}
+
+/// An unresolved trailing output proves nothing, here as everywhere else: a
+/// loop is only ever established by outputs that were actually observed.
+#[test]
+fn an_unresolved_output_never_trips_the_interleaved_rung() {
+    let records = vec![
+        read("a.rs"),
+        read("b.rs"),
+        read("a.rs"),
+        read("b.rs"),
+        record("read_file", serde_json::json!({ "path": "a.rs" }), None),
+    ];
+    let config = LoopDetectionConfig {
+        exact_repeat_threshold: 0,
+        short_cycle_repeats: 0,
+        stagnation_threshold: 0,
+        interleaved_repeat_threshold: 2,
+    };
+    assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
+}
+
+/// The identity of an interleaved repeat must equal the identity of the same
+/// loop seen contiguously, or the escalation ladder would treat one wedge as
+/// two and steer twice for it.
+#[test]
+fn the_interleaved_and_contiguous_verdicts_share_one_identity() {
+    let interleaved = LoopVerdict::InterleavedRepeat {
+        tool: "bash".into(),
+        input: serde_json::json!({ "command": "cargo test" }),
+        count: 3,
+    };
+    let contiguous = LoopVerdict::ExactRepeat {
+        tool: "bash".into(),
+        input: serde_json::json!({ "command": "cargo test" }),
+        count: 3,
+    };
+    assert_eq!(interleaved.identity(), contiguous.identity());
+}
+
+/// The false positive this rung shipped with, and the reason
+/// `window_is_progressing` exists.
+///
+/// Correct polling alternates `read_output` (same handle, NEW bytes each
+/// time) with `bash sleep 5` (same command, empty output every time). The
+/// sleep is a spacer: it repeats identically by design. Counting its
+/// occurrences flagged a turn that was streaming a build log perfectly well —
+/// caught by `two_distinct_calls_alternating_with_changing_outputs_is_not_a_loop`
+/// on the first cut of this detector.
+///
+/// Asserted here on its own, with only the interleaved rung enabled, so a
+/// future change cannot re-introduce it and pass by having some other
+/// detector answer first.
+#[test]
+fn a_repeating_spacer_beside_a_streaming_poll_is_not_a_loop() {
+    let mut records = Vec::new();
+    for i in 0..6 {
+        records.push(call(
+            "read_output",
+            serde_json::json!({ "handle": "proc-5" }),
+            &format!("[{i}s] compiling..."),
+        ));
+        records.push(call("bash", serde_json::json!({ "cmd": "sleep 5" }), ""));
+    }
+    let only_the_new_rung = LoopDetectionConfig {
+        exact_repeat_threshold: 0,
+        short_cycle_repeats: 0,
+        stagnation_threshold: 0,
+        interleaved_repeat_threshold: 3,
+    };
+    assert_eq!(
+        detect_loop(&records, only_the_new_rung),
+        LoopVerdict::NoLoop,
+        "the sleep repeats identically six times, but read_output is \
+         answering differently every round — the turn is making progress"
+    );
 }
