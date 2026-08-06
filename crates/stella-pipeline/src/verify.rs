@@ -831,8 +831,9 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
     // A negated verdict token is not that verdict: "the tests do not pass" is
     // a FAIL, and crediting its "pass" token as a PASS inverted real verdicts.
     // The negator must sit within two tokens of the verdict word ("do not
-    // pass", "cannot currently pass") — an unbounded window would misread "not
-    // a problem: PASS". A negated PASS reads as the FAIL it states; a negated
+    // pass" is adjacent, "cannot currently pass" has one token between) — a
+    // wider window would misread an approval lead-in like "not a problem.
+    // PASS". A negated PASS reads as the FAIL it states; a negated
     // FAIL ("did not fail") is skipped rather than trusted as a PASS, since
     // absence of failure is not the protocol's affirmative verdict. "no" is
     // deliberately not a negator for the same reason it is not a FAIL token:
@@ -848,7 +849,10 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
         if raw.is_empty() {
             continue;
         }
-        let negated = matches!(since_negation, Some(distance) if distance <= 2);
+        // `distance` is 0 for the token immediately after the negator, so the
+        // bound of 1 is the documented two-token window: "not pass" and
+        // "not currently pass" negate; "not a problem. PASS" does not.
+        let negated = matches!(since_negation, Some(distance) if distance <= 1);
         match raw {
             "pass" | "passed" | "approve" | "approved" => {
                 return Some(Verdict {
