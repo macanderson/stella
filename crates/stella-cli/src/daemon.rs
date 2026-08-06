@@ -692,6 +692,13 @@ impl Tail {
         Ok(Self { file, offset: 0 })
     }
 
+    // There is deliberately no `seek_to_end` here, for the same reason
+    // `console::Follower` carries no `skip_to_now`: that pair was the only
+    // caller, and #1632 removed it as a defect — seeking past everything
+    // already written threw away the run's shutdown output, which on the
+    // Ctrl-C path is precisely what the person who pressed the key is
+    // waiting to read.
+
     /// Start `lines` lines back from the end, or at the beginning if the file
     /// is shorter than that.
     ///
