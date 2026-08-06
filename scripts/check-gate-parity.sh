@@ -49,7 +49,23 @@ agents="AGENTS.md"
 contributing="CONTRIBUTING.md"
 
 fail=0
-note() { printf 'check-gate-parity: %s\n' "$1" >&2; }
+
+# The verdict is decided before anything is written (#1815). Failure lines are
+# buffered while the checks run and emitted in one final write: a guard that
+# prints as it scans dies mid-report when its reader exits early, and under
+# `set -euo pipefail` whatever partial state it had reached becomes the exit
+# status. scripts/check-file-size.sh is the shape being copied.
+report=""
+note() { report="${report}check-gate-parity: $1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
+}
 
 # ── The truth ────────────────────────────────────────────────────────────────
 
@@ -57,12 +73,14 @@ if ! steps="$(make -s print-gate-steps 2>/dev/null)"; then
   note "FAIL — could not read GATE_STEPS (\`make -s print-gate-steps\`)."
   note "     That target is what makes this guard derived rather than a"
   note "     second copy of the list. Restore it in the Makefile."
+  emit
   exit 1
 fi
 
 count="$(printf '%s\n' "$steps" | wc -w | tr -d ' ')"
 if [ "$count" -eq 0 ]; then
   note "FAIL — GATE_STEPS is empty."
+  emit
   exit 1
 fi
 
@@ -167,8 +185,10 @@ if [ "$fail" -ne 0 ]; then
   note "The gate's composition lives in GATE_STEPS in the Makefile, and these"
   note "two documents restate it for readers. When you add or remove a guard,"
   note "update all three in the same PR — that is what this guard is for."
+  emit
   exit 1
 fi
 
-printf 'check-gate-parity: OK — all %s gate steps are named in %s and %s.\n' \
-  "$count" "$agents" "$contributing"
+emit
+printf 'check-gate-parity: OK — %s gate steps, named in %s and %s.\n' \
+  "$count" "$agents" "$contributing" || true
