@@ -578,27 +578,60 @@ pub(crate) fn truncate_preview(text: &str, max_bytes: usize) -> String {
     text[..cut].to_string()
 }
 
-/// Keep head and tail when output exceeds the cap — build/test failures
-/// matter at both ends (first error, final summary).
+/// Keep head and tail when output exceeds the shared runner's page budget —
+/// build/test failures matter at both ends (first error, final summary).
 pub(crate) fn truncate_middle(s: String) -> String {
     if s.len() <= MAX_OUTPUT_BYTES {
         return s;
     }
-    let half = MAX_OUTPUT_BYTES / 2;
-    let mut head_end = half;
-    while !s.is_char_boundary(head_end) {
-        head_end -= 1;
+    truncate_middle_capped(&s, MAX_OUTPUT_BYTES)
+}
+
+/// Keep the head and tail of `s` when it exceeds `max_bytes`, eliding the
+/// middle with a marker that names both the elided byte count and the cap.
+///
+/// The crate's ONE model-facing elision spelling: [`truncate_middle`],
+/// [`crate::bash`], and [`crate::custom`] all cut through here, so their
+/// markers and budgets cannot drift apart (#1889 — they had, three ways).
+/// The split is tail-biased — 40% head, 60% tail — because a failing
+/// command's signal concentrates at both ends and the tail end is the denser
+/// one: the final test summary, the last error, the exit status (lesson
+/// L-S3, first applied in `crate::custom`). Both cuts land on UTF-8 char
+/// boundaries so multibyte output can never panic the slice.
+pub(crate) fn truncate_middle_capped(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
     }
-    let mut tail_start = s.len() - half;
-    while !s.is_char_boundary(tail_start) {
-        tail_start += 1;
-    }
+    let head_budget = max_bytes * 2 / 5; // 40% head …
+    let tail_budget = max_bytes - head_budget; // … 60% tail (≥ head, L-S3)
+    let head_end = floor_char_boundary(s, head_budget);
+    let tail_start = ceil_char_boundary(s, s.len().saturating_sub(tail_budget));
+    let elided = tail_start - head_end;
     format!(
-        "{}\n[… {} bytes truncated …]\n{}",
+        "{}\n[… {elided} bytes truncated: output exceeded the {max_bytes}-byte cap; the head \
+         and tail are kept …]\n{}",
         &s[..head_end],
-        s.len() - head_end - (s.len() - tail_start),
         &s[tail_start..]
     )
+}
+
+/// Largest char boundary `<= i` (clamped to `s.len()`).
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest char boundary `>= i`.
+fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 #[cfg(test)]
@@ -844,5 +877,46 @@ mod tests {
         assert!(t.starts_with('a'));
         assert!(t.ends_with('z'));
         assert!(t.contains("truncated"));
+    }
+
+    /// The marker must account for every byte: it names the true elided count
+    /// and the cap it enforced, both derived here rather than hard-coded so a
+    /// moved cap cannot leave the assertion silently green (#1842's lesson).
+    #[test]
+    fn truncate_middle_capped_names_the_elided_count_and_cap() {
+        let cap = 1_000;
+        let s = "a".repeat(400) + &"m".repeat(5_000) + &"z".repeat(400);
+        let t = truncate_middle_capped(&s, cap);
+        assert!(t.starts_with('a'), "head survives: {t}");
+        assert!(t.ends_with('z'), "tail survives: {t}");
+        let head_kept = cap * 2 / 5;
+        let tail_kept = cap - head_kept;
+        assert!(tail_kept >= head_kept, "tail budget ≥ head budget (L-S3)");
+        let elided = s.len() - head_kept - tail_kept;
+        assert!(
+            t.contains(&format!("[… {elided} bytes truncated")),
+            "the marker names the elided count: {t}"
+        );
+        assert!(
+            t.contains(&format!("the {cap}-byte cap")),
+            "the marker names the cap: {t}"
+        );
+    }
+
+    /// Both cuts land inside a 3-byte char at a 40/60 split of this cap; a
+    /// raw byte slice would panic, the boundary-safe path must not.
+    #[test]
+    fn truncate_middle_capped_respects_utf8_boundaries() {
+        let s = "€".repeat(1_000);
+        let t = truncate_middle_capped(&s, 1_000);
+        assert!(t.starts_with('€'), "{t}");
+        assert!(t.ends_with('€'), "{t}");
+        assert!(t.contains("bytes truncated"), "{t}");
+    }
+
+    #[test]
+    fn truncate_middle_capped_is_a_no_op_at_or_below_the_cap() {
+        assert_eq!(truncate_middle_capped("hello", 5), "hello");
+        assert_eq!(truncate_middle_capped("hi", 5), "hi");
     }
 }
