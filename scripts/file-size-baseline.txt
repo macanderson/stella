@@ -35,8 +35,7 @@
 1569 crates/stella-tools/src/media.rs
 2214 crates/stella-tools/src/registry.rs
 1839 crates/stella-tools/src/scripts.rs
-1510 crates/stella-tui/src/deck.rs
-1528 crates/stella-tui/src/deck_render.rs
-4006 crates/stella-tui/src/deck_ui.rs
+1580 crates/stella-tui/src/deck_render.rs
+4028 crates/stella-tui/src/deck_ui.rs
 1665 crates/stella-tui/src/views/engine.rs
 1611 crates/stella-tui/src/views/session.rs
