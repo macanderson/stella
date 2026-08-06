@@ -21,6 +21,18 @@
 //! structurally *never*, and the settings-supplied `agents.<role>.prompt`
 //! override joins the same system prefix, so a tuned role clears the minimum
 //! sooner, not later.
+//!
+//! Measured (#1786, 2026-08, estimator scale): no fixed block clears the
+//! Anthropic minimum on its own — the verdict instructions estimate ~520
+//! tokens (the golden fixture records the exact figure), guidance and triage
+//! less, and the witness author's system prompt ~620. So for the RAW calls
+//! (triage/verdict/guidance) the split's cache win is real only with an
+//! `agents.<role>.prompt` override padding the prefix past the minimum;
+//! stability across calls is what the split guarantees, not a hit. The
+//! witness author is different: it runs an ENGINE turn, where the provider
+//! prefix is system prompt + conversation, which crosses the minimum within
+//! the first tool round-trip — there the split converts the whole fixed
+//! block from per-step re-billing into cached prefix from step two on.
 
 use stella_protocol::CompletionMessage;
 

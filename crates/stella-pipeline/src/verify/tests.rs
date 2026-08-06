@@ -703,9 +703,15 @@ fn heuristic_fallback_passes_only_on_confirmed_green_tests() {
     });
     assert!(green.passed);
 
+    // #1788: the flip rescues the fallback. A verifier OUTAGE is the absence
+    // of a checker, not a refutation, and the confirmed fail→pass flip is
+    // the strongest deterministic evidence the crate has — a provider being
+    // down must not convert it into VerificationFailed. (This inverts the
+    // earlier "even a flip doesn't rescue" pin, which treated the checker's
+    // absence as the work's failure.)
     for tests in [Some(false), None] {
         let v = heuristic_fallback(&LadderInputs {
-            flip_achieved: true, // even a flip doesn't rescue an unconfirmed suite
+            flip_achieved: true,
             touched_tests_passed: tests,
             diff_lines: 0,
             diff_budget: 100,
@@ -714,8 +720,25 @@ fn heuristic_fallback_passes_only_on_confirmed_green_tests() {
             mutating_actions: 1,
             ..Default::default()
         });
-        assert!(!v.passed, "unconfirmed tests must fall back to FAIL");
+        assert!(v.passed, "a confirmed flip must survive a verifier outage");
     }
+    // With NOTHING deterministic positive, the fallback still fails closed:
+    // the escalation existed because something was inconclusive, and a
+    // revision is the honest next move.
+    let v = heuristic_fallback(&LadderInputs {
+        flip_achieved: false,
+        touched_tests_passed: None,
+        diff_lines: 5,
+        diff_budget: 100,
+        diff_available: true,
+        file_change_events: 1,
+        mutating_actions: 1,
+        ..Default::default()
+    });
+    assert!(
+        !v.passed,
+        "no positive evidence must still fall back to FAIL"
+    );
 }
 
 #[test]

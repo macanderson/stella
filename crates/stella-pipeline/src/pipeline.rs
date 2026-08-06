@@ -695,6 +695,12 @@ struct CandidateState {
     /// the audit runs and wherever it cannot be made — the two are the same
     /// claim, which is none.
     diff_coverage: DiffCoverage,
+    /// How the authored witness's arming failure presented (#1790): the
+    /// airlock's symptom class of the failing baseline run, recorded only
+    /// when it was a build failure — a flip armed by a compile error is
+    /// legitimate for a missing-API goal but weaker evidence than an
+    /// assertion failure, and the verifier deserves to see which it was.
+    witness_baseline_symptom: Option<&'static str>,
     revisions: u32,
     /// How many of those revisions were spent asking for corroboration of a
     /// standalone verifier pass rather than fixing a failure (#1295). Capped at
@@ -2026,6 +2032,7 @@ impl<'a> Pipeline<'a> {
             revisions: 0,
             evidence_demands: 0,
             witness_paths: Vec::new(),
+            witness_baseline_symptom: None,
             failures: Vec::new(),
             last_verdict: None,
             last_verdict_diff: None,
