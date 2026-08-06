@@ -1,5 +1,5 @@
-# deck golden · tab_session
-# the SESSION tab over the scripted demo session
+# deck golden · overlay_plan_review
+# the pending plan-review dialog, modal over SESSION
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
@@ -17,17 +17,17 @@
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                                                                                                      ││Refactor the automations store into a…│
-│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││○ 1. extract types                    │
-│                                                                                                                      ││○ 2. move hooks                       │
-│☰  plan  4/7  ·  Wire the triggers API                                                                                ││○ 3. update 9 imports                 │
-│                                                                                                                      ││                                      │
-│── WITNESS ───────────────────────────────────────────────────────────────────────────────────────────────────────────││                                      │
-│                                                                                                                      ││                                      │
-│── EXECUTE ───────────────────────────────────────────────────────────────────────────────────────────────────────────││                                      │
-│                                                                                                                      ││                                      │
+└──────────────────────────────────────────┌ plan review ───────────────────────────────────────────────────────────┐──────────────────────────────────────────┘
+┌ transcript · 21 lines · following ───────│Refactor the automations store into a shared workspace package          │──┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│                                          │                                                                        │  ││Refactor the automations store into a…│
+│  Planning the automations cluster: list, │ ○  1. extract types                                                    │  ││○ 1. extract types                    │
+│                                          │ ○  2. move hooks                                                       │  ││○ 2. move hooks                       │
+│☰  plan  4/7  ·  Wire the triggers API    │ ○  3. update 9 imports                                                 │  ││○ 3. update 9 imports                 │
+│                                          │                                                                        │  ││                                      │
+│── WITNESS ───────────────────────────────│3 steps  ·  ~11 files  ·  est. ~$0.42                                   │──││                                      │
+│                                          │                                                                        │  ││                                      │
+│── EXECUTE ───────────────────────────────│a approve   t trim   r refine   x abort   ! shell                       │──││                                      │
+│                                          └───────────────────────────────────── one keypress decides · esc aborts ┘  ││                                      │
 │● read_file    apps/app/automations/page.tsx                                                                          │└────────────────────── /plan reads it ┘
 │  ⎿ 312 lines                                                                                                     42ms│┌ DONE VERIFICATION ───────────────────┐
 │                                                                                                                      ││○ warrant  pending                    │
