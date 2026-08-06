@@ -7,7 +7,8 @@
 //! `render_ask_user`, `entry_lines`), just scoped to whichever agent
 //! `ui.focused` points at. No transcript rendering is duplicated — there is
 //! one implementation of "draw a session". (The scope gate renders as the
-//! modal plan-review dialog, [`crate::views::scope_dialog`], not as a band.)
+//! modal plan-review dialog, `views::scope_dialog`, not as a band. That module
+//! is crate-private, so this names it rather than linking it.)
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
