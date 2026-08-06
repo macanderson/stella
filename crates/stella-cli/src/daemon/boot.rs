@@ -249,6 +249,16 @@ impl AttemptLedger {
         self.attempts.retain(|id, _| known.iter().any(|k| k == id));
     }
 
+    /// Forget `id`'s count because the run has reached a terminal status.
+    ///
+    /// The bound counts *one interruption episode*, not a session's lifetime:
+    /// a session that was resumed once and then ended must not carry that
+    /// attempt into an unrelated interruption weeks later, or a long-lived
+    /// session would silently run out of resumes it never spent.
+    pub(super) fn forget(&mut self, id: &str) {
+        self.attempts.remove(id);
+    }
+
     /// Read the ledger at `path`, treating an absent or unparseable file as an
     /// empty one.
     ///
@@ -333,31 +343,38 @@ where
                 );
                 to_continue.push(candidate.id);
             }
-            BootDecision::Skip(reason) => println!(
-                "{} {} — {}",
-                "▸ skipping".dimmed(),
-                candidate.id.dimmed(),
-                reason.explain().dimmed()
-            ),
+            BootDecision::Skip(reason) => {
+                if reason == SkipReason::EndedDeliberately {
+                    // The interruption episode this run's count belonged to is
+                    // over; the next one starts from zero.
+                    ledger.forget(&candidate.id);
+                }
+                println!(
+                    "{} {} — {}",
+                    "▸ skipping".dimmed(),
+                    candidate.id.dimmed(),
+                    reason.explain().dimmed()
+                );
+            }
         }
     }
 
-    if to_continue.is_empty() {
-        println!(
-            "Nothing to resume: no supervised run was interrupted with work left to continue."
-        );
-        // Still written: `retain_known` above may have pruned entries for
-        // sessions that no longer exist.
-        return ledger.store(&path);
-    }
     if dry_run {
         println!(
-            "{} — {} would be continued from their last step boundary; nothing was spawned and \
-             nothing was spent",
+            "{} — {} would be continued from their last step boundary; nothing was spawned, \
+             nothing was spent, and nothing was written",
             "dry run".yellow(),
             to_continue.len()
         );
         return Ok(());
+    }
+    if to_continue.is_empty() {
+        println!(
+            "Nothing to resume: no supervised run was interrupted with work left to continue."
+        );
+        // Still written: the pass above may have pruned entries for sessions
+        // that ended, or that the registry no longer knows about.
+        return ledger.store(&path);
     }
 
     for id in &to_continue {

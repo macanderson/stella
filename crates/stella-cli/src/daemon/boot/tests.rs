@@ -184,6 +184,37 @@ fn the_ledger_round_trips_and_forgets_runs_the_registry_has_pruned() {
     assert_eq!(reloaded.attempts("ses-kept"), 2);
 }
 
+/// The bound counts one interruption episode, not a session's whole life: a
+/// run that ends gives its attempts back, so a long-lived session cannot run
+/// out of resumes it never spent.
+#[test]
+fn a_run_that_reaches_a_terminal_status_gives_its_attempts_back() {
+    let mut ledger = AttemptLedger::default();
+    let id = &killed_mid_turn().id;
+    for _ in 0..MAX_BOOT_ATTEMPTS {
+        ledger.record_attempt(id);
+    }
+    assert_eq!(
+        decide(&BootCandidate {
+            attempts: ledger.attempts(id),
+            ..killed_mid_turn()
+        }),
+        BootDecision::Skip(SkipReason::AttemptsExhausted)
+    );
+
+    // The sweep calls this on exactly the arm that observed the run end.
+    ledger.forget(id);
+    assert_eq!(ledger.attempts(id), 0);
+    assert_eq!(
+        decide(&BootCandidate {
+            attempts: ledger.attempts(id),
+            ..killed_mid_turn()
+        }),
+        BootDecision::Continue,
+        "a fresh interruption after a clean ending starts from zero"
+    );
+}
+
 #[test]
 fn a_missing_or_corrupt_ledger_reads_as_empty_rather_than_wedging_the_sweep() {
     let dir = tempfile::tempdir().unwrap();
