@@ -360,7 +360,7 @@ fn a_drain_from_the_pump_thread_restores_the_fd_without_joining_itself() {
 
     let dir = tempfile::tempdir().unwrap();
     let console = dir.path().join(supervised::STDOUT_LOG);
-    let mut open_console = || {
+    let open_console = || {
         std::fs::OpenOptions::new()
             .write(true)
             .create(true)
