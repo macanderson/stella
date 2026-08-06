@@ -5,6 +5,7 @@ import type { Cell, ContestantSnap, TranscriptEntry } from "@/lib/types";
 import { fmtClock, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
 import { Disclosure } from "@/components/ui/collapsible";
+import { FileBrowser } from "@/components/arena/file-browser";
 
 /**
  * One trial's transcript over SSE. Entries carry a `seq`, and a streaming
@@ -174,6 +175,9 @@ export function Lane({
         </div>
       )}
 
+      {/* `has_video` means the recording carries a `moov` atom, not merely that
+          a file exists. A live trial has a growing, unplayable file for its
+          whole duration, so gating on existence produced a broken player. */}
       {cell?.has_video && (
         <div className="border-b border-line-soft px-[13px] py-2.5">
           <Disclosure summary="screen recording (MP4)">
@@ -183,6 +187,14 @@ export function Lane({
               className="block w-full rounded-[7px] bg-black"
               src={`/api/matches/${encodeURIComponent(matchId)}/video/${encodeURIComponent(contestant.id)}/${encodeURIComponent(task)}`}
             />
+          </Disclosure>
+        </div>
+      )}
+
+      {cell && (
+        <div className="border-b border-line-soft px-[13px] py-2.5">
+          <Disclosure summary="files">
+            <FileBrowser matchId={matchId} contestantId={contestant.id} task={task} />
           </Disclosure>
         </div>
       )}
