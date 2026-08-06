@@ -237,6 +237,26 @@ impl SubSessions {
         lanes.sort();
         lanes
     }
+
+    /// The lanes carrying a worker *right now* — winding-down included,
+    /// exactly like [`Self::is_live`], because a stopped worker whose
+    /// `Ended` has not arrived is still writing (forwarder drain, store
+    /// closeout). Sorted, so a caller rendering them gets a stable string.
+    ///
+    /// Distinct from [`Self::lanes`], which is every lane ever started this
+    /// tenancy: `/clear` names *these*, because an ended lane is not
+    /// something the user needs warning about.
+    pub(crate) fn live_lanes(&self) -> Vec<String> {
+        let mut lanes: Vec<String> = self
+            .stops
+            .keys()
+            .chain(self.winding_down.keys())
+            .cloned()
+            .collect();
+        lanes.sort();
+        lanes.dedup();
+        lanes
+    }
 }
 
 /// The deck's [`stella_core::ports::TurnSteering`] implementation: a tap the
@@ -1144,6 +1164,39 @@ mod tests {
         assert!(subs.ended("req:1", generation));
         assert!(!subs.is_live("req:1"));
         assert_eq!(subs.live(), 0);
+    }
+
+    /// `/clear` (#1631) reports the lanes it left running, and this is what
+    /// it reports: running workers and winding-down ones, never a lane whose
+    /// worker has already ended. A retained spec is a Restart target, not
+    /// something the user needs warning about — so `live_lanes` and `lanes`
+    /// must diverge the moment a worker settles.
+    #[test]
+    fn live_lanes_are_the_running_and_winding_down_ones_only() {
+        let mut subs = SubSessions::new();
+        let (stop_a, _rx_a) = oneshot::channel();
+        let (pause_a, _p_a) = watch::channel(false);
+        let gen_a = subs.started("req:1", stop_a, pause_a, dummy_spec("req:1"));
+        let (stop_b, _rx_b) = oneshot::channel();
+        let (pause_b, _p_b) = watch::channel(false);
+        subs.started("req:2", stop_b, pause_b, dummy_spec("req:2"));
+
+        assert_eq!(subs.live_lanes(), vec!["req:1", "req:2"], "both running");
+
+        assert!(subs.stop("req:1"));
+        assert_eq!(
+            subs.live_lanes(),
+            vec!["req:1", "req:2"],
+            "a winding-down lane is still writing, so it is still reported"
+        );
+
+        assert!(subs.ended("req:1", gen_a));
+        assert_eq!(subs.live_lanes(), vec!["req:2"], "an ended lane drops out");
+        assert_eq!(
+            subs.lanes(),
+            vec!["req:1", "req:2"],
+            "…while `lanes` still carries it for Restart"
+        );
     }
 
     #[test]
