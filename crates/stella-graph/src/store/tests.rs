@@ -263,7 +263,8 @@ fn a_corrupt_store_is_quarantined_and_rebuilt_on_open() {
     // would be an empty one.
     {
         let conn = Connection::open(&db).unwrap();
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
         drop(conn);
         use std::io::{Seek, SeekFrom, Write};
         let mut file = fs::OpenOptions::new()
