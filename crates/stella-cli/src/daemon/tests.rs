@@ -426,6 +426,48 @@ fn ids_resolve_by_unique_prefix_and_refuse_an_ambiguous_one() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The #1690 witness: a pid resolves too.
+///
+/// A pid is what `ps`, `top`, Activity Monitor and an OOM-killer log hand an
+/// operator, and on today's code it is a dead end — every verb takes only the
+/// id, so the pid must be eyeballed back through `stella daemon list` first.
+/// The two address spaces cannot collide: a session id is `ses-<millis>-<pid>`
+/// and never parses as digits alone.
+#[test]
+fn a_pid_resolves_to_its_run_and_an_ambiguous_one_is_refused() {
+    let (dir, registry) = temp_registry("resolve-pid");
+    let mut a = SessionRecord::new("/w", "a");
+    a.id = "ses-100-4242".into();
+    a.pid = 4242;
+    a.supervisor = Some(SupervisorInfo { pgid: 4242 });
+    let mut b = SessionRecord::new("/w", "b");
+    b.id = "ses-100-9001".into();
+    b.pid = 9001;
+    b.supervisor = Some(SupervisorInfo { pgid: 9001 });
+    // Two records that share a pid — the OS reuses them, so a long-lived
+    // registry really can hold both.
+    let mut stale = SessionRecord::new("/w", "stale");
+    stale.id = "ses-050-9001".into();
+    stale.pid = 9001;
+    stale.supervisor = Some(SupervisorInfo { pgid: 9001 });
+    for record in [&a, &b, &stale] {
+        registry.upsert(record).unwrap();
+    }
+
+    assert_eq!(resolve(&registry, Some("4242")).unwrap().id, a.id);
+    assert!(
+        resolve(&registry, Some("9001"))
+            .is_err_and(|e| e.contains("more than one run")),
+        "a reused pid must be refused, not guessed at"
+    );
+    assert!(resolve(&registry, Some("77777")).is_err(), "no run owns it");
+    // The id form is untouched: an exact id still wins, and it is never read
+    // as a pid because it is not digits.
+    assert_eq!(resolve(&registry, Some("ses-100-4242")).unwrap().id, a.id);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn an_exit_code_is_forwarded_the_way_a_shell_reports_it() {
     let status = |script: &str| {

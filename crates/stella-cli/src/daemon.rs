@@ -1195,6 +1195,14 @@ fn mark_stopped(registry: &SessionRegistry, id: &str) {
 /// is a timestamp and a pid and nobody is going to type it. `None` picks the
 /// most recent supervised run, which is what "the one I just started" means
 /// nine times in ten.
+///
+/// An all-digits argument is a **pid** (#1690). A pid is what `ps`, `top`,
+/// Activity Monitor and an OOM-killer log hand you, and without this rung it
+/// is a dead end: the operator holding one has to eyeball `stella daemon list`
+/// to translate it into an id before any verb will take it. The two forms
+/// cannot collide — a session id is `ses-<millis>-<pid>`, so it never parses
+/// as digits alone — which is what lets this rung sit ahead of the prefix
+/// match without making any existing input ambiguous.
 pub(crate) fn resolve(
     registry: &SessionRegistry,
     id: Option<&str>,
@@ -1217,6 +1225,23 @@ pub(crate) fn resolve(
     // to put the exact match anywhere in particular.
     if let Some(exact) = supervised_runs.iter().find(|r| r.id == id) {
         return Ok(exact.clone());
+    }
+
+    // A pid, if the argument is one and a run owns it. Ambiguity is resolved
+    // exactly as it is for a prefix, and for the same reason: two records
+    // claiming one pid means the operator has to say which, not that this
+    // picks for them.
+    if let Ok(pid) = id.parse::<u32>() {
+        let mut by_pid = supervised_runs.iter().filter(|r| r.pid == pid);
+        if let Some(first) = by_pid.next() {
+            return match by_pid.next() {
+                None => Ok(first.clone()),
+                Some(second) => Err(format!(
+                    "pid {pid} matches more than one run ({} and {}) — use the id",
+                    first.id, second.id
+                )),
+            };
+        }
     }
 
     let mut matches = supervised_runs.into_iter().filter(|r| r.id.starts_with(id));
