@@ -116,8 +116,11 @@ impl GitCandidateWorkspace {
             );
             let sealed_blob =
                 blob_id(git(&self.dir, &["rev-parse", &format!("{sealed}:{path}")]).await);
-            if PathDivergence::classify(real.as_deref(), baseline.as_deref(), sealed_blob.as_deref())
-                == PathDivergence::CandidateWroteOutside
+            if PathDivergence::classify(
+                real.as_deref(),
+                baseline.as_deref(),
+                sealed_blob.as_deref(),
+            ) == PathDivergence::CandidateWroteOutside
             {
                 escaped.push(path.to_string());
             }

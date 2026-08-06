@@ -179,7 +179,10 @@ mod tests {
     #[test]
     fn the_escape_reason_names_the_candidate_and_the_paths() {
         let reason = escape_abort_reason(&["app/vm.js".to_string()]);
-        assert!(reason.contains("wrote outside its isolated workspace"), "{reason}");
+        assert!(
+            reason.contains("wrote outside its isolated workspace"),
+            "{reason}"
+        );
         assert!(reason.contains("`app/vm.js`"), "{reason}");
         assert!(
             !reason.contains("user"),
@@ -191,7 +194,10 @@ mod tests {
     fn many_escaped_paths_are_summarized_not_pasted() {
         let paths: Vec<String> = (0..9).map(|i| format!("f{i}.rs")).collect();
         let reason = escape_abort_reason(&paths);
-        assert!(reason.contains("`f3.rs`") && !reason.contains("`f4.rs`"), "{reason}");
+        assert!(
+            reason.contains("`f3.rs`") && !reason.contains("`f4.rs`"),
+            "{reason}"
+        );
         assert!(reason.contains("+5 more"), "{reason}");
     }
 }

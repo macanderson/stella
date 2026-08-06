@@ -23,12 +23,12 @@ use stella_protocol::{
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
+use super::test_doubles::{FakeWorkspace, FakeWorkspacePort, NeverRepoStatus, NeverRunner};
 use crate::ports::{
     AdoptedChange, ArtifactIdentity, ArtifactKind, CmdOutcome, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, NoContextRecall, NoFileTouches, NoRepoStatus,
     NoRepoStructure, Recall, TestInvocation, TestRunner,
 };
-use super::test_doubles::{FakeWorkspace, FakeWorkspacePort, NeverRepoStatus, NeverRunner};
 use stella_protocol::{ContextProviderUsage, ContextUsage};
 
 // test doubles
@@ -1559,9 +1559,17 @@ async fn a_candidate_that_wrote_outside_its_workspace_is_failed_not_adopted() {
         text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    // Same authored-witness scripting as the flip test above — the escape
+    // must be caught at *verification*, so the run has to get that far.
     let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone())
+        .with_repo_status(SeqRepoStatus::new(vec![
+            vec![],
+            vec![("tests/witness.rs", "w1")],
+        ]))
         .with_escaped(vec!["app/vm.js"]);
-    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone());
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
     let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
     let (outcome, events, _) = run_isolated(
         &provider,
@@ -1578,7 +1586,10 @@ async fn a_candidate_that_wrote_outside_its_workspace_is_failed_not_adopted() {
                 reason.contains("wrote outside its isolated workspace"),
                 "the escape is named as the candidate's defect: {reason}"
             );
-            assert!(reason.contains("`app/vm.js`"), "the path is named: {reason}");
+            assert!(
+                reason.contains("`app/vm.js`"),
+                "the path is named: {reason}"
+            );
             assert!(
                 !reason.contains("git apply"),
                 "caught at verification, not reported as an adoption conflict: {reason}"
