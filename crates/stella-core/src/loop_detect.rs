@@ -228,6 +228,120 @@ impl LoopVerdict {
             )),
         }
     }
+
+    /// The detected loop's [`LoopIdentity`], for deciding whether a later
+    /// detection in the same turn is *this* loop again or a fresh one.
+    /// `None` only for [`LoopVerdict::NoLoop`], which is not a loop to
+    /// identify.
+    #[must_use]
+    pub fn identity(&self) -> Option<LoopIdentity> {
+        match self {
+            LoopVerdict::NoLoop => None,
+            LoopVerdict::ExactRepeat { tool, input, .. } => Some(LoopIdentity {
+                tools: vec![tool.clone()],
+                inputs: Some(vec![input.to_string()]),
+            }),
+            LoopVerdict::ShortCycle { pattern, .. } => Some(LoopIdentity {
+                tools: pattern.iter().map(|c| c.name.clone()).collect(),
+                inputs: Some(pattern.iter().map(|c| c.input.to_string()).collect()),
+            }),
+            // Stagnation is the one verdict whose loop spans *differing*
+            // arguments, so naming any of them would misidentify it. The
+            // tool is the whole identity, and an empty (not absent) input
+            // list is how that is said.
+            LoopVerdict::Stagnant { tool, .. } => Some(LoopIdentity {
+                tools: vec![tool.clone()],
+                inputs: Some(Vec::new()),
+            }),
+        }
+    }
+}
+
+/// What makes two loop detections *the same loop*.
+///
+/// Not the tool name on its own. `bash` is the tool most loops are made of,
+/// so tool-name identity says every `bash` loop in a turn is one loop, and
+/// the steer→abort ladder above it then blames a warning the model *obeyed*
+/// for a loop it was never told about. That is #1524's defect one level
+/// down: that fix taught the ladder to tell a `write_file` loop from an
+/// `edit_file` one, and still could not tell two `bash` calls apart. Its
+/// witness is a real run — steered about
+/// `grep -n "fn open\b" … store.rs`, the model changed command as asked,
+/// looped on `grep -n "fn index_all" … graph.rs`, and was killed by
+/// "persisted after a steering warning".
+///
+/// Identity mirrors what the detector actually keyed on, so the two can
+/// never disagree about what a loop is: [`LoopVerdict::ExactRepeat`] and
+/// [`LoopVerdict::ShortCycle`] are keyed on byte-identical *input*, so the
+/// input is part of the loop; [`LoopVerdict::Stagnant`] spans deliberately
+/// varying inputs, so for it the tool alone is the whole loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopIdentity {
+    /// The tools in the loop, in cycle order — what a message names.
+    pub tools: Vec<String>,
+    /// The arguments the loop repeated, as JSON, one per entry of
+    /// [`Self::tools`]. Empty when arguments are not part of this loop's
+    /// identity, which is exactly the `Stagnant` verdict.
+    ///
+    /// `None` means the arguments were never *recorded* — not that there
+    /// were none. It is what a turn resumed from a checkpoint written
+    /// before identities carried arguments knows about the warning it
+    /// already spent, and such an identity can never be compared
+    /// ([`Self::same_loop_as`]).
+    pub inputs: Option<Vec<String>>,
+}
+
+impl LoopIdentity {
+    /// Whether `other` is a re-detection of this same loop — or `None` when
+    /// this identity is too incomplete to say, because its arguments were
+    /// never recorded.
+    ///
+    /// Three answers, not two, and callers must handle all three: the only
+    /// honest thing to say about a loop you cannot identify is nothing. A
+    /// `bool` here would force "unknown" to collapse into one of the two
+    /// claims, which is precisely the bug this type exists to end.
+    #[must_use]
+    pub fn same_loop_as(&self, other: &LoopIdentity) -> Option<bool> {
+        let (mine, theirs) = (self.inputs.as_ref()?, other.inputs.as_ref()?);
+        Some(self.tools == other.tools && mine == theirs)
+    }
+
+    /// How to name this loop in a message: its tools, plus the arguments
+    /// when the loop is one repeated call.
+    ///
+    /// The arguments are what make the name useful — two `bash` loops read
+    /// as the same "about `bash`" without them, so a message distinguishing
+    /// them would look self-contradictory. They are truncated because a
+    /// looping `edit_file` input carries whole file chunks, and a reason
+    /// line is read by a human. A cycle's inputs are left out for the same
+    /// reason: the tool sequence already tells cycles apart.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let tools = self
+            .tools
+            .iter()
+            .map(|t| format!("`{t}`"))
+            .collect::<Vec<_>>()
+            .join(" → ");
+        match self.inputs.as_deref() {
+            Some([input]) => format!("{tools} with {}", truncate(input, MAX_DESCRIBED_INPUT)),
+            _ => tools,
+        }
+    }
+}
+
+/// How much of a looped call's arguments a reason line quotes. Enough to
+/// tell two commands or two paths apart, short enough that the sentence
+/// around it survives.
+const MAX_DESCRIBED_INPUT: usize = 160;
+
+/// `s` capped at `max` *characters* (never bytes — a cut inside a multi-byte
+/// char panics), with an ellipsis marking what was dropped.
+fn truncate(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        None => s.to_string(),
+        Some((cut, _)) => format!("{}…", &s[..cut]),
+    }
 }
 
 /// Two records are "the same" for loop-detection purposes iff the tool
