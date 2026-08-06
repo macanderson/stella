@@ -294,9 +294,19 @@ class TestRegistry:
         assert tasks[0].difficulty == "easy"
 
 
-def test_every_registered_agent_declares_how_it_launches():
+@pytest.mark.parametrize("import_path_flag", [True, False])
+def test_every_registered_agent_declares_how_it_launches(monkeypatch, import_path_flag):
+    """Every agent in the registry can name the flags that launch it.
+
+    Harbor is stubbed because `launch_flags` asks the installed binary which
+    of `--agent-import-path`/`--agent` it takes, and this is an assertion
+    about the *registry*, not about what happens to be on PATH. Both answers
+    run: the fold between those two flags is the one thing that varies here,
+    and its docstring claims to work in both directions.
+    """
     from arenabench.agents import launch_flags
 
+    _fake_harbor(monkeypatch, import_path_flag=import_path_flag)
     for slug in AGENTS:
         seat = Contestant.from_json({"name": slug, "agent": slug, "engine": {"model": "m"}})
         assert launch_flags(seat), slug
