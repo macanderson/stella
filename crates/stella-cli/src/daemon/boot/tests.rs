@@ -289,7 +289,8 @@ fn a_ceiling_stop_names_the_ceiling_the_safe_stop_and_the_next_step() {
         "an operator must be handed the command that answers what happened: {line}"
     );
     // The console speaks the flag's unit for whole minutes and falls back to
-    // seconds, so a test ceiling is not rounded into a fiction.
+    // seconds — or milliseconds — so a test ceiling is never rounded into a
+    // fiction like "0-second".
     assert_eq!(
         describe_ceiling(std::time::Duration::from_secs(90)),
         "90-second"
@@ -297,6 +298,10 @@ fn a_ceiling_stop_names_the_ceiling_the_safe_stop_and_the_next_step() {
     assert_eq!(
         describe_ceiling(std::time::Duration::from_secs(120)),
         "2-minute"
+    );
+    assert_eq!(
+        describe_ceiling(std::time::Duration::from_millis(250)),
+        "250-millisecond"
     );
 }
 

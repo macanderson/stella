@@ -325,16 +325,13 @@ fn watch(
     mut run: Supervised,
     ceiling: Option<Duration>,
 ) -> Result<Watched, String> {
-    // `None` from the race means the ceiling expired before the child exited;
-    // dropping the abandoned `follow` future loses nothing, because every
-    // byte of streaming state lives on `run` itself.
+    // `None` means the ceiling expired before the child exited; dropping the
+    // timed-out `follow` future loses nothing, because every byte of
+    // streaming state lives on `run` itself.
     let bounded = async {
         match ceiling {
             None => Some(run.follow().await),
-            Some(limit) => tokio::select! {
-                followed = run.follow() => Some(followed),
-                () = tokio::time::sleep(limit) => None,
-            },
+            Some(limit) => tokio::time::timeout(limit, run.follow()).await.ok(),
         }
     };
     match rt.block_on(crate::signals::until_interrupted(bounded)) {

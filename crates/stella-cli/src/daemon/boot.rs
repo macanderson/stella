@@ -161,7 +161,7 @@ pub(super) struct BootCandidate {
     /// Whether the workspace the turn must continue in still exists.
     pub(super) workspace_exists: bool,
     /// Whether the run left an unanswered approval request in its sidecar
-    /// ([`supervised::APPROVAL_REQUEST`]).
+    /// ([`stella_store::supervised::APPROVAL_REQUEST`]).
     ///
     /// Such a run does not fail on resume — it *parks*, waiting for a human
     /// who is not there. The sweep resumes one run at a time and streams each
@@ -382,8 +382,10 @@ pub(super) fn describe_ceiling(ceiling: std::time::Duration) -> String {
     let secs = ceiling.as_secs();
     if secs >= 60 && secs.is_multiple_of(60) {
         format!("{}-minute", secs / 60)
-    } else {
+    } else if secs > 0 {
         format!("{secs}-second")
+    } else {
+        format!("{}-millisecond", ceiling.as_millis())
     }
 }
 
