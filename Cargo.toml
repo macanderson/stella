@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "crates/stella-diag",
+  "crates/stella-diff",
   "crates/stella-home",
   "crates/stella-protocol",
   "crates/stella-core",
@@ -26,7 +27,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.126"
+version = "0.6.127"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"

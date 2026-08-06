@@ -37,7 +37,9 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 use stella_observatory::respond;
-use stella_protocol::{AgentEvent, ContextFrameRef, ProviderShare, ToolCall, ToolOutput};
+use stella_protocol::{
+    AgentEvent, ContextFrameRef, ProviderShare, TaskItem, TaskStatus, ToolCall, ToolOutput,
+};
 use stella_store::{
     AgentUseRow, ContextBlockRow, ExecutionReflectionRow, FileTouchRow, ManifestBlockRow,
     McpUsageRow, MemoryCitationRow, ReflectionRow, SkillUsageRow, StepManifestRow, Store,
@@ -48,6 +50,15 @@ use stella_store::{
 /// looks for: the system prompt is the part of a model call that exists nowhere
 /// else in the store, and reconstructing it is the whole point of the route.
 const SYSTEM_PROMPT: &str = "you are stella, and you are careful";
+
+/// The session the seeded execution is stamped with — what `/api/sessions`
+/// lists and `/api/session` drills. Shaped like a real minted id
+/// (`ses-<ms>-<pid>`) because the sessions view recovers a sort key from it.
+const SESSION_ID: &str = "ses-1700000000000-424242";
+
+/// The one line the second turn's system prefix gained — what the prompt-diff
+/// witness expects to see as the sole `+` line (#1511).
+const DRIFT_LINE: &str = "and be bold about it";
 
 /// Every `/api/*` route the router serves, paired with the JSON pointer that
 /// must resolve to seeded (non-empty) data.
@@ -69,6 +80,16 @@ const ROUTES: &[(&str, Option<&str>)] = &[
     (
         "/api/execution-context?id=1&turn=0&step=1&call_seq=0",
         Some("/context/messages/0/role"),
+    ),
+    ("/api/sessions", Some("/sessions/0/id")),
+    (
+        "/api/session?id=ses-1700000000000-424242",
+        Some("/turns/0/id"),
+    ),
+    ("/api/execution-tendencies?id=1", Some("/retries")),
+    (
+        "/api/execution-context-diff?id=2&turn=0&step=1&call_seq=0",
+        Some("/hunks/0/lines/0/op"),
     ),
     ("/api/models", Some("/0/provider")),
     ("/api/tools", Some("/0/name")),
@@ -133,6 +154,9 @@ fn real_store_workspace() -> tempfile::TempDir {
     let completed = store
         .begin_execution("run", "add a function", "zai", "glm-5.2")
         .expect("begin");
+    store
+        .set_execution_session(completed, SESSION_ID)
+        .expect("session stamp");
     // Tool calls arrive as events and are projected from them — seeding the
     // `tool_calls` table any other way would test a write path production
     // does not use.
@@ -149,7 +173,58 @@ fn real_store_workspace() -> tempfile::TempDir {
             .record_event(completed, seq as u64, &event)
             .expect("tool event");
     }
+    // Two behavioural events for the tendencies fold: a retry and a steer-
+    // stage loop detection. Seeded as events because that is the only place
+    // production writes them — no projection exists.
+    store
+        .record_event(
+            completed,
+            2,
+            &AgentEvent::Retry {
+                attempt: 1,
+                reason: "rate limited".into(),
+            },
+        )
+        .expect("retry event");
+    store
+        .record_event(
+            completed,
+            3,
+            &AgentEvent::LoopDetected {
+                turn_instance: 0,
+                kind: "exact_repeat".into(),
+                pattern: vec!["read_file".into()],
+                repeats: 3,
+                evidence: "same call three times".into(),
+                aborted: false,
+            },
+        )
+        .expect("loop event");
     seed_receipt(&store, completed, &call, &output);
+    store
+        .record_task_board(
+            completed,
+            Some(SESSION_ID),
+            &[TaskItem {
+                id: "1".into(),
+                subject: "add the function".into(),
+                description: None,
+                status: TaskStatus::Completed,
+                owner: Some("lead".into()),
+            }],
+            1_700_000_000_000,
+        )
+        .expect("task board");
+    store
+        .upsert_pull_request(
+            Some(SESSION_ID),
+            "https://github.com/example/repo/pull/7",
+            Some(7),
+            "open",
+            Some("passing"),
+            1_700_000_000_000,
+        )
+        .expect("pull request");
     store
         .record_telemetry(
             completed,
@@ -258,12 +333,79 @@ fn real_store_workspace() -> tempfile::TempDir {
         .finish_execution(completed, "completed", 0.03)
         .expect("finish");
 
-    // A second, unfinished execution: the observatory must render a run that
+    // A second turn of the same session whose system prefix gained exactly
+    // one line — the drift `/api/execution-context-diff` exists to name
+    // (#1511). Two byte-identical worker calls, so `prev` inside this turn is
+    // an honest "no change" while `prev` across the turn boundary names the
+    // line that moved.
+    let drifted = store
+        .begin_execution("run", "add another function", "zai", "glm-5.2")
+        .expect("begin drifted");
+    store
+        .set_execution_session(drifted, SESSION_ID)
+        .expect("session stamp 2");
+    let drifted_prompt = format!("{SYSTEM_PROMPT}\n{DRIFT_LINE}");
+    seed_system_receipt(&store, drifted, 1, &drifted_prompt);
+    seed_system_receipt(&store, drifted, 2, &drifted_prompt);
+    store
+        .finish_execution(drifted, "completed", 0.01)
+        .expect("finish drifted");
+
+    // A last, unfinished execution: the observatory must render a run that
     // is still in flight (outcome NULL, finished_at NULL) without failing.
     store
         .begin_execution("goal", "make tests pass", "local", "llama")
         .expect("begin unfinished");
     dir
+}
+
+/// One worker call whose whole context is a single system-prefix block — the
+/// smallest receipt that makes a call diffable. The block is a gap kind, so
+/// its bytes are stored locally, exactly as the engine stores them.
+fn seed_system_receipt(store: &Store, execution_id: i64, step: u64, system: &str) {
+    store
+        .record_context_block(
+            execution_id,
+            &ContextBlockRow {
+                block_id: "blk_sys_drift".into(),
+                kind: "system_prefix".into(),
+                origin_turn: 0,
+                origin_step: 0,
+                call_id: None,
+                memory_id: None,
+                token_cost: Some(48),
+                content_digest: digest(system),
+                citation_label: None,
+                content: Some(system.into()),
+            },
+        )
+        .expect("drifted system block");
+    store
+        .record_step_manifest(
+            execution_id,
+            &StepManifestRow {
+                turn_instance: 0,
+                step,
+                call_seq: 0,
+                provider: "zai".into(),
+                model: "glm-5.2".into(),
+                call_role: "worker".into(),
+                effective_budget_tokens: 136_363,
+                calibration_factor: 1.1,
+                estimated_input_tokens: 48,
+                compiled_frame_id: None,
+                frame_hash: None,
+                blocks: vec![ManifestBlockRow {
+                    block_id: "blk_sys_drift".into(),
+                    cache_zone: "stable_prefix".into(),
+                    token_cost: Some(48),
+                    resident_since_step: 0,
+                    message_index: 0,
+                    call_id: None,
+                }],
+            },
+        )
+        .expect("drifted manifest");
 }
 
 /// One recorded model call's context receipt: the block registry plus the
@@ -716,4 +858,81 @@ fn every_route_survives_a_store_older_than_this_build() {
         cursor["events"].as_i64().unwrap_or(0) > 0,
         "the columns that DO exist still report: {cursor}"
     );
+}
+
+/// The #1511 witness: two calls of the same role whose system prefixes differ
+/// by one line produce exactly one hunk naming that line, and a
+/// byte-identical pair reports `changed: false`. Fails before the route
+/// exists (404), and fails if the baseline search stops at the execution
+/// boundary — the drift here is *across* turns, which is the only place a
+/// byte-stable system prompt can drift.
+#[test]
+fn context_diff_names_the_moved_line_and_reports_identity_honestly() {
+    let workspace = real_store_workspace();
+    let root: &Path = workspace.path();
+
+    // Across the turn boundary: execution 2's first worker call against
+    // execution 1's — the same role, one line of drift, system scope.
+    let body = respond(
+        root,
+        "/api/execution-context-diff?id=2&turn=0&step=1&call_seq=0&base=prev&only=system",
+    )
+    .body;
+    let diff: serde_json::Value = serde_json::from_slice(&body).expect("diff json");
+    assert_eq!(diff["found"], true, "{diff}");
+    assert_eq!(diff["changed"], true, "{diff}");
+    assert_eq!(diff["base"], "prev", "{diff}");
+    assert_eq!(diff["minimal"], true, "{diff}");
+    assert_eq!(diff["added"], 1, "one inserted line, one addition: {diff}");
+    let hunks = diff["hunks"].as_array().expect("hunks");
+    assert_eq!(hunks.len(), 1, "one contiguous change, one hunk: {diff}");
+    let added: Vec<&str> = hunks[0]["lines"]
+        .as_array()
+        .expect("lines")
+        .iter()
+        .filter(|l| l["op"] == "add")
+        .filter_map(|l| l["text"].as_str())
+        .collect();
+    assert_eq!(added, vec![DRIFT_LINE], "the diff names the moved line");
+    assert!(
+        diff["base_label"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("execution 1"),
+        "a cross-turn baseline is unmistakable: {diff}"
+    );
+
+    // Inside the turn: step 2 against step 1, byte-identical by construction.
+    let body = respond(
+        root,
+        "/api/execution-context-diff?id=2&turn=0&step=2&call_seq=0&base=prev&only=system",
+    )
+    .body;
+    let same: serde_json::Value = serde_json::from_slice(&body).expect("diff json");
+    assert_eq!(
+        same["changed"], false,
+        "byte-identical is not a change: {same}"
+    );
+    assert_eq!(same["base"], "prev", "{same}");
+    assert!(
+        !same["base_label"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("execution"),
+        "a same-turn baseline stays terse: {same}"
+    );
+
+    // A role's first call has no predecessor: the resolved base is reported
+    // as `prompt`, never silently claimed to be `prev`.
+    let body = respond(
+        root,
+        "/api/execution-context-diff?id=1&turn=0&step=1&call_seq=0&base=prev",
+    )
+    .body;
+    let first: serde_json::Value = serde_json::from_slice(&body).expect("diff json");
+    assert_eq!(
+        first["base"], "prompt",
+        "prev on a first call resolves: {first}"
+    );
+    assert_eq!(first["base_label"], "prompt as submitted", "{first}");
 }

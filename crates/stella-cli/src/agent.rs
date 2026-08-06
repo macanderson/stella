@@ -65,8 +65,8 @@ pub(crate) use graph::spawn_session_graph;
 #[cfg(test)]
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 use outcome::{
-    pipeline_episode_outcome, pipeline_failure_reason, pipeline_status_label,
-    pipeline_status_result,
+    pipeline_episode_outcome, pipeline_failure_reason, pipeline_session_status,
+    pipeline_status_label, pipeline_status_result,
 };
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
@@ -605,10 +605,10 @@ async fn run_pipeline_one_shot(
     // always lands a notification; a successful one only when it ran long
     // enough that the user has plausibly looked away. `Enter` on the
     // notification (or the SESSIONS overlay) replays the journal.
-    let run_ok = matches!(&result, Ok(o) if matches!(o.status, PipelineStatus::Completed));
+    let session_status = pipeline_session_status(&result);
     let run_secs = turn_start.elapsed().as_secs();
-    let notify = presence.one_shot_notification(run_ok, run_secs, prompt);
-    presence.finish(run_ok, notify);
+    let notify = presence.one_shot_notification(session_status, run_secs, prompt);
+    presence.finish(session_status, notify);
 
     match &result {
         Ok(outcome) => {
@@ -1122,7 +1122,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     if let Some(set) = &mcp {
         set.close_all().await;
     }
-    presence.finish(true, None);
+    presence.finish(stella_store::SessionStatus::Complete, None);
     println!("\n  {}", "Goodbye! ✦".magenta());
     Ok(())
 }

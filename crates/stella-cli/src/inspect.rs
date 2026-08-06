@@ -73,14 +73,13 @@
 //! they submitted — and it is invisible in every other view, since the
 //! transcript shows the sum and never the delta.
 
-mod diff;
-
 use colored::Colorize;
 use serde::Serialize;
+// The differ lives in its own zero-dep leaf crate (#1511) so the Observatory's
+// prompt-diff route and this command share one implementation.
+use stella_diff::{Diff, Op, unified_diff};
 use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
 use stella_store::{Reconstruction, RecordedCall, Store};
-
-use diff::{Diff, Op};
 
 use crate::query_format::{QueryFormat, Rows, Versioned};
 
@@ -532,7 +531,7 @@ fn show_diff(
 
     let baseline = resolve_baseline(store, &target, base, args)?;
     let document = render_document(&recon, args.only);
-    let computed = diff::unified_diff(&baseline.document, &document, args.context);
+    let computed = unified_diff(&baseline.document, &document, args.context);
 
     let target_label = target.label(execution_id);
     match args.format {

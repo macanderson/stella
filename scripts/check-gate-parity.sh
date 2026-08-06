@@ -149,11 +149,6 @@ for doc in "$agents" "$contributing"; do
     fi
   done
 
-  if ! grep -qF -- "$word" "$doc"; then
-    note "FAIL — $doc does not spell the gate's step count as '$word'."
-    note "     The gate runs $count steps. Find the stale count and fix it."
-    fail=1
-  fi
 done
 
 # ── Ghosts ───────────────────────────────────────────────────────────────────

@@ -170,7 +170,7 @@ fn call_context(
 /// A `LEFT JOIN`, deliberately: a manifest citing a block that was never
 /// registered must come back as an entry with no `kind` — an unresolved block
 /// the reader is told about — rather than vanish from the wire order.
-fn manifest_entries(
+pub(crate) fn manifest_entries(
     conn: &Connection,
     id: i64,
     turn: i64,
@@ -217,7 +217,7 @@ fn manifest_entries(
 /// The third sanctioned read of `events`, on the same bargain as the other
 /// two: `execution_id`-first, which the store's `UNIQUE (execution_id, seq)`
 /// index serves directly, and only on a per-execution detail route.
-fn journal_payloads(conn: &Connection, id: i64) -> Result<Vec<String>, DbError> {
+pub(crate) fn journal_payloads(conn: &Connection, id: i64) -> Result<Vec<String>, DbError> {
     let sql = "SELECT payload FROM events
                WHERE execution_id = ?1
                  AND event_type IN ('tool_start', 'tool_result', 'text')

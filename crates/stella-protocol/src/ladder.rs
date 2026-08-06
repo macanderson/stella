@@ -208,6 +208,21 @@ pub struct LadderSnapshot {
     /// `unmeasured`, never as either verdict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_coverage: Option<String>,
+    /// Whether the model that graded this verdict was independent of the
+    /// worker that produced the work (#1795): `Some(false)` is a self-graded
+    /// verdict — the verdict call resolved to the worker's own model — and
+    /// `Some(true)` a distinct grader.
+    ///
+    /// A structured fact rather than the once-per-run prose caveat, because
+    /// the caveat scrolls away while the verdict is stored: a reader of a
+    /// stored verdict must be able to see the grader was not independent
+    /// without the transcript. Absent when no model verdict was bought (the
+    /// deterministic, waived, and abstaining rungs — nothing graded, so
+    /// independence is not a fact about them), when the worker's own
+    /// resolution failed (nothing to compare against), and on snapshots
+    /// recorded before this existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verifier_independent: Option<bool>,
 }
 
 impl LadderSnapshot {
@@ -219,6 +234,17 @@ impl LadderSnapshot {
         Self {
             rung: Some(rung),
             ..self.clone()
+        }
+    }
+
+    /// This snapshot with the grader-independence fact set (#1795). Stamped
+    /// only on the model-verdict path — see [`Self::verifier_independent`]
+    /// for why the other rungs stay absent.
+    #[must_use]
+    pub fn with_verifier_independence(self, verifier_independent: Option<bool>) -> Self {
+        Self {
+            verifier_independent,
+            ..self
         }
     }
 }
@@ -271,18 +297,42 @@ mod tests {
             witness_intact: Some(true),
             witness_mutation: Some(true),
             diff_coverage: Some("covered".into()),
+            verifier_independent: None,
         }
     }
 
     /// Invariant #4: the snapshot round-trips byte-for-byte, with and without
-    /// a rung.
+    /// a rung, and with the grader-independence fact in either polarity.
     #[test]
     fn the_snapshot_round_trips() {
-        for value in [snapshot(), snapshot().with_rung(LadderRung::SubmitFast)] {
+        for value in [
+            snapshot(),
+            snapshot().with_rung(LadderRung::SubmitFast),
+            snapshot()
+                .with_rung(LadderRung::ModelVerdict)
+                .with_verifier_independence(Some(false)),
+        ] {
             let json = serde_json::to_string(&value).unwrap();
             let back: LadderSnapshot = serde_json::from_str(&json).unwrap();
             assert_eq!(value, back);
         }
+    }
+
+    /// The grader-independence fact is additive (#1795): a snapshot that never
+    /// stated it emits no key and parses as unknown — never as either verdict.
+    #[test]
+    fn verifier_independence_is_additive() {
+        let json = serde_json::to_string(&snapshot()).unwrap();
+        assert!(
+            !json.contains("verifier_independent"),
+            "an unstated fact emits no key: {json}"
+        );
+        let stamped = snapshot().with_verifier_independence(Some(false));
+        let json = serde_json::to_string(&stamped).unwrap();
+        assert!(
+            json.contains("\"verifier_independent\":false"),
+            "a self-graded verdict states it: {json}"
+        );
     }
 
     /// `rung` is additive: a snapshot recorded before it existed still parses,

@@ -471,6 +471,19 @@ pub struct AgentEngineConfig {
     /// which is what makes the two arms one binary and one posture key apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_verifier_evidence_demand: Option<Toggle>,
+    /// Refuse a run whose VERDICT call would resolve to the worker's own
+    /// model (`stella_pipeline::PipelineConfig::require_independent_verifier`,
+    /// #1795). Absent is off.
+    ///
+    /// Off is the right default for a single-provider BYOK seat, where the
+    /// verifier legitimately rides the worker and the verdict records that
+    /// fact on its ladder snapshot instead. Turn it on where the posture
+    /// claims an independent reviewer — a benchmark arm, a policy that treats
+    /// a self-graded PASS as no verdict at all — and a run that cannot honour
+    /// the claim should refuse before spending rather than produce a number
+    /// the configuration misdescribes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_require_independent_verifier: Option<Toggle>,
     /// Seconds of provider silence that end a single generation
     /// (`stella_core::EngineConfig::model_timeout`). Absent keeps the engine's
     /// own default, which is what every run used before this key existed.
@@ -729,6 +742,7 @@ impl AgentEngineConfig {
         take!(pipeline_candidates);
         take!(pipeline_verifier_evidence_demand);
         take!(pipeline_require_diff_coverage);
+        take!(pipeline_require_independent_verifier);
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
         take!(tool_result_horizon_steps);
@@ -833,6 +847,13 @@ impl AgentEngineConfig {
     /// deterministic fast-submit (#1291). Absent is off.
     pub fn pipeline_require_diff_coverage_on(&self) -> bool {
         self.pipeline_require_diff_coverage
+            .is_some_and(Toggle::is_on)
+    }
+
+    /// Whether a verdict that would be graded by the worker's own model
+    /// refuses the run instead (#1795). Absent is off.
+    pub fn pipeline_require_independent_verifier_on(&self) -> bool {
+        self.pipeline_require_independent_verifier
             .is_some_and(Toggle::is_on)
     }
 

@@ -485,12 +485,29 @@ impl McpToolSet {
 
 #[async_trait]
 impl ToolExecutor for McpToolSet {
+    /// The advertised toolset, as two segments in a fixed order: the native
+    /// tools, then this set's MCP tools.
+    ///
+    /// **Both the segment order and the order within each segment are a
+    /// cross-process contract, not a presentation choice.** This list is
+    /// serialized verbatim at position 0 of the prompt prefix, and prompt
+    /// caching is a byte-level prefix match — so two stella processes in the
+    /// same workspace inside the cache TTL share the tools+system entry only
+    /// if they emit the same bytes. `ToolRegistry::schemas` sorts the native
+    /// segment for exactly that reason; this decorator used to concatenate
+    /// after it without re-sorting, which put the whole guarantee back at the
+    /// mercy of `self.clients` order and of which server finished connecting
+    /// first (#1848).
+    ///
+    /// Sorting the MCP segment by its namespaced name — rather than trusting
+    /// client order — is what makes the answer independent of both.
     fn schemas(&self) -> Vec<ToolSchema> {
         let mut schemas = Vec::new();
         // Native tools first — they are the base layer the MCP set augments.
         if let Some(native) = &self.native {
             schemas.extend(native.schemas());
         }
+        let mut mcp = Vec::new();
         for (idx, client) in self.clients.iter().enumerate() {
             // A disabled server advertises nothing this session — the engine
             // re-reads schemas each model call, so the model stops seeing its
@@ -503,7 +520,7 @@ impl ToolExecutor for McpToolSet {
                 // Only advertise tools that actually route back to this client
                 // (defends against any skipped/collided entry).
                 if self.routes.get(&namespaced).map(|(i, _)| *i) == Some(idx) {
-                    schemas.push(ToolSchema {
+                    mcp.push(ToolSchema {
                         name: namespaced,
                         description: tool.description.clone(),
                         input_schema: tool.input_schema.clone(),
@@ -517,6 +534,11 @@ impl ToolExecutor for McpToolSet {
                 }
             }
         }
+        // Namespaced names are unique by construction (`routes` is keyed on
+        // them), so this is a total order — no tie for the sort to resolve
+        // arbitrarily and reintroduce the nondeterminism.
+        mcp.sort_by(|a, b| a.name.cmp(&b.name));
+        schemas.extend(mcp);
         schemas
     }
 
@@ -559,6 +581,25 @@ impl ToolExecutor for McpToolSet {
         self.native
             .as_ref()
             .map_or(0.0, |native| native.drain_sub_agent_spend_usd())
+    }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.native
+            .as_ref()
+            .and_then(|native| native.drain_wait_request())
+    }
+
+    /// Forwarded from the native layer: letting the empty default stand would
+    /// silently serialize its sibling spawns (see the port's contract).
+    /// External MCP tools never carry this claim — the port pins their
+    /// concurrency to `read_only`, which they are advertised without.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.native
+            .as_ref()
+            .map_or_else(Default::default, |native| native.parallel_safe_names())
     }
 }
 
@@ -612,6 +653,21 @@ impl ToolExecutor for CandidateMcpView {
     /// budget (see the port's contract).
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
+    }
+
+    /// Forwarded so a swallowed wait request cannot turn parked waits
+    /// (#1471) back into model-step polling — to `native`, not `inner`:
+    /// remote MCP tools never deposit wait requests, and the native layer
+    /// this view executes (`ci_status` included) is the only depositor.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.native.drain_wait_request()
+    }
+
+    /// Forwarded from the candidate's own `native` layer — the executor every
+    /// non-`mcp__` name routes to in `execute` above. `inner`'s set would name
+    /// tools this view never runs, and MCP tools never carry the claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.native.parallel_safe_names()
     }
 }
 
@@ -667,6 +723,34 @@ mod tests {
                 content: format!("native ran {name}"),
             }
         }
+        fn parallel_safe_names(&self) -> HashSet<String> {
+            HashSet::from(["task".to_string()])
+        }
+    }
+
+    /// Both wrappers forward the native layer's concurrency claim — the empty
+    /// default would silently serialize sibling spawns in any MCP-connected
+    /// session (and in every Best-of-N candidate).
+    #[tokio::test]
+    async fn parallel_safe_names_forward_from_the_native_layer() {
+        let client = connected_client("files", "read").await;
+        let set = Arc::new(McpToolSet::from_clients(vec![client]).wrapping(Arc::new(FakeNative)));
+        assert!(
+            set.parallel_safe_names().contains("task"),
+            "the native layer's claim must survive the MCP set"
+        );
+
+        let view = set.for_candidates(Arc::new(FakeNative));
+        assert!(
+            view.parallel_safe_names().contains("task"),
+            "and the candidate view forwards its own native layer's claim"
+        );
+
+        let bare = McpToolSet::from_clients(Vec::new());
+        assert!(
+            bare.parallel_safe_names().is_empty(),
+            "no native layer, no claims"
+        );
     }
 
     /// A transport that never answers `tools/call` — used to prove the
@@ -737,6 +821,60 @@ mod tests {
         let set = McpToolSet::from_clients(vec![a, b]);
         assert_eq!(set.connected_names(), vec!["files", "search"]);
         assert!(set.failed_servers().is_empty());
+    }
+
+    /// The advertised toolset must be byte-identical however the servers
+    /// happened to be ordered (#1848).
+    ///
+    /// This list is serialized verbatim at position 0 of the prompt prefix and
+    /// prompt caching is a byte-level prefix match, so the question is not
+    /// "does it look the same" but "do two processes emit the same bytes".
+    /// `ToolRegistry::schemas` sorts its own tools for that reason; this
+    /// decorator appended after it without re-sorting, so the guarantee held
+    /// only as long as `self.clients` order and connection-completion order
+    /// happened to match between processes — which across a restart, or two
+    /// stella processes in one workspace inside the cache TTL, they need not.
+    ///
+    /// Serialized rather than compared field by field: bytes are what the
+    /// cache matches on, so bytes are what the assertion should be about.
+    #[tokio::test]
+    async fn schemas_are_byte_identical_whatever_order_the_servers_connected_in() {
+        let forward = McpToolSet::from_clients(vec![
+            connected_client("alpha", "one").await,
+            connected_client("zeta", "two").await,
+        ])
+        .wrapping(Arc::new(FakeNative));
+        let reverse = McpToolSet::from_clients(vec![
+            connected_client("zeta", "two").await,
+            connected_client("alpha", "one").await,
+        ])
+        .wrapping(Arc::new(FakeNative));
+
+        let bytes = |set: &McpToolSet| serde_json::to_string(&set.schemas()).expect("serialize");
+        assert_eq!(
+            bytes(&forward),
+            bytes(&reverse),
+            "two processes that connected the same servers in different orders must \
+             advertise the same bytes, or they cannot share a prompt-cache entry"
+        );
+
+        // And the segment contract the doc comment states: native first, then
+        // the MCP tools. A sort applied to the WHOLE list would also make the
+        // assertion above pass while silently moving the native tools.
+        let names: Vec<String> = forward.schemas().into_iter().map(|s| s.name).collect();
+        let first_mcp = names
+            .iter()
+            .position(|n| n.starts_with(NS_PREFIX))
+            .expect("the mcp segment exists");
+        assert!(
+            names[..first_mcp].iter().all(|n| !n.starts_with(NS_PREFIX)),
+            "native tools must all precede the mcp segment: {names:?}"
+        );
+        assert_eq!(
+            names[first_mcp..],
+            ["mcp__alpha__one".to_string(), "mcp__zeta__two".to_string()],
+            "the mcp segment is sorted by namespaced name"
+        );
     }
 
     #[tokio::test]

@@ -48,6 +48,7 @@ pub mod subagent;
 mod summarize;
 pub mod tasks;
 pub mod tool_foundry;
+pub mod waiting;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
 // `bus::HookEvent` (the extension-bus envelope) stays module-qualified: the
@@ -104,3 +105,4 @@ pub use tasks::{SpawnRequest, TaskBoard, TaskBoardError};
 pub use tool_foundry::{
     GapDetectionConfig, ParamKind, ProposedTool, ShellInvocation, ToolParameter, detect_tool_gaps,
 };
+pub use waiting::{WaitCall, WaitRequest};

@@ -768,6 +768,20 @@ impl ToolExecutor for CustomToolSet<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.get().drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.get().drain_wait_request()
+    }
+
+    /// Forwarded: letting the empty default stand would silently serialize the
+    /// inner executor's sibling spawns (see the port's contract). Custom
+    /// script tools spawn workspace subprocesses and make no such claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.get().parallel_safe_names()
+    }
 }
 
 #[cfg(test)]

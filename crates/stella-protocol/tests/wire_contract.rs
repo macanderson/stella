@@ -1161,6 +1161,7 @@ fn sample_events() -> Vec<AgentEvent> {
                         witness_intact: Some(true),
                         witness_mutation: Some(true),
                         diff_coverage: Some("covered".into()),
+                        verifier_independent: Some(false),
                     })),
                 },
             }),

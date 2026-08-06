@@ -182,8 +182,11 @@ pub(crate) async fn run_raw_one_shot(
     // `SessionPresence::one_shot_notification`, shared with the pipeline path).
     let run_secs =
         u64::try_from(crate::memory::unix_now_secs().saturating_sub(started_unix)).unwrap_or(0);
-    let notify = presence.one_shot_notification(outcome.is_ok(), run_secs, prompt);
-    presence.finish(outcome.is_ok(), notify);
+    // The failure itself, not a bool: an unsupervised deliberate stop must
+    // reach the registry as `Stopped`, never age into it as a crash (#1826).
+    let status = crate::daemon::outcome_status(outcome.as_ref().map(|_| ()));
+    let notify = presence.one_shot_notification(status, run_secs, prompt);
+    presence.finish(status, notify);
     outcome
 }
 
@@ -372,8 +375,17 @@ pub async fn run_goal_cmd(
     } else {
         format!("{}: goal run FAILED", presence.name())
     };
+    // The goal loop still answers with a `String`, which has no room for the
+    // abort's typed kind (#1637's collapse one level deeper — #1862), so a
+    // policy-stopped goal round can only record `Error` here. Projected
+    // through `outcome_status` all the same, so a user interrupt records
+    // `Cancelled` rather than aging into a crash (#1826).
+    let terminal = outcome
+        .as_ref()
+        .map(|_| ())
+        .map_err(|e| crate::failure::CliFailure::error(e.clone()));
     presence.finish(
-        outcome.is_ok(),
+        crate::daemon::outcome_status(terminal.as_ref().map(|_| ())),
         Some((notify, crate::command_deck::prompt_line(goal, 160))),
     );
     outcome

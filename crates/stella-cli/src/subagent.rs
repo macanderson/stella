@@ -47,10 +47,12 @@
 //! `task` calls from one step execute concurrently — reachable since the
 //! engine's dispatch scheduler groups the spawn tool with read-only calls
 //! (`Tool::parallel_safe`; before that claim existed, every non-read-only
-//! call was its own barrier and this concurrency was dead code). Two siblings
-//! can therefore each carve against the same headroom before either settles —
-//! an overshoot bounded by one child's cap, and caught by the parent's guard
-//! at the next step boundary regardless.
+//! call was its own barrier and this concurrency was dead code). Every
+//! sibling in one dispatch group can therefore carve against the same
+//! headroom before any settles — an overshoot bounded by one child's cap per
+//! concurrently-running sibling (up to the engine's dispatch cap of 8, so
+//! seven extra caps in the worst case, not one), and caught by the parent's
+//! guard at the next step boundary regardless.
 //!
 //! ## Settling is the child's job
 //!
@@ -253,6 +255,14 @@ impl SessionSubAgents {
     }
 
     /// Override the session pool ceiling.
+    ///
+    /// `None` means **unlimited**, and replaces the ceiling
+    /// [`Self::new`] installed — it does not mean "leave the default alone".
+    /// That reading is what made [`DEFAULT_POOL_LIMIT_USD`] dead code:
+    /// `install_for_session` passed `None` meaning "nothing to override" and
+    /// got an unbounded pool (#1849). Kept as-is rather than reinterpreted,
+    /// because a caller that genuinely wants no pool ceiling needs a way to
+    /// say so; the fix belongs at the call site, which now names its choice.
     #[must_use]
     pub fn with_pool_limit(self, limit_usd: Option<f64>) -> Self {
         let mode = self.pool.lock().unwrap_or_else(|p| p.into_inner()).mode();
@@ -304,9 +314,37 @@ pub fn install_for_session(
         registry,
         crate::agent::engine_config_for(cfg),
         stella_protocol::BudgetMode::Observed,
-        None,
+        session_pool_limit_usd(),
     );
     Ok(())
+}
+
+/// The sub-agent pool ceiling a session installs when nothing overrides it.
+///
+/// A named function rather than a literal at the call site, because a literal
+/// there is exactly what went wrong: every production installer passed `None`
+/// — which [`SessionSubAgents::with_pool_limit`] reads as *unlimited*, not as
+/// "keep the default" — so [`DEFAULT_POOL_LIMIT_USD`] was documented as the
+/// bound that stops "a model looping on `task`" while binding nothing. A
+/// session without `--budget` whose model wedged on delegation ran every child
+/// to `max_steps` with no dollar bound at any layer (#1849).
+///
+/// # Why it warns rather than stops
+///
+/// The pool is installed `Observed`, so crossing $2 produces a warning and the
+/// children keep running. That is this repository's standing posture —
+/// degradation warns, never disables — and the enforcing bound is elsewhere
+/// and unchanged: the *parent's* guard is the hard ceiling, via the spend
+/// ledger the engine drains at each step boundary, so a session that passed
+/// `--budget` already stops. Making the pool itself enforcing would add a
+/// second wall that a caller never asked for and that no flag can raise.
+///
+/// The alternative — enforce at the pool — is a maintainer's call, not this
+/// function's: say so and this becomes a one-line change to the mode passed by
+/// [`install_for_session`].
+#[must_use]
+pub fn session_pool_limit_usd() -> Option<f64> {
+    Some(DEFAULT_POOL_LIMIT_USD)
 }
 
 #[async_trait]
