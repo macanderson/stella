@@ -51,8 +51,8 @@ fn apply_role_shaping(mut config: EngineConfig, overrides: &RoleCallOverrides) -
     if let Some(max_output_tokens) = overrides.max_output_tokens {
         config.max_output_tokens = Some(max_output_tokens);
     }
-    if let Some(params) = &overrides.params {
-        config.params = Some(*params);
+    if let Some(params) = overrides.params {
+        config.params = Some(params);
     }
     config
 }
