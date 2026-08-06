@@ -191,6 +191,14 @@ It prints one line per supervised run, continued or skipped, with the reason:
 
 **What it continues.** Exactly the rows `list` paints `Crashed ↩`: a supervised run whose recorded status is still live while its liveness lock is gone, whose workspace still exists, and which left a resume point. A run that finished, was stopped, was set aside, or recorded an error is never resumed — every deliberate ending writes a status on the way out, and a process the kernel took writes nothing, so a live status with a dead lock is the signature of interruption and of nothing else. The rule is deliberately conservative on the one ambiguous case: work you ended on purpose is never resumed behind your back, at the cost of not resuming a crash that managed to record itself.
 
+**What it skips because nobody is there.** A run that was waiting on a plan review when the machine went down is *not* resumed at boot. Resuming it would not fail — it would park again, waiting for an answer, and because the sweep streams one run at a time to completion it would sit there forever with every later run behind it unresumed. So the sweep names it and moves on:
+
+```text
+▸ skipping    ses-1785956700221 — waiting on an approval — answer it with `stella daemon attach <id>`, then `stella daemon resume <id>`
+```
+
+Waiting is not failing, so it does not spend one of the three attempts below: a run can wait across any number of reboots and still be resumable the moment you answer it.
+
 **What bounds it.** Each run gets at most **three** boot-time resumes. The count is durable (`~/.stella/services/resume-boot.json`) and is written *before* the resume is spawned, so a run that takes the machine down with it is still charged for the attempt. Past three, the run is retired from the sweep and left for `stella daemon resume <id>` by hand — a human deciding to try again is what the bound exists to require. Runs are resumed one at a time; several turns resuming at once is several models spending at once on a machine nobody is watching.
 
 Everything `resume` says about a resumed turn applies here, including the honest limits above: a turn interrupted mid-pipeline resumes as a plain engine turn and says which stages it is not restoring — into the service console rather than a terminal.
