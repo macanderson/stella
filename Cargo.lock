@@ -3137,7 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "stella-diff"
-version = "0.6.126"
+version = "0.6.127"
 
 [[package]]
 name = "stella-engine"
