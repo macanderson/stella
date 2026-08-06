@@ -80,6 +80,10 @@ pin just the verifier model while your user scope keeps everything else.
     // long steps stop on the timeout instead of the cap.
     "model_timeout_secs": 816,
 
+    // Seconds a supervised run may sit parked on a scope review nobody
+    // answers before it aborts. 0 (the default) parks until answered.
+    "approval_wait_secs": 0,
+
     // Per-agent deep config. Set a field and it goes on the wire; leave it
     // out and the provider default applies.
     "agents": {

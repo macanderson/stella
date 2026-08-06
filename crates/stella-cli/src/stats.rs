@@ -173,6 +173,11 @@ fn cache_savings_for(row: &UsageStatsRow) -> Option<f64> {
         output_tokens: row.output_tokens.max(0) as u64,
         cached_input_tokens: row.cache_read_tokens.max(0) as u64,
         cache_write_tokens: row.cache_write_tokens.max(0) as u64,
+        // Cache savings do not read it — reasoning tokens ride inside
+        // `output_tokens` as a diagnostic split, never their own cost line —
+        // and `UsageStatsRow` has no column for it, so `None` states the fact
+        // rather than inventing a zero the store never recorded.
+        reasoning_tokens: None,
     };
     Some(entry.pricing.cache_savings_usd_for(&row.provider, &usage))
 }

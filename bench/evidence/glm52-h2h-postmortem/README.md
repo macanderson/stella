@@ -1,11 +1,13 @@
 # GLM-5.2 head-to-head post-mortem: the 106 cap hits and the 6.4× input gap
 
 A reading of the evidence from the 89-task Terminal-Bench 2.1 same-model
-head-to-head (`stella-docs/benchmarks/terminal-bench-2-1-glm-5-2.json` — the
+head-to-head (`docs/benchmarks/terminal-bench-2-1-glm-5-2.json` — the
 data behind the public "same model, different harness" page). Stella won the
 run, 58/89 against Claude Code's 44/89, and this document is about the two
-things the winning number hides: **106 output-cap hits** (Claude Code: 0) and
-**366M input tokens against 57M** (6.40×).
+things the winning number hides: **106 output-cap hits** (a Stella-only
+measurement — the Claude Code arm does not emit it, so there is no 106-vs-0
+comparison to make) and **366M input tokens against 57M** (6.40×, and that one
+*is* like-for-like).
 
 Every figure below is recomputed by [`analyze.py`](analyze.py) beside this
 file, from the committed table alone — stdlib only, no network, no arguments.
@@ -27,14 +29,17 @@ If this prose and that script disagree, the script wins.
 | input tokens | 366,226,022 | 57,233,585 |
 | output tokens | 5.31M | 2.23M |
 | cost | $78.25 | $63.35 |
-| cap hits | **106** | 0 |
+| cap hits | **106** (inferred) | — (not emitted) |
 
 `cap_hits` counts `step_usage` events with ≥16,384 output tokens **and zero
 tool calls** — a step that spent a huge output budget without acting. Under
 the frozen posture (`max_tokens: 64000`) a counted step may sit anywhere in
 [16,384, 64,000]; a literal truncation at the cap is the worst case of the
-class, not the whole class. Claude Code recorded zero because its steps
-either act or stay small — the failure shape is Stella-specific.
+class, not the whole class. **The Claude Code column is a dash, not a zero,
+and the difference matters**: `cap_hits` is read from `stella-events.jsonl`,
+which that arm never writes, so its value is *no source* rather than *measured
+zero* (#1227). Nothing here licenses "106 against 0" — this section is a
+finding about Stella's own steps, not a comparison.
 
 ## 2. The 106 cap hits
 

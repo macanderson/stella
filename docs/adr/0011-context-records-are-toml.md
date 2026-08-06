@@ -1,3 +1,9 @@
+---
+id: adr/0011-context-records-are-toml
+title: "ADR 0011: Context Records Are TOML (supersedes the surface decision in 0008)"
+status: implemented
+---
+
 # ADR 0011: Context Records Are TOML (supersedes the surface decision in 0008)
 
 - Status: **Accepted** — ratified by repository owner 2026-07-30 (was: Proposed).

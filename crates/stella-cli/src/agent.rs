@@ -454,6 +454,7 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
+        crate::resume_frame::declare(&cfg.durability, &pipeline_config);
         let pipeline = Pipeline::new(ports, pipeline_event_sender(&tx, format), pipeline_config);
         pipeline.run(prompt, &mut messages, &mut budget).await
     };

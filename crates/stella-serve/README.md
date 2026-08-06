@@ -102,6 +102,14 @@ To tell *wedged* from merely *slow*: a turn whose `turn_settled` tally shows no
 advancing `stages` while a reverse request's `waited_ms` climbs is wedged; one
 whose stages keep advancing is just long.
 
+## God files — do not add lines
+
+This crate has no god files: no file exceeds the gate's 1500-line ratchet
+(`scripts/check-file-size.sh`), and none may appear — a new file crossing
+1500 lines fails the gate outright, and `scripts/file-size-baseline.txt`
+accepts no new entries. When a file here approaches the limit, split it before
+it crosses.
+
 ## Key concepts
 
 **The reverse tool-call protocol.** Two deliberately asymmetric directions.

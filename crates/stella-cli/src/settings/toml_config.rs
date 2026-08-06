@@ -1,6 +1,13 @@
 //! `stella.toml` — the TOML config document, and how it lowers into
 //! [`Settings`].
 //!
+//! The design this implements is `doc:config-system` — Phases 0 and 1 of it are
+//! built (this document and its lowering, comment-preserving writes in
+//! [`super::toml_io`], three-scope discovery, and the dual read with TOML
+//! winning whole); Phases 2–6 are not. Read §3.1–§3.2 and §6.1 there before
+//! changing the shapes below, because the divergences from [`Settings`] are
+//! decisions recorded in that spec rather than accidents of this file.
+//!
 //! # Why a separate document type
 //!
 //! This is deliberately NOT `#[derive(Deserialize)]` on [`Settings`] itself.

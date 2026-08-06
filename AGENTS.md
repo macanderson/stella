@@ -57,20 +57,36 @@ make watch-lint          # re-run clippy on every save
 A red gate is an automatic "not yet":
 
 ```bash
-make gate                # = no-scratch + action-pins + cargo-install-pins
+make gate                # = no-scratch + no-secrets + design-refs
+                         #   + action-pins + cargo-install-pins
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
-                         #   + command-docs + file-size + wire-schema
-                         #   + rustdoc -D warnings + fmt --check
-                         #   + clippy -D warnings + test --workspace
+                         #   + command-docs + brand-case + file-size
+                         #   + god-files
+                         #   + gate-parity + left-behind + role-names
+                         #   + wire-schema
+                         #   + doc-warnings (rustdoc -D warnings)
+                         #   + format-check (fmt --check)
+                         #   + lint (clippy -D warnings)
+                         #   + test (test --workspace)
 ```
 
-CI enforces the same fifteen steps split across two workflows:
+That is twenty-two steps, and the list is not maintained by hand: it is
+`GATE_STEPS` in the `Makefile`, and `gate-parity` (`scripts/check-gate-parity.sh`)
+fails if this block or CONTRIBUTING.md's stops matching it. The block had
+already drifted twice before that guard existed, both times by under-reporting
+a newly added guard, which is the direction that misleads — a reader runs the
+short list, sees green, and believes the gate is green (#1437).
+
+CI enforces the same steps split across three workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`
 and `doc-links`, and adds a `Cargo.lock` sync check, the prompt-cache golden
 fixtures, `stella context validate`, and a release smoke build (thin LTO);
 `docs-guards.yml` runs those two plus a second run of `command-docs`, because
-all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores.
+all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
+`wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
+because a PR that hand-edits a generated schema and nothing else starts neither
+of the other two (#1439).
 
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
@@ -86,13 +102,22 @@ This replaces two path-based guards (`check-normative-home.sh`,
 was, and that only ever read Rust comments — 16 dead markdown-to-markdown links
 had accumulated underneath them.
 
-Three rungs, each a superset of the one above:
+Four rungs, each a superset of the one above:
 
 | Target | Runs | Honours `CARGO_SCOPE` |
 | --- | --- | --- |
-| `make guards` | every global guard + `fmt --check` — nothing compiles beyond `wire-schema`'s two exporters | — |
+| `make guards-fast` | the toolchain-free guards + `fmt --check` — nothing compiles at all | — |
+| `make guards` | ...plus `wire-schema`, whose two schema exporters do compile | — |
 | `make check` | ...plus clippy | clippy |
 | `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
+
+`guards-fast` is not a rung you choose by hand; the pre-push hook picks it for
+a push that reaches no crate *and* cannot have touched the wire contract — a
+website-only or workflow-only push, which used to pay for a cargo build it had
+no use for (#1439). `wire-schema` is conditional there, never dropped:
+`docs/wire/` is generated and committed, so a hand-edit to it still takes the
+dearer rung, and `.github/workflows/wire-schema.yml` covers the same paths
+server-side because `ci.yml` ignores `docs/**`.
 
 `CARGO_SCOPE` narrows only the compile tiers, and defaults to `--workspace`, so
 `make gate` and CI are unchanged unless a caller asks for less (#1135):
@@ -312,6 +337,16 @@ deleted.
   related issues instead of duplicating them. Reference the issues you filed
   from your PR description so the residue of the work is auditable.
 
+The judgment half of this rule — did you notice something and not file it —
+is not mechanically decidable, and the PR template asks a human. Its most
+common *residue* is checked: `left-behind` (`scripts/check-left-behind.sh`)
+fails the gate on a `TODO`/`FIXME`/`XXX`/`HACK` in code that names no issue,
+because a marker with no `#1234` beside it is by definition a thing left
+behind with no handoff (#1454). A marker that names an issue is tracked work
+and passes. The fix is always to file the issue and reference it — never to
+delete the marker, and never to add a baseline entry: that baseline started
+empty and is meant to stay empty.
+
 ---
 
 ## Workspace layout — where a change goes
@@ -389,6 +424,15 @@ a plan needs and the part that rarely changes:
 The other twelve crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
+
+All three copies — this table, those README lists, and each clean crate's "no
+god files" claim — are checked against `scripts/file-size-baseline.txt` by
+`god-files` (`scripts/check-god-files.sh`). `make file-size-update` rewrites the
+baseline and touches no prose, so before that guard existed the next split or
+rename stranded every copy silently (#1435). The baseline is the tiebreaker: it
+is generated and gate-enforced, so the prose follows it and never the reverse.
+Only *which* files are named is checked — the ceilings stay in the baseline
+alone, because a number in two places is how the last limit died.
 
 **Status — what ships.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /

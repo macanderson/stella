@@ -1,3 +1,9 @@
+---
+id: adr/0009-enum-freeze-resolutions
+title: "ADR 0009: Enum-Freeze Resolutions for Flagged Phase-1 Decisions"
+status: implemented
+---
+
 # ADR 0009: Enum-Freeze Resolutions for Flagged Phase-1 Decisions
 
 - Status: **Accepted** — ratified by repository owner 2026-07-24. Four items

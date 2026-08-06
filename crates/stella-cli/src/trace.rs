@@ -597,6 +597,7 @@ mod tests {
                 compiled_frame: None,
             },
             AgentEvent::StepUsage {
+                reasoning_tokens: None,
                 step: 0,
                 role: ModelCallRole::Worker,
                 provider: "zai".to_string(),

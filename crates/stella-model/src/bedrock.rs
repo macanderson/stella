@@ -850,6 +850,10 @@ impl Provider for BedrockProvider {
             output_tokens: usage.output_tokens,
             cached_input_tokens: usage.cache_read_input_tokens,
             cache_write_tokens: usage.cache_write_input_tokens,
+            // Converse reports no reasoning breakdown — thinking rides inside
+            // `outputTokens` exactly as it does on Anthropic's native API.
+            // `None` = not reported, never a measured zero.
+            reasoning_tokens: None,
         };
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         // Normalize Converse's stop vocabulary so the driver's truncation

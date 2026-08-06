@@ -1,3 +1,9 @@
+---
+id: audit/2026-08-parity-gap-followup
+title: "Parity follow-up to the July 2026 audit — August 2026"
+status: archived
+---
+
 # Parity follow-up to the July 2026 audit — August 2026
 
 Scope: re-check every claim in `2026-07-reference-grade-audit.md` against the

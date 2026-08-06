@@ -926,6 +926,7 @@ mod tests {
     fn step_usage_carries_the_model_through_the_reviewed_hatch() {
         let (mut bridge, records) = bridge();
         bridge.observe(&AgentEvent::StepUsage {
+            reasoning_tokens: None,
             step: 1,
             role: ModelCallRole::Worker,
             provider: "anthropic".into(),

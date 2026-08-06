@@ -172,6 +172,43 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-brand-case.sh
 
+      # Also toolchain-free. `make file-size-update` regenerates the baseline
+      # and touches neither AGENTS.md's god-file table nor the twenty crate
+      # READMEs that restate it, so a split or rename stranded all three
+      # silently — the same duplicated-normative-prose shape as #630 (#1435).
+      - name: the god-file prose matches the baseline
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-god-files.sh
+
+      # Also toolchain-free. #1394 renamed an agent-config role and the Rust
+      # compiler found every Rust call site and none of the others — a Python
+      # dict and a JavaScript literal kept the old spelling, and the arenabench
+      # one failed *silently*: the seat ran with the verifier inheriting the
+      # worker baseline while the scoreboard reported it as configured. A wrong
+      # measurement, not a crash (#1449).
+      - name: role names agree across Rust, Python and JavaScript
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-role-names.sh
+
+      # Also toolchain-free. AGENTS.md requires that anything noticed and not
+      # fixed becomes an issue written as a handoff; nothing checked it, and an
+      # unenforced standard reads as one the codebase is meeting. The decidable
+      # residue is a TODO/FIXME/XXX/HACK naming no issue (#1454). Unlike the
+      # file-size ratchet this had nothing to grandfather — the baseline is
+      # empty and is meant to stay empty.
+      - name: every deferral marker names a tracking issue
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-left-behind.sh
+
+      # Also toolchain-free. AGENTS.md and CONTRIBUTING.md each restate what
+      # `make gate` runs, and both had drifted twice — each time by omitting a
+      # newly added guard, which is the direction that misleads a reader into
+      # thinking a short green list means a green gate (#1437). The list is
+      # `GATE_STEPS` in the Makefile; this holds the prose to it.
+      - name: the documented gate is the real gate
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-gate-parity.sh
+
       # Also toolchain-free (shellcheck ships preinstalled on ubuntu-latest).
       # install.sh is fetched over the network and piped into `sh` by
       # strangers before Stella is installed; the guard scripts are what the
