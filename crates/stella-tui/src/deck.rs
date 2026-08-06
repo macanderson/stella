@@ -642,16 +642,9 @@ impl WorkspaceModel {
                 });
             }
             // `/clear`: reset the agent's session to seq-0 — blank the
-            // transcript, zero the cost/token counters and the header clock, and
-            // return the HUD (progress bar) to idle. The prompt echo the paired
-            // `PromptStarted` pushed is wiped along with the rest.
-            //
-            // The file-touch half of the session model is deliberately NOT
-            // reset (`SessionModel::reset_conversation`): [`Self::ledger`] — the
-            // Files tab's rows — is untouched here, and the diffs those rows
-            // render live in the session model (L-T5). Blanking one store and
-            // not the other is what made every post-`/clear` row show accurate
-            // counts beside `(no diff captured)`.
+            // transcript, zero the counters and header clock, return the HUD to
+            // idle, wipe the prompt echo. The file-touch half and
+            // [`Self::ledger`] survive; why is on `SessionModel::reset_conversation`.
             Inbound::SessionReset { agent } => {
                 if let Some(idx) = self.index_of(agent) {
                     let entry = &mut self.agents[idx];
