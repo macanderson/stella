@@ -147,8 +147,8 @@ fn registry_records(workspace_root: &Path) -> (Vec<Value>, usize) {
     let Ok(entries) = std::fs::read_dir(registry_dir()) else {
         return (Vec::new(), 0);
     };
-    let canon_root = std::fs::canonicalize(workspace_root)
-        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let canon_root =
+        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
     let mut records = Vec::new();
     let mut damaged = 0;
     for entry in entries.flatten().take(MAX_REGISTRY_RECORDS) {
@@ -196,7 +196,10 @@ fn registry_record(id: &str) -> Option<Value> {
 /// an id in any other shape — those sort last, which is where a session with
 /// no other timestamp belongs.
 fn ms_from_id(id: &str) -> u64 {
-    id.split('-').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0)
+    id.split('-')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 /// The store's per-session rollup: one aggregate row per stamped session over
@@ -336,9 +339,7 @@ fn first_prompts(conn: &Connection) -> Result<BTreeMap<String, String>, DbError>
         Err(e) if is_missing_schema(&e) => return Ok(BTreeMap::new()),
         Err(e) => return Err(e.into()),
     };
-    let mapped = stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-    })?;
+    let mapped = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
     let mut out = BTreeMap::new();
     for row in mapped {
         let (id, prompt) = row?;
@@ -905,12 +906,7 @@ fn fold_turn_extras(conn: &Connection, id: &str, turns: &mut [Value]) -> Result<
 /// Run one session-bound query collecting every row; a missing table or
 /// column degrades to `[]` — the same bargain `crate::db::collect_rows`
 /// strikes, with the session id bound as the parameter.
-fn session_group<F>(
-    conn: &Connection,
-    id: &str,
-    sql: &str,
-    map: F,
-) -> Result<Vec<Value>, DbError>
+fn session_group<F>(conn: &Connection, id: &str, sql: &str, map: F) -> Result<Vec<Value>, DbError>
 where
     F: Fn(&rusqlite::Row<'_>) -> rusqlite::Result<Value>,
 {

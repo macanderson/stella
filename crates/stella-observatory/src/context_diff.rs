@@ -199,11 +199,9 @@ fn resolve_baseline(
 /// The raw submitted prompt as a baseline — what the user actually typed,
 /// before Stella assembled anything around it.
 fn prompt_baseline(conn: &Connection, id: i64) -> Result<Baseline, DbError> {
-    let prompt = match conn.query_row(
-        "SELECT prompt FROM executions WHERE id = ?1",
-        [id],
-        |r| r.get::<_, String>(0),
-    ) {
+    let prompt = match conn.query_row("SELECT prompt FROM executions WHERE id = ?1", [id], |r| {
+        r.get::<_, String>(0)
+    }) {
         Ok(prompt) => prompt,
         Err(rusqlite::Error::QueryReturnedNoRows) => String::new(),
         Err(e) if is_missing_schema(&e) => String::new(),

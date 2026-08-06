@@ -272,7 +272,10 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                     let base = query_param(query, "base").unwrap_or_else(|| "prev".into());
                     let only = query_param(query, "only").unwrap_or_else(|| "all".into());
                     if !matches!(base.as_str(), "prev" | "first" | "prompt") {
-                        return Response::error("400 Bad Request", "base must be prev|first|prompt");
+                        return Response::error(
+                            "400 Bad Request",
+                            "base must be prev|first|prompt",
+                        );
                     }
                     if !matches!(
                         only.as_str(),

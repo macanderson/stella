@@ -3069,6 +3069,7 @@ dependencies = [
  "stella-context",
  "stella-core",
  "stella-diag",
+ "stella-diff",
  "stella-fleet",
  "stella-graph",
  "stella-home",
@@ -3133,6 +3134,10 @@ dependencies = [
  "tempfile",
  "trybuild",
 ]
+
+[[package]]
+name = "stella-diff"
+version = "0.6.126"
 
 [[package]]
 name = "stella-engine"
@@ -3272,6 +3277,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "stella-core",
+ "stella-diff",
  "stella-home",
  "stella-protocol",
  "stella-store",

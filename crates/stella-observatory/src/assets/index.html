@@ -1085,7 +1085,8 @@ function renderTools(rows) {
     const r = top[i];
     el.addEventListener("mousemove", ev => showTip(ev,
       `<b>${esc(r.name)}</b>${fmtInt(r.calls)} calls · ${fmtInt(r.errors)} errors<br>` +
-      `p50 ${fmtMs(r.p50_ms)} · max ${fmtMs(r.max_ms)} · ${fmtTok(r.bytes_out)}B returned`));
+      `p50 ${fmtMs(r.p50_ms)} · p90 ${fmtMs(r.p90_ms)} · p99 ${fmtMs(r.p99_ms)} · ` +
+      `max ${fmtMs(r.max_ms)} · ${fmtTok(r.bytes_out)}B returned`));
     el.addEventListener("mouseleave", hideTip);
   });
 }
@@ -2287,7 +2288,7 @@ function renderHub(d) {
   const titles = { org: "By org", workspace: "By workspace", repo: "By repo", project: "By project" };
   $("hubDrillTitle").textContent = pick(titles, level, "Breakdown");
   $("hubDrillKick").textContent = level === "project"
-    ? "Select a project to open its dashboard" : "Select a row to drill in";
+    ? "Select a project to open its sessions" : "Select a row to drill in";
   const rows = d.drill?.rows ?? [];
   hubDrillRows = rows; hubDrillLevel = level;
   if (!rows.length) {
@@ -2363,7 +2364,10 @@ $("hubDrill").addEventListener("click", (ev) => {
   if (level === "org") { hub.org = r.key == null ? "(local)" : r.key; hubReload(); }
   else if (level === "workspace") { hub.workspace = r.key == null ? "(local)" : r.key; hubReload(); }
   else if (level === "repo") { hub.repo = r.key === "" ? "(local)" : r.key; hubReload(); }
-  else if (level === "project") { state.project = r.key; renderProjects(D.projects); switchTab("overview"); }
+  // The end of the hub's descent: org → workspace → repo → project lands on
+  // the project's *sessions*, so the drill continues seamlessly down through
+  // session → turn → step → tool call instead of dead-ending at tiles.
+  else if (level === "project") { state.project = r.key; renderProjects(D.projects); switchTab("sessions"); }
 });
 
 /* ── self-driving: the perpetual delivery loop ───────────────────────────── */

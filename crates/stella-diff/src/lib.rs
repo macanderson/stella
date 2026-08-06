@@ -32,7 +32,10 @@
 /// The fallback is still a correct diff — every old line removed, every new one
 /// added — just not a minimal one, and [`Diff::minimal`] says which you got
 /// rather than letting a caller assume.
-const LCS_AREA_CAP: usize = 4_000_000;
+///
+/// Public so a caller sizing its inputs can reason about the boundary; the
+/// value is not tunable per call by design — one bound, one behaviour.
+pub const LCS_AREA_CAP: usize = 4_000_000;
 
 /// What happened to one line between the two sides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

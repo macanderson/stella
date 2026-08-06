@@ -600,17 +600,33 @@ impl Observatory {
             .into_iter()
             .map(|(name, mut agg)| {
                 agg.durations.sort_unstable();
+                // Nearest-rank over the already-sorted window — the vector is
+                // materialized for the p50 anyway, so the tail percentiles
+                // cost two more indexed reads, not another scan.
+                let rank = |num: usize, den: usize| {
+                    agg.durations
+                        .get((agg.durations.len() * num / den).min(agg.durations.len() - 1))
+                        .copied()
+                        .unwrap_or(0)
+                };
                 let p50 = agg
                     .durations
                     .get(agg.durations.len() / 2)
                     .copied()
                     .unwrap_or(0);
+                let (p90, p99) = if agg.durations.is_empty() {
+                    (0, 0)
+                } else {
+                    (rank(9, 10), rank(99, 100))
+                };
                 let max = agg.durations.last().copied().unwrap_or(0);
                 json!({
                     "name": name,
                     "calls": agg.calls,
                     "errors": agg.errors,
                     "p50_ms": p50,
+                    "p90_ms": p90,
+                    "p99_ms": p99,
                     "max_ms": max,
                     "bytes_out": agg.bytes_out,
                 })
