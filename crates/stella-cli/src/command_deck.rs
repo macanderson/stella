@@ -1527,7 +1527,7 @@ pub async fn run_deck_session(
         // (the post-turn self-review is stored 1:1 with it) and record this
         // turn's skill-version usage — the same seam every headless path hits,
         // so the deck no longer carries a private copy of the recorder.
-        agent::stamp_execution_and_record_skill_usage(
+        agent::stamp_and_record_skill_usage(
             &execution,
             memory.as_mut(),
             &prompt,

@@ -33,7 +33,7 @@ use super::*;
 /// turn: selection honours the A/B recall control, so a control turn that
 /// injects no skills records no usage. A missing store, execution, or memory
 /// is a quiet no-op — those paths inject no skills either.
-pub(crate) fn stamp_execution_and_record_skill_usage(
+pub(crate) fn stamp_and_record_skill_usage(
     execution: &Option<(Arc<Store>, i64)>,
     memory: Option<&mut SessionMemory>,
     prompt: &str,
@@ -106,7 +106,7 @@ mod tests {
             .begin_execution("pipeline", "review the database", "anthropic", "claude")
             .expect("begin");
 
-        stamp_execution_and_record_skill_usage(
+        stamp_and_record_skill_usage(
             &Some((store.clone(), id)),
             Some(&mut memory),
             "review the database",
@@ -144,7 +144,7 @@ mod tests {
             .begin_execution("goal", "unrelated prompt", "anthropic", "claude")
             .expect("begin");
 
-        stamp_execution_and_record_skill_usage(
+        stamp_and_record_skill_usage(
             &Some((store.clone(), id)),
             Some(&mut memory),
             "unrelated prompt",
@@ -169,14 +169,14 @@ mod tests {
             .begin_execution("deck-sub", "review the database", "anthropic", "claude")
             .expect("begin");
 
-        stamp_execution_and_record_skill_usage(
+        stamp_and_record_skill_usage(
             &Some((store.clone(), id)),
             None,
             "review the database",
             dir.path(),
         );
         let mut memory = session_memory(dir.path());
-        stamp_execution_and_record_skill_usage(&None, Some(&mut memory), "review", dir.path());
+        stamp_and_record_skill_usage(&None, Some(&mut memory), "review", dir.path());
 
         assert_eq!(store.count("skill_usage").expect("count"), 0);
     }

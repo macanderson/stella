@@ -417,7 +417,7 @@ pub(crate) async fn run_goal_turn(
 ) -> Result<(), String> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
-    stamp_execution_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
+    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
     let files_before = registry.files_touched().len();
 
     // Route the VERIFIER role. `Some` only when a distinct-family verifier was
@@ -582,7 +582,7 @@ async fn run_goal_pipeline_turn(
     // Rebound mutable and NOT consumed by the seam, so the same memory can
     // double as the pipeline's recall port below.
     let mut session_memory = session_memory;
-    stamp_execution_and_record_skill_usage(
+    stamp_and_record_skill_usage(
         &execution,
         session_memory.as_deref_mut(),
         goal,

@@ -77,7 +77,7 @@ pub(crate) use persistence::{
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
-pub(crate) use skill_usage::stamp_execution_and_record_skill_usage;
+pub(crate) use skill_usage::stamp_and_record_skill_usage;
 // `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
 // session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".
 pub(crate) use crate::tool_policy::PolicyToolSet;
@@ -339,16 +339,10 @@ async fn run_pipeline_one_shot(
         // one-turn-per-process surface produce an arm at all.
         m.arm_recall_control();
     }
-    // The shared seam (#1872): stamp the execution onto memory (reflection
-    // stores the self-review 1:1 with it) and record the skills the block
-    // below will inject — after the arm above, so a control turn that
-    // injects nothing records nothing.
-    stamp_execution_and_record_skill_usage(
-        &execution,
-        memory.as_mut(),
-        prompt,
-        &cfg.workspace_root,
-    );
+    // The shared seam (#1872): stamp the execution onto memory and record the
+    // skills the block below will inject — after the arm above, so a control
+    // turn that injects nothing records nothing.
+    stamp_and_record_skill_usage(&execution, memory.as_mut(), prompt, &cfg.workspace_root);
     if let Some(m) = &memory {
         // Frames ride the pipeline's own recall port below (`recall:` in the
         // ports), which recalls once, renders them into the goal message, and
@@ -2072,7 +2066,7 @@ async fn run_turn(
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
-    stamp_execution_and_record_skill_usage(&execution, session_memory, prompt, &cfg.workspace_root);
+    stamp_and_record_skill_usage(&execution, session_memory, prompt, &cfg.workspace_root);
     let files_before = registry.files_touched().len();
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
