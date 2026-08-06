@@ -65,7 +65,6 @@ mod fleet_gc;
 mod fleet_spend;
 mod fleet_verbs;
 mod fleet_warmth;
-mod fullauto_cmd;
 mod ingest_cmd;
 mod init_fx;
 mod inspect;
@@ -79,6 +78,7 @@ mod memory_retire_cmd;
 mod model_catalog;
 mod paths;
 mod scoreboard_cmd;
+mod self_driving_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
 mod profile;
 // Phase 3 (#714): the adaptive-context proposal review surface.
@@ -798,10 +798,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // Reads .stella/private/store.db only.
             return scoreboard_cmd::run().map_err(failure::CliFailure::from);
         }
-        Some(Command::Fullauto { cmd }) => {
-            // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
+        Some(Command::SelfDriving { cmd }) => {
+            // Reads and writes ~/.stella/self-driving/<slug>/ (plus `gh` reads
             // of the defect queue) — works with zero API keys.
-            return fullauto_cmd::run(cmd).map_err(failure::CliFailure::from);
+            return self_driving_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
@@ -1267,7 +1267,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Cloud { .. }
         | Command::Telemetry { .. }
         | Command::Memory { .. }
-        | Command::Fullauto { .. }
+        | Command::SelfDriving { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
         | Command::Mcp { .. }

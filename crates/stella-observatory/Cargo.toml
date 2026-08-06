@@ -15,16 +15,16 @@ publish.workspace = true
 # all, so depending on it costs none of the isolation the dev-dependency note
 # below protects — it is path arithmetic over env vars and opens nothing.
 stella-home = { path = "../stella-home" }
-# The fullauto fold and its signal thresholds, shared rather than copied
+# The self-driving fold and its signal thresholds, shared rather than copied
 # (#1613). This crate carried its own `fold_runs` and `self_improvement`,
 # written when the only other implementation was shell — and the two had
-# already drifted: the dashboard and `stella fullauto metrics` disagreed about
+# already drifted: the dashboard and `stella self-driving metrics` disagreed about
 # whether the loop was NOISY for every odd cycle count.
 #
 # It does NOT weaken the isolation the dev-dependency note below protects.
 # That rule is about the WRITE path: the observatory re-reads artifacts instead
 # of linking the crates that produce them, which is why it opens store.db with
-# rusqlite rather than linking stella-store. `stella-core::fullauto` is the
+# rusqlite rather than linking stella-store. `stella-core::self_driving` is the
 # opposite shape — pure decision logic over owned data, no I/O by invariant 2,
 # with the clock passed in as a parameter. Linking it opens nothing.
 stella-core = { path = "../stella-core" }

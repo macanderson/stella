@@ -64,6 +64,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + command-docs + brand-case + file-size
                          #   + god-files
                          #   + gate-parity + left-behind + role-names
+                         #   + stat-portability
                          #   + wire-schema
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
@@ -71,7 +72,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + test (test --workspace)
 ```
 
-That is twenty-two steps, and the list is not maintained by hand: it is
+That is twenty-three steps, and the list is not maintained by hand: it is
 `GATE_STEPS` in the `Makefile`, and `gate-parity` (`scripts/check-gate-parity.sh`)
 fails if this block or CONTRIBUTING.md's stops matching it. The block had
 already drifted twice before that guard existed, both times by under-reporting

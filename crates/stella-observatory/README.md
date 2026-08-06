@@ -19,7 +19,7 @@ Nearly a leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
 `sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and two
 `stella-*` dependencies: [`stella-home`](../stella-home), which has no
 dependencies of its own, and [`stella-core`](../stella-core), for the
-`fullauto` fold and its signal thresholds. Everything heavier is excluded
+`self_driving` fold and its signal thresholds. Everything heavier is excluded
 deliberately: `stella_store::Store::open` creates `.stella/` and runs schema
 migrations, and an observer that migrates what it observes is not an observer.
 
@@ -28,15 +28,15 @@ crate re-reads artifacts instead of linking the crates that produce them, which
 is why it opens `store.db` with `rusqlite` rather than linking `stella-store`.
 Both crates above are the opposite shape and neither opens anything:
 `stella-home` is path arithmetic over environment variables, and
-`stella-core::fullauto` is pure decision logic over owned data (no I/O, by
+`stella-core::self_driving` is pure decision logic over owned data (no I/O, by
 invariant 2) with the clock passed in as a parameter.
 
 The price used to be four acknowledged copies. `global::data_dir` was one of
 them — a hand-synced mirror of `../stella-store/src/usage.rs` with a comment
 asking readers to keep it equal — and is now shared through `stella-home`
-instead (#1139). `src/fullauto.rs` was another: a private `fold_runs` and
+instead (#1139). `src/self_driving.rs` was another: a private `fold_runs` and
 `self_improvement`, written when the only other implementation was shell, and
-the two had already drifted — the dashboard and `stella fullauto metrics`
+the two had already drifted — the dashboard and `stella self-driving metrics`
 disagreed about whether the loop was NOISY for every odd cycle count, because
 one tested `2 * new < n` and the other `new < n / 2` in integer arithmetic
 (#1613). Both now come from `stella-core`. Three copies remain:
@@ -67,7 +67,7 @@ free one). This crate builds no binary —
 | [`src/sent_context.rs`](src/sent_context.rs) | `/api/execution-context`: the receipt queries (`step_receipt`, `step_manifest`, `context_blocks`) and the fold that rebuilds the messages one model call was sent, with the digest-verification verdict. Kept out of `src/db.rs` so that file stays clear of the 1500-line ratchet. |
 | [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). |
 | [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain, exploration maps — plus `redact`, the credential scrubber. |
-| [`src/fullauto.rs`](src/fullauto.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/fullauto/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
+| [`src/self-driving.rs`](src/self-driving.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/self-driving/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
 | [`src/codegraph.rs`](src/codegraph.rs) | `codegraph.db` flattened to `{nodes, edges, groups}` for the force-directed canvas, including the Rust module-path resolution the indexer doesn't do. |
 | [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. |
 | `src/assets/mark.svg`, `src/assets/wordmark.svg` | Favicon and header lockup, served from `/assets/`. |

@@ -1,7 +1,7 @@
-//! The fullauto view: every perpetual-delivery run on this machine, its cycles,
+//! The self-driving view: every perpetual-delivery run on this machine, its cycles,
 //! and the evidence that the loop is improving itself.
 //!
-//! Read from `~/.stella/fullauto/<slug>/`, which fullauto writes as plain JSONL
+//! Read from `~/.stella/self-driving/<slug>/`, which self-driving writes as plain JSONL
 //! and small JSON documents. Nothing here opens a database, and nothing here
 //! writes — the same two rules the rest of this crate lives under, for the same
 //! reason: an observer that mutates what it observes is not an observer.
@@ -27,7 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-/// Loop directories scanned under `~/.stella/fullauto`.
+/// Loop directories scanned under `~/.stella/self-driving`.
 ///
 /// One per repository the user runs the loop against, so a real machine holds a
 /// handful. The bound keeps a pathological or mispointed directory from
@@ -46,18 +46,18 @@ const MAX_JSONL_LINES: usize = 20_000;
 /// Seconds without a heartbeat after which a `running` run is reported crashed.
 ///
 /// Read from `stella-core` rather than restated, so this page and
-/// `stella fullauto` cannot disagree about when a run is dead. It used to be a
-/// local `900` "deliberately equal to" fullauto's own default — a comment
-/// asking a future reader to keep two numbers in step by hand, which is the
-/// same arrangement that let the NOISY threshold drift (#1613).
-const STALE_AFTER_SECS: i64 = stella_core::fullauto::DEFAULT_STALE_AFTER_SECS;
+/// `stella self-driving` cannot disagree about when a run is dead. It used to
+/// be a local `900` "deliberately equal to" self-driving's own default — a
+/// comment asking a future reader to keep two numbers in step by hand, which is
+/// the same arrangement that let the NOISY threshold drift (#1613).
+const STALE_AFTER_SECS: i64 = stella_core::self_driving::DEFAULT_STALE_AFTER_SECS;
 
-/// `~/.stella/fullauto` — the root every loop's state directory sits under.
+/// `~/.stella/self-driving` — the root every loop's state directory sits under.
 ///
 /// Resolved through `stella-home` rather than re-derived, so `STELLA_HOME`
 /// moves the observatory's view and the loop's writes together.
 fn state_root() -> Option<PathBuf> {
-    stella_home::stella_home().map(|home| home.join("fullauto"))
+    stella_home::stella_home().map(|home| home.join("self-driving"))
 }
 
 fn now_unix() -> i64 {
@@ -175,7 +175,7 @@ fn load_loops() -> Vec<Loop> {
 ///    *different* run has been orphaned — nothing is driving it.
 /// 2. A run that still holds the live pointer but whose heartbeat has gone
 ///    stale has crashed. The heartbeat is the witness, never the pid: every
-///    fullauto subcommand is its own short-lived process, so a recorded pid is
+///    self-driving subcommand is its own short-lived process, so a recorded pid is
 ///    dead moments after it is written and would declare every run crashed.
 fn fold_runs(l: &Loop) -> Vec<Value> {
     let mut folded: BTreeMap<String, Value> = BTreeMap::new();
@@ -214,7 +214,7 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
         let mut live_block = Value::Null;
 
         if status == "running" {
-            // The two corrections above are `stella_core::fullauto::liveness`,
+            // The two corrections above are `stella_core::self_driving::liveness`,
             // not a second copy of the rule: a dashboard that decided
             // "crashed" on its own terms would eventually disagree with the
             // terminal about whether a run is alive, which is the exact drift
@@ -222,11 +222,11 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
             let live = l.live.clone().unwrap_or_else(|| json!({}));
             let heartbeat = i64_at(&live, "heartbeat_unix");
             let verdict =
-                stella_core::fullauto::liveness(&id, &live_id, heartbeat, now, STALE_AFTER_SECS);
+                stella_core::self_driving::liveness(&id, &live_id, heartbeat, now, STALE_AFTER_SECS);
             if verdict.is_crashed() {
                 status = "crashed".into();
             }
-            if verdict != stella_core::fullauto::Liveness::Orphaned {
+            if verdict != stella_core::self_driving::Liveness::Orphaned {
                 let age = now - heartbeat;
                 live_block = json!({
                     "phase": str_at(&live, "phase"),
@@ -279,7 +279,7 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
 /// completely between them and a dashboard that only said "health: poor" would
 /// send a reader to re-derive all of this by hand.
 ///
-/// Deliberately the same four signals `fullauto metrics` reports, so the page
+/// Deliberately the same four signals `self-driving metrics` reports, so the page
 /// and the terminal never disagree about whether the loop is in trouble.
 fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
     let n = cycles.len() as i64;
@@ -287,10 +287,10 @@ fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
         return json!({ "signals": Vec::<Value>::new(), "cycles": 0 });
     }
 
-    let records: Vec<stella_core::fullauto::CycleRecord> =
+    let records: Vec<stella_core::self_driving::CycleRecord> =
         cycles.iter().filter_map(|c| as_cycle_record(c)).collect();
-    let m = stella_core::fullauto::metrics(&records);
-    let starved = stella_core::fullauto::starved(&as_calibration(calibration));
+    let m = stella_core::self_driving::metrics(&records);
+    let starved = stella_core::self_driving::starved(&as_calibration(calibration));
 
     // Named in this order rather than in whatever order the fold emits them,
     // because the page has always listed them this way and the order is what a
@@ -331,7 +331,7 @@ fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
 /// written by an older build would be worse than useless. Every field but
 /// `cycle` already carries a serde default, so seeding that one is the whole
 /// of the tolerance — the thresholds applied to the result are core's.
-fn as_cycle_record(v: &Value) -> Option<stella_core::fullauto::CycleRecord> {
+fn as_cycle_record(v: &Value) -> Option<stella_core::self_driving::CycleRecord> {
     let mut obj = v.as_object()?.clone();
     obj.entry("cycle").or_insert(json!(0));
     serde_json::from_value(Value::Object(obj)).ok()
@@ -344,11 +344,11 @@ fn as_cycle_record(v: &Value) -> Option<stella_core::fullauto::CycleRecord> {
 /// write from the process that has to act on it. A *reader* wants the opposite,
 /// so the fallbacks live here: the same values this function used before it
 /// shared the threshold.
-fn as_calibration(v: &Value) -> stella_core::fullauto::Calibration {
+fn as_calibration(v: &Value) -> stella_core::self_driving::Calibration {
     let mut obj = v.as_object().cloned().unwrap_or_default();
     obj.entry("batch_ceiling").or_insert(json!(20));
     obj.entry("parallel_ceiling").or_insert(json!(2));
-    serde_json::from_value(Value::Object(obj)).unwrap_or(stella_core::fullauto::Calibration {
+    serde_json::from_value(Value::Object(obj)).unwrap_or(stella_core::self_driving::Calibration {
         batch_ceiling: 20,
         parallel_ceiling: 2,
         clean_run: 0,
@@ -357,7 +357,7 @@ fn as_calibration(v: &Value) -> stella_core::fullauto::Calibration {
     })
 }
 
-/// `/api/fullauto` — every loop and every run on this machine.
+/// `/api/self-driving` — every loop and every run on this machine.
 ///
 /// The workspace root is used only to mark which loop belongs to the project
 /// the dashboard is currently pointed at; every other loop is still listed,
@@ -412,7 +412,7 @@ pub fn runs(workspace_root: &Path) -> Value {
     })
 }
 
-/// `/api/fullauto-run?id=<run_id>` — the rich drill for one run.
+/// `/api/self-driving-run?id=<run_id>` — the rich drill for one run.
 ///
 /// Returns the run header, every cycle it contains in order, the controller's
 /// trajectory across those cycles, and the self-improvement signals computed
@@ -491,7 +491,7 @@ mod tests {
 
     /// Build a loop state dir under a temporary `STELLA_HOME`.
     ///
-    /// Mirrors exactly what `scripts/fullauto.sh` writes: append-only
+    /// Mirrors exactly what `scripts/self-driving.sh` writes: append-only
     /// `runs.jsonl` and `ledger.jsonl`, plus the single live pointer.
     fn seed(dir: &Path, runs: &[&str], cycles: &[&str], live: Option<&str>) {
         std::fs::create_dir_all(dir).unwrap();
@@ -534,7 +534,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         let stale = now_unix() - (STALE_AFTER_SECS + 60);
         seed(
             &dir,
@@ -565,7 +565,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         let fresh = now_unix();
         seed(
             &dir,
@@ -594,7 +594,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         let fresh = now_unix();
         seed(
             &dir,
@@ -626,7 +626,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         seed(
             &dir,
             &[
@@ -665,7 +665,7 @@ mod tests {
         // SAFETY: the env lock is held for this test's whole body.
         unsafe { std::env::set_var("STELLA_HOME", tmp.path()) };
 
-        let dir = tmp.path().join("fullauto/demo");
+        let dir = tmp.path().join("self-driving/demo");
         seed(
             &dir,
             &[&run_rec("r-1", "completed")],
@@ -732,7 +732,7 @@ mod tests {
         assert_eq!(si["fixed"], 24);
     }
 
-    /// The page and `stella fullauto metrics` must reach the SAME verdict on
+    /// The page and `stella self-driving metrics` must reach the SAME verdict on
     /// the same ledger (#1613).
     ///
     /// Five cycles discovering two findings is the fixture that caught the
@@ -742,7 +742,7 @@ mod tests {
     /// `4 < 5` — true. Every ODD cycle count on the boundary disagreed, and
     /// the two surfaces reported different health for the same loop.
     ///
-    /// Asserting equality against `stella_core::fullauto::metrics` rather than
+    /// Asserting equality against `stella_core::self_driving::metrics` rather than
     /// against the literal "NOISY" is the point: a future threshold change has
     /// to move both surfaces or fail here, which is the property the duplicate
     /// implementation could never have.
@@ -770,9 +770,9 @@ mod tests {
             .map(|s| str_at(s, "code"))
             .collect();
 
-        let records: Vec<stella_core::fullauto::CycleRecord> =
+        let records: Vec<stella_core::self_driving::CycleRecord> =
             refs.iter().filter_map(|c| as_cycle_record(c)).collect();
-        let terminal: Vec<String> = stella_core::fullauto::metrics(&records)
+        let terminal: Vec<String> = stella_core::self_driving::metrics(&records)
             .signals
             .iter()
             .map(|s| s.code.to_string())

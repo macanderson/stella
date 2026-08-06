@@ -2,15 +2,15 @@
 description: Where the loop stands — cycles run, dry streak, what is still open, and whether the next cycle is worth running.
 ---
 
-# fullauto:status — where the loop is
+# self-driving:status — where the loop is
 
 Read-only. Changes nothing, spends nothing. Run it before starting a loop, after
 an interrupted one, or any time you want to know whether the thing is converging.
 
 ```bash
-scripts/fullauto.sh state
-scripts/fullauto.sh preflight
-scripts/fullauto.sh queue --limit 20
+scripts/self-driving.sh state
+scripts/self-driving.sh preflight
+scripts/self-driving.sh queue --limit 20
 ```
 
 Then add the things the script cannot see:
@@ -26,7 +26,7 @@ gh issue list --state open --label bug --json number --jq 'length'
 ## Report this
 
 ```
-fullauto · <repo> · cycle N
+self-driving · <repo> · cycle N
 
 converging?   dry streak 1 / 2 — one more clean audit ends the loop
 queue         14 open defects (2 P0, 5 P1, 7 P2)
@@ -72,7 +72,7 @@ is a loop that destroys findings, and that is worse than a loop that does not ru
 
 ## Resetting
 
-The state lives in `~/.fullauto/stella/` (`ledger.jsonl`, `seen.txt`, `cycle`) —
+The state lives in `~/.self-driving/stella/` (`ledger.jsonl`, `seen.txt`, `cycle`) —
 outside the repo, because `make no-scratch` fails the gate if a tracked file
 matches a `.gitignore` rule.
 
@@ -80,7 +80,7 @@ To start a fresh convergence run over the same codebase, move it aside rather
 than deleting it — the old ledger is the record of what previous cycles decided:
 
 ```bash
-mv ~/.fullauto/stella ~/.fullauto/stella.$(date -u +%Y%m%d)
+mv ~/.self-driving/stella ~/.self-driving/stella.$(date -u +%Y%m%d)
 ```
 
 Clearing `seen.txt` alone re-opens every finding ever triaged, including the ones
