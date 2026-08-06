@@ -51,6 +51,14 @@
 //! produces byte-identical files, which is what lets
 //! `scripts/check-wire-schema.sh` treat any diff as real drift.
 
+// The crate denies `expect` under invariant #5, and the two below are the one
+// place the lint is wrong. Both serialize a `serde_json::Value`, and the only
+// two ways `serde_json` can fail to serialize — a map key that is not a string,
+// a non-finite float — are unrepresentable in `Value`. The failure is excluded
+// by the type, not by convention, so plumbing a `Result` no caller could match
+// on would trade a proof for ceremony.
+#![allow(clippy::expect_used)]
+
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 

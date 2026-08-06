@@ -26,7 +26,7 @@
 │                                          │                                                                        │  ││                                      │
 │── WITNESS ───────────────────────────────│3 steps  ·  ~11 files  ·  est. ~$0.42                                   │──││                                      │
 │                                          │                                                                        │  ││                                      │
-│── EXECUTE ───────────────────────────────│a approve    t trim    r refine    x abort                              │──││                                      │
+│── EXECUTE ───────────────────────────────│a approve   t trim   r refine   x abort   ! shell                       │──││                                      │
 │                                          └───────────────────────────────────── one keypress decides · esc aborts ┘  ││                                      │
 │● read_file    apps/app/automations/page.tsx                                                                          │└────────────────────── /plan reads it ┘
 │  ⎿ 312 lines                                                                                                     42ms│┌ DONE VERIFICATION ───────────────────┐

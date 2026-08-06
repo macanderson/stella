@@ -50,6 +50,12 @@ pub(crate) fn cache_insight_for(
         output_tokens: *output_tokens,
         cached_input_tokens: *cached_input_tokens,
         cache_write_tokens: *cache_write_tokens,
+        // Not carried through, and not a loss: this envelope exists only to
+        // feed `cache_savings_usd_for`, and reasoning tokens are already
+        // inside `output_tokens` — a diagnostic split, never their own cost
+        // line. `None` is also the honest value here: nothing on this path
+        // observed a reasoning breakdown.
+        reasoning_tokens: None,
     };
     let savings_usd_delta = Catalog::current()
         .resolve_for(provider_id, model)
@@ -70,6 +76,7 @@ mod tests {
 
     fn step_usage(model: &str, input: u64, cached: u64, write: u64) -> AgentEvent {
         AgentEvent::StepUsage {
+            reasoning_tokens: None,
             output_text: None,
             step: 1,
             role: stella_protocol::event::ModelCallRole::Worker,
@@ -114,6 +121,7 @@ mod tests {
             .pricing;
         let expected = pricing.cache_savings_usd(
             &CompletionUsage {
+                reasoning_tokens: None,
                 reported: true,
                 input_tokens: 1_000_000,
                 output_tokens: 0,

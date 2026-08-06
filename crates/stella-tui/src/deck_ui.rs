@@ -686,10 +686,11 @@ pub struct DeckUi {
     /// fresh `ScopeReview` — the per-agent mirror of the single-session
     /// shell's `scope_answered` (see `crate::ui`).
     pub scope_answered: std::collections::HashSet<String>,
-    /// The plan-review dialog's refine input: `Some` while `r` has switched
-    /// the dialog into note-entry, holding the note as typed. View state,
-    /// like [`Self::hunk_marks`] — a half-written note is not session state.
-    pub scope_note: Option<String>,
+    /// The plan-review dialog's text input: `Some` while `r` (refine note) or
+    /// `!` (shell line) has switched the dialog out of its one-keypress
+    /// options, holding the line as typed. View state, like
+    /// [`Self::hunk_marks`] — a half-written note is not session state.
+    pub scope_input: Option<gates::ScopeInput>,
     /// The same latch for a pending `ask_user` question (cleared on a fresh
     /// `AskUser`).
     pub ask_answered: std::collections::HashSet<String>,
@@ -776,8 +777,8 @@ pub struct DeckUi {
     /// the detail can say "reconstructing…" instead of rendering an empty
     /// transcript that reads like "the model was sent nothing".
     pub inspect_pending: bool,
-    /// The floating card overlays (`/tasks` · `/scope` · `/witness` ·
-    /// `/models` · `/budget`): which one is up, plus the task card's
+    /// The floating card overlays (`/plan` · `/models` ·
+    /// `/budget`): which one is up, plus the plan card's
     /// selection and the budget editor's input buffer. One struct so the
     /// mutual-exclusion rule (raising one lowers the others) lives in one
     /// place — see [`cards::CardState`].
@@ -848,7 +849,7 @@ impl Default for DeckUi {
             esc_armed_at: None,
             dispatch_held: false,
             scope_answered: std::collections::HashSet::new(),
-            scope_note: None,
+            scope_input: None,
             ask_answered: std::collections::HashSet::new(),
             hunk_answered: std::collections::HashSet::new(),
             hunk_marks: std::collections::HashMap::new(),
@@ -926,11 +927,13 @@ impl DeckUi {
             return;
         }
 
-        // 1a. The plan-review dialog's refine input is modal while open — a
-        //     pasted "don't touch the tests" belongs to the note, not to the
-        //     composer hidden behind the dialog.
-        if let Some(note) = self.scope_note.as_mut() {
-            push_single_line(note, text);
+        // 1a. The plan-review dialog's input is modal while open — a pasted
+        //     "don't touch the tests" belongs to the note, not to the composer
+        //     hidden behind the dialog. Whether newlines survive is the
+        //     input's own call (`ScopeInput::paste`): verbatim for the
+        //     multi-line refine note, flattened for the one-line shell field.
+        if let Some(input) = self.scope_input.as_mut() {
+            input.paste(text);
             return;
         }
 
@@ -1386,7 +1389,7 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
                 ui.scope_answered.remove(agent);
                 // A fresh proposal opens the dialog on its options, never on
                 // a stale half-typed note from the last one.
-                ui.scope_note = None;
+                ui.scope_input = None;
             }
             stella_protocol::AgentEvent::AskUser { .. } => {
                 ui.ask_answered.remove(agent);
@@ -1490,9 +1493,9 @@ pub mod cards;
 /// surface claims Esc ahead of rules 3 onward, at the gate that hands it the
 /// keyboard: the INSTALLED AGENTS sub-modes, the ISSUES sub-modes, the Graph
 /// file picker, the ENGINE panel, the SESSIONS / INBOX / CONTEXT / INSPECT
-/// overlays, the floating cards (`/tasks` · `/scope` · `/witness` ·
-/// `/models` · `/budget` — Esc closes the topmost card before anything else
-/// it currently does; see [`cards::handle_card_key`]), and the SKILLS
+/// overlays, the floating cards (`/plan` · `/models` · `/budget` — Esc closes
+/// the topmost card before anything else it currently does; see
+/// [`cards::handle_card_key`]), and the SKILLS
 /// preview/prompt overlays. (The SKILLS *panes* are the exception: they
 /// claim typing but not Esc, so it reaches the rules below.)
 ///
@@ -1523,7 +1526,7 @@ pub mod cards;
 mod create;
 pub mod dispatch;
 mod gates;
-pub use gates::HunkMarks;
+pub use gates::{HunkMarks, ScopeInput};
 mod nav;
 mod queue_editor;
 pub use dispatch::{AskBeforeSpawn, DispatchRoute, PendingDispatch};
@@ -1765,7 +1768,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     if ui.inspect_open {
         return handle_inspect_key(key, ui);
     }
-    // The floating cards (`/tasks` · `/scope` · `/witness` · `/models` ·
+    // The floating cards (`/plan` · `/models` ·
     // `/budget`) are modal exactly like the overlays above: the topmost card
     // claims every key — Esc closes it before any other Esc meaning fires.
     if let Some(action) = cards::handle_card_key(key, model, ui) {

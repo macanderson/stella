@@ -637,6 +637,11 @@ impl TestRunner for TypedTestRunner {
     async fn run_test(&self, invocation: &TestInvocation) -> CmdOutcome {
         run_command(test_process(invocation, &self.root)).await
     }
+
+    async fn runner_available(&self, probe: &TestInvocation) -> bool {
+        let outcome = run_command(test_process(probe, &self.root)).await;
+        outcome.kind == CmdKind::Completed && outcome.exit_code == 0
+    }
 }
 
 fn test_process(invocation: &TestInvocation, root: &std::path::Path) -> tokio::process::Command {

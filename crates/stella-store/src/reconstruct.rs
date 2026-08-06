@@ -9,8 +9,16 @@
 //! exactly what a model saw — reconstructed from the append-only fold, not from
 //! any live engine state. What makes it *verifiable* rather than merely stored:
 //! every journal-resolved block's recovered bytes are re-hashed and checked
-//! against the digest the receipt recorded, so a torn journal or a fabricated
-//! block surfaces as a mismatch instead of a plausible-looking lie.
+//! against the digest the receipt recorded, so bytes that are not this block's
+//! surface as a mismatch instead of a plausible-looking lie.
+//!
+//! A mismatch is a statement about *these bytes*, not about anyone's motives.
+//! The common cause is mundane: compaction rewrites tool results in place, and
+//! until a rewrite is journaled the only preimage under that `call_id` is the
+//! pre-compaction one, so replay recovers a real output that is simply not the
+//! one this step sent. Reporting that as tampering would be both wrong and
+//! self-defeating — an alarm that fires on routine housekeeping is an alarm
+//! nobody reads.
 //!
 //! # Reconstructable boundary (clean path only)
 //!
@@ -42,8 +50,11 @@ pub struct Reconstruction {
     /// local gap store — the documented non-reconstructable cases (synthetic
     /// results, discarded speculation, attachments). Empty on the clean path.
     pub unresolved: Vec<String>,
-    /// Block ids whose resolved preimage did NOT re-hash to the recorded digest
-    /// — a torn-journal or tampering signal. Empty on the clean path.
+    /// Block ids whose resolved preimage did NOT re-hash to the recorded
+    /// digest: the bytes in [`Self::messages`] for these blocks are the closest
+    /// preimage the journal holds, not the exact bytes the step sent. Usually a
+    /// compaction rewrite the journal was never told about. Empty on the clean
+    /// path.
     pub digest_mismatches: Vec<String>,
 }
 

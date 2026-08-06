@@ -1077,3 +1077,130 @@ async fn run_plan_dispatches_a_serial_wave_warmest_first() {
         .collect();
     assert_eq!(dispatched, vec!["hot", "warm", "cold"]);
 }
+
+// dispatch claims: the lease that stops two sessions taking one task (#1136)
+
+/// A fleet over a real `fleet.db` file, so a second connection can play the
+/// rival session that a second `stella fleet` process would be.
+fn fleet_on(db: &Path, run_id: &str, worker: FakeWorker) -> Fleet<FakeWorker, OkGit, SeqClock> {
+    Fleet::new(
+        worker,
+        WorktreeManager::new(OkGit::new(), "/repo"),
+        Ledger::open(db).unwrap(),
+        BudgetGuard::new(BudgetMode::Observed, None, None),
+        SeqClock::new(),
+        FleetConfig::new(run_id, "HEAD"),
+    )
+    .unwrap()
+}
+
+/// **Witness (#1136).** A task another session is holding is not dispatched a
+/// second time: the rival's live lease turns it into a named dispatch failure
+/// instead of a duplicate worker.
+#[tokio::test]
+async fn a_task_another_session_holds_is_not_dispatched_twice() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("fleet.db");
+    let f = fleet_on(&db, "run-a", FakeWorker::new(0.10));
+
+    // The rival session — a second process in this workspace — claims the
+    // task first. `SeqClock` starts at 1, so a lease taken at 0 is live for
+    // the whole test.
+    let rival = Ledger::open(&db).unwrap();
+    assert!(matches!(
+        rival
+            .claim_dispatch(&dispatch_claim_key("t1"), "run-b", 0, 900_000)
+            .unwrap(),
+        ClaimOutcome::Granted(_)
+    ));
+
+    let err = f
+        .dispatch(&Task::new("t1", "title", "prompt").shared_tree())
+        .await
+        .expect_err("a claimed task must not be dispatched again");
+    match err {
+        FleetError::DispatchClaimed { task, holder, .. } => {
+            assert_eq!(task, "t1");
+            assert_eq!(holder, "run-b", "the refusal names the session on it");
+        }
+        other => panic!("expected a dispatch-claim refusal, got {other:?}"),
+    }
+    // Nothing was started: no attempt row, no spend.
+    assert_eq!(f.ledger_total_spend().unwrap(), 0.0);
+    assert!(f.ledger_commits_for_task("t1").unwrap().is_empty());
+    // And the rival's claim is untouched by the loser.
+    assert_eq!(
+        f.dispatch_claim_holder(&"t1".to_string())
+            .unwrap()
+            .unwrap()
+            .owner,
+        "run-b"
+    );
+}
+
+/// **Witness (#1136), the expiry half.** A session that died holding a task
+/// cannot wedge it: once the lease lapses the next fleet takes it with no
+/// reaper, no operator, and no force flag.
+#[tokio::test]
+async fn a_lapsed_claim_from_a_dead_session_does_not_wedge_the_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("fleet.db");
+    let f = fleet_on(&db, "run-a", FakeWorker::new(0.10));
+
+    // A claim taken with a zero TTL is already expired by the time the
+    // fleet's clock reads 1 — exactly the row a SIGKILLed session leaves.
+    let dead = Ledger::open(&db).unwrap();
+    assert!(matches!(
+        dead.claim_dispatch(&dispatch_claim_key("t1"), "run-dead", 0, 0)
+            .unwrap(),
+        ClaimOutcome::Granted(_)
+    ));
+
+    let handle = f
+        .dispatch(&Task::new("t1", "title", "prompt").shared_tree())
+        .await
+        .expect("an expired claim is reclaimable");
+    assert!(handle.outcome.success);
+    // The attempt released its own lease when it settled, so the key is free
+    // again immediately rather than after the TTL.
+    assert_eq!(f.dispatch_claim_holder(&"t1".to_string()).unwrap(), None);
+}
+
+/// The lease is genuinely held for the attempt's duration — not taken and
+/// dropped — so a rival racing a *live* worker loses.
+#[tokio::test]
+async fn a_live_attempt_holds_its_task_against_a_rival() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("fleet.db");
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let f = Fleet::new(
+        GatedWorker { gate: gate.clone() },
+        WorktreeManager::new(OkGit::new(), "/repo"),
+        Ledger::open(&db).unwrap(),
+        BudgetGuard::new(BudgetMode::Observed, None, None),
+        SeqClock::new(),
+        FleetConfig::new("run-a", "HEAD"),
+    )
+    .unwrap();
+    let rival = Ledger::open(&db).unwrap();
+
+    let task = Task::new("t1", "title", "prompt").shared_tree();
+    let (handle, rival_outcome) = tokio::join!(f.dispatch(&task), async {
+        // The dispatch parks in its gated worker holding the lease; only
+        // then does the rival try, and only then is it released.
+        let outcome = rival
+            .claim_dispatch(&dispatch_claim_key("t1"), "run-b", 1_000, 900_000)
+            .unwrap();
+        gate.add_permits(1);
+        outcome
+    });
+    assert!(handle.unwrap().outcome.success);
+    match rival_outcome {
+        ClaimOutcome::Held(Some(claim)) => assert_eq!(claim.owner, "run-a"),
+        other => panic!("a live attempt must hold its task, got {other:?}"),
+    }
+
+    // Settled: the same task can be re-dispatched (restart is re-dispatch).
+    gate.add_permits(1);
+    assert!(f.dispatch(&task).await.unwrap().outcome.success);
+}

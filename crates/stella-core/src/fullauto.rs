@@ -824,10 +824,15 @@ pub fn fold_runs(
         }
     }
 
-    let live_id = live
-        .and_then(|l| l.get("run_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+    // Bind the live pointer to its id as a single fact. Deriving the id alone
+    // and recovering the pointer later behind an `is_empty()` sentinel was
+    // correct, but the proof that the pointer existed lived fifteen lines from
+    // the code that dereferenced it — a shape that reads as safe and is one
+    // edit away from panicking on a `live` record the process did not write.
+    let live_run = live.and_then(|l| {
+        let id = l.get("run_id").and_then(|v| v.as_str())?;
+        (!id.is_empty()).then_some((id, l))
+    });
 
     let mut out = Vec::new();
     for (id, rec) in folded {
@@ -839,24 +844,24 @@ pub fn fold_runs(
         let mut phase = String::new();
 
         if status == "running" {
-            if !live_id.is_empty() && live_id == id {
-                let live = live.expect("live_id came from live");
-                let heartbeat = live
-                    .get("heartbeat_unix")
-                    .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(0);
-                let age = now_unix - heartbeat;
-                phase = format!(
-                    "{} ({age}s ago)",
-                    live.get("phase").and_then(|v| v.as_str()).unwrap_or("?")
-                );
-                if age > stale_after_secs {
-                    status = "crashed".to_string();
+            match live_run {
+                Some((live_id, live)) if live_id == id => {
+                    let heartbeat = live
+                        .get("heartbeat_unix")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0);
+                    let age = now_unix - heartbeat;
+                    phase = format!(
+                        "{} ({age}s ago)",
+                        live.get("phase").and_then(|v| v.as_str()).unwrap_or("?")
+                    );
+                    if age > stale_after_secs {
+                        status = "crashed".to_string();
+                    }
                 }
-            } else {
                 // Last record says running, but nothing holds the live
                 // pointer.
-                status = "crashed".to_string();
+                _ => status = "crashed".to_string(),
             }
         }
 

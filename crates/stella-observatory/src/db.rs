@@ -421,6 +421,39 @@ impl Observatory {
         ))
     }
 
+    /// One model call's **sent context** (#1475): the messages that call was
+    /// given, rebuilt from its persisted receipt and the event journal — what
+    /// `stella inspect <execution> --step N` prints in the terminal.
+    ///
+    /// The transcript route above replays what a run *did*; this one answers
+    /// what a call *was sent*, system prompt included, which no other view in
+    /// the dashboard carries. Always returns the index of the execution's
+    /// recorded calls, because that is what the drawer drills from; `step`
+    /// additionally selects one of them to reconstruct (`turn` and `call_seq`
+    /// default to the worker call, as they do on the CLI).
+    ///
+    /// Bodies obey the transcript route's clip policy — `JOURNAL_BODY_CLIP`
+    /// chars unless `full`, and a clipped message says so. An execution with no
+    /// receipts (a store recorded with `context.lifecycle` off, or one older
+    /// than the receipts plane) answers with an explicit no-receipts payload;
+    /// missing is a state here as everywhere else, never an error.
+    ///
+    /// The fold itself lives in `sent_context`, which documents why the
+    /// observatory re-implements it instead of linking `stella-store`.
+    pub fn execution_context(
+        &self,
+        id: i64,
+        turn: i64,
+        step: Option<i64>,
+        call_seq: i64,
+        full: bool,
+    ) -> Result<Value, DbError> {
+        match self.store() {
+            Some(conn) => crate::sent_context::payload(&conn, id, turn, step, call_seq, full),
+            None => Ok(crate::sent_context::no_receipts(id)),
+        }
+    }
+
     /// Per-(provider, model) usage — the same rows `stella stats` prints,
     /// same semantics (`resolved` = outcome `completed`, `off-grid` = local).
     pub fn models(&self) -> Result<Value, DbError> {
@@ -1075,7 +1108,11 @@ fn journal_entry(row: Value, full: bool) -> Value {
 
 /// Attach `body` to a transcript entry, clipped to [`JOURNAL_BODY_CLIP`]
 /// unless `full`, and record which of the two happened.
-fn set_journal_body(entry: &mut Value, body: &str, full: bool) {
+///
+/// Shared with the sent-context messages (`sent_context`), so the transcript
+/// and the reconstruction can never disagree about what "clipped" means or
+/// where the cut falls.
+pub(crate) fn set_journal_body(entry: &mut Value, body: &str, full: bool) {
     let clipped = !full && body.chars().count() > JOURNAL_BODY_CLIP;
     entry["body"] = if clipped {
         json!(truncate(body.to_owned(), JOURNAL_BODY_CLIP))
@@ -1213,7 +1250,7 @@ fn or_empty(result: rusqlite::Result<Value>) -> Result<Value, DbError> {
 /// correctly, for the case it was written for — silently fails to catch a
 /// missing column, so the degradation never fires and the route 500s anyway.
 /// That is precisely how this bug got here.
-fn is_missing_schema(e: &rusqlite::Error) -> bool {
+pub(crate) fn is_missing_schema(e: &rusqlite::Error) -> bool {
     let message = match e {
         rusqlite::Error::SqliteFailure(_, Some(msg)) => msg.as_str(),
         rusqlite::Error::SqlInputError { msg, .. } => msg.as_str(),
@@ -1223,7 +1260,7 @@ fn is_missing_schema(e: &rusqlite::Error) -> bool {
 }
 
 /// Shallow-merge `extra`'s fields into `base` (both must be objects).
-fn merge(base: &mut Value, extra: Value) {
+pub(crate) fn merge(base: &mut Value, extra: Value) {
     if let (Some(base_map), Value::Object(extra_map)) = (base.as_object_mut(), extra) {
         for (k, v) in extra_map {
             base_map.insert(k, v);

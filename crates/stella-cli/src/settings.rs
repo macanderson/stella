@@ -518,6 +518,23 @@ pub struct AgentEngineConfig {
     /// compaction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_result_horizon_steps: Option<u64>,
+    /// Seconds a supervised run's parked scope-review approval
+    /// (`SidecarApprovalGate::review`, #1585) waits for an attached
+    /// terminal's decision before unparking itself as
+    /// `ScopeDecision::Abort`. Absent or `0` (the same "0 opts out"
+    /// convention as `model_timeout_secs`) parks forever, the shipped
+    /// default — bounded only by discoverability (`Needs Input` in `stella
+    /// daemon list`) and an explicit `stella daemon stop`.
+    ///
+    /// The default is deliberate: scope review exists to keep a large blast
+    /// radius from landing unattended, so timing it out to `Approve` would
+    /// defeat the gate, and a fail-open default nobody asked for is worse
+    /// than a run that stays parked until a human looks. This is the knob
+    /// for an operator who has decided the opposite trade for their own
+    /// workspace — fail CLOSED after N minutes unattended, sacrificing the
+    /// run rather than leaving it parked indefinitely (#1616).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_wait_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }
@@ -715,6 +732,7 @@ impl AgentEngineConfig {
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
         take!(tool_result_horizon_steps);
+        take!(approval_wait_secs);
         if let Some(agents) = &other.agents {
             let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
             for kind in EngineAgentKind::ALL {

@@ -702,7 +702,7 @@ pub async fn run_deck_session(
         });
 
     // The deck drives turns through the staged pipeline by default (triage →
-    // recall → plan → scope → witness → execute → verify → verdict); `/pipeline`
+    // recall → plan → scope → execute → witness → verify → verdict); `/pipeline`
     // toggles back to the raw `Engine::run_turn` loop (`run_lead_turn`). A
     // resumed session keeps whatever it last had — the same state the persona
     // choice above read, so driver and persona start the session agreeing.
@@ -847,7 +847,7 @@ pub async fn run_deck_session(
     let mut dispatch = HoldState::new();
     dispatch.held = resume_hold;
     // `/pipeline`: route lead turns through the staged pipeline (triage →
-    // witness → execute → verify → verdict) instead of the raw engine loop.
+    // execute → witness → verify → verdict) instead of the raw engine loop.
     // Session-local, ON at start (the deck loads with the pipeline active)
     // unless a resumed session had toggled it — mirrored to the PIPELINE
     // stat box via `Inbound::Pipeline`.
@@ -1022,6 +1022,7 @@ pub async fn run_deck_session(
                             &mut messages,
                             &system_prompt,
                             &sidecar_dir,
+                            &subs.live_lanes(),
                             &in_tx,
                         );
                         continue 'session;
@@ -2249,28 +2250,20 @@ pub async fn run_deck_session(
                 queue.clear();
                 let cleared_cost =
                     agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd());
-                if let Some((store, id)) = &execution
-                    && !agent::record_execution_end(
-                        store,
-                        *id,
-                        registry.as_ref(),
-                        files_before,
-                        "cancelled",
-                        cleared_cost,
-                        false,
-                    )
-                {
-                    let _ = in_tx.send(Inbound::Event {
-                        agent: LEAD.to_string(),
-                        event: AgentEvent::Error {
-                            message: "store write failed — this cleared execution was not \
-                                      recorded"
-                                .to_string(),
-                            retryable: true,
-                        },
-                    });
-                }
-                session_clear::reset_lead(&mut messages, &system_prompt, &sidecar_dir, &in_tx);
+                session_clear::close_cleared_execution(
+                    execution.as_ref(),
+                    registry.as_ref(),
+                    files_before,
+                    cleared_cost,
+                    &in_tx,
+                );
+                session_clear::reset_lead(
+                    &mut messages,
+                    &system_prompt,
+                    &sidecar_dir,
+                    &subs.live_lanes(),
+                    &in_tx,
+                );
                 // No `continue`: the shared tail below re-snapshots the
                 // reset history (a no-op) and still services a parked create.
                 session_exit = stella_store::SessionStatus::Cancelled;
@@ -4421,7 +4414,7 @@ async fn run_lead_turn(
 /// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
 /// analogue of the `stella run` pipeline path — same tool stack, persistence,
 /// and event forwarding as [`run_lead_turn`], with `Pipeline::run` (triage →
-/// recall → plan → scope → witness → execute → verify → verdict → revise) in
+/// recall → plan → scope → execute → witness → verify → verdict → revise) in
 /// place of the raw `Engine::run_turn`.
 ///
 /// Deck-mode seams, all named:

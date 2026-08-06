@@ -20,15 +20,17 @@
 //!
 //! It starts **one stella invocation the operator explicitly registered**, in
 //! the directory `install` was run from, at every login (launchd) or boot
-//! (systemd, once lingering is on). This is *service registration, not
-//! resume*: a service manager re-**starts**, so a command launched at boot
-//! begins a fresh turn and a fresh spend. Continuing a turn the reboot killed
-//! is [`crate::DaemonCmd::Resume`]'s job (#1586), and wiring *that* to the boot
-//! sequence is the deliberate second slice tracked as #1627, not a side
-//! effect this module smuggles in. That
-//! makes standing verbs — `monitor`, a fleet watch, a deliberately perpetual
-//! run — the fit, and nothing is ever registered implicitly: an ordinary
-//! terminal run is supervised, never installed.
+//! (systemd, once lingering is on). This is *service registration*: a service
+//! manager re-**starts**, so a command launched at boot begins a fresh turn
+//! and a fresh spend. That makes standing verbs — `monitor`, a fleet watch, a
+//! deliberately perpetual run — the fit, and nothing is ever registered
+//! implicitly: an ordinary terminal run is supervised, never installed.
+//!
+//! The one command for which restarting is the *wrong* verb has its own flag:
+//! `--resume-all` registers [`crate::daemon::boot`]'s sweep (#1627), which continues
+//! the turns the reboot killed from their last committed step boundary
+//! instead of starting anything over. It is still explicit, still one
+//! registered invocation, and still removed by `uninstall`.
 //!
 //! Two consequences of the same budget concern, both deliberate:
 //!
@@ -185,16 +187,21 @@ struct ServicePlan {
     log_path: PathBuf,
 }
 
-/// `stella daemon install [--label L] [--keep-alive] -- <stella args…>`.
+/// `stella daemon install [--label L] [--keep-alive] -- <stella args…>`, or
+/// `stella daemon install --resume-all`.
 pub(crate) fn install(
     label: Option<&str>,
     keep_alive: bool,
+    resume_all: bool,
     command: &[String],
 ) -> Result<(), String> {
     let manager = ServiceManager::current()?;
-    let label = match label {
-        Some(label) => label.to_string(),
-        None => derive_label(command)?,
+    let command = resolve_command(resume_all, keep_alive, command)?;
+    let command = command.as_slice();
+    let label = match (label, resume_all) {
+        (Some(label), _) => label.to_string(),
+        (None, true) => super::boot::BOOT_LABEL.to_string(),
+        (None, false) => derive_label(command)?,
     };
     validate_label(&label)?;
 
@@ -222,6 +229,16 @@ pub(crate) fn install(
     write_definition(&plan)?;
     println!("{} wrote {}", "✓".green(), plan.path.display());
     load(&plan);
+    if resume_all {
+        println!(
+            "  at every boot it {} the turns this machine interrupted — it never restarts one",
+            "continues".green()
+        );
+        println!(
+            "  preview what it would do: {}",
+            "stella daemon resume-all --dry-run".cyan()
+        );
+    }
     println!(
         "  console: {}",
         plan.log_path.display().to_string().dimmed()
@@ -262,6 +279,47 @@ pub(crate) fn uninstall(label: &str) -> Result<(), String> {
         run_tool(&["systemctl", "--user", "daemon-reload"], Quiet::Yes);
     }
     Ok(())
+}
+
+/// The argv to register, given the two mutually exclusive ways of asking.
+///
+/// `--resume-all` is not sugar over a command the operator could have typed
+/// after `--`: it is the one registration whose whole point is that it does
+/// *not* restart, so it names its own verb and refuses to be combined with
+/// either an explicit command (which of the two would boot run?) or
+/// `--keep-alive` (a sweep restarted every minute would re-enter its own
+/// attempt bound forever — see [`crate::daemon::boot`]).
+fn resolve_command(
+    resume_all: bool,
+    keep_alive: bool,
+    command: &[String],
+) -> Result<Vec<String>, String> {
+    if !resume_all {
+        if command.is_empty() {
+            return Err(
+                "nothing to register — give the stella invocation after `--`, or pass \
+                        --resume-all to register the boot-time resume sweep"
+                    .to_string(),
+            );
+        }
+        return Ok(command.to_vec());
+    }
+    if !command.is_empty() {
+        return Err(
+            "--resume-all registers `stella daemon resume-all`; drop the command after `--` \
+             (install it as a second service if you want both)"
+                .to_string(),
+        );
+    }
+    if keep_alive {
+        return Err(
+            "--keep-alive cannot be combined with --resume-all: the sweep resumes what a boot \
+             interrupted and exits, and restarting it every minute would spend against its own \
+             attempt bound until it is exhausted"
+                .to_string(),
+        );
+    }
+    Ok(super::boot::registered_argv())
 }
 
 /// Compute the whole installation for `manager` from resolved inputs.
@@ -334,7 +392,7 @@ fn remove_definition(path: &Path) -> Result<RemoveOutcome, String> {
 /// Owner-only because the log is the run's stdout, which is model output.
 /// The manager creates the log files itself with default modes, so the
 /// directory is what carries the restriction.
-fn ensure_service_log_dir() -> Result<PathBuf, String> {
+pub(super) fn ensure_service_log_dir() -> Result<PathBuf, String> {
     let dir = stella_home::data_dir().join("services");
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     #[cfg(unix)]

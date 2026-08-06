@@ -3,7 +3,7 @@
 //! in the catalog is a hard, immediate, named error, never a silent
 //! fallback** (the TS-era phantom `glm-5.2-turbo` slug and gateway
 //! slug-drift lessons, L-M1/L-M2). The seed below covers every provider
-//! `stella-cli/src/config.rs`'s `PROVIDERS` table can select — it is
+//! `crates/stella-cli/src/config.rs`'s `PROVIDERS` table can select — it is
 //! the compile-time floor, always accepted. `stella models refresh` pulls
 //! the live master list (models.dev) into the on-disk catalog
 //! (`stella-store`'s model cards), and `stella-cli` installs the merged
@@ -1160,6 +1160,7 @@ mod tests {
             output_tokens: 200_000,
             cached_input_tokens: 400_000,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         };
         assert!((pricing.cost_usd(&usage) - 4.92).abs() < 1e-9);
     }
@@ -1180,6 +1181,7 @@ mod tests {
             output_tokens: 0,
             cached_input_tokens: 1_000,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         };
         // All 100 input tokens billed as cached (clamped), never negative.
         let expected = (100.0 / 1_000_000.0) * 0.30;
@@ -1232,6 +1234,7 @@ mod tests {
             output_tokens: 0,
             cached_input_tokens: 0,
             cache_write_tokens: 100_000,
+            reasoning_tokens: None,
         };
         // Derived from the entry's OWN rate rather than a copied constant: a
         // hardcoded figure re-fails this test every time a price is corrected,
@@ -1250,7 +1253,7 @@ mod tests {
 
     #[test]
     fn seed_covers_every_provider_stella_cli_can_select() {
-        // stella-cli/src/config.rs::PROVIDERS lists these providers; this
+        // crates/stella-cli/src/config.rs::PROVIDERS lists these providers; this
         // test doesn't import that crate (stella-cli depends on
         // stella-model, not the reverse) but pins the provider id set here
         // so the two can't silently drift apart again — the actual

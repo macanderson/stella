@@ -30,6 +30,13 @@
 //! since concurrent `getenv`/`setenv` is undefined behaviour on POSIX and the
 //! process environment is the one piece of global state a test cannot own.
 
+// Invariant #5: library code never panics on runtime data. This crate is at
+// zero production `unwrap`/`expect`, and this keeps it there — `make lint` runs
+// clippy with `-D warnings`, so a new one fails the gate instead of arriving
+// unremarked. `not(test)` scopes the lint exactly as the invariant does: the
+// rule is about runtime data, and `unwrap` in a test is fine.
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 use std::ffi::OsString;
 use std::path::PathBuf;
 

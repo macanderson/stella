@@ -20,6 +20,20 @@
 //! `observed_at`, `valid_to` → `valid_until`, and the legacy memory/fact APIs)
 //! need the ingestion path, so they land with the Phase 2 migration that owns it.
 //!
+//! ## The decisions this module implements
+//!
+//! These are ratified decision records, not background reading — the shape of
+//! the types below is their output, and changing one here without amending the
+//! record there leaves two answers to the same question:
+//!
+//! - `doc:adr/0009-enum-freeze-resolutions` — which variants the frozen enums
+//!   carry, including `DirectiveEnforcement` dropping `Informational` and the
+//!   closed `constraint_effect` set.
+//! - `doc:adr/0011-context-records-are-toml` — a context record is TOML at
+//!   `.stella/rules/*.toml`, one record per file.
+//! - `doc:adr/0012-context-record-field-schema` — which fields a record
+//!   carries, and the records-live-in-files rule that follows from it.
+//!
 //! ## Where a validator lives
 //!
 //! Purity is about I/O, not about arity. A rule that spans two records is still

@@ -46,7 +46,7 @@ pub struct ZaiProvider {
     /// List pricing for `model`, resolved from the catalog at construction so
     /// `cost_usd` is computed on the real request path. `None` when the slug
     /// isn't in the catalog — for seeded providers `build_provider`
-    /// (`agent.rs`) rejects that case up front; for gateway providers with
+    /// (`factory.rs`) rejects that case up front; for gateway providers with
     /// free-form slugs (OpenRouter) it is legitimately `None` and the cost
     /// comes from the gateway's own usage accounting instead.
     pricing: Option<Pricing>,
@@ -868,6 +868,21 @@ struct ZaiUsage {
     /// keeps it 0.
     #[serde(default)]
     prompt_cache_hit_tokens: u64,
+    /// The reasoning share of `completion_tokens`, when the endpoint breaks it
+    /// out. `Option` all the way down: absent means the server never reported
+    /// it, which is a different fact from a reported zero and must not
+    /// collapse into one.
+    #[serde(default)]
+    completion_tokens_details: Option<ZaiCompletionTokensDetails>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct ZaiCompletionTokensDetails {
+    /// Tokens spent thinking, already counted inside `completion_tokens`.
+    /// Served by OpenRouter for every reasoning model and by the OpenAI-shaped
+    /// endpoints that implement the same detail object; absent elsewhere.
+    #[serde(default)]
+    reasoning_tokens: Option<u64>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -1313,6 +1328,14 @@ async fn aggregate_zai_stream(
                     u.prompt_cache_hit_tokens
                 };
                 usage.cache_write_tokens = details.cache_write_tokens;
+                // Only overwrite when this frame carried the breakdown: a
+                // later usage frame without the detail object must not erase
+                // a count an earlier one reported.
+                if let Some(reasoning) =
+                    u.completion_tokens_details.and_then(|d| d.reasoning_tokens)
+                {
+                    usage.reasoning_tokens = Some(reasoning);
+                }
                 if u.cost.is_some() {
                     reported_cost_usd = u.cost;
                 }

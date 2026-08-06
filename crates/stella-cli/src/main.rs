@@ -58,9 +58,12 @@ mod env_files;
 mod export;
 mod extensions;
 mod failure;
+mod fleet_claims;
 mod fleet_cmd;
 mod fleet_commits;
+mod fleet_gc;
 mod fleet_spend;
+mod fleet_verbs;
 mod fleet_warmth;
 mod fullauto_cmd;
 mod ingest_cmd;
@@ -82,6 +85,7 @@ mod profile;
 mod prompt_source;
 mod proposals_cmd;
 mod query_format;
+mod resume_frame;
 mod rules;
 mod runtime;
 mod scripts_cmd;
@@ -305,20 +309,22 @@ pub(crate) use cli::{
     AuthCmd, Cli, Command, ConnectCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
 };
 
-/// Whether this invocation is handed to the supervisor (#1552).
+/// How this invocation meets the supervisor (#1552, #1607).
 ///
-/// `false` runs the work in this process, exactly as every release before
-/// supervision existed. Supervision costs no capability any more: a plan
-/// that expands scope parks and asks through the session sidecar (#1585)
-/// instead of dying at the headless scope-review error, so there is no
-/// longer a downgrade to warn about here.
+/// [`daemon::detach::Posture::Foreground`] runs the work in this process, exactly as every
+/// release before supervision existed. Supervision costs no capability any
+/// more: a plan that expands scope parks and asks through the session sidecar
+/// (#1585) instead of dying at the headless scope-review error, so there is no
+/// longer a downgrade to warn about here. [`daemon::detach::Posture::Detached`] is the same
+/// supervised child with the launcher not staying — `--detach`.
 ///
 /// Computed here, once, because it is the only place the parsed flags and
 /// the real terminal handle are both in hand; each long-running arm then
-/// asks one question instead of re-deriving three.
-fn supervision(globals: &cli::GlobalArgs) -> bool {
-    daemon::should_supervise(
+/// asks one question instead of re-deriving four.
+fn supervision(globals: &cli::GlobalArgs) -> daemon::detach::Posture {
+    daemon::detach::posture(
         globals.foreground,
+        globals.detach,
         daemon::supervised_id().is_some(),
         daemon::has_controlling_terminal(),
     )
@@ -521,11 +527,21 @@ fn main() -> ExitCode {
     // Installed after `startup.close()` — the pumps are threads, and threads
     // before that boundary would race the env mutations it fences — and
     // drained as this function's last act so the final lines land.
+    //
+    // A panic would unwind (or, under the release profile's
+    // `panic = "abort"`, not unwind at all) past that last act and strand up
+    // to a pipe buffer — usually including the panic message itself — so
+    // `arm_panic_drain` chains a hook that performs the same idempotent
+    // drain (#1616). Whichever of the two arrives first does the one real
+    // drain; the other finds the streams already taken.
     let console = daemon::supervised_id().and_then(|id| {
         daemon::console::install_bounded(
             &stella_store::SessionRegistry::open_default().sidecar_dir(&id),
         )
     });
+    if let Some(guard) = &console {
+        daemon::console::arm_panic_drain(guard);
+    }
 
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
     // a human output format so it never pollutes json/stream-json.
@@ -575,9 +591,10 @@ fn main() -> ExitCode {
         }
     };
     // After the last print of every path above: restore the raw fds and join
-    // the pumps, so the console files carry this process's final lines.
-    if let Some(console) = console {
-        console.drain();
+    // the pumps, so the console files carry this process's final lines. A
+    // no-op if the panic hook installed above already won that race.
+    if let Some(guard) = console {
+        guard.drain();
     }
     code
 }
@@ -913,6 +930,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         .map_err(failure::CliFailure::from);
                 }
                 DaemonCmd::Resume { .. } => {}
+                // The sweep is the parent half N times over — it resolves,
+                // spawns and streams each `daemon resume <id> --foreground`
+                // child — so it stays keyless here for the same reason.
+                DaemonCmd::ResumeAll { dry_run } => {
+                    return daemon::resume_all(*dry_run, rt).map_err(failure::CliFailure::from);
+                }
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
             }
         }
@@ -1000,12 +1023,14 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             )?;
             // Resolved first on purpose: the prompt may have come from this
             // process's stdin, and a detached child has none to read.
-            if supervision(&cli.globals) {
+            let posture = supervision(&cli.globals);
+            if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &prompt),
                     prompt.as_bytes(),
+                    posture,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1050,12 +1075,14 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 std::io::stdin().is_terminal(),
                 prompt_source::read_stdin_to_string,
             )?;
-            if supervision(&cli.globals) {
+            let posture = supervision(&cli.globals);
+            if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &goal),
                     goal.as_bytes(),
+                    posture,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1064,6 +1091,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             )?;
         }
         Command::Fleet {
+            cmd: Some(sub),
+            ..
+        } => {
+            // Maintenance verbs never fan out, never supervise, and never
+            // touch a provider — dispatch before any of the run machinery.
+            signals::block_on_interruptible(rt()?, fleet_verbs::run(&cfg, &sub))?;
+        }
+        Command::Fleet {
+            cmd: None,
             tasks,
             plan,
             max_concurrency,
@@ -1073,7 +1109,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             task_timeout,
             output_format,
         } => {
-            if supervision(&cli.globals) {
+            let posture = supervision(&cli.globals);
+            if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1085,6 +1122,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         },
                     ),
                     &[],
+                    posture,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1105,12 +1143,14 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         }
         Command::Monitor { target } => {
             let target = target.unwrap_or_else(|| "main".to_string());
-            if supervision(&cli.globals) {
+            let posture = supervision(&cli.globals);
+            if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &format!("monitor {target}")),
                     &[],
+                    posture,
                 ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status

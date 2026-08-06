@@ -544,7 +544,7 @@ pub(super) fn render_context_section(frames: &[RecalledFrame]) -> Option<String>
             // block while the model was still told to cite `[nod_…]` lines
             // that might not exist anywhere in it. `RecalledFrame` documents
             // `id: None` as a legitimate state for a not-yet-materialized
-            // frame (`stella-pipeline/src/ports.rs`), so this was reachable by
+            // frame (`crates/stella-pipeline/src/ports.rs`), so this was reachable by
             // contract even though the only production projection happens to
             // always set `Some`. Render it as grounding — it cannot be cited,
             // so it must not claim to be.

@@ -1,3 +1,9 @@
+---
+id: adr/0006-contextframe-vs-compiledcontextframe
+title: "ADR 0006: ContextFrame vs. CompiledContextFrame"
+status: implemented
+---
+
 # ADR 0006: ContextFrame vs. CompiledContextFrame
 
 - Status: Accepted (Phase 0) — amended 2026-07-26 (compiled frame extends the

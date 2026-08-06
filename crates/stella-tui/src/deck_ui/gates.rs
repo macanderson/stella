@@ -13,6 +13,56 @@
 
 use super::*;
 
+/// A text input open *inside* the plan-review dialog. The dialog is modal, so
+/// at most one is up at a time and the variant is what the keyboard means.
+///
+/// Both exist to restore something the typed-answer flow had and the modal
+/// dropped. The modal owns the whole keyboard — that is what makes a bare
+/// letter safe as a decision (see the collision history on
+/// `handle_focused_gates`, this module's `pub(super)` key handler) — but owning
+/// the keyboard also took the composer away, and with it two capabilities the
+/// reviewer used to have while deciding.
+/// Rather than hand the composer back (which reopens the collision), each one
+/// comes back as its own input *within* the dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeInput {
+    /// `r` — a refinement note for the planner (#1630).
+    ///
+    /// **Multi-line**, because re-scoping instructions are prose: a modified
+    /// `⏎` inserts a newline and a bare `⏎` sends, the same chord the composer
+    /// used. A single-line buffer silently truncated the long instructions
+    /// that are the whole reason someone refines instead of approving.
+    Refine(String),
+    /// `!` — a shell line run without leaving the dialog (#1629).
+    ///
+    /// **Single-line**: it is one command, and it does not answer the gate.
+    /// Reading back before deciding (`!git status`, `!cargo test -q`) is part
+    /// of reviewing a plan, and the alternative the modal left was "abort the
+    /// plan, look, then make the planner propose it again".
+    Shell(String),
+}
+
+impl ScopeInput {
+    /// The buffer as typed, for rendering.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Refine(s) | Self::Shell(s) => s,
+        }
+    }
+
+    /// Append a paste. The refine note takes the clipboard verbatim, newlines
+    /// and all — it is a multi-line surface like the agent editor. The shell
+    /// line flattens, because a pasted blob whose second line is another
+    /// command must not become two commands on one `⏎`.
+    pub fn paste(&mut self, text: &str) {
+        match self {
+            Self::Refine(note) => note.push_str(text),
+            Self::Shell(cmd) => super::push_single_line(cmd, text),
+        }
+    }
+}
+
 /// A reviewer's in-progress marks on one hunk-review card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HunkMarks {
@@ -86,15 +136,17 @@ pub(super) fn handle_focused_gates(
     // while it is up it owns the keyboard (every unclaimed key is swallowed
     // here, never typed into the composer), so a letter can only ever mean
     // what the dialog says it means — the same modality that makes `git`'s
-    // `y/n` and the routing card's `s/n/p` safe. Free-text intent survives as
-    // the `r` note, which is its own input inside the dialog rather than the
-    // composer.
+    // `y/n` and the routing card's `s/n/p` safe. What the composer used to
+    // provide survives as the dialog's own inputs ([`ScopeInput`]): `r` for a
+    // multi-line refinement note, `!` for a shell line.
     //
     // `PgUp`/`PgDn` deliberately fall through: they are pure transcript
     // scroll, and a reviewer reads back for context before deciding — the
-    // same carve-out the hunk card makes. (`!` shell lines, which the typed
-    // flow used to carve out, do not: the composer is unreachable while a
-    // modal owns the keyboard. Abort first, or answer.)
+    // same carve-out the hunk card makes. `!` shell lines, which the typed
+    // flow also carved out, come back as an input *inside* the dialog
+    // ([`ScopeInput::Shell`]) rather than as a hole in the modality: the
+    // composer stays unreachable, so no key ever leaks behind the dialog.
+    //
     // Asked through `pending` rather than re-derived here. The predicate's own
     // doc promises the renderer, this handler and the cursor-suppression check
     // "can never disagree", and that only holds if all three ask it — a copy of
@@ -102,33 +154,68 @@ pub(super) fn handle_focused_gates(
     // also carries the Session-tab scope, so the dialog can never own the
     // keyboard on a tab that is not drawing it.
     if crate::views::scope_dialog::pending(model, ui).is_some() {
-        // Note-entry (`r` was pressed): the dialog is a text input until `⏎`
-        // sends the note or Esc returns to the options.
-        if let Some(note) = ui.scope_note.as_mut() {
-            match key.code {
-                KeyCode::Esc => {
-                    ui.scope_note = None;
-                    return Some(DeckAction::Handled);
-                }
-                KeyCode::Enter => {
-                    let note = note.trim().to_string();
-                    // A blank note is not an answer — stay in the input.
-                    if note.is_empty() {
+        // An input is open (`r` or `!` was pressed): the dialog is a text
+        // field until `⏎` acts on the line or Esc returns to the options.
+        if let Some(input) = ui.scope_input.as_mut() {
+            // Esc backs out of the input, never out of the gate — the plan is
+            // still unanswered and the dialog is still up behind this field.
+            if key.code == KeyCode::Esc {
+                ui.scope_input = None;
+                return Some(DeckAction::Handled);
+            }
+            match classify_enter(&key) {
+                EnterAction::Submit => {
+                    // A blank line is not an action, in either mode: stay in
+                    // the input, buffer untouched, rather than sending the
+                    // planner an empty revision or the shell an empty command.
+                    let line = input.text().trim().to_string();
+                    if line.is_empty() {
                         return Some(DeckAction::Ignored);
                     }
-                    ui.scope_note = None;
-                    ui.scope_answered.insert(agent.clone());
-                    return Some(DeckAction::Send(WorkspaceInput::ToAgent {
-                        agent: agent.clone(),
-                        input: UserInput::ScopeDecision(ScopeDecision::Revise { note }),
-                    }));
+                    return Some(match input {
+                        // A refine note answers the gate: latch it, send it.
+                        ScopeInput::Refine(_) => {
+                            ui.scope_input = None;
+                            ui.scope_answered.insert(agent.clone());
+                            DeckAction::Send(WorkspaceInput::ToAgent {
+                                agent: agent.clone(),
+                                input: UserInput::ScopeDecision(ScopeDecision::Revise {
+                                    note: line,
+                                }),
+                            })
+                        }
+                        // A shell line does NOT answer the gate: no latch, and
+                        // the dialog stays up — with the command still in the
+                        // field — so the reviewer decides *after* reading the
+                        // output. That is the whole point of having it:
+                        // running `!git status` must not count as approving
+                        // the plan it was run to evaluate.
+                        ScopeInput::Shell(_) => DeckAction::Shell(line),
+                    });
                 }
+                // A modified `⏎` composes: the refine note is prose and spans
+                // lines (the chord the composer used). A shell line is one
+                // command, so the chord does nothing there rather than
+                // building a buffer `⏎` would run as a single command.
+                EnterAction::Newline => {
+                    if let ScopeInput::Refine(note) = input {
+                        note.push('\n');
+                    }
+                    return Some(DeckAction::Handled);
+                }
+                EnterAction::NotEnter => {}
+            }
+            match key.code {
                 KeyCode::Backspace => {
-                    note.pop();
+                    match input {
+                        ScopeInput::Refine(buf) | ScopeInput::Shell(buf) => buf.pop(),
+                    };
                     return Some(DeckAction::Handled);
                 }
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    note.push(c);
+                    match input {
+                        ScopeInput::Refine(buf) | ScopeInput::Shell(buf) => buf.push(c),
+                    }
                     return Some(DeckAction::Handled);
                 }
                 _ => return Some(DeckAction::Handled),
@@ -140,7 +227,13 @@ pub(super) fn handle_focused_gates(
             KeyCode::Char('x') if key.modifiers.is_empty() => Some(ScopeDecision::Abort),
             KeyCode::Esc => Some(ScopeDecision::Abort),
             KeyCode::Char('r') if key.modifiers.is_empty() => {
-                ui.scope_note = Some(String::new());
+                ui.scope_input = Some(ScopeInput::Refine(String::new()));
+                return Some(DeckAction::Handled);
+            }
+            // The shell escape the typed flow had. `!` is not a decision
+            // letter and never has been, so it costs the dialog nothing.
+            KeyCode::Char('!') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                ui.scope_input = Some(ScopeInput::Shell(String::new()));
                 return Some(DeckAction::Handled);
             }
             // Pure scroll stays available — reading back is part of deciding.

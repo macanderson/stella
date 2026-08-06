@@ -174,10 +174,33 @@ fi
 # An empty scope means no crate in the workspace can be reached by this diff —
 # a website-only or workflow-only push. The global guards still run; there is
 # simply nothing to compile.
+#
+# ...with one exception, and it is worth stating precisely because removing it
+# would open a hole. `make guards` includes `wire-schema`, which runs the two
+# schema exporters — a cargo build. For a website-only push that is pure waste:
+# the diff cannot have touched the wire contract. But `docs/wire/` is *generated
+# and committed*, and ci.yml carries `paths-ignore: docs/**`, so a hand-edit
+# confined to `docs/wire/` is invisible to the required check. That is why
+# wire-schema was put in `guards` in the first place, and why the fix here is to
+# make it conditional rather than to drop it: run the dear rung only when the
+# pushed diff can actually have invalidated the artifacts. The server-side half
+# of the same hole is closed by .github/workflows/wire-schema.yml, which
+# triggers on these same paths (#1439).
+#
+# Keep this list in sync with that workflow's `paths:` filter — both answer the
+# same question, and neither is derived from the other.
 
-if [ -z "$scope" ]; then
+wire_touched=0
+if grep -Eq '^(docs/wire/|crates/stella-protocol/|crates/stella-serve/|scripts/(export-agentevent-schema|check-wire-schema)\.sh$)' "$changed"; then
+  wire_touched=1
+fi
+
+if [ -z "$scope" ] && [ "$wire_touched" = "0" ]; then
+  target="guards-fast"
+  label="make guards-fast (no crate reachable, wire contract untouched — no cargo build)"
+elif [ -z "$scope" ]; then
   target="guards"
-  label="make guards (no crate reachable — global guards + fmt only)"
+  label="make guards (no crate reachable, but the diff touches the wire contract)"
 elif [ "${GATE:-}" = "fast" ]; then
   target="check"
   label="make check (guards + fmt + clippy; GATE=fast, no rustdoc and no tests)"

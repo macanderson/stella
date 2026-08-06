@@ -55,6 +55,12 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// Thread-name prefix for the pump threads (`console-pump-1`/`console-pump-2`,
+/// set at spawn in [`pump_fd`]). Diagnostic only: the drain's self-join guard
+/// compares [`std::thread::ThreadId`]s, which a name cannot be confused with
+/// (names are optional and need not be unique).
+const PUMP_THREAD_PREFIX: &str = "console-pump-";
+
 use stella_store::supervised;
 
 /// The index's name in the sidecar, beside the two consoles it orders.
@@ -423,9 +429,21 @@ fn wall_ms() -> u64 {
 }
 
 /// The live pumps, held by `main` for the life of the supervised child.
+///
+/// The pumps live behind an `Arc` rather than in this struct because two
+/// different code paths have to be able to end them: `main`'s orderly exit,
+/// and the panic hook [`install_panic_drain`] installs (#1616). Both call the
+/// same idempotent [`Drainable::drain`]; whichever arrives first takes the
+/// streams and the other finds nothing to do.
 pub(crate) struct ConsoleGuard {
     #[cfg(unix)]
-    streams: Vec<PumpedStream>,
+    pumps: Arc<Drainable>,
+}
+
+/// The drainable half of a [`ConsoleGuard`], shareable with the panic hook.
+#[cfg(unix)]
+struct Drainable {
+    streams: Mutex<Vec<PumpedStream>>,
 }
 
 #[cfg(unix)]
@@ -435,6 +453,10 @@ struct PumpedStream {
     /// The fd the pipe replaced (1 or 2).
     target_fd: i32,
     pump: Option<std::thread::JoinHandle<u64>>,
+    /// Which thread the pump runs on. A drain reached *from* that thread —
+    /// the pump itself panicking — must not join it, which would be a thread
+    /// waiting on itself forever.
+    pump_thread: std::thread::ThreadId,
 }
 
 impl ConsoleGuard {
@@ -443,9 +465,39 @@ impl ConsoleGuard {
     /// only write ends, so each pump sees EOF, writes its `Closed` marker,
     /// and exits; anything printed after this lands raw at the ring cursor,
     /// which the marker tells readers to sweep.
-    pub(crate) fn drain(self) {
+    pub(crate) fn drain(&self) {
         #[cfg(unix)]
-        for mut stream in self.streams {
+        self.pumps.drain();
+    }
+
+    /// Drain whatever guard is still in `cell`, unless the CURRENT thread is
+    /// one of the pumps it owns — see [`PUMP_THREAD_PREFIX`]. Idempotent and
+    /// safe to call from both the normal end-of-`main` path and a panic hook:
+    /// the two race to be first, and whichever wins performs the one real
+    /// drain; the loser finds `None` and does nothing.
+    pub(crate) fn drain_shared(cell: &Mutex<Option<ConsoleGuard>>) {
+        if std::thread::current()
+            .name()
+            .is_some_and(|name| name.starts_with(PUMP_THREAD_PREFIX))
+        {
+            return;
+        }
+        let guard = cell.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(guard) = guard {
+            guard.drain();
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drainable {
+    /// Idempotent drain: take the streams out under the lock, then do the
+    /// blocking part (the `join`) with the lock released, so a panicking pump
+    /// thread arriving here cannot deadlock against the drain already
+    /// running.
+    fn drain(&self) {
+        let streams = std::mem::take(&mut *self.streams.lock().unwrap_or_else(|p| p.into_inner()));
+        for mut stream in streams {
             let Some(pump) = stream.pump.take() else {
                 continue;
             };
@@ -455,6 +507,17 @@ impl ConsoleGuard {
             // read end so no descriptor is closed twice.
             unsafe {
                 libc::dup2(stream.saved_fd, stream.target_fd);
+            }
+            if stream.pump_thread == std::thread::current().id() {
+                // The pump itself panicked and this drain is running inside
+                // its own panic hook. The fd is restored (above), which is
+                // what keeps the process's remaining output reaching the
+                // file; joining from here would wait on this very thread.
+                // SAFETY: as below — the install-time duplicate is done.
+                unsafe {
+                    libc::close(stream.saved_fd);
+                }
+                continue;
             }
             if let Ok(resume_at) = pump.join() {
                 // Post-drain appends continue at the ring cursor rather than
@@ -477,6 +540,27 @@ impl ConsoleGuard {
             }
         }
     }
+}
+
+/// Install a panic hook that drains `cell`'s console guard — restoring the
+/// real console fds via `dup2` — BEFORE the previously installed hook (the
+/// diagnostics ring dump, and beneath that the default hook) prints the
+/// panic message (#1616).
+///
+/// Release builds run with `panic = "abort"` (`Cargo.toml`), so this hook is
+/// the only cleanup this process ever gets on a panic — there is no unwind
+/// back to `main`'s own `drain_shared` call to fall back to. Without it, the
+/// default hook's message goes out fd 2 while it is still the pipe a pump
+/// thread reads asynchronously, and a process that aborts before the pump is
+/// next scheduled loses it — usually the one line a postmortem most wants.
+/// Restoring the fd first makes the same `eprintln!` land as an ordinary
+/// synchronous write to the console file instead.
+pub(crate) fn install_panic_drain(cell: Arc<Mutex<Option<ConsoleGuard>>>) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        ConsoleGuard::drain_shared(&cell);
+        previous(info);
+    }));
 }
 
 /// Interpose the bounded pumps on this process's stdout and stderr.
@@ -508,7 +592,11 @@ pub(crate) fn install_bounded(sidecar: &Path) -> Option<ConsoleGuard> {
             )?;
             streams.push(stream);
         }
-        Some(ConsoleGuard { streams })
+        Some(ConsoleGuard {
+            pumps: Arc::new(Drainable {
+                streams: Mutex::new(streams),
+            }),
+        })
     }
 }
 
@@ -569,7 +657,7 @@ fn pump_fd(
     // takes ownership and closes it when the pump exits.
     let mut pipe = unsafe { std::fs::File::from_raw_fd(read_fd) };
     let pump = std::thread::Builder::new()
-        .name(format!("console-pump-{target_fd}"))
+        .name(format!("{PUMP_THREAD_PREFIX}{target_fd}"))
         .spawn(move || {
             let mut buf = [0u8; 64 * 1024];
             loop {
@@ -586,6 +674,7 @@ fn pump_fd(
     Some(PumpedStream {
         saved_fd,
         target_fd,
+        pump_thread: pump.thread().id(),
         pump: Some(pump),
     })
 }

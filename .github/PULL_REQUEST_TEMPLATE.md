@@ -35,6 +35,17 @@ Stella's definition of done is a test that **fails on the old code and passes on
 - [ ] `Closes #N` appears **both** above and as a commit trailer — squash builds
       the commit body from commit messages, so the description alone won't carry it
 
+## Nothing left behind
+
+Anything you noticed and did not fix — a bug, a missing test, dead or unwired
+code, the logical next step of this work — is a GitHub issue before this merges,
+written as a handoff a fresh agent could execute (AGENTS.md § "Nothing left
+behind"). The gate catches the residue (a `TODO` with no issue number); it
+cannot catch what only you saw.
+
+- [ ] Filed: #___, #___ — **or**
+- [ ] There is nothing: everything I noticed is fixed in this PR
+
 ## Ground-rule check
 
 <!-- Delete lines that don't apply. -->

@@ -1,0 +1,49 @@
+name: empty-diff
+
+# A pull request whose diff against its merge base is empty is reported rather
+# than merged in silence (#1136, #1676). PR #1099 merged as a zero-file-diff
+# commit 27 seconds after #1098 landed the identical fix, and nothing noticed.
+#
+# Deliberately its own workflow rather than a job in ci.yml, and deliberately
+# with **no paths-ignore**: an empty PR changes no paths at all, so it is
+# exactly the shape a path filter is least able to reason about. ci.yml's
+# filters exist to keep prose changes off the hour-long Rust gate; this job is
+# seconds and has nothing to skip.
+#
+# Not wired into the merge queue either. `merge_group` builds a merged result
+# whose diff against the queue tip is a different question from "does this
+# branch carry anything", and a check that reports on `pull_request` reaches a
+# human while there is still a decision to make.
+
+on:
+  pull_request:
+
+# Reads the repository and nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: empty-diff-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  empty-diff:
+    name: PR carries a diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The full history: the check compares against the merge base, and a
+          # shallow clone may not contain it. The script fails loudly rather
+          # than skipping if this is ever dropped.
+          fetch-depth: 0
+
+      - name: Report an empty diff
+        env:
+          # Via env rather than inlined into the shell, so a ref name can
+          # never be read as script (the standard script-injection shape for
+          # `${{ }}` in a `run:` block).
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/check-empty-diff.sh "$BASE_SHA" "$HEAD_SHA"
