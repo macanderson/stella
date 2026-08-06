@@ -454,6 +454,9 @@ fn phase_color(phase: crate::envelope::SessionPhase) -> ratatui::style::Color {
         SessionPhase::NeedsInput => theme::WARNING_BRIGHT,
         SessionPhase::Paused => theme::ACCENT,
         SessionPhase::Cancelled => theme::TEXT_TERTIARY,
+        // The same calm tone as `Cancelled`: both are deliberate endings,
+        // and the whole point of the variant is not to paint them red.
+        SessionPhase::Stopped => theme::TEXT_TERTIARY,
         SessionPhase::Complete => theme::SUCCESS,
         SessionPhase::Archived => theme::TEXT_TERTIARY,
         SessionPhase::Error => theme::DANGER_BRIGHT,
