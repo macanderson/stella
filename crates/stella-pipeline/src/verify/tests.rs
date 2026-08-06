@@ -745,6 +745,13 @@ fn a_negated_pass_is_the_fail_it_states() {
         parse_verifier_response("Not a single problem here: PASS").map(|v| v.passed),
         Some(true)
     );
+    // ...and the bound is exactly two tokens: the first window that shipped
+    // reached one token further, inverting this approval lead-in into a FAIL.
+    assert_eq!(
+        parse_verifier_response("Not a problem. PASS").map(|v| v.passed),
+        Some(true),
+        "an approval lead-in two tokens past the negator is a genuine PASS"
+    );
     // An affirmative token before the negator is untouched.
     assert_eq!(
         parse_verifier_response("PASS — this does not fail any case").map(|v| v.passed),
