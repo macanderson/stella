@@ -599,6 +599,60 @@ class TestTranscript:
         assert reader.read(one)[-1]["body"] == "AAA"
         assert reader.read(two)[-1]["body"] == "BBB"
 
+    def test_the_consolidated_text_event_replaces_the_fragment_run(
+        self, tmp_path: Path
+    ):
+        """Stella emits both `text_delta` fragments and one consolidated
+        `text` event per message (the field names are crossed on the wire:
+        the fragment rides in `text`, the complete body in `delta`).
+        Appending both rendered every response twice in the transcript —
+        once assembled, once whole. The consolidated event must replace the
+        run under the same seq, not extend it.
+        """
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            {"type": "text_delta", "text": "The work"},
+            {"type": "text_delta", "text": "space root is `/app`."},
+            {"type": "text", "delta": "The workspace root is `/app`."},
+        ])
+        entries = TranscriptReader().read(path)
+        text = [e for e in entries if e["kind"] == "text"]
+        assert len({e["seq"] for e in text}) == 1, "one message, one entry"
+        assert text[-1]["body"] == "The workspace root is `/app`."
+
+    def test_a_consolidated_text_after_a_closed_run_does_not_duplicate(
+        self, tmp_path: Path
+    ):
+        """The shape from the field report: fragments stream, `step_usage`
+        closes the run, and only then the consolidated event arrives. The
+        old reader opened a *second* entry with the full body — the exact
+        doubled paragraph seen around every usage line."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            {"type": "text_delta", "text": "Config "},
+            {"type": "text_delta", "text": "validates."},
+            {"type": "step_usage", "step": 6, "role": "worker"},
+            {"type": "text", "delta": "Config validates."},
+        ])
+        entries = TranscriptReader().read(path)
+        text = [e for e in entries if e["kind"] == "text"]
+        # One message, one entry — a client keyed by seq replaces in place.
+        assert len({e["seq"] for e in text}) == 1
+        assert text[-1]["body"] == "Config validates."
+
+    def test_a_lone_consolidated_text_still_renders(self, tmp_path: Path):
+        """A stream with no fragments (another emitter, a replay) is one
+        complete message per `text` event — each its own entry."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            {"type": "text", "delta": "first message"},
+            {"type": "text", "delta": "second message"},
+        ])
+        entries = TranscriptReader().read(path)
+        text = [e for e in entries if e["kind"] == "text"]
+        assert [e["body"] for e in text] == ["first message", "second message"]
+        assert len({e["seq"] for e in text}) == 2
+
 
 class TestInfrastructureFailuresAreNotLosses:
     """A trial the agent never got to attempt is not a trial it lost."""

@@ -531,6 +531,19 @@ def _handler_factory(
             except ValueError:
                 self._error(HTTPStatus.FORBIDDEN, "path escapes the web root")
                 return
+            # The exported client writes a route as `<route>.html` — and ALSO
+            # leaves a `<route>/` directory of RSC payload files beside it, so
+            # a clean path can resolve to a directory that holds no page. Try
+            # the directory's index first, then the `.html` sibling, never
+            # past the web root the check above already pinned.
+            if target.is_dir():
+                index = target / "index.html"
+                sibling = target.with_suffix(".html")
+                target = index if index.is_file() else sibling
+            elif not target.is_file() and not target.suffix:
+                sibling = target.with_suffix(".html")
+                if sibling.is_file():
+                    target = sibling
             if not target.is_file():
                 self._error(HTTPStatus.NOT_FOUND, f"no such asset: {rel}")
                 return
