@@ -64,6 +64,27 @@ const NS_SEP: &str = "__";
 /// Default per-call (and per-connect) timeout when the caller does not set one.
 pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Byte budget for ONE server's contribution to the advertised toolset.
+///
+/// Ingest already caps each tool individually — `MAX_TOOLS_PER_SERVER` (256),
+/// `MAX_TOOL_DESCRIPTION_CHARS` (2,000) and a per-tool `inputSchema` budget in
+/// [`crate::client::ingest`]. What none of them bounds is the **aggregate**:
+/// 256 tools times a 2,000-character description is ~512 KB of third-party
+/// prose from a single server, at position 0 of every request, before its
+/// schemas are counted (#1856).
+///
+/// Every per-tool cap can hold and the block still exceed the whole
+/// recall+memory+rules budget combined, because the caps are per-item and the
+/// cost is the sum. 32 KB is roughly 9k tokens: generous for the servers
+/// people actually run (a handful of tools each), and a wall for the one that
+/// advertises a catalogue.
+///
+/// Applied to the SORTED segment, so which tools survive is a deterministic
+/// function of their names rather than of client order — the byte-stability
+/// contract in [`McpToolSet::schemas`] would be worthless if the truncation
+/// point moved between processes.
+pub const MAX_SERVER_SCHEMA_BYTES: usize = 32 * 1024;
+
 /// What a connected server said about itself during the `initialize`
 /// handshake — its own name (which need not match the local alias), version,
 /// display title, and free-prose `instructions`.
@@ -483,30 +504,96 @@ impl McpToolSet {
     }
 }
 
-#[async_trait]
-impl ToolExecutor for McpToolSet {
-    /// The advertised toolset, as two segments in a fixed order: the native
-    /// tools, then this set's MCP tools.
-    ///
-    /// **Both the segment order and the order within each segment are a
-    /// cross-process contract, not a presentation choice.** This list is
-    /// serialized verbatim at position 0 of the prompt prefix, and prompt
-    /// caching is a byte-level prefix match — so two stella processes in the
-    /// same workspace inside the cache TTL share the tools+system entry only
-    /// if they emit the same bytes. `ToolRegistry::schemas` sorts the native
-    /// segment for exactly that reason; this decorator used to concatenate
-    /// after it without re-sorting, which put the whole guarantee back at the
-    /// mercy of `self.clients` order and of which server finished connecting
-    /// first (#1848).
-    ///
-    /// Sorting the MCP segment by its namespaced name — rather than trusting
-    /// client order — is what makes the answer independent of both.
-    fn schemas(&self) -> Vec<ToolSchema> {
-        let mut schemas = Vec::new();
-        // Native tools first — they are the base layer the MCP set augments.
-        if let Some(native) = &self.native {
-            schemas.extend(native.schemas());
+/// Which server a namespaced tool belongs to — `mcp__<server>__<tool>`.
+///
+/// Server names are guaranteed free of the `__` separator (`is_namespaceable`
+/// rejects the rest at connect), so the segment between the prefix and the
+/// first separator is unambiguous.
+fn server_of(namespaced: &str) -> &str {
+    namespaced
+        .strip_prefix(NS_PREFIX)
+        .and_then(|rest| rest.split_once(NS_SEP))
+        .map_or("", |(server, _)| server)
+}
+
+/// Roughly what one schema costs in the serialized tools block: its name, its
+/// description, and its `inputSchema`.
+///
+/// Approximate on purpose — the exact cost depends on the provider's own JSON
+/// envelope, which this crate does not model. A budget is a bound, not an
+/// accounting, and being a few bytes out either way changes nothing about
+/// whether a 512 KB catalogue is refused.
+fn schema_cost(schema: &ToolSchema) -> usize {
+    schema.name.len()
+        + schema.description.len()
+        + serde_json::to_string(&schema.input_schema).map_or(0, |s| s.len())
+}
+
+/// Hold each server's contribution to a SORTED MCP segment under
+/// [`MAX_SERVER_SCHEMA_BYTES`], returning what survives and, per server, how
+/// many tools the budget cut.
+///
+/// One function with two callers ([`McpToolSet::schemas`] takes the schemas,
+/// [`McpToolSet::over_budget_servers`] takes the counts) rather than a second
+/// copy of the rule for reporting — two implementations of one fold is exactly
+/// the drift #1613 was filed for.
+///
+/// The input is already sorted by namespaced name, which groups each server's
+/// tools into a contiguous run (the server name is the prefix) AND fixes the
+/// order within it. So the truncation point is a deterministic function of the
+/// tool names, not of client order or connection timing — without that, the
+/// byte-stability contract above would survive the sort and then be lost here.
+fn budget_segment(sorted: Vec<ToolSchema>) -> (Vec<ToolSchema>, Vec<(String, usize)>) {
+    let mut kept = Vec::with_capacity(sorted.len());
+    let mut elided: Vec<(String, usize)> = Vec::new();
+    let mut current = String::new();
+    let mut spent = 0usize;
+
+    for schema in sorted {
+        let server = server_of(&schema.name);
+        if server != current {
+            current = server.to_string();
+            spent = 0;
         }
+        let cost = schema_cost(&schema);
+        // The first tool of a server is always admitted, however large: a
+        // server whose single tool exceeds the budget should advertise that
+        // one tool, not vanish. Ingest's per-tool caps already bound it.
+        if spent > 0 && spent + cost > MAX_SERVER_SCHEMA_BYTES {
+            match elided.last_mut() {
+                Some((name, count)) if *name == current => *count += 1,
+                _ => elided.push((current.clone(), 1)),
+            }
+            continue;
+        }
+        spent += cost;
+        kept.push(schema);
+    }
+    (kept, elided)
+}
+
+impl McpToolSet {
+    /// Servers whose advertised tools were trimmed to fit
+    /// [`MAX_SERVER_SCHEMA_BYTES`], as `(server, tools dropped)`.
+    ///
+    /// Deliberately separate from [`Self::over_advertising_servers`], which
+    /// reports the per-tool COUNT cap applied at ingest. These are two
+    /// different walls and a reader needs to know which one it hit: 300 tools
+    /// trips the first, twelve verbose ones trip this. Empty for every server
+    /// that fits, which is nearly all of them.
+    #[must_use]
+    pub fn over_budget_servers(&self) -> Vec<(String, usize)> {
+        budget_segment(self.mcp_segment()).1
+    }
+
+    /// This set's MCP tools, namespaced and sorted, before the byte budget.
+    ///
+    /// The one place the segment is built. [`ToolExecutor::schemas`] budgets it
+    /// and returns the schemas; [`Self::over_budget_servers`] budgets it and
+    /// returns the counts. Deriving the counts from the already-budgeted list
+    /// would report zero every time — the honest input to both questions is
+    /// what the servers advertised, not what survived.
+    fn mcp_segment(&self) -> Vec<ToolSchema> {
         let mut mcp = Vec::new();
         for (idx, client) in self.clients.iter().enumerate() {
             // A disabled server advertises nothing this session — the engine
@@ -538,7 +625,35 @@ impl ToolExecutor for McpToolSet {
         // them), so this is a total order — no tie for the sort to resolve
         // arbitrarily and reintroduce the nondeterminism.
         mcp.sort_by(|a, b| a.name.cmp(&b.name));
-        schemas.extend(mcp);
+        mcp
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for McpToolSet {
+    /// The advertised toolset, as two segments in a fixed order: the native
+    /// tools, then this set's MCP tools.
+    ///
+    /// **Both the segment order and the order within each segment are a
+    /// cross-process contract, not a presentation choice.** This list is
+    /// serialized verbatim at position 0 of the prompt prefix, and prompt
+    /// caching is a byte-level prefix match — so two stella processes in the
+    /// same workspace inside the cache TTL share the tools+system entry only
+    /// if they emit the same bytes. `ToolRegistry::schemas` sorts the native
+    /// segment for exactly that reason; this decorator used to concatenate
+    /// after it without re-sorting, which put the whole guarantee back at the
+    /// mercy of `self.clients` order and of which server finished connecting
+    /// first (#1848).
+    ///
+    /// Sorting the MCP segment by its namespaced name — rather than trusting
+    /// client order — is what makes the answer independent of both.
+    fn schemas(&self) -> Vec<ToolSchema> {
+        let mut schemas = Vec::new();
+        // Native tools first — they are the base layer the MCP set augments.
+        if let Some(native) = &self.native {
+            schemas.extend(native.schemas());
+        }
+        schemas.extend(budget_segment(self.mcp_segment()).0);
         schemas
     }
 
@@ -812,6 +927,88 @@ mod tests {
             names[first_mcp..],
             ["mcp__alpha__one".to_string(), "mcp__zeta__two".to_string()],
             "the mcp segment is sorted by namespaced name"
+        );
+    }
+
+    /// One chatty server cannot spend the whole prefix (#1856).
+    ///
+    /// Ingest already caps each tool — 256 per server, 2,000 description
+    /// characters, a per-tool schema budget. None of them bounds the SUM, and
+    /// the sum is what lands at position 0 of every request: 256 × 2,000 is
+    /// ~512 KB of third-party prose from one server, which can exceed the
+    /// whole recall+memory+rules budget combined while every per-item cap
+    /// holds.
+    ///
+    /// Driven through the real `tools/list` path rather than by constructing
+    /// schemas directly, so it exercises what a server actually sends.
+    #[tokio::test]
+    async fn one_chatty_server_cannot_spend_the_whole_prefix() {
+        // 40 tools × ~2 KB of description — every per-tool cap satisfied.
+        let big = "d".repeat(2_000);
+        let tools: Vec<Value> = (0..40)
+            .map(|i| {
+                serde_json::json!({
+                    "name": format!("tool{i:02}"),
+                    "description": big,
+                    "inputSchema": { "type": "object" },
+                })
+            })
+            .collect();
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok("tools/list", serde_json::json!({ "tools": tools }));
+        let mut client = McpClient::new("chatty", Box::new(transport));
+        client.initialize().await.unwrap();
+        let set = McpToolSet::from_clients(vec![client]);
+
+        let advertised = ToolExecutor::schemas(&set);
+        let bytes: usize = advertised.iter().map(schema_cost).sum();
+        assert!(
+            bytes <= MAX_SERVER_SCHEMA_BYTES + 2_100,
+            "one server advertised {bytes} bytes, over the \
+             {MAX_SERVER_SCHEMA_BYTES}-byte budget (the slack is one \
+             over-budget final tool, which is admitted by design)"
+        );
+        assert!(
+            !advertised.is_empty(),
+            "the budget must trim a chatty server, not silence it"
+        );
+
+        // The cut is reported, not silent: an operator who wonders why a tool
+        // is missing needs to be told, and the count is the whole diagnostic.
+        let over = set.over_budget_servers();
+        assert_eq!(over.len(), 1, "one server was trimmed: {over:?}");
+        assert_eq!(over[0].0, "chatty");
+        assert_eq!(
+            over[0].1 + advertised.len(),
+            40,
+            "every tool is either advertised or counted as dropped: {over:?}"
+        );
+
+        // Deterministic, because the segment is sorted before it is budgeted —
+        // truncating an unsorted list would make WHICH tools survive depend on
+        // client order, losing the byte-stability the sort exists to buy.
+        let names: Vec<&str> = advertised.iter().map(|s| s.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            names, sorted,
+            "the surviving tools are the lexicographic prefix"
+        );
+    }
+
+    /// A well-behaved server is untouched: the budget must be invisible for
+    /// the servers people actually run.
+    #[tokio::test]
+    async fn an_ordinary_server_is_not_trimmed() {
+        let set = McpToolSet::from_clients(vec![connected_client("files", "read").await]);
+        assert_eq!(ToolExecutor::schemas(&set).len(), 1);
+        assert!(
+            set.over_budget_servers().is_empty(),
+            "nothing to report for a server that fits"
         );
     }
 
