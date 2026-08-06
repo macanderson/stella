@@ -53,6 +53,7 @@ from pathlib import Path
 from stat import S_ISDIR
 from typing import Any
 
+from .artifacts import mp4_is_finalized
 from .pricing import Price, price_for, price_for_route, price_on_route, trial_cost
 
 __all__ = [
@@ -672,7 +673,12 @@ class MetricsReader:
             if isinstance(wasted, (int, float)):
                 metrics.wasted_elapsed = float(wasted)
 
-        metrics.has_video = (trial_dir / "arena" / "recording.mp4").exists()
+        # Existence is not playability. The recorder writes the index (`moov`)
+        # at the *end* of encoding, so a live trial has a growing file that no
+        # player can open, and a killed one keeps that file forever. Offering a
+        # player in either window is a broken box in the UI, so this reports a
+        # video only once the recording has actually been finalised.
+        metrics.has_video = mp4_is_finalized(trial_dir / "arena" / "recording.mp4")
         return metrics
 
 
