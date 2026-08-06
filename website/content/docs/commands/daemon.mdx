@@ -99,7 +99,7 @@ Every supervised run on this machine, newest first. Local reads only — no API 
 
 ## `attach`
 
-Streams the run's output into this terminal, from the beginning, and stays until the run ends. A run that has already finished prints in full and exits. The id can be any unique prefix; omit it for the most recently started run. If the run is parked on a scope review, attach renders the proposal and delivers your answer.
+Streams the run's output into this terminal, from the beginning, and stays until the run ends. A run that has already finished prints in full and exits. The id can be any unique prefix — or the run's **pid**, which is the address `ps`, `top`, Activity Monitor and an OOM-killer log give you; omit it for the most recently started run. If the run is parked on a scope review, attach renders the proposal and delivers your answer.
 
 Detaching again — `Ctrl-C` — leaves the run alone. `stella daemon stop` is what stops it.
 
