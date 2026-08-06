@@ -31,6 +31,26 @@
 //! Because that snapshot is seeded at session start, the dialog is complete on
 //! the frame it opens: no round-trip, and nothing to wait for.
 //!
+//! # Running now, versus saved for next time
+//!
+//! The cells are what **this session** resolved, and they stay that way: a
+//! running session keeps the wiring it resolved at start, and printing a
+//! mid-session settings edit as though it were in force would misreport the
+//! exact thing the dialog exists to answer.
+//!
+//! But saying nothing about a saved edit was its own way of lying. Someone who
+//! changed `pipeline_verifier_model` in the ENGINE panel, saved, and opened
+//! this dialog saw their **old** pin with no explanation — and the panel's own
+//! "applies to runs started from now on" line is one tab away and gone by
+//! then. The dialog read as having ignored the save (#1521).
+//!
+//! So the driver resolves the wiring a second time, from the settings as they
+//! sit on disk, and sends the cells that differ as
+//! [`RoleWiringRow::next_session`]. The dialog names both: the row is what is
+//! running, a WARN-toned line under it is what a session started now would
+//! get, and the title counts them so the pending edit is visible on the frame
+//! this opens.
+//!
 //! # Copy law (D6)
 //!
 //! The three pipeline slots keep the deck's own words — `think` / `work` /
@@ -183,7 +203,34 @@ fn role_rows(
             Span::styled(line, dim),
         ]));
     }
+    rows.extend(next_session_row(row, inner_w, accessible));
     rows
+}
+
+/// The pending-edit row: what this role would resolve to in a session started
+/// now, when a saved settings edit makes that differ.
+///
+/// In the WARN tone rather than the dim one every other detail row uses,
+/// because it is the one line here that is *not* describing what is running —
+/// and the failure it exists to prevent is a reader taking it for one that is.
+fn next_session_row(row: &RoleWiringRow, inner_w: usize, accessible: bool) -> Vec<Line<'static>> {
+    let Some(next) = row.next_session.as_deref() else {
+        return Vec::new();
+    };
+    let text = format!("next session: {next}");
+    if accessible {
+        return vec![Line::from(Span::styled(
+            format!("· {text}"),
+            Style::new().fg(theme::WARN),
+        ))];
+    }
+    vec![Line::from(vec![
+        Span::raw(" ".repeat(LABEL_W)),
+        Span::styled(
+            cards::truncate_cols(&text, inner_w.saturating_sub(LABEL_W)),
+            Style::new().fg(theme::WARN),
+        ),
+    ])]
 }
 
 /// The header rows: what this session resolved to, and which auto-modes are
@@ -257,14 +304,26 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
         }
     }
 
+    // The title carries the count so a pending edit is visible on the frame
+    // this opens, without reading four rows to find the one that moved.
+    let pending = state.map_or(0, |s| {
+        s.roles.iter().filter(|r| r.next_session.is_some()).count()
+    });
+    let mut title = vec![Span::styled("resolved routing", dim)];
+    if pending > 0 {
+        let phrase = if pending == 1 {
+            "1 saved change applies".to_string()
+        } else {
+            format!("{pending} saved changes apply")
+        };
+        title.push(Span::styled(
+            format!(" · {phrase} next session"),
+            Style::new().fg(theme::WARN),
+        ));
+    }
+
     let area = cards::card_area(frame, rows.len() as u16, MODELS_CARD_W, ui.accessible);
-    let inner = cards::card_frame(
-        area,
-        "models",
-        vec![Span::styled("resolved routing", dim)],
-        "esc close",
-        buf,
-    );
+    let inner = cards::card_frame(area, "models", title, "esc close", buf);
     cards::render_body(rows, None, inner, buf);
 }
 
@@ -280,6 +339,7 @@ mod tests {
             effort: effort.to_string(),
             thinking: "thinking on".to_string(),
             source: source.to_string(),
+            next_session: None,
         }
     }
 
@@ -340,6 +400,45 @@ mod tests {
         ] {
             assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
         }
+    }
+
+    /// A saved settings edit is named, and named as *pending* (#1521).
+    ///
+    /// The dialog keeps printing what this session resolved — that is the
+    /// question it answers — so the running pin must still be there. But a
+    /// user who saved a new verifier model and saw only the old one read the
+    /// dialog as having ignored the save, which is the failure this row exists
+    /// to prevent. Both answers, distinguishable.
+    #[test]
+    fn a_saved_edit_is_named_as_pending_without_displacing_what_is_running() {
+        let mut row = wiring(
+            "verifier",
+            "anthropic/claude-opus-5",
+            "high",
+            "pipeline_verifier_model",
+        );
+        row.next_session = Some("openai/gpt-5.5".to_string());
+        let lines = role_rows(&WorkspaceModel::new(), &row, "verify", 68, false);
+        let text = text_of(&lines);
+
+        assert!(
+            text.contains("anthropic/claude-opus-5"),
+            "the running pin is still the row's answer:\n{text}"
+        );
+        assert!(
+            text.contains("next session: openai/gpt-5.5"),
+            "the saved edit is named, and named as next-session:\n{text}"
+        );
+    }
+
+    /// A role whose saved settings agree with what is running says nothing —
+    /// a "next session" line on every row would be noise that trains the
+    /// reader to skip the one row where it means something.
+    #[test]
+    fn a_role_with_no_pending_edit_stays_silent() {
+        let row = wiring("worker", "zai/glm-5.2", "medium", "default_model");
+        let text = text_of(&role_rows(&WorkspaceModel::new(), &row, "work", 68, false));
+        assert!(!text.contains("next session"), "{text}");
     }
 
     /// Copy law (D6): the deck's words label the rows. The internal role
