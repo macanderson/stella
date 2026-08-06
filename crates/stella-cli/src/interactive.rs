@@ -528,11 +528,11 @@ impl ToolExecutor for InteractiveToolSet<'_> {
         self.inner.drain_sub_agent_spend_usd()
     }
 
-    /// Forwarded: letting the empty default stand would silently serialize the
-    /// inner executor's sibling spawns (see the port's contract). The tools
-    /// added here (`ask_user`, skills) make no concurrency claim of their own.
-    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-        self.inner.parallel_safe_names()
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.drain_wait_request()
     }
 }
 

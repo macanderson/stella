@@ -61,6 +61,15 @@ pub trait Tool: Send + Sync {
     fn parallel_safe(&self) -> bool {
         false
     }
+
+    /// The parked-wait request this tool deposited during its last
+    /// `execute`, taken destructively — the registry aggregates it into
+    /// `ToolExecutor::drain_wait_request` and the engine parks the turn on
+    /// it at the next step boundary (#1471, `stella_core::waiting`).
+    /// Defaults to `None`: almost no tool waits on external state.
+    fn take_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        None
+    }
 }
 
 /// A file op classified before execution: the normalized path the ledger
@@ -1257,7 +1266,7 @@ impl ToolRegistry {
                 let mut hits: Vec<String> = coverage
                     .by_path
                     .iter()
-                    .filter(|(path, _)| mentions_path(&haystack, path))
+                    .filter(|(path, _)| crate::exploration::mentions_path(&haystack, path))
                     .flat_map(|(_, slices)| slices.iter().cloned())
                     .filter(|slice| !coverage.hinted.contains(slice))
                     .collect();
@@ -2108,35 +2117,6 @@ impl ToolRegistry {
     }
 }
 
-/// True when `haystack` mentions `path` as a whole path token: the hit may
-/// not extend into path characters on either side, so a map covering
-/// `lib.rs` never fires on `mylib.rs` or `graphlib.rs` — a false positive
-/// would permanently consume that map's once-per-session coverage hint.
-fn mentions_path(haystack: &str, path: &str) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-    let is_path_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/');
-    let mut from = 0;
-    while let Some(pos) = haystack[from..].find(path) {
-        let start = from + pos;
-        let end = start + path.len();
-        // A preceding `/` is a component boundary, not an embedding: search
-        // results routinely print the workspace-relative map path with an
-        // absolute prefix (`/tmp/ws/covered.rs` covers `covered.rs`).
-        let clear_before = !haystack[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|c| is_path_char(c) && c != '/');
-        let clear_after = !haystack[end..].chars().next().is_some_and(is_path_char);
-        if clear_before && clear_after {
-            return true;
-        }
-        from = end;
-    }
-    false
-}
-
 /// `ToolRegistry` is the production implementation of `stella-core`'s
 /// `ToolExecutor` port — the engine drives every tool call through this
 /// impl, never through `stella-tools` types directly.
@@ -2155,6 +2135,24 @@ impl ToolExecutor for ToolRegistry {
     /// whatever this returns, so reporting twice would bill twice.
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         stella_core::subagent::drain_sub_agent_spend(&self.sub_agent_spend)
+    }
+
+    /// Collect the parked-wait request a tool deposited this step, if any
+    /// (#1471). Consults the primary map and the late-enabled overlay — the
+    /// same two sources every other read path reads. First hit wins: a step
+    /// dispatches at most a handful of calls, and `Tool::take_wait_request`
+    /// is destructive, so at most one request exists per boundary.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        let from_primary = self
+            .tools
+            .values()
+            .find_map(|tool| tool.take_wait_request());
+        from_primary.or_else(|| {
+            self.late_tools
+                .read()
+                .ok()
+                .and_then(|late| late.values().find_map(|tool| tool.take_wait_request()))
+        })
     }
 
     /// Aggregate each registered tool's [`Tool::parallel_safe`] claim for the

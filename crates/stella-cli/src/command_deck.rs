@@ -119,6 +119,7 @@ mod session_clear;
 mod sessions_view;
 mod settle;
 mod task_tap;
+use task_tap::TaskTap;
 mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};

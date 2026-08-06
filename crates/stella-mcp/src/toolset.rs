@@ -561,14 +561,13 @@ impl ToolExecutor for McpToolSet {
             .map_or(0.0, |native| native.drain_sub_agent_spend_usd())
     }
 
-    /// Forwarded from the native layer: letting the empty default stand would
-    /// silently serialize its sibling spawns (see the port's contract).
-    /// External MCP tools never carry this claim — the port pins their
-    /// concurrency to `read_only`, which they are advertised without.
-    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.native
             .as_ref()
-            .map_or_else(Default::default, |native| native.parallel_safe_names())
+            .and_then(|native| native.drain_wait_request())
     }
 }
 
@@ -624,11 +623,12 @@ impl ToolExecutor for CandidateMcpView {
         self.inner.drain_sub_agent_spend_usd()
     }
 
-    /// Forwarded from the candidate's own `native` layer — the executor every
-    /// non-`mcp__` name routes to in `execute` above. `inner`'s set would name
-    /// tools this view never runs, and MCP tools never carry the claim.
-    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-        self.native.parallel_safe_names()
+    /// Forwarded so a swallowed wait request cannot turn parked waits
+    /// (#1471) back into model-step polling — to `native`, not `inner`:
+    /// remote MCP tools never deposit wait requests, and the native layer
+    /// this view executes (`ci_status` included) is the only depositor.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.native.drain_wait_request()
     }
 }
 

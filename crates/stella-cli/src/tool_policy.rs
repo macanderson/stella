@@ -103,14 +103,11 @@ impl ToolExecutor for PolicyToolSet<'_> {
         self.inner.get().drain_sub_agent_spend_usd()
     }
 
-    /// Forwarded minus what the policy withholds. Letting the empty default
-    /// stand would silently serialize the inner executor's sibling spawns —
-    /// but blindly delegating would advertise names `execute` above refuses,
-    /// an empty promise. Same two-sided shape as `schemas`/`execute`.
-    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
-        let mut names = self.inner.get().parallel_safe_names();
-        names.retain(|name| self.policy.allows(name));
-        names
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.get().drain_wait_request()
     }
 }
 
