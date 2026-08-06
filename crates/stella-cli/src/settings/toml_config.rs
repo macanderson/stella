@@ -198,6 +198,8 @@ pub struct AgentsSection {
     pub compaction_budget_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_result_horizon_steps: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_wait_secs: Option<u64>,
 
     // The four built-in agents, as tables. Serialized LAST so the flat scalars
     // above are not stranded after a table header — TOML would then read them
@@ -598,6 +600,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         model_timeout_secs: cfg.model_timeout_secs,
         compaction_budget_tokens: cfg.compaction_budget_tokens,
         tool_result_horizon_steps: cfg.tool_result_horizon_steps,
+        approval_wait_secs: cfg.approval_wait_secs,
         default: per_agent.default,
         worker: per_agent.worker,
         verifier: per_agent.verifier,
@@ -670,6 +673,7 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         model_timeout_secs: agents.model_timeout_secs,
         compaction_budget_tokens: agents.compaction_budget_tokens,
         tool_result_horizon_steps: agents.tool_result_horizon_steps,
+        approval_wait_secs: agents.approval_wait_secs,
         agents: agents_field,
     })
 }

@@ -261,3 +261,85 @@ fn a_session_without_an_index_falls_back_to_raw_tails() {
     follower.pump(&mut out, &mut err).unwrap();
     assert_eq!(String::from_utf8_lossy(&out), "legacy\n");
 }
+
+/// The #1616 witness: a panic ends the pump instead of leaving it to die
+/// unjoined with the process.
+///
+/// What the drain does is restore the fd — which closes the pipe's last write
+/// end, so the pump reads EOF, writes everything it holds, and records its
+/// `Closed` marker. That marker is the assertion, because it is the one thing
+/// that cannot happen by luck: a pump that was never drained is still blocked
+/// on its pipe when the process exits, and up to a buffer of output (the panic
+/// message, in a real supervised child) dies with it. On `main` there is no
+/// panic hook and no shareable drain — `arm_panic_drain` does not exist — so
+/// this test does not compile there, let alone pass.
+///
+/// The pump is interposed on a private descriptor rather than on fd 1, so the
+/// test runner's own stdout is never hijacked; everything downstream of the
+/// `dup2` is the production path.
+#[cfg(unix)]
+#[test]
+fn a_panic_drains_the_console_pump() {
+    use std::os::unix::io::IntoRawFd;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sidecar = dir.path();
+    let console = sidecar.join(supervised::STDOUT_LOG);
+    // A descriptor naming the console file — what the OS redirect hands a
+    // supervised child, and what `pump_fd` expects to interpose on.
+    let target_fd = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&console)
+        .unwrap()
+        .into_raw_fd();
+    let stream = pump_fd(
+        console.clone(),
+        target_fd,
+        Stream::Stdout,
+        Arc::new(Mutex::new(Index::open(sidecar))),
+        Arc::new(SharedGeometry::default()),
+    )
+    .unwrap();
+    let guard = ConsoleGuard {
+        pumps: Arc::new(Drainable {
+            streams: Mutex::new(vec![stream]),
+        }),
+    };
+
+    arm_panic_drain(&guard);
+    let last_words = b"thread 'main' panicked: the supervised child died\n";
+    // SAFETY: `target_fd` is this test's own descriptor, now the pipe's write
+    // end, and the buffer outlives the call.
+    unsafe {
+        libc::write(target_fd, last_words.as_ptr().cast(), last_words.len());
+    }
+
+    let panicked = std::panic::catch_unwind(|| panic!("the supervised child died"));
+    assert!(panicked.is_err());
+    // Restore the hook this test installed process-wide before asserting, so
+    // a failure below cannot leave the harness carrying it.
+    let _ = std::panic::take_hook();
+
+    let index = std::fs::read_to_string(sidecar.join(INDEX)).unwrap_or_default();
+    let closed = index
+        .lines()
+        .filter_map(|line| serde_json::from_str::<IndexRecord>(line).ok())
+        .any(|record| matches!(record, IndexRecord::Closed { s, .. } if s == Stream::Stdout));
+    assert!(
+        closed,
+        "the panic hook must drain the pump: no Closed marker means it was \
+         still blocked on the pipe when the panic unwound\n{index}"
+    );
+    assert!(
+        String::from_utf8_lossy(&std::fs::read(&console).unwrap()).contains("the supervised child"),
+        "and everything the pipe held must have reached the console file"
+    );
+
+    // SAFETY: the descriptor is this test's own and no longer used. The drain
+    // restored it over the pipe, so this closes the console file, not the pump.
+    unsafe {
+        libc::close(target_fd);
+    }
+}

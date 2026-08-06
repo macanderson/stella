@@ -102,6 +102,7 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "model_timeout_secs",
     "compaction_budget_tokens",
     "tool_result_horizon_steps",
+    "approval_wait_secs",
     "agents",
 ];
 
