@@ -432,7 +432,7 @@ fn wall_ms() -> u64 {
 ///
 /// The pumps live behind an `Arc` rather than in this struct because two
 /// different code paths have to be able to end them: `main`'s orderly exit,
-/// and the panic hook [`arm_panic_drain`] installs (#1616). Both call the
+/// and the panic hook [`install_panic_drain`] installs (#1616). Both call the
 /// same idempotent [`Drainable::drain`]; whichever arrives first takes the
 /// streams and the other finds nothing to do.
 pub(crate) struct ConsoleGuard {
@@ -468,6 +468,24 @@ impl ConsoleGuard {
     pub(crate) fn drain(&self) {
         #[cfg(unix)]
         self.pumps.drain();
+    }
+
+    /// Drain whatever guard is still in `cell`, unless the CURRENT thread is
+    /// one of the pumps it owns — see [`PUMP_THREAD_PREFIX`]. Idempotent and
+    /// safe to call from both the normal end-of-`main` path and a panic hook:
+    /// the two race to be first, and whichever wins performs the one real
+    /// drain; the loser finds `None` and does nothing.
+    pub(crate) fn drain_shared(cell: &Mutex<Option<ConsoleGuard>>) {
+        if std::thread::current()
+            .name()
+            .is_some_and(|name| name.starts_with(PUMP_THREAD_PREFIX))
+        {
+            return;
+        }
+        let guard = cell.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(guard) = guard {
+            guard.drain();
+        }
     }
 }
 
@@ -524,6 +542,27 @@ impl Drainable {
     }
 }
 
+/// Install a panic hook that drains `cell`'s console guard — restoring the
+/// real console fds via `dup2` — BEFORE the previously installed hook (the
+/// diagnostics ring dump, and beneath that the default hook) prints the
+/// panic message (#1616).
+///
+/// Release builds run with `panic = "abort"` (`Cargo.toml`), so this hook is
+/// the only cleanup this process ever gets on a panic — there is no unwind
+/// back to `main`'s own `drain_shared` call to fall back to. Without it, the
+/// default hook's message goes out fd 2 while it is still the pipe a pump
+/// thread reads asynchronously, and a process that aborts before the pump is
+/// next scheduled loses it — usually the one line a postmortem most wants.
+/// Restoring the fd first makes the same `eprintln!` land as an ordinary
+/// synchronous write to the console file instead.
+pub(crate) fn install_panic_drain(cell: Arc<Mutex<Option<ConsoleGuard>>>) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        ConsoleGuard::drain_shared(&cell);
+        previous(info);
+    }));
+}
+
 /// Interpose the bounded pumps on this process's stdout and stderr.
 ///
 /// Called once, in the supervised child, before its first byte of ordinary
@@ -558,35 +597,6 @@ pub(crate) fn install_bounded(sidecar: &Path) -> Option<ConsoleGuard> {
                 streams: Mutex::new(streams),
             }),
         })
-    }
-}
-
-/// Drain the console when this process panics, before the panic message is
-/// lost (#1616).
-///
-/// The pump made the console's tail lossy on a violent death: a panic unwinds
-/// past `main`'s orderly [`ConsoleGuard::drain`], the process exits without
-/// joining the pump threads, and up to a pipe buffer of output — the panic
-/// message itself, most of the time — dies in the pipe. That is the one
-/// artifact a postmortem of a supervised child actually wants.
-///
-/// The hook chains rather than replaces: whatever hook is already installed
-/// (the diagnostics dump, or the default printer) runs FIRST, so its output
-/// goes down the pipe like everything else, and only then is the pipe drained
-/// into the file. Draining first would restore the fds and leave the panic
-/// message to land raw — readable, but ahead of the pump's own `Closed`
-/// marker and outside the bound.
-pub(crate) fn arm_panic_drain(guard: &ConsoleGuard) {
-    #[cfg(not(unix))]
-    let _ = guard;
-    #[cfg(unix)]
-    {
-        let pumps = guard.pumps.clone();
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            previous(info);
-            pumps.drain();
-        }));
     }
 }
 
