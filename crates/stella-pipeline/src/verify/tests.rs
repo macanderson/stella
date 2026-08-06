@@ -5,6 +5,8 @@
 use super::*;
 use proptest::prelude::*;
 
+mod uncollected;
+
 // FlipOracle transitions
 
 #[test]
@@ -338,91 +340,6 @@ fn a_readable_empty_diff_is_not_blindness() {
         }),
         LadderDecision::ModelVerdict,
     );
-}
-
-/// #1701: the nginx trial's ladder inputs. Ten calls able to write, a diff
-/// probe that ran and read an unchanged tree, and nothing else that could
-/// speak. The run reported `passed: true, deterministic: true, rung: waived`.
-///
-/// The mirror image of `every_channel_blind_abstains_…` above: there, no
-/// channel could look; here, they looked and none of them saw work that was
-/// demonstrably done. Both are the same epistemic state — the turn went
-/// unobserved — so both abstain, and neither may claim.
-#[test]
-fn effects_that_escaped_collection_abstain_rather_than_claim_a_clean_tree() {
-    let inputs = LadderInputs {
-        flip_achieved: false,
-        touched_tests_passed: None,
-        diff_lines: 0,
-        diff_budget: 100,
-        diff_available: true,
-        file_change_events: 0,
-        mutating_actions: 10,
-        ..Default::default()
-    };
-    assert!(inputs.effects_escaped_collection());
-    assert!(
-        !inputs.nothing_was_attempted(),
-        "ten dispatched calls is the opposite of the no-op rung's premise"
-    );
-    assert_eq!(ladder_decision(&inputs), LadderDecision::Unverifiable);
-
-    // And the summary must not borrow the blind rung's excuse. This probe
-    // worked; saying it could not read the tree would send a reader to repair
-    // the one part of this that was functioning.
-    let evidence = unverifiable_evidence(&inputs);
-    assert!(evidence.summary.starts_with("UNVERIFIABLE"));
-    assert!(!evidence.deterministic);
-    assert!(
-        !evidence.summary.contains("could not read the working tree"),
-        "the probe read it fine: {}",
-        evidence.summary
-    );
-    assert!(
-        evidence.summary.contains("10"),
-        "and the count that contradicts a clean tree has to appear: {}",
-        evidence.summary
-    );
-}
-
-/// The guard rails on the new rung: any single corroborating observation takes
-/// the turn back to a rung that can credit it. Abstention is for the state
-/// where *nothing* saw the work, not for every empty diff.
-#[test]
-fn one_corroborating_observation_lifts_the_turn_off_the_abstain_rung() {
-    let escaped = LadderInputs {
-        flip_achieved: false,
-        touched_tests_passed: None,
-        diff_lines: 0,
-        diff_budget: 100,
-        diff_available: true,
-        file_change_events: 0,
-        mutating_actions: 10,
-        ..Default::default()
-    };
-    for (label, inputs) in [
-        (
-            "a recorded file touch proves the tree moved",
-            LadderInputs {
-                file_change_events: 3,
-                ..escaped
-            },
-        ),
-        (
-            "a green test is an observation of the work",
-            LadderInputs {
-                touched_tests_passed: Some(true),
-                ..escaped
-            },
-        ),
-    ] {
-        assert!(!inputs.effects_escaped_collection(), "{label}");
-        assert_ne!(
-            ladder_decision(&inputs),
-            LadderDecision::Unverifiable,
-            "{label}"
-        );
-    }
 }
 
 /// The `regex-log` Terminal-Bench 2.1 trial, reconstructed as ladder

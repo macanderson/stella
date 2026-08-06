@@ -550,11 +550,10 @@ impl LadderInputs {
 ///    mutating call and nothing observed a change. Checked *above* the blind
 ///    rung, which it would otherwise satisfy — and does not fall through to
 ///    it, because "no action was taken" is knowledge, not an absence of it.
-/// 3. **Every channel blind → `Unverifiable`.** Nothing could observe this
-///    turn, so nothing may be claimed about it — in particular not a failure.
-/// 3b. **Effects escaped collection → `Unverifiable`.** The mirror image: every
-///    channel *could* look and none of them saw the work this run demonstrably
-///    dispatched. Equally unobserved, equally unclaimable.
+/// 3. **The turn went unobserved → `Unverifiable`.** Two routes, one state.
+///    Either every channel was blind, or every channel could look and none of
+///    them saw the work this run demonstrably dispatched. Nothing may be
+///    claimed about it — in particular not a failure.
 /// 4. **Flip + green + within budget → `SubmitFast`.** The full deterministic
 ///    pass: verifier skipped.
 /// 5. **Otherwise → `ModelVerdict`.** Genuinely inconclusive: no flip, or the
