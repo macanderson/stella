@@ -1126,8 +1126,9 @@ pub fn verifier_prompt(
 }
 
 /// The distress-guidance prompt: spent only when the worker is demonstrably
-/// stuck — the *second consecutive* deterministic test failure in the revise
-/// loop (`PipelineConfig::distress_guidance`). Not a verdict (the failure is
+/// stuck — the *second* deterministic test failure a candidate accumulates in
+/// the revise loop, consecutive or not (#868 chose the cumulative ledger;
+/// `PipelineConfig::distress_guidance`). Not a verdict (the failure is
 /// already deterministic — re-judging it would be spend without information,
 /// L-E11); the verifier model instead reads goal + diff + failing evidence and
 /// returns concrete course-correction the next revision turn carries. This is

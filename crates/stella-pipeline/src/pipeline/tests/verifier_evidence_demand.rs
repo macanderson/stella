@@ -314,7 +314,7 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
         test_command: Some("cargo test -p x".into()),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         // Off so the model script stays a pure count of worker turns — the
-        // second consecutive red would otherwise buy a guidance call, which
+        // second deterministic red would otherwise buy a guidance call, which
         // has its own witnesses.
         distress_guidance: false,
         // `max_revisions` stays at the default 2: the subject is that BOTH

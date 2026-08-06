@@ -206,8 +206,9 @@ heuristic verdict rather than hanging or guessing.
 ### 8. Revise
 
 A failed verification sends the worker back with the failure evidence — up to
-a bounded number of revision turns (2 by default). Once a revision has
-deterministically failed, stella spends one verifier call on **distress guidance**:
+a bounded number of revision turns (2 by default). Once a candidate has
+deterministically failed twice — consecutive or not — stella spends one
+verifier call on **distress guidance**:
 a course-correction note that rides with the next revision prompt instead of
 letting the worker keep digging the same hole.
 
