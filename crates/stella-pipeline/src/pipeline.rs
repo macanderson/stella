@@ -2870,6 +2870,7 @@ impl<'a> Pipeline<'a> {
                     // than being forwarded (§4.3).
                     let feedback = self
                         .airlock_forward(&verdict.reasoning, "verifier_reasoning", &sealed)
+                        .map(|text| crate::verify::bound_forwarded_reasoning(&text))
                         .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
                     if let Err(abort) = self
                         .revise_candidate(engine, surface, budget, &feedback, total, &mut state)
