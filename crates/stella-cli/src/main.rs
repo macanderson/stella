@@ -1006,8 +1006,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &prompt),
                     prompt.as_bytes(),
-                )
-                .map_err(failure::CliFailure::from);
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1057,8 +1056,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &goal),
                     goal.as_bytes(),
-                )
-                .map_err(failure::CliFailure::from);
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1087,8 +1085,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         },
                     ),
                     &[],
-                )
-                .map_err(failure::CliFailure::from);
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1114,8 +1111,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &format!("monitor {target}")),
                     &[],
-                )
-                .map_err(failure::CliFailure::from);
+                ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status
             // itself) ends the loop only on a fully green latest run.

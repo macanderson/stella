@@ -23,6 +23,7 @@ use clap::Subcommand;
 use serde_json::Value;
 use stella_core::fullauto::{self, CycleOutcome, CycleRecord, Demand, Tooling};
 
+use crate::query_format::{QueryFormat, Rows};
 use crate::timefmt::{now_unix, rfc3339_utc_now};
 use state::LoopState;
 
@@ -48,15 +49,15 @@ pub(crate) enum FullautoCmd {
         #[arg(long)]
         dry_streak: bool,
 
-        /// Output format: text, or the ledger's records as json under the
-        /// versioned query envelope.
+        /// Output format: the human summary, or the ledger's records under
+        /// the versioned query envelope (#1568).
         #[arg(
             long,
             value_enum,
             default_value = "text",
             conflicts_with = "dry_streak"
         )]
-        format: crate::query_format::QueryFormat,
+        format: QueryFormat,
     },
 
     /// Allocate a cycle or append its ledger record.
@@ -136,10 +137,10 @@ pub(crate) enum FullautoCmd {
         #[arg(long, default_value_t = 20)]
         limit: usize,
 
-        /// Output format: text, or the picked issues as json under the
-        /// versioned query envelope.
+        /// Output format: the ranked table, or the picked issues under the
+        /// versioned query envelope (#1568).
         #[arg(long, value_enum, default_value = "text")]
-        format: crate::query_format::QueryFormat,
+        format: QueryFormat,
     },
 
     /// Run lifecycle — a RUN spans many cycles and is the unit a person
@@ -452,27 +453,21 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
 // state / cycle
 // ---------------------------------------------------------------------------
 
-fn cmd_state(
-    st: &LoopState,
-    dry_streak: bool,
-    format: crate::query_format::QueryFormat,
-) -> Result<(), String> {
+fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<(), String> {
     if dry_streak {
         let streak = fullauto::dry_streak(&st.cycles(), &st.aperture());
         println!("{streak}");
         return Ok(());
     }
-    if format == crate::query_format::QueryFormat::Json {
-        let cycles = st.cycles();
+    let cycles = st.cycles();
+    if format == QueryFormat::Json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&crate::query_format::Rows::new(&cycles))
-                .map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&Rows::new(&cycles)).map_err(|e| e.to_string())?
         );
         return Ok(());
     }
 
-    let cycles = st.cycles();
     say(&format!("fullauto state — {}", st.dir.display()));
     println!("  cycle           {}", st.cycle_counter());
     println!(
@@ -844,11 +839,7 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
     Ok(())
 }
 
-fn queue(
-    _st: &LoopState,
-    limit: usize,
-    format: crate::query_format::QueryFormat,
-) -> Result<(), String> {
+fn queue(_st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
     let raw = gh_plain(&[
         "issue",
         "list",
@@ -867,11 +858,10 @@ fn queue(
     let defects = fullauto::rank_defects(issues);
     let picked = &defects[..limit.min(defects.len())];
 
-    if format == crate::query_format::QueryFormat::Json {
+    if format == QueryFormat::Json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&crate::query_format::Rows::new(picked))
-                .map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&Rows::new(picked)).map_err(|e| e.to_string())?
         );
         return Ok(());
     }

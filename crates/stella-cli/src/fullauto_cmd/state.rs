@@ -429,6 +429,10 @@ impl LoopState {
 /// overwrite: if both exist the new home wins and the legacy directory is
 /// left untouched for the user to inspect.
 fn migrate_legacy_state(new_dir: &Path, slug: &str) {
+    // Through `crate::paths`, never a raw env read of the home anchor — that
+    // indirection is what lets a test redirect it without mutating
+    // process-global state (#1139), and the guard in `paths.rs` greps this
+    // crate's sources (comments included) for the forbidden spelling.
     let Some(home) = crate::paths::home() else {
         return;
     };
