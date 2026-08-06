@@ -228,3 +228,61 @@ fn install_writes_once_and_uninstall_removes() {
         "uninstalling twice is the requested state, not a failure"
     );
 }
+
+/// #1627's install side: `--resume-all` registers the sweep and nothing else,
+/// and refuses the two combinations that would turn a boot-time *resume* back
+/// into a boot-time *restart* or a spend loop.
+#[test]
+fn resume_all_registers_the_sweep_and_refuses_a_command_or_keep_alive() {
+    assert_eq!(
+        resolve_command(true, false, &[]).unwrap(),
+        crate::daemon::boot::registered_argv(),
+        "--resume-all registers `stella daemon resume-all`, which continues \
+         interrupted turns rather than starting anything over"
+    );
+
+    let err = resolve_command(true, false, &args(&["run", "ship it"])).unwrap_err();
+    assert!(
+        err.contains("--resume-all"),
+        "a command beside --resume-all would leave `run` restarting work at \
+         every boot: {err}"
+    );
+
+    let err = resolve_command(true, true, &[]).unwrap_err();
+    assert!(
+        err.contains("attempt bound"),
+        "a restarted sweep would exhaust its own boot-attempt bound: {err}"
+    );
+
+    let err = resolve_command(false, false, &[]).unwrap_err();
+    assert!(
+        err.contains("--resume-all"),
+        "the empty-command error must name the other way to ask: {err}"
+    );
+    assert_eq!(
+        resolve_command(false, false, &args(&["monitor"])).unwrap(),
+        args(&["monitor"]),
+        "an ordinary registration is untouched"
+    );
+}
+
+/// The registered boot definition carries the resume verb and no prompt — the
+/// bytes launchd and systemd actually read at boot.
+#[test]
+fn the_boot_definition_registers_the_resume_sweep_on_both_platforms() {
+    let argv = crate::daemon::boot::registered_argv();
+    let mut spec = spec(&argv, false);
+    spec.label = crate::daemon::boot::BOOT_LABEL;
+
+    let plist = launchd_plist(&spec).unwrap();
+    assert!(plist.contains("<string>daemon</string>"), "{plist}");
+    assert!(plist.contains("<string>resume-all</string>"), "{plist}");
+    assert!(
+        !plist.contains("KeepAlive"),
+        "the sweep resumes what a boot interrupted and exits: {plist}"
+    );
+
+    let unit = systemd_unit(&spec).unwrap();
+    assert!(unit.contains("\"daemon\" \"resume-all\""), "{unit}");
+    assert!(!unit.contains("Restart="), "{unit}");
+}

@@ -106,6 +106,11 @@ use crate::DaemonCmd;
 /// supervision alone cannot cross.
 mod service;
 
+/// `resume-all` and `install --resume-all`: the boot-time sweep (#1627) that
+/// makes a registered service *continue* the turns a reboot killed rather
+/// than restart them.
+mod boot;
+
 pub(crate) mod approval;
 pub(crate) mod console;
 
@@ -1063,6 +1068,18 @@ pub(crate) fn resume_supervised(
     watch(rt, &registry, run)
 }
 
+/// `stella daemon resume-all` — the boot-time sweep (#1627).
+///
+/// Thin on purpose: the decision about *which* runs a boot continues, and the
+/// bound that stops it continuing them forever, live in [`boot`] where they
+/// are pure enough to witness.
+pub(crate) fn resume_all<F>(dry_run: bool, runtime: F) -> Result<(), String>
+where
+    F: FnMut() -> Result<tokio::runtime::Runtime, String>,
+{
+    boot::resume_all(dry_run, runtime)
+}
+
 /// The resume point `record` left behind, decoded — or the precise reason
 /// there is nothing to resume.
 ///
@@ -1212,11 +1229,15 @@ pub(crate) fn run(cmd: &DaemonCmd) -> Result<(), String> {
         // `--foreground` child half needs the provider resolution this
         // registry-only dispatcher exists to run before.
         DaemonCmd::Resume { .. } => unreachable!("daemon resume is dispatched in main"),
+        // Same routing, same reason: the sweep spawns and streams the runs it
+        // continues, so it needs the runtime `main` owns (#1627).
+        DaemonCmd::ResumeAll { .. } => unreachable!("daemon resume-all is dispatched in main"),
         DaemonCmd::Install {
             label,
             keep_alive,
+            resume_all,
             command,
-        } => service::install(label.as_deref(), *keep_alive, command),
+        } => service::install(label.as_deref(), *keep_alive, *resume_all, command),
         DaemonCmd::Uninstall { label } => service::uninstall(label),
     }
 }
