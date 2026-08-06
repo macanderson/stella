@@ -72,4 +72,8 @@ if [ "$deny_list" != "$review_list" ]; then
   exit 1
 fi
 
-echo "check-license-allowlist-parity: OK — deny.toml and dependency-review.yml agree on $(printf '%s\n' "$deny_list" | wc -l | tr -d '[:space:]') licenses."
+# The verdict is already decided; the write is best-effort. SIGPIPE is ignored
+# and the write's failure discarded, so a reader that closed the pipe
+# (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
+trap '' PIPE
+echo "check-license-allowlist-parity: OK — deny.toml and dependency-review.yml agree on $(printf '%s\n' "$deny_list" | wc -l | tr -d '[:space:]') licenses." || true

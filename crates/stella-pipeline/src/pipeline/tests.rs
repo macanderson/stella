@@ -1888,7 +1888,7 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
         matches!(
             event,
             AgentEvent::Error { message, retryable: true }
-                if message.contains("no author independent of the worker")
+                if message.contains("no model independent of the worker")
         )
     });
     assert!(warned, "the degradation is announced: {events:?}");
@@ -1897,7 +1897,7 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
             event,
             AgentEvent::Proof {
                 step: stella_protocol::ProofStep::WitnessUnavailable { reason }
-            } if reason.contains("no author independent of the worker")
+            } if reason.contains("no model independent of the worker")
         )
     });
     assert!(
@@ -2382,6 +2382,10 @@ mod verification_hardening;
 /// declining to ask where no tracked command could ever answer. A child
 /// module, so it reaches the scripted ports above via `super::*`.
 mod verifier_evidence_demand;
+/// Verifier != worker for the verdict call (#1795): the opt-in refusal and
+/// the structured grader-independence fact on the snapshot. A child module,
+/// so it reaches the scripted ports above via `super::*`.
+mod verifier_independence;
 /// Proportionate verification: changes with nothing to prove complete with a
 /// stated reason rather than escalating. A child module, so it reaches the
 /// scripted ports above via `super::*`.

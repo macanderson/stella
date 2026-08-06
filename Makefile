@@ -327,6 +327,10 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 file-size-test: ## Test which languages the file-size ratchet actually watches (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
 
+.PHONY: guard-sigpipe-test
+guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)
+	./scripts/test-guard-sigpipe.sh
+
 .PHONY: releases-published
 releases-published: ## Assert every v* tag older than the grace window has a published release (#1464)
 	@./scripts/check-releases-published.sh
@@ -339,6 +343,10 @@ releases-baseline-update: ## Grandfather the tags that shipped nothing and never
 .PHONY: releases-published-test
 releases-published-test: ## Test the tag/release reconciliation rule (hermetic; not part of `gate`)
 	./scripts/test-releases-published.sh
+
+.PHONY: guard-sigpipe-test
+guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)
+	./scripts/test-guard-sigpipe.sh
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)

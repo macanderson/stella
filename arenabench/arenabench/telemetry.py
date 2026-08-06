@@ -822,6 +822,11 @@ class TranscriptState:
     open_entries: dict[str, int] = field(default_factory=dict)
     #: ``call_id`` -> entry sequence, so a tool result can find its call.
     tool_index: dict[str, int] = field(default_factory=dict)
+    #: The last fragment-built text entry not yet superseded by its
+    #: consolidated ``text`` event. Outlives ``open_entries`` on purpose:
+    #: ``step_usage`` routinely closes the run *before* the consolidated
+    #: event arrives, and the consolidation must still find its run.
+    pending_text: int | None = None
 
 
 class TranscriptReader:
@@ -925,7 +930,10 @@ class TranscriptReader:
             }
 
         # ---- streaming text / reasoning: coalesce into one growing entry ----
-        if kind in ("text", "text_delta", "reasoning"):
+        # The field names are crossed on the wire and that is the trap:
+        # `text_delta` events carry a *fragment* (in `text`), while the one
+        # `text` event per message carries the *complete* body (in `delta`).
+        if kind in ("text_delta", "reasoning"):
             bucket = "reasoning" if kind == "reasoning" else "text"
             fragment = str(event.get("delta") or event.get("text") or "")
             if not fragment:
@@ -934,6 +942,8 @@ class TranscriptReader:
             if seq is None:
                 seq = self._next_seq(state)
                 state.open_entries[bucket] = seq
+                if bucket == "text":
+                    state.pending_text = seq
             key = (path_key, seq)
             self._bodies[key] = self._bodies.get(key, "") + fragment
             return [
@@ -945,6 +955,25 @@ class TranscriptReader:
                     streaming=True,
                 )
             ]
+
+        if kind == "text":
+            # The consolidated message. It REPLACES the fragment run rather
+            # than appending to it: appending rendered every response twice
+            # (once assembled from fragments, once whole), and replacing also
+            # self-heals any fragment this reader never saw. `pending_text`
+            # rather than `open_entries` finds the run, because a `step_usage`
+            # usually closed the run before this event arrived. The message is
+            # complete, so both trackers reset here.
+            full = str(event.get("delta") or event.get("text") or "")
+            if not full:
+                return []
+            seq = state.open_entries.get("text") or state.pending_text
+            if seq is None:
+                seq = self._next_seq(state)
+            state.open_entries.clear()
+            state.pending_text = None
+            self._bodies[(path_key, seq)] = full
+            return [entry(seq, "text", "response", full)]
 
         # Any non-delta event closes the open text/reasoning runs, so the next
         # fragment starts a fresh entry rather than reopening a finished one.

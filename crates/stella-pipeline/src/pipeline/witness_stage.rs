@@ -57,6 +57,18 @@ fn apply_role_shaping(mut config: EngineConfig, overrides: &RoleCallOverrides) -
     config
 }
 
+/// The recorded symptom of the authored witness's arming failure (#1790):
+/// `Some("build_failure")` when the failing baseline never ran a test —
+/// classified by the airlock's lexical rules over the run's own output —
+/// and `None` for every failure shape that reached an assertion. Pure so
+/// the classification is testable apart from the stage.
+fn witness_baseline_symptom(baseline_output: &str) -> Option<&'static str> {
+    match crate::witness::airlock::SymptomClass::classify(baseline_output) {
+        crate::witness::airlock::SymptomClass::BuildFailure => Some("build_failure"),
+        _ => None,
+    }
+}
+
 /// Candidate-bound hook execution: both the hook process and the engine's
 /// payload use the isolated root, never the session root.
 pub(super) struct BoundHookRunner<'a> {
@@ -81,9 +93,11 @@ impl HookRunner for BoundHookRunner<'_> {
 ///
 /// `degradable` = the witness simply couldn't be AUTHORED (no test command,
 /// an unusable command, a test that proves nothing, the author engine getting
-/// stuck). The task needs no witness to proceed, so the run degrades to a
-/// bare worker turn rather than dying. NOT degradable = a resource limit
-/// (budget) or an artifact-INTEGRITY violation (the author modified tracked
+/// stuck, a budget stop mid-authoring — #1789: the worker's change is already
+/// done, and the budget guard still gates every later paid call, so degrading
+/// preserves the work without overspending). The task needs no witness to
+/// proceed, so the run degrades to a bare worker turn rather than dying. NOT
+/// degradable = an artifact-INTEGRITY violation (the author modified tracked
 /// files, produced a non-single-file / symlink artifact, or a runner/identity
 /// mismatch) — fail-closed decisions that surface the problem rather than
 /// silently completing unverified.
@@ -236,8 +250,7 @@ impl<'a> Pipeline<'a> {
         authoring: WitnessAuthoring<'_>,
         baseline: CandidateSurface<'_>,
         candidate: CandidateSurface<'_>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<Option<Witness>, WitnessAbort> {
         // `port` is deliberately not used here: the caller has already spent it
         // to make `baseline`, and a second snapshot from inside this stage would
@@ -265,9 +278,16 @@ impl<'a> Pipeline<'a> {
         let tracked_before = baseline.repo_status.tracked_fingerprints().await;
         let untracked_before = baseline.repo_status.untracked_fingerprints().await;
         let structure = self.repo.structure_summary().await;
-        let baseline_workspace = baseline
-            .workspace
-            .expect("witness authoring requires a pristine baseline workspace");
+        // Degrade, never panic (#1789): this stage's whole contract is that a
+        // witness which cannot be produced must not cost the run — a caller
+        // wiring a surface without a workspace is exactly such a case, and
+        // the one stage designed to degrade must not be the one that panics.
+        let Some(baseline_workspace) = baseline.workspace else {
+            return Err(WitnessAbort::degradable(
+                "witness authoring requires a pristine baseline workspace and none was provided"
+                    .to_string(),
+            ));
+        };
         let witness_tools = baseline_workspace.witness_tools();
         let mut engine = Engine::with_sleeper(
             author.provider,
@@ -295,17 +315,13 @@ impl<'a> Pipeline<'a> {
         // what the worker did toward the goal. A test file written here is not
         // the change under verification, and counting it as a mutating action
         // would let an authored witness disguise a worker that never acted.
-        let mut file_changes = 0u32;
-        let mut mutating_actions = 0u32;
-        let mut opaque_actions = 0u32;
+        let mut discarded_signals = ChangeSignals::default();
         let text = match self
             .run_engine_turn(
                 &engine,
                 &mut messages,
-                budget,
-                &mut file_changes,
-                &mut mutating_actions,
-                &mut opaque_actions,
+                spend.budget,
+                &mut discarded_signals,
                 // No flip halt: this turn is the witness AUTHOR writing the
                 // test, not the worker fixing the code. Stopping it because
                 // the tracked command went green would abandon the artifact
@@ -315,15 +331,27 @@ impl<'a> Pipeline<'a> {
             .await
         {
             TurnOutcome::Completed { text, cost_usd } => {
-                *total += cost_usd;
+                *spend.total += cost_usd;
                 text
             }
             TurnOutcome::Aborted {
                 reason, cost_usd, ..
             } => {
                 *total += cost_usd;
+                // A budget stop here is degradable too (#1789): the worker's
+                // change is already complete in the candidate, and discarding
+                // it because the SCAFFOLDING ran out of money threw away real
+                // work. Degrading cannot overspend — every later paid call
+                // still passes the same budget guard, which aborts the run at
+                // the next unaffordable call; what degrading buys is the
+                // deterministically-resolvable endings (a warranted waiver,
+                // an abstention) that need no further model spend at all.
                 if let Some(abort) = budget_abort(budget.evaluate()) {
-                    return Err(WitnessAbort::rejected(abort.reason));
+                    return Err(WitnessAbort::degradable(format!(
+                        "witness authoring stopped by the budget ({}); the executed change \
+                         stands unproven",
+                        abort.reason
+                    )));
                 }
                 return Err(WitnessAbort::degradable(format!(
                     "witness author turn aborted: {reason}"
@@ -391,25 +419,29 @@ impl<'a> Pipeline<'a> {
                 .run_engine_turn(
                     &repair_engine,
                     &mut messages,
-                    budget,
-                    &mut file_changes,
-                    &mut mutating_actions,
-                    &mut opaque_actions,
+                    spend.budget,
+                    &mut discarded_signals,
                     // Witness repair, same reasoning as the author turn.
                     None,
                 )
                 .await
             {
                 TurnOutcome::Completed { text, cost_usd } => {
-                    *total += cost_usd;
+                    *spend.total += cost_usd;
                     text
                 }
                 TurnOutcome::Aborted {
                     reason, cost_usd, ..
                 } => {
                     *total += cost_usd;
+                    // Degradable for the same #1789 reason as the author
+                    // turn's budget arm above.
                     if let Some(abort) = budget_abort(budget.evaluate()) {
-                        return Err(WitnessAbort::rejected(abort.reason));
+                        return Err(WitnessAbort::degradable(format!(
+                            "witness repair stopped by the budget ({}); the executed change \
+                             stands unproven",
+                            abort.reason
+                        )));
                     }
                     return Err(WitnessAbort::degradable(format!(
                         "witness repair turn aborted: {reason}"
@@ -498,9 +530,15 @@ impl<'a> Pipeline<'a> {
         // candidate's work is untouched and already done, so it falls through
         // to the unauthored ladder rather than being discarded for want of
         // scaffolding.
-        candidate
-            .workspace
-            .expect("witness grafting requires the candidate workspace")
+        // Same #1789 posture as the baseline workspace above: an absent
+        // candidate workspace loses the witness, never the run.
+        let Some(candidate_workspace) = candidate.workspace else {
+            return Err(WitnessAbort::degradable(
+                "witness grafting requires the candidate workspace and none was provided"
+                    .to_string(),
+            ));
+        };
+        candidate_workspace
             .graft_witness(baseline_workspace.root(), path)
             .await
             .map_err(|error| WitnessAbort::degradable(error.to_string()))?;
@@ -553,13 +591,12 @@ impl<'a> Pipeline<'a> {
         authoring: Option<WitnessAuthoring<'_>>,
         surface: CandidateSurface<'_>,
         state: &mut CandidateState,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<Option<Witness>, String> {
         let Some(authoring) = authoring else {
             return Ok(None);
         };
-        if !warrant(&state.diff_text, state.change_signals()).is_required() {
+        if !warrant(&state.diff_text, state.signals).is_required() {
             // No Witness stage is emitted, because none runs. The reason is
             // not lost: `warranted_completion` reads the same warrant during
             // verification and records the sentence on the verdict, which is
@@ -594,7 +631,7 @@ impl<'a> Pipeline<'a> {
             workspace: Some(baseline.as_ref()),
         };
         let authored = self
-            .witness_stage(goal, authoring, baseline_surface, surface, budget, total)
+            .witness_stage(goal, authoring, baseline_surface, surface, spend)
             .await;
         baseline.remove().await;
 
@@ -631,6 +668,23 @@ impl<'a> Pipeline<'a> {
                 .insert(path.clone(), identity.fingerprint.clone());
         }
         state.witness_paths = witness.files.keys().cloned().collect();
+        // #1790: a flip armed by a failure that never ran a test (a compile
+        // error) is legitimate — a missing-API witness FAILS TO BUILD on the
+        // old code by design — but it is weaker evidence than an assertion,
+        // and it is also the shape two-tree environment drift produces. It
+        // is recorded, surfaced in the verifier's evidence, and warned; it
+        // is deliberately not refused (that would reject the most common
+        // Rust witness shape).
+        state.witness_baseline_symptom = witness_baseline_symptom(&witness.baseline_output);
+        if state.witness_baseline_symptom.is_some() {
+            self.warn(
+                "the witness's failing baseline was a build failure, not a test failure — \
+                 correct for a missing-API goal, but the flip proves compilation, and \
+                 environment drift between the authoring snapshot and the candidate can \
+                 produce the same shape"
+                    .to_string(),
+            );
+        }
         Ok(Some(witness))
     }
 }
@@ -638,6 +692,24 @@ impl<'a> Pipeline<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1790's witness: a compile-error baseline is RECORDED, not refused —
+    /// refusal would reject the most common Rust witness shape (a missing-API
+    /// test fails to build on the old code by design), while silence hid the
+    /// same shape when environment drift produced it.
+    #[test]
+    fn a_build_failure_baseline_is_recorded_and_an_assertion_one_is_not() {
+        assert_eq!(
+            witness_baseline_symptom("error[E0425]: cannot find function `retry_delays`"),
+            Some("build_failure")
+        );
+        assert_eq!(
+            witness_baseline_symptom(
+                "thread 'witness' panicked at 'assertion failed: `(left == right)`'"
+            ),
+            None
+        );
+    }
 
     /// #1785's witness: the verifier's request shaping reaches the witness
     /// engines field by field, `None` overrides leave the worker's values

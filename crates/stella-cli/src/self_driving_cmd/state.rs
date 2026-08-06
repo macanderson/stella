@@ -141,7 +141,13 @@ impl LoopState {
                 let home = stella_home::stella_home()
                     .ok_or_else(|| "cannot resolve the stella home directory".to_string())?;
                 let slug = repo_slug(&repo_root);
-                let dir = home.join("self-driving").join(&slug);
+                // Through `stella-home`, never `home.join("self-driving")` — the
+                // observatory resolves this same root read-only, and #1755
+                // moved the spelling there precisely so the writer and the
+                // reader cannot drift. A second literal here is the drift.
+                let dir = stella_home::resolve_self_driving_root(Some(home.clone()))
+                    .ok_or_else(|| "cannot resolve the self-driving state root".to_string())?
+                    .join(&slug);
                 migrate_legacy_state(&dir, &slug, &home);
                 dir
             }
@@ -676,6 +682,23 @@ mod tests {
             "{\"cycle\":1}\n",
             "the ledger travels with the seen-set — the dry-streak oracle \
              folds it, so half a migration is a silently wrong streak"
+        );
+    }
+
+    /// The CURRENT root has the same two-readers problem as the legacy ones,
+    /// and #1810 factored out only half of it: the observatory moved to
+    /// `stella_home::self_driving_root`, while `LoopState::open` kept its own
+    /// `home.join("self-driving")`. Two literals for one path is exactly the
+    /// drift the shared resolver exists to prevent — a rename of the directory
+    /// in one of them would point the dashboard at nothing, silently.
+    #[test]
+    fn the_current_root_comes_from_the_shared_resolver() {
+        let home = PathBuf::from("/home/dev/.stella");
+        assert_eq!(
+            stella_home::resolve_self_driving_root(Some(home.clone())),
+            Some(home.join("self-driving")),
+            "the shared resolver must still produce the directory this crate \
+             writes and stella-observatory reads"
         );
     }
 

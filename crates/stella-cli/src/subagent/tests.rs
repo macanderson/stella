@@ -106,6 +106,68 @@ async fn the_production_tool_stack_forwards_sub_agent_spend() {
     );
 }
 
+/// The wait-request twin of the spend witness above: `drain_wait_request`
+/// has a `None` default, so any one decorator forgetting to forward would
+/// silently turn parked waits (#1471) back into model-step polling for
+/// every session composed through it — and no compiler would say so.
+#[tokio::test]
+async fn the_production_tool_stack_forwards_wait_requests() {
+    /// A leaf holding one deposited request, standing in for the registry.
+    struct WaitingBase(std::sync::Mutex<Option<stella_core::WaitRequest>>);
+
+    #[async_trait]
+    impl ToolExecutor for WaitingBase {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
+        fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+            self.0.lock().unwrap().take()
+        }
+    }
+
+    let request = stella_core::WaitRequest {
+        description: "CI for branch main settles".into(),
+        probe: stella_core::WaitCall {
+            name: "ci_status".into(),
+            input: json!({ "probe": true, "branch": "main" }),
+        },
+        baseline: "pending".into(),
+        on_wake: None,
+        poll_interval_secs: 15,
+        timeout_secs: 0,
+    };
+    let base = WaitingBase(std::sync::Mutex::new(Some(request.clone())));
+
+    let customs =
+        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
+    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &customs,
+        stub_tx,
+        crate::interactive::default_ask_io(false),
+    );
+    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
+    let discovery =
+        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+
+    assert_eq!(
+        discovery.drain_wait_request(),
+        Some(request),
+        "a deposited wait request must survive every decorator between the \
+         engine and the registry — one that swallows it re-enables polling"
+    );
+    assert_eq!(
+        discovery.drain_wait_request(),
+        None,
+        "and the drain stays destructive through the stack"
+    );
+}
+
 /// **The parallel-dispatch counterpart of the spend witness above.**
 ///
 /// `parallel_safe_names` has an empty default, so any decorator that forgets
@@ -184,6 +246,62 @@ async fn the_pool_binds_and_a_failed_child_charges_nothing() {
         pool.session_spent_usd(),
         0.0,
         "a failed child that never billed must not charge the pool"
+    );
+}
+
+/// A session that passed no `--budget` must still install a pool ceiling
+/// (#1849).
+///
+/// `DEFAULT_POOL_LIMIT_USD` was documented as the bound that stops "a model
+/// looping on `task`" and bound nothing: every production installer passed
+/// `None` to `with_pool_limit`, which means *unlimited*, not "keep the
+/// default". So an unbudgeted session whose model wedged on delegation ran
+/// every child to `max_steps` with no dollar bound at any layer.
+///
+/// Both halves are asserted, because the first alone is satisfiable by a
+/// ceiling that never reaches a child: the pool binds, AND a carve against it
+/// hands the child finite headroom. `carve(None, None)` on an unlimited pool
+/// yields `ceiling: None`, which is the shape that made this invisible.
+#[test]
+fn an_unbudgeted_session_still_installs_a_sub_agent_pool_ceiling() {
+    assert_eq!(
+        crate::subagent::session_pool_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "the documented default must be what a session actually installs"
+    );
+
+    // Constructed exactly as `install_for_session` constructs it — same mode,
+    // same limit. Only the provider differs, because building the real one
+    // needs credentials a unit test has no business holding.
+    let registry = registry();
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NeverProvider),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_pool_limit(crate::subagent::session_pool_limit_usd());
+
+    let pool = *dispatcher.pool.lock().unwrap();
+    assert_eq!(
+        pool.session_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "the pool must carry the ceiling, not an unbounded guard"
+    );
+
+    // The half that reaches the child: an unlimited pool carves an unlimited
+    // child, so a ceiling nothing inherits is the same as no ceiling.
+    let child = pool.carve(None);
+    assert_eq!(
+        child.session_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "a child carved against the pool must inherit finite headroom"
+    );
+    assert_eq!(
+        child.mode(),
+        stella_protocol::BudgetMode::Observed,
+        "and the session's mode — the pool warns, it does not stop (the \
+         parent's guard is the enforcing bound)"
     );
 }
 

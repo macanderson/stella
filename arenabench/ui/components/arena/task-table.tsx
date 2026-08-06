@@ -4,7 +4,6 @@ import * as React from "react";
 import type { Cell, ContestantSnap, Snapshot } from "@/lib/types";
 import { fmtClock, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import { Tip } from "@/components/ui/tooltip";
 
 /**
@@ -111,15 +110,7 @@ function Verdict({ cell }: { cell: Cell | null | undefined }) {
   );
 }
 
-export function TaskTable({
-  snapshot,
-  onOpenTranscript,
-  activeTask,
-}: {
-  snapshot: Snapshot;
-  onOpenTranscript: (task: string) => void;
-  activeTask: string | null;
-}) {
+export function TaskTable({ snapshot }: { snapshot: Snapshot }) {
   const seats = snapshot.contestants;
 
   return (
@@ -157,7 +148,6 @@ export function TaskTable({
           <tbody>
             {snapshot.rows.map((row) => {
               const won = winnersFor(row.cells, seats);
-              const isActive = row.task === activeTask;
               return seats.map((seat, seatIndex) => {
                 const cell = row.cells[seat.id];
                 return (
@@ -166,7 +156,6 @@ export function TaskTable({
                     style={seatStyle(seat.color)}
                     className={cn(
                       "border-b border-line-soft/60 align-middle",
-                      isActive && "bg-(--seat)/6",
                       seatIndex === seats.length - 1 && "border-b-line",
                     )}
                   >
@@ -224,14 +213,18 @@ export function TaskTable({
                     })}
                     {seatIndex === 0 && (
                       <td rowSpan={seats.length} className="px-3 py-2 text-right align-middle">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onOpenTranscript(row.task)}
+                        {/* A link, not a drawer: the transcript is its own
+                            page, so it can be bookmarked and shared. */}
+                        <a
+                          href={
+                            `/transcript?match=${encodeURIComponent(snapshot.match.id)}` +
+                            `&task=${encodeURIComponent(row.task)}`
+                          }
                           title={`Read the transcripts for ${row.task}`}
+                          className="inline-flex cursor-pointer items-center rounded-[7px] border border-line bg-transparent px-2.5 py-[5px] font-mono text-xs lowercase text-foreground transition-colors hover:border-dim"
                         >
                           transcript
-                        </Button>
+                        </a>
                       </td>
                     )}
                   </tr>

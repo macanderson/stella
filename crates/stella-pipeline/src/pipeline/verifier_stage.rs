@@ -123,7 +123,17 @@ impl<'a> Pipeline<'a> {
             .await
         {
             Ok(result) => match parse_verifier_response(&result.text) {
-                Some(verdict) => Ok(verdict),
+                Some(mut verdict) => {
+                    // The grader-independence fact (#1795), stated where the
+                    // resolution that graded is in hand. `None` when the
+                    // worker itself will not resolve — nothing to compare —
+                    // never a guess in either direction.
+                    verdict.verifier_independent = self
+                        .resolve_provider(Role::Worker)
+                        .ok()
+                        .map(|worker| worker.model_ref != resolved.model_ref);
+                    Ok(verdict)
+                }
                 None => {
                     self.warn_verifier_fallback(
                         "the verifier's response did not follow the verdict protocol",

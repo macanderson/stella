@@ -1,5 +1,5 @@
-//! The deck's task-board tap — split out of `command_deck.rs` (a god file
-//! closed to growth) when the tap grew its `parallel_safe_names` forward.
+//! The deck's task-board decorator, split out of `command_deck.rs` to keep
+//! it under the size gate (the `driver/settlement.rs` pattern).
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -53,6 +53,12 @@ impl ToolExecutor for TaskTap<'_> {
     /// budget (see the port's contract).
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
+    }
+
+    /// Forwarded for the same reason: a swallowed wait request silently
+    /// turns parked waits (#1471) back into model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.drain_wait_request()
     }
 
     /// Forwarded: letting the empty default stand would silently serialize

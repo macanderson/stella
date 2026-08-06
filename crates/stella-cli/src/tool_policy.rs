@@ -103,6 +103,13 @@ impl ToolExecutor for PolicyToolSet<'_> {
         self.inner.get().drain_sub_agent_spend_usd()
     }
 
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.get().drain_wait_request()
+    }
+
     /// Forwarded minus what the policy withholds. Letting the empty default
     /// stand would silently serialize the inner executor's sibling spawns —
     /// but blindly delegating would advertise names `execute` above refuses,

@@ -15,25 +15,9 @@ use stella_protocol::PolicyKind;
 
 use super::*;
 use crate::witness::airlock::FailureBrief;
-use crate::witness::warrant::{ChangeSignals, warrant};
+use crate::witness::warrant::warrant;
 
 impl CandidateState {
-    /// What this candidate *did*, in the form [`warrant`] reads it.
-    ///
-    /// One accessor rather than four literals at the four call sites, because
-    /// the two counts are both `u32` and mean opposite things: `file_changes`
-    /// is what a channel observed, `mutating_actions` is what this pipeline
-    /// dispatched. Transposing them at one call site would silently restore
-    /// #1701 — the warrant would guard on an observation channel that is
-    /// structurally dark inside a candidate.
-    pub(super) fn change_signals(&self) -> ChangeSignals {
-        ChangeSignals {
-            file_changes: self.file_changes,
-            mutating_actions: self.mutating_actions,
-            opaque_actions: self.opaque_actions,
-        }
-    }
-
     /// Record one deterministic failure and return how many times *this same*
     /// failure has now occurred, counting this one. `1` is a first sighting.
     ///
@@ -131,7 +115,7 @@ impl Pipeline<'_> {
         state: &CandidateState,
         snapshot: &stella_protocol::LadderSnapshot,
     ) -> Option<VerdictEvidence> {
-        let reason = warrant(&state.diff_text, state.change_signals()).reason()?;
+        let reason = warrant(&state.diff_text, state.signals).reason()?;
         if reason.warrants_independent_review() {
             return None;
         }
@@ -187,7 +171,7 @@ impl Pipeline<'_> {
     /// without a verifier). A behavioral diff, a deletion, or anything the diff
     /// machinery could not read keeps its reviewer, whatever triage guessed.
     pub(super) fn verifier_waiver_stands(state: &CandidateState) -> bool {
-        warrant(&state.diff_text, state.change_signals())
+        warrant(&state.diff_text, state.signals)
             .reason()
             .is_some_and(|reason| !reason.warrants_independent_review())
     }

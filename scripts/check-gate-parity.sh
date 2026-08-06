@@ -26,13 +26,14 @@
 #   2. Every step is named in CONTRIBUTING.md's gate fence, via the alias table
 #      below (that fence lists raw commands, on purpose — its reader wants to
 #      run them without make).
-#   3. Both documents' spelled-out count matches the real number of steps.
-#   4. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
+#   3. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
 #      gate step — which is how a removed guard leaves a ghost behind. Only
 #      that fence is checked this way: it is a delimited list of commands,
 #      whereas AGENTS.md's block is prose with parenthetical glosses.
 #
-# What it deliberately does NOT check: the prose *around* the lists. Whether
+# What it deliberately does NOT check: the spelled-out step total — that check
+# existed and was removed; see "The count is deliberately NOT checked any
+# more" below (#1883) — and the prose *around* the lists. Whether
 # "ci.yml's required job runs everything except invariants and doc-links" is
 # still true is a claim about a workflow, not about this list, and pretending a
 # grep could settle it would be worse than leaving it to review.
@@ -49,7 +50,23 @@ agents="AGENTS.md"
 contributing="CONTRIBUTING.md"
 
 fail=0
-note() { printf 'check-gate-parity: %s\n' "$1" >&2; }
+
+# The verdict is decided before anything is written (#1815). Failure lines are
+# buffered while the checks run and emitted in one final write: a guard that
+# prints as it scans dies mid-report when its reader exits early, and under
+# `set -euo pipefail` whatever partial state it had reached becomes the exit
+# status. scripts/check-file-size.sh is the shape being copied.
+report=""
+note() { report="${report}check-gate-parity: $1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
+}
 
 # ── The truth ────────────────────────────────────────────────────────────────
 
@@ -57,34 +74,38 @@ if ! steps="$(make -s print-gate-steps 2>/dev/null)"; then
   note "FAIL — could not read GATE_STEPS (\`make -s print-gate-steps\`)."
   note "     That target is what makes this guard derived rather than a"
   note "     second copy of the list. Restore it in the Makefile."
+  emit
   exit 1
 fi
 
 count="$(printf '%s\n' "$steps" | wc -w | tr -d ' ')"
 if [ "$count" -eq 0 ]; then
   note "FAIL — GATE_STEPS is empty."
+  emit
   exit 1
 fi
 
-# ── The count is deliberately NOT checked any more ───────────────────────────
-#
-# Both documents used to spell the total in prose ("the fifteen of them in
-# order") and this guard held them to it. That check is gone, and its removal
-# is the fix for a failure it caused rather than caught (#1883).
-#
-# The step NAMES are checked one at a time, so two PRs that each add a
-# different guard produce diffs that merge cleanly. The TOTAL is a single
-# shared cell both branches must write — and each writes its own correct
-# answer. On 2026-08-06 `module-reachability` and `self-driving-test` landed
-# within an hour of each other, each having dutifully updated both documents
-# to "twenty-four". The second merge left GATE_STEPS at 25 with the prose
-# saying 24, `docs guards` went red on `main`, and every open PR inherited it.
-# Twice in one day.
-#
-# Nothing was lost by dropping it. The count told a reader no fact the checked
-# list does not already carry: if every step is named, the number of them is
-# not independently knowable-wrong. It was a derived value maintained by hand,
-# which is the same defect this guard exists to prevent one level up.
+# Spelled-out numbers, because both documents spell the count in prose ("the
+# fifteen of them in order") and a digit would read wrong there. Covers a range
+# no plausible gate will leave.
+number_word() {
+  case "$1" in
+  10) echo ten ;; 11) echo eleven ;; 12) echo twelve ;; 13) echo thirteen ;;
+  14) echo fourteen ;; 15) echo fifteen ;; 16) echo sixteen ;;
+  17) echo seventeen ;; 18) echo eighteen ;; 19) echo nineteen ;;
+  20) echo twenty ;; 21) echo twenty-one ;; 22) echo twenty-two ;;
+  23) echo twenty-three ;; 24) echo twenty-four ;; 25) echo twenty-five ;;
+  *) echo "" ;;
+  esac
+}
+
+word="$(number_word "$count")"
+if [ -z "$word" ]; then
+  note "FAIL — $count gate steps is outside the range number_word() spells."
+  note "     Extend the table in this script; the documents spell the count."
+  emit
+  exit 1
+fi
 
 # CONTRIBUTING.md lists raw commands rather than make targets. Every guard is
 # `scripts/check-<target>.sh` except the ones named here, and the four compile
@@ -167,8 +188,10 @@ if [ "$fail" -ne 0 ]; then
   note "The gate's composition lives in GATE_STEPS in the Makefile, and these"
   note "two documents restate it for readers. When you add or remove a guard,"
   note "update all three in the same PR — that is what this guard is for."
+  emit
   exit 1
 fi
 
-printf 'check-gate-parity: OK — all %s gate steps are named in %s and %s.\n' \
-  "$count" "$agents" "$contributing"
+emit
+printf 'check-gate-parity: OK — %s (%s) gate steps, named in %s and %s.\n' \
+  "$count" "$word" "$agents" "$contributing" || true

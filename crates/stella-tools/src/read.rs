@@ -61,10 +61,28 @@ pub(crate) const MAX_LINES: usize = 2000;
 /// call when you want the file's actual contents.
 const MAX_LINE_BYTES: usize = 1_000;
 
-/// Ceiling on the whole rendered payload. 400 KB is ~114k estimated tokens —
-/// already more than any single tool result should spend, and the point at
-/// which the honest answer is "narrow the range", not "here is everything".
-const MAX_RENDER_BYTES: usize = 400 * 1024;
+/// Ceiling on the whole rendered payload.
+///
+/// This was 400 KB — about 114k estimated tokens, or **76% of the whole 150k
+/// compaction budget in one tool result**. That is worse than it sounds,
+/// because a single large result does not trigger compaction to reclaim
+/// itself: with the rest of the transcript small, `compact_measured` returns
+/// early (under budget) and the retention horizon
+/// (`tool_result_horizon_steps: Some(8)`) then keeps the result verbatim for
+/// the next eight tool-bearing steps. One read of a lockfile, a schema dump or
+/// a bundled JS file cost roughly 900k input tokens (#1842).
+///
+/// 64 KB is ~18k tokens, about 12% of that budget — a bound a turn can carry
+/// eight times over.
+///
+/// **The trade-off, stated rather than buried:** a full 2000-line read of
+/// ordinary source (~45 bytes a line, ~90 KB) now stops around line 1400 and
+/// the model pages once. That cost is deliberate and it is what the fix is —
+/// `read_file` already supports `offset`/`limit`, and the footer now names the
+/// exact line to resume from, so paging is one more call rather than a guess.
+/// Moving this number is one edit if a maintainer wants a different point on
+/// that curve.
+const MAX_RENDER_BYTES: usize = 64 * 1024;
 
 /// Ceiling on the file this tool will load at all.
 ///
@@ -73,7 +91,7 @@ const MAX_RENDER_BYTES: usize = 400 * 1024;
 /// file has been read, UTF-8-validated and sha256'd. `offset`/`limit` do not
 /// help — a one-line read of a 4 GB database dump paid for all 4 GB. Above
 /// this ceiling the honest answer is a named refusal that points at the tools
-/// which stream, not a multi-gigabyte allocation followed by a 400 KB answer.
+/// which stream, not a multi-gigabyte allocation followed by a 64 KB answer.
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// What one confined open of the target found. The classification travels
@@ -424,11 +442,18 @@ impl Tool for ReadFile {
                     );
                 }
                 if payload_capped {
+                    // Name the line to resume from, not just the existence of
+                    // more. "re-read with offset/limit to continue" left the
+                    // model to work out WHERE from — and the answer is not the
+                    // line count it can see, because `start` may be non-zero
+                    // and clipped lines still count as shown. A paging note
+                    // that costs a guess is a note that costs another read.
                     let _ = write!(
                         numbered,
-                        "{READ_FOOTER_CLAUSE_SEP}stopped at the {} KB payload cap — re-read \
-                         with offset/limit to continue",
-                        MAX_RENDER_BYTES / 1024
+                        "{READ_FOOTER_CLAUSE_SEP}stopped at the {} KB payload cap — \
+                         continue with offset={}",
+                        MAX_RENDER_BYTES / 1024,
+                        start + shown + 1
                     );
                 }
                 numbered.push_str(READ_FOOTER_CLOSE);
@@ -637,8 +662,14 @@ mod tests {
             "payload stays under the ceiling (got {} bytes)",
             content.len()
         );
+        // Derived from the constant, not written out: this assertion said
+        // "400 KB" and would have gone on passing for a cap that moved, which
+        // is the shape a size guard can least afford.
         assert!(
-            content.contains("stopped at the 400 KB payload cap"),
+            content.contains(&format!(
+                "stopped at the {} KB payload cap",
+                MAX_RENDER_BYTES / 1024
+            )),
             "the footer names the cap: {content}"
         );
         assert!(
@@ -646,6 +677,43 @@ mod tests {
             "the shown count must be the lines actually emitted: {content}"
         );
         assert!(content.contains("/800 lines shown"), "{content}");
+
+        // The paging half (#1842). A cap that says "there is more" without
+        // saying WHERE costs the model a guess, and the answer is not the
+        // shown count — `start` may be non-zero and clipped lines still count
+        // as shown. Asserted by re-reading at the named offset and requiring
+        // the continuation to begin exactly one line after the last shown.
+        let resume: usize = content
+            .split("continue with offset=")
+            .nth(1)
+            .and_then(|tail| {
+                let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+                digits.parse().ok()
+            })
+            .unwrap_or_else(|| panic!("the footer must name the line to resume from: {content}"));
+        assert!(resume > 1, "a resume offset of {resume} names no progress");
+
+        // The offset has to be usable, not merely present: re-reading at it
+        // must begin exactly where this render stopped. An off-by-one here
+        // silently skips a line or repeats one, and the model cannot tell.
+        assert!(
+            !content.contains(&format!("\n{resume:>6}\t")),
+            "line {resume} must NOT already be in this render — it is where the \
+             next one starts"
+        );
+        let next = ReadFile::default()
+            .execute(
+                &serde_json::json!({"path": "dump.sql", "offset": resume}),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content: next } = next else {
+            panic!("expected ok, got: {next:?}");
+        };
+        assert!(
+            next.starts_with(&format!("{resume:>6}\t")),
+            "reading at the named offset must continue at line {resume}: {next}"
+        );
     }
 
     /// The caps must be invisible for ordinary source: no marker, no footer

@@ -32,6 +32,19 @@ pub enum PipelineError {
         "an independent witness author was required but {0} — refusing rather than running as the single-model arm under a configuration that claims otherwise"
     )]
     WitnessAuthorUnavailable(String),
+    /// [`crate::PipelineConfig::require_independent_verifier`] is on and the
+    /// verdict call would resolve to the worker's own model — or to no model
+    /// at all (#1795).
+    ///
+    /// Same shape and same before-spend placement as the witness refusal
+    /// above, for the same caller: one that has published the claim that an
+    /// independent reviewer grades the work. The ordinary posture keeps the
+    /// soft path — the verdict runs self-graded, records the fact on its
+    /// ladder snapshot, and the router's caveat says so in prose.
+    #[error(
+        "an independent verifier was required for the verdict but {0} — refusing before spend rather than letting the worker grade its own work under a configuration that claims otherwise"
+    )]
+    VerifierNotIndependent(String),
     /// A required role (worker) could not be resolved at all.
     #[error(transparent)]
     Routing(#[from] RouterError),

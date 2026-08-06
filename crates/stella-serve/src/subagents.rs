@@ -438,6 +438,13 @@ impl ToolExecutor for DelegatingTools<'_> {
             + stella_core::subagent::drain_sub_agent_spend(&self.spend)
     }
 
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.drain_wait_request()
+    }
+
     /// Forwarded: letting the empty default stand would silently serialize
     /// the host executor's sibling spawns (see the port's contract). The
     /// `task` this wrapper itself implements is deliberately not added here —
