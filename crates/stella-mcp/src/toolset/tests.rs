@@ -100,11 +100,7 @@ async fn connected_client(name: &str, tool: &str) -> McpClient {
 /// Like [`connected_client`], with a caller-chosen `inputSchema` — for
 /// proving [`McpToolSet::prefetch_candidate_context`]'s zero-required-input
 /// filter against a tool that DOES require one.
-async fn connected_client_with_schema(
-    name: &str,
-    tool: &str,
-    input_schema: Value,
-) -> McpClient {
+async fn connected_client_with_schema(name: &str, tool: &str, input_schema: Value) -> McpClient {
     let transport = ScriptedTransport::new();
     transport.push_ok(
         "initialize",
@@ -478,9 +474,8 @@ async fn disabled_server_is_hidden_from_schemas_and_errors_on_execute() {
 async fn candidate_view_advertises_only_allowlisted_mcp_tools_plus_native() {
     let docs = connected_client("docs", "search").await;
     let fs = connected_client("fs", "write").await;
-    let set = Arc::new(
-        McpToolSet::from_clients(vec![docs, fs]).with_candidate_safe_servers(["docs"]),
-    );
+    let set =
+        Arc::new(McpToolSet::from_clients(vec![docs, fs]).with_candidate_safe_servers(["docs"]));
     let view = set.for_candidates(Arc::new(FakeNative));
 
     let names: HashSet<String> = view.schemas().into_iter().map(|s| s.name).collect();
@@ -496,8 +491,7 @@ async fn candidate_view_advertises_only_allowlisted_mcp_tools_plus_native() {
 #[tokio::test]
 async fn candidate_view_executes_an_allowlisted_tool_and_falls_through_to_native() {
     let docs = connected_client("docs", "search").await;
-    let set =
-        Arc::new(McpToolSet::from_clients(vec![docs]).with_candidate_safe_servers(["docs"]));
+    let set = Arc::new(McpToolSet::from_clients(vec![docs]).with_candidate_safe_servers(["docs"]));
     let view = set.for_candidates(Arc::new(FakeNative));
 
     let mcp_out = view.execute("mcp__docs__search", &Value::Null).await;
@@ -794,7 +788,9 @@ async fn a_multibyte_result_is_capped_without_slicing_a_codepoint() {
 async fn tools_past_the_per_server_cap_are_dropped_recorded_and_the_server_still_works() {
     let overflow = 7;
     let advertised: Vec<Value> = (0..MAX_TOOLS_PER_SERVER + overflow)
-        .map(|i| serde_json::json!({ "name": format!("t{i}"), "inputSchema": { "type": "object" } }))
+        .map(
+            |i| serde_json::json!({ "name": format!("t{i}"), "inputSchema": { "type": "object" } }),
+        )
         .collect();
     let transport = ScriptedTransport::new();
     transport.push_ok(
@@ -851,7 +847,9 @@ async fn a_well_behaved_server_records_no_overflow() {
 /// A connected client that advertised `overflow` tools past the cap.
 async fn over_advertising_client(name: &str, overflow: usize) -> McpClient {
     let advertised: Vec<Value> = (0..MAX_TOOLS_PER_SERVER + overflow)
-        .map(|i| serde_json::json!({ "name": format!("t{i}"), "inputSchema": { "type": "object" } }))
+        .map(
+            |i| serde_json::json!({ "name": format!("t{i}"), "inputSchema": { "type": "object" } }),
+        )
         .collect();
     let transport = ScriptedTransport::new();
     transport.push_ok(
