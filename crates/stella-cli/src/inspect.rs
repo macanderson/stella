@@ -19,13 +19,18 @@
 //! ## What "verified" means in the output
 //!
 //! Every block whose preimage came from the event journal is re-hashed and
-//! checked against the digest the receipt recorded at emission, so a torn
-//! journal or a fabricated block surfaces as a mismatch instead of a
-//! plausible-looking lie. The two gap kinds (the system prefix and the
-//! assembled user/recall message) are stored as local bytes, so their check is
-//! tautological and is deliberately not counted as evidence — see
-//! [`stella_store::Reconstruction`]. The banner reports both facts rather than
-//! flattening them into one word.
+//! checked against the digest the receipt recorded at emission, so bytes that
+//! are not that block's surface as a mismatch instead of a plausible-looking
+//! lie. The two gap kinds (the system prefix and the assembled user/recall
+//! message) are stored as local bytes, so their check is tautological and is
+//! deliberately not counted as evidence — see [`stella_store::Reconstruction`].
+//! The banner reports both facts rather than flattening them into one word.
+//!
+//! A mismatch says the recovered bytes are not this block's; it does not say
+//! anyone altered anything. The ordinary cause is a compaction pass rewriting
+//! a tool result in place while the journal keeps only the pre-compaction
+//! output under that `call_id`, so replay recovers a real result that is
+//! simply not the one this step sent.
 //!
 //! ## `--diff`: what changed, rather than what was sent
 //!
@@ -429,8 +434,15 @@ fn print_reconstruction(
         if full { ", full bodies" } else { "" }
     );
     // Report the two failure modes separately: an unresolved block is a
-    // documented coverage gap, a digest mismatch is a tampering/torn-journal
-    // signal. Collapsing them into "unverified" would hide which one happened.
+    // documented coverage gap, a digest mismatch means the bytes recovered for
+    // a block are not the bytes it recorded. Collapsing them into "unverified"
+    // would hide which one happened.
+    //
+    // Neither is phrased as tampering. A mismatch is almost always routine —
+    // a compaction pass rewrote a tool result in place without the journal
+    // learning about it, so replay recovers the pre-compaction output. Calling
+    // ordinary housekeeping an integrity breach trains the reader to ignore
+    // the line, which is the one outcome that would matter if it were real.
     if !recon.unresolved.is_empty() {
         println!(
             "!  {} block(s) could not be resolved (synthetic results, discarded \
@@ -441,8 +453,8 @@ fn print_reconstruction(
     }
     if !recon.digest_mismatches.is_empty() {
         println!(
-            "!! {} block(s) did NOT re-hash to their recorded digest — the journal is torn \
-             or was altered: {}",
+            "!  {} block(s) did NOT re-hash to their recorded digest — shown from the closest \
+             preimage (usually a compaction rewrite): {}",
             recon.digest_mismatches.len(),
             recon.digest_mismatches.join(", ")
         );
