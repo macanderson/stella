@@ -926,7 +926,7 @@ fn has_action_request(goal: &str) -> bool {
 ///
 /// `structure` is the workspace listing the `RepoStructurePort` already
 /// supplies to the planner and the witness author — bounded here to
-/// [`TRIAGE_STRUCTURE_CHARS`] and rendered *before* the task so the
+/// `TRIAGE_STRUCTURE_CHARS` and rendered *before* the task so the
 /// `Task:`/`Answer:` pair stays adjacent at the end. Triage decides the
 /// highest-leverage questions in the pipeline (how much orchestration, whether
 /// a witness is warranted, whether this is a task at all) and until this
