@@ -1213,7 +1213,11 @@ pub(crate) fn resolve(
     if let Ok(pid) = id.parse::<u32>() {
         return only(
             supervised_runs.into_iter().filter(|r| r.pid == pid),
-            || format!("no supervised run has pid {pid} — `stella daemon list` shows what there is"),
+            || {
+                format!(
+                    "no supervised run has pid {pid} — `stella daemon list` shows what there is"
+                )
+            },
             |first, second| {
                 format!(
                     "pid {pid} matches more than one run ({} and {}) — use the id `stella daemon list` prints",
