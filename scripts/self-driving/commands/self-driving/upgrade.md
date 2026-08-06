@@ -3,15 +3,15 @@ description: Ship phase — install the released Stella from the Homebrew tap an
 argument-hint: "[--dry-run] [--no-dev-alias]"
 ---
 
-# fullauto:upgrade — consume what you shipped
+# self-driving:upgrade — consume what you shipped
 
 The delivery half of autonomous delivery. After a cycle lands, this makes the
 `stella` on this machine **the released build a user would get**, not the dev
 binary sitting in `target/release`.
 
 ```bash
-scripts/fullauto.sh upgrade --dry-run    # show every edit, change nothing
-scripts/fullauto.sh upgrade              # do it
+scripts/self-driving.sh upgrade --dry-run    # show every edit, change nothing
+scripts/self-driving.sh upgrade              # do it
 ```
 
 Run `--dry-run` first the very first time. This is the one command in the family
@@ -62,7 +62,7 @@ clever regex.
 
 1. Adds the tap if missing.
 2. `brew install` or `brew upgrade` the tap-qualified formula.
-3. Backs up `~/.zshrc` to `~/.zshrc.fullauto-<timestamp>.bak`, comments out the
+3. Backs up `~/.zshrc` to `~/.zshrc.self-driving-<timestamp>.bak`, comments out the
    shadow line, and leaves a comment saying what removed it and why.
 4. Unless `--no-dev-alias`, drops in a replacement so the dev build stays one
    word away:
@@ -82,7 +82,7 @@ which looks exactly like the upgrade failing.
 Every run prints its own restore line. It is always:
 
 ```bash
-cp ~/.zshrc.fullauto-<timestamp>.bak ~/.zshrc && exec zsh
+cp ~/.zshrc.self-driving-<timestamp>.bak ~/.zshrc && exec zsh
 ```
 
 ## Verify

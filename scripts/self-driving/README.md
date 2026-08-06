@@ -1,19 +1,19 @@
-# fullauto — the perpetual delivery loop
+# self-driving — the perpetual delivery loop
 
-`fullauto` runs Stella's delivery cycle unattended and **does not terminate**:
+`self-driving` runs Stella's delivery cycle unattended and **does not terminate**:
 size the cycle to the machine, fix a batch of defects, audit what is left, file
 what it cannot fix, benchmark against Claude Code, ship, recalibrate, repeat.
 
 ```bash
-scripts/fullauto.sh install-commands    # once, per machine
-scripts/fullauto.sh preflight           # can this box run a cycle?
-scripts/fullauto.sh plan --explain      # what this cycle would do, and why
+scripts/self-driving.sh install-commands    # once, per machine
+scripts/self-driving.sh preflight           # can this box run a cycle?
+scripts/self-driving.sh plan --explain      # what this cycle would do, and why
 ```
 
 Then, in Claude Code:
 
 ```
-/loop 45m /fullauto
+/loop 45m /self-driving
 ```
 
 ---
@@ -39,8 +39,8 @@ design:
 
 | | |
 |---|---|
-| `scripts/fullauto.sh` | everything a machine can decide without a model — readiness, the governor, the ranked queue, the ledger, the dedup set, the aperture, the benchmark launch, the Homebrew upgrade. Gate-linted by `make shellcheck`. |
-| `scripts/fullauto/commands/` | the `/fullauto` slash commands — the judgement half. Canonical copies; `install-commands` puts them in `~/.claude/commands/`. |
+| `scripts/self-driving.sh` | everything a machine can decide without a model — readiness, the governor, the ranked queue, the ledger, the dedup set, the aperture, the benchmark launch, the Homebrew upgrade. Gate-linted by `make shellcheck`. |
+| `scripts/self-driving/commands/` | the `/self-driving` slash commands — the judgement half. Canonical copies; `install-commands` puts them in `~/.claude/commands/`. |
 
 `.claude/` is gitignored here (#448 — session scratch must never reach the
 remote), so the commands cannot live at `.claude/commands/` and survive. Edit the
@@ -48,14 +48,14 @@ copies here and re-run `install-commands`.
 
 | Command | Phase |
 |---|---|
-| `/fullauto` | one full cycle — the thing you loop |
-| `/fullauto:status` | where the loop stands (read-only, free) |
-| `/fullauto:scale` | the resource governor — how a cycle sizes itself |
-| `/fullauto:audit` | discover what the batch missed, through the current lens |
-| `/fullauto:tickets` | file what could not be fixed, as handoffs |
-| `/fullauto:bench` | Stella vs Claude Code on Terminal-Bench 2.1 |
-| `/fullauto:upgrade` | install the released build, drop the dev-build PATH shadow |
-| `/fullauto:evolve` | the meta-cycle — the loop improves the loop |
+| `/self-driving` | one full cycle — the thing you loop |
+| `/self-driving:status` | where the loop stands (read-only, free) |
+| `/self-driving:scale` | the resource governor — how a cycle sizes itself |
+| `/self-driving:audit` | discover what the batch missed, through the current lens |
+| `/self-driving:tickets` | file what could not be fixed, as handoffs |
+| `/self-driving:bench` | Stella vs Claude Code on Terminal-Bench 2.1 |
+| `/self-driving:upgrade` | install the released build, drop the dev-build PATH shadow |
+| `/self-driving:evolve` | the meta-cycle — the loop improves the loop |
 
 ## The aperture ladder
 
@@ -90,16 +90,16 @@ Additive increase on a clean cycle, multiplicative decrease on a resource
 failure. `--outcome resource-fail` means killed compiler, OOM, ENOSPC, thrash —
 **a red gate is `ok`**, because the batch was wrong, not too big. Getting that
 distinction wrong teaches the controller to shrink away from work it could
-handle. Full detail in `/fullauto:scale`.
+handle. Full detail in `/self-driving:scale`.
 
-The most consequential output is `FULLAUTO_LOCAL_BUILD=0` — *do not compile here,
+The most consequential output is `SELF_DRIVING_LOCAL_BUILD=0` — *do not compile here,
 push and read the gate from CI*. On a constrained box that is a **better** cycle,
 not a degraded one: CI has more memory than the laptop, and its result is the one
 that gates the merge anyway.
 
 ## State
 
-`~/.fullauto/<repo>/` — outside the repository, because `make no-scratch` fails
+`~/.self-driving/<repo>/` — outside the repository, because `make no-scratch` fails
 the gate if a tracked file matches a `.gitignore` rule. Keyed off the **remote
 URL**, not the directory name, so a git worktree shares the main checkout's
 memory instead of starting a fresh one.
@@ -142,14 +142,14 @@ a parser, so every parsed `gh` call goes through `gh_plain`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `FULLAUTO_STATE_DIR` | `~/.fullauto/<repo>` | ledger, seen set, aperture, calibration |
-| `FULLAUTO_COMMAND_DIR` | `~/.claude/commands` | where `install-commands` writes |
-| `FULLAUTO_DRY_STREAK` | `2` | dry cycles that advance the aperture |
-| `FULLAUTO_BATCH_MAX` | `20` | AIMD hard ceiling |
-| `FULLAUTO_PARALLEL_MAX` | `4` | worktree ceiling |
-| `FULLAUTO_DISK_FLOOR_GB` | `15` | below this, never build locally |
-| `FULLAUTO_MEM_FLOOR_GB` | `4` | below this, never build locally |
-| `FULLAUTO_MATCH` | `arenabench/matches/fable5-claude-code-vs-stella.toml` | the head-to-head |
-| `FULLAUTO_RIG_INSTANCE` | `i-07d46341dcc9a31b3` | the Terminal-Bench rig |
-| `FULLAUTO_ALLOW_EMULATED` | unset | permit a non-claim-eligible host for throwaway signal |
-| `FULLAUTO_RC` | `~/.zshrc` | the rc file `upgrade` unshadows |
+| `SELF_DRIVING_STATE_DIR` | `~/.self-driving/<repo>` | ledger, seen set, aperture, calibration |
+| `SELF_DRIVING_COMMAND_DIR` | `~/.claude/commands` | where `install-commands` writes |
+| `SELF_DRIVING_DRY_STREAK` | `2` | dry cycles that advance the aperture |
+| `SELF_DRIVING_BATCH_MAX` | `20` | AIMD hard ceiling |
+| `SELF_DRIVING_PARALLEL_MAX` | `4` | worktree ceiling |
+| `SELF_DRIVING_DISK_FLOOR_GB` | `15` | below this, never build locally |
+| `SELF_DRIVING_MEM_FLOOR_GB` | `4` | below this, never build locally |
+| `SELF_DRIVING_MATCH` | `arenabench/matches/fable5-claude-code-vs-stella.toml` | the head-to-head |
+| `SELF_DRIVING_RIG_INSTANCE` | `i-07d46341dcc9a31b3` | the Terminal-Bench rig |
+| `SELF_DRIVING_ALLOW_EMULATED` | unset | permit a non-claim-eligible host for throwaway signal |
+| `SELF_DRIVING_RC` | `~/.zshrc` | the rc file `upgrade` unshadows |

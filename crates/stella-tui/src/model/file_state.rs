@@ -174,4 +174,40 @@ mod tests {
             "the least-recently-touched path was evicted"
         );
     }
+
+    /// `/clear` keeps the file ledger, so it must also keep the counter that
+    /// stamps [`FileState::touched_seq`] — the recency key this eviction orders
+    /// by. Restarting it at 0 under retained files ranks every surviving path
+    /// above every new one, and the cap then evicts newest-first: the path the
+    /// agent is working on right now is the one that disappears.
+    #[test]
+    fn a_conversation_reset_keeps_the_recency_key_so_eviction_stays_oldest_first() {
+        let mut model = SessionModel::new();
+        let change = |path: String| AgentEvent::FileChange {
+            path,
+            kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
+            diff: Some("@@\n+x".into()),
+        };
+        for i in 0..MAX_TRACKED_FILES {
+            model.apply(&change(format!("src/f{i}.rs")));
+        }
+
+        model.reset_conversation();
+
+        // The first post-clear touch admits a new path at the cap: the victim
+        // must be the oldest pre-clear file, never this arrival.
+        model.apply(&change("src/after_clear.rs".into()));
+
+        assert_eq!(model.files.len(), MAX_TRACKED_FILES, "cap holds");
+        assert!(
+            model.files.iter().any(|f| f.path == "src/after_clear.rs"),
+            "the newly touched path must not be its own eviction victim"
+        );
+        assert!(
+            !model.files.iter().any(|f| f.path == "src/f0.rs"),
+            "the oldest pre-clear path is the victim"
+        );
+    }
 }

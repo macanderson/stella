@@ -642,13 +642,13 @@ impl WorkspaceModel {
                 });
             }
             // `/clear`: reset the agent's session to seq-0 — blank the
-            // transcript, zero the cost/token counters and the header clock, and
-            // return the HUD (progress bar) to idle. The prompt echo the paired
-            // `PromptStarted` pushed is wiped along with the rest.
+            // transcript, zero the counters and header clock, return the HUD to
+            // idle, wipe the prompt echo. The file-touch half and
+            // [`Self::ledger`] survive; why is on `SessionModel::reset_conversation`.
             Inbound::SessionReset { agent } => {
                 if let Some(idx) = self.index_of(agent) {
                     let entry = &mut self.agents[idx];
-                    entry.model = SessionModel::new();
+                    entry.model.reset_conversation();
                     entry.status = AgentStatus::WaitingInput;
                     entry.tokens_in = 0;
                     entry.tokens_out = 0;

@@ -429,6 +429,91 @@ mod tests {
         assert!(text.contains("new"), "expected diff body content:\n{text}");
     }
 
+    /// **Witness.** A `/clear` mid-session must not turn every diff pane into
+    /// `(no diff captured)`.
+    ///
+    /// The tab reads two stores with different lifetimes: the row comes from
+    /// `WorkspaceModel::ledger`, which `Inbound::SessionReset` deliberately
+    /// leaves alone, and the diff text from the agent's `SessionModel` (L-T5).
+    /// Replacing that model wholesale cut the second and not the first, so
+    /// every row survived a clear with its counts intact and lost its diff —
+    /// the reported shape was `+64 -6` on the row, footer agreeing, and a pane
+    /// saying nothing had been captured. Both halves are asserted, because a
+    /// "fix" that dropped the rows too would satisfy a body-only assertion.
+    #[test]
+    fn a_session_reset_keeps_the_diff_the_surviving_ledger_row_renders() {
+        let mut model = sample_model();
+        model.apply_inbound(&Inbound::SessionReset {
+            agent: "lead".into(),
+        });
+
+        let mut ui = DeckUi::default();
+        ui.files_sel = 1; // "existing.rs" — the Modified record
+        ui.files_diff_open = true;
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+
+        assert!(
+            text.contains("existing.rs"),
+            "the ledger row itself survives a clear:\n{text}"
+        );
+        assert!(
+            !text.contains("no diff captured"),
+            "the row kept its +/- counts, so it must keep its diff too:\n{text}"
+        );
+        assert!(
+            text.contains("+another"),
+            "expected the diff body the pre-clear event carried:\n{text}"
+        );
+        assert!(
+            ui.metrics.files_diff_total > 0,
+            "a rendered diff records its line count"
+        );
+    }
+
+    /// The other half of the same reset: the conversation really is gone. A
+    /// reset that kept the file ledger by keeping *everything* would pass the
+    /// witness above and defeat `/clear`.
+    #[test]
+    fn a_session_reset_still_blanks_the_transcript() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Text {
+                delta: "an answer the clear must remove".into(),
+            },
+        });
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::FileChange {
+                path: "src/kept.rs".into(),
+                kind: FileChangeKind::Modified,
+                added: 1,
+                removed: 0,
+                diff: Some("@@ -1,0 +1,1 @@\n+kept\n".into()),
+            },
+        });
+        model.apply_inbound(&Inbound::SessionReset {
+            agent: "lead".into(),
+        });
+
+        let session = &model.agents[0].model;
+        assert!(session.transcript.is_empty(), "the conversation is cleared");
+        assert!(session.streaming_text.is_empty());
+        assert_eq!(
+            session.files.len(),
+            1,
+            "what the session did to the tree is not conversation"
+        );
+        assert_eq!(
+            session.files[0].latest_diff.as_deref(),
+            Some("@@ -1,0 +1,1 @@\n+kept\n")
+        );
+    }
+
     #[test]
     fn record_without_a_diff_shows_the_fallback_and_zero_total() {
         let mut model = WorkspaceModel::new();
