@@ -552,14 +552,15 @@ pub(crate) fn session_detail(
         conn,
         id,
         "SELECT task_id, subject, status, owner, updated_at
-         FROM tasks WHERE session_id = ?1 ORDER BY task_id ASC",
+         FROM tasks WHERE session_id = ?1
+         ORDER BY CAST(task_id AS INTEGER) ASC, task_id ASC",
         |r| {
             Ok(json!({
                 "task_id": r.get::<_, String>(0)?,
                 "subject": r.get::<_, String>(1)?,
                 "status": r.get::<_, String>(2)?,
-                "owner": r.get::<_, String>(3)?,
-                "updated_at": r.get::<_, String>(4)?,
+                "owner": r.get::<_, Option<String>>(3)?,
+                "updated_at_ms": r.get::<_, i64>(4)?,
             }))
         },
     )?);
@@ -567,14 +568,15 @@ pub(crate) fn session_detail(
         conn,
         id,
         "SELECT url, number, status, ci_status, updated_at
-         FROM pull_requests WHERE session_id = ?1 ORDER BY updated_at DESC",
+         FROM pull_requests WHERE session_id = ?1
+         ORDER BY updated_at DESC, url ASC",
         |r| {
             Ok(json!({
                 "url": r.get::<_, String>(0)?,
-                "number": r.get::<_, i64>(1)?,
+                "number": r.get::<_, Option<i64>>(1)?,
                 "status": r.get::<_, String>(2)?,
                 "ci_status": r.get::<_, Option<String>>(3)?,
-                "updated_at": r.get::<_, String>(4)?,
+                "updated_at_ms": r.get::<_, i64>(4)?,
             }))
         },
     )?);

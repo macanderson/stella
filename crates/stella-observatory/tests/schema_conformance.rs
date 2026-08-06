@@ -37,7 +37,9 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 use stella_observatory::respond;
-use stella_protocol::{AgentEvent, ContextFrameRef, ProviderShare, ToolCall, ToolOutput};
+use stella_protocol::{
+    AgentEvent, ContextFrameRef, ProviderShare, TaskItem, TaskStatus, ToolCall, ToolOutput,
+};
 use stella_store::{
     AgentUseRow, ContextBlockRow, ExecutionReflectionRow, FileTouchRow, ManifestBlockRow,
     McpUsageRow, MemoryCitationRow, ReflectionRow, SkillUsageRow, StepManifestRow, Store,
@@ -48,6 +50,11 @@ use stella_store::{
 /// looks for: the system prompt is the part of a model call that exists nowhere
 /// else in the store, and reconstructing it is the whole point of the route.
 const SYSTEM_PROMPT: &str = "you are stella, and you are careful";
+
+/// The session the seeded execution is stamped with — what `/api/sessions`
+/// lists and `/api/session` drills. Shaped like a real minted id
+/// (`ses-<ms>-<pid>`) because the sessions view recovers a sort key from it.
+const SESSION_ID: &str = "ses-1700000000000-424242";
 
 /// Every `/api/*` route the router serves, paired with the JSON pointer that
 /// must resolve to seeded (non-empty) data.
@@ -70,6 +77,12 @@ const ROUTES: &[(&str, Option<&str>)] = &[
         "/api/execution-context?id=1&turn=0&step=1&call_seq=0",
         Some("/context/messages/0/role"),
     ),
+    ("/api/sessions", Some("/sessions/0/id")),
+    (
+        "/api/session?id=ses-1700000000000-424242",
+        Some("/turns/0/id"),
+    ),
+    ("/api/execution-tendencies?id=1", Some("/retries")),
     ("/api/models", Some("/0/provider")),
     ("/api/tools", Some("/0/name")),
     ("/api/files", Some("/0/path")),
@@ -133,6 +146,9 @@ fn real_store_workspace() -> tempfile::TempDir {
     let completed = store
         .begin_execution("run", "add a function", "zai", "glm-5.2")
         .expect("begin");
+    store
+        .set_execution_session(completed, SESSION_ID)
+        .expect("session stamp");
     // Tool calls arrive as events and are projected from them — seeding the
     // `tool_calls` table any other way would test a write path production
     // does not use.
@@ -149,7 +165,58 @@ fn real_store_workspace() -> tempfile::TempDir {
             .record_event(completed, seq as u64, &event)
             .expect("tool event");
     }
+    // Two behavioural events for the tendencies fold: a retry and a steer-
+    // stage loop detection. Seeded as events because that is the only place
+    // production writes them — no projection exists.
+    store
+        .record_event(
+            completed,
+            2,
+            &AgentEvent::Retry {
+                attempt: 1,
+                reason: "rate limited".into(),
+            },
+        )
+        .expect("retry event");
+    store
+        .record_event(
+            completed,
+            3,
+            &AgentEvent::LoopDetected {
+                turn_instance: 0,
+                kind: "exact_repeat".into(),
+                pattern: vec!["read_file".into()],
+                repeats: 3,
+                evidence: "same call three times".into(),
+                aborted: false,
+            },
+        )
+        .expect("loop event");
     seed_receipt(&store, completed, &call, &output);
+    store
+        .record_task_board(
+            completed,
+            Some(SESSION_ID),
+            &[TaskItem {
+                id: "1".into(),
+                subject: "add the function".into(),
+                description: None,
+                status: TaskStatus::Completed,
+                owner: Some("lead".into()),
+            }],
+            1_700_000_000_000,
+        )
+        .expect("task board");
+    store
+        .upsert_pull_request(
+            Some(SESSION_ID),
+            "https://github.com/example/repo/pull/7",
+            Some(7),
+            "open",
+            Some("passing"),
+            1_700_000_000_000,
+        )
+        .expect("pull request");
     store
         .record_telemetry(
             completed,

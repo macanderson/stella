@@ -357,6 +357,7 @@ footer b{color:var(--text-2);font-weight:600}
   <nav class="bar" aria-label="Dashboard">
     <div class="tabs" id="tabs" role="tablist" aria-label="Sections">
       <button role="tab" id="tab-overview" aria-controls="panel-overview" data-tab="overview">Overview</button>
+      <button role="tab" id="tab-sessions" aria-controls="panel-sessions" data-tab="sessions">Sessions</button>
       <button role="tab" id="tab-activity" aria-controls="panel-activity" data-tab="activity">Activity</button>
       <button role="tab" id="tab-graph" aria-controls="panel-graph" data-tab="graph">Code graph</button>
       <button role="tab" id="tab-skills" aria-controls="panel-skills" data-tab="skills">Skills</button>
@@ -380,6 +381,47 @@ footer b{color:var(--text-2);font-weight:600}
 
   <main id="main" tabindex="-1">
   <div class="err" id="err" role="alert" hidden></div>
+
+  <!-- ══ SESSIONS ══════════════════════════════════════════════════════ -->
+  <section data-tab="sessions" id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0">
+    <div class="grid kpis" id="ses-kpis"></div>
+    <div class="card section-gap">
+      <div class="kick">Every session of this workspace · registry + store · select one</div>
+      <h2>Sessions</h2>
+      <div class="scroll-x" id="ses-list"></div>
+    </div>
+    <div class="card section-gap" id="ses-detail-card" hidden>
+      <div class="kick" id="ses-detail-kick">Nothing selected</div>
+      <h2 id="ses-detail-title">Session replay</h2>
+      <div id="ses-summary"></div>
+      <div class="kick" style="margin-top:12px">Turn by turn · oldest first · select a turn to replay it</div>
+      <div class="scroll-x" id="ses-turns"></div>
+    </div>
+    <div class="grid cols-2" id="ses-panels" hidden>
+      <div class="card">
+        <div class="kick">Skills applied &amp; subagents dispatched</div>
+        <h2>Skills &amp; agents</h2>
+        <div class="scroll-y" id="ses-skills"></div>
+      </div>
+      <div class="card">
+        <div class="kick">External tool servers · per (server, tool)</div>
+        <h2>MCP traffic</h2>
+        <div class="scroll-y" id="ses-mcp"></div>
+      </div>
+    </div>
+    <div class="grid cols-2" id="ses-panels2" hidden>
+      <div class="card">
+        <div class="kick">Lessons mined · memories kept · context cited</div>
+        <h2>Self-improvement</h2>
+        <div class="scroll-y" id="ses-improve"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Task board &amp; pull requests</div>
+        <h2>Outcomes</h2>
+        <div class="scroll-y" id="ses-outcomes"></div>
+      </div>
+    </div>
+  </section>
 
   <!-- ══ ORG / HUB ═════════════════════════════════════════════════════ -->
   <section data-tab="hub" id="panel-hub" role="tabpanel" aria-labelledby="tab-hub" tabindex="0">
@@ -1230,6 +1272,11 @@ async function openDrawer(id, full = false) {
      prompt, so it loads on demand when a row is drilled into. */
   let cx = null;
   try { cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`); } catch { cx = null; }
+  /* The behavioural tendencies fold: retries, loop detections, compactions,
+     policy verdicts — the "how it went" beside the transcript's "what it
+     did". All-zero payloads render no section at all. */
+  let td = null;
+  try { td = await api(`/api/execution-tendencies?id=${encodeURIComponent(id)}`); } catch { td = null; }
   const entries = Array.isArray(j) ? j : [];
   const jrnl = entries.map(journalEntryHtml).join("");
   // Rendered even with zero entries while the run is still going: the
@@ -1284,6 +1331,7 @@ async function openDrawer(id, full = false) {
     ${steps ? `<div class="sect"><div class="kick">Per-step tokens and latency</div>${steps}</div>`
             : `<div class="sect"><div class="kick">Per-step tokens and latency</div>
                <div class="empty">No steps recorded for this run.</div></div>`}
+    ${tendenciesSectionHtml(td)}
     ${sentContextSectionHtml(cx)}
     ${jrnlSect}
     ${tools ? `<div class="sect"><div class="kick">Tool calls</div>${tools}</div>` : ""}
@@ -1337,6 +1385,36 @@ async function refreshDrawerJournal() {
     }
   }
   drawerState.lastSeq = entries[entries.length - 1].seq;
+}
+/* One execution's behavioural-tendency strip: badges for every nonzero
+   counter the journal fold reported. All-zero (or unreachable) payloads
+   render nothing — an uneventful run should not grow a section saying so.
+   Loop kinds and policy verdicts are maps whose keys come from the journal;
+   they are workspace-derived strings and go through esc() like the rest. */
+function tendenciesSectionHtml(td) {
+  if (!td) return "";
+  const chips = [];
+  const chip = (n, label, cls) => {
+    if (num(n) > 0) chips.push(`<span class="badge ${cls}">${fmtInt(n)} ${esc(label)}</span>`);
+  };
+  chip(td.retries, "retries", "warn");
+  chip(td.retries_exhausted, "retries exhausted", "bad");
+  for (const [kind, n] of Object.entries(td.loops ?? {}))
+    chip(n, `loop: ${kind}`, "warn");
+  chip(td.loop_aborts, "loop aborts", "bad");
+  chip(td.budget_denied, "budget denied", "bad");
+  chip(td.compactions, "compactions", "dim");
+  if (num(td.tokens_reclaimed) > 0)
+    chips.push(`<span class="badge dim">${fmtTok(td.tokens_reclaimed)} tok reclaimed</span>`);
+  for (const [kind, n] of Object.entries(td.policy ?? {}))
+    chip(n, `policy: ${kind}`, kind === "blocked" || kind === "secret_detected" ? "bad" : "dim");
+  chip(td.speculation_discarded, "speculation discarded", "dim");
+  chip(td.steered, "steered", "warn");
+  chip(td.provider_fallback, "provider fallback", "warn");
+  chip(td.usage_incomplete, "usage incomplete", "warn");
+  if (!chips.length) return "";
+  return `<div class="sect"><div class="kick">Tendencies</div>
+    <p style="margin:6px 0 0;display:flex;flex-wrap:wrap;gap:6px">${chips.join(" ")}</p></div>`;
 }
 /* ── sent context (#1475) ────────────────────────────────────────────────
    What a model call was *given*, as opposed to what the run did: the
@@ -2387,6 +2465,185 @@ $("fa-runs").addEventListener("click", (ev) => {
   if (tr) openSelfDrivingRun(tr.dataset.run);
 });
 
+/* ── sessions: list, replay drill, self-improvement residue ──────────────
+   The session list merges two sources the server keeps honest about
+   (`registry: false` marks a session the registry has pruned but the store
+   still remembers). Drilling a session lists its turns oldest-first; drilling
+   a turn opens the same execution drawer the Overview uses — transcript,
+   sent context, tendencies — so the replay path is one continuous descent:
+   session → turn → step → call → block/tool. Every workspace- or
+   model-derived string routes through esc(). */
+function sesBadge(s, crashed) {
+  if (crashed) return `<span class="badge bad">crashed</span>`;
+  const cls = pick({
+    in_progress: "ok", needs_input: "warn", paused: "dim", cancelled: "dim",
+    complete: "ok", archived: "dim", error: "bad",
+  }, s, "dim");
+  const label = pick({
+    in_progress: "live", needs_input: "needs input", paused: "paused",
+    cancelled: "cancelled", complete: "complete", archived: "archived",
+    error: "error",
+  }, s, s ? String(s) : "pruned");
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+function cachePct(read, miss) {
+  const t = num(read) + num(miss);
+  return t ? (100 * num(read) / t).toFixed(0) + "%" : "—";
+}
+function renderSessions(d) {
+  const rows = d?.sessions ?? [];
+  const live = rows.filter(r => r.live).length;
+  const turns = rows.reduce((a, r) => a + num(r.turns), 0);
+  const spend = rows.reduce((a, r) => a + num(r.cost_usd), 0);
+  $("ses-kpis").innerHTML =
+    tile("Sessions", fmtInt(rows.length), fmtInt(live) + " live now", live > 0) +
+    tile("Turns", fmtInt(turns), "across every listed session") +
+    tile("Spend", fmtUsd(spend), "sum of listed sessions") +
+    tile("Tool calls", fmtInt(rows.reduce((a, r) => a + num(r.tool_calls), 0)),
+      fmtInt(rows.reduce((a, r) => a + num(r.tool_errors), 0)) + " errored");
+  $("ses-list").innerHTML = rows.length ? `<table><thead><tr>
+      <th>Session</th><th>Status</th><th class="num">Turns</th>
+      <th class="num">Tools</th><th class="num">Files</th><th class="num">Tokens</th>
+      <th class="num">Cache</th><th class="num">Skills</th><th class="num">MCP</th>
+      <th class="num">Cost</th><th>Updated</th></tr></thead><tbody>
+    ${rows.map(r => `<tr data-ses="${esc(r.id)}">
+      <td><span class="name" title="${esc(r.id)}">${esc(clip(r.title || r.summary || r.id, 64))}</span>${
+        r.supervised ? ` <span class="badge dim">supervised</span>` : ""}${
+        r.registry ? "" : ` <span class="badge dim">store only</span>`}</td>
+      <td>${sesBadge(r.status, r.crashed)}</td>
+      <td class="num">${fmtInt(r.turns)}</td>
+      <td class="num">${fmtInt(r.tool_calls)}${num(r.tool_errors)
+        ? ` <span style="color:var(--bad)">✕${fmtInt(r.tool_errors)}</span>` : ""}</td>
+      <td class="num">${fmtInt(r.files_touched)}</td>
+      <td class="num">${fmtTok(num(r.input_tokens) + num(r.output_tokens))}</td>
+      <td class="num">${cachePct(r.cache_read_tokens, r.cache_miss_tokens)}</td>
+      <td class="num">${fmtInt(r.skill_uses)}</td>
+      <td class="num">${fmtInt(r.mcp_calls)}</td>
+      <td class="num">${fmtUsd(r.cost_usd)}</td>
+      <td>${r.updated_at_ms ? agoMs(r.updated_at_ms) : "—"}</td></tr>`).join("")}
+    </tbody></table>`
+    : `<div class="empty">No sessions recorded yet. Run <code>stella</code> in this
+       workspace and the session appears here as it works.</div>`;
+  if (state.session && rows.some(r => r.id === state.session)) {
+    openSession(state.session, true);
+  } else if (rows.length) {
+    openSession(rows[0].id, true);
+  }
+}
+function turnRowHtml(t, i) {
+  const rating = t.reflection && t.reflection.self_rating != null
+    ? `${fmtInt(t.reflection.self_rating)}/10` : "—";
+  return `<tr data-exec="${fmtInt(t.id)}">
+    <td class="num">${fmtInt(i + 1)}</td>
+    <td><span class="name" title="execution ${fmtInt(t.id)}">${esc(clip(t.prompt ?? "", 80))}</span>${
+      (t.skills ?? []).map(s => ` <span class="badge accent">${esc(s)}</span>`).join("")}${
+      (t.mcp_servers ?? []).map(s => ` <span class="badge dim">${esc(s)}</span>`).join("")}</td>
+    <td>${badge(t.outcome)}</td>
+    <td class="num">${fmtInt(t.steps)}</td>
+    <td class="num">${fmtInt(t.tool_calls)}${num(t.tool_errors)
+      ? ` <span style="color:var(--bad)">✕${fmtInt(t.tool_errors)}</span>` : ""}</td>
+    <td class="num">${fmtInt(t.files_touched)}
+      <span style="color:var(--ok)">+${fmtInt(t.lines_added)}</span>
+      <span style="color:var(--bad)">−${fmtInt(t.lines_removed)}</span></td>
+    <td class="num">${fmtTok(t.input_tokens)}·${fmtTok(t.output_tokens)}</td>
+    <td class="num">${cachePct(t.cache_read_tokens, t.cache_miss_tokens)}</td>
+    <td class="num">${num(t.retries) ? `<span style="color:var(--warn)">${fmtInt(t.retries)}</span>` : "0"}</td>
+    <td class="num">${fmtUsd(t.cost_usd)}</td>
+    <td class="num">${rating}</td>
+    <td class="num">${num(t.receipts) ? "✓" : "—"}</td></tr>`;
+}
+async function openSession(id, quiet) {
+  state.session = id;
+  [...document.querySelectorAll("#ses-list tbody tr")].forEach(tr =>
+    tr.classList.toggle("sel", tr.dataset.ses === id));
+  let d;
+  try {
+    d = await api("/api/session?id=" + encodeURIComponent(id));
+  } catch (e) {
+    if (!quiet) fail("Could not load that session.", e);
+    return;
+  }
+  $("ses-detail-card").hidden = false;
+  $("ses-panels").hidden = false;
+  $("ses-panels2").hidden = false;
+  const reg = d?.registry;
+  const turns = d?.turns ?? [];
+  $("ses-detail-kick").textContent = id;
+  $("ses-detail-title").innerHTML = `${esc(clip(reg?.title || turns[0]?.prompt || id, 90))} ${
+    sesBadge(reg?.status, reg?.crashed)}`;
+  const retries = turns.reduce((a, t) => a + num(t.retries), 0);
+  const calls = turns.reduce((a, t) => a + num(t.tool_calls), 0);
+  const errs = turns.reduce((a, t) => a + num(t.tool_errors), 0);
+  const read = turns.reduce((a, t) => a + num(t.cache_read_tokens), 0);
+  const miss = turns.reduce((a, t) => a + num(t.cache_miss_tokens), 0);
+  const rated = turns.filter(t => t.reflection && t.reflection.self_rating != null);
+  const avgRating = rated.length
+    ? (rated.reduce((a, t) => a + num(t.reflection.self_rating), 0) / rated.length).toFixed(1)
+    : null;
+  $("ses-summary").innerHTML = `
+    ${reg?.summary ? `<div class="feed-item"><b>Now</b> — ${esc(reg.summary)}</div>` : ""}
+    <div class="feed-item"><b>Tendencies</b> —
+      ${fmtInt(retries)} retries ·
+      ${calls ? (100 * errs / calls).toFixed(0) : 0}% tool errors ·
+      ${cachePct(read, miss)} cache hits${
+      avgRating ? ` · self-rated ${esc(avgRating)}/10 over ${fmtInt(rated.length)} turns` : ""}</div>
+    ${reg?.exploring?.length ? `<div class="feed-item"><b>Exploring</b> — ${
+      reg.exploring.map(esc).join(", ")}</div>` : ""}
+    ${d?.turns_truncated ? `<div class="feed-item"><b>Note</b> — showing the newest
+      turns only; older turns were clipped from this view.</div>` : ""}`;
+  $("ses-turns").innerHTML = turns.length ? `<table><thead><tr>
+      <th class="num">#</th><th>Turn</th><th>Outcome</th><th class="num">Steps</th>
+      <th class="num">Tools</th><th class="num">Files</th><th class="num">Tok in·out</th>
+      <th class="num">Cache</th><th class="num">Retries</th><th class="num">Cost</th>
+      <th class="num">Rated</th><th class="num">Receipts</th></tr></thead><tbody>
+    ${turns.map(turnRowHtml).join("")}</tbody></table>`
+    : `<div class="empty">No turns stamped for this session yet${
+       reg ? " — it may not have completed a turn" : ""}.</div>`;
+  const skills = d?.skills ?? [], agents = d?.agents ?? [];
+  $("ses-skills").innerHTML = (skills.length || agents.length) ? `
+    ${skills.map(s => `<div class="feed-item"><b>${esc(s.skill)}</b> —
+      ${fmtInt(s.uses)} use(s), v${fmtInt(s.version)}</div>`).join("")}
+    ${agents.map(a => `<div class="feed-item"><b>${esc(a.agent)}</b>
+      <span class="badge dim">agent</span> — ${fmtInt(a.uses)} dispatch(es)</div>`).join("")}`
+    : `<div class="empty">No skills applied or subagents dispatched.</div>`;
+  const mcp = d?.mcp ?? [];
+  $("ses-mcp").innerHTML = mcp.length ? `<table><thead><tr>
+      <th>Server</th><th>Tool</th><th class="num">Calls</th><th>Last</th></tr></thead><tbody>
+    ${mcp.map(m => `<tr><td>${esc(m.server)}</td><td>${esc(m.tool)}</td>
+      <td class="num">${fmtInt(m.calls)}</td>
+      <td>${m.last_called_at_ms ? agoMs(m.last_called_at_ms) : "—"}</td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">No MCP calls in this session.</div>`;
+  const lessons = d?.lessons ?? [], writes = d?.memory_writes ?? [], cites = d?.memory ?? [];
+  $("ses-improve").innerHTML = (lessons.length || writes.length || cites.length) ? `
+    ${lessons.map(l => `<div class="feed-item"><b>lesson</b>
+      <span class="badge dim">${esc(l.kind)}</span> — ${esc(clip(l.content, 200))}</div>`).join("")}
+    ${writes.map(w => `<div class="feed-item"><b>memory kept</b> —
+      ${esc(w.slug || "(unnamed)")}${w.ok ? "" : ` <span class="badge bad">failed</span>`}
+      <span class="when">turn ${fmtInt(w.execution_id)}</span></div>`).join("")}
+    ${cites.map(c => `<div class="feed-item"><b>cited</b> — ${esc(c.memory_id)} ·
+      ${fmtInt(c.citations)}×${c.avg_useful_score != null
+        ? ` · useful ${num(c.avg_useful_score).toFixed(1)}` : ""}${
+      num(c.untruthful) ? ` · <span style="color:var(--bad)">${fmtInt(c.untruthful)} untruthful</span>` : ""}</div>`).join("")}`
+    : `<div class="empty">This session has not left self-improvement residue yet.</div>`;
+  const tasks = d?.tasks ?? [], prs = d?.pull_requests ?? [];
+  $("ses-outcomes").innerHTML = (tasks.length || prs.length) ? `
+    ${tasks.map(t => `<div class="feed-item"><b>#${esc(t.task_id)}</b>
+      ${badge(t.status)} — ${esc(clip(t.subject, 120))}${
+      t.owner ? ` <span class="when">${esc(t.owner)}</span>` : ""}</div>`).join("")}
+    ${prs.map(p => `<div class="feed-item"><b>PR ${p.number ? "#" + fmtInt(p.number) : ""}</b>
+      ${badge(p.status)}${p.ci_status ? ` · CI ${esc(p.ci_status)}` : ""} —
+      <span class="name" title="${esc(p.url)}">${esc(clip(p.url, 80))}</span></div>`).join("")}`
+    : `<div class="empty">No task board or pull requests recorded.</div>`;
+}
+$("ses-list").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-ses]");
+  if (tr) openSession(tr.dataset.ses);
+});
+$("ses-turns").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-exec]");
+  if (tr) openDrawer(+tr.dataset.exec);
+});
+
 /* ── tabs, lazy loads, refresh loop ──────────────────────────────────── */
 async function loadTab(tab, force) {
   const key = `${tab}:${state.project}`;
@@ -2416,6 +2673,11 @@ async function loadTab(tab, force) {
       lazyCache[`skills:${state.project}`] = data;
       lazyCache[key] = data;
       renderImprove(data ?? []);
+    } else if (tab === "sessions") {
+      // Never cached, same reasoning as self-driving: a session's liveness
+      // (live / needs-input / crashed) is the point of the list, and the
+      // pid-derived downgrade only happens server-side at read time.
+      renderSessions(await api("/api/sessions") ?? {});
     } else if (tab === "self-driving") {
       // Never cached: a running loop's phase and heartbeat are the point, and a
       // cached "● running, 3s ago" that is actually twenty minutes old would be
@@ -2595,6 +2857,9 @@ async function pollOnce() {
       await refresh();
       await refreshDrawerJournal();
       checkDrawerFinished();
+      // The sessions tab is lazy-loaded and never cached; while it is the one
+      // on screen, a moved cursor means its liveness column is stale too.
+      if (state.tab === "sessions") loadTab("sessions", true);
     }
     $("live").classList.remove("paused");
   } catch {
@@ -2675,6 +2940,7 @@ function connectLive() {
     if (payload.changed) {
       refresh().then(checkDrawerFinished);
       refreshDrawerJournal();
+      if (state.tab === "sessions") loadTab("sessions", true);
     }
   });
   source.onerror = () => {
