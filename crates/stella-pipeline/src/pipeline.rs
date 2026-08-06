@@ -378,6 +378,18 @@ pub struct PipelineConfig {
     /// number at all: the arm's own digest describes a configuration the run
     /// did not have (#1147).
     pub require_independent_witness: bool,
+    /// Refuse the run when the VERDICT call would resolve to the worker's own
+    /// model (#1795) — the "independent code reviewer" grading the code it
+    /// wrote — instead of proceeding with the once-per-run prose caveat.
+    ///
+    /// Off by default for the same reason its witness sibling above is: a
+    /// single-provider BYOK seat is the common case and must keep working.
+    /// On or off, the verdict's ladder snapshot records grader independence
+    /// as a structured fact (`LadderSnapshot::verifier_independent`), so a
+    /// stored verdict states it without the transcript. Checked before spend,
+    /// like the witness gate: a refusal after the trajectory is bought is a
+    /// trajectory the caller must throw away.
+    pub require_independent_verifier: bool,
     /// Best-of-N (L-E7). `None` or `Some(1)` is single-shot (the default);
     /// `Some(n)` generates n candidate executions — each in an isolated
     /// snapshot of the current tree state when a
@@ -449,6 +461,7 @@ impl Default for PipelineConfig {
             // evidence-demand-1295/README.md` for the measurement.
             verifier_evidence_demand: true,
             require_independent_witness: false,
+            require_independent_verifier: false,
             candidates: None,
             candidate_concurrency: None,
             create_worktrees: crate::ports::WorktreePolicy::default(),
@@ -927,6 +940,19 @@ impl<'a> Pipeline<'a> {
         {
             return Err(PipelineRunError::new(
                 PipelineError::WitnessAuthorUnavailable(reason),
+                total_cost,
+            ));
+        }
+        // Same probe, second consequence (#1795): the VERDICT grader must be
+        // independent too when the caller says so. The probe compares the
+        // worker's and verifier's resolved model refs, which is exactly
+        // "would the verdict resolve to the worker's model".
+        if self.config.require_independent_verifier
+            && let WitnessAuthorIndependence::Unavailable(reason) =
+                self.witness_author_independence()
+        {
+            return Err(PipelineRunError::new(
+                PipelineError::VerifierNotIndependent(reason),
                 total_cost,
             ));
         }
@@ -2790,7 +2816,11 @@ impl<'a> Pipeline<'a> {
                         state.last_verdict_diff = Some(stripped.diff.clone());
                     }
                     let mut evidence = model_verdict_evidence(&verdict);
-                    evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));
+                    evidence.ladder = Some(Box::new(
+                        snapshot
+                            .with_rung(verdict.rung())
+                            .with_verifier_independence(verdict.verifier_independent),
+                    ));
                     self.emit(AgentEvent::Verdict {
                         passed: verdict.passed,
                         evidence: evidence.clone(),
@@ -3220,12 +3250,18 @@ impl<'a> Pipeline<'a> {
             Ok(verifier) if verifier.model_ref != worker.model_ref => {
                 WitnessAuthorIndependence::Independent
             }
+            // Role-neutral wording on purpose (#1795): the same finding is
+            // framed by two different refusals (witness author, verdict
+            // grader) and one degradation notice, and each supplies its own
+            // role — a reason that named one would misname the others.
             Ok(_) => WitnessAuthorIndependence::Unavailable(format!(
-                "no author independent of the worker (verifier and worker both resolved to `{}`)",
+                "no model independent of the worker resolves (verifier and worker both \
+                 resolved to `{}`)",
                 worker.model_ref
             )),
             Err(_) => WitnessAuthorIndependence::Unavailable(
-                "no author independent of the worker (the verifier role is unresolvable)"
+                "no model independent of the worker resolves (the verifier role is \
+                 unresolvable)"
                     .to_string(),
             ),
         }

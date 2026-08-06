@@ -597,6 +597,13 @@
           "description": "A flip was observed but its confirmation re-run did not pass (#859).",
           "type": "boolean"
         },
+        "verifier_independent": {
+          "description": "Whether the model that graded this verdict was independent of the\nworker that produced the work (#1795): `Some(false)` is a self-graded\nverdict — the verdict call resolved to the worker's own model — and\n`Some(true)` a distinct grader.\n\nA structured fact rather than the once-per-run prose caveat, because\nthe caveat scrolls away while the verdict is stored: a reader of a\nstored verdict must be able to see the grader was not independent\nwithout the transcript. Absent when no model verdict was bought (the\ndeterministic, waived, and abstaining rungs — nothing graded, so\nindependence is not a fact about them), when the worker's own\nresolution failed (nothing to compare against), and on snapshots\nrecorded before this existed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "witness_intact": {
           "description": "The witness-tamper check's result: `None` when no witness was armed,\n`Some(true)` when every witness artifact matched its pinned identity.\n`Some(false)` never reaches a verdict — tampering aborts the\ncandidate — so its presence here is the *stated* proof the check ran.",
           "type": [
