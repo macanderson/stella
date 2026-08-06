@@ -962,15 +962,11 @@ fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
         });
         let Ok(stat) = probe.metadata() else {
             continue;
-        }
-        // SAFETY: `fstat` returned success, so it initialized the struct.
-        let stat = unsafe { stat.assume_init() };
-        // `st_dev` is `i32` on macOS and already `u64` on Linux, and std's
-        // `MetadataExt::dev()` widens it with exactly this cast — identity
-        // only matches if the conversion does too.
-        #[allow(clippy::unnecessary_cast)] // a no-op on Linux, the point on macOS
-        let dev = stat.st_dev as u64;
-        if dev == lock.dev() && stat.st_ino == lock.ino() {
+        };
+        // `dev()`/`ino()` are `u64` on every Unix, so the comparison needs no
+        // cast and no `#[allow]` — which is the whole reason this reads through
+        // `MetadataExt` rather than a raw `libc::stat`.
+        if stat.dev() == lock.dev() && stat.ino() == lock.ino() {
             return Some(fd);
         }
     }
