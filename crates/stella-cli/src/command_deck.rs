@@ -1022,6 +1022,7 @@ pub async fn run_deck_session(
                             &mut messages,
                             &system_prompt,
                             &sidecar_dir,
+                            &subs.live_lanes(),
                             &in_tx,
                         );
                         continue 'session;
@@ -2249,28 +2250,20 @@ pub async fn run_deck_session(
                 queue.clear();
                 let cleared_cost =
                     agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd());
-                if let Some((store, id)) = &execution
-                    && !agent::record_execution_end(
-                        store,
-                        *id,
-                        registry.as_ref(),
-                        files_before,
-                        "cancelled",
-                        cleared_cost,
-                        false,
-                    )
-                {
-                    let _ = in_tx.send(Inbound::Event {
-                        agent: LEAD.to_string(),
-                        event: AgentEvent::Error {
-                            message: "store write failed — this cleared execution was not \
-                                      recorded"
-                                .to_string(),
-                            retryable: true,
-                        },
-                    });
-                }
-                session_clear::reset_lead(&mut messages, &system_prompt, &sidecar_dir, &in_tx);
+                session_clear::close_cleared_execution(
+                    execution.as_ref(),
+                    registry.as_ref(),
+                    files_before,
+                    cleared_cost,
+                    &in_tx,
+                );
+                session_clear::reset_lead(
+                    &mut messages,
+                    &system_prompt,
+                    &sidecar_dir,
+                    &subs.live_lanes(),
+                    &in_tx,
+                );
                 // No `continue`: the shared tail below re-snapshots the
                 // reset history (a no-op) and still services a parked create.
                 session_exit = stella_store::SessionStatus::Cancelled;

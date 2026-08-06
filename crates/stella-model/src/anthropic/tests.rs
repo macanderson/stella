@@ -861,6 +861,12 @@ async fn complete_reports_cache_write_tokens_from_the_usage_envelope() {
     // Writes surfaced, not folded: input_tokens stays 1_000.
     assert_eq!(result.usage.cache_write_tokens, 650);
     assert_eq!(result.usage.output_tokens, 7);
+    // The Messages API publishes NO reasoning breakdown — extended thinking is
+    // counted inside `output_tokens` and never split out. So this route reports
+    // "not measured" rather than "measured zero"; a `Some(0)` here would make
+    // the whole Anthropic-direct arm look like it never thinks, which is the
+    // failure this field's `Option` exists to prevent.
+    assert_eq!(result.usage.reasoning_tokens, None);
 }
 
 #[tokio::test]
@@ -1316,6 +1322,7 @@ async fn complete_computes_nonzero_cost_from_catalog_pricing() {
             output_tokens: 500,
             cached_input_tokens: 0,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         });
     assert!(result.cost_usd > 0.0, "cost must be non-zero");
     assert_eq!(result.cost_usd, expected);

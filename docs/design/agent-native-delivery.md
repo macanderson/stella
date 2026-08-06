@@ -1,3 +1,9 @@
+---
+id: agent-native-delivery
+title: "Agent-Native Delivery — the issue tracker as the agent's working memory"
+status: proposed
+---
+
 # Agent-Native Delivery — the issue tracker as the agent's working memory
 
 Status: proposal, unbuilt. Phases in §11; the Phase-1 Linear extraction is

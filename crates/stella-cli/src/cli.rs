@@ -291,6 +291,21 @@ pub(crate) struct GlobalArgs {
     /// Env: STELLA_FOREGROUND.
     #[arg(long, global = true, env = "STELLA_FOREGROUND", hide_short_help = true)]
     pub(crate) foreground: bool,
+
+    /// Start the run in the background and return to the shell immediately.
+    ///
+    /// The work is supervised exactly as it would be otherwise — same session
+    /// id, same console, `stella daemon list | attach | logs | stop` all
+    /// address it — but this process does not stay to stream it. Use it to
+    /// launch a long run from a script, or to keep using the terminal you
+    /// started one in. Unlike plain supervision this does not need a terminal,
+    /// so it works from a pipe, a container, or CI.
+    ///
+    /// The exit code is the launch's, not the run's: the run's own answer is
+    /// in `stella daemon list` afterwards. `--foreground` wins if both are
+    /// given. Env: STELLA_DETACH.
+    #[arg(long, global = true, env = "STELLA_DETACH", hide_short_help = true)]
+    pub(crate) detach: bool,
 }
 
 #[derive(Subcommand)]

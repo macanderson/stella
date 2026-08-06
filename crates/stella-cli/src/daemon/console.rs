@@ -423,9 +423,21 @@ fn wall_ms() -> u64 {
 }
 
 /// The live pumps, held by `main` for the life of the supervised child.
+///
+/// The pumps live behind an `Arc` rather than in this struct because two
+/// different code paths have to be able to end them: `main`'s orderly exit,
+/// and the panic hook [`arm_panic_drain`] installs (#1616). Both call the
+/// same idempotent [`Drainable::drain`]; whichever arrives first takes the
+/// streams and the other finds nothing to do.
 pub(crate) struct ConsoleGuard {
     #[cfg(unix)]
-    streams: Vec<PumpedStream>,
+    pumps: Arc<Drainable>,
+}
+
+/// The drainable half of a [`ConsoleGuard`], shareable with the panic hook.
+#[cfg(unix)]
+struct Drainable {
+    streams: Mutex<Vec<PumpedStream>>,
 }
 
 #[cfg(unix)]
@@ -435,6 +447,10 @@ struct PumpedStream {
     /// The fd the pipe replaced (1 or 2).
     target_fd: i32,
     pump: Option<std::thread::JoinHandle<u64>>,
+    /// Which thread the pump runs on. A drain reached *from* that thread —
+    /// the pump itself panicking — must not join it, which would be a thread
+    /// waiting on itself forever.
+    pump_thread: std::thread::ThreadId,
 }
 
 impl ConsoleGuard {
@@ -443,9 +459,21 @@ impl ConsoleGuard {
     /// only write ends, so each pump sees EOF, writes its `Closed` marker,
     /// and exits; anything printed after this lands raw at the ring cursor,
     /// which the marker tells readers to sweep.
-    pub(crate) fn drain(self) {
+    pub(crate) fn drain(&self) {
         #[cfg(unix)]
-        for mut stream in self.streams {
+        self.pumps.drain();
+    }
+}
+
+#[cfg(unix)]
+impl Drainable {
+    /// Idempotent drain: take the streams out under the lock, then do the
+    /// blocking part (the `join`) with the lock released, so a panicking pump
+    /// thread arriving here cannot deadlock against the drain already
+    /// running.
+    fn drain(&self) {
+        let streams = std::mem::take(&mut *self.streams.lock().unwrap_or_else(|p| p.into_inner()));
+        for mut stream in streams {
             let Some(pump) = stream.pump.take() else {
                 continue;
             };
@@ -455,6 +483,17 @@ impl ConsoleGuard {
             // read end so no descriptor is closed twice.
             unsafe {
                 libc::dup2(stream.saved_fd, stream.target_fd);
+            }
+            if stream.pump_thread == std::thread::current().id() {
+                // The pump itself panicked and this drain is running inside
+                // its own panic hook. The fd is restored (above), which is
+                // what keeps the process's remaining output reaching the
+                // file; joining from here would wait on this very thread.
+                // SAFETY: as below — the install-time duplicate is done.
+                unsafe {
+                    libc::close(stream.saved_fd);
+                }
+                continue;
             }
             if let Ok(resume_at) = pump.join() {
                 // Post-drain appends continue at the ring cursor rather than
@@ -508,7 +547,40 @@ pub(crate) fn install_bounded(sidecar: &Path) -> Option<ConsoleGuard> {
             )?;
             streams.push(stream);
         }
-        Some(ConsoleGuard { streams })
+        Some(ConsoleGuard {
+            pumps: Arc::new(Drainable {
+                streams: Mutex::new(streams),
+            }),
+        })
+    }
+}
+
+/// Drain the console when this process panics, before the panic message is
+/// lost (#1616).
+///
+/// The pump made the console's tail lossy on a violent death: a panic unwinds
+/// past `main`'s orderly [`ConsoleGuard::drain`], the process exits without
+/// joining the pump threads, and up to a pipe buffer of output — the panic
+/// message itself, most of the time — dies in the pipe. That is the one
+/// artifact a postmortem of a supervised child actually wants.
+///
+/// The hook chains rather than replaces: whatever hook is already installed
+/// (the diagnostics dump, or the default printer) runs FIRST, so its output
+/// goes down the pipe like everything else, and only then is the pipe drained
+/// into the file. Draining first would restore the fds and leave the panic
+/// message to land raw — readable, but ahead of the pump's own `Closed`
+/// marker and outside the bound.
+pub(crate) fn arm_panic_drain(guard: &ConsoleGuard) {
+    #[cfg(not(unix))]
+    let _ = guard;
+    #[cfg(unix)]
+    {
+        let pumps = guard.pumps.clone();
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            previous(info);
+            pumps.drain();
+        }));
     }
 }
 
@@ -586,6 +658,7 @@ fn pump_fd(
     Some(PumpedStream {
         saved_fd,
         target_fd,
+        pump_thread: pump.thread().id(),
         pump: Some(pump),
     })
 }

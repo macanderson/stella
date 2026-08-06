@@ -413,6 +413,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             diff: Some("@@ -1 +1,2 @@\n-old\n+new\n+line\n".into()),
         }),
         ev(AgentEvent::StepUsage {
+            reasoning_tokens: None,
             output_text: None,
             step: 1,
             role: ModelCallRole::Worker,

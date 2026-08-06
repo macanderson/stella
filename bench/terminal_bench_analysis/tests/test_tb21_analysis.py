@@ -524,12 +524,11 @@ _POSTURE, _POSTURE_JSON, _POSTURE_SHA256 = analysis_module.canonical_engine_post
     _READINESS_POSTURE_JSON,
     _READINESS_POSTURE_SHA256,
 ) = analysis_module.canonical_engine_posture(_READINESS_MODEL)
-# Re-frozen when the `judge` agent slot became `verifier`. A slot rename is a
-# NEW posture generation, not a cosmetic edit: runs under `8530a36f…` booked an
-# agent under the old key and are not hash-comparable with runs under this one.
-assert _POSTURE_SHA256 == (
-    "8ce2e82029af25d9c9ee5d3f0f024f6e97c08fe39543486edb66926cb55b84a9"
-)
+# The registered-digest check that used to sit here as a module-scope `assert`
+# now lives in tests/test_posture_digest.py. It ran at import, so one stale hex
+# string reported as `Interrupted: 1 error during collection` and took every
+# test in this file with it (#1452). Fixtures below use the *computed* posture,
+# which is what makes moving the check out safe.
 
 
 def test_the_readme_digests_match_the_postures_printed_beside_them() -> None:

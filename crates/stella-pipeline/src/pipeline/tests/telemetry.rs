@@ -13,6 +13,7 @@ fn metered_result(
         output_tokens,
         cached_input_tokens: input_tokens / 2,
         cache_write_tokens: 0,
+        reasoning_tokens: None,
         reported: true,
     };
     result

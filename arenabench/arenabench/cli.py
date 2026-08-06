@@ -40,14 +40,20 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run a committed ``arenabench.toml`` headlessly — the CI entry point.
 
     Credentials are read from the process environment against each seat's
-    declared ``required`` list, never from the file. A missing one aborts
-    before any container starts, because an unauthenticated arm scores zero
-    and a zero is indistinguishable from a real result on a scoreboard.
+    declared ``required`` list, never from the file — and then from the saved
+    credential set at :func:`~.credentials.credentials_path` for whatever the
+    environment left unset (:func:`~.credentials.apply_saved_credentials`), so
+    a local, repeat ``arenabench run`` does not need the same ``export`` lines
+    pasted before every invocation. A seat's own environment always wins over
+    the saved file. A candidate still missing from both aborts before any
+    container starts, because an unauthenticated arm scores zero and a zero is
+    indistinguishable from a real result on a scoreboard.
     """
     import os
     import time
 
     from .config import MatchTemplateError, load_match, required_env
+    from .credentials import apply_saved_credentials, credentials_path, load_credentials
     from .monitor import MatchWatcher
     from .runner import MatchRunner
     from .server import ArenaServer
@@ -60,19 +66,33 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     needed = required_env(spec)
-    missing: list[str] = []
     seated: list = []
     for contestant in spec.contestants:
         candidates = needed.get(contestant.id, [])
-        env = {
-            name: os.environ[name] for name in candidates if os.environ.get(name)
-        }
+        env = {name: os.environ[name] for name in candidates if os.environ.get(name)}
+        seated.append(replace(contestant, env=env))
+    spec = replace(spec, contestants=tuple(seated))
+
+    saved = load_credentials()
+    spec = apply_saved_credentials(spec)
+    if saved:
+        filled = sum(
+            1
+            for contestant in spec.contestants
+            for name in needed.get(contestant.id, [])
+            if name in saved and not os.environ.get(name)
+        )
+        if filled:
+            print(f"credentials: {filled} value(s) filled in from {credentials_path()}")
+
+    missing: list[str] = []
+    for contestant in spec.contestants:
+        candidates = needed.get(contestant.id, [])
         # The candidate names are alternatives, not a conjunction: a seat
         # carrying any one of them is credentialled (a Claude subscription
         # token authenticates a seat that has no ANTHROPIC_API_KEY at all).
-        if candidates and not env and not args.allow_missing_env:
+        if candidates and not contestant.env and not args.allow_missing_env:
             missing.append(f"{contestant.name}: any of {', '.join(candidates)}")
-        seated.append(replace(contestant, env=env))
     if missing:
         print("error: required environment variables are not set:", file=sys.stderr)
         for line in missing:
@@ -80,7 +100,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print("  (use --allow-missing-env to run anyway)", file=sys.stderr)
         return 2
 
-    spec = replace(spec, contestants=tuple(seated))
     workspace = Path(args.workspace).expanduser()
     arena = ArenaServer(workspace)
     runner: MatchRunner = arena.runner

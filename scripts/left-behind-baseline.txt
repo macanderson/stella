@@ -1,0 +1,10 @@
+# Files carrying deferral markers (TODO/FIXME/XXX/HACK) that name no
+# issue. See #1454 and scripts/check-left-behind.sh.
+# Format: <count> <path>.
+#
+# Regenerate with: make left-behind-update
+#
+# This file started empty and is meant to stay that way. An entry may
+# only ever shrink: a file must not exceed its recorded count, and a
+# count that reaches zero must be removed. The fix for a marker is to
+# file the issue and reference it — not to add a line here.
