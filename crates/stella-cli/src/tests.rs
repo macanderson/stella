@@ -14,7 +14,7 @@ use super::term_policy::{
     PlainReason, accessible_env, animation_disabled, deck_decision, dumb_terminal,
 };
 use super::{
-    AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json, fleet_gc,
+    AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json, fleet_verbs,
 };
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
@@ -429,7 +429,7 @@ fn fleet_clean_parses_as_a_subcommand_and_a_prompt_survives_after_dashdash() {
         .expect("`fleet clean` must parse with no task prompts");
     match cli.command {
         Some(Command::Fleet {
-            cmd: Some(fleet_gc::FleetCmd::Clean { dry_run, age, .. }),
+            cmd: Some(fleet_verbs::FleetCmd::Clean { dry_run, age, .. }),
             tasks,
             ..
         }) => {

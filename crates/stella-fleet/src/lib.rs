@@ -19,7 +19,10 @@
 //!   carrying unmerged commits is removed without `--force`, and every kept
 //!   candidate reports why.
 //! - [`ledger`] — the **commit ledger**: one embedded SQLite file recording
-//!   every run, task, attempt, commit, lineage edge, and per-task USD spend.
+//!   every run, task, attempt, commit, lineage edge, and per-task USD spend —
+//!   and, in [`ledger::lease`], the **dispatch claims** that stop two
+//!   sessions taking the same unit of work (#1136): a check-and-set lease
+//!   with an expiry, so a crashed session cannot wedge a task.
 //! - [`monitor`] — the **PR/CI monitor** over the [`GhCli`] port: live PR
 //!   reconciliation and a capped-deferred-wait CI watcher (L-E4).
 //! - [`cache_schedule`] — **warmest-first scheduling** (issue #269): the pure,
@@ -90,6 +93,7 @@ pub use git::{
 };
 pub use ledger::{
     AttemptFinish, AttemptId, AttemptStart, CommitRecord, Ledger, LedgerError, RunRecord,
+    lease::{ClaimOutcome, DispatchClaim, DispatchLease, RenewOutcome},
 };
 pub use monitor::{
     CiConclusion, CiRun, CiRunStatus, CiSnapshot, CiWatchOutcome, GhCli, GhError, GhOutput,
