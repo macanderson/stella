@@ -308,6 +308,10 @@ smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic b
 automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not part of `gate`)
 	./scripts/test-automerge-nudge.sh
 
+.PHONY: file-size-test
+file-size-test: ## Test which languages the file-size ratchet actually watches (hermetic; not part of `gate`)
+	./scripts/test-file-size.sh
+
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)
 	git config core.hooksPath .githooks
