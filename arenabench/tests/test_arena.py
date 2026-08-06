@@ -1060,6 +1060,90 @@ class TestFailedMatchStatus:
         assert match.note == ""
 
 
+class TestRestoredMatches:
+    """A server restart must not erase the history sitting on disk (#1885).
+
+    Witness: on the old code every one of these fails — the runner had no
+    restore path at all, so a rebooted `ArenaServer` listed nothing and
+    `arena.match(...)` raised for a match whose artifacts were fully intact.
+    """
+
+    FIXTURE = Path(__file__).parent / "fixtures" / "matches" / "dd52a57a6f49"
+
+    def _workspace_with_fixture(self, tmp_path: Path) -> Path:
+        import shutil
+
+        workspace = tmp_path / "ws"
+        (workspace / "matches").mkdir(parents=True)
+        shutil.copytree(self.FIXTURE, workspace / "matches" / "dd52a57a6f49")
+        return workspace
+
+    def test_a_finished_match_on_disk_is_listed_after_boot(self, tmp_path: Path):
+        from arenabench.server import ArenaServer
+
+        arena = ArenaServer(self._workspace_with_fixture(tmp_path))
+        listed = {m["id"]: m for m in arena.list_matches()["matches"]}
+        assert "dd52a57a6f49" in listed
+        assert listed["dd52a57a6f49"]["status"] == "finished"
+
+    def test_a_restored_match_serves_its_snapshot_and_seats_read_done(
+        self, tmp_path: Path
+    ):
+        from arenabench.server import ArenaServer
+
+        arena = ArenaServer(self._workspace_with_fixture(tmp_path))
+        snap = arena.match("dd52a57a6f49")
+        assert snap["status"] == "finished"
+        assert len(snap["contestants"]) == 2
+        assert all(c["state"] == "done" for c in snap["contestants"])
+        assert snap["rows"], "the task grid must come back from the job dirs"
+        # History replays; it never re-runs. No process, no supervisor.
+        match = arena.runner.matches["dd52a57a6f49"]
+        assert all(run.process is None for run in match.runs.values())
+
+    def test_create_persists_a_secret_free_spec_for_the_next_boot(
+        self, tmp_path: Path
+    ):
+        spec = MatchSpec.from_json(
+            {
+                "name": "kvk",
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["fix-git"],
+                "contestants": [
+                    {
+                        "name": "Stella",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "z-ai/glm-5.2"},
+                        "env": "OPENROUTER_API_KEY=sk-secret-value",
+                    },
+                    {
+                        "name": "Claude Code",
+                        "agent": "claude-code",
+                        "engine": {"api": "anthropic", "model": "claude-sonnet-5"},
+                    },
+                ],
+            }
+        )
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path)
+        match = runner.create(spec)
+        raw = (match.workspace / "spec.json").read_text(encoding="utf-8")
+        assert "sk-secret-value" not in raw, "credential values must never touch disk"
+        restored = MatchSpec.from_json(json.loads(raw))
+        assert restored.id == spec.id
+        assert [c.name for c in restored.contestants] == ["Stella", "Claude Code"]
+        assert restored.tasks == ("fix-git",)
+
+    def test_junk_directories_do_not_break_the_boot(self, tmp_path: Path):
+        from arenabench.server import ArenaServer
+
+        workspace = self._workspace_with_fixture(tmp_path)
+        (workspace / "matches" / "no-jobs-here").mkdir()
+        (workspace / "matches" / "empty-jobs" / "jobs").mkdir(parents=True)
+        arena = ArenaServer(workspace)
+        listed = [m["id"] for m in arena.list_matches()["matches"]]
+        assert listed == ["dd52a57a6f49"]
+
+
 class TestSnapshotDetections:
     """The monitor's verdicts ride the snapshot the web UI renders (#1569).
 
