@@ -29,7 +29,7 @@ builds its own binary, `mcp-fixture-server`, which exists purely for
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate's authoritative design notes and the flat re-export surface. Read this first. |
-| [`src/toolset.rs`](src/toolset.rs) | `McpToolSet` — the `ToolExecutor` impl, tool namespacing, routing, native fall-through, disabled servers, and the Best-of-N `CandidateMcpView`. Open it for anything the engine sees. |
+| [`src/toolset.rs`](src/toolset.rs) (+ [`src/toolset/tests.rs`](src/toolset/tests.rs)) | `McpToolSet` — the `ToolExecutor` impl, tool namespacing, routing, native fall-through, disabled servers, and the Best-of-N `CandidateMcpView`. Open it for anything the engine sees. |
 | [`src/client.rs`](src/client.rs) | `McpClient` — handshake, version negotiation, paginated discovery, `tools/call`, the reconnect/backoff state machine, and every ingest budget. The largest file and the one with the most invariants. |
 | [`src/transport.rs`](src/transport.rs) | The `Transport` trait (framing only, no MCP methods) plus the `ScriptedTransport` test double used by the unit tests. |
 | [`src/stdio.rs`](src/stdio.rs) / [`src/http.rs`](src/http.rs) / [`src/sse.rs`](src/sse.rs) | The two transports and the SSE decoder streamable-HTTP needs. `http.rs` also owns the shared `truncate` / `truncate_middle_out` helpers. |
