@@ -337,7 +337,7 @@ impl<'a> Pipeline<'a> {
             TurnOutcome::Aborted {
                 reason, cost_usd, ..
             } => {
-                *total += cost_usd;
+                *spend.total += cost_usd;
                 // A budget stop here is degradable too (#1789): the worker's
                 // change is already complete in the candidate, and discarding
                 // it because the SCAFFOLDING ran out of money threw away real
@@ -346,7 +346,7 @@ impl<'a> Pipeline<'a> {
                 // the next unaffordable call; what degrading buys is the
                 // deterministically-resolvable endings (a warranted waiver,
                 // an abstention) that need no further model spend at all.
-                if let Some(abort) = budget_abort(budget.evaluate()) {
+                if let Some(abort) = budget_abort(spend.budget.evaluate()) {
                     return Err(WitnessAbort::degradable(format!(
                         "witness authoring stopped by the budget ({}); the executed change \
                          stands unproven",
@@ -433,10 +433,10 @@ impl<'a> Pipeline<'a> {
                 TurnOutcome::Aborted {
                     reason, cost_usd, ..
                 } => {
-                    *total += cost_usd;
+                    *spend.total += cost_usd;
                     // Degradable for the same #1789 reason as the author
                     // turn's budget arm above.
-                    if let Some(abort) = budget_abort(budget.evaluate()) {
+                    if let Some(abort) = budget_abort(spend.budget.evaluate()) {
                         return Err(WitnessAbort::degradable(format!(
                             "witness repair stopped by the budget ({}); the executed change \
                              stands unproven",
