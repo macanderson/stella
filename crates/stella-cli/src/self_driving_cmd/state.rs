@@ -429,14 +429,13 @@ impl LoopState {
     }
 }
 
-/// Two earlier builds kept this state elsewhere, newest first:
+/// Move this repo's state out of the newest legacy root that still has it.
 ///
-/// 1. `<stella home>/fullauto/<slug>` — before the loop was renamed
-///    `self-driving`. The spelling is a fact about bytes already on disk, so it
-///    survives the rename verbatim; rewriting it here would point the migration
-///    at a directory that has never existed and silently orphan a live ledger.
-/// 2. `~/.fullauto/<slug>` — the original home, before the state moved under
-///    the stella home.
+/// The roots come from `stella_home::resolve_legacy_self_driving_roots` rather
+/// than a list spelled out here, because the observatory scans the same roots
+/// read-only and two independently maintained copies drift silently: the
+/// reader would keep showing a loop the writer had already moved, or miss one
+/// it had not (#1755).
 ///
 /// Move the first one that exists, once. Never overwrite: if both exist the new
 /// home wins and the legacy directory is left untouched for the user to inspect.
@@ -444,7 +443,6 @@ fn migrate_legacy_state(new_dir: &Path, slug: &str, stella_home: &Path) {
     if new_dir.exists() {
         return;
     }
-    let mut candidates = vec![stella_home.join("fullauto").join(slug)];
     // `crate::paths::home()`, never `std::env::var_os("HOME")` — that
     // indirection is what lets a test redirect the anchor without mutating
     // process-global state (#1139), and
@@ -453,11 +451,12 @@ fn migrate_legacy_state(new_dir: &Path, slug: &str, stella_home: &Path) {
     // comment describing the rule, so the comment was reworded around it
     // instead (#1747); the guard now reads code and not prose (#1748), and this
     // is the clearer sentence.
-    if let Some(home) = crate::paths::home() {
-        candidates.push(home.join(".fullauto").join(slug));
-    }
+    let roots = stella_home::resolve_legacy_self_driving_roots(
+        Some(stella_home.to_path_buf()),
+        crate::paths::home(),
+    );
 
-    let Some(legacy) = candidates.into_iter().find(|c| c.is_dir()) else {
+    let Some(legacy) = roots.into_iter().map(|r| r.join(slug)).find(|c| c.is_dir()) else {
         return;
     };
     if let Some(parent) = new_dir.parent()
@@ -546,4 +545,154 @@ pub(crate) fn new_run_id() -> String {
         .unwrap_or(0);
     let salt = (nanos ^ std::process::id()) & 0xffff;
     format!("r-{compact}-{salt:04x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Seed a state directory with the two files whose loss is unrecoverable:
+    /// the seen-set (losing it re-files every finding ever triaged) and the
+    /// ledger the dry-streak oracle folds.
+    fn seed_state(dir: &Path, seen: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("seen.txt"), seen).unwrap();
+        std::fs::write(dir.join("ledger.jsonl"), "{\"cycle\":1}\n").unwrap();
+    }
+
+    /// `<stella home>/self-driving/<slug>`, the destination under test.
+    fn dest_dir(stella_home: &Path) -> PathBuf {
+        stella_home.join("self-driving").join("demo")
+    }
+
+    #[test]
+    fn an_existing_new_home_is_never_overwritten() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::paths::test_user_home(tmp.path().to_path_buf());
+        let stella_home = tmp.path().join(".stella");
+
+        let dest = dest_dir(&stella_home);
+        seed_state(&dest, "current\n");
+        seed_state(&stella_home.join("fullauto").join("demo"), "legacy\n");
+        seed_state(&tmp.path().join(".fullauto").join("demo"), "older\n");
+
+        migrate_legacy_state(&dest, "demo", &stella_home);
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("seen.txt")).unwrap(),
+            "current\n",
+            "the live ledger must not be clobbered by a stale one"
+        );
+        assert!(
+            stella_home.join("fullauto").join("demo").is_dir()
+                && tmp.path().join(".fullauto").join("demo").is_dir(),
+            "both legacy homes are left untouched for the user to inspect"
+        );
+    }
+
+    #[test]
+    fn the_newest_legacy_home_wins_when_both_exist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::paths::test_user_home(tmp.path().to_path_buf());
+        let stella_home = tmp.path().join(".stella");
+
+        let newer = stella_home.join("fullauto").join("demo");
+        let older = tmp.path().join(".fullauto").join("demo");
+        seed_state(&newer, "newer\n");
+        seed_state(&older, "older\n");
+
+        let dest = dest_dir(&stella_home);
+        migrate_legacy_state(&dest, "demo", &stella_home);
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("seen.txt")).unwrap(),
+            "newer\n",
+            "reversed, a machine carrying both adopts the OLDER ledger and \
+             strands everything triaged since the state moved under the \
+             stella home"
+        );
+        assert!(!newer.exists(), "the migrated home is moved, not copied");
+        assert!(older.is_dir(), "the un-chosen legacy home is left alone");
+    }
+
+    #[test]
+    fn the_original_home_still_migrates_when_it_is_the_only_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::paths::test_user_home(tmp.path().to_path_buf());
+        let stella_home = tmp.path().join(".stella");
+
+        let older = tmp.path().join(".fullauto").join("demo");
+        seed_state(&older, "older\n");
+
+        let dest = dest_dir(&stella_home);
+        migrate_legacy_state(&dest, "demo", &stella_home);
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("seen.txt")).unwrap(),
+            "older\n",
+            "the pre-stella-home layout must keep migrating — it is the one \
+             users on the oldest builds still have"
+        );
+        assert!(!older.exists());
+    }
+
+    #[test]
+    fn a_machine_with_no_legacy_state_is_left_completely_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::paths::test_user_home(tmp.path().to_path_buf());
+        let stella_home = tmp.path().join(".stella");
+
+        let dest = dest_dir(&stella_home);
+        migrate_legacy_state(&dest, "demo", &stella_home);
+
+        assert!(
+            !dest.exists(),
+            "a no-op migration must not create the destination — seeding it \
+             here would make a fresh install look like a migrated one"
+        );
+    }
+
+    /// The property the whole function exists for. A move that dropped or
+    /// rewrote `seen.txt` would re-file every finding the loop has ever
+    /// triaged, and nothing downstream would report it as an error.
+    #[test]
+    fn the_seen_set_survives_the_move_byte_for_byte() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::paths::test_user_home(tmp.path().to_path_buf());
+        let stella_home = tmp.path().join(".stella");
+
+        let digests = "0123456789abcdef\nfedcba9876543210\n";
+        seed_state(&stella_home.join("fullauto").join("demo"), digests);
+
+        let dest = dest_dir(&stella_home);
+        migrate_legacy_state(&dest, "demo", &stella_home);
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("seen.txt")).unwrap(),
+            digests
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.join("ledger.jsonl")).unwrap(),
+            "{\"cycle\":1}\n",
+            "the ledger travels with the seen-set — the dry-streak oracle \
+             folds it, so half a migration is a silently wrong streak"
+        );
+    }
+
+    /// The reader (`stella-observatory`) scans exactly the roots this migrates
+    /// out of. Two hand-maintained copies drift: the dashboard would keep
+    /// showing a loop the CLI had already moved, or miss one it had not.
+    #[test]
+    fn the_writer_and_the_reader_agree_on_the_legacy_roots() {
+        let roots = stella_home::resolve_legacy_self_driving_roots(
+            Some(PathBuf::from("/s")),
+            Some(PathBuf::from("/h")),
+        );
+        assert_eq!(
+            roots,
+            vec![PathBuf::from("/s/fullauto"), PathBuf::from("/h/.fullauto")],
+            "this list is shared with stella-observatory through stella-home; \
+             a second copy here is how the two surfaces drift (#1755)"
+        );
+    }
 }
