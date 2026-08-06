@@ -1687,8 +1687,8 @@ async fn a_workspace_with_no_usable_runner_skips_the_author_turn() {
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
-    let baseline = FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone())
-        .with_available_runners(vec![]);
+    let baseline =
+        FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone()).with_available_runners(vec![]);
     let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
     let (outcome, events, _) = run_isolated(
         &provider,
