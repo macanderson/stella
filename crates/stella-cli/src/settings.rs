@@ -841,6 +841,23 @@ impl AgentEngineConfig {
         self.hunk_review.is_some_and(Toggle::is_on)
     }
 
+    /// The parked-approval deadline, if the operator set one (#1616).
+    ///
+    /// `0` is spelled and means "no deadline", the same convention
+    /// `model_timeout_secs` uses: in a field whose absence already means
+    /// "the default", zero is the only way for one project to opt out of a
+    /// deadline a user-scope file set. Absent and `0` therefore agree, and
+    /// both park forever.
+    ///
+    /// The single copy of this reading, deliberately: #1616 merged twice,
+    /// and one of the two mappings that resulted was consulted by nothing.
+    /// Witness: `daemon::approval::tests::the_setting_maps_absent_and_zero_to_park_forever`.
+    pub fn approval_wait(&self) -> Option<std::time::Duration> {
+        self.approval_wait_secs
+            .filter(|secs| *secs > 0)
+            .map(std::time::Duration::from_secs)
+    }
+
     /// Persist THIS config as the `agent_engine_config` key of the
     /// settings file at `path`, preserving every other key in the file
     /// byte-for-byte at the value level (providers, hooks, mcp, and any
