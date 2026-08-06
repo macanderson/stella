@@ -239,6 +239,64 @@ fn kill_during_indexing_leaves_a_consistent_store() {
     assert_eq!(file_count(&conn3).unwrap(), 2);
 }
 
+/// A damaged store is not a fatal error for a rebuildable cache: `open`
+/// quarantines the corrupt file (sidecars included) and hands back a fresh,
+/// migrated store the next index can fill.
+#[test]
+fn a_corrupt_store_is_quarantined_and_rebuilt_on_open() {
+    let ws = tempdir().unwrap();
+    let dbdir = tempdir().unwrap();
+    let root = canon(&ws);
+    let db = dbdir.path().join("codegraph.db");
+    fs::write(root.join("a.rs"), "pub fn a() {}\n").unwrap();
+    let grammars = Grammars::load().unwrap();
+
+    // A real, indexed store first — the quarantine must preserve it.
+    let mut conn = open(&db).unwrap();
+    index_tree(&mut conn, &root, &grammars).unwrap();
+    assert_eq!(file_count(&conn).unwrap(), 1);
+    drop(conn);
+
+    // Overwrite the header so SQLite cannot read the image. The store is a
+    // WAL database, so checkpoint first: otherwise the live pages sit in the
+    // `-wal` the quarantine moves aside with it, and the "corrupt" main file
+    // would be an empty one.
+    {
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        drop(conn);
+        use std::io::{Seek, SeekFrom, Write};
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .open(&db)
+            .expect("open db for corruption");
+        file.seek(SeekFrom::Start(0)).expect("seek");
+        file.write_all(&[0x7f; 128]).expect("write garbage");
+        file.sync_all().expect("sync");
+    }
+
+    // The open heals itself: the damaged file moves aside and a fresh store
+    // answers in its place.
+    let mut conn = open(&db).unwrap();
+    assert_eq!(file_count(&conn).unwrap(), 0, "the rebuild starts empty");
+    let quarantined: Vec<_> = fs::read_dir(dbdir.path())
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("codegraph.db.corrupt-"))
+        .collect();
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "the corrupt store was moved aside, found: {quarantined:?}"
+    );
+
+    // And the fresh store indexes the tree end to end.
+    let stats = index_tree(&mut conn, &root, &grammars).unwrap();
+    assert_eq!(stats.files_parsed, 1);
+    assert_eq!(file_count(&conn).unwrap(), 1);
+}
+
 #[test]
 fn sql_files_produce_storage_rows_and_prune_with_their_file() {
     let ws = tempdir().unwrap();
