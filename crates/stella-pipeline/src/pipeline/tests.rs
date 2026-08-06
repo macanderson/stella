@@ -336,6 +336,10 @@ pub(super) struct ScriptedRunner {
     /// repository" wording, which the pipeline reads to tell a permanently
     /// inapplicable probe from a transiently failed one.
     diff_stderr: String,
+    /// #1539: which runner programs the availability probe reports usable.
+    /// `None` (the default) keeps the port's own default — everything
+    /// available — so pre-existing scripts never see the constraint.
+    available_runners: Option<Vec<String>>,
 }
 impl ScriptedRunner {
     pub(super) fn new(test_results: Vec<bool>, diff: &str) -> Self {
@@ -362,6 +366,7 @@ impl ScriptedRunner {
             failure_tail: "test failed".to_string(),
             diff_exit_code: 0,
             diff_stderr: String::new(),
+            available_runners: None,
         }
     }
     /// How many times `run_test` was invoked on this runner.
@@ -392,6 +397,12 @@ impl ScriptedRunner {
             .into_iter()
             .map(|(p, n)| (p.to_string(), n))
             .collect();
+        self
+    }
+    /// #1539: script the availability probe — only these programs report
+    /// usable. An empty vec models a workspace with no toolchain at all.
+    pub(super) fn with_available_runners(mut self, programs: Vec<&str>) -> Self {
+        self.available_runners = Some(programs.into_iter().map(str::to_string).collect());
         self
     }
 }
@@ -431,6 +442,13 @@ impl DiagnosticRunner for ScriptedRunner {
 
 #[async_trait]
 impl TestRunner for ScriptedRunner {
+    async fn runner_available(&self, probe: &TestInvocation) -> bool {
+        match &self.available_runners {
+            Some(programs) => programs.iter().any(|p| p == &probe.program),
+            None => true,
+        }
+    }
+
     async fn run_test(&self, _invocation: &TestInvocation) -> CmdOutcome {
         self.test_runs
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1608,6 +1626,97 @@ async fn a_candidate_that_wrote_outside_its_workspace_is_failed_not_adopted() {
     assert!(
         !log.iter().any(|entry| entry.starts_with("adopt:")),
         "escaped work must never be adopted: {log:?}"
+    );
+}
+
+/// #1539: an author that names a runner the workspace cannot spawn is caught
+/// by the availability constraint at parse time — degraded with the honest
+/// reason and the available set named, never by spending the baseline run to
+/// discover an unobservable command and blaming generic infra noise.
+#[tokio::test]
+async fn an_unavailable_runner_choice_degrades_naming_the_available_set() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: pytest tests/test_witness.py"),
+        // The unauthored ladder's verifier, after the witness degrades.
+        text_result("PASS looks right"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    let baseline = FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone())
+        .with_available_runners(vec!["cargo"]);
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert!(
+        !matches!(outcome.status, PipelineStatus::Aborted { .. }),
+        "an unavailable runner degrades the witness, never the run: {outcome:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. }
+                if message.contains("witness author chose `pytest`")
+                    && message.contains("available runners: cargo")
+        )),
+        "the degradation names the choice and the available set: {events:?}"
+    );
+}
+
+/// #1539: a workspace where NO vocabulary runner is usable degrades before
+/// the author turn is even dispatched — zero model spend on a witness that
+/// could never be observed, and the reason says so.
+#[tokio::test]
+async fn a_workspace_with_no_usable_runner_skips_the_author_turn() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        // The unauthored ladder's verifier — NOT a witness-author reply. If
+        // the author turn had run anyway, it would have consumed this text
+        // and degraded on "produced no TEST_COMMAND line" instead of the
+        // no-runner reason asserted below.
+        text_result("PASS looks right"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    let baseline =
+        FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone()).with_available_runners(vec![]);
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert!(
+        !matches!(outcome.status, PipelineStatus::Aborted { .. }),
+        "an absent toolchain degrades honestly, never aborts: {outcome:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. }
+                if message.contains("no supported test runner is available")
+        )),
+        "the degradation states the toolchain fact: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. } if message.contains("produced no TEST_COMMAND")
+        )),
+        "the author turn must never have been dispatched: {events:?}"
     );
 }
 
