@@ -914,6 +914,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         .map_err(failure::CliFailure::from);
                 }
                 DaemonCmd::Resume { .. } => {}
+                // The sweep is the parent half N times over — it resolves,
+                // spawns and streams each `daemon resume <id> --foreground`
+                // child — so it stays keyless here for the same reason.
+                DaemonCmd::ResumeAll { dry_run } => {
+                    return daemon::resume_all(*dry_run, rt).map_err(failure::CliFailure::from);
+                }
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
             }
         }

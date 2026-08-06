@@ -345,6 +345,22 @@ pub(crate) enum DaemonCmd {
         id: Option<String>,
     },
 
+    /// Resume every run this machine interrupted, once
+    ///
+    /// The verb `stella daemon install --resume-all` registers, and a useful
+    /// one by hand after an unplanned reboot. It continues each supervised run
+    /// whose process was killed mid-turn and which left a resume point, from
+    /// that run's last completed step — never restarting one, and never
+    /// touching a run that finished, was stopped, or was set aside. Each run
+    /// gets at most three boot-time resumes before it is retired from the
+    /// sweep and left for `stella daemon resume <id>` by hand.
+    ResumeAll {
+        /// Print the decision for every run and exit without resuming
+        /// anything — no process spawned, no budget spent.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Register a stella invocation with the OS's per-user service manager
     ///
     /// Supervision survives the terminal; only the service manager survives
@@ -353,15 +369,17 @@ pub(crate) enum DaemonCmd {
     /// invocation in the current directory at every login (macOS) or boot
     /// (Linux, once lingering is on), and loads it now.
     ///
-    /// Registration, not resume: the service manager re-starts the command
-    /// from scratch each time (`stella daemon resume` is what continues a
-    /// killed turn), so register standing verbs (`monitor`, a fleet watch) —
-    /// a one-shot `run` would repeat its work, and its spend, on every boot.
-    /// By default a command that exits stays down; `--keep-alive` opts into
-    /// restarts.
+    /// A service manager re-starts what it registers, so a registered command
+    /// begins a fresh turn and a fresh spend each boot: register standing
+    /// verbs (`monitor`, a fleet watch) — a one-shot `run` would repeat its
+    /// work, and its spend, on every boot. By default a command that exits
+    /// stays down; `--keep-alive` opts into restarts. To come back
+    /// *continuing* the work a reboot interrupted rather than repeating it,
+    /// register the resume sweep with `--resume-all`.
     Install {
-        /// Name for the service (default: the command's first word).
-        /// Lowercase letters, digits and dashes.
+        /// Name for the service (default: the command's first word, or
+        /// `resume-boot` with --resume-all). Lowercase letters, digits and
+        /// dashes.
         #[arg(long)]
         label: Option<String>,
 
@@ -371,9 +389,16 @@ pub(crate) enum DaemonCmd {
         #[arg(long)]
         keep_alive: bool,
 
+        /// Register `stella daemon resume-all` instead of a command of your
+        /// own: at every boot, continue the turns this machine interrupted
+        /// from their last completed step rather than starting them over.
+        /// Cannot be combined with a command or with --keep-alive.
+        #[arg(long)]
+        resume_all: bool,
+
         /// The stella invocation to register, after `--`:
         /// `stella daemon install -- monitor --interval 300`
-        #[arg(last = true, required = true, value_name = "STELLA ARGS")]
+        #[arg(last = true, value_name = "STELLA ARGS")]
         command: Vec<String>,
     },
 
