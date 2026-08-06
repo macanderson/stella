@@ -706,6 +706,16 @@ impl ToolExecutor for McpToolSet {
             .as_ref()
             .and_then(|native| native.drain_wait_request())
     }
+
+    /// Forwarded from the native layer: letting the empty default stand would
+    /// silently serialize its sibling spawns (see the port's contract).
+    /// External MCP tools never carry this claim — the port pins their
+    /// concurrency to `read_only`, which they are advertised without.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.native
+            .as_ref()
+            .map_or_else(Default::default, |native| native.parallel_safe_names())
+    }
 }
 
 /// A Best-of-N candidate's tool surface (issue #248 Phase 1): built by
@@ -766,6 +776,13 @@ impl ToolExecutor for CandidateMcpView {
     /// this view executes (`ci_status` included) is the only depositor.
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.native.drain_wait_request()
+    }
+
+    /// Forwarded from the candidate's own `native` layer — the executor every
+    /// non-`mcp__` name routes to in `execute` above. `inner`'s set would name
+    /// tools this view never runs, and MCP tools never carry the claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.native.parallel_safe_names()
     }
 }
 

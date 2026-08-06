@@ -60,4 +60,54 @@ impl ToolExecutor for TaskTap<'_> {
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.inner.drain_wait_request()
     }
+
+    /// Forwarded: letting the empty default stand would silently serialize
+    /// the inner executor's sibling spawns (see the port's contract). The
+    /// spawn tool is `task`, not `task_*` — the tap never fires for it.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A leaf claiming one parallel-safe name, standing in for the registry.
+    struct Claiming;
+
+    #[async_trait]
+    impl ToolExecutor for Claiming {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
+        fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+            std::collections::HashSet::from(["task".to_string()])
+        }
+    }
+
+    /// The deck's lead lane wraps the whole stack in this tap last, so a tap
+    /// that swallowed the claim would kill concurrent sibling spawns for
+    /// every deck session no matter what the layers below advertised.
+    #[test]
+    fn the_task_tap_forwards_parallel_safe_names() {
+        let inner = Claiming;
+        let registry = ToolRegistry::with_issue_backend(std::path::PathBuf::from("."), None);
+        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let tap = TaskTap {
+            inner: &inner,
+            events,
+            registry: &registry,
+            supervisor: None,
+        };
+        assert!(
+            tap.parallel_safe_names().contains("task"),
+            "the tap must forward the inner executor's concurrency claims"
+        );
+    }
 }

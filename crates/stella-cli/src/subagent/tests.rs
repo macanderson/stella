@@ -168,6 +168,39 @@ async fn the_production_tool_stack_forwards_wait_requests() {
     );
 }
 
+/// **The parallel-dispatch counterpart of the spend witness above.**
+///
+/// `parallel_safe_names` has an empty default, so any decorator that forgets
+/// to forward it silently serializes sibling `task` calls in every real
+/// session — the registry's claim never reaches the engine, and the feature
+/// (#1776) is dead exactly where it shipped. Asserted through the shipped
+/// composition for the same reason as the spend test: a future decorator
+/// inserted into the real stack fails here, and nowhere else.
+#[tokio::test]
+async fn the_production_tool_stack_forwards_parallel_safe_names() {
+    let ledger: SubAgentSpendLedger = Arc::default();
+    let base = LedgerBase(ledger);
+
+    let customs =
+        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
+    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &customs,
+        stub_tx,
+        crate::interactive::default_ask_io(false),
+    );
+    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
+    let discovery =
+        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+
+    assert!(
+        discovery.parallel_safe_names().contains("task"),
+        "the registry's concurrency claim must survive every decorator \
+         between the engine and the registry — one that swallows it silently \
+         serializes sibling spawns"
+    );
+}
+
 /// A dispatcher whose registry has been dropped reports a refusal rather
 /// than panicking a torn-down session.
 #[tokio::test]
@@ -213,6 +246,62 @@ async fn the_pool_binds_and_a_failed_child_charges_nothing() {
         pool.session_spent_usd(),
         0.0,
         "a failed child that never billed must not charge the pool"
+    );
+}
+
+/// A session that passed no `--budget` must still install a pool ceiling
+/// (#1849).
+///
+/// `DEFAULT_POOL_LIMIT_USD` was documented as the bound that stops "a model
+/// looping on `task`" and bound nothing: every production installer passed
+/// `None` to `with_pool_limit`, which means *unlimited*, not "keep the
+/// default". So an unbudgeted session whose model wedged on delegation ran
+/// every child to `max_steps` with no dollar bound at any layer.
+///
+/// Both halves are asserted, because the first alone is satisfiable by a
+/// ceiling that never reaches a child: the pool binds, AND a carve against it
+/// hands the child finite headroom. `carve(None, None)` on an unlimited pool
+/// yields `ceiling: None`, which is the shape that made this invisible.
+#[test]
+fn an_unbudgeted_session_still_installs_a_sub_agent_pool_ceiling() {
+    assert_eq!(
+        crate::subagent::session_pool_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "the documented default must be what a session actually installs"
+    );
+
+    // Constructed exactly as `install_for_session` constructs it — same mode,
+    // same limit. Only the provider differs, because building the real one
+    // needs credentials a unit test has no business holding.
+    let registry = registry();
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NeverProvider),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_pool_limit(crate::subagent::session_pool_limit_usd());
+
+    let pool = *dispatcher.pool.lock().unwrap();
+    assert_eq!(
+        pool.session_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "the pool must carry the ceiling, not an unbounded guard"
+    );
+
+    // The half that reaches the child: an unlimited pool carves an unlimited
+    // child, so a ceiling nothing inherits is the same as no ceiling.
+    let child = pool.carve(None);
+    assert_eq!(
+        child.session_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "a child carved against the pool must inherit finite headroom"
+    );
+    assert_eq!(
+        child.mode(),
+        stella_protocol::BudgetMode::Observed,
+        "and the session's mode — the pool warns, it does not stop (the \
+         parent's guard is the enforcing bound)"
     );
 }
 

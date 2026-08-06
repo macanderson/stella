@@ -28,6 +28,16 @@ stella-home = { path = "../stella-home" }
 # opposite shape — pure decision logic over owned data, no I/O by invariant 2,
 # with the clock passed in as a parameter. Linking it opens nothing.
 stella-core = { path = "../stella-core" }
+# The pure unified differ behind `/api/execution-context-diff` (#1511) —
+# extracted from `stella-cli`'s `inspect::diff` precisely so this crate could
+# link it instead of taking a fourth acknowledged copy. Zero dependencies,
+# zero I/O (the `stella-home` shape), so the observer boundary holds.
+stella-diff = { path = "../stella-diff" }
+# One syscall: `kill(pid, 0)` in `sessions::pid_alive`, the read-time liveness
+# probe the session registry's readers all share (an acknowledged copy of
+# `stella_store::sessions::pid_alive` — see that fn's doc). Probing a pid
+# opens nothing and writes nothing, so the observer boundary holds.
+libc.workspace = true
 rusqlite.workspace = true
 serde_json = { workspace = true }
 # Re-hash exploration-map manifests for the /api/explorations freshness

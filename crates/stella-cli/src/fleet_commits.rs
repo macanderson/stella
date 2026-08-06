@@ -138,6 +138,13 @@ impl ToolExecutor for CommitObserver<'_> {
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.inner.drain_wait_request()
     }
+
+    /// Forwarded: letting the empty default stand would silently serialize
+    /// the inner executor's sibling spawns (see the port's contract) — the
+    /// spawn tool is not commit-lane routed, so nothing is observed for it.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
 }
 
 /// One attempt's commits, oldest first — and the two ways of knowing which

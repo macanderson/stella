@@ -1,0 +1,15 @@
+[package]
+name = "stella-diff"
+description = "A pure line-oriented unified diff — git's exact hunk shape, zero dependencies. The shared differ behind `stella inspect --diff` and the Observatory's prompt-diff view."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Deliberately empty: this crate is pure functions over borrowed strings, the
+# `stella-home` shape (#1139) — which is what lets `stella-observatory` (which
+# links almost nothing) and `stella-cli` share one differ instead of keeping
+# acknowledged copies (#1511).
+[dependencies]

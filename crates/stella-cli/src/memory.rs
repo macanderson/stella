@@ -302,6 +302,11 @@ impl SessionMemory {
         &self.task_id
     }
 
+    #[cfg(test)]
+    pub(crate) fn execution_id_for_test(&self) -> Option<i64> {
+        self.execution_id
+    }
+
     /// Tell memory which execution this turn's reflection belongs to, so the
     /// model's self-review can be stored against it.
     ///
@@ -481,6 +486,14 @@ impl SessionMemory {
     /// domains/terms that selected it. Same enabled-filtered load + selection
     /// as [`Self::recall_block_reported`], so this reports exactly what was applied.
     pub fn selected_skills(&self, prompt: &str) -> Vec<(String, String)> {
+        // The A/B recall control gates every injection channel
+        // ([`Self::recall_block_reported`], [`Self::pipeline_recall_block`]),
+        // so it gates the report too: a control turn injects no skills, and
+        // recording usage for skills that never reached the prompt would
+        // corrupt the appraisal signal `skill_usage` feeds.
+        if self.ab_suppressed {
+            return Vec::new();
+        }
         skills::select_skills(
             &self.load_skills(),
             prompt,

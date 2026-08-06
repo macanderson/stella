@@ -182,8 +182,11 @@ pub(crate) async fn run_raw_one_shot(
     // `SessionPresence::one_shot_notification`, shared with the pipeline path).
     let run_secs =
         u64::try_from(crate::memory::unix_now_secs().saturating_sub(started_unix)).unwrap_or(0);
-    let notify = presence.one_shot_notification(outcome.is_ok(), run_secs, prompt);
-    presence.finish(outcome.is_ok(), notify);
+    // The failure itself, not a bool: an unsupervised deliberate stop must
+    // reach the registry as `Stopped`, never age into it as a crash (#1826).
+    let status = crate::daemon::outcome_status(outcome.as_ref().map(|_| ()));
+    let notify = presence.one_shot_notification(status, run_secs, prompt);
+    presence.finish(status, notify);
     outcome
 }
 
@@ -205,7 +208,7 @@ pub async fn run_goal_cmd(
     goal: &str,
     budget_limit: Option<f64>,
     use_pipeline: bool,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
@@ -367,13 +370,19 @@ pub async fn run_goal_cmd(
     // Goal runs are long by construction — always land the inbox
     // notification (Enter on it replays this session's journal).
     let goal_secs = crate::memory::unix_now_secs().saturating_sub(started_unix);
-    let notify = if outcome.is_ok() {
-        format!("{}: goal met ({goal_secs}s)", presence.name())
-    } else {
-        format!("{}: goal run FAILED", presence.name())
+    let notify = match &outcome {
+        Ok(()) => format!("{}: goal met ({goal_secs}s)", presence.name()),
+        Err(failure) if failure.is_deliberate_stop() => {
+            format!("{}: goal run stopped by policy", presence.name())
+        }
+        Err(_) => format!("{}: goal run FAILED", presence.name()),
     };
+    // The typed abort survives to this terminal write (#1862): the same
+    // decider as every other registry writer projects a deliberate stop as
+    // `Stopped`, a user interrupt as `Cancelled`, and a crash as `Error`
+    // (#1653, #1826).
     presence.finish(
-        outcome.is_ok(),
+        crate::daemon::outcome_status(outcome.as_ref().map(|_| ())),
         Some((notify, crate::command_deck::prompt_line(goal, 160))),
     );
     outcome
@@ -409,16 +418,15 @@ pub(crate) async fn run_goal_turn(
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall necessarily precedes the channel it would be emitted on.
     recall_event: Option<AgentEvent>,
-    // The caller's session memory, so this round's execution id is stamped
-    // before the turn runs — reflection stores the self-review 1:1 with an
-    // execution, and an unstamped round files an id-less row.
+    // The caller's session memory, so the execution seam can stamp this
+    // round's execution id and record its skill-version usage before the turn
+    // runs — reflection stores the self-review 1:1 with an execution, and an
+    // unstamped round files an id-less row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
-        m.set_execution_id(*id);
-    }
+    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
     let files_before = registry.files_touched().len();
 
     // Route the VERIFIER role. `Some` only when a distinct-family verifier was
@@ -533,13 +541,16 @@ pub(crate) async fn run_goal_turn(
             rounds,
             reason,
             cost_usd,
+            kind,
         } => {
             tui::cost_summary(
                 cost_usd,
                 &format!("{}/{}", cfg.provider.id, cfg.model_id),
                 turn_start.elapsed(),
             );
-            Err(format!("goal not met after {rounds} round(s): {reason}"))
+            // The typed kind survives the loop (#1862): a working turn's
+            // deliberate stop exits `3` and records `Stopped`.
+            Err(outcome::goal_unmet_failure(rounds, &reason, kind))
         }
     }
 }
@@ -573,18 +584,22 @@ async fn run_goal_pipeline_turn(
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller.
     recall_event: Option<AgentEvent>,
-    // Same contract as `run_goal_turn`: stamp the execution id into the
-    // caller's memory before the turn runs, so reflection can name its row.
+    // Same contract as `run_goal_turn`: the execution seam stamps the id into
+    // the caller's memory and records this round's skill-version usage before
+    // the turn runs, so reflection can name its row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
-    // Rebound mutable and NOT consumed by the id stamp, so the same memory
-    // can double as the pipeline's recall port below.
+    // Rebound mutable and NOT consumed by the seam, so the same memory can
+    // double as the pipeline's recall port below.
     let mut session_memory = session_memory;
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory.as_deref_mut()) {
-        m.set_execution_id(*id);
-    }
+    stamp_and_record_skill_usage(
+        &execution,
+        session_memory.as_deref_mut(),
+        goal,
+        &cfg.workspace_root,
+    );
     let files_before = registry.files_touched().len();
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 
@@ -705,7 +720,7 @@ async fn run_goal_pipeline_turn(
         .with_calibration(calibration);
 
         let mut total_cost_usd = 0.0f64;
-        let mut result: Option<Result<(), String>> = None;
+        let mut result: Option<Result<(), crate::failure::CliFailure>> = None;
         let mut goal_met = false;
 
         for round in 1..=goal_config.max_rounds {
@@ -761,25 +776,17 @@ async fn run_goal_pipeline_turn(
             match pipeline.run(&round_goal, messages, budget).await {
                 Ok(outcome) => {
                     total_cost_usd += outcome.total_cost_usd;
-                    match outcome.status {
-                        PipelineStatus::Completed => {}
-                        PipelineStatus::VerificationFailed { verdict } => {
-                            result = Some(Err(format!(
-                                "goal not met: verification failed: {}",
-                                verdict.summary
-                            )));
-                            break;
-                        }
-                        PipelineStatus::Aborted { reason, .. } => {
-                            result = Some(Err(format!(
-                                "goal not met: working round aborted: {reason}"
-                            )));
-                            break;
-                        }
+                    // The fold keeps the abort's typed kind (#1862), so the
+                    // terminal registry write can tell a policy stop from a
+                    // crash. A completed round is no break at all — the loop
+                    // goes on to its verifier assessment below.
+                    if let Some(failure) = outcome::goal_round_break(&outcome.status) {
+                        result = Some(Err(failure));
+                        break;
                     }
                 }
                 Err(e) => {
-                    result = Some(Err(e.to_string()));
+                    result = Some(Err(crate::failure::CliFailure::error(e.to_string())));
                     break;
                 }
             }
@@ -795,7 +802,9 @@ async fn run_goal_pipeline_turn(
             {
                 Ok(pair) => pair,
                 Err(reason) => {
-                    result = Some(Err(format!("goal not met: verifier unavailable: {reason}")));
+                    result = Some(Err(crate::failure::CliFailure::error(format!(
+                        "goal not met: verifier unavailable: {reason}"
+                    ))));
                     break;
                 }
             };
@@ -841,10 +850,10 @@ async fn run_goal_pipeline_turn(
                     &format!("{}/{}", cfg.provider.id, cfg.model_id),
                     turn_start.elapsed(),
                 );
-                Err(format!(
+                Err(crate::failure::CliFailure::error(format!(
                     "goal not met after {} round(s): round cap reached without a passing verdict",
                     goal_config.max_rounds
-                ))
+                )))
             }
         }
     };

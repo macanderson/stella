@@ -121,6 +121,15 @@ impl<'a> Pipeline<'a> {
                 crate::replay::render_oracle_trace(&snapshot.oracle_trace)
             ));
         }
+        if let Some(symptom) = state.witness_baseline_symptom {
+            // #1790: the flip's arming failure never ran a test. Legitimate
+            // for a missing-API goal, indistinguishable by class from
+            // two-tree environment drift — so the verifier weighs it rather
+            // than the pipeline silently crediting or refusing it.
+            evidence_summary.push_str(&format!(
+                "; witness_baseline={symptom} (the arming failure ran no test)"
+            ));
+        }
         if snapshot.witness_intact == Some(true) {
             // #864: the tamper-exclusion result, stated. A tampered witness
             // never reaches a verifier, so what the verifier learns here is

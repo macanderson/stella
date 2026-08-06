@@ -133,4 +133,8 @@ else
 fi
 
 changed="$(git diff --name-only "$merge_base" "$head" | wc -l | tr -d ' ')"
-echo "ok  $changed file(s) changed against merge base ${merge_base}, and the merge is not a no-op."
+# The verdict is already decided; the write is best-effort. SIGPIPE is ignored
+# and the write's failure discarded, so a reader that closed the pipe
+# (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
+trap '' PIPE
+echo "ok  $changed file(s) changed against merge base ${merge_base}, and the merge is not a no-op." || true

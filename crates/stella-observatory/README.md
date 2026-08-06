@@ -39,12 +39,18 @@ instead (#1139). `src/self_driving.rs` was another: a private `fold_runs` and
 the two had already drifted — the dashboard and `stella self-driving metrics`
 disagreed about whether the loop was NOISY for every odd cycle count, because
 one tested `2 * new < n` and the other `new < n / 2` in integer arithmetic
-(#1613). Both now come from `stella-core`. Three copies remain:
-`project_id_for` ([`src/global.rs`](src/global.rs)) still mirrors the
-store's, `/api/explorations` re-hashes exploration manifests itself, and
+(#1613). Both now come from `stella-core`. The unified differ took the same
+exit before ever becoming a copy: `/api/execution-context-diff` links
+`stella-diff`, the zero-dependency leaf crate the CLI's `inspect::diff` was
+extracted into (#1511). Four copies remain: `project_id_for`
+([`src/global.rs`](src/global.rs)) still mirrors the store's,
+`/api/explorations` re-hashes exploration manifests itself,
+`sessions::pid_alive` ([`src/sessions.rs`](src/sessions.rs)) mirrors
+`stella_store::sessions::pid_alive` (one `kill(pid, 0)` probe, including the
+pid_t-overflow-reads-as-dead rule), and
 [`src/sent_context.rs`](src/sent_context.rs) re-implements the receipt
 reconstruction `stella_store::Store::reconstruct_call` performs (#1475). The
-last is the largest of the three and the only one with a *byte-level* coupling
+last is the largest of the four and the only one with a *byte-level* coupling
 — it rebuilds a `tool_call` block's preimage in `stella_protocol::ToolCall`'s
 field order — so `tests/schema_conformance.rs` seeds its digests from that
 crate's own serializer: a reordered field fails the suite instead of printing
@@ -65,6 +71,8 @@ free one). This crate builds no binary —
 | [`src/lib.rs`](src/lib.rs) | The HTTP responder: the route table, the `Host` and head-cap gates, the CSP, `serve`. Open it to add a route or to touch anything security-relevant. |
 | [`src/db.rs`](src/db.rs) | Every query against `.stella/private/store.db` and `fleet.db`. Open it when a panel needs a new aggregate; the SQL deliberately mirrors `stella stats` semantics (resolved = outcome `completed`, `off-grid` = provider `local`). |
 | [`src/sent_context.rs`](src/sent_context.rs) | `/api/execution-context`: the receipt queries (`step_receipt`, `step_manifest`, `context_blocks`) and the fold that rebuilds the messages one model call was sent, with the digest-verification verdict. Kept out of `src/db.rs` so that file stays clear of the 1500-line ratchet. |
+| [`src/context_diff.rs`](src/context_diff.rs) | `/api/execution-context-diff` (#1511): `stella inspect --diff`, served — the unified diff between one call's reconstruction and its resolved baseline (`prev`/`first`/`prompt`, same-role, whole-session). The differ itself is the `stella-diff` leaf crate. |
+| [`src/sessions.rs`](src/sessions.rs) | The sessions plane: the `~/.stella/sessions/` registry (with the read-time pid-liveness downgrade) merged with per-session store rollups (`/api/sessions`, `/api/session`), plus the per-execution behavioural-tendencies fold (`/api/execution-tendencies`). |
 | [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). |
 | [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain, exploration maps — plus `redact`, the credential scrubber. |
 | [`src/self_driving.rs`](src/self_driving.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/self-driving/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |

@@ -402,6 +402,25 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     let sidecar = registry.sidecar_dir(&run.id);
     let id = run.id.clone();
 
+    // The precondition `stop` needs, and which nothing established before.
+    // `spawn` returns once the PARENT has forked; the liveness lock is taken by
+    // the CHILD, after its `exec`. So there is a window in which the run is
+    // registered but holds no lock — and `stop` reads exactly that lock to
+    // decide whether there is anything to stop:
+    //
+    //     if lock_is_held(&sidecar) != Some(true) { … "was already finished"; return }
+    //
+    // Entering that branch returns in microseconds, and the `took >= STOP_GRACE`
+    // assertion below then fails against a run that was never signalled at all.
+    // Under full-suite load, with ~1400 tests and several sibling cases
+    // spawning their own children, that window is exactly what widens (#1721).
+    assert!(
+        eventually(Duration::from_secs(10), || lock_is_held(&sidecar)
+            == Some(true)),
+        "precondition: the child must hold its liveness lock before stop can \
+         have anything to escalate against"
+    );
+
     let started = Instant::now();
     stop(&registry, &id).expect("stop");
     let took = started.elapsed();
@@ -410,9 +429,22 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
         took >= STOP_GRACE,
         "the child was killed after {took:?}, before its {STOP_GRACE:?} to shut down cleanly"
     );
-    assert_eq!(
-        lock_is_held(&sidecar),
-        Some(false),
+    // Bounded, because `stop` returns as soon as it has ISSUED the SIGKILL —
+    // unlike `Supervisor::interrupt_and_drain`, which reaps with `child.wait()`
+    // before returning. The kernel still has to schedule the target, terminate
+    // it, and release its flock, so "the lock is free" is not true at the
+    // instant `stop` returns and was never promised to be. Asserting it with no
+    // wait made this the one lock-released-by-a-dying-process check in the file
+    // without an `eventually` around it, and it lost the race under full-suite
+    // load while passing alone every time (#1721).
+    //
+    // This does not widen a bound that expired — there was no bound. The
+    // property under test is unchanged and still measured against a real child:
+    // a process that ignores TERM is gone after the grace period. Only the
+    // observation waits for the kernel to finish what SIGKILL started.
+    assert!(
+        eventually(Duration::from_secs(10), || lock_is_held(&sidecar)
+            == Some(false)),
         "a child that ignores TERM must still be gone"
     );
     assert_eq!(

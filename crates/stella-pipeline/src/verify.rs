@@ -800,6 +800,15 @@ pub struct Verdict {
     /// extraction discards the first and keeps the second, so the distinction
     /// has to survive as a field rather than as the wording of `reasoning`.
     pub heuristic: bool,
+    /// Whether the model that answered was independent of the worker (#1795):
+    /// `Some(false)` = the verdict call resolved to the worker's own model,
+    /// so this "independent code review" graded its own work. Stamped by the
+    /// call seam (`Pipeline::verifier`), which is the one place the actual
+    /// resolution is known — the parser and the heuristic fallback leave it
+    /// `None` (no model answered, or nobody compared). Carried onto the
+    /// verdict's `LadderSnapshot` so a stored verdict states the fact without
+    /// the transcript.
+    pub verifier_independent: Option<bool>,
 }
 
 impl Verdict {
@@ -873,6 +882,7 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
                         passed: !negated,
                         reasoning: text.trim().to_string(),
                         heuristic: false,
+                        verifier_independent: None,
                     });
                 }
                 "fail" | "failed" | "reject" | "rejected" if !negated => {
@@ -880,6 +890,7 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
                         passed: false,
                         reasoning: text.trim().to_string(),
                         heuristic: false,
+                        verifier_independent: None,
                     });
                 }
                 _ => {}
@@ -922,22 +933,37 @@ pub fn bound_forwarded_reasoning(text: &str) -> String {
 /// The conservative heuristic verdict used when the *verifier model call itself*
 /// fails or its response is unparseable (L-E11: "a heuristic fallback verdict
 /// if the verifier call itself fails"). It never fabricates confidence: it
-/// passes only when the touched tests were observed green, and otherwise
-/// fails (so an unverifiable turn is revised rather than shipped). A verifier
-/// outage therefore degrades to "trust green tests, distrust everything
-/// else", never to a blanket pass.
+/// passes only on positive deterministic evidence — an observed fail→pass
+/// flip, or touched tests observed green — and otherwise fails, so a turn
+/// with nothing deterministic behind it is revised rather than shipped.
+///
+/// The flip counts here for the same reason `Unverifiable` abstains instead
+/// of failing (#1788): a verifier OUTAGE is the absence of a checker, not a
+/// refutation, and it must not outrank the strongest deterministic evidence
+/// this crate has. Before this, a candidate whose flip was confirmed but
+/// whose diff ran over budget (routing it to the model verifier) was driven
+/// to `VerificationFailed` by a provider being down. With neither flip nor
+/// green tests the fallback still fails closed: the escalation existed
+/// because something was genuinely inconclusive, and a revision is the
+/// honest next move.
 pub fn heuristic_fallback(inputs: &LadderInputs) -> Verdict {
-    let passed = inputs.touched_tests_passed == Some(true);
-    let reasoning = if passed {
+    let passed = inputs.flip_achieved || inputs.touched_tests_passed == Some(true);
+    let reasoning = if inputs.flip_achieved {
+        "verifier unavailable; heuristic fallback passed on the observed fail→pass flip".to_string()
+    } else if passed {
         "verifier unavailable; heuristic fallback passed on green touched tests".to_string()
     } else {
-        "verifier unavailable; heuristic fallback failed (touched tests not confirmed green)"
+        "verifier unavailable; heuristic fallback failed (no flip, touched tests not \
+         confirmed green)"
             .to_string()
     };
     Verdict {
         passed,
         reasoning,
         heuristic: true,
+        // No model answered, so grader independence is not a fact about this
+        // verdict — absent, never false.
+        verifier_independent: None,
     }
 }
 
