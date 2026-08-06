@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 #
-# Guard: no NEW Rust or Python file may exceed the 1500-line ratchet.
-# See #629 (Rust) and #825 (Python — an 8,166-line analysis module had slipped
-# through because the guard only looked at *.rs).
+# Guard: no NEW Rust, Python or shell file may exceed the 1500-line ratchet.
+# See #629 (Rust), #825 (Python — an 8,166-line analysis module had slipped
+# through because the guard only looked at *.rs) and #1563 (shell — the
+# delivery-loop driver reached ~1,900 lines while no gate could see it).
+#
+# The language list has now been widened twice for the same reason, which is
+# the argument for widening it eagerly rather than after the next incident: a
+# limit that watches one language is not a property of the repository, it is a
+# property of that language's files, and the growth simply moves to whatever is
+# unwatched. Shell was the last substantial unwatched surface here.
 #
 # Three fleet plans asserted this limit as a standard the tree follows
 # (docs/spec/serve-surface.fleet.toml, plus two since-deleted siblings), and
@@ -60,11 +67,30 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 0
 fi
 
-# Emit "<lines> <path>" for every tracked Rust or Python file, NUL-safe on the
-# git side. Python counts too (#825): the analyzer under bench/ grew to 8,166
-# lines while the guard watched only *.rs.
+# The pathspecs the ratchet watches. Defined once because they are used twice —
+# by current_sizes below and by the summary line at the end — and two copies of
+# a file selector is how a language gets silently dropped from a guard that
+# claims to cover it.
+#
+# An indexed array, and every element QUOTED at the point of use, because these
+# are globs for *git* to match against the index, not for the shell to expand
+# against the working directory. Unquoted they are expanded before git ever
+# sees them: at the repo root `*.sh` matches only `install.sh`, so the guard
+# would have watched exactly one of this tree's 63 shell files while reporting
+# that it covered shell. (An indexed array is bash 3.2 safe; the portability
+# note above rules out *associative* arrays, which is a different feature.)
+#
+# `.githooks/*` sits beside `*.sh` because the hook there carries no extension.
+# That is the set `make shellcheck` lints, deliberately: this repository
+# already treats everything under `.githooks/` as shell, so a non-shell file
+# appearing there would break that guard first.
+RATCHET_PATHSPECS=('*.rs' '*.py' '*.sh' '.githooks/*')
+
+# Emit "<lines> <path>" for every tracked file in scope, NUL-safe on the git
+# side. Python counts (#825): the analyzer under bench/ grew to 8,166 lines
+# while the guard watched only *.rs. Shell counts (#1563) for the same reason.
 current_sizes() {
-  git ls-files -z '*.rs' '*.py' | while IFS= read -r -d '' f; do
+  git ls-files -z "${RATCHET_PATHSPECS[@]}" | while IFS= read -r -d '' f; do
     printf '%s %s\n' "$(wc -l <"$f" | tr -d ' ')" "$f"
   done
 }
@@ -139,5 +165,5 @@ if [ -n "$report" ]; then
   exit 1
 fi
 
-tracked=$(git ls-files '*.rs' '*.py' | wc -l | tr -d ' ')
-echo "check-file-size: OK — $tracked Rust/Python files, none over $LIMIT lines except $(grep -cv '^#' "$baseline") grandfathered (none grew)."
+tracked=$(git ls-files "${RATCHET_PATHSPECS[@]}" | wc -l | tr -d ' ')
+echo "check-file-size: OK — $tracked Rust/Python/shell files, none over $LIMIT lines except $(grep -cv '^#' "$baseline") grandfathered (none grew)."
