@@ -344,10 +344,6 @@ releases-baseline-update: ## Grandfather the tags that shipped nothing and never
 releases-published-test: ## Test the tag/release reconciliation rule (hermetic; not part of `gate`)
 	./scripts/test-releases-published.sh
 
-.PHONY: guard-sigpipe-test
-guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)
-	./scripts/test-guard-sigpipe.sh
-
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)
 	git config core.hooksPath .githooks
