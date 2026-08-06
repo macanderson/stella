@@ -108,6 +108,7 @@ async fn concurrent_same_id_claims_authorize_and_submit_once() {
             })),
             media_operation_journal: Some(operation_journal),
             media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
+            ..Default::default()
         },
     );
     let input = serde_json::json!({"prompt": "same"});
@@ -141,6 +142,7 @@ async fn different_roots_with_one_host_journal_submit_once() {
         })),
         media_operation_journal: Some(operation_journal),
         media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
+        ..Default::default()
     };
     let backend = || MediaBackend {
         image: provider.clone(),
@@ -257,6 +259,7 @@ async fn process_free_registry_cannot_spawn_a_journal_deletion() {
             media_operation_ids: Some(Arc::new(SameHostOperation { expires_at })),
             media_operation_journal: Some(operation_journal.clone()),
             media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
+            ..Default::default()
         },
     );
     assert!(

@@ -1698,7 +1698,7 @@ pub fn run_tools_listing() -> Result<(), String> {
     let policy = settings.tool_policy();
     let registry = ToolRegistry::new(
         workspace_root.clone(),
-        stella_tools::RegistryOptions::default(),
+        stella_tools::RegistryOptions::ambient(),
     );
     println!("  {}", "built-in:".dimmed());
     let mut native: Vec<String> = stella_core::ports::ToolExecutor::schemas(&registry)
