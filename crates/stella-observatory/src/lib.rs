@@ -43,6 +43,7 @@
 
 mod accept;
 mod codegraph;
+mod context_diff;
 mod db;
 mod fsview;
 mod global;
@@ -258,6 +259,45 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                         .unwrap_or(0),
                     query_param(query, "full").is_some(),
                 ),
+                None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
+            }
+        }
+        // What changed between two model calls (#1511): the diff between one
+        // call's reconstructed context and an earlier state of the session —
+        // `stella inspect --diff`, served. `base` picks the earlier state
+        // (`prev`|`first`|`prompt`); `only` narrows to one role's messages.
+        "/api/execution-context-diff" => {
+            match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
+                Some(id) => {
+                    let base = query_param(query, "base").unwrap_or_else(|| "prev".into());
+                    let only = query_param(query, "only").unwrap_or_else(|| "all".into());
+                    if !matches!(base.as_str(), "prev" | "first" | "prompt") {
+                        return Response::error("400 Bad Request", "base must be prev|first|prompt");
+                    }
+                    if !matches!(
+                        only.as_str(),
+                        "all" | "system" | "user" | "assistant" | "tool"
+                    ) {
+                        return Response::error(
+                            "400 Bad Request",
+                            "only must be all|system|user|assistant|tool",
+                        );
+                    }
+                    obs.execution_context_diff(
+                        id,
+                        query_param(query, "turn")
+                            .and_then(|v| v.parse::<i64>().ok())
+                            .unwrap_or(0),
+                        query_param(query, "step")
+                            .and_then(|v| v.parse::<i64>().ok())
+                            .unwrap_or(0),
+                        query_param(query, "call_seq")
+                            .and_then(|v| v.parse::<i64>().ok())
+                            .unwrap_or(0),
+                        &base,
+                        &only,
+                    )
+                }
                 None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
             }
         }

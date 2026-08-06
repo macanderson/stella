@@ -454,6 +454,25 @@ impl Observatory {
         }
     }
 
+    /// What changed between two model calls (#1511) — the diff between the
+    /// addressed call's reconstruction and its resolved baseline, in the JSON
+    /// shape `stella inspect --diff --format json` emits. The fold lives in
+    /// `context_diff`, which documents the baseline semantics it mirrors.
+    pub fn execution_context_diff(
+        &self,
+        id: i64,
+        turn: i64,
+        step: i64,
+        call_seq: i64,
+        base: &str,
+        only: &str,
+    ) -> Result<Value, DbError> {
+        match self.store() {
+            Some(conn) => crate::context_diff::payload(&conn, id, turn, step, call_seq, base, only),
+            None => Ok(crate::sent_context::no_receipts(id)),
+        }
+    }
+
     /// Every session of this workspace: the registry's live/crashed view
     /// joined with the store's per-session rollups. The fold lives in
     /// `sessions`, which documents the two-source merge.

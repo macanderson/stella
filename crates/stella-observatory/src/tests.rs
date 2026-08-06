@@ -616,6 +616,7 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
         "/api/sessions",
         "/api/session?id=ses-1700000000000-424242",
         "/api/execution-tendencies?id=1",
+        "/api/execution-context-diff?id=1",
         "/api/models",
         "/api/tools",
         "/api/files",

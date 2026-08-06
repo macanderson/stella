@@ -353,7 +353,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-one crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -372,6 +372,7 @@ the files you must plan around (see below).
 | Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
 | Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store` and `stella-observatory` share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
+| Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
 | Persistence: executions, events, telemetry (SQLite) | [`stella-store`](crates/stella-store/README.md) | |
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
@@ -423,7 +424,7 @@ a plan needs and the part that rarely changes:
 | `stella-tools` | `src/registry.rs`, `src/scripts.rs`, `src/media.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
-The other twelve crates carry no god files — keep it that way. Each crate's
+The other thirteen crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

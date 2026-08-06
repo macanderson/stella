@@ -1343,6 +1343,10 @@ async function openDrawer(id, full = false) {
     b.addEventListener("click", () =>
       loadSentContext(id, +b.dataset.turn, +b.dataset.step, +b.dataset.seq));
   }
+  for (const b of $("drawer").querySelectorAll(".ctx-diff")) {
+    b.addEventListener("click", () =>
+      loadContextDiff(id, +b.dataset.turn, +b.dataset.step, +b.dataset.seq));
+  }
   drawerState = {
     id,
     full,
@@ -1440,7 +1444,11 @@ function sentContextSectionHtml(cx) {
         num(c.turn) || num(c.call_seq) ? ` · turn ${fmtInt(c.turn)} seq ${fmtInt(c.call_seq)}` : ""}</span>
       <span><button type="button" class="jrnl-full ctx-call" data-turn="${esc(String(c.turn))}"
         data-step="${esc(String(c.step))}" data-seq="${esc(String(c.call_seq))}"
-        >context sent</button></span>
+        >context sent</button>
+      <button type="button" class="jrnl-full ctx-diff" data-turn="${esc(String(c.turn))}"
+        data-step="${esc(String(c.step))}" data-seq="${esc(String(c.call_seq))}"
+        title="unified diff against the previous call of this role"
+        >what changed</button></span>
     </div>`).join("");
   return `<div class="sect"><div class="kick">Context sent</div>${rows}
     <div id="ctx-body"></div></div>`;
@@ -1494,6 +1502,50 @@ async function loadSentContext(id, turn, step, callSeq, full = false) {
       ? `<button type="button" class="jrnl-full" id="ctx-full">show full bodies</button>` : ""}`;
   const btn = $("ctx-full");
   if (btn) btn.addEventListener("click", () => loadSentContext(id, turn, step, callSeq, true));
+}
+/* What changed since the previous call of this role (#1511): the served
+   `stella inspect --diff`. Hunks arrive in git's exact shape; add/remove
+   coloring mirrors the terminal's. The resolved base is reported, not the
+   requested one — `prev` on a role's first call resolves to `prompt` — and a
+   coarse (non-minimal) diff says so instead of posing as a precise answer. */
+async function loadContextDiff(id, turn, step, callSeq, only = "all") {
+  const body = $("ctx-body");
+  if (!body) return;
+  let d = null;
+  try {
+    d = await api(`/api/execution-context-diff?id=${encodeURIComponent(id)}`
+      + `&turn=${encodeURIComponent(turn)}&step=${encodeURIComponent(step)}`
+      + `&call_seq=${encodeURIComponent(callSeq)}&base=prev&only=${encodeURIComponent(only)}`);
+  } catch { d = null; }
+  if (!d || !d.found) {
+    body.innerHTML = `<div class="empty">${
+      esc((d && d.note) || "That call has no recorded receipt to diff.")}</div>`;
+    return;
+  }
+  const scopeBtn = `<button type="button" class="jrnl-full" id="ctx-diff-scope">${
+    only === "all" ? "system only" : "all roles"}</button>`;
+  if (!d.changed) {
+    body.innerHTML = `<div class="kick">--- ${esc(d.base_label)} · +++ ${esc(d.target_label)}</div>
+      <div class="empty">no change: the ${esc(d.scope)} are byte-identical to ${esc(d.base_label)}.</div>
+      ${scopeBtn}`;
+  } else {
+    const hunks = (d.hunks ?? []).map(h => `<pre class="jrnl-body">${
+      esc(`@@ -${num(h.old_start)},${num(h.old_count)} +${num(h.new_start)},${num(h.new_count)} @@`)}
+${(h.lines ?? []).map(l => {
+        const sigil = l.op === "add" ? "+" : l.op === "remove" ? "−" : " ";
+        const color = l.op === "add" ? "var(--ok)" : l.op === "remove" ? "var(--bad)" : "inherit";
+        return `<span style="color:${color}">${esc(sigil + l.text)}</span>`;
+      }).join("\n")}</pre>`).join("");
+    body.innerHTML = `<div class="kick">--- ${esc(d.base_label)} · +++ ${esc(d.target_label)}</div>
+      <div class="kick"><span style="color:var(--ok)">+${fmtInt(d.added)}</span> ·
+        <span style="color:var(--bad)">−${fmtInt(d.removed)}</span> (${esc(d.scope)}${
+        d.minimal ? "" : ` · <span style="color:var(--warn)">coarse: input too large for an exact diff</span>`}${
+        d.base === "prompt" ? " · baseline: prompt as submitted" : ""})</div>
+      ${hunks}${scopeBtn}`;
+  }
+  const scope = $("ctx-diff-scope");
+  if (scope) scope.addEventListener("click", () =>
+    loadContextDiff(id, turn, step, callSeq, only === "all" ? "system" : "all"));
 }
 /* The main poll already re-fetches `/api/executions` (with `finished_at`)
    on every cursor move — reuse that instead of a dedicated per-tick

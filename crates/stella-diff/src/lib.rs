@@ -2,22 +2,27 @@
 //! to read, because it is the shape `git diff` produces.
 //!
 //! The tree had no unified-diff generator when this landed. `stella-tools`'
-//! [`changed_region_diff`] is the display companion to a *line-count* helper and
-//! says so in its own docs: it trims the common prefix and suffix and then
-//! prints the entire remaining span twice, once as `-` and once as `+`. That is
-//! honest and cheap for a file edit, where the changed region is small and the
-//! viewer already has the file open. It is useless for a system prompt, where
-//! the interesting change is one inserted paragraph inside four hundred stable
-//! lines — the coarse renderer would print all four hundred lines as removed
-//! and all four hundred and one as added, which is exactly the "I cannot see
-//! what actually changed" problem this module exists to end.
+//! `file_touch::changed_region_diff` is the display companion to a
+//! *line-count* helper and says so in its own docs: it trims the common prefix
+//! and suffix and then prints the entire remaining span twice, once as `-` and
+//! once as `+`. That is honest and cheap for a file edit, where the changed
+//! region is small and the viewer already has the file open. It is useless for
+//! a system prompt, where the interesting change is one inserted paragraph
+//! inside four hundred stable lines — the coarse renderer would print all four
+//! hundred lines as removed and all four hundred and one as added, which is
+//! exactly the "I cannot see what actually changed" problem this crate exists
+//! to end.
 //!
 //! So: trim the common prefix/suffix (cheap, and it shrinks the quadratic
 //! region a lot on append-mostly prompts), run an exact longest-common-
 //! subsequence over what is left, and walk the table to an edit script.
 //! Group the script into `@@` hunks with context lines.
 //!
-//! [`changed_region_diff`]: stella_tools::file_touch::changed_region_diff
+//! Extracted from `stella-cli`'s `inspect::diff` (#1511) so the Observatory's
+//! prompt-diff route and `stella inspect --diff` share one differ instead of
+//! keeping acknowledged copies. Deliberately dependency-free — the
+//! `stella-home` precedent (#1139) — so linking it costs no caller its
+//! isolation.
 
 /// Beyond this many DP cells the exact LCS is abandoned for the
 /// replace-everything bound. Mirrors `stella_tools::file_touch`'s cap for the
@@ -31,7 +36,7 @@ const LCS_AREA_CAP: usize = 4_000_000;
 
 /// What happened to one line between the two sides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Op {
+pub enum Op {
     /// Present in both, unchanged — printed as a context line.
     Equal,
     /// Present only on the new side.
@@ -42,7 +47,8 @@ pub(crate) enum Op {
 
 impl Op {
     /// The single-character gutter git puts in front of the line.
-    pub(crate) fn sigil(self) -> char {
+    #[must_use]
+    pub fn sigil(self) -> char {
         match self {
             Op::Equal => ' ',
             Op::Add => '+',
@@ -51,7 +57,8 @@ impl Op {
     }
 
     /// The stable lowercase tag the JSON format emits.
-    pub(crate) fn tag(self) -> &'static str {
+    #[must_use]
+    pub fn tag(self) -> &'static str {
         match self {
             Op::Equal => "equal",
             Op::Add => "add",
@@ -62,26 +69,35 @@ impl Op {
 
 /// One line of the edit script.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DiffLine {
-    pub(crate) op: Op,
-    pub(crate) text: String,
+pub struct DiffLine {
+    /// What happened to this line.
+    pub op: Op,
+    /// The line's text, without its newline.
+    pub text: String,
 }
 
 /// One `@@ -old_start,old_count +new_start,new_count @@` group: a run of
 /// changes plus the context lines framing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Hunk {
-    pub(crate) old_start: usize,
-    pub(crate) old_count: usize,
-    pub(crate) new_start: usize,
-    pub(crate) new_count: usize,
-    pub(crate) lines: Vec<DiffLine>,
+pub struct Hunk {
+    /// 1-based first line of the hunk on the old side (0 when the old side is
+    /// empty — see [`Hunk::header`]).
+    pub old_start: usize,
+    /// Lines of the hunk present on the old side.
+    pub old_count: usize,
+    /// 1-based first line of the hunk on the new side.
+    pub new_start: usize,
+    /// Lines of the hunk present on the new side.
+    pub new_count: usize,
+    /// The hunk's lines, in script order.
+    pub lines: Vec<DiffLine>,
 }
 
 impl Hunk {
     /// The `@@ … @@` header, in git's exact format so an editor's diff mode and
     /// a human's muscle memory both parse it.
-    pub(crate) fn header(&self) -> String {
+    #[must_use]
+    pub fn header(&self) -> String {
         format!(
             "@@ -{},{} +{},{} @@",
             self.old_start, self.old_count, self.new_start, self.new_count
@@ -92,21 +108,25 @@ impl Hunk {
 /// A complete comparison: the hunks, plus the accounting a caller would
 /// otherwise be tempted to re-derive by counting sigils in rendered text.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Diff {
-    pub(crate) hunks: Vec<Hunk>,
-    pub(crate) added: usize,
-    pub(crate) removed: usize,
+pub struct Diff {
+    /// The `@@`-grouped changes, in document order. Empty means byte-identical.
+    pub hunks: Vec<Hunk>,
+    /// Lines present only on the new side.
+    pub added: usize,
+    /// Lines present only on the old side.
+    pub removed: usize,
     /// Whether the edit script is the minimal one. `false` means the input
     /// exceeded [`LCS_AREA_CAP`] and fell back to replace-everything — the diff
     /// is still correct, just blunt, and surfaces are expected to say so rather
     /// than present it as a precise answer.
-    pub(crate) minimal: bool,
+    pub minimal: bool,
 }
 
 impl Diff {
     /// Whether the two sides differ at all. An empty hunk list is the honest
     /// "byte-identical" answer, not an error.
-    pub(crate) fn changed(&self) -> bool {
+    #[must_use]
+    pub fn changed(&self) -> bool {
         !self.hunks.is_empty()
     }
 }
@@ -117,7 +137,8 @@ impl Diff {
 /// Line semantics follow `str::lines()`, matching `count_lines` in
 /// `stella-tools`: `""` is zero lines and a trailing newline adds none. Two
 /// empty inputs therefore produce no hunks rather than one empty hunk.
-pub(crate) fn unified_diff(old: &str, new: &str, context: usize) -> Diff {
+#[must_use]
+pub fn unified_diff(old: &str, new: &str, context: usize) -> Diff {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
 
@@ -356,7 +377,7 @@ mod tests {
     #[test]
     fn an_insertion_in_a_stable_body_shows_only_the_inserted_line() {
         // The case the coarse `changed_region_diff` cannot express, and the
-        // reason this module exists: one line lands in the middle of a long
+        // reason this crate exists: one line lands in the middle of a long
         // stable body, and everything else must stay context.
         let old = (1..=20)
             .map(|i| i.to_string())
