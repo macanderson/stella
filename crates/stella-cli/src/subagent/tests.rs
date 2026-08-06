@@ -101,6 +101,68 @@ async fn the_production_tool_stack_forwards_sub_agent_spend() {
     );
 }
 
+/// The wait-request twin of the spend witness above: `drain_wait_request`
+/// has a `None` default, so any one decorator forgetting to forward would
+/// silently turn parked waits (#1471) back into model-step polling for
+/// every session composed through it — and no compiler would say so.
+#[tokio::test]
+async fn the_production_tool_stack_forwards_wait_requests() {
+    /// A leaf holding one deposited request, standing in for the registry.
+    struct WaitingBase(std::sync::Mutex<Option<stella_core::WaitRequest>>);
+
+    #[async_trait]
+    impl ToolExecutor for WaitingBase {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
+        fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+            self.0.lock().unwrap().take()
+        }
+    }
+
+    let request = stella_core::WaitRequest {
+        description: "CI for branch main settles".into(),
+        probe: stella_core::WaitCall {
+            name: "ci_status".into(),
+            input: json!({ "probe": true, "branch": "main" }),
+        },
+        baseline: "pending".into(),
+        on_wake: None,
+        poll_interval_secs: 15,
+        timeout_secs: 0,
+    };
+    let base = WaitingBase(std::sync::Mutex::new(Some(request.clone())));
+
+    let customs =
+        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
+    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &customs,
+        stub_tx,
+        crate::interactive::default_ask_io(false),
+    );
+    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
+    let discovery =
+        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+
+    assert_eq!(
+        discovery.drain_wait_request(),
+        Some(request),
+        "a deposited wait request must survive every decorator between the \
+         engine and the registry — one that swallows it re-enables polling"
+    );
+    assert_eq!(
+        discovery.drain_wait_request(),
+        None,
+        "and the drain stays destructive through the stack"
+    );
+}
+
 /// A dispatcher whose registry has been dropped reports a refusal rather
 /// than panicking a torn-down session.
 #[tokio::test]

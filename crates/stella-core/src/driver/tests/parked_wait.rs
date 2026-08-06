@@ -152,7 +152,9 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
         .position(|m| m.role == MessageRole::User && m.content.starts_with(WAKE_MARKER))
         .expect("the wake message must enter the conversation");
     assert!(
-        messages[wake_idx].content.contains("fresh status: all green"),
+        messages[wake_idx]
+            .content
+            .contains("fresh status: all green"),
         "the wake carries the on_wake output: {}",
         messages[wake_idx].content
     );
@@ -198,7 +200,9 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
         "the park must be announced: {texts:?}"
     );
     assert!(
-        texts.iter().any(|t| t.contains("Wait ended after 3 probes")),
+        texts
+            .iter()
+            .any(|t| t.contains("Wait ended after 3 probes")),
         "the wake must be announced with its probe count: {texts:?}"
     );
 }
@@ -230,7 +234,10 @@ async fn an_unchanged_condition_wakes_once_at_the_deadline() {
 
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "{outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     assert_eq!(probe_calls.load(Ordering::SeqCst), 4, "deadline / interval");
     assert_eq!(
@@ -276,14 +283,17 @@ async fn a_non_read_only_probe_is_refused_not_replayed() {
 
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "{outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
     assert_eq!(probe_calls.load(Ordering::SeqCst), 0, "never replayed");
     assert!(
         !messages.iter().any(|m| m.content.starts_with(WAKE_MARKER)),
         "a refused park must not fabricate a wake"
     );
-    let refused = drain_events(&mut rx).into_iter().any(|e| {
-        matches!(&e, AgentEvent::Text { delta } if delta.contains("not a read-only tool"))
-    });
+    let refused = drain_events(&mut rx).into_iter().any(
+        |e| matches!(&e, AgentEvent::Text { delta } if delta.contains("not a read-only tool")),
+    );
     assert!(refused, "the refusal must be visible on the stream");
 }

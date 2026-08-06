@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_protocol::{CompletionUsage, ToolSchema};
 use stella_protocol::event::BudgetMode;
+use stella_protocol::{CompletionUsage, ToolSchema};
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 

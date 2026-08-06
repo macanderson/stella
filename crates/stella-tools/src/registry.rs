@@ -2143,7 +2143,10 @@ impl ToolExecutor for ToolRegistry {
     /// dispatches at most a handful of calls, and `Tool::take_wait_request`
     /// is destructive, so at most one request exists per boundary.
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
-        let from_primary = self.tools.values().find_map(|tool| tool.take_wait_request());
+        let from_primary = self
+            .tools
+            .values()
+            .find_map(|tool| tool.take_wait_request());
         from_primary.or_else(|| {
             self.late_tools
                 .read()

@@ -560,6 +560,15 @@ impl ToolExecutor for McpToolSet {
             .as_ref()
             .map_or(0.0, |native| native.drain_sub_agent_spend_usd())
     }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.native
+            .as_ref()
+            .and_then(|native| native.drain_wait_request())
+    }
 }
 
 /// A Best-of-N candidate's tool surface (issue #248 Phase 1): built by
@@ -612,6 +621,14 @@ impl ToolExecutor for CandidateMcpView {
     /// budget (see the port's contract).
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
+    }
+
+    /// Forwarded so a swallowed wait request cannot turn parked waits
+    /// (#1471) back into model-step polling — to `native`, not `inner`:
+    /// remote MCP tools never deposit wait requests, and the native layer
+    /// this view executes (`ci_status` included) is the only depositor.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.native.drain_wait_request()
     }
 }
 

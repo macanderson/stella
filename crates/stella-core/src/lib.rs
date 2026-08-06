@@ -102,7 +102,7 @@ pub use subagent::{
     forwards_to_parent, push_sub_agent_spend,
 };
 pub use tasks::{SpawnRequest, TaskBoard, TaskBoardError};
-pub use waiting::{WaitCall, WaitRequest};
 pub use tool_foundry::{
     GapDetectionConfig, ParamKind, ProposedTool, ShellInvocation, ToolParameter, detect_tool_gaps,
 };
+pub use waiting::{WaitCall, WaitRequest};

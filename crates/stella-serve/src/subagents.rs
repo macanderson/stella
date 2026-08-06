@@ -437,6 +437,13 @@ impl ToolExecutor for DelegatingTools<'_> {
         self.inner.drain_sub_agent_spend_usd()
             + stella_core::subagent::drain_sub_agent_spend(&self.spend)
     }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.drain_wait_request()
+    }
 }
 
 /// Turn a child's outcome into a model-visible result.

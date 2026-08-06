@@ -87,7 +87,11 @@ impl Tool for CiStatus {
         // would fake the state change the engine is watching for. Probe
         // inputs deposited below carry the already-resolved branch, so this
         // path re-resolves a PR head only when a caller passes `pr` itself.
-        if input.get("probe").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if input
+            .get("probe")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             let pr_head = match input.get("pr").and_then(|v| v.as_u64()) {
                 Some(pr) => resolve_pr_head(pr, root, timeout_secs).await,
                 None => None,
@@ -187,7 +191,11 @@ impl Tool for CiStatus {
     // input ([`resolve_pr_head`], [`gh_run_scope`]) riding the same
     // approval, and the `command -v gh` probe is a constant.
     async fn command_for_gate(&self, input: &Value, _root: &std::path::Path) -> Option<String> {
-        if input.get("probe").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if input
+            .get("probe")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             Some(settled_command(&gh_run_scope(input, None)))
         } else {
             Some(primary_command(input))
@@ -214,33 +222,33 @@ impl Tool for CiStatus {
 fn park_request(input: &Value, pr_head: Option<&PrHead>) -> stella_core::WaitRequest {
     let mut probe = serde_json::Map::new();
     probe.insert("probe".into(), Value::Bool(true));
-    let (target_key, target, description) = if let Some(pr) = input.get("pr").and_then(Value::as_u64)
-    {
-        match pr_head {
-            Some(head) => (
+    let (target_key, target, description) =
+        if let Some(pr) = input.get("pr").and_then(Value::as_u64) {
+            match pr_head {
+                Some(head) => (
+                    "branch",
+                    Value::String(head.branch.clone()),
+                    format!("CI for PR #{pr} (branch {}) settles", head.branch),
+                ),
+                None => ("pr", Value::from(pr), format!("CI for PR #{pr} settles")),
+            }
+        } else if let Some(commit) = input.get("commit").and_then(Value::as_str) {
+            (
+                "commit",
+                Value::String(commit.into()),
+                format!("CI for commit {commit} settles"),
+            )
+        } else {
+            let branch = input
+                .get("branch")
+                .and_then(Value::as_str)
+                .unwrap_or("main");
+            (
                 "branch",
-                Value::String(head.branch.clone()),
-                format!("CI for PR #{pr} (branch {}) settles", head.branch),
-            ),
-            None => ("pr", Value::from(pr), format!("CI for PR #{pr} settles")),
-        }
-    } else if let Some(commit) = input.get("commit").and_then(Value::as_str) {
-        (
-            "commit",
-            Value::String(commit.into()),
-            format!("CI for commit {commit} settles"),
-        )
-    } else {
-        let branch = input
-            .get("branch")
-            .and_then(Value::as_str)
-            .unwrap_or("main");
-        (
-            "branch",
-            Value::String(branch.into()),
-            format!("CI for branch {branch} settles"),
-        )
-    };
+                Value::String(branch.into()),
+                format!("CI for branch {branch} settles"),
+            )
+        };
     probe.insert(target_key.into(), target);
     let mut on_wake = input.as_object().cloned().unwrap_or_default();
     on_wake.remove("wait");
@@ -619,12 +627,19 @@ mod tests {
             req.probe.input,
             serde_json::json!({ "probe": true, "branch": "main" })
         );
-        assert!(req.description.contains("branch main"), "{}", req.description);
+        assert!(
+            req.description.contains("branch main"),
+            "{}",
+            req.description
+        );
         // An unresolved PR head keeps the `pr` field, whose probe-side scope
         // falls back to the embedded lookup exactly like every other
         // composed sub-query.
         let req = park_request(&serde_json::json!({ "pr": 7, "wait": true }), None);
-        assert_eq!(req.probe.input, serde_json::json!({ "probe": true, "pr": 7 }));
+        assert_eq!(
+            req.probe.input,
+            serde_json::json!({ "probe": true, "pr": 7 })
+        );
     }
 
     // --- #1470: the failure-log tail must be scoped to the target's ---
