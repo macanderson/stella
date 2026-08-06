@@ -207,7 +207,7 @@ impl LoopVerdict {
     /// A human-readable evidence string for the driver to surface when it
     /// steers or aborts. `None` for `NoLoop`.
     ///
-    /// The quoted input is truncated through the same `truncate` and
+    /// The quoted input is truncated through the same private `truncate` and
     /// `MAX_DESCRIBED_INPUT` [`LoopIdentity::describe`] uses, not a second
     /// budget of its own. This string becomes an `AgentEvent::Error` message,
     /// the abort reason on `TurnOutcome::Aborted`, the red line in the Command
