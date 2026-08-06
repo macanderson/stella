@@ -176,10 +176,7 @@ fn render(rows: &[ClaimRow], all: bool) -> String {
     }
 
     let live = rows.iter().filter(|r| r.live).count();
-    out.push_str(&format!(
-        "\n  {} claim(s), {live} live\n\n",
-        rows.len()
-    ));
+    out.push_str(&format!("\n  {} claim(s), {live} live\n\n", rows.len()));
     out
 }
 
@@ -241,7 +238,10 @@ mod tests {
         let out = render(&rows, false);
         assert!(out.contains("task:fix-1136"), "the unit of work: {out}");
         assert!(out.contains("run-8f21a3-41207"), "the holder: {out}");
-        assert!(out.contains("held 3m 00s"), "how long they have had it: {out}");
+        assert!(
+            out.contains("held 3m 00s"),
+            "how long they have had it: {out}"
+        );
         assert!(out.contains("expires in 12m 00s"), "when it lapses: {out}");
         assert!(out.contains("1 claim(s), 1 live"), "the tally: {out}");
     }
@@ -252,14 +252,23 @@ mod tests {
     fn a_lapsed_claim_says_who_held_it_and_how_long_ago_it_went() {
         let now = 600_000;
         let rows = vec![
-            ClaimRow::read(&claim("issue:1136", "run-2b90cc-41999", 60_000, 480_000), now),
-            ClaimRow::read(&claim("task:live", "run-8f21a3-41207", 590_000, 900_000), now),
+            ClaimRow::read(
+                &claim("issue:1136", "run-2b90cc-41999", 60_000, 480_000),
+                now,
+            ),
+            ClaimRow::read(
+                &claim("task:live", "run-8f21a3-41207", 590_000, 900_000),
+                now,
+            ),
         ];
 
         let out = render(&rows, true);
         assert!(out.contains("run-2b90cc-41999"), "the dead holder: {out}");
         assert!(out.contains("lapsed 2m 00s ago"), "when it went: {out}");
-        assert!(out.contains("expires in 5m 00s"), "the live one stays: {out}");
+        assert!(
+            out.contains("expires in 5m 00s"),
+            "the live one stays: {out}"
+        );
         assert!(out.contains("2 claim(s), 1 live"), "the tally: {out}");
         assert!(!rows[0].live && rows[1].live);
     }
@@ -316,7 +325,11 @@ mod tests {
     fn spans_render_in_one_fixed_shape() {
         assert_eq!(human_ms(0), "0s");
         assert_eq!(human_ms(45_000), "45s");
-        assert_eq!(human_ms(-45_000), "45s", "the caller's wording carries the sign");
+        assert_eq!(
+            human_ms(-45_000),
+            "45s",
+            "the caller's wording carries the sign"
+        );
         assert_eq!(human_ms(750_000), "12m 30s");
         assert_eq!(human_ms(11_040_000), "3h 04m");
     }
@@ -352,9 +365,6 @@ mod tests {
 
         // And the documented escape hatch still works: `--` makes it a prompt.
         let cli = Cli::try_parse_from(["stella", "fleet", "--", "claims are stale"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Command::Fleet { cmd: None, .. }
-        ));
+        assert!(matches!(cli.command, Command::Fleet { cmd: None, .. }));
     }
 }
