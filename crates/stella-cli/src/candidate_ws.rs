@@ -96,6 +96,7 @@ use crate::agent::{
 };
 
 mod adopt;
+mod escape;
 mod snapshot_gaps;
 mod witness_tools;
 use witness_tools::WitnessToolExecutor;
@@ -716,6 +717,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
         self.sealed_unchanged_inner().await
     }
 
+    async fn escaped_paths(&self) -> Vec<String> {
+        self.escaped_paths_inner().await
+    }
+
     async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
         self.adopt_inner(withhold).await
     }
@@ -786,7 +791,7 @@ mod tests {
     /// - uncommitted tracked edit: `tracked.txt` = "base\ndirty\n"
     /// - staged-but-uncommitted new file: `staged.txt`
     /// - untracked: `untracked.txt`; ignored: `ignored.txt`
-    fn scaffold(tag: &str) -> PathBuf {
+    pub(super) fn scaffold(tag: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "stella_cwstest_{tag}_{}_{}",
             std::process::id(),
@@ -840,7 +845,7 @@ mod tests {
         );
     }
 
-    fn read(path: &Path) -> String {
+    pub(super) fn read(path: &Path) -> String {
         std::fs::read_to_string(path).unwrap()
     }
 

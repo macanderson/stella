@@ -778,6 +778,22 @@ pub trait CandidateWorkspace: Send + Sync {
     async fn seal(&self) -> Result<(), WorkspaceError>;
     /// Whether the live worktree and HEAD still exactly match the last seal.
     async fn sealed_is_unchanged(&self) -> Result<bool, WorkspaceError>;
+    /// Workspace-relative paths where the REAL tree already holds this
+    /// candidate's own sealed bytes at a path whose baseline state differed —
+    /// the blob-level signature of the candidate having written *through* its
+    /// isolation (#1538). Nothing else on the machine produces the exact
+    /// sealed blob, so a non-empty answer is attributable to this candidate,
+    /// never to a user's mid-run edit.
+    ///
+    /// Consulted by the pipeline once per verification round, immediately
+    /// after [`Self::seal`] (the seal is what pins the bytes being matched).
+    /// Best-effort by contract: a substrate that cannot measure — or a probe
+    /// that fails — answers empty rather than failing a candidate on broken
+    /// forensics, so the check can only ever *add* a detection. The default
+    /// is empty for the same reason.
+    async fn escaped_paths(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// Apply this workspace's changes — relative to its starting snapshot —
     /// to the real tree. All-or-nothing: on conflict the real tree is left
     /// byte-identical and the error names the conflicting paths
