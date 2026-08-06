@@ -300,7 +300,7 @@ that resolves each role also carries reliability machinery:
   a provider's breaker; routing skips it and reports the fallback visibly —
   never a silent mid-turn switch. After a cooldown, one trial call decides
   whether the breaker closes.
-- **Cross-family judging.** The verifier prefers a healthy provider whose model
+- **Cross-family verification.** The verifier prefers a healthy provider whose model
   *family* differs from the worker's (Claude judging GLM's work, GPT judging
   Claude's). With only one family configured, the verifier degrades to the same
   family — with a visible caveat, never an error.

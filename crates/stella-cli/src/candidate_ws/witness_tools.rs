@@ -10,7 +10,9 @@ use stella_pipeline::ports::WorkspaceError;
 use stella_protocol::{ToolOutput, ToolSchema};
 
 /// Candidate-root executor built specifically for witness authoring. Reads
-/// stay in the snapshot; the sole mutation atomically creates one new test.
+/// stay in the snapshot; the sole mutation atomically creates one new test,
+/// and a repeat create replaces the previous artifact so at most one witness
+/// file ever exists (the repair turn's "rewrite the test" depends on this).
 pub(super) struct WitnessToolExecutor {
     root: PathBuf,
     reads: Arc<dyn ToolExecutor>,
@@ -71,12 +73,27 @@ impl WitnessToolExecutor {
             .created_path
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if claimed.is_some() {
-            return Self::denied("create_witness_test", "only one create attempt may succeed");
-        }
         let Ok(root) = self.root.canonicalize() else {
             return Self::denied("create_witness_test", "the candidate root is unavailable");
         };
+        // Replace-your-own-artifact, never accumulate: at most one witness
+        // file exists at any moment, and a second create deletes the first
+        // before writing. This is what makes the bounded repair turn able to
+        // act at all — its instruction is "rewrite the test", and a claim
+        // that never resets turned every repair into a paid model call whose
+        // only legal move was narrowing the command against an unchanged
+        // file. The single-artifact invariant the claim exists for is
+        // preserved: acceptance still requires exactly one new file.
+        if let Some(previous) = claimed.take() {
+            let prior = root.join(&previous);
+            if let Err(error) = std::fs::remove_file(&prior) {
+                *claimed = Some(previous);
+                return Self::denied(
+                    "create_witness_test",
+                    format!("replacing the previous witness artifact failed: {error}"),
+                );
+            }
+        }
         let joined = root.join(&path);
         let Some(parent) = joined.parent() else {
             return Self::denied(
@@ -142,7 +159,7 @@ impl ToolExecutor for WitnessToolExecutor {
             .collect();
         schemas.push(ToolSchema {
             name: "create_witness_test".into(),
-            description: "Atomically create one previously absent test file inside the candidate. Existing files and additional creations are refused.".into(),
+            description: "Atomically create one previously absent test file inside the candidate. Existing files are refused; calling again replaces your previous artifact.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -436,16 +453,29 @@ mod tests {
             std::fs::read_to_string(root.path().join("tests/new_witness.rs")).unwrap(),
             witness_body(2)
         );
+        // A further create is the repair turn's rewrite: it REPLACES the
+        // previous artifact rather than being refused, and at most one
+        // witness file exists afterwards. Before this contract, the repair
+        // turn's "rewrite the test" instruction was structurally impossible —
+        // the claim never reset, so every repair-turn create was denied.
+        let output = tools
+            .execute(
+                "create_witness_test",
+                &serde_json::json!({"path": "tests/second.rs", "content": witness_body(3)}),
+            )
+            .await;
         assert!(
-            tools
-                .execute(
-                    "create_witness_test",
-                    &serde_json::json!({"path": "tests/second.rs", "content": witness_body(3)}),
-                )
-                .await
-                .is_error()
+            matches!(output, ToolOutput::Ok { .. }),
+            "a repeat create must replace the author's own artifact: {output:?}"
         );
-        assert!(!root.path().join("tests/second.rs").exists());
+        assert!(
+            !root.path().join("tests/new_witness.rs").exists(),
+            "the replaced artifact must be discarded"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("tests/second.rs")).unwrap(),
+            witness_body(3)
+        );
     }
 
     /// #863 at the boundary that owns it: a vacuous witness never reaches
@@ -569,8 +599,12 @@ mod tests {
         );
     }
 
+    /// The claim's invariant under concurrency is *at most one artifact on
+    /// disk*, not *at most one successful call*: a later create replaces the
+    /// earlier artifact (the repair turn's rewrite), and the mutex serializes
+    /// the replacement so no interleaving can leave two files behind.
     #[tokio::test]
-    async fn one_executor_allows_only_one_concurrent_creation() {
+    async fn one_executor_holds_at_most_one_artifact_under_concurrency() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tests")).unwrap();
         let tools = Arc::new(witness_executor(root.path()).await);
@@ -593,15 +627,16 @@ mod tests {
         });
 
         let (left, right) = tokio::join!(left, right);
-        let outputs = [left.unwrap(), right.unwrap()];
-        assert_eq!(
-            outputs.iter().filter(|output| !output.is_error()).count(),
-            1
-        );
+        for output in [left.unwrap(), right.unwrap()] {
+            assert!(
+                !output.is_error(),
+                "serialized creates each succeed; the later one replaces: {output:?}"
+            );
+        }
         let created = ["tests/left.rs", "tests/right.rs"]
             .iter()
             .filter(|path| root.path().join(path).exists())
             .count();
-        assert_eq!(created, 1);
+        assert_eq!(created, 1, "the replaced artifact must not survive");
     }
 }

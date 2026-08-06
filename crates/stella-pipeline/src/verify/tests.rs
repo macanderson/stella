@@ -507,7 +507,23 @@ fn the_verifier_prompt_forbids_reading_a_blind_probe_as_an_absence() {
         p.contains("could not read the working tree"),
         "the prompt must name the failure mode it is guarding against"
     );
-    assert!(p.contains("never on evidence you could not see"));
+    // The FULL clause, not a trailing fragment: a `judge → verifier` rename
+    // once mangled this sentence into "Verifier only what the evidence
+    // positively shows" and the fragment-level guard kept passing over it —
+    // the most load-bearing instruction in the prompt shipped ungrammatical
+    // for months.
+    assert!(
+        p.contains(
+            "Judge only what the evidence positively shows, and base a FAIL on a defect \
+             you can point to — never on evidence you could not see"
+        ),
+        "{p}"
+    );
+    // The evidence vocabulary the instructions define must match what the
+    // summary emits (`pipeline/evidence.rs`): `unobserved` and
+    // `mutating_actions` are both spelled in the fixed block.
+    assert!(p.contains("`touched_tests=unobserved`"), "{p}");
+    assert!(p.contains("`mutating_actions`"), "{p}");
 }
 
 const DIFF_PROBE_BLIND_SAMPLE: &str =
@@ -695,6 +711,44 @@ fn parses_pass_and_fail_verdicts() {
     assert_eq!(
         parse_verifier_response("FAIL\nthe change looks fine otherwise").map(|v| v.passed),
         Some(false)
+    );
+}
+
+/// A negated verdict token states the OPPOSITE verdict, and the parser used
+/// to credit it as written: "The tests do not pass" parsed as a PASS — the
+/// most damaging possible misread, converting a stated refusal into the
+/// verdict that ends the run. The `yes`/`no` mirror of this bug was found
+/// and fixed years earlier (see `parses_pass_and_fail_verdicts`); the
+/// `pass`/`fail` half had no negation handling and no test.
+#[test]
+fn a_negated_pass_is_the_fail_it_states() {
+    for line in [
+        "The tests do not pass",
+        "This does not pass the edge case",
+        "Cannot pass this without the missing test",
+        "The suite doesn't pass",
+        "The change does not currently pass review",
+    ] {
+        assert_eq!(
+            parse_verifier_response(line).map(|v| v.passed),
+            Some(false),
+            "{line:?} states a refusal and must parse as FAIL"
+        );
+    }
+    // A negated FAIL is skipped, never trusted as an affirmative PASS —
+    // "did not fail" is absence of failure, not the protocol's verdict —
+    // and with no other token the reply is unparseable (heuristic fallback).
+    assert_eq!(parse_verifier_response("The suite did not fail"), None);
+    // The negation window is bounded: a negator more than two tokens back
+    // does not reach the verdict word.
+    assert_eq!(
+        parse_verifier_response("Not a single problem here: PASS").map(|v| v.passed),
+        Some(true)
+    );
+    // An affirmative token before the negator is untouched.
+    assert_eq!(
+        parse_verifier_response("PASS — this does not fail any case").map(|v| v.passed),
+        Some(true)
     );
 }
 

@@ -157,7 +157,7 @@ fn is_relational_layer(snapshot: &StorageSnapshot, key: &str) -> bool {
         .unwrap_or(true)
 }
 
-/// Verifier a proposed write. `Err(message)` is the tool error the model sees
+/// Vet a proposed write. `Err(message)` is the tool error the model sees
 /// (ring 1/2 block, or ring 3 challenge); `Ok` carries what to record.
 pub fn check(request: &GateRequest<'_>) -> Result<GatePass, String> {
     let is_ddl = request.is_ddl();

@@ -109,6 +109,7 @@ use crate::witness::{
 mod authored;
 mod candidate_result;
 mod disclosure;
+mod evidence;
 mod fanout_stage;
 mod plan_steps;
 mod raw_usage;
@@ -636,6 +637,11 @@ struct CandidateState {
     /// engine's own `ToolStart` stream rather than probed for, which is what
     /// lets `0` mean "never tried" instead of "could not tell".
     mutating_actions: u32,
+    /// The subset of `mutating_actions` whose effects the diff cannot be
+    /// trusted to account for (`witness::warrant::diff_accountable_mutator`)
+    /// — the warrant's guard against waiving a witness on a diff that is not
+    /// the whole change.
+    opaque_actions: u32,
     /// Ends the execute turn as soon as the tracked test goes fail→pass.
     ///
     /// `None` whenever there is nothing to watch: no configured test command,
@@ -2028,6 +2034,7 @@ impl<'a> Pipeline<'a> {
             final_text: String::new(),
             file_changes: 0,
             mutating_actions: 0,
+            opaque_actions: 0,
             flip_halt,
             oracle,
             oracle_trace,
@@ -2150,6 +2157,7 @@ impl<'a> Pipeline<'a> {
                     budget,
                     &mut state.file_changes,
                     &mut state.mutating_actions,
+                    &mut state.opaque_actions,
                     state.flip_halt.clone(),
                 )
                 .await
@@ -2184,6 +2192,7 @@ impl<'a> Pipeline<'a> {
                         budget,
                         &mut state.file_changes,
                         &mut state.mutating_actions,
+                        &mut state.opaque_actions,
                         state.flip_halt.clone(),
                     )
                     .await
@@ -2696,107 +2705,17 @@ impl<'a> Pipeline<'a> {
                     }
                     // Inconclusive — escalate to the model verifier (verifier ≠
                     // worker; a verifier-call failure falls back to a heuristic).
-                    let mut evidence_summary = format!(
-                        "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {}); \
-                         file_change_events={}",
-                        inputs.flip_achieved,
-                        inputs.touched_tests_passed,
-                        state.diff_lines,
-                        self.config.diff_budget_lines,
-                        state.file_changes,
+                    // The summary and the witness-stripped diff are assembled
+                    // together (`pipeline/evidence.rs`) so the reuse digest
+                    // below hashes exactly what the prompt carries.
+                    let (evidence_summary, stripped) = Self::verifier_evidence_summary(
+                        &state,
+                        &inputs,
+                        &snapshot,
+                        test_infra,
+                        &lint_sample,
+                        &witness_paths,
                     );
-                    if let Some(label) = test_infra {
-                        // #860: the run ended without observing an assertion.
-                        // Named so the verifier reads "the suite timed out", not
-                        // "the suite failed".
-                        evidence_summary
-                            .push_str(&format!("; test_run={label} (no assertion observed)"));
-                    }
-                    if state.oracle.is_unstable() {
-                        // #859: a fail→pass flip WAS observed but could not
-                        // be reproduced on the same tree — a different fact
-                        // from "the test never passed", and one the verifier
-                        // should weigh explicitly.
-                        evidence_summary.push_str(
-                            "; unstable_flip=true (the flip's confirmation re-run did not pass)",
-                        );
-                    }
-                    if inputs.diff_coverage != DiffCoverage::Unmeasured {
-                        // #1291: stated only when it was actually measured.
-                        // An `unmeasured` line here would be pure noise in a
-                        // verifier prompt — the ladder already escalated for some
-                        // other reason, and "nobody looked" adds nothing to
-                        // reason from. It stays on the snapshot either way.
-                        evidence_summary.push_str("; ");
-                        evidence_summary.push_str(inputs.diff_coverage.explain());
-                    }
-                    if state.witness_mutation == Some(false) {
-                        // #870: the witness reacted to the change without
-                        // constraining it — it stayed green while the
-                        // changed lines were deliberately broken.
-                        evidence_summary.push_str(
-                            "; witness_tautological=true (the witness stayed green under every \
-                             trivial mutation of the changed lines)",
-                        );
-                    }
-                    if state.oracle.refused_different_failure() {
-                        // #867: the suite passed, but its own complete test
-                        // listing did not contain the baseline's failing
-                        // tests — the observed failure was not fixed, it
-                        // disappeared. The verifier should treat the passing
-                        // exit code accordingly.
-                        evidence_summary.push_str(
-                            "; flip_refused=the passing run's test listing does not contain \
-                             the test(s) that failed on the baseline (fixed a different \
-                             failure, or the failing test was removed)",
-                        );
-                    }
-                    if inputs.new_diag_errors > 0 || inputs.new_diag_warnings > 0 {
-                        // #861: the regression the veto saw, capped to a
-                        // 3-line sample so the verifier reads the delta, not
-                        // the linter's whole opinion.
-                        evidence_summary.push_str(&format!(
-                            "; new_diagnostics={} error(s), {} warning(s) vs baseline",
-                            inputs.new_diag_errors, inputs.new_diag_warnings
-                        ));
-                        if !lint_sample.is_empty() {
-                            evidence_summary.push('\n');
-                            evidence_summary.push_str(lint_sample.trim_end());
-                        }
-                    }
-                    if !snapshot.oracle_trace.is_empty() {
-                        // #864: the oracle trace, rendered compactly. The
-                        // verifier sees WHY the ladder was inconclusive — which
-                        // runs happened, in order, and what each observed —
-                        // instead of a diff cold.
-                        evidence_summary.push_str(&format!(
-                            "; oracle_trace=[{}]",
-                            crate::replay::render_oracle_trace(&snapshot.oracle_trace)
-                        ));
-                    }
-                    if snapshot.witness_intact == Some(true) {
-                        // #864: the tamper-exclusion result, stated. A
-                        // tampered witness never reaches a verifier, so what the
-                        // verifier learns here is that the check RAN and the
-                        // witness it is weighing is the authored one.
-                        evidence_summary.push_str("; witness_tamper_check=intact");
-                    }
-                    // The witness's own chunks never ride into the paid prompt
-                    // as "worker-authored data" (#1433): they are the
-                    // verifier's own artifact, and everything the verdict needs
-                    // to know about the witness is already in the trusted
-                    // evidence above. The omission is named HERE — the trusted
-                    // zone — never in-band in the diff, where the framing says
-                    // every byte is forgeable worker data.
-                    let stripped =
-                        crate::verify::strip_witness_hunks(&state.diff_text, &witness_paths);
-                    if !stripped.omitted.is_empty() {
-                        evidence_summary.push_str(&format!(
-                            "; witness_files_omitted_from_diff=[{}] (verifier-authored test, \
-                             not part of the change under review)",
-                            stripped.omitted.join(", ")
-                        ));
-                    }
                     // Reuse before re-buying (#1431): a revision that changed
                     // nothing the verdict depends on — same goal, same diff,
                     // same evidence, byte for byte — would re-ask the same
@@ -3005,6 +2924,7 @@ impl<'a> Pipeline<'a> {
                 reason,
                 &mut state.file_changes,
                 &mut state.mutating_actions,
+                &mut state.opaque_actions,
                 &mut state.final_text,
                 total,
                 &state.untracked_before,
@@ -3029,6 +2949,7 @@ impl<'a> Pipeline<'a> {
         reason: &str,
         file_changes: &mut u32,
         mutating_actions: &mut u32,
+        opaque_actions: &mut u32,
         final_text: &mut String,
         total: &mut f64,
         untracked_before: &HashMap<String, String>,
@@ -3044,6 +2965,7 @@ impl<'a> Pipeline<'a> {
                 budget,
                 file_changes,
                 mutating_actions,
+                opaque_actions,
                 None,
             )
             .await
@@ -3111,6 +3033,7 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         file_changes: &mut u32,
         mutating_actions: &mut u32,
+        opaque_actions: &mut u32,
         flip_halt: Option<Arc<FlipHalt>>,
     ) -> TurnOutcome {
         // The filtered sender is SYNCHRONOUS on purpose: when the outer
@@ -3122,6 +3045,8 @@ impl<'a> Pipeline<'a> {
         let count = seen_file_changes.clone();
         let seen_mutating = Arc::new(AtomicU32::new(0));
         let mutating = seen_mutating.clone();
+        let seen_opaque = Arc::new(AtomicU32::new(0));
+        let opaque = seen_opaque.clone();
         let read_only = self.read_only_tool_names();
         let consumer = self.events.clone();
         // Correlate a shell call's command line (carried on `ToolStart`) with
@@ -3168,6 +3093,13 @@ impl<'a> Pipeline<'a> {
                     // registry positively advertises as read-only is excluded.
                     if !read_only.contains(&call.name) {
                         mutating.fetch_add(1, Ordering::Relaxed);
+                        // The warrant's premise check: a mutating call whose
+                        // effects the diff cannot fully account for (the
+                        // shell, processes, MCP, anything unrecognized)
+                        // forfeits every path-classified waiver (#1701).
+                        if !crate::witness::warrant::diff_accountable_mutator(&call.name) {
+                            opaque.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                     // Remember the command line so its result can be scored
                     // against the tracked test. Only when a halt is armed —
@@ -3226,6 +3158,7 @@ impl<'a> Pipeline<'a> {
             .await;
         *file_changes += seen_file_changes.load(Ordering::Relaxed);
         *mutating_actions += seen_mutating.load(Ordering::Relaxed);
+        *opaque_actions += seen_opaque.load(Ordering::Relaxed);
         outcome
     }
 

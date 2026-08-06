@@ -404,27 +404,6 @@ mod tests {
             .iter()
             .flat_map(|name| ["var_os", "var"].map(|read| format!("{read}(\"{name}\")")))
             .collect();
-        // `remove_var("HOME")` ends in the same six characters as
-        // `var("HOME")`, and it is a WRITE — a different question, guarded
-        // elsewhere. Requiring a non-`_` before the match separates the two
-        // without pinning the exact `std::env::` spelling a caller used.
-        // Comment lines are prose, not reads. A file that routes through
-        // `crate::paths` and says so — "never `var_os("HOME")`, because …" —
-        // was being reported as an offender for carrying the explanation of
-        // the very rule it obeys, which teaches the next author to delete the
-        // comment rather than keep the discipline. Only whole-line comments
-        // are skipped, so a read with a trailing comment
-        // (`let h = var_os("HOME"); // …`) is still matched: the line does not
-        // start with `//`.
-        let reads = |body: &str, pattern: &str| {
-            body.lines()
-                .filter(|line| !line.trim_start().starts_with("//"))
-                .any(|line| {
-                    line.match_indices(pattern)
-                        .any(|(at, _)| at == 0 || !line[..at].ends_with('_'))
-                })
-        };
-
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut offenders = Vec::new();
         let mut dirs = vec![src.clone()];
@@ -446,9 +425,9 @@ mod tests {
                 let body = std::fs::read_to_string(&path)
                     .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
                 for pattern in &forbidden {
-                    if reads(&body, pattern) {
+                    for line in reading_lines(&body, pattern) {
                         let relative = path.strip_prefix(&src).unwrap_or(&path);
-                        offenders.push(format!("{}: {pattern}", relative.display()));
+                        offenders.push(format!("{}:{line}: {pattern}", relative.display()));
                     }
                 }
             }
@@ -461,6 +440,244 @@ mod tests {
              a test able to redirect one without mutating process-global state \
              (#1139):\n  {}",
             offenders.join("\n  ")
+        );
+    }
+
+    /// The 1-based lines of `body` on which `pattern` appears as **code**.
+    ///
+    /// Splitting this out of the sweep above is what makes the rule testable
+    /// against fixture strings rather than against whatever the crate happens
+    /// to contain this week (#1748).
+    ///
+    /// # Why comments have to be excluded
+    ///
+    /// A file that correctly routes its home lookup through `crate::paths` and
+    /// *explains why* — naming the banned call so the next reader understands
+    /// the rule — was reported as an offender, with a message claiming it read
+    /// the environment directly. It did not. The lesson a reader draws from
+    /// that is "delete the comment", which trades the documentation for
+    /// nothing: the guard's value is catching a real ambient read, and prose
+    /// was never one.
+    ///
+    /// # Why `remove_var` is not a match
+    ///
+    /// `remove_var("HOME")` ends in the same characters as `var("HOME")` and is
+    /// a WRITE — a different question, guarded in [`crate::startup`]. Requiring
+    /// a non-`_` before the match separates the two without pinning the exact
+    /// `std::env::` spelling a caller used.
+    ///
+    /// # String literals
+    ///
+    /// Decided explicitly rather than by accident, because the naive stripper
+    /// gets it backwards. `let u = "https://x"; let h = var_os("HOME");` has a
+    /// `//` inside a literal; treating that as a comment start would blank the
+    /// rest of the line and hide a genuine read — a FALSE NEGATIVE, which is
+    /// the one direction this guard must never fail in. So the scan tracks
+    /// string literals (escapes and raw strings included) and only honours a
+    /// `//` or `/*` that is really outside one.
+    ///
+    /// Comments are masked to spaces rather than removed so byte offsets, and
+    /// therefore line numbers and the `_` check, are unaffected.
+    fn reading_lines(body: &str, pattern: &str) -> Vec<usize> {
+        mask_comments(body)
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                line.match_indices(pattern)
+                    .any(|(at, _)| at == 0 || !line[..at].ends_with('_'))
+            })
+            .map(|(i, _)| i + 1)
+            .collect()
+    }
+
+    /// `body` with every comment byte replaced by a space, newlines kept.
+    ///
+    /// Rust block comments nest, so the depth is counted rather than treated
+    /// as a flag: `/* /* */ */` closes once, not twice.
+    fn mask_comments(body: &str) -> String {
+        #[derive(PartialEq)]
+        enum S {
+            Code,
+            Line,
+            Block(u32),
+            Str,
+            Raw(usize),
+        }
+        let mut out = String::with_capacity(body.len());
+        let mut state = S::Code;
+        let chars: Vec<char> = body.chars().collect();
+        let mut i = 0;
+        // How many `#` a `r###"` opener carried, so its `"###` closer matches.
+        while i < chars.len() {
+            let c = chars[i];
+            let next = chars.get(i + 1).copied();
+            match state {
+                S::Code => {
+                    if c == '/' && next == Some('/') {
+                        state = S::Line;
+                        out.push_str("  ");
+                        i += 2;
+                        continue;
+                    }
+                    if c == '/' && next == Some('*') {
+                        state = S::Block(1);
+                        out.push_str("  ");
+                        i += 2;
+                        continue;
+                    }
+                    if c == '"' {
+                        state = S::Str;
+                    } else if c == 'r' {
+                        // `r"` or `r#*"`. Anything else is an identifier.
+                        let mut hashes = 0;
+                        while chars.get(i + 1 + hashes) == Some(&'#') {
+                            hashes += 1;
+                        }
+                        if chars.get(i + 1 + hashes) == Some(&'"') {
+                            out.extend(chars[i..=i + 1 + hashes].iter());
+                            state = S::Raw(hashes);
+                            i += hashes + 2;
+                            continue;
+                        }
+                    }
+                    out.push(c);
+                }
+                S::Line => {
+                    // The newline itself is not comment text; keeping it is
+                    // what preserves the line numbering.
+                    if c == '\n' {
+                        state = S::Code;
+                        out.push('\n');
+                    } else {
+                        out.push(' ');
+                    }
+                }
+                S::Block(depth) => {
+                    if c == '/' && next == Some('*') {
+                        state = S::Block(depth + 1);
+                        out.push_str("  ");
+                        i += 2;
+                        continue;
+                    }
+                    if c == '*' && next == Some('/') {
+                        state = if depth == 1 {
+                            S::Code
+                        } else {
+                            S::Block(depth - 1)
+                        };
+                        out.push_str("  ");
+                        i += 2;
+                        continue;
+                    }
+                    out.push(if c == '\n' { '\n' } else { ' ' });
+                }
+                S::Str => {
+                    if c == '\\' {
+                        out.push(c);
+                        if let Some(n) = next {
+                            out.push(n);
+                        }
+                        i += 2;
+                        continue;
+                    }
+                    if c == '"' {
+                        state = S::Code;
+                    }
+                    out.push(c);
+                }
+                S::Raw(hashes) => {
+                    if c == '"' && (1..=hashes).all(|h| chars.get(i + h) == Some(&'#')) {
+                        state = S::Code;
+                        out.extend(chars[i..=i + hashes].iter());
+                        i += hashes + 1;
+                        continue;
+                    }
+                    out.push(c);
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// Both directions of the rule, against fixture strings rather than real
+    /// crate files so the cases cannot rot as the crate changes (#1748).
+    ///
+    /// The pair matters: a guard that ignored everything would pass the
+    /// comment cases, and one that ignored nothing would pass the code cases.
+    #[test]
+    fn the_env_anchor_sweep_reads_code_and_not_prose() {
+        // The literal spelling is built, not written, so this file does not
+        // become its own match — the same reason the sweep above builds its
+        // patterns with `format!`.
+        let pat = format!("var_os(\"{}\")", "HOME");
+        let lines = |body: &str| reading_lines(body, &pat);
+
+        // ── Prose is not a read ──────────────────────────────────────────
+        assert!(
+            lines(&format!("// never {pat}, ask crate::paths\nlet h = 1;\n")).is_empty(),
+            "a line comment naming the call is documentation, not a read"
+        );
+        assert!(
+            lines(&format!(
+                "/// Routes through paths, never {pat}.\nfn f() {{}}\n"
+            ))
+            .is_empty(),
+            "a doc comment naming the call is documentation, not a read"
+        );
+        assert!(
+            lines(&format!("//! Module: never {pat}.\n")).is_empty(),
+            "an inner doc comment naming the call is documentation, not a read"
+        );
+        assert!(
+            lines(&format!("/*\n * never {pat}\n */\nfn f() {{}}\n")).is_empty(),
+            "a block comment naming the call is documentation, not a read"
+        );
+        assert!(
+            lines(&format!("/* outer /* inner {pat} */ still comment */\n")).is_empty(),
+            "block comments nest — the inner close must not reopen code"
+        );
+
+        // ── Code is a read, and the line number is reported ──────────────
+        assert_eq!(
+            lines(&format!("fn f() {{\n    let h = std::env::{pat};\n}}\n")),
+            vec![2],
+            "a real read must be caught, and named by line"
+        );
+        assert_eq!(
+            lines(&format!("let h = {pat}; // explained here\n")),
+            vec![1],
+            "a trailing comment must not excuse the code before it"
+        );
+        assert_eq!(
+            lines(&format!("/* off */ let h = {pat};\n")),
+            vec![1],
+            "code after a closed block comment is still code"
+        );
+        assert_eq!(
+            lines(&format!("let a = 1;\nlet b = 2;\nlet h = {pat};\n")),
+            vec![3],
+            "the reported line is the offending one"
+        );
+
+        // ── The false-negative trap the string-literal handling exists for ──
+        assert_eq!(
+            lines(&format!("let u = \"https://x\"; let h = {pat};\n")),
+            vec![1],
+            "a `//` inside a string literal must not blank the rest of the line \
+             — that would HIDE a real read, the one direction this guard must \
+             never fail in"
+        );
+        assert_eq!(
+            lines(&format!("let u = r#\"a // b\"#; let h = {pat};\n")),
+            vec![1],
+            "the same, through a raw string"
+        );
+
+        // ── remove_var is a write, guarded elsewhere ─────────────────────
+        assert!(
+            lines(&format!("std::env::remove_{pat};\n")).is_empty(),
+            "remove_var is a WRITE — a different question, guarded in crate::startup"
         );
     }
 }
