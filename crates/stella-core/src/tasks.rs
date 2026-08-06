@@ -11,8 +11,8 @@
 //!
 //! `task_assign` does not spawn anything itself — spawning is I/O. It
 //! validates the transition and records a [`SpawnRequest`]; the session
-//! driver drains requests and dispatches sub-agents through the fleet seam
-//! (L-E9: `Fleet::dispatch` is THE dispatch seam).
+//! driver drains them (`stella-tools`' `ToolRegistry::take_spawn_requests`)
+//! and runs each on its own deck sub-session lane.
 
 use stella_protocol::{TaskItem, TaskStatus};
 

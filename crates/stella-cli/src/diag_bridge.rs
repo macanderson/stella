@@ -27,7 +27,7 @@
 //!
 //! ## The match is exhaustive on purpose
 //!
-//! `stella-protocol/src/event.rs` carries a checklist of every downstream
+//! `crates/stella-protocol/src/event.rs` carries a checklist of every downstream
 //! matcher a new variant must be considered against, and it distinguishes
 //! *compile-enforced* matchers from *silent* ones that would quietly ignore a
 //! new variant. This one is compile-enforced: there is no `_` arm, so adding

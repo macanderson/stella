@@ -1087,7 +1087,7 @@ async fn clean_lookup_skips_plan_verify_and_verifier() {
 }
 
 /// A greeting takes the conversational fast path: **one** plain completion, no
-/// triage call, no plan / witness / execute / verify / verdict. This is the fix
+/// triage call, no plan / execute / witness / verify / verdict. This is the fix
 /// for "typing `hi` authored a witness test", and now also for "typing `hi`
 /// paid for a classification that could not change the answer".
 ///

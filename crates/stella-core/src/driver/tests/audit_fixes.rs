@@ -1047,7 +1047,7 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
 /// #632 — a provider that recycles one `call_id` per response must not blind
 /// loop detection.
 ///
-/// `stella-model/src/gemini.rs` mints ids as `call_{ordinal}` where the
+/// `crates/stella-model/src/gemini.rs` mints ids as `call_{ordinal}` where the
 /// ordinal is local to ONE response, so `call_0` restarts on every assistant
 /// step; `vertex.rs` reuses the same aggregation path. #622 accepted the
 /// `call_id`-keyed identity snapshot on the grounds that "real providers

@@ -2,8 +2,8 @@
 //!
 //! The guarantee lives in `docs/spec/adaptive-context/adaptive-context.md` §8. Its two pure
 //! halves — the per-session cap and the no-clobber comparison itself — are
-//! tested in `stella-core/src/skills.rs`, and tombstone suppression is tested
-//! in `stella-store/src/forget/tests.rs`. What could not be tested there is the
+//! tested in `crates/stella-core/src/skills.rs`, and tombstone suppression in
+//! `crates/stella-store/src/forget/tests.rs`. What could not be tested there is the
 //! part that was actually broken: `stella-core` only ever sees the path list
 //! this crate hands it, and this crate used to build that list from the skills
 //! that LOADED rather than the files that EXIST. These tests own that seam.
