@@ -476,7 +476,7 @@ impl<'a> Pipeline<'a> {
         let Some(authoring) = authoring else {
             return Ok(None);
         };
-        if !warrant(&state.diff_text, state.file_changes).is_required() {
+        if !warrant(&state.diff_text, state.change_signals()).is_required() {
             // No Witness stage is emitted, because none runs. The reason is
             // not lost: `warranted_completion` reads the same warrant during
             // verification and records the sentence on the verdict, which is

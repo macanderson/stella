@@ -346,9 +346,12 @@ pub enum LadderDecision {
     /// A determinate finding, not an abstention: revise, and report `passed:
     /// false` if the revisions run out.
     NothingAttempted,
-    /// **Every** evidence channel was unavailable — see
-    /// [`LadderInputs::evidence_is_blind`]. The ladder abstains: no verifier call,
-    /// and the run is scored as unverified rather than passed or failed.
+    /// The turn went unobserved, by either route: **every** evidence channel
+    /// was unavailable ([`LadderInputs::evidence_is_blind`]), or the channels
+    /// were available and saw nothing of work that was demonstrably dispatched
+    /// ([`LadderInputs::effects_escaped_collection`]). The ladder abstains: no
+    /// verifier call, and the run is scored as unverified rather than passed
+    /// or failed.
     Unverifiable,
     /// Inconclusive: no flip evidence, or diff over budget, or tests couldn't
     /// be run — but at least one channel could still see something. Escalate to
@@ -506,6 +509,36 @@ impl LadderInputs {
             && !self.flip_achieved
             && self.touched_tests_passed.is_none()
     }
+
+    /// Whether this turn's effects landed somewhere this run does not collect:
+    /// it dispatched calls able to change the workspace, the diff probe *could*
+    /// read the tree and found it unchanged, and no other channel saw anything
+    /// either.
+    ///
+    /// The exact inverse of [`Self::nothing_was_attempted`] on its one
+    /// load-bearing conjunct, and the reason both exist. A readable, empty diff
+    /// is a confident observation — but only of the tree the probe was pointed
+    /// at. When the dispatch record says calls were made, "the tree did not
+    /// move" and "the work happened elsewhere" produce identical readings, and
+    /// nothing available here separates them. Neither may be asserted, so the
+    /// ladder abstains.
+    ///
+    /// Named after the failure it ends (#1701): a Terminal-Bench
+    /// system-configuration task installed and configured nginx against the
+    /// real `/etc/nginx` — which is the only place `service nginx restart`
+    /// will ever read — while the run collected a candidate root that stayed
+    /// empty. Ten mutating calls, a readable zero-line diff, and a verdict of
+    /// `passed: true, deterministic: true`. Note what does *not* reach here: a
+    /// flip, a green test, or a recorded touch each corroborate the work, and
+    /// any one of them sends the turn on to the rungs that can credit it.
+    pub fn effects_escaped_collection(&self) -> bool {
+        self.mutating_actions > 0
+            && self.diff_available
+            && self.diff_lines == 0
+            && self.file_change_events == 0
+            && !self.flip_achieved
+            && self.touched_tests_passed.is_none()
+    }
 }
 
 /// The evidence ladder (L-E11). Decides submit/revise/abstain/escalate from
@@ -519,6 +552,9 @@ impl LadderInputs {
 ///    it, because "no action was taken" is knowledge, not an absence of it.
 /// 3. **Every channel blind → `Unverifiable`.** Nothing could observe this
 ///    turn, so nothing may be claimed about it — in particular not a failure.
+/// 3b. **Effects escaped collection → `Unverifiable`.** The mirror image: every
+///    channel *could* look and none of them saw the work this run demonstrably
+///    dispatched. Equally unobserved, equally unclaimable.
 /// 4. **Flip + green + within budget → `SubmitFast`.** The full deterministic
 ///    pass: verifier skipped.
 /// 5. **Otherwise → `ModelVerdict`.** Genuinely inconclusive: no flip, or the
@@ -540,6 +576,18 @@ pub fn ladder_decision(inputs: &LadderInputs) -> LadderDecision {
     //    to ask a model to guess from an empty record, and the answer it
     //    produced in the wild was a confident FAIL naming a file that existed.
     if inputs.evidence_is_blind() {
+        return LadderDecision::Unverifiable;
+    }
+    // 3b. The probe could look, looked, and found an unchanged tree — while
+    //     this pipeline's own record says calls able to write it were
+    //     dispatched. That is not a clean turn; it is a turn whose effects
+    //     landed outside what the run collects, and the two are
+    //     indistinguishable from here (#1701). Same abstention as above, for
+    //     the same reason: what cannot be observed cannot be claimed, in
+    //     either direction. Deliberately NOT `Revise` — the work may be
+    //     entirely correct and merely uncollected, and no revision can make
+    //     an un-snapshot-able workspace observable.
+    if inputs.effects_escaped_collection() {
         return LadderDecision::Unverifiable;
     }
     // 4. Full deterministic pass — submit fast, verifier skipped. The
@@ -626,7 +674,7 @@ pub fn deterministic_pass_evidence(
 }
 
 /// Build the `VerdictEvidence` for a [`LadderDecision::Unverifiable`] turn: the
-/// ladder abstained because every channel was blind.
+/// ladder abstained because the turn went unobserved.
 ///
 /// `deterministic: false` — this is the *absence* of a deterministic result,
 /// and marking it `true` would let an unobserved turn wear the ladder's
@@ -634,15 +682,35 @@ pub fn deterministic_pass_evidence(
 /// summarizing, because the only actionable content here is *why* nothing
 /// could be seen: on Terminal-Bench the answer is "the task directory is not a
 /// git repository", which no amount of re-running will change.
+///
+/// Which is also why the two routes to this rung get two summaries. Telling a
+/// reader "the diff probe could not read the working tree" when it read the
+/// tree fine and found it unchanged is a second verification lie in the
+/// sentence written to end the first one — and it points at the wrong repair
+/// (fix the probe, rather than collect the workspace the work actually landed
+/// in).
 pub fn unverifiable_evidence(inputs: &LadderInputs) -> VerdictEvidence {
-    VerdictEvidence {
-        summary: format!(
+    let summary = if inputs.effects_escaped_collection() {
+        format!(
+            "UNVERIFIABLE — this turn dispatched {} call(s) able to change the workspace, and the \
+             diff probe then read the tree and found it unchanged, so nothing here observed the \
+             work and nothing is claimed about it (this is NOT a finding that the work is absent \
+             or wrong): the effects landed outside what this run collects. Flip oracle not armed \
+             (no test command); touched tests not run; file-change events recorded = 0. Verify \
+             the result on its own merits.",
+            inputs.mutating_actions
+        )
+    } else {
+        format!(
             "UNVERIFIABLE — no evidence channel could observe this turn, so nothing is claimed \
              about it (this is NOT a finding that the work is absent or wrong): flip oracle not \
              armed (no test command); touched tests not run; the diff probe could not read the \
              working tree; file-change events recorded = {}. Verify the result on its own merits.",
             inputs.file_change_events
-        ),
+        )
+    };
+    VerdictEvidence {
+        summary,
         deterministic: false,
         evidence_refs: Vec::new(),
         ladder: None,
