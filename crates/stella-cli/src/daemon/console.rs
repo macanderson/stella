@@ -55,6 +55,12 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// Thread-name prefix for the pump threads (`console-pump-1`/`console-pump-2`,
+/// set at spawn in [`pump_fd`]). Diagnostic only: the drain's self-join guard
+/// compares [`std::thread::ThreadId`]s, which a name cannot be confused with
+/// (names are optional and need not be unique).
+const PUMP_THREAD_PREFIX: &str = "console-pump-";
+
 use stella_store::supervised;
 
 /// The index's name in the sidecar, beside the two consoles it orders.
@@ -641,7 +647,7 @@ fn pump_fd(
     // takes ownership and closes it when the pump exits.
     let mut pipe = unsafe { std::fs::File::from_raw_fd(read_fd) };
     let pump = std::thread::Builder::new()
-        .name(format!("console-pump-{target_fd}"))
+        .name(format!("{PUMP_THREAD_PREFIX}{target_fd}"))
         .spawn(move || {
             let mut buf = [0u8; 64 * 1024];
             loop {

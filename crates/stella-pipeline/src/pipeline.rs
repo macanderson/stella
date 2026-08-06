@@ -2072,7 +2072,7 @@ impl<'a> Pipeline<'a> {
         // early when a test IS required. Emitting from either would make the
         // rail's first row appear only on some runs, which is the failure this
         // whole surface exists to end.
-        let warrant = warrant(&state.diff_text, state.file_changes);
+        let warrant = warrant(&state.diff_text, state.change_signals());
         self.emit_proof(ProofStep::Warrant {
             required: warrant.is_required(),
             reason: warrant.reason().map(|r| r.sentence().to_string()),
@@ -2524,9 +2524,11 @@ impl<'a> Pipeline<'a> {
                     }
                 }
                 LadderDecision::Unverifiable => {
-                    // Every channel was blind. The verifier is not asked, because
-                    // the only thing it could do is guess from an empty record
-                    // — which in the wild it did, returning `FAIL … the file
+                    // The turn went unobserved — every channel blind, or every
+                    // channel clear-eyed and empty over dispatched mutating
+                    // calls (#1701). The verifier is not asked, because the
+                    // only thing it could do is guess from an empty record —
+                    // which in the wild it did, returning `FAIL … the file
                     // likely does not exist` about a file that was in the
                     // container (#973).
                     //
@@ -2539,15 +2541,13 @@ impl<'a> Pipeline<'a> {
                     // best-of-N and then win the smaller-diff tiebreak.
                     //
                     // The arm above is what makes this defensible. Reaching
-                    // here now means the turn *did* dispatch mutating calls and
-                    // no channel could see their effect — the state the abstain
-                    // rung was built for, and a real one: a Terminal-Bench
+                    // here means the turn *did* dispatch mutating calls and no
+                    // channel saw their effect — a real state: a Terminal-Bench
                     // trial that wrote its answer through shell redirects
                     // recorded no touch, could not be diffed, landed here, and
                     // scored 1.0 against its verifier. Failing that closed
-                    // would report a correct run as broken, and no revision
-                    // could ever clear it, because nothing about that workspace
-                    // will ever become observable.
+                    // would report a correct run as broken, and no revision can
+                    // clear it — that workspace never becomes observable.
                     let mut evidence = unverifiable_evidence(&inputs);
                     evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.unverifiable(&evidence.summary);

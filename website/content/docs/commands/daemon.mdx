@@ -14,7 +14,9 @@ stella daemon attach [id]
 stella daemon logs [id] [-n LINES]
 stella daemon stop <id>
 stella daemon resume [id]
+stella daemon resume-all [--dry-run]
 stella daemon install [--label NAME] [--keep-alive] -- <stella args…>
+stella daemon install --resume-all [--label NAME]
 stella daemon uninstall <label>
 ```
 
@@ -147,6 +149,30 @@ $ stella daemon resume ses-1785956826121
 
 An unverified resume is a resume you can still act on; an unverified resume you were never told about is not. Re-verifying is `stella run` with the verifier of your choice.
 
+## `resume-all`
+
+`resume` continues one run you name. `resume-all` continues every run *this machine* interrupted, in one pass — the verb a boot-time service runs, and a useful one by hand after an unplanned reboot:
+
+```bash
+stella daemon resume-all --dry-run   # print the decision for every run, spend nothing
+stella daemon resume-all
+```
+
+It prints one line per supervised run, continued or skipped, with the reason:
+
+```text
+↩ continuing ses-1785956826121 — stella: finish the store migration
+▸ skipping    ses-1785956700004 — ended deliberately — only an interrupted run is resumed at boot
+▸ skipping    ses-1785956811930 — no resume point
+  boot-time resume 1 of 3 for ses-1785956826121
+```
+
+**What it continues.** Exactly the rows `list` paints `Crashed ↩`: a supervised run whose recorded status is still live while its liveness lock is gone, whose workspace still exists, and which left a resume point. A run that finished, was stopped, was set aside, or recorded an error is never resumed — every deliberate ending writes a status on the way out, and a process the kernel took writes nothing, so a live status with a dead lock is the signature of interruption and of nothing else. The rule is deliberately conservative on the one ambiguous case: work you ended on purpose is never resumed behind your back, at the cost of not resuming a crash that managed to record itself.
+
+**What bounds it.** Each run gets at most **three** boot-time resumes. The count is durable (`~/.stella/services/resume-boot.json`) and is written *before* the resume is spawned, so a run that takes the machine down with it is still charged for the attempt. Past three, the run is retired from the sweep and left for `stella daemon resume <id>` by hand — a human deciding to try again is what the bound exists to require. Runs are resumed one at a time; several turns resuming at once is several models spending at once on a machine nobody is watching.
+
+Everything `resume` says about a resumed turn applies here, including the honest limits above: a turn interrupted mid-pipeline resumes as a plain engine turn and says which stages it is not restoring — into the service console rather than a terminal.
+
 ## `install` / `uninstall`
 
 Supervision and resume both act on runs a human started; neither makes anything *start by itself* after a reboot — nothing a process arranges for itself can. Starting again is the OS service manager's job, and `install` is the explicit handshake with it, registering **one stella invocation you choose** as a per-user service:
@@ -159,7 +185,15 @@ stella daemon uninstall night-fleet
 
 On **macOS** it writes a launchd agent (`~/Library/LaunchAgents/sh.oxagen.stella.<label>.plist`) and loads it with `launchctl bootstrap`; the command starts at every login, including the login after a reboot. On **Linux** it writes a `systemd --user` unit (`~/.config/systemd/user/stella-<label>.service`), enables it, and turns on lingering (`loginctl enable-linger`) so the command starts at boot and keeps running through logout. When a `launchctl`/`systemctl` call fails, the definition is still written and the exact command to load it by hand is printed.
 
-**Registration, not resume.** The service manager re-*starts*: the registered command begins a fresh turn, and a fresh spend, each time it is launched. Continuing a turn the reboot killed is [`resume`](#resume)'s job. So register standing verbs — a monitor, a fleet watch, a deliberately perpetual run — and let one-shot runs stay merely supervised. Nothing is ever registered implicitly.
+**A registered command re-*starts*:** it begins a fresh turn, and a fresh spend, each time the manager launches it. So register standing verbs — a monitor, a fleet watch, a deliberately perpetual run — and let one-shot runs stay merely supervised. Nothing is ever registered implicitly.
+
+**To come back *continuing* the work a reboot interrupted, register the sweep instead:**
+
+```bash
+stella daemon install --resume-all
+```
+
+That registers exactly one thing — `stella daemon resume-all`, under the label `resume-boot`, console `~/.stella/services/resume-boot.log`. At every boot it continues the turns this machine killed from their last completed step and never restarts one; its selection rule and its three-attempt bound are [above](#resume-all). It takes no command of its own and refuses `--keep-alive`: a sweep restarted every minute would spend against its own attempt bound until it was exhausted. `stella daemon uninstall resume-boot` removes it like any other service.
 
 Two defaults keep a broken service from spending money unattended:
 

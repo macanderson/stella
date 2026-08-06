@@ -58,10 +58,12 @@ mod env_files;
 mod export;
 mod extensions;
 mod failure;
+mod fleet_claims;
 mod fleet_cmd;
 mod fleet_commits;
 mod fleet_gc;
 mod fleet_spend;
+mod fleet_verbs;
 mod fleet_warmth;
 mod fullauto_cmd;
 mod ingest_cmd;
@@ -525,18 +527,20 @@ fn main() -> ExitCode {
     // Installed after `startup.close()` — the pumps are threads, and threads
     // before that boundary would race the env mutations it fences — and
     // drained as this function's last act so the final lines land.
+    //
+    // A panic would unwind (or, under the release profile's
+    // `panic = "abort"`, not unwind at all) past that last act and strand up
+    // to a pipe buffer — usually including the panic message itself — so
+    // `arm_panic_drain` chains a hook that performs the same idempotent
+    // drain (#1616). Whichever of the two arrives first does the one real
+    // drain; the other finds the streams already taken.
     let console = daemon::supervised_id().and_then(|id| {
         daemon::console::install_bounded(
             &stella_store::SessionRegistry::open_default().sidecar_dir(&id),
         )
     });
-    // A panic unwinds past the drain below, and the pump threads die with the
-    // process holding whatever the pipe still had — usually the panic message
-    // itself, which is the one line a postmortem is looking for. The hook
-    // chains onto the diagnostics hook installed above, so the message is
-    // printed first and drained second (#1616).
-    if let Some(console) = &console {
-        daemon::console::arm_panic_drain(console);
+    if let Some(guard) = &console {
+        daemon::console::arm_panic_drain(guard);
     }
 
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
@@ -587,9 +591,10 @@ fn main() -> ExitCode {
         }
     };
     // After the last print of every path above: restore the raw fds and join
-    // the pumps, so the console files carry this process's final lines.
-    if let Some(console) = console {
-        console.drain();
+    // the pumps, so the console files carry this process's final lines. A
+    // no-op if the panic hook installed above already won that race.
+    if let Some(guard) = console {
+        guard.drain();
     }
     code
 }
@@ -925,6 +930,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                         .map_err(failure::CliFailure::from);
                 }
                 DaemonCmd::Resume { .. } => {}
+                // The sweep is the parent half N times over — it resolves,
+                // spawns and streams each `daemon resume <id> --foreground`
+                // child — so it stays keyless here for the same reason.
+                DaemonCmd::ResumeAll { dry_run } => {
+                    return daemon::resume_all(*dry_run, rt).map_err(failure::CliFailure::from);
+                }
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
             }
         }
@@ -1085,7 +1096,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         } => {
             // Maintenance verbs never fan out, never supervise, and never
             // touch a provider — dispatch before any of the run machinery.
-            signals::block_on_interruptible(rt()?, fleet_gc::run(&cfg, &sub))?;
+            signals::block_on_interruptible(rt()?, fleet_verbs::run(&cfg, &sub))?;
         }
         Command::Fleet {
             cmd: None,

@@ -270,9 +270,9 @@ fn a_session_without_an_index_falls_back_to_raw_tails() {
 /// `Closed` marker. That marker is the assertion, because it is the one thing
 /// that cannot happen by luck: a pump that was never drained is still blocked
 /// on its pipe when the process exits, and up to a buffer of output (the panic
-/// message, in a real supervised child) dies with it. On `main` there is no
-/// panic hook and no shareable drain — `arm_panic_drain` does not exist — so
-/// this test does not compile there, let alone pass.
+/// message, in a real supervised child) dies with it. Asserting instead that
+/// the bytes reached the file would pass with the hook disarmed — a live pump
+/// in a process that keeps running flushes them on its own schedule.
 ///
 /// The pump is interposed on a private descriptor rather than on fd 1, so the
 /// test runner's own stdout is never hijacked; everything downstream of the
@@ -339,6 +339,69 @@ fn a_panic_drains_the_console_pump() {
 
     // SAFETY: the descriptor is this test's own and no longer used. The drain
     // restored it over the pipe, so this closes the console file, not the pump.
+    unsafe {
+        libc::close(target_fd);
+    }
+}
+
+/// The other half of the drain's ordering contract (#1616): when the drain is
+/// reached from a pump thread — that pump panicking, so the hook runs on its
+/// stack — the fd is still restored, but the pump is NOT joined. A join there
+/// is a thread waiting on itself, which hangs the process forever rather than
+/// losing a message.
+///
+/// The stand-in pump never finishes, so a regression would block; the drain
+/// therefore runs on its own thread and is awaited with a timeout, making the
+/// failure an assertion rather than a wedged test binary.
+#[cfg(unix)]
+#[test]
+fn a_drain_from_the_pump_thread_restores_the_fd_without_joining_itself() {
+    use std::os::unix::io::IntoRawFd;
+
+    let dir = tempfile::tempdir().unwrap();
+    let console = dir.path().join(supervised::STDOUT_LOG);
+    let open_console = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&console)
+            .unwrap()
+            .into_raw_fd()
+    };
+    let saved_fd = open_console();
+    let target_fd = open_console();
+
+    let (release, blocked) = std::sync::mpsc::channel::<()>();
+    let pump = std::thread::spawn(move || {
+        let _ = blocked.recv();
+        0u64
+    });
+
+    let (done, finished) = std::sync::mpsc::channel();
+    let drainer = std::thread::spawn(move || {
+        // The stream names THIS thread as its pump, which is what a pump
+        // panicking inside the hook looks like from the drain's side.
+        let drainable = Drainable {
+            streams: Mutex::new(vec![PumpedStream {
+                saved_fd,
+                target_fd,
+                pump: Some(pump),
+                pump_thread: std::thread::current().id(),
+            }]),
+        };
+        drainable.drain();
+        let _ = done.send(());
+    });
+
+    finished
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("a drain reached from the pump thread must not join that pump");
+    drop(release);
+    drainer.join().unwrap();
+
+    // SAFETY: the drain closed `saved_fd` after copying it over `target_fd`;
+    // this closes the one surviving descriptor, which is this test's own.
     unsafe {
         libc::close(target_fd);
     }
