@@ -196,7 +196,15 @@ impl ToolExecutor for WitnessToolExecutor {
             // names-only, root-confined by the tool itself, and its results
             // pass the same credential exclusion the read path enforces.
             "glob" => {
+                // The root itself is spelled `.` or `""` — the `glob` tool
+                // defaults its `path` to `.` and resolves both to the root —
+                // and it is the blind author's whole opening move, so it must
+                // pass. `normalized_candidate_path` answers `None` for them
+                // because it was written for `read_file`, where a path that
+                // names no file is a different question; reusing that answer
+                // here denied the one call #1792 exists to enable.
                 if let Some(raw_path) = input.get("path").and_then(serde_json::Value::as_str)
+                    && !names_candidate_root(raw_path)
                     && normalized_candidate_path(raw_path).is_none()
                 {
                     return Self::denied(name, "the path must stay within the candidate root");
@@ -219,6 +227,24 @@ impl ToolExecutor for WitnessToolExecutor {
             ),
         }
     }
+}
+
+/// Does this `path` name the candidate root itself?
+///
+/// Separate from [`normalized_candidate_path`] rather than folded into it: that
+/// function normalizes to a non-empty *relative* path, and the root does not
+/// have one, so `None` there means both "escapes the root" and "is the root".
+/// Only the listing tools can act on the second, and conflating them is what
+/// made `glob` refuse its own default argument.
+///
+/// Absolute and drive-qualified spellings are excluded first, so `/` — which
+/// would otherwise trim to the empty string — stays an escape.
+fn names_candidate_root(raw: &str) -> bool {
+    let slash = raw.replace('\\', "/");
+    if Path::new(&slash).is_absolute() || slash.as_bytes().get(1) == Some(&b':') {
+        return false;
+    }
+    matches!(slash.trim_end_matches('/'), "" | ".")
 }
 
 pub(super) fn normalized_candidate_path(raw: &str) -> Option<String> {
@@ -604,6 +630,51 @@ mod tests {
             escaped.is_error(),
             "an escaping search path must be refused"
         );
+    }
+
+    /// Naming the root explicitly is the same call as omitting `path`.
+    ///
+    /// The `glob` tool documents `path` as "Subdirectory to search (default:
+    /// workspace root)" and resolves `.` and `""` to the root, so a model that
+    /// spells the default out loud — which they routinely do — must not be
+    /// refused. The guard reused `normalized_candidate_path`, whose `None`
+    /// means "no relative path" and therefore covers both "escapes the root"
+    /// and "*is* the root"; only the second is legal, and collapsing them shut
+    /// the door on the blind author's opening move (#1792).
+    #[tokio::test]
+    async fn glob_accepts_the_root_spelled_out_as_well_as_omitted() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("tests")).unwrap();
+        std::fs::write(root.path().join("tests/existing.rs"), "#[test] fn t() {}").unwrap();
+        let tools = witness_executor(root.path()).await;
+
+        for path in [".", "", "./"] {
+            let output = tools
+                .execute(
+                    "glob",
+                    &serde_json::json!({"pattern": "**/*", "path": path}),
+                )
+                .await;
+            let ToolOutput::Ok { content } = output else {
+                panic!("`path: {path:?}` names the root and must be allowed: {output:?}");
+            };
+            assert!(
+                content.contains("tests/existing.rs"),
+                "`path: {path:?}` must search the root: {content}"
+            );
+        }
+
+        // The root spellings are the only ones that gain entry: `/` trims to
+        // the empty string but is absolute, and must stay an escape.
+        for path in ["/", "..", "../..", "/etc"] {
+            assert!(
+                tools
+                    .execute("glob", &serde_json::json!({"pattern": "*", "path": path}))
+                    .await
+                    .is_error(),
+                "`path: {path:?}` leaves the candidate root and must be refused"
+            );
+        }
     }
 
     /// #1784's witness: the operator's tool policy governs the witness
