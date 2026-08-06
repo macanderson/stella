@@ -41,7 +41,7 @@ GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 # CONTRIBUTING.md to the real list instead of a hand-copied one. Both documents
 # had already re-rotted twice, in the same direction each time: a guard was
 # added here and the prose kept the old count (#1437).
-GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test
+GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test self-driving-test
 
 .PHONY: help
 help: ## Show this help
@@ -305,8 +305,15 @@ impacted-test: ## Test the gate-scoping script (hermetic; not part of `gate`)
 	./scripts/test-impacted-crates.sh
 
 .PHONY: self-driving-test
-self-driving-test: ## Test the self-driving control logic — digest, AIMD, aperture, run lifecycle (hermetic; not part of `gate`)
-	./scripts/test-self-driving.sh
+# Pins STELLA_BIN rather than letting the harness locate one. Its own
+# `locate_stella` prefers target/release over target/debug, so a stale release
+# build silently wins over the code under test — three cases went red against a
+# months-old binary that predated the command they exercised, and the harness
+# does not say which binary it measured (#1753). The gate must test what the
+# gate just built.
+self-driving-test: ## Test the self-driving control logic — digest, AIMD, aperture, run lifecycle (hermetic)
+	cargo build -q -p stella-cli --bin stella
+	STELLA_BIN="$(CURDIR)/target/debug/stella" ./scripts/test-self-driving.sh
 
 .PHONY: smoke-artifact-test
 smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic broken artifacts (hermetic; not part of `gate`)
@@ -319,6 +326,19 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 .PHONY: file-size-test
 file-size-test: ## Test which languages the file-size ratchet actually watches (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
+
+.PHONY: releases-published
+releases-published: ## Assert every v* tag older than the grace window has a published release (#1464)
+	@./scripts/check-releases-published.sh
+
+.PHONY: releases-baseline-update
+releases-baseline-update: ## Grandfather the tags that shipped nothing and never will (review the diff!)
+	@./scripts/check-releases-published.sh --update
+	@git --no-pager diff --stat -- scripts/unpublished-tags-baseline.txt || true
+
+.PHONY: releases-published-test
+releases-published-test: ## Test the tag/release reconciliation rule (hermetic; not part of `gate`)
+	./scripts/test-releases-published.sh
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)

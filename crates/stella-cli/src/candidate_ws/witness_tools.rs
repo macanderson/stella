@@ -155,7 +155,7 @@ impl ToolExecutor for WitnessToolExecutor {
             .reads
             .schemas()
             .into_iter()
-            .filter(|schema| schema.name == "read_file")
+            .filter(|schema| schema.name == "read_file" || schema.name == "glob")
             .collect();
         schemas.push(ToolSchema {
             name: "create_witness_test".into(),
@@ -187,6 +187,30 @@ impl ToolExecutor for WitnessToolExecutor {
                     return Self::denied(name, "credential and private-state paths are excluded");
                 }
                 self.reads.execute(name, input).await
+            }
+            // Discovery for the blind author (#1792): the repo listing in the
+            // prompt is truncated to its first 200 sorted paths, and an
+            // author that cannot see any `tests/` directory there had no
+            // legal move — `read_file` needs a path it can already name, and
+            // `create_witness_test` requires the parent to exist. `glob` is
+            // names-only, root-confined by the tool itself, and its results
+            // pass the same credential exclusion the read path enforces.
+            "glob" => {
+                if let Some(raw_path) = input.get("path").and_then(serde_json::Value::as_str)
+                    && normalized_candidate_path(raw_path).is_none()
+                {
+                    return Self::denied(name, "the path must stay within the candidate root");
+                }
+                match self.reads.execute(name, input).await {
+                    ToolOutput::Ok { content } => ToolOutput::Ok {
+                        content: content
+                            .lines()
+                            .filter(|line| !is_credential_path(line.trim()))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    },
+                    error => error,
+                }
             }
             "create_witness_test" => self.create_test(input),
             _ => Self::denied(
@@ -385,7 +409,7 @@ mod tests {
             .into_iter()
             .map(|schema| schema.name)
             .collect();
-        assert_eq!(names, vec!["read_file", "create_witness_test"]);
+        assert_eq!(names, vec!["glob", "read_file", "create_witness_test"]);
         for denied in [
             "write_file",
             "edit_file",
@@ -541,6 +565,83 @@ mod tests {
             "a substantive witness must be accepted after the refusals: {output:?}"
         );
         assert!(root.path().join("tests/real_witness.rs").exists());
+    }
+
+    /// #1792's witness: the blind author can discover the tree by name —
+    /// `glob` is offered and executes root-confined, and its results pass
+    /// the same credential exclusion as the read path, so discovery never
+    /// becomes a map of the workspace's secrets.
+    #[tokio::test]
+    async fn glob_lets_the_author_discover_tests_without_leaking_credentials() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("tests")).unwrap();
+        std::fs::write(root.path().join("tests/existing.rs"), "#[test] fn t() {}").unwrap();
+        std::fs::write(root.path().join(".env.local"), "secret").unwrap();
+        let tools = witness_executor(root.path()).await;
+
+        let output = tools
+            .execute("glob", &serde_json::json!({"pattern": "**/*"}))
+            .await;
+        let ToolOutput::Ok { content } = output else {
+            panic!("glob must be available to the witness author: {output:?}");
+        };
+        assert!(
+            content.contains("tests/existing.rs"),
+            "discovery must surface the test directory: {content}"
+        );
+        assert!(
+            !content.contains(".env.local"),
+            "credential paths must not appear in discovery output: {content}"
+        );
+
+        let escaped = tools
+            .execute(
+                "glob",
+                &serde_json::json!({"pattern": "*", "path": "../.."}),
+            )
+            .await;
+        assert!(
+            escaped.is_error(),
+            "an escaping search path must be refused"
+        );
+    }
+
+    /// #1784's witness: the operator's tool policy governs the witness
+    /// author's reads exactly as it governs the worker's. The executor takes
+    /// whatever read surface it is handed — the candidate workspace hands it
+    /// the policy-wrapped one — so a `read_file: off` switch removes both
+    /// the schema and the dispatch here, not just on the worker path.
+    #[tokio::test]
+    async fn the_tool_policy_reaches_the_witness_authors_reads() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("tests")).unwrap();
+        std::fs::write(root.path().join("src.rs"), "source").unwrap();
+        let registry: Arc<dyn ToolExecutor> = Arc::new(
+            ToolRegistry::new_detected(root.path().to_path_buf(), RegistryOptions::default()).await,
+        );
+        let policied: Arc<dyn ToolExecutor> = Arc::new(crate::agent::PolicyToolSet::new_owned(
+            registry,
+            stella_tools::policy::ToolPolicy::from_switches([("read_file".to_string(), false)]),
+        ));
+        let tools = WitnessToolExecutor::new(root.path().to_path_buf(), policied);
+
+        let names: Vec<_> = tools
+            .schemas()
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec!["glob", "create_witness_test"],
+            "a switched-off read_file must not be offered to the author (glob stays)"
+        );
+        assert!(
+            tools
+                .execute("read_file", &serde_json::json!({"path": "src.rs"}))
+                .await
+                .is_error(),
+            "and must not execute either"
+        );
     }
 
     #[cfg(unix)]

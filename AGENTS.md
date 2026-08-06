@@ -70,6 +70,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + format-check (fmt --check)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
+                         #   + self-driving-test (the shell harness)
 ```
 
 That is twenty-four steps, and the list is not maintained by hand: it is

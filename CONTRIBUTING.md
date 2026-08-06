@@ -91,6 +91,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo build -p stella-cli --bin stella && \
+  STELLA_BIN="$PWD/target/debug/stella" ./scripts/test-self-driving.sh
 ```
 
 Or just `make gate`, which is the twenty-four of them in order.

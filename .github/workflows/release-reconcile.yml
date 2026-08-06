@@ -1,0 +1,73 @@
+name: release-reconcile
+
+# Break the silence around a failed release (#1464).
+#
+# `release.yml` failed on 31 consecutive tags (v0.6.75 → v0.6.108, about two
+# days) and nothing anywhere said so. The repository kept cutting version
+# numbers the whole time while shipping no binaries.
+#
+# It was invisible because every surface a maintainer glances at reported
+# success: `ci` on main green, `auto-tag` succeeded (it tags, dispatches, and
+# exits without ever looking at the outcome), the version-sync PR opened and
+# auto-merged, CHANGELOG.md rolled, and the manifests were stamped. Only the
+# last two jobs of `release.yml` skipped, and nothing reads `gh release list`
+# on a cadence.
+#
+# ── Why a reconciler and not a watcher ───────────────────────────────────────
+#
+# The tempting fix is to have `auto-tag` watch the run it dispatches — it
+# already does exactly that for the version-sync PR. But `auto-tag`'s
+# concurrency group is serialized with `cancel-in-progress: false` and its
+# comments are explicit that every failure path warns and exits 0 *specifically*
+# so a bad release cannot jam the queue under a burst of merges. Holding that
+# job open for an hour of full-LTO builds is the thing it was written to avoid.
+#
+# Comparing state instead of watching a run also catches strictly more: a
+# dispatch that never started, a run cancelled by a runner outage, and a release
+# deleted after the fact are all invisible to a watcher and all visible here.
+#
+# ── Cadence ──────────────────────────────────────────────────────────────────
+#
+# Hourly. The script's own 90-minute grace window is what keeps this quiet
+# during a build — a red release run is indistinguishable at a glance from one
+# still going, since full-LTO plus the independent rebuild arm takes the better
+# part of an hour. Running more often than the grace window would just re-ask a
+# question whose answer cannot have changed.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      grace-secs:
+        description: "Seconds a tag may go unpublished before it is reported"
+        type: string
+        default: "5400"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-reconcile
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    name: every tag has a published release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full history and tags: the check reads tag creation dates out of git
+      # (`gh api .../tags` carries no date at all), so a shallow clone would
+      # see no tags and report a clean bill of health it had not earned.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Reconcile tags against published releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./scripts/check-releases-published.sh \
+            --grace-secs "${{ inputs.grace-secs || '5400' }}"

@@ -1204,3 +1204,60 @@ async fn a_live_attempt_holds_its_task_against_a_rival() {
     gate.add_permits(1);
     assert!(f.dispatch(&task).await.unwrap().outcome.success);
 }
+
+/// **Witness (#1677).** An attempt whose dispatch lease is reclaimed by a
+/// rival mid-run still finishes — the no-mid-flight-kill contract — but the
+/// loss no longer vanishes: it is reported on the settled handle, naming the
+/// session that took the task over. Fails on the old code, where
+/// `TaskHandle` had no field to carry it.
+#[tokio::test(start_paused = true)]
+async fn a_lost_dispatch_lease_is_reported_on_the_settled_handle() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("fleet.db");
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let f = Fleet::new(
+        GatedWorker { gate: gate.clone() },
+        WorktreeManager::new(OkGit::new(), "/repo"),
+        Ledger::open(&db).unwrap(),
+        BudgetGuard::new(BudgetMode::Observed, None, None),
+        SeqClock::new(),
+        FleetConfig::new("run-a", "HEAD"),
+    )
+    .unwrap();
+    let rival = Ledger::open(&db).unwrap();
+
+    let task = Task::new("t1", "title", "prompt").shared_tree();
+    let (handle, ()) = tokio::join!(f.dispatch(&task), async {
+        // While the worker is parked on its gate, the rival reclaims the
+        // task as if this attempt had stalled past its TTL — a far-future
+        // `now_ms` expires the live lease inside the claim statement itself.
+        let outcome = rival
+            .claim_dispatch(
+                &dispatch_claim_key("t1"),
+                "run-b",
+                u64::from(u32::MAX),
+                900_000,
+            )
+            .unwrap();
+        assert!(
+            matches!(outcome, ClaimOutcome::Granted(_)),
+            "the rival reclaims the expired lease, got {outcome:?}"
+        );
+        // Paused time auto-advances to the dispatch's heartbeat while every
+        // task is parked; sleeping two beats guarantees the renewal has
+        // failed against the moved fence before the gate opens.
+        tokio::time::sleep(DISPATCH_LEASE_TTL * 2 / 3).await;
+        gate.add_permits(1);
+    });
+
+    let handle = handle.unwrap();
+    assert!(handle.outcome.success, "the worker still finishes");
+    let loss = handle
+        .lease_loss
+        .expect("a lost lease must be reported on the handle");
+    assert_eq!(
+        loss.taken_by.as_deref(),
+        Some("run-b"),
+        "the report names the session that took the task over"
+    );
+}

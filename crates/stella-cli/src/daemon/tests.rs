@@ -263,6 +263,60 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #1653 witness: the terminal-status write distinguishes a deliberate stop
+/// from a crash. Before, both writers collapsed the outcome to a bool on the
+/// way into `outcome_status`, so a policy stop (stuck-loop escalation, step
+/// cap, enforced budget — the failures that exit `3`) and a genuine crash
+/// (exit `1`) both stored [`SessionStatus::Error`] — on the old signature
+/// this test does not even compile.
+///
+/// No signal is involved on this path, and no test in this binary ever calls
+/// `signals::note_interrupt`, so `interrupted_exit_code()` is reliably `None`
+/// here.
+#[test]
+fn a_deliberate_stop_records_a_status_distinct_from_a_crash() {
+    let stop = crate::failure::CliFailure::deliberate_stop(
+        "stuck-loop detected (persisted after a steering warning)",
+    );
+    let crash = crate::failure::CliFailure::error("model call failed: 500");
+
+    // Driven through the same registry write both real writers perform. The
+    // ids are re-minted by hand: two records minted in the same millisecond
+    // of the same process would otherwise share one `ses-<ms>-<pid>` id.
+    let (dir, registry) = temp_registry("deliberate-status");
+    let mut stopped = SessionRecord::new("/tmp/workspace", "stopped by policy");
+    let mut crashed = SessionRecord::new("/tmp/workspace", "fell over");
+    stopped.id.push_str("-stop");
+    crashed.id.push_str("-crash");
+    registry.upsert(&stopped).unwrap();
+    registry.upsert(&crashed).unwrap();
+    assert!(
+        registry
+            .set_status(&stopped.id, outcome_status(Err(&stop)))
+            .unwrap()
+    );
+    assert!(
+        registry
+            .set_status(&crashed.id, outcome_status(Err(&crash)))
+            .unwrap()
+    );
+
+    let stored_stop = registry.get(&stopped.id).map(|r| r.status);
+    let stored_crash = registry.get(&crashed.id).map(|r| r.status);
+    assert_eq!(
+        stored_stop,
+        Some(SessionStatus::Stopped),
+        "a run that ended itself by policy must not read as a crash"
+    );
+    assert_eq!(stored_crash, Some(SessionStatus::Error));
+    assert_ne!(stored_stop, stored_crash);
+
+    // The happy path is untouched by the widening.
+    assert_eq!(outcome_status(Ok(())), SessionStatus::Complete);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Stopping something that already finished is not an error, and must not
 /// signal anything: the pid in the record may by then belong to somebody else
 /// entirely.

@@ -155,7 +155,11 @@ pub fn goal_round_turn_offset(round: usize) -> u32 {
     u32::try_from(round.saturating_sub(1).saturating_mul(2)).unwrap_or(u32::MAX)
 }
 
-const VERIFIER_SYSTEM_PROMPT: &str = "You are an impartial verifier assessing whether a coding agent \
+/// Public so the CLI's goal loop can pin its tool allowlist against the six
+/// tools this prompt names (#1783): the prompt and the offered surface must
+/// not drift apart, and the test that enforces that lives beside the
+/// executor it guards.
+pub const VERIFIER_SYSTEM_PROMPT: &str = "You are an impartial verifier assessing whether a coding agent \
      has fully met a stated goal. Judge from EVIDENCE, never from claims: use your read-only \
      tools (read_file, grep, glob, explorations, ci_status, search_issues) to verify the work \
      directly whenever the transcript alone is not conclusive — read the changed files, check \

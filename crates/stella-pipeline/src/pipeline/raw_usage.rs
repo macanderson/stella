@@ -7,7 +7,9 @@ use stella_core::retry::RetryPolicy;
 use stella_core::{
     AccountedCall, AccountedCallError, BudgetGuard, ReceiptContext, run_accounted_call,
 };
-use stella_protocol::{CompletionMessage, CompletionRequest, CompletionResult, ModelCallRole};
+use stella_protocol::{
+    CompletionMessage, CompletionRequest, CompletionResult, ModelCallRole, ReasoningEffort,
+};
 
 use super::stage_budget::{PipelineBudgetAbort, budget_abort};
 use super::{Pipeline, ResolvedRole, RoleCallOverrides};
@@ -41,6 +43,49 @@ pub(super) enum RawCallError {
     Provider,
     Timeout,
     Budget(PipelineBudgetAbort),
+}
+
+/// Role-shaped request bounds `(max_output_tokens, effort)` for the
+/// management chokepoint, applied between the caller's explicit overrides
+/// (which always win) and the engine config's worker-tier base.
+///
+/// The base is the wrong default here: `engine.max_output_tokens` is seeded
+/// from the model catalog's full ceiling (64k on current Claude rows) and an
+/// unset `effort` leaves the provider's own default (high) reasoning
+/// allowance in force — dispatching a role whose written output contract is
+/// two to six lines with a 64k allowance and unbounded thinking. The bounded
+/// shape is the one the engine's own overflow summarizer already pins
+/// (`stella-core`'s `run_compaction_pass`: 1,200 tokens, `effort: Low`).
+///
+/// Exhaustive over [`ModelCallRole`] on purpose: a new role dispatched
+/// through this chokepoint must decide its bounds here, not inherit the
+/// worker ceiling by omission.
+fn management_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffort>) {
+    match role {
+        // Three-line classification, already under the L-M4 decision-latency
+        // ceiling: pinned-low effort is not only cheaper, it keeps the call
+        // inside the ceiling so the fast route actually gets taken.
+        ModelCallRole::Triage => (Some(512), Some(ReasoningEffort::Low)),
+        // A small ordered-JSON plan. Output is bounded; effort is inherited —
+        // plan quality rides the session's own reasoning posture.
+        ModelCallRole::Plan | ModelCallRole::PlanRepair => (Some(4096), None),
+        // "PASS or FAIL, then one line" / "at most 6 lines" by their own
+        // prompts. Effort inherited: both are judgment calls on evidence.
+        ModelCallRole::Verdict | ModelCallRole::DistressGuidance => (Some(1024), None),
+        // The only raw `Worker` call is the conversational fast path, whose
+        // instructions say "reply briefly and warmly in plain prose".
+        ModelCallRole::Worker => (Some(2048), Some(ReasoningEffort::Low)),
+        // Never dispatched through this chokepoint today; if one ever is,
+        // inheriting the engine base is exactly the pre-existing behavior.
+        ModelCallRole::Unknown
+        | ModelCallRole::WitnessAuthor
+        | ModelCallRole::WitnessRepair
+        | ModelCallRole::AgentAuthor
+        | ModelCallRole::SkillAuthor
+        | ModelCallRole::DomainInference
+        | ModelCallRole::Reflection
+        | ModelCallRole::Summarization => (None, None),
+    }
 }
 
 impl<'a> Pipeline<'a> {
@@ -90,11 +135,15 @@ impl<'a> Pipeline<'a> {
         // verifier prompt from anything reading the estimate.
         let estimated_input_tokens =
             stella_core::estimator::estimate_conversation_tokens(&messages);
+        let (role_cap, role_effort) = management_bounds(role);
         let req = CompletionRequest {
             messages,
-            max_output_tokens: overrides.max_output_tokens.or(engine.max_output_tokens),
+            max_output_tokens: overrides
+                .max_output_tokens
+                .or(role_cap)
+                .or(engine.max_output_tokens),
             temperature: overrides.temperature.or(engine.temperature),
-            effort: overrides.effort.or(engine.effort),
+            effort: overrides.effort.or(role_effort).or(engine.effort),
             reasoning: overrides.reasoning.or(engine.reasoning),
             params: overrides.params.or(engine.params),
             tools: Vec::new(),
