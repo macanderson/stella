@@ -217,11 +217,14 @@ pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
 /// barely-over-threshold results fired a prefix rewrite to reclaim under
 /// 2 KB, while three 100 KB outputs could never fire at all and were re-sent
 /// verbatim on every remaining call of the turn. The gate now measures what
-/// the rewrite actually buys: the bytes the batch would remove. 20 KB is a
-/// few thousand tokens — enough that one firing pays for the suffix
-/// re-write it forces, and between firings the whole prefix is byte-stable
-/// (the same discipline as the budget hysteresis — invariant 7).
-const RETENTION_MIN_RECLAIM_CHARS: usize = 20_000;
+/// the rewrite actually buys: the bytes the batch would remove. 12 KB
+/// (~3.4k estimated tokens) keeps the #1285 shape firing — a long turn of
+/// ~5 KB reads ages after four accumulate, as its step-loop witness pins —
+/// while a trickle of barely-over-threshold results reclaiming a few
+/// hundred bytes each no longer buys a rewrite at all. Between firings the
+/// whole prefix is byte-stable (the same discipline as the budget
+/// hysteresis — invariant 7).
+const RETENTION_MIN_RECLAIM_CHARS: usize = 12_000;
 
 /// The bytes one aged payload retains: both kept ends plus the elision
 /// marker. What aging reclaims from a payload is its length minus this.
@@ -851,7 +854,7 @@ mod tests {
     #[test]
     fn retention_reports_the_block_identity_the_manifest_cited() {
         // §6.2 for pass 0: the aged block is named by its PRE-mutation id.
-        let mut messages = long_turn(6, 6_000);
+        let mut messages = long_turn(6, 5_000);
         let expected = tool_result_block_id(&messages[3].tool_results[0].output);
         let (_, report) = compact_measured(
             &mut messages,
