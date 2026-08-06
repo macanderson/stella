@@ -97,9 +97,11 @@ pub struct RepairHeadroom {
     /// USD left before the tightest configured budget limit trips
     /// (`BudgetGuard::headroom_usd`), or `None` when the guard is unmetered.
     pub budget_usd: Option<f64>,
-    /// Wall clock left before the caller's own deadline
-    /// ([`crate::driver::EngineConfig::turn_budget`]), or `None` when the
-    /// caller declared no deadline.
+    /// Wall clock left before the caller's own deadline — one whose
+    /// denominator matches what elapsed time is measured against (the
+    /// pipeline's `run_budget` covers a whole run; a per-turn allowance like
+    /// [`crate::driver::EngineConfig::turn_budget`] does not, #1507) — or
+    /// `None` when the caller declared no deadline.
     pub wall_clock: Option<Duration>,
 }
 

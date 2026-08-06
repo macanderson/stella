@@ -110,6 +110,7 @@ mod authored;
 mod candidate_result;
 mod disclosure;
 mod fanout_stage;
+mod plan_steps;
 mod raw_usage;
 mod repair_gate;
 mod run_error;
@@ -196,6 +197,18 @@ pub struct PipelineRoleOverrides {
 pub struct PipelineConfig {
     /// Passed to `stella-core::Engine` for every execute turn.
     pub engine: EngineConfig,
+    /// Wall clock this whole pipeline RUN may spend, measured from
+    /// [`Pipeline::new`] — the repair gate's clock axis (#1479, #1507).
+    ///
+    /// Deliberately not [`EngineConfig::turn_budget`], whose contract is one
+    /// engine turn: a multi-step plan runs one engine turn per step plus the
+    /// witness author's and every revision's, so metering the run's elapsed
+    /// time against a per-turn allowance under-reported the remaining clock
+    /// and refused repairs a long run could still afford (#1507). Like
+    /// `turn_budget` it enforces nothing — no future is cancelled when it
+    /// elapses — and `None` means "nobody is measuring": the clock axis
+    /// abstains rather than inventing a deadline the caller never declared.
+    pub run_budget: Option<Duration>,
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
     pub role_overrides: PipelineRoleOverrides,
@@ -334,8 +347,10 @@ pub struct PipelineConfig {
     /// deterministic stands behind it (#1295): spend one revision demanding
     /// the evidence instead of recording the pass as UNVERIFIED on the spot.
     ///
-    /// Bounded to **one** demand per candidate, drawn from the same
-    /// `max_revisions` budget a real failure spends, and — the part that
+    /// Bounded to **one** demand per candidate, spending a revision turn the
+    /// repair gate does NOT count against `max_revisions` (#1509 — the demand
+    /// corroborates a passing verdict; a repair fixes a refuted one, and the
+    /// two are not substitutes), and — the part that
     /// decides whether this is worth having at all — only raised when
     /// `Pipeline::effective_test_command` resolved to something. Without a
     /// tracked command the ladder has no channel that can *ever* answer the
@@ -404,6 +419,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             engine: EngineConfig::default(),
+            run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
             triage_latency_ceiling: Duration::from_secs(10),
             // Half the triage ceiling, and recall runs concurrently with
@@ -2153,12 +2169,13 @@ impl<'a> Pipeline<'a> {
         } else {
             let n = steps.len();
             for (i, step) in steps.iter().enumerate() {
-                state.messages.push(CompletionMessage::user(format!(
-                    "Step {}/{}: {}",
-                    i + 1,
-                    n,
-                    step.description
-                )));
+                state
+                    .messages
+                    .push(CompletionMessage::user(plan_steps::step_prompt(
+                        i,
+                        n,
+                        &step.description,
+                    )));
                 match self
                     .run_engine_turn(
                         engine,
@@ -2171,8 +2188,16 @@ impl<'a> Pipeline<'a> {
                     .await
                 {
                     TurnOutcome::Completed { text, cost_usd } => {
-                        state.final_text = text;
                         *total += cost_usd;
+                        // #1702: a worker that declares the whole goal done
+                        // ends the walk — the remaining steps could only
+                        // re-confirm finished work, and a false declaration
+                        // is the verify stage's to refute, not this loop's.
+                        let closed_out = plan_steps::goal_declared_complete(&text);
+                        state.final_text = text;
+                        if closed_out {
+                            break;
+                        }
                     }
                     TurnOutcome::Aborted {
                         reason,
