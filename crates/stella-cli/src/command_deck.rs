@@ -2051,7 +2051,7 @@ pub async fn run_deck_session(
         match end {
             TurnEnd::Finished(outcome) => {
                 if let Err(reason) = &outcome {
-                    if reason == stella_core::SOFT_STOP_REASON {
+                    if reason.message() == stella_core::SOFT_STOP_REASON {
                         // A user choice, not a failure: no Error row — the
                         // work is kept and the next prompt continues from it.
                         let _ = in_tx.send(Inbound::Event {
@@ -2067,7 +2067,7 @@ pub async fn run_deck_session(
                         let _ = in_tx.send(Inbound::Event {
                             agent: LEAD.to_string(),
                             event: AgentEvent::Error {
-                                message: reason.clone(),
+                                message: reason.to_string(),
                                 retryable: false,
                             },
                         });
