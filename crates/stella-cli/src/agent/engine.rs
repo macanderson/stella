@@ -370,6 +370,13 @@ pub(crate) fn pipeline_config_for_approval_capability(
 /// governs whether unattended work may land unreviewed — there is no surface
 /// where honouring the user's setting is the unsafe choice.
 pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) -> PipelineConfig {
+    // The repair gate's run-scoped deadline (#1507). `--turn-budget` at this
+    // surface declares an EXTERNAL deadline for the invocation (a harness
+    // killing the trial on elapsed time), and one invocation drives one
+    // pipeline run — so the one declaration feeds both the engine's per-turn
+    // continuation allowance and the run deadline, and the two cannot drift.
+    // Absent stays absent: no flag, no clock axis.
+    config.run_budget = cfg.turn_budget;
     let Some(engine) = cfg.engine_settings.as_ref() else {
         return config;
     };

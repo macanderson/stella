@@ -77,10 +77,16 @@ impl Pipeline<'_> {
         budget: &BudgetGuard,
     ) -> bool {
         // Rounds run = revisions spent + the one that just produced this
-        // refutation.
+        // refutation. All of them price the mean round, demands included —
+        // a demand round runs the same worker-turn-plus-verification shape.
         let rounds = state.revisions.saturating_add(1);
+        // Repair attempts spent = revision turns minus evidence demands
+        // (#1509). A demand corroborates a PASSING verdict; a repair fixes a
+        // refuted one — counting the demand here walked a candidate into its
+        // next refutation one repair round short of the configured allowance.
+        let repairs = state.revisions.saturating_sub(state.evidence_demands);
         match plan_repair(
-            state.revisions,
+            repairs,
             self.config.max_revisions,
             self.repair_headroom(budget),
             meter.mean_round(spent_usd, rounds),
@@ -108,14 +114,15 @@ impl Pipeline<'_> {
             budget_usd: (budget.mode() != BudgetMode::Off)
                 .then(|| budget.headroom_usd())
                 .flatten(),
-            // The same deadline the engine declines length continuations
-            // against, measured from when this pipeline was constructed —
-            // one pipeline drives one turn, so its own lifetime is the turn's
-            // elapsed time.
+            // The run-scoped deadline, measured from when this pipeline was
+            // constructed. Deliberately NOT the engine's `turn_budget`
+            // (#1507): that allowance is per engine turn and a multi-step
+            // run holds many, so metering the whole run's elapsed time
+            // against one turn's budget turned this axis into a false
+            // refusal after the first turn's worth of elapsed time.
             wall_clock: self
                 .config
-                .engine
-                .turn_budget
+                .run_budget
                 .map(|budget| budget.saturating_sub(self.started.elapsed())),
         }
     }

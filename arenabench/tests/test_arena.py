@@ -399,6 +399,92 @@ class TestRecorder:
         assert supervisor._failures[trial_dir] == 1
         assert trial_dir not in supervisor._finished
 
+    def _stub_trial(self, tmp_path: Path, payload: bytes) -> Path:
+        trial_dir = tmp_path / "job" / "t__1"
+        (trial_dir / "arena").mkdir(parents=True)
+        (trial_dir / "arena" / "recording.mp4").write_bytes(payload)
+        return trial_dir
+
+    def _stop(self, supervisor, trial_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        from arenabench.recorder import _Recording
+
+        # `docker stop` is the only shell-out on this path and it is not what
+        # is under test; the file on disk is.
+        monkeypatch.setattr(
+            "arenabench.recorder.subprocess.run", lambda *a, **k: None
+        )
+        supervisor._stop_container(_Recording("c", trial_dir, 0.0), trial_dir)
+
+    def test_a_stub_too_small_to_play_is_not_reported_as_a_recording(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+    ):
+        """An encoder killed before it flushed a fragment leaves 28 bytes of
+        `ftyp` and nothing else. A bare `size > 0` check calls that a success
+        and prints "recorded ... (0.0 MB)", so an operator has no reason to
+        look — which is how a head-to-head finishes with a full gallery of
+        unplayable stubs. Measured on a 32-vCPU rig, where x264 sized its
+        thread pool from the host's cores and the container was OOM-killed.
+        """
+        import logging
+
+        supervisor = self._supervisor(tmp_path)
+        trial_dir = self._stub_trial(tmp_path, b"\x00" * 28)
+
+        with caplog.at_level(logging.INFO, logger="arenabench.recorder"):
+            self._stop(supervisor, trial_dir, monkeypatch)
+
+        assert not [r for r in caplog.records if r.levelno == logging.INFO], (
+            "a 28-byte stub was reported as a successful recording"
+        )
+        warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warned, "a stub too small to play produced no warning at all"
+        # The operator needs the cause, not just the symptom.
+        assert "28 bytes" in warned[0]
+        assert "memory limit" in warned[0]
+
+    def test_a_real_recording_is_still_reported_as_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+    ):
+        """The guard above must not swallow the ordinary case."""
+        import logging
+
+        from arenabench.recorder import MIN_PLAYABLE_BYTES
+
+        supervisor = self._supervisor(tmp_path)
+        trial_dir = self._stub_trial(tmp_path, b"\x00" * (MIN_PLAYABLE_BYTES + 1))
+
+        with caplog.at_level(logging.INFO, logger="arenabench.recorder"):
+            self._stop(supervisor, trial_dir, monkeypatch)
+
+        assert [r for r in caplog.records if r.levelno == logging.INFO]
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+class TestRecorderEncoder:
+    """The encoder's footprint must be a property of the recorder, not of the
+    host it lands on."""
+
+    def _script(self) -> str:
+        from pathlib import Path as _Path
+
+        import arenabench
+
+        return (
+            _Path(arenabench.__file__).resolve().parent.parent / "recorder" / "record.sh"
+        ).read_text()
+
+    def test_the_encoder_thread_pool_is_pinned(self):
+        """x264 sizes its pool from the CPUs it can *see* — the host's, since
+        `--cpus` is a scheduling quota and not a visible core count. On a
+        32-vCPU host it chose 28 threads, and the per-thread frame buffers blew
+        through the recorder's 512 MB cgroup within a second of ffmpeg
+        starting. Unpinned, this file only works on small machines, and a
+        benchmark rig is not one.
+        """
+        script = self._script()
+        assert "-threads" in script, "ffmpeg's thread pool is unpinned"
+        assert "ARENA_THREADS" in script, "the pool size is not overridable"
+
 
 # --------------------------------------------------------------------------
 # routing an agent off its home provider

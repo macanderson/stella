@@ -275,6 +275,77 @@ async fn the_demand_can_be_switched_off() {
     assert_eq!(calls, 3, "triage, worker, verifier");
 }
 
+/// #1509's witness: the demand and a repair are not substitutes, so buying
+/// the demand must not walk the candidate into its next refutation one
+/// repair round short of the configured allowance.
+///
+/// The demand is bought (the verifier passed standing alone), the demanded
+/// turn comes back RED — a real refutation — and the candidate must still
+/// get the full `max_revisions` (2) worth of repair rounds after it. On
+/// `main` the demand's revision counts as a repair attempt, so the second
+/// repair round is refused and the run ends `VerificationFailed` one round
+/// early, with the green flip sitting one turn away.
+#[tokio::test]
+async fn an_evidence_demand_does_not_spend_a_repair_round() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS — the change reads correct"),
+        text_result("tried to produce the evidence"),
+        text_result("first repair"),
+        text_result("second repair"),
+    ]);
+    // Baseline red; candidate inconclusive (nothing deterministic, so the
+    // verifier's pass stands alone and buys the demand); the demanded turn
+    // observes RED; two repair rounds follow — red, then the green flip —
+    // plus the pre-submit confirmation run.
+    let runner = ScriptedRunner::scripted(
+        vec![
+            TestScript::Fail,
+            TestScript::TimeOut,
+            TestScript::Fail,
+            TestScript::Fail,
+            TestScript::Pass,
+            TestScript::Pass,
+        ],
+        "@@ -1 +1 @@\n-old\n+new",
+    );
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        // Off so the model script stays a pure count of worker turns — the
+        // second consecutive red would otherwise buy a guidance call, which
+        // has its own witnesses.
+        distress_guidance: false,
+        // `max_revisions` stays at the default 2: the subject is that BOTH
+        // configured rounds survive the demand, not a bigger allowance.
+        ..PipelineConfig::default()
+    };
+
+    let (outcome, _events, calls) = run_scenario!(provider, runner, config);
+
+    assert_eq!(
+        outcome.status,
+        PipelineStatus::Completed,
+        "the full allowance reaches the flip: {:?}",
+        outcome.verdict
+    );
+    let verdict = outcome.verdict.expect("a verdict was produced");
+    assert!(
+        verdict.passed && verdict.deterministic,
+        "the second repair round's fail->pass flip is the verdict: {verdict:?}"
+    );
+    assert_eq!(
+        outcome.revisions, 3,
+        "one demand plus the FULL configured allowance of two repairs — on \
+         main the demand eats a repair and this reads 2 with the run refused"
+    );
+    assert_eq!(
+        calls, 6,
+        "triage, worker, verifier, the demand, and two repair rounds"
+    );
+}
+
 /// An uncorroborated verifier pass must be stamped `Unverifiable` on the wire,
 /// not `ModelJudge`.
 ///

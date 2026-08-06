@@ -1,0 +1,87 @@
+name: automerge-nudge
+
+# Keep armed auto-merge PRs from deadlocking at BEHIND (#1527).
+#
+# `main`'s protection sets required_status_checks.strict — head branches must
+# be up to date with base — and auto-merge does not update branches on its own.
+# So a PR with every check green and auto-merge armed stops dead the moment
+# main moves under it. Six of them piled up that way on 2026-08-05 and drained
+# only because someone ran `gh pr update-branch` by hand in a loop.
+#
+# The strict rule stays: the same evening, two individually-green PRs merged
+# into a semantically incompatible stella-pipeline and broke main (#1482/#1462).
+# That is the counterexample that justifies requiring up-to-date branches, so
+# this fixes the deadlock rather than relaxing the rule.
+#
+# ── Why one PR per run ───────────────────────────────────────────────────────
+#
+# Every update re-runs the ~12-minute fmt+clippy+test job. Nudging all of them
+# at once is O(N²) CI runs for N stacked PRs, because each update moves main
+# and puts the rest behind again. scripts/automerge-nudge.sh picks exactly one
+# — the oldest — and the next trigger picks up whatever is still behind.
+#
+# ── Triggers ─────────────────────────────────────────────────────────────────
+#
+# `push: main` is the responsive one: main moving is the event that creates the
+# deadlock, so it is the moment to start draining. The schedule is the backstop
+# for a main that stopped moving with PRs still queued behind it, and for a
+# push whose event did not reach Actions.
+#
+# ── Why this cannot be the merge queue (yet) ─────────────────────────────────
+#
+# GitHub's merge queue is #1527's preferred fix and would make this workflow
+# unnecessary: it serializes candidates and tests each against the true merge
+# result, so armed PRs drain themselves. Turning it on is a repository settings
+# change that needs admin, so this ships the mechanism that does not.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Every 15 minutes. One `gh pr list` call, and scheduled workflows are
+    # delayed under load anyway — a tighter cron buys nothing.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Report which PR would be updated without calling update-branch"
+        type: boolean
+        default: false
+
+# Reads the repository; the update itself goes through the PAT below, not this
+# token. See the job comment.
+permissions:
+  contents: read
+  pull-requests: read
+
+# Never two at once: both runs would read the same queue and nudge the same PR,
+# spending a second CI run to accomplish what the first already did. Queued
+# rather than cancelled, so a push landing mid-run still gets a pass afterwards.
+concurrency:
+  group: automerge-nudge
+  cancel-in-progress: false
+
+jobs:
+  nudge:
+    name: update the oldest behind auto-merge PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # PERSONAL_ACCESS_TOKEN, not GITHUB_TOKEN, and this is the whole reason
+      # the job is shaped this way. GitHub suppresses workflow runs for events
+      # raised by GITHUB_TOKEN, and updating a branch creates a new head commit
+      # — a `pull_request: synchronize`. Under GITHUB_TOKEN the required checks
+      # would never run on that new head, so the PR would go from
+      # BEHIND-and-green to pending-forever: a worse deadlock than the one
+      # being fixed. The script treats a missing token as a loud no-op rather
+      # than falling back, for the same reason.
+      #
+      # The secret already exists in this repository (cla.yml uses it).
+      - name: Nudge
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          ./scripts/automerge-nudge.sh --base main \
+            ${{ inputs.dry-run && '--dry-run' || '' }}

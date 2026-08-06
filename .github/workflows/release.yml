@@ -276,9 +276,62 @@ jobs:
           fi
           echo "reproducible: both arms produced ${b%% *}"
 
+  # Execute the artifact this release would publish (#1626). Nothing else in
+  # this pipeline ever did: `verify-reproducible` above proves the build is
+  # deterministic, which a binary that segfaults on startup satisfies
+  # perfectly, and `ci.yml` triggers on pull_request and pushes to main — not
+  # on tags. A release could therefore go green, reproducible, signed,
+  # attested and out to the Homebrew tap without a single process having run
+  # it. The first execution of a published stella artifact by anyone was by
+  # hand, in an issue.
+  #
+  # `needs: build` and downloading its *uploaded* artifact rather than reading
+  # a path in the build tree: a build-tree binary would not prove the tarball
+  # unpacks, keeps its mode bits, or contains the binary whose checksum ships
+  # in SHA256SUMS.bin. This tests what a user receives.
+  #
+  # Two of the four targets, because those are the two a GitHub runner can
+  # execute natively — an aarch64-linux or x86_64-darwin artifact would need
+  # emulation, and a smoke gate that lies about which bytes it ran is worse
+  # than one that admits a gap. `fail-fast: false` so a macOS-only break is
+  # reported as macOS-only.
+  #
+  # The assertions live in scripts/smoke-artifact.sh, not inline here: that
+  # puts them under `make shellcheck` and gives them a witness suite
+  # (scripts/test-smoke-artifact.sh) that drives every failure branch against
+  # a synthetic broken artifact. An inline `run:` block is the shape that
+  # cannot be tested until a release is already going out.
+  smoke:
+    name: smoke ${{ matrix.target }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download the artifact this release would publish
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: stella-${{ matrix.target }}
+          path: published
+
+      - name: Unpack it, verify it against its published checksum, and run it
+        run: ./scripts/smoke-artifact.sh published
+
   release:
     name: publish GitHub Release
-    needs: [build, verify-reproducible]
+    # `smoke` gates this rather than the `homebrew` job downstream: a release
+    # that cannot run is not one to publish tarballs for either, and gating
+    # here covers the tap transitively.
+    needs: [build, verify-reproducible, smoke]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
