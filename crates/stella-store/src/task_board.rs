@@ -4,7 +4,7 @@
 //!
 //! Board state, not history — the `events` stream already keeps every
 //! snapshot, so each write REPLACES a task's row. The DDL lives in
-//! [`crate::ddl`]; this module is the read/write API over it.
+//! `crate::ddl` (private); this module is the read/write API over it.
 //!
 //! ## Why `/clear` deletes a session's rows (#1692)
 //!
