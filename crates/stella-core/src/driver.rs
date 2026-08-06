@@ -2353,8 +2353,17 @@ impl<'a> Engine<'a> {
             attachments: Vec::new(),
         });
 
+        // Dispatch grouping is wider than the read-only set: the executor may
+        // declare tools that run concurrently despite not being read-only
+        // (`ToolExecutor::parallel_safe_names` — the sub-agent spawn tool,
+        // whose children only read and whose dispatcher carves budget per
+        // child). The union is built HERE, at the one dispatch site, so the
+        // evidence-side consumers of `read_only_tools` above (confident_zero)
+        // and the speculation fence keep the narrower read-only semantics.
+        let mut dispatch_safe_tools = read_only_tools;
+        dispatch_safe_tools.extend(self.tools.parallel_safe_names());
         let tool_results = self
-            .execute_tool_calls(&result.tool_calls, &read_only_tools, speculation, events)
+            .execute_tool_calls(&result.tool_calls, &dispatch_safe_tools, speculation, events)
             .await;
 
         messages.push(CompletionMessage {
@@ -2369,14 +2378,16 @@ impl<'a> Engine<'a> {
     }
 
     /// Execute one step's tool calls, preserving sequential semantics for
-    /// anything that can mutate: consecutive read-only calls (per
-    /// `ToolSchema::read_only`) form a group executed concurrently (capped
-    /// at [`MAX_CONCURRENT_TOOL_CALLS`]); every mutating call is its own
-    /// barrier, executed alone, in call order. So `[read, read, edit,
-    /// read]` runs the two reads in parallel, then the edit alone, then the
-    /// final read — an observer of any *mutable* state cannot distinguish
-    /// this schedule from fully-sequential execution, while the common
-    /// "read five files" step gets real concurrency.
+    /// anything that can mutate: consecutive dispatch-safe calls (read-only
+    /// per `ToolSchema::read_only`, plus the executor's declared
+    /// `parallel_safe_names` — sibling sub-agent spawns) form a group
+    /// executed concurrently (capped at [`MAX_CONCURRENT_TOOL_CALLS`]);
+    /// every other call is its own barrier, executed alone, in call order.
+    /// So `[read, read, edit, read]` runs the two reads in parallel, then
+    /// the edit alone, then the final read — an observer of any *mutable*
+    /// state cannot distinguish this schedule from fully-sequential
+    /// execution, while the common "read five files" step (and the
+    /// "research three questions" step) gets real concurrency.
     ///
     /// `ToolStart` fires when a call actually starts; `ToolResult` fires as
     /// each call completes (so results from one parallel group may
@@ -2410,16 +2421,16 @@ impl<'a> Engine<'a> {
     async fn execute_tool_calls(
         &self,
         calls: &[ToolCall],
-        read_only_tools: &HashSet<String>,
+        dispatch_safe_tools: &HashSet<String>,
         mut speculation: SpeculationPool,
         events: &EventSender,
     ) -> Vec<ToolResult> {
         let mut indexed: Vec<(usize, ToolResult)> = Vec::with_capacity(calls.len());
         let mut i = 0;
         while i < calls.len() {
-            let group_end = if read_only_tools.contains(&calls[i].name) {
+            let group_end = if dispatch_safe_tools.contains(&calls[i].name) {
                 let mut end = i + 1;
-                while end < calls.len() && read_only_tools.contains(&calls[end].name) {
+                while end < calls.len() && dispatch_safe_tools.contains(&calls[end].name) {
                     end += 1;
                 }
                 end

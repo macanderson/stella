@@ -49,6 +49,30 @@ pub trait ToolExecutor: Send + Sync {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         0.0
     }
+
+    /// Names of tools that are safe to run **concurrently with each other and
+    /// with read-only calls** despite not declaring `read_only` — the
+    /// executor-level claim behind the driver's dispatch grouping. The
+    /// shipped case is the sub-agent spawn tool: its children only ever read
+    /// (they run behind [`ReadOnlyTools`]) and the dispatcher carves budget
+    /// per child, so sibling spawns in one step have no ordering an observer
+    /// of mutable state could distinguish — yet the tool is honestly not
+    /// `read_only` (that flag also fences children out of it, and gates
+    /// permission surfaces on spend).
+    ///
+    /// Deliberately an executor method rather than a third `ToolSchema`
+    /// claim: dispatch grouping is a scheduling fact about *this* executor's
+    /// composition, not a wire-level property an external (MCP) tool may
+    /// self-declare — an external tool that wants concurrency claims
+    /// `read_only`, which is already the grouping key. Defaults to empty, the
+    /// safe direction. This set widens ONLY dispatch grouping: speculation
+    /// keeps its `read_only && speculation_safe` conjunction, and the
+    /// evidence-side consumers of the read-only set (`confident_zero`, the
+    /// mutating-action counts) are untouched — "runs concurrently" is not an
+    /// artifact claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        std::collections::HashSet::new()
+    }
 }
 
 /// A read-only view over another executor: advertises only the schemas
@@ -116,6 +140,12 @@ impl ToolExecutor for ReadOnlyTools<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    // `parallel_safe_names` deliberately keeps the empty default rather than
+    // forwarding (contrast with the spend drain above): the one shipped
+    // parallel-safe tool is the sub-agent spawn, and this view exists to
+    // strip exactly that from a child — advertising a name whose execution
+    // the same view refuses would be an empty promise.
 }
 
 /// Time source, injectable for deterministic tests. Only the trait lives
