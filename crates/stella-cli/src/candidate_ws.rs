@@ -442,7 +442,9 @@ impl CandidateWorkspacePort for GitCandidateWorkspaces {
 /// [`McpPrefetchPort`] (issue #248 Phase 1): the orchestrator calls this
 /// ONCE before a best-of-N fan-out, never per candidate — see
 /// [`stella_mcp::McpToolSet::prefetch_candidate_context`] for what actually
-/// gets called and why it is safe to call blind.
+/// gets called and why it is safe to call blind. Goal-blind by the port's
+/// contract (#1779): the sweep only ever calls zero-argument tools with
+/// `{}`, so there is no goal to deliver anywhere.
 pub(crate) struct McpPrefetchAdapter(Arc<stella_mcp::McpToolSet>);
 
 impl McpPrefetchAdapter {
@@ -453,7 +455,7 @@ impl McpPrefetchAdapter {
 
 #[async_trait]
 impl McpPrefetchPort for McpPrefetchAdapter {
-    async fn prefetch(&self, _goal: &str) -> Option<String> {
+    async fn prefetch(&self) -> Option<String> {
         self.0.prefetch_candidate_context().await
     }
 }
