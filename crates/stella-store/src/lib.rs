@@ -94,7 +94,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
-use stella_protocol::{AgentEvent, TaskItem, TaskStatus};
+use stella_protocol::{AgentEvent, TaskStatus};
 
 // Module map — this file holds the row types, the `Store` handle and its
 // query surface, and the tests; everything else is split by concern:
@@ -158,6 +158,7 @@ pub mod prune;
 pub mod reflection;
 pub mod scoreboard;
 pub mod sessions;
+pub mod task_board;
 pub mod usage;
 pub mod work_journal;
 pub mod workspace_local;
@@ -207,6 +208,10 @@ pub use receipts::{
 };
 pub use reconstruct::Reconstruction;
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo, supervised};
+/// Re-exported because it *is* this crate's task-board API: every signature
+/// in [`task_board`] speaks in these, and a caller should not have to name
+/// `stella-protocol` to call one.
+pub use stella_protocol::TaskItem;
 pub use telemetry::{SourceTelemetryRow, TelemetryRow};
 pub use tool_calls::{ToolCallAnswer, ToolCallRow, ToolCallState};
 
@@ -1339,90 +1344,6 @@ impl Store {
             }
         }
         Ok(total)
-    }
-
-    /// Mirror one task-board snapshot into `tasks`: every item is upserted
-    /// on (session_id, task_id), so the table always holds each task's
-    /// LATEST state (the `events` stream keeps the full snapshot history).
-    /// `status`/`owner` are stored as the protocol's serde snake_case
-    /// strings (e.g. `"in_progress"`); `description` is stored as-is.
-    /// NOTE: with `session_id` `None` the UNIQUE key never conflicts (SQL
-    /// NULLs are pairwise distinct), so session-less rows append rather than
-    /// replace — dedup is a per-session guarantee.
-    ///
-    /// One transaction, like every sibling fan-out writer here (see
-    /// [`Self::record_files_touched`]): a snapshot is a whole board, so an item
-    /// that fails partway must not leave the table holding half of one — and
-    /// the batch costs one WAL commit instead of one per task on a path that
-    /// runs at every `TaskUpdate`.
-    pub fn record_task_board(
-        &self,
-        execution_id: i64,
-        session_id: Option<&str>,
-        tasks: &[TaskItem],
-        now_ms: u64,
-    ) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for item in tasks {
-            let status = task_status_to_string(item.status)?;
-            tx.execute(
-                "INSERT INTO tasks \
-                 (execution_id, session_id, task_id, subject, description, status, owner, \
-                  updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT (session_id, task_id) DO UPDATE SET \
-                 execution_id = excluded.execution_id, subject = excluded.subject, \
-                 description = excluded.description, status = excluded.status, \
-                 owner = excluded.owner, updated_at = excluded.updated_at",
-                params![
-                    execution_id,
-                    session_id,
-                    item.id,
-                    item.subject,
-                    item.description,
-                    status,
-                    item.owner,
-                    now_ms as i64,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// Read back a session's task board — each task's latest recorded state,
-    /// ordered numerically by the board's ordinal task id (`CAST(task_id AS
-    /// INTEGER)`, so "10" sorts after "2"). A stored status that no longer
-    /// parses as a [`TaskStatus`] is an error: the store wrote it, so a bad
-    /// token is corruption, not drift.
-    pub fn list_session_tasks(&self, session_id: &str) -> Result<Vec<TaskItem>> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT task_id, subject, description, status, owner FROM tasks \
-             WHERE session_id = ? ORDER BY CAST(task_id AS INTEGER) ASC, task_id ASC",
-        )?;
-        let rows = stmt.query_map(params![session_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-            ))
-        })?;
-        let mut board = Vec::new();
-        for row in rows {
-            let (task_id, subject, description, status, owner) = row?;
-            board.push(TaskItem {
-                id: task_id,
-                subject,
-                description,
-                status: task_status_from_string(&status)?,
-                owner,
-            });
-        }
-        Ok(board)
     }
 
     /// Upsert one tracked pull request, keyed by URL: a later observation of

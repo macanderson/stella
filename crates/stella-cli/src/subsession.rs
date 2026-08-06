@@ -86,6 +86,10 @@ pub(crate) struct SubSessions {
     /// Monotonic spawn counter: each start stamps its worker, and `ended`
     /// only frees a lane for the generation that actually ended.
     next_generation: u64,
+    /// The generation watermark below which a worker predates the CURRENT
+    /// task board — moved to `next_generation` by every `/clear` (#1692).
+    /// See [`Self::seal_task_board`].
+    board_epoch: u64,
     stops: HashMap<String, (u64, oneshot::Sender<()>)>,
     /// Live workers' pause switches (watch: `true` = parked at the next
     /// step boundary).
@@ -112,6 +116,7 @@ impl SubSessions {
             active: 0,
             next_req: 0,
             next_generation: 0,
+            board_epoch: 0,
             stops: HashMap::new(),
             pauses: HashMap::new(),
             winding_down: HashMap::new(),
@@ -144,6 +149,51 @@ impl SubSessions {
         self.pauses.insert(lane.to_string(), pause);
         self.specs.insert(lane.to_string(), spec);
         generation
+    }
+
+    /// Supersede the task board: every worker alive right now belongs to the
+    /// board `/clear` just destroyed, and none of them may write to the new
+    /// one (#1692).
+    ///
+    /// The spawn generation is already this driver's stale-event token —
+    /// [`Self::ended`] uses it to stop a replaced worker freeing its
+    /// successor's slot — and it is monotonic across every lane, so a single
+    /// watermark separates "spawned before the clear" from "spawned after"
+    /// with no per-lane bookkeeping and no new id to keep in step. Sealing is
+    /// a pure sequencing fact: it does not stop, pause, or deregister a
+    /// worker, and a sealed worker keeps its lane, its context and its output
+    /// exactly as #1631 decided.
+    pub(crate) fn seal_task_board(&mut self) {
+        self.board_epoch = self.next_generation;
+    }
+
+    /// Register a live lane with no worker thread behind it, and return its
+    /// generation. Tests about what the DRIVER does with live lanes and
+    /// spawn generations want exactly this and nothing more: a real spawn
+    /// needs a runtime, a config and a provider to say something about two
+    /// integers and a `HashMap` key.
+    #[cfg(test)]
+    pub(crate) fn started_for_test(&mut self, lane: &str) -> u64 {
+        let (stop_tx, _stop_rx) = oneshot::channel();
+        let (pause_tx, _pause_rx) = watch::channel(false);
+        self.started(
+            lane,
+            stop_tx,
+            pause_tx,
+            SubSessionSpec {
+                lane: lane.to_string(),
+                title: lane.to_string(),
+                prompt: String::new(),
+                notify_title: String::new(),
+            },
+        )
+    }
+
+    /// Whether `generation` was spawned before the last
+    /// [`Self::seal_task_board`] — i.e. whether its task-board closeout would
+    /// be writing to a board that no longer exists.
+    pub(crate) fn predates_task_board(&self, generation: u64) -> bool {
+        generation < self.board_epoch
     }
 
     /// Free `lane` — but only for the generation that actually ended.
