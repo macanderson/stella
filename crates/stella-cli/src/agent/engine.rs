@@ -241,7 +241,7 @@ pub(crate) fn approval_gate_for(
     cfg: &Config,
     capability: PipelineApprovalCapability,
 ) -> crate::daemon::approval::OneShotApprovalGate {
-    let wait = crate::daemon::approval::park_deadline(cfg.engine_settings.as_ref());
+    let wait = cfg.engine_settings.as_ref().and_then(|e| e.approval_wait());
     crate::daemon::approval::OneShotApprovalGate::select(capability, wait)
 }
 
