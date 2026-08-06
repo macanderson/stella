@@ -262,7 +262,10 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // covers the spawned child), so the hand-run `--foreground` case records
     // a terminal status too. Same value on both paths; double-writing it is
     // harmless, leaving it unwritten reads as a crash forever.
-    let _ = registry.set_status(&record.id, crate::daemon::outcome_status(result.is_ok()));
+    let _ = registry.set_status(
+        &record.id,
+        crate::daemon::outcome_status(result.as_ref().err()),
+    );
     result
 }
 

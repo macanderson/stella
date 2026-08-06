@@ -40,7 +40,14 @@ pub enum SessionStatus {
     /// switched away) with work still pending. Not live (no pid downgrade
     /// applies), and the first thing `resume` looks for.
     Paused,
-    /// The user interrupted the work (Ctrl-C mid-turn, queue abandoned).
+    /// The work was **ended**, not broken. Two endings share this status
+    /// because they are one fact to every reader: the user interrupted it
+    /// (Ctrl-C mid-turn, queue abandoned), or the run stopped itself by
+    /// policy — a stuck loop escalated past its warning, the step cap, an
+    /// enforced budget, a scope review the user ended (#1653).
+    ///
+    /// Its counterpart [`SessionStatus::Error`] therefore means only "it fell
+    /// over", which is the distinction a boot-time resume sweep reads.
     Cancelled,
     /// The session ended after finishing its work.
     Complete,

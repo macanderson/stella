@@ -100,6 +100,7 @@ use colored::{ColoredString, Colorize};
 use stella_store::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo, supervised};
 
 use crate::DaemonCmd;
+use crate::failure::CliFailure;
 
 /// `install` / `uninstall`: the service-manager half (#1587) — what makes a
 /// registered invocation come back after the logout and reboot that
@@ -986,25 +987,42 @@ const LOCK_FD_SCAN_LIMIT: i32 = 64;
 /// that have one, and writes the same value. This is what covers the paths
 /// that do not — `stella fleet`, and any future long-running verb that is
 /// handed to the supervisor before it grows a session presence.
-pub(crate) fn record_outcome_if_supervised(ok: bool) {
+pub(crate) fn record_outcome_if_supervised(failure: Option<&CliFailure>) {
     let Some(id) = supervised_id() else {
         return;
     };
-    let _ = SessionRegistry::open_default().set_status(&id, outcome_status(ok));
+    let _ = SessionRegistry::open_default().set_status(&id, outcome_status(failure));
 }
 
-/// The terminal status a finished run records.
+/// The terminal status a finished run records — `None` for a run that ended
+/// on its own terms, the failure itself for one that did not.
 ///
-/// A signal is not a failure: the run was stopped, and recording it as an
-/// error would put a deliberate `stella daemon stop` in the registry beside
-/// the runs that genuinely broke. Shared with the resume driver
-/// (`crate::agent::resume`), which writes its own terminal status for the
-/// hand-run `--foreground` case no supervised env var covers.
-pub(crate) fn outcome_status(ok: bool) -> SessionStatus {
-    match (ok, crate::signals::interrupted_exit_code()) {
-        (_, Some(_)) => SessionStatus::Cancelled,
-        (true, None) => SessionStatus::Complete,
-        (false, None) => SessionStatus::Error,
+/// Three endings, not two. A signal is not a failure: the run was stopped, and
+/// recording it as an error would put a deliberate `stella daemon stop` in the
+/// registry beside the runs that genuinely broke. Neither is a **deliberate
+/// stop** ([`AbortKind::DeliberateStop`]: stuck-loop escalation, the step cap,
+/// an enforced budget, a scope review the user ended) — the process exits `3`
+/// rather than `1` for exactly that reason (#1620, #1637), and collapsing it
+/// back to [`SessionStatus::Error`] one line before the write made the registry
+/// the last place that still could not tell a policy stop from a crash (#1653).
+///
+/// Both land on [`SessionStatus::Cancelled`] rather than a new variant, because
+/// they are the same fact to every reader: **the work was ended, not broken.**
+/// That leaves `Error` meaning only "it fell over", which is what lets a
+/// boot-time sweep tell a resumable crash from a run it must never restart
+/// (#1696).
+///
+/// Shared with the resume driver (`crate::agent::resume`), which writes its own
+/// terminal status for the hand-run `--foreground` case no supervised env var
+/// covers.
+pub(crate) fn outcome_status(failure: Option<&CliFailure>) -> SessionStatus {
+    if crate::signals::interrupted_exit_code().is_some() {
+        return SessionStatus::Cancelled;
+    }
+    match failure {
+        None => SessionStatus::Complete,
+        Some(f) if f.is_deliberate_stop() => SessionStatus::Cancelled,
+        Some(_) => SessionStatus::Error,
     }
 }
 

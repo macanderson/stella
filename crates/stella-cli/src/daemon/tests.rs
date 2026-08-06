@@ -542,3 +542,49 @@ fn a_resumed_launch_keeps_the_record_and_the_crashed_console() {
         "a relaunch re-owns the record as live"
     );
 }
+
+/// #1653 witness: the terminal status separates a run that *chose* to stop
+/// from one that fell over.
+///
+/// Before this, both writers reduced the outcome to a `bool` and every
+/// non-signal failure stored [`SessionStatus::Error`] — so a stuck-loop
+/// escalation, an enforced budget or an ended scope review was recorded
+/// identically to a crash, and `stella daemon list` painted them the same.
+/// The exit code had already learned the difference (#1620, #1637); the
+/// registry was the last reader that had not.
+///
+/// Asserted directly against [`outcome_status`], which is where the
+/// distinction was being discarded. The signal rung is deliberately not
+/// asserted here: `crate::signals::interrupted_exit_code` reads a process-global
+/// flag, so a test that set it would leak into every other test in this binary.
+#[test]
+fn a_deliberate_stop_is_not_recorded_as_a_crash() {
+    use stella_core::AbortKind;
+
+    let stop = CliFailure::from_abort(
+        "stuck-loop detected (persisted after a steering warning)".into(),
+        AbortKind::DeliberateStop,
+    );
+    let crash = CliFailure::from_abort("model call failed: 500".into(), AbortKind::Failure);
+
+    assert_eq!(
+        outcome_status(Some(&stop)),
+        SessionStatus::Cancelled,
+        "a policy stop ended the work; it did not break it"
+    );
+    assert_eq!(
+        outcome_status(Some(&crash)),
+        SessionStatus::Error,
+        "a genuine failure must stay distinguishable from a policy stop"
+    );
+    assert_ne!(
+        outcome_status(Some(&stop)),
+        outcome_status(Some(&crash)),
+        "the two endings must not collapse — #1696 reads exactly this bit"
+    );
+    assert_eq!(
+        outcome_status(None),
+        SessionStatus::Complete,
+        "a run that ended on its own terms is complete"
+    );
+}
