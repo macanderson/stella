@@ -728,6 +728,7 @@ fn evidence_builders_tag_determinism_correctly() {
         passed: true,
         reasoning: "looks fine".into(),
         heuristic: false,
+        verifier_independent: None,
     });
     assert!(
         !model.deterministic,

@@ -878,6 +878,7 @@ mod tests {
             witness_intact: None,
             witness_mutation: None,
             diff_coverage: None,
+            verifier_independent: None,
         }
     }
 }

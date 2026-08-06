@@ -435,6 +435,17 @@ pub fn verdict_provenance(evidence: &VerdictEvidence) -> Option<String> {
     if let Some(coverage) = &snapshot.diff_coverage {
         out.push_str(&format!("; diff_coverage={coverage}"));
     }
+    // #1795: a provenance reader asking "who graded this?" gets the stored
+    // fact — `self-graded` is the finding this field exists to surface, and
+    // `independent` is stated too so its absence stays distinguishable from
+    // "recorded before the fact existed".
+    if let Some(independent) = snapshot.verifier_independent {
+        out.push_str(if independent {
+            "; grader=independent"
+        } else {
+            "; grader=self-graded (worker's own model)"
+        });
+    }
     Some(out)
 }
 
@@ -1330,6 +1341,7 @@ mod calibration_tests {
             witness_intact: None,
             witness_mutation: None,
             diff_coverage: None,
+            verifier_independent: None,
         };
         AgentEvent::Verdict {
             passed,

@@ -2093,6 +2093,7 @@ mod tests {
                     witness_intact: Some(true),
                     witness_mutation: None,
                     diff_coverage: Some("covered".into()),
+                    verifier_independent: None,
                 })),
             },
         };
