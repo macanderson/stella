@@ -22,7 +22,7 @@
 //!
 //! # Two differences from an attached launch, both deliberate
 //!
-//! 1. **A terminal is not required.** [`super::should_supervise`] answers "no"
+//! 1. **A terminal is not required.** [`crate::daemon::should_supervise`] answers "no"
 //!    without a controlling terminal, because a run with no terminal to lose
 //!    is already immune to the hangup supervision exists to prevent. `--detach`
 //!    is asked for a different property — *this process returns now* — which a
@@ -30,7 +30,7 @@
 //!    does. So the flag forces supervision rather than merely permitting it.
 //! 2. **The exit code is the launch's, not the run's.** An attached
 //!    supervisor forwards the child's status
-//!    ([`super::forwarded_exit_code`]); a detached one has returned long
+//!    ([`crate::daemon::forwarded_exit_code`]); a detached one has returned long
 //!    before there is a status to forward, so `stella run --detach; echo $?`
 //!    answers "did the launch succeed". The run's own answer arrives in
 //!    `stella daemon list`.
@@ -42,7 +42,8 @@
 //! included) and is told to do the work through `STELLA_FOREGROUND=1` in its
 //! environment — which clap reads as the `--foreground` flag. A declared
 //! conflict fires on env-sourced values too, so every detached child would die
-//! in argument parsing before it ran a turn. Precedence in [`posture`] is what
+//! in argument parsing before it ran a turn. Precedence in
+//! [`crate::daemon::detach::posture`] is what
 //! keeps that path open, and it also happens to be the safer reading of a
 //! contradictory command line: the flag that asks for *less* machinery wins.
 
