@@ -7,7 +7,7 @@
 //! the wrong rung. These reason about English, where a bug inverts a verdict —
 //! so they are worth keeping together and worth reading as a set.
 
-use crate::verify::parse_verifier_response;
+use crate::verify::{MAX_VERDICT_REASONING_CHARS, parse_verifier_response};
 
 #[test]
 fn parses_pass_and_fail_verdicts() {
@@ -133,4 +133,64 @@ fn a_negator_does_not_reach_past_the_end_of_its_clause() {
 fn unparseable_verifier_response_is_none() {
     assert_eq!(parse_verifier_response("hmm, hard to say"), None);
     assert_eq!(parse_verifier_response(""), None);
+}
+
+/// **Witness (#1787).** A 100 KB verifier reply does not become a 100 KB
+/// revision prompt.
+///
+/// `reasoning` is the verifier's whole reply and it travels — into the
+/// worker's next turn and into the verdict cache. Unbounded, a reasoning model
+/// that thinks out loud pays that size again on every revision round, at the
+/// full input rate, and leaves it in a cache entry.
+#[test]
+fn a_runaway_verifier_reply_is_clipped_before_it_reaches_the_worker() {
+    let runaway = format!("FAIL — {}", "the tests are red. ".repeat(6_000));
+    assert!(
+        runaway.len() > 100_000,
+        "the fixture must actually be oversized: {}",
+        runaway.len()
+    );
+
+    let verdict = parse_verifier_response(&runaway).expect("a FAIL token is present");
+    assert!(!verdict.passed);
+    assert!(
+        verdict.reasoning.chars().count() < MAX_VERDICT_REASONING_CHARS + 100,
+        "reasoning survived at {} chars",
+        verdict.reasoning.chars().count()
+    );
+    assert!(
+        verdict.reasoning.contains("clipped"),
+        "a clip must say so — a silently truncated verdict reads as a verifier \
+         that simply stopped talking: {}",
+        &verdict.reasoning[..200.min(verdict.reasoning.len())]
+    );
+    // The head is kept: the verdict token and its first reasons are what a
+    // revision acts on.
+    assert!(verdict.reasoning.starts_with("FAIL"));
+}
+
+/// An ordinary reply is untouched — the bound must be invisible in the case
+/// that matters, or it would be quietly editing every verdict.
+#[test]
+fn an_ordinary_verdict_passes_through_the_bound_unchanged() {
+    let verdict = parse_verifier_response("PASS — the witness flipped and the diff is scoped")
+        .expect("a PASS token is present");
+    assert!(verdict.passed);
+    assert_eq!(
+        verdict.reasoning,
+        "PASS — the witness flipped and the diff is scoped"
+    );
+}
+
+/// Clipping happens on a character boundary, not a byte one.
+///
+/// The reply is model output — runtime data — so a verifier answering in a
+/// language of multi-byte characters must not panic the pipeline (invariant 5).
+/// A `&text[..N]` byte slice would do exactly that.
+#[test]
+fn clipping_a_multibyte_reply_does_not_panic() {
+    let runaway = format!("FAIL — {}", "これはテストです。".repeat(3_000));
+    let verdict = parse_verifier_response(&runaway).expect("a FAIL token is present");
+    assert!(verdict.reasoning.chars().count() < MAX_VERDICT_REASONING_CHARS + 100);
+    assert!(verdict.reasoning.contains("clipped"));
 }
