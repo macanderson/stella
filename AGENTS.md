@@ -73,12 +73,17 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + self-driving-test (the shell harness)
 ```
 
-That is twenty-four steps, and the list is not maintained by hand: it is
-`GATE_STEPS` in the `Makefile`, and `gate-parity` (`scripts/check-gate-parity.sh`)
-fails if this block or CONTRIBUTING.md's stops matching it. The block had
-already drifted twice before that guard existed, both times by under-reporting
-a newly added guard, which is the direction that misleads — a reader runs the
-short list, sees green, and believes the gate is green (#1437).
+That list is not maintained by hand: it is `GATE_STEPS` in the `Makefile`, and
+`gate-parity` (`scripts/check-gate-parity.sh`) fails if this block or
+CONTRIBUTING.md's stops matching it. The block had already drifted twice before
+that guard existed, both times by under-reporting a newly added guard, which is
+the direction that misleads — a reader runs the short list, sees green, and
+believes the gate is green (#1437).
+
+Deliberately no total: the guard checks each step by name, so two PRs adding
+different guards merge cleanly, while a spelled-out count is one shared cell
+both must write — and two of them collided on it twice in a day, each time
+leaving `main` red for everyone (#1883).
 
 CI enforces the same steps split across three workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`
