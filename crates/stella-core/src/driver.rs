@@ -2363,7 +2363,12 @@ impl<'a> Engine<'a> {
         let mut dispatch_safe_tools = read_only_tools;
         dispatch_safe_tools.extend(self.tools.parallel_safe_names());
         let tool_results = self
-            .execute_tool_calls(&result.tool_calls, &dispatch_safe_tools, speculation, events)
+            .execute_tool_calls(
+                &result.tool_calls,
+                &dispatch_safe_tools,
+                speculation,
+                events,
+            )
             .await;
 
         messages.push(CompletionMessage {
