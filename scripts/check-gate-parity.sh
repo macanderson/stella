@@ -84,27 +84,25 @@ if [ "$count" -eq 0 ]; then
   exit 1
 fi
 
-# Spelled-out numbers, because both documents spell the count in prose ("the
-# fifteen of them in order") and a digit would read wrong there. Covers a range
-# no plausible gate will leave.
-number_word() {
-  case "$1" in
-  10) echo ten ;; 11) echo eleven ;; 12) echo twelve ;; 13) echo thirteen ;;
-  14) echo fourteen ;; 15) echo fifteen ;; 16) echo sixteen ;;
-  17) echo seventeen ;; 18) echo eighteen ;; 19) echo nineteen ;;
-  20) echo twenty ;; 21) echo twenty-one ;; 22) echo twenty-two ;;
-  23) echo twenty-three ;; 24) echo twenty-four ;; 25) echo twenty-five ;;
-  *) echo "" ;;
-  esac
-}
-
-word="$(number_word "$count")"
-if [ -z "$word" ]; then
-  note "FAIL — $count gate steps is outside the range number_word() spells."
-  note "     Extend the table in this script; the documents spell the count."
-  emit
-  exit 1
-fi
+# ── The count is deliberately NOT checked any more ───────────────────────────
+#
+# Both documents used to spell the total in prose ("the fifteen of them in
+# order") and this guard held them to it. That check is gone, and its removal
+# is the fix for a failure it caused rather than caught (#1883).
+#
+# The step NAMES are checked one at a time, so two PRs that each add a
+# different guard produce diffs that merge cleanly. The TOTAL is a single
+# shared cell both branches must write — and each writes its own correct
+# answer. On 2026-08-06 `module-reachability` and `self-driving-test` landed
+# within an hour of each other, each having dutifully updated both documents
+# to "twenty-four". The second merge left GATE_STEPS at 25 with the prose
+# saying 24, `docs guards` went red on `main`, and every open PR inherited it.
+# Twice in one day.
+#
+# Nothing was lost by dropping it. The count told a reader no fact the checked
+# list does not already carry: if every step is named, the number of them is
+# not independently knowable-wrong. It was a derived value maintained by hand,
+# which is the same defect this guard exists to prevent one level up.
 
 # CONTRIBUTING.md lists raw commands rather than make targets. Every guard is
 # `scripts/check-<target>.sh` except the ones named here, and the four compile
@@ -149,11 +147,6 @@ for doc in "$agents" "$contributing"; do
     fi
   done
 
-  if ! grep -qF -- "$word" "$doc"; then
-    note "FAIL — $doc does not spell the gate's step count as '$word'."
-    note "     The gate runs $count steps. Find the stale count and fix it."
-    fail=1
-  fi
 done
 
 # ── Ghosts ───────────────────────────────────────────────────────────────────
