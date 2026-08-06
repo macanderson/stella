@@ -1,8 +1,28 @@
-use stella_core::{AbortKind, BudgetOutcome};
+use stella_core::{AbortKind, BudgetGuard, BudgetOutcome};
 use stella_protocol::AgentEvent;
 
 use super::{PipelineOutcome, PipelineStatus};
 use crate::triage::TaskClass;
+
+/// The turn's money, threaded through the candidate plane as one parameter
+/// (#1809): the guard that decides whether the next paid call may happen, and
+/// the running total the outcome reports. The two were passed side by side
+/// through every function between `run` and the engine turn — always together,
+/// because spending through the guard without recording it (or vice versa)
+/// is a bug — so the pairing is now a type instead of a convention.
+///
+/// Borrows rather than owns: the guard and the total live with the caller of
+/// [`super::Pipeline::run`] and in `run`'s locals respectively, and every
+/// mutation must land there — an owned copy would need a write-back on each
+/// of `run`'s early returns, and one missed return is a silently vanished
+/// spend.
+pub(super) struct Spend<'a> {
+    /// Gates each paid call; consulted between model calls only (invariant #6).
+    pub(super) budget: &'a mut BudgetGuard,
+    /// The run's settled cost in USD, reported on every outcome — including
+    /// aborts, which is why it cannot ride inside the guard.
+    pub(super) total: &'a mut f64,
+}
 
 /// A settled stage call crossed an enforced budget. Kept distinct from
 /// provider/routing failures so raw stages must propagate the stop.

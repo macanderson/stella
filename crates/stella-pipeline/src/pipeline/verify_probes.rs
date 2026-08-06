@@ -362,7 +362,7 @@ impl<'a> Pipeline<'a> {
             .saturating_sub(state.touch_baseline);
         u32::try_from(delta)
             .unwrap_or(u32::MAX)
-            .max(state.file_changes)
+            .max(state.signals.file_changes)
     }
 
     /// Fold one working-tree observation into `state`, refreshing every
@@ -382,7 +382,7 @@ impl<'a> Pipeline<'a> {
         // are bracketed exactly the way this one's were without paying for a
         // second walk of an identical tree.
         self.touches.settle_workspace_probe();
-        state.file_changes = self.observed_mutations(state);
+        state.signals.file_changes = self.observed_mutations(state);
         // The authored channel is read AFTER settling, for the same reason the
         // count is: the probe's attributions are recorded through the same
         // emitter, so reading first would describe the turn before its opaque
@@ -402,7 +402,7 @@ impl<'a> Pipeline<'a> {
         state.diff_available = probe.available;
         state.diff_text = verification_honest_diff(
             authored::splice_authored(probe.text, &authored),
-            state.file_changes,
+            state.signals.file_changes,
         );
     }
 }
