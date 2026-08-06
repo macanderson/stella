@@ -44,6 +44,8 @@ _CHECKER = _REPO_ROOT / "bench" / "harbor_adapter" / "stella_harbor" / "portabil
 _ENV_SH = _REPO_ROOT / "bench" / "evidence" / "run" / "env.sh"
 
 _spec = importlib.util.spec_from_file_location("stella_harbor_portability", _CHECKER)
+# Module-scope assert, deliberately: an import precondition, not a constant
+# check — without it there is nothing to collect (see #1452's sweep).
 assert _spec is not None and _spec.loader is not None
 _portability = importlib.util.module_from_spec(_spec)
 # Registered before execution: `@dataclass` resolves a class's own module out

@@ -28,6 +28,12 @@ import pytest
 
 _PLAN_PATH = Path(__file__).resolve().parent.parent / "plan.py"
 _spec = importlib.util.spec_from_file_location("frontier_plan", _PLAN_PATH)
+# A module-scope assert, deliberately: this one is a *precondition for importing
+# the module under test*, not a check on a constant. Without it there is nothing
+# to collect, so the collection error is the honest report and no smaller blast
+# radius exists. Contrast the digest constant in
+# `bench/terminal_bench_analysis/tests/test_tb21_analysis.py`, which was moved
+# into a named test for exactly that reason (#1452).
 assert _spec and _spec.loader
 plan = importlib.util.module_from_spec(_spec)
 sys.modules["frontier_plan"] = plan
