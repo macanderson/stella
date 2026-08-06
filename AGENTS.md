@@ -62,14 +62,14 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
                          #   + command-docs + brand-case + file-size
-                         #   + gate-parity + wire-schema
+                         #   + gate-parity + left-behind + wire-schema
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
 ```
 
-That is nineteen steps, and the list is not maintained by hand: it is
+That is twenty steps, and the list is not maintained by hand: it is
 `GATE_STEPS` in the `Makefile`, and `gate-parity` (`scripts/check-gate-parity.sh`)
 fails if this block or CONTRIBUTING.md's stops matching it. The block had
 already drifted twice before that guard existed, both times by under-reporting
@@ -328,6 +328,16 @@ deleted.
 - **Search before filing** (`gh issue list`, `gh search issues`) and link
   related issues instead of duplicating them. Reference the issues you filed
   from your PR description so the residue of the work is auditable.
+
+The judgment half of this rule — did you notice something and not file it —
+is not mechanically decidable, and the PR template asks a human. Its most
+common *residue* is checked: `left-behind` (`scripts/check-left-behind.sh`)
+fails the gate on a `TODO`/`FIXME`/`XXX`/`HACK` in code that names no issue,
+because a marker with no `#1234` beside it is by definition a thing left
+behind with no handoff (#1454). A marker that names an issue is tracked work
+and passes. The fix is always to file the issue and reference it — never to
+delete the marker, and never to add a baseline entry: that baseline started
+empty and is meant to stay empty.
 
 ---
 

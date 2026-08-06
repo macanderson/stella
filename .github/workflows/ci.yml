@@ -172,6 +172,16 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-brand-case.sh
 
+      # Also toolchain-free. AGENTS.md requires that anything noticed and not
+      # fixed becomes an issue written as a handoff; nothing checked it, and an
+      # unenforced standard reads as one the codebase is meeting. The decidable
+      # residue is a TODO/FIXME/XXX/HACK naming no issue (#1454). Unlike the
+      # file-size ratchet this had nothing to grandfather — the baseline is
+      # empty and is meant to stay empty.
+      - name: every deferral marker names a tracking issue
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-left-behind.sh
+
       # Also toolchain-free. AGENTS.md and CONTRIBUTING.md each restate what
       # `make gate` runs, and both had drifted twice — each time by omitting a
       # newly added guard, which is the direction that misleads a reader into
