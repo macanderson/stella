@@ -235,13 +235,14 @@ pub(crate) enum PipelineApprovalCapability {
 /// The one-shot approval gate for `capability`, honoring
 /// `agent_engine_config.approval_wait_secs` (#1616) — the sidecar gate's
 /// only caller-supplied tuning, so it lives beside the capability it gates
-/// rather than being computed inline at the call site.
+/// rather than being computed inline at the call site (which is in the
+/// `agent.rs` god file).
 pub(crate) fn approval_gate_for(
     cfg: &Config,
     capability: PipelineApprovalCapability,
 ) -> crate::daemon::approval::OneShotApprovalGate {
-    let approval_wait = cfg.engine_settings.as_ref().and_then(|e| e.approval_wait());
-    crate::daemon::approval::OneShotApprovalGate::select(capability, approval_wait)
+    let wait = crate::daemon::approval::park_deadline(cfg.engine_settings.as_ref());
+    crate::daemon::approval::OneShotApprovalGate::select(capability, wait)
 }
 
 /// Which approval capability a one-shot host run can actually service, given

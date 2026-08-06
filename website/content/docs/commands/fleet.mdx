@@ -113,6 +113,10 @@ stella fleet clean --age 30 --force   # also month-old dirty/unmerged work — d
 
 A dispatch claim stops two sessions taking the same task, but a claim nobody can read is a claim somebody collides with by hand — which is the failure this machinery was built for. `stella fleet claims` is the read surface: what is claimed, who holds it, how long they have held it, and when the lease lapses.
 
+<Callout type="warn">
+Two different claims share the word. A **file** claim asks "may I write this path?" and coordinates writers inside one run — those are the cooperative locks described above, and they are not what this command lists. A **dispatch** claim asks "is another session already doing this work?", and only it stops two sessions duplicating an entire run.
+</Callout>
+
 ```bash
 stella fleet claims                   # what this workspace is currently working on
 stella fleet claims --all             # including keys whose holder died or moved on

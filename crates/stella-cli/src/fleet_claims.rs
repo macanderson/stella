@@ -209,10 +209,7 @@ fn human_ms(ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
-
     use super::*;
-    use crate::cli::{Cli, Command};
 
     fn claim(key: &str, owner: &str, acquired_at_ms: u64, expires_at_ms: u64) -> DispatchClaim {
         DispatchClaim {
@@ -316,9 +313,13 @@ mod tests {
         assert_eq!(row.expires_in_ms, -120_000);
         assert!(!row.live);
 
-        // A claim minted by a clock ahead of ours must not wrap into the past.
+        // A claim minted by a clock far ahead of ours must saturate, never
+        // wrap: an expiry in the far future stays in the future, and an
+        // acquisition in the far future reads as a negative age rather than
+        // as an absurdly old claim.
         let skewed = ClaimRow::read(&claim("issue:1", "run-a", u64::MAX, u64::MAX), 0);
-        assert!(skewed.expires_in_ms < 0 && skewed.held_for_ms < 0);
+        assert_eq!(skewed.expires_in_ms, i64::MAX, "saturated, not wrapped");
+        assert!(skewed.held_for_ms < 0, "{}", skewed.held_for_ms);
     }
 
     #[test]
@@ -340,27 +341,29 @@ mod tests {
     fn fleet_claims_parses_as_a_verb_and_defaults_to_live_text() {
         let cli = Cli::try_parse_from(["stella", "fleet", "claims"]).unwrap();
         match cli.command {
-            Command::Fleet {
+            Some(Command::Fleet {
                 cmd: Some(crate::fleet_verbs::FleetCmd::Claims { all, format }),
                 ..
-            } => {
+            }) => {
                 assert!(!all, "the live listing is the default");
                 assert_eq!(format, QueryFormat::Text);
             }
-            other => panic!("expected `fleet claims`, got {other:?}"),
+            // `Command` carries no `Debug`, so the arm names what was
+            // expected rather than printing what arrived.
+            _ => panic!("expected `fleet claims` to parse as the claims verb"),
         }
 
         let cli = Cli::try_parse_from(["stella", "fleet", "claims", "--all", "--format", "json"])
             .unwrap();
         assert!(matches!(
             cli.command,
-            Command::Fleet {
+            Some(Command::Fleet {
                 cmd: Some(crate::fleet_verbs::FleetCmd::Claims {
                     all: true,
                     format: QueryFormat::Json
                 }),
                 ..
-            }
+            })
         ));
 
         // And the documented escape hatch still works: `--` makes it a prompt.
