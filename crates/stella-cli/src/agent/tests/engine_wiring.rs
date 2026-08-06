@@ -51,6 +51,32 @@ fn the_turn_budget_flag_reaches_every_role_that_can_continue() {
 }
 
 #[test]
+fn the_turn_budget_flag_is_also_the_pipelines_run_deadline() {
+    // #1507: the repair gate's clock axis measures the RUN's elapsed time, so
+    // it must be fed a run-scoped deadline — and at this surface the flag
+    // declares the invocation's external deadline, which is exactly that.
+    // `apply_pipeline_tuning` is where every driver (run, goal, fleet, deck)
+    // folds settings into a `PipelineConfig`, so this is the one wire.
+    let mut cfg = cfg_for("zai");
+    cfg.turn_budget = Some(std::time::Duration::from_secs(840));
+    let tuned = crate::agent::apply_pipeline_tuning(
+        &cfg,
+        stella_pipeline::PipelineConfig::default(),
+    );
+    assert_eq!(
+        tuned.run_budget,
+        Some(std::time::Duration::from_secs(840)),
+    );
+
+    // Absent stays absent: an unmeasured clock axis must abstain, never
+    // inherit a deadline nobody declared.
+    let plain = cfg_for("zai");
+    let untuned =
+        crate::agent::apply_pipeline_tuning(&plain, stella_pipeline::PipelineConfig::default());
+    assert_eq!(untuned.run_budget, None);
+}
+
+#[test]
 fn a_bound_session_checkpoints_from_every_role() {
     // The same argument as the turn budget above, for the same reason: the
     // sink is attached at ONE place (`tuned_engine_config`) precisely so no
