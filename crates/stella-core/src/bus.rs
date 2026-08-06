@@ -497,10 +497,13 @@ impl Drop for HookSubscription {
 
 // The bus
 
+/// Ambient agent attribution (#1853): a stack, not a slot.
+pub mod attribution;
+
 #[derive(Default)]
 struct AmbientContext {
     turn_id: Option<String>,
-    agent_id: Option<String>,
+    agents: attribution::AgentStack,
 }
 
 /// Cap on the in-memory failure log — enough for a session postmortem,
@@ -584,14 +587,8 @@ impl HookBus {
             .turn_id = turn_id;
     }
 
-    /// Set (or clear) the ambient agent id (fleet/subagent attribution),
-    /// returning the id it replaced — which makes attribution nestable: a
-    /// sub-agent (`crate::subagent`) restores what it displaced instead of
-    /// clearing, so a grandchild's exit cannot un-attribute its parent.
-    pub fn set_agent(&self, agent_id: Option<String>) -> Option<String> {
-        let mut context = self.inner.context.lock().unwrap_or_else(|p| p.into_inner());
-        std::mem::replace(&mut context.agent_id, agent_id)
-    }
+    // Agent attribution lives in `bus::attribution` (#1853): the save/restore
+    // slot that used to sit here could not survive two siblings overlapping.
 
     // ---- registration ------------------------------------------------
 
@@ -805,7 +802,7 @@ impl HookBus {
         let sequence = self.inner.sequence.fetch_add(1, Ordering::Relaxed) + 1;
         let (ambient_turn, ambient_agent) = {
             let ctx = self.inner.context.lock().unwrap_or_else(|p| p.into_inner());
-            (ctx.turn_id.clone(), ctx.agent_id.clone())
+            (ctx.turn_id.clone(), ctx.agents.current())
         };
         HookEvent {
             id: format!("evt_{}_{sequence}", self.inner.session_id),
