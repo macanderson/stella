@@ -20,7 +20,19 @@ export interface ConnState {
 function Brand() {
   return (
     <div className="flex items-center gap-2.5">
-      <svg className="block h-3 w-[34px] flex-none" viewBox="0 0 96 34" role="img" aria-label="stella">
+      {/*
+       * The viewBox spans y -5..39, not 0..34: the star's north and south
+       * points sit at y=-5 and y=39, so a box that stopped at the trails'
+       * extent sliced both of them flat. Height follows the box's own
+       * ratio (34 x 44/96) so the artwork keeps the logomark's proportions
+       * rather than being squashed back into the old square-ish frame.
+       */}
+      <svg
+        className="block h-[15.58px] w-[34px] flex-none overflow-visible"
+        viewBox="0 -5 96 44"
+        role="img"
+        aria-label="stella"
+      >
         <line className="comet-trail stroke-gold" x1="6" y1="17" x2="34" y2="17" strokeWidth="7" strokeLinecap="round" />
         <line className="comet-trail stroke-gold" x1="17" y1="4" x2="34" y2="4" strokeWidth="7" strokeLinecap="round" />
         <line className="comet-trail stroke-gold" x1="17" y1="30" x2="34" y2="30" strokeWidth="7" strokeLinecap="round" />

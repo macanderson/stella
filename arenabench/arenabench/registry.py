@@ -106,6 +106,12 @@ class Dataset:
     namespace: str
     description: str = ""
     homepage: str = ""
+    #: Oldest Harbor that grades this dataset **correctly** — not merely the
+    #: oldest that runs it. A Harbor predating a task setting drops it
+    #: silently (pydantic ``extra="ignore"``) and reports a plausible wrong
+    #: score, so this is enforced as a refusal rather than a warning. See
+    #: :mod:`arenabench.harbor`.
+    min_harbor: str | None = None
 
     @property
     def name_only(self) -> str:
@@ -387,4 +393,32 @@ TERMINAL_BENCH_21 = Dataset(
     homepage="https://www.tbench.ai/",
 )
 
-DEFAULT_REGISTRY = Registry().add(TERMINAL_BENCH_21)
+#: Frontier-Bench, Harbor's Terminal-Bench successor.
+#:
+#: Pinned to the digest the leaderboard's ``DATASET_REF`` names. Resolving
+#: ``frontier-bench/frontier-bench`` by name yields a *different* digest that
+#: exports a byte-identical tree — the same run, rejected by an intake that
+#: compares the ref string. There is no way to tell those apart after the
+#: fact, so the submittable one is the one recorded here.
+#:
+#: ``min_harbor`` is the load-bearing field: every task declares
+#: ``environment_mode = "separate"`` under ``[verifier]``, which Harbor 0.6.1
+#: does not know and silently discards.
+FRONTIER_BENCH = Dataset(
+    key="frontier-bench",
+    title="Frontier Bench",
+    harbor_id=(
+        "frontier-bench/frontier-bench"
+        "@sha256:97fd2ba3aabdda16823a1a8ea695a3875e50e800caa60b450686deedc7171763"
+    ),
+    namespace="frontier-bench",
+    description=(
+        "74 research- and engineering-scale tasks, Harbor's successor to "
+        "Terminal-Bench. Every task builds its environment from a Dockerfile "
+        "and is graded by an independent verifier in a separate container."
+    ),
+    homepage="https://www.frontierbench.ai/",
+    min_harbor="0.20.0",
+)
+
+DEFAULT_REGISTRY = Registry().add(TERMINAL_BENCH_21).add(FRONTIER_BENCH)
