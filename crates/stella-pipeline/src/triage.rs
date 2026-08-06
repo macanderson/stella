@@ -923,11 +923,54 @@ fn has_action_request(goal: &str) -> bool {
 /// Stella was pointed at, so the split that matters is *does this ask for
 /// anything to be done*, not *is this about source files*. See
 /// [`resolve_conversational`] for the deterministic backstop.
-pub fn triage_prompt(goal: &str) -> ManagementPrompt {
+///
+/// `structure` is the workspace listing the `RepoStructurePort` already
+/// supplies to the planner and the witness author — bounded here to
+/// [`TRIAGE_STRUCTURE_CHARS`] and rendered *before* the task so the
+/// `Task:`/`Answer:` pair stays adjacent at the end. Triage decides the
+/// highest-leverage questions in the pipeline (how much orchestration, whether
+/// a witness is warranted, whether this is a task at all) and until this
+/// section existed it was the only stage deciding anything from the goal
+/// string alone: `WITNESS: no` was guessed with no way to see whether the
+/// workspace even has a test harness, and the chat-vs-task call had no
+/// evidence of what the workspace *is*. Empty structure (no git, port
+/// unavailable) renders the legacy goal-only payload byte-for-byte — the
+/// listing is evidence when it exists, never a requirement. It rides in the
+/// volatile payload half, so the cacheable instruction block (#1434) is
+/// untouched.
+pub fn triage_prompt(goal: &str, structure: &str) -> ManagementPrompt {
+    let structure = bounded_structure(structure);
+    let payload = if structure.is_empty() {
+        format!("Task:\n{goal}\n\nAnswer:")
+    } else {
+        format!("Workspace listing (truncated):\n{structure}\n\nTask:\n{goal}\n\nAnswer:")
+    };
     ManagementPrompt {
         instructions: TRIAGE_INSTRUCTIONS,
-        payload: format!("Task:\n{goal}\n\nAnswer:"),
+        payload,
     }
+}
+
+/// Ceiling on the workspace-listing characters the triage payload may carry —
+/// the same order as one recalled frame (`RECALL_FRAME_CHARS` in
+/// `crate::pipeline`). Triage is the cheap, latency-capped tier: the listing's
+/// job is to show *what kind of workspace this is* (code with a test tree, a
+/// folder of documents, a monorepo) and roughly how big, which the head of a
+/// sorted listing answers; past this point more paths add cost per call
+/// without changing any triage decision. Counted in `chars`, not bytes, so
+/// multi-byte paths are not over-charged.
+const TRIAGE_STRUCTURE_CHARS: usize = 4_000;
+
+/// Clamp a structure summary to [`TRIAGE_STRUCTURE_CHARS`], head-kept, with an
+/// explicit marker when anything was dropped — a truncated listing must never
+/// read as the whole workspace.
+fn bounded_structure(structure: &str) -> String {
+    let trimmed = structure.trim();
+    if trimmed.chars().count() <= TRIAGE_STRUCTURE_CHARS {
+        return trimmed.to_string();
+    }
+    let kept: String = trimmed.chars().take(TRIAGE_STRUCTURE_CHARS).collect();
+    format!("{kept}\n[… listing truncated at the triage budget …]")
 }
 
 /// The triage protocol block (#1434): fully literal, so it is a plain
@@ -954,6 +997,11 @@ const TRIAGE_INSTRUCTIONS: &str = "Classify the following user message, and deci
      like any other task. Use `chat` ONLY when the message asks you to do \
      nothing at all. If it asks you to look at, decide about, or change \
      anything, it is never `chat`.\n\n\
+     A truncated listing of the workspace's files may precede the task. It \
+     is evidence, not the ask: use it to judge what kind of workspace this \
+     is, how far the task could reach, and whether a test could even run \
+     here — a workspace with no test files or build manifest usually \
+     warrants WITNESS: no. Classify the message, never the listing.\n\n\
      WITNESS is whether a failing test should be written first to pin the \
      intended behavior. Say no when the change is mechanical, when \
      correctness is already obvious from the diff, or when the project \
