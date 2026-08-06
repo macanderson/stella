@@ -1174,9 +1174,12 @@ fn mark_stopped(registry: &SessionRegistry, id: &str) {
 /// Resolve a user-typed id to a record.
 ///
 /// Accepts a unique prefix, because the full form (`ses-1754431200000-84213`)
-/// is a timestamp and a pid and nobody is going to type it. `None` picks the
-/// most recent supervised run, which is what "the one I just started" means
-/// nine times in ten.
+/// is a timestamp and a pid and nobody is going to type it. It also accepts a
+/// bare **pid**, because that is the address `ps`, `top`, Activity Monitor and
+/// an OOM-killer log hand you, and without this rung translating one back to a
+/// run means eyeballing `stella daemon list` (#1690). `None` picks the most
+/// recent supervised run, which is what "the one I just started" means nine
+/// times in ten.
 pub(crate) fn resolve(
     registry: &SessionRegistry,
     id: Option<&str>,
@@ -1201,18 +1204,53 @@ pub(crate) fn resolve(
         return Ok(exact.clone());
     }
 
-    let mut matches = supervised_runs.into_iter().filter(|r| r.id.starts_with(id));
+    // An id begins `ses-`, so an argument that parses as a number cannot be a
+    // prefix of one: the two address spaces are disjoint, and a pid that hits
+    // nothing is reported as a pid rather than falling through to a prefix
+    // scan that could not have matched either. The ambiguity rule is the same
+    // one — pids are recycled, and a finished run keeps the one it ran under —
+    // but the advice is not, since there are no further digits to type.
+    if let Ok(pid) = id.parse::<u32>() {
+        return only(
+            supervised_runs.into_iter().filter(|r| r.pid == pid),
+            || format!("no supervised run has pid {pid} — `stella daemon list` shows what there is"),
+            |first, second| {
+                format!(
+                    "pid {pid} matches more than one run ({} and {}) — use the id `stella daemon list` prints",
+                    first.id, second.id
+                )
+            },
+        );
+    }
+
+    only(
+        supervised_runs.into_iter().filter(|r| r.id.starts_with(id)),
+        || format!("no supervised run matches `{id}` — `stella daemon list` shows what there is"),
+        |first, second| {
+            format!(
+                "`{id}` matches more than one run ({} and {}) — use more of the id",
+                first.id, second.id
+            )
+        },
+    )
+}
+
+/// The one record in `matches`, or the error for none and for several.
+///
+/// Shared by [`resolve`]'s prefix and pid rungs: the rule ("exactly one, or
+/// say so") is the same on both, while the sentences are not — what to type
+/// instead depends on which address space the caller was using.
+fn only(
+    mut matches: impl Iterator<Item = SessionRecord>,
+    miss: impl FnOnce() -> String,
+    ambiguous: impl FnOnce(&SessionRecord, &SessionRecord) -> String,
+) -> Result<SessionRecord, String> {
     let Some(first) = matches.next() else {
-        return Err(format!(
-            "no supervised run matches `{id}` — `stella daemon list` shows what there is"
-        ));
+        return Err(miss());
     };
     match matches.next() {
         None => Ok(first),
-        Some(second) => Err(format!(
-            "`{id}` matches more than one run ({} and {}) — use more of the id",
-            first.id, second.id
-        )),
+        Some(second) => Err(ambiguous(&first, &second)),
     }
 }
 
