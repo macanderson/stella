@@ -254,6 +254,22 @@ machinery falls through to "witness required". An unnecessary witness costs one
 model call; a missing one ships unverified behavior. Where the warrant is
 unsure, it buys the test.
 
+**An empty diff is not a clean turn.** `NothingChanged` is the one reason that
+rests on an *absence*, so it is the one that needs a signal which cannot go
+dark. A probe reporting nothing may have been unable to look — or may have
+looked at the wrong place: a system-configuration task installs into `/etc`,
+because that is where the service will read, and the candidate root it was
+handed stays empty by construction. Both of the warrant's original guards said
+"clean" for that shape, and the run completed `deterministic: true` over ten
+mutating calls. So the warrant also reads `mutating_actions` — the pipeline's
+tally of the calls it dispatched itself, not a probe into the world — and
+waives the witness only when nothing changed *and nothing tried*. The ladder
+carries the same rule one rung further: dispatched mutating calls plus a
+readable, empty diff and no other observation resolves to `Unverifiable`, an
+abstention, never a pass. It is deliberately not a failure — the work may be
+entirely correct and merely uncollected, and no revision can make an
+un-snapshot-able workspace observable.
+
 **No test needed is not the same as no review needed.** A removal's proof is
 its diff, but deleting the *wrong* thing is a real mistake a reader catches and
 no test would have covered — so `TestsOnly` and `PureRemoval` keep the
