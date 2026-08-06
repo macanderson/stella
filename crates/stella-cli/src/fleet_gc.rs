@@ -18,9 +18,7 @@ use std::path::Path;
 
 use clap::Subcommand;
 use colored::Colorize;
-use stella_fleet::{
-    BranchAction, Gc, GcOptions, GcReport, Ledger, SystemGitCli, WorktreeAction,
-};
+use stella_fleet::{BranchAction, Gc, GcOptions, GcReport, Ledger, SystemGitCli, WorktreeAction};
 
 use crate::config::Config;
 use crate::tui;
@@ -136,12 +134,10 @@ fn print_report(report: &GcReport) {
     );
 
     for verdict in &report.worktrees {
-        let name = verdict
-            .path
-            .file_name()
-            .map_or_else(|| verdict.path.display().to_string(), |n| {
-                n.to_string_lossy().into_owned()
-            });
+        let name = verdict.path.file_name().map_or_else(
+            || verdict.path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
         let branch = verdict.branch.as_deref().unwrap_or("(detached)");
         match &verdict.action {
             WorktreeAction::Removed { branch_deleted } => println!(
@@ -179,7 +175,11 @@ fn print_report(report: &GcReport) {
                 println!("    {} {} — branch deleted", "✓".green(), verdict.branch);
             }
             BranchAction::WouldDelete => {
-                println!("    {} {} — would delete branch", "·".dimmed(), verdict.branch);
+                println!(
+                    "    {} {} — would delete branch",
+                    "·".dimmed(),
+                    verdict.branch
+                );
             }
             BranchAction::Kept(reason) => {
                 println!("    {} {} — kept: {reason}", "•".dimmed(), verdict.branch);
