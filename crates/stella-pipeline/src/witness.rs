@@ -573,16 +573,57 @@ pub fn witness_identity_matches(
     expected.is_regular_single_link() && current == Some(expected)
 }
 
+/// The closed runner vocabulary [`parse_test_invocation`] accepts, by leading
+/// program — and therefore the natural probe list for runner availability
+/// (#1539). Kept beside the parser so extending one without the other is a
+/// single-file review question.
+pub const RUNNER_VOCABULARY: &[&str] = &[
+    "cargo", "pnpm", "npm", "yarn", "bun", "vitest", "npx", "bunx", "pytest", "python", "python3",
+    "go", "dotnet",
+];
+
+/// The cheapest invocation that answers "is this runner actually usable
+/// here?" for a vocabulary program — version-style, discovers and runs no
+/// test (#1539). `None` for a program outside the vocabulary.
+///
+/// `python`/`python3` probe `-m pytest --version`, not the bare interpreter:
+/// [`parse_test_invocation`] only accepts them as pytest hosts, and an
+/// interpreter without the module is exactly the missing toolchain the probe
+/// exists to catch. Probing is program-level by design — `cargo --version`
+/// cannot vouch for a `cargo nextest` subcommand — so an available program
+/// with a missing subcommand still degrades at the baseline observation,
+/// exactly as before.
+pub fn runner_probe(program: &str) -> Option<TestInvocation> {
+    let args: &[&str] = match program {
+        "go" => &["version"],
+        "python" | "python3" => &["-m", "pytest", "--version"],
+        "cargo" | "pnpm" | "npm" | "yarn" | "bun" | "vitest" | "npx" | "bunx" | "pytest"
+        | "dotnet" => &["--version"],
+        _ => return None,
+    };
+    Some(TestInvocation {
+        program: program.to_string(),
+        args: args.iter().map(|a| (*a).to_string()).collect(),
+    })
+}
+
 /// The witness author's task prompt: split context exactly like the planner
 /// (goal + recall + repo structure, never the worker transcript — L-E6). The
 /// hard requirements — new file only, must fail now, no production edits,
 /// marker line — are the parts [`parse_witness_command`] and the pipeline's
 /// fail-check enforce mechanically; the prose is guidance.
+///
+/// `available_runners` is the probed availability set (#1539): the runners
+/// the pipeline confirmed this workspace can actually spawn. The author's
+/// role cannot execute anything, so this is the one fact about the toolchain
+/// it can be GIVEN rather than left to infer — and the pipeline enforces the
+/// choice afterwards, so the section is a constraint, not a hint.
 pub fn witness_prompt(
     goal: &str,
     recall: &[RecalledFrame],
     repo_structure: &str,
     project_test_command: Option<&str>,
+    available_runners: &[String],
 ) -> String {
     let mut s = String::from(
         "You are the WITNESS AUTHOR for a coding agent. Write a witness test: a minimal \
@@ -631,6 +672,19 @@ pub fn witness_prompt(
             "\n## This project's own test command\n`{command}`\nIts runner is installed \
              and working here. Author for that runner, and shape your TEST_COMMAND like \
              this one — narrowed to your single new test.\n"
+        ));
+    }
+    if !available_runners.is_empty() {
+        // Probed fact, not inference (#1539): the pipeline spawned each
+        // vocabulary runner's version probe in this very workspace. The
+        // author's TEST_COMMAND is checked against this set, so naming a
+        // runner outside it discards the witness.
+        s.push_str(&format!(
+            "\n## Test runners available in this workspace\n{}\nThese are the ONLY \
+             runners installed here — your TEST_COMMAND must use one of them. The \
+             repository listing below tells you which of them this project actually \
+             uses.\n",
+            available_runners.join(", ")
         ));
     }
     if !repo_structure.trim().is_empty() {
@@ -1197,7 +1251,7 @@ mod tests {
             id: None,
             content_digest: None,
         }];
-        let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", None);
+        let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", None, &[]);
         assert!(p.contains("TEST_COMMAND:"));
         assert!(p.contains("fix the retry bug"));
         assert!(p.contains("src/"));
@@ -1217,7 +1271,7 @@ mod tests {
     /// that choosing a runner is a decision made from evidence, not a default.
     #[test]
     fn the_author_is_told_it_cannot_probe_and_must_pick_an_evidenced_runner() {
-        let p = witness_prompt("add a parser", &[], "go.mod\nmain.go", None);
+        let p = witness_prompt("add a parser", &[], "go.mod\nmain.go", None, &[]);
         assert!(
             p.contains("CHOOSE A RUNNER THIS REPOSITORY ALREADY USES"),
             "{p}"
@@ -1240,7 +1294,7 @@ mod tests {
     /// names this command, so its runner is installed on this machine.
     #[test]
     fn a_configured_test_command_anchors_the_authors_runner_choice() {
-        let anchored = witness_prompt("add a parser", &[], "go.mod", Some("go test ./..."));
+        let anchored = witness_prompt("add a parser", &[], "go.mod", Some("go test ./..."), &[]);
         assert!(anchored.contains("`go test ./...`"), "{anchored}");
         assert!(
             anchored.contains("Its runner is installed and working here"),
@@ -1248,9 +1302,9 @@ mod tests {
         );
 
         // Nothing to anchor on: the section must be absent rather than empty.
-        let bare = witness_prompt("add a parser", &[], "go.mod", None);
+        let bare = witness_prompt("add a parser", &[], "go.mod", None, &[]);
         assert!(!bare.contains("This project's own test command"), "{bare}");
-        let blank = witness_prompt("add a parser", &[], "go.mod", Some("   "));
+        let blank = witness_prompt("add a parser", &[], "go.mod", Some("   "), &[]);
         assert!(
             !blank.contains("This project's own test command"),
             "a whitespace command anchors nothing: {blank}"
@@ -1262,5 +1316,52 @@ mod tests {
         let p = witness_repair_prompt("cargo test -p x");
         assert!(p.contains("cargo test -p x"));
         assert!(p.contains("TEST_COMMAND:"));
+    }
+
+    /// #1539: the probed availability set is the one toolchain fact the
+    /// blind author can be GIVEN — and its absence must leave no dangling
+    /// empty section.
+    #[test]
+    fn probed_runner_availability_reaches_the_author_as_a_constraint() {
+        let available = vec!["cargo".to_string(), "pytest".to_string()];
+        let p = witness_prompt("add a parser", &[], "Cargo.toml", None, &available);
+        assert!(
+            p.contains("Test runners available in this workspace"),
+            "{p}"
+        );
+        assert!(p.contains("cargo, pytest"), "{p}");
+        assert!(
+            p.contains("must use one of them"),
+            "a constraint, not a hint: {p}"
+        );
+
+        let bare = witness_prompt("add a parser", &[], "Cargo.toml", None, &[]);
+        assert!(
+            !bare.contains("Test runners available in this workspace"),
+            "no probes, no section: {bare}"
+        );
+    }
+
+    /// #1539: every vocabulary program has a probe, the probe never runs a
+    /// test, and the two interpreter hosts probe the pytest MODULE — a
+    /// spawnable python without pytest is still a missing toolchain.
+    #[test]
+    fn every_vocabulary_runner_has_a_version_style_probe() {
+        for program in RUNNER_VOCABULARY {
+            let probe = runner_probe(program)
+                .unwrap_or_else(|| panic!("`{program}` is in the vocabulary but unprobeable"));
+            assert_eq!(&probe.program, program);
+            assert!(
+                probe.args.iter().any(|a| a.contains("version")),
+                "`{program}`'s probe must be version-style, never a test run: {:?}",
+                probe.args
+            );
+        }
+        assert_eq!(
+            runner_probe("python").unwrap().args,
+            vec!["-m", "pytest", "--version"],
+            "python probes the pytest module, not the bare interpreter"
+        );
+        assert_eq!(runner_probe("bash"), None, "outside the vocabulary");
     }
 }

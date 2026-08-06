@@ -553,6 +553,19 @@ pub trait DiagnosticRunner: Send + Sync {
 pub trait TestRunner: Send + Sync {
     /// Spawn `invocation.program` with `invocation.args` directly.
     async fn run_test(&self, invocation: &TestInvocation) -> CmdOutcome;
+    /// Whether this version-style probe invocation completes with exit 0 —
+    /// "is this runner actually usable here?", never a test run (#1539).
+    ///
+    /// The witness author's tool surface is deliberately unable to execute
+    /// anything, so runner existence is a fact only the pipeline can
+    /// establish; this is where it asks. Defaults to `true` ("assume
+    /// present") so a substrate that cannot check — a scripted double, a
+    /// remoted host — only ever skips the availability steering, never
+    /// blocks an author whose runner exists.
+    async fn runner_available(&self, probe: &TestInvocation) -> bool {
+        let _ = probe;
+        true
+    }
 }
 
 /// One parsed lint/typecheck record for the regression veto (#861).

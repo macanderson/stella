@@ -132,6 +132,15 @@ impl FakeWorkspace {
         self.escaped = paths.into_iter().map(str::to_string).collect();
         self
     }
+
+    /// #1539: script which runner programs this workspace's availability
+    /// probe reports usable. An empty vec models no toolchain at all.
+    pub(super) fn with_available_runners(mut self, programs: Vec<&str>) -> Self {
+        self.diagnostics =
+            std::mem::replace(&mut self.diagnostics, ScriptedRunner::new(vec![], ""))
+                .with_available_runners(programs);
+        self
+    }
 }
 
 #[async_trait]
