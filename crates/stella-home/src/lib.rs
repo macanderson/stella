@@ -55,6 +55,16 @@ pub const STELLA_CONFIG_DIR_ENV: &str = "STELLA_CONFIG_DIR";
 /// The directory name stella keeps under the user's home.
 const DOT_STELLA: &str = ".stella";
 
+/// The self-driving loop's state directory under the stella home.
+const SELF_DRIVING_DIR: &str = "self-driving";
+
+/// What [`SELF_DRIVING_DIR`] was called before #1757 renamed the loop. A
+/// spelling on disk, not a name — see [`legacy_self_driving_roots`].
+const LEGACY_SELF_DRIVING_DIR: &str = "fullauto";
+
+/// The original home, before the state moved under the stella home.
+const LEGACY_DOT_SELF_DRIVING_DIR: &str = ".fullauto";
+
 /// Every override that can point resolution away from the `~/.stella`
 /// defaults, in one list so a caller asking "is any of this redirected?"
 /// cannot answer with a stale subset.
@@ -157,6 +167,59 @@ pub fn resolve_systemd_user_unit_dir(
         None => home?.join(".config"),
     };
     Some(config.join("systemd").join("user"))
+}
+
+/// The self-driving loop's state root: `<stella home>/self-driving`, one
+/// directory per repository slug beneath it.
+///
+/// Resolved here rather than in either crate that uses it, because two
+/// processes share it and disagree destructively: `stella-cli` is the single
+/// writer and `stella-observatory` is a read-only reader, so a root spelled
+/// differently in one of them shows an operator an empty dashboard for a
+/// machine that has a full ledger.
+#[must_use]
+pub fn self_driving_root() -> Option<PathBuf> {
+    resolve_self_driving_root(stella_home())
+}
+
+/// [`self_driving_root`] over anchors the caller supplies.
+#[must_use]
+pub fn resolve_self_driving_root(stella_home: Option<PathBuf>) -> Option<PathBuf> {
+    stella_home.map(|home| home.join(SELF_DRIVING_DIR))
+}
+
+/// Roots earlier builds wrote this state to, newest first.
+///
+/// The `fullauto` spelling is deliberate and must never be renamed with the
+/// rest of the loop (#1757): these name bytes already on users' disks, not a
+/// concept. Rewriting them points the migration at a directory that has never
+/// existed, and losing the seen-set re-files every finding ever triaged.
+///
+/// 1. `<stella home>/fullauto` — before the loop was renamed `self-driving`.
+/// 2. `~/.fullauto` — the original home, before the state moved under the
+///    stella home.
+///
+/// The writer migrates the first of these that exists; the reader scans them
+/// so a loop that has not been migrated yet is still visible.
+#[must_use]
+pub fn legacy_self_driving_roots() -> Vec<PathBuf> {
+    resolve_legacy_self_driving_roots(stella_home(), home_dir())
+}
+
+/// [`legacy_self_driving_roots`] over anchors the caller supplies.
+#[must_use]
+pub fn resolve_legacy_self_driving_roots(
+    stella_home: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::with_capacity(2);
+    if let Some(home) = stella_home {
+        roots.push(home.join(LEGACY_SELF_DRIVING_DIR));
+    }
+    if let Some(home) = home {
+        roots.push(home.join(LEGACY_DOT_SELF_DRIVING_DIR));
+    }
+    roots
 }
 
 /// Whether any of [`OVERRIDE_ENV_VARS`] is set — i.e. whether resolution is
@@ -294,6 +357,65 @@ mod tests {
             "XDG_CONFIG_HOME moves the config root"
         );
         assert_eq!(resolve_systemd_user_unit_dir(None, None), None);
+    }
+
+    #[test]
+    fn the_self_driving_root_follows_the_stella_home() {
+        assert_eq!(
+            resolve_self_driving_root(Some(PathBuf::from("/home/dev/.stella"))),
+            Some(PathBuf::from("/home/dev/.stella/self-driving"))
+        );
+        assert_eq!(resolve_self_driving_root(None), None);
+    }
+
+    #[test]
+    fn the_legacy_roots_are_ordered_newest_first() {
+        let roots = resolve_legacy_self_driving_roots(
+            Some(PathBuf::from("/home/dev/.stella")),
+            Some(PathBuf::from("/home/dev")),
+        );
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from("/home/dev/.stella/fullauto"),
+                PathBuf::from("/home/dev/.fullauto"),
+            ],
+            "the writer migrates the FIRST root that exists, so the newest \
+             layout must come first — reversed, a machine carrying both would \
+             adopt the older ledger and strand the newer one"
+        );
+    }
+
+    #[test]
+    fn the_legacy_roots_keep_the_pre_rename_spelling() {
+        let roots =
+            resolve_legacy_self_driving_roots(Some(PathBuf::from("/s")), Some(PathBuf::from("/h")));
+        assert!(
+            roots.iter().all(|r| {
+                let name = r.file_name().unwrap().to_string_lossy();
+                name == "fullauto" || name == ".fullauto"
+            }),
+            "these name bytes already on users' disks, not a concept (#1757). \
+             Renaming them with the rest of the loop points the migration at a \
+             directory that has never existed and silently orphans a live \
+             ledger; losing the seen-set re-files every finding ever triaged."
+        );
+    }
+
+    #[test]
+    fn a_machine_with_no_home_at_all_yields_no_legacy_roots() {
+        assert!(resolve_legacy_self_driving_roots(None, None).is_empty());
+    }
+
+    #[test]
+    fn the_current_root_is_never_also_a_legacy_root() {
+        let stella = PathBuf::from("/home/dev/.stella");
+        let current = resolve_self_driving_root(Some(stella.clone())).unwrap();
+        assert!(
+            !resolve_legacy_self_driving_roots(Some(stella), Some(PathBuf::from("/home/dev")))
+                .contains(&current),
+            "the reader unions these; an overlap would list every loop twice"
+        );
     }
 
     #[test]
