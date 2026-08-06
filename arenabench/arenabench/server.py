@@ -62,6 +62,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .agents import AGENTS
 from .config import MatchTemplateError, dump_match, match_from_toml, required_env
+from .credentials import apply_saved_credentials
 from .model import EFFORTS, ROLES, MatchSpec
 from .recorder import preflight as recorder_preflight
 from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
@@ -205,6 +206,9 @@ class ArenaServer:
         payload = dict(payload)
         payload.setdefault("id", uuid.uuid4().hex[:12])
         spec = MatchSpec.from_json(payload)
+        # Fills gaps only: a seat's own pasted `.env` always wins over the
+        # saved credential set — see `apply_saved_credentials`.
+        spec = apply_saved_credentials(spec)
         match = self.runner.create(spec)
         if spec.record_video:
             ok, reason = recorder_preflight()

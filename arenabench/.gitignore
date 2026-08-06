@@ -28,3 +28,9 @@ tests/fixtures/matches/*/
 *.local
 .env
 .env.*
+
+# Saved provider credentials (arenabench/credentials.py). The default location
+# is ~/.arenabench/credentials.env, outside any checkout entirely, but an
+# ARENABENCH_CREDENTIALS override that lands one here must never be tracked.
+credentials.env
+credentials.toml
