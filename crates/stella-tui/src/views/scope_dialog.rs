@@ -24,8 +24,17 @@
 //!
 //! - `a` — approve the plan as proposed
 //! - `t` — approve, trimmed to the scope thresholds
-//! - `r` — send it back: type a refinement note, `⏎` sends it to the planner
+//! - `r` — send it back: type a refinement note (`⌥⏎` for a new line, `⏎`
+//!   sends it to the planner)
 //! - `x` / `Esc` — abort the plan
+//! - `!` — run a shell line without leaving the dialog, and without answering
+//!   it: reading back (`!git status`) is part of deciding
+//!
+//! The last two inputs exist because owning the keyboard also took the
+//! composer away, and with it two things the typed-answer flow had — a
+//! multi-line note and the `!` escape. Each came back as its own field
+//! *inside* the dialog ([`crate::deck_ui::ScopeInput`]) rather than as a hole
+//! in the modality, so no key ever leaks to the composer behind it.
 //!
 //! Once the decision is sent the pending gate clears on the engine's follow-on
 //! event; until then the answered latch keeps [`pending`] `None`, so the
@@ -41,7 +50,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 use stella_protocol::ScopeProposal;
 
 use crate::deck::{DeckTab, WorkspaceModel};
-use crate::deck_ui::DeckUi;
+use crate::deck_ui::{DeckUi, ScopeInput};
 use crate::plan::PlanStepState;
 use crate::theme;
 use crate::views::cards::truncate_cols;
@@ -73,18 +82,94 @@ pub(crate) fn pending<'m>(model: &'m WorkspaceModel, ui: &DeckUi) -> Option<&'m 
     entry.model.pending_scope_review.as_ref()
 }
 
-/// Draw the dialog centered over `area`. `note` is the refine input's buffer:
-/// `None` renders the one-keypress answers, `Some` renders the note being
-/// typed (`r` was pressed) with its own send/back legend.
-pub(crate) fn render(proposal: &ScopeProposal, note: Option<&str>, area: Rect, buf: &mut Buffer) {
-    // `clamp` panics when max < min; both bounds here are compile-time
-    // constants with 20 < DIALOG_MAX_W, so that case cannot arise.
+/// How many rows of a long refine note stay on screen. The note is the one
+/// part of this dialog the user is authoring, so it gets a real budget — but
+/// the plan is what the decision is *about*, so the note never crowds it out.
+const NOTE_MAX_ROWS: usize = 6;
+
+/// The rows for an open input: the typed line(s) behind a labelled marker,
+/// with the cursor on the last one.
+///
+/// The refine note is soft-wrapped **and** honours the newlines a modified `⏎`
+/// inserted, because a note that renders as one tail-truncated line is
+/// indistinguishable from a note that was silently truncated on the way in
+/// (#1630). When it outgrows [`NOTE_MAX_ROWS`] the *tail* is what survives:
+/// the text under the cursor is the text being typed.
+fn input_lines(input: &ScopeInput, inner_w: usize) -> Vec<Line<'static>> {
+    let (label, color, body) = match input {
+        ScopeInput::Refine(note) => ("refine ▸ ", theme::VIOLET, note.as_str()),
+        ScopeInput::Shell(cmd) => ("!", theme::TEXT_SECONDARY, cmd.as_str()),
+    };
+    let width = inner_w.saturating_sub(label.chars().count() + 1).max(8);
+
+    // Explicit newlines first, then soft-wrap each of those on width. The
+    // column count is carried rather than re-measured per character: paste
+    // lands here verbatim now, so the buffer is only bounded by the
+    // clipboard, and `chars().count()` inside the loop would make a large
+    // paste quadratic on every frame.
+    let mut rows: Vec<String> = Vec::new();
+    for paragraph in body.split('\n') {
+        let mut row = String::new();
+        let mut cols = 0usize;
+        for c in paragraph.chars() {
+            if cols == width {
+                rows.push(std::mem::take(&mut row));
+                cols = 0;
+            }
+            row.push(c);
+            cols += 1;
+        }
+        rows.push(row);
+    }
+    // A single-line input keeps its tail visible rather than wrapping into the
+    // plan: one command is one row.
+    let cap = match input {
+        ScopeInput::Refine(_) => NOTE_MAX_ROWS,
+        ScopeInput::Shell(_) => 1,
+    };
+    let folded = rows.len().saturating_sub(cap);
+    let rows = rows.split_off(folded);
+
+    let indent = " ".repeat(label.chars().count());
+    let last = rows.len().saturating_sub(1);
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let mut spans = vec![Span::styled(
+                if i == 0 {
+                    label.to_string()
+                } else {
+                    indent.clone()
+                },
+                Style::new().fg(color).add_modifier(Modifier::BOLD),
+            )];
+            spans.push(Span::styled(row, Style::new().fg(theme::TEXT_PRIMARY)));
+            if i == last {
+                spans.push(Span::styled("▎", Style::new().fg(color)));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+/// Draw the dialog centered over `area`. `input` is the dialog's open text
+/// field: `None` renders the one-keypress answers, `Some` renders the line
+/// being typed (`r` or `!` was pressed) with its own legend.
+pub(crate) fn render(
+    proposal: &ScopeProposal,
+    input: Option<&ScopeInput>,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     let w = area.width.saturating_sub(4).clamp(20, DIALOG_MAX_W);
     let inner_w = (w as usize).saturating_sub(4);
 
     // The step list yields to the frame: fixed chrome is summary + estimates +
-    // legend + spacers (6 rows) inside the borders (2).
-    let fixed: u16 = 8;
+    // spacers (5 rows) plus the footer inside the borders (2). The footer is
+    // one row of answer keys, or however many rows the open input needs — a
+    // growing refine note eats into the step list rather than off the frame.
+    let footer = input.map_or(1, |i| input_lines(i, inner_w).len());
+    let fixed: u16 = 7 + footer as u16;
     let max_steps = area
         .height
         .saturating_sub(fixed + 2)
@@ -130,7 +215,7 @@ pub(crate) fn render(proposal: &ScopeProposal, note: Option<&str>, area: Rect, b
         Style::new().fg(theme::TEXT_TERTIARY),
     )));
     lines.push(Line::default());
-    match note {
+    match input {
         None => {
             let key = |k: &'static str, color| {
                 Span::styled(k, Style::new().fg(color).add_modifier(Modifier::BOLD))
@@ -138,33 +223,18 @@ pub(crate) fn render(proposal: &ScopeProposal, note: Option<&str>, area: Rect, b
             let word = |t: &'static str| Span::styled(t, Style::new().fg(theme::TEXT_SECONDARY));
             lines.push(Line::from(vec![
                 key("a", theme::OK),
-                word(" approve    "),
+                word(" approve   "),
                 key("t", theme::WARN),
-                word(" trim    "),
+                word(" trim   "),
                 key("r", theme::VIOLET),
-                word(" refine    "),
+                word(" refine   "),
                 key("x", theme::DANGER),
-                word(" abort"),
+                word(" abort   "),
+                key("!", theme::TEXT_SECONDARY),
+                word(" shell"),
             ]));
         }
-        Some(note) => {
-            let shown: String = note
-                .chars()
-                .rev()
-                .take(inner_w.saturating_sub(10))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "refine ▸ ",
-                    Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(shown, Style::new().fg(theme::TEXT_PRIMARY)),
-                Span::styled("▎", Style::new().fg(theme::VIOLET)),
-            ]));
-        }
+        Some(input) => lines.extend(input_lines(input, inner_w)),
     }
 
     let h = ((lines.len() as u16) + 2).min(area.height);
@@ -188,9 +258,14 @@ pub(crate) fn render(proposal: &ScopeProposal, note: Option<&str>, area: Rect, b
         ))
         .title_bottom(
             Line::from(Span::styled(
-                match note {
+                match input {
                     None => " one keypress decides · esc aborts ",
-                    Some(_) => " ⏎ send · esc back ",
+                    // `⌥⏎` rather than the composer footer's terminal-aware
+                    // `⌘⏎`: it is the chord that reports correctly without the
+                    // kitty protocol, and this dialog does not carry the
+                    // `enter_submits` flag that footer switches on.
+                    Some(ScopeInput::Refine(_)) => " ⏎ send · ⌥⏎ newline · esc back ",
+                    Some(ScopeInput::Shell(_)) => " ⏎ run · esc back ",
                 },
                 Style::new().fg(theme::TEXT_TERTIARY),
             ))
@@ -271,17 +346,73 @@ mod tests {
     /// `r` swaps the legend for the refine input, which echoes the note.
     #[test]
     fn the_refine_mode_echoes_the_typed_note() {
+        let note = ScopeInput::Refine("only the dialog".into());
         let frame = flat(Rect::new(0, 0, 80, 24), |buf| {
-            render(
-                &proposal(),
-                Some("only the dialog"),
-                Rect::new(0, 0, 80, 24),
-                buf,
-            );
+            render(&proposal(), Some(&note), Rect::new(0, 0, 80, 24), buf);
         });
         assert!(frame.contains("refine ▸ only the dialog"), "{frame}");
         assert!(frame.contains("⏎ send"), "{frame}");
         assert!(!frame.contains("one keypress decides"), "{frame}");
+    }
+
+    /// A multi-line note renders as multiple rows (#1630). The single-line
+    /// input tail-truncated, which is indistinguishable from a note that was
+    /// truncated on the way *in* — the reviewer could not tell whether the
+    /// planner would receive what they wrote.
+    #[test]
+    fn a_multi_line_refine_note_renders_every_line() {
+        let note = ScopeInput::Refine("drop step 2\nand re-scope 3".into());
+        let frame = flat(Rect::new(0, 0, 80, 24), |buf| {
+            render(&proposal(), Some(&note), Rect::new(0, 0, 80, 24), buf);
+        });
+        assert!(frame.contains("refine ▸ drop step 2"), "{frame}");
+        assert!(frame.contains("and re-scope 3"), "{frame}");
+        assert!(frame.contains("⌥⏎ newline"), "{frame}");
+    }
+
+    /// A note past the row budget keeps its **tail**: the text under the
+    /// cursor is the text being typed, and a note that scrolled away from
+    /// what you are writing would be worse than the single line this
+    /// replaced. The plan is what the decision is about, so the note is
+    /// capped rather than allowed to push the steps off the frame.
+    #[test]
+    fn an_overlong_note_keeps_the_end_it_is_being_typed_at() {
+        let note = ScopeInput::Refine((1..=20).map(|i| format!("line {i}\n")).collect());
+        let lines = input_lines(&note, 64);
+        assert_eq!(lines.len(), NOTE_MAX_ROWS, "the note is capped");
+
+        let frame = flat(Rect::new(0, 0, 80, 40), |buf| {
+            render(&proposal(), Some(&note), Rect::new(0, 0, 80, 40), buf);
+        });
+        assert!(frame.contains("line 20"), "the tail survives:\n{frame}");
+        assert!(!frame.contains("line 1 "), "the head folds:\n{frame}");
+        assert!(
+            frame.contains("1. read the layout"),
+            "the plan is still readable under a long note:\n{frame}"
+        );
+    }
+
+    /// The shell field names itself and offers "run", not "send" — it does not
+    /// answer the gate, and the legend must not imply that it does (#1629).
+    #[test]
+    fn the_shell_field_offers_run_rather_than_send() {
+        let cmd = ScopeInput::Shell("git status".into());
+        let frame = flat(Rect::new(0, 0, 80, 24), |buf| {
+            render(&proposal(), Some(&cmd), Rect::new(0, 0, 80, 24), buf);
+        });
+        assert!(frame.contains("!git status"), "{frame}");
+        assert!(frame.contains("⏎ run"), "{frame}");
+        assert!(!frame.contains("⏎ send"), "{frame}");
+    }
+
+    /// The options row advertises the shell escape — an escape nobody can see
+    /// is an escape nobody uses.
+    #[test]
+    fn the_options_row_advertises_the_shell_escape() {
+        let frame = flat(Rect::new(0, 0, 80, 24), |buf| {
+            render(&proposal(), None, Rect::new(0, 0, 80, 24), buf);
+        });
+        assert!(frame.contains("shell"), "{frame}");
     }
 
     /// A long plan folds its tail and says so rather than overflowing the

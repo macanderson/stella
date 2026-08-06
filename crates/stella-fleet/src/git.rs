@@ -189,7 +189,7 @@ pub enum WorktreeError {
     NonUtf8Path { path: String },
 }
 
-fn ensure_ok(output: GitOutput, command: &str) -> Result<GitOutput, WorktreeError> {
+pub(crate) fn ensure_ok(output: GitOutput, command: &str) -> Result<GitOutput, WorktreeError> {
     if output.success {
         Ok(output)
     } else {
@@ -201,7 +201,7 @@ fn ensure_ok(output: GitOutput, command: &str) -> Result<GitOutput, WorktreeErro
     }
 }
 
-fn path_arg(path: &Path) -> Result<&str, WorktreeError> {
+pub(crate) fn path_arg(path: &Path) -> Result<&str, WorktreeError> {
     path.to_str().ok_or_else(|| WorktreeError::NonUtf8Path {
         path: path.display().to_string(),
     })
@@ -502,7 +502,7 @@ impl<G: GitCli> WorktreeManager<G> {
 /// `worktree <path>` / `HEAD <sha>` / (`branch refs/heads/<name>` |
 /// `detached`), separated by blank lines; we key off the `worktree` line and
 /// pick up the branch if present.
-fn parse_worktree_list(stdout: &str) -> Vec<WorktreeEntry> {
+pub(crate) fn parse_worktree_list(stdout: &str) -> Vec<WorktreeEntry> {
     let mut entries = Vec::new();
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;

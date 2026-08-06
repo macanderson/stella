@@ -9,13 +9,18 @@ Run many tasks in parallel in **one shared working tree**, coordinated by cooper
 
 ```bash
 stella fleet <task>... [--plan <FILE>] [--max-concurrency <N>] [--base-ref <ref>] [--watch] [--no-pipeline]
+stella fleet clean [--dry-run] [--force] [--age <DAYS>] [--base-ref <ref>]
 ```
+
+<Callout type="info">
+A prompt whose **first word** is exactly a subcommand name (`clean`) is read as that subcommand. Put the prompts after `--` when that happens: `stella fleet -- clean up the dead code`.
+</Callout>
 
 ## What it does
 
 Each task prompt becomes an independent task running **in the shared repository root**. Workers coordinate through cooperative file claims — paths declared upfront in a plan (`claims`) plus claim-on-first-write at the tool layer — so a conflict surfaces in under a second at write time with the rival named, and commits interleave on one branch with no merge-back. A task a plan file opts into `isolation = "isolated"` instead gets a dedicated git worktree under `.stella/worktrees/<slug>` — branched from the current `HEAD` (or `--base-ref`), pinned to a SHA at start, onto a `fleet/<slug>-<hash>` branch (the hash suffix keeps re-runs from colliding with branches you kept). Tasks dispatch in dependency-ordered waves, running up to `--max-concurrency` at once within a wave. Each worker is a full engine run through the [staged pipeline](/docs/inference-pipeline) by default. Progress, attempts, commits, and cost are persisted to `.stella/private/fleet.db` and surface on the [Observatory dashboard](/docs/telemetry/dashboard)'s Fleet runs card.
 
-Isolated worktrees and fleet branches are **not** cleaned up automatically: they stay on disk so you can inspect, test, and merge each result yourself. A failed task is never retried automatically, and its dependents end the run as `skipped`.
+Isolated worktrees and fleet branches are **not** cleaned up automatically: they stay on disk so you can inspect, test, and merge each result yourself. Reclaim the finished ones with [`stella fleet clean`](#stella-fleet-clean) when you are done reviewing. A failed task is never retried automatically, and its dependents end the run as `skipped`.
 
 <Callout type="info">
 For anything beyond a handful of independent prompts, use a plan file (`--plan`). It lets you declare task `id`, `title`, `prompt`, `depends_on` (to order the waves), `isolation` (`shared_tree` — the default — runs in the repo root under the claim discipline; `isolated` opts a task into its own worktree and branch, for genuinely divergent work like best-of-N attempts on the same files), and `claims` — file paths held as cooperative locks while a task runs, so two tasks never edit the same file at once. See [Agent Fleets](/docs/agent-fleets) for the full plan schema.
@@ -61,6 +66,45 @@ The budget cap is the **global** `--budget` flag (or `STELLA_BUDGET`) rather tha
 ```bash
 stella --budget 5 fleet --plan release-prep.toml
 ```
+
+## stella fleet clean
+
+Isolated worktrees and their `fleet/*` branches otherwise accumulate forever — every isolated task of every run leaves a directory under `.stella/worktrees/` and a branch, and nothing removed them. `stella fleet clean` is the explicit door out; no part of a fan-out calls it for you.
+
+A worktree is reclaimed only when **all** of these hold, and anything kept is printed with its reason:
+
+- the ledger (`.stella/private/fleet.db`) shows no unfinished attempt using it — an in-flight worktree is kept even under `--force`;
+- `git status` in it is clean;
+- its branch's commits are already contained in the base ref (`git merge-base --is-ancestor`), so nothing is lost by deleting it.
+
+`fleet/*` branches whose worktree is already gone are swept by the same containment rule. The main checkout is never a candidate, and no branch outside the `fleet/` namespace is ever passed to a `git` mutation — with or without `--force`. When git cannot answer a question (an unresolvable ref, a `merge-base` that fails for its own reasons), the answer is always "keep".
+
+```bash
+stella fleet clean --dry-run          # what would go, and why the rest stays
+stella fleet clean                    # reclaim the provably-finished ones
+stella fleet clean --age 14           # only what last finished 14+ days ago
+stella fleet clean --age 30 --force   # also month-old dirty/unmerged work — destructive
+```
+
+<CardGrid size="md">
+  <OptionCard name="--dry-run">
+    Decide and print the verdicts, remove nothing.
+  </OptionCard>
+  <OptionCard name="--force">
+    Also reclaim worktrees with uncommitted changes and branches whose commits the base
+    ref does not contain. **This destroys that work.** It never touches a worktree whose
+    attempt is still in flight, and never leaves the `fleet/` namespace.
+  </OptionCard>
+  <OptionCard name="--age <DAYS>">
+    Only consider worktrees whose last attempt finished at least this many days ago. A
+    worktree the ledger has no finish time for cannot be shown to be old enough, so it is
+    kept.
+  </OptionCard>
+  <OptionCard name="--base-ref <ref>" defaultValue="origin/HEAD, else main, else master">
+    The ref a branch's commits must already be contained in to count as reclaimable. The
+    sweep stops rather than guessing if none of the defaults resolve.
+  </OptionCard>
+</CardGrid>
 
 ## Examples
 

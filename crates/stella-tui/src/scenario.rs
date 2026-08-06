@@ -604,6 +604,9 @@ pub fn demo_engine_config() -> crate::envelope::EngineConfigState {
         effort: effort.to_string(),
         thinking: thinking.to_string(),
         source: source.to_string(),
+        // The demo deck has no settings file behind it, so nothing is
+        // pending — the golden frames pin the ordinary case.
+        next_session: None,
     };
     crate::envelope::EngineConfigState {
         effort_auto: true,

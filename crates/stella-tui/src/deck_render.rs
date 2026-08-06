@@ -181,7 +181,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // dialog is back on top).
     if let Some(proposal) = views::scope_dialog::pending(model, ui) {
         guarded_overlay(buf, area, "plan review", |b| {
-            views::scope_dialog::render(proposal, ui.scope_note.as_deref(), area, b)
+            views::scope_dialog::render(proposal, ui.scope_input.as_ref(), area, b)
         });
     }
     // The floating cards (`/plan` · `/models` · `/budget`): at most one is up
