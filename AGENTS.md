@@ -419,7 +419,7 @@ a plan needs and the part that rarely changes:
 | `stella-protocol` | `src/event.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tools` | `src/registry.rs`, `src/scripts.rs`, `src/media.rs` |
-| `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs`, `src/deck.rs` |
+| `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
 The other twelve crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
