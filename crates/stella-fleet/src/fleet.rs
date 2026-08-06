@@ -317,6 +317,28 @@ pub struct TaskHandle {
     /// left open and its commits/spend rows were not written, so anything
     /// reading the ledger later sees an attempt that never closed.
     pub ledger_error: Option<String>,
+    /// `Some` when this attempt's dispatch lease (#1136) was lost mid-run: a
+    /// heartbeat renewal came back [`RenewOutcome::Lost`] — the attempt
+    /// stalled past `DISPATCH_LEASE_TTL` and a rival session reclaimed the
+    /// task — or the ledger became unreadable. The same "attempt succeeded
+    /// but something durable failed" seam as `ledger_error`: the worker was
+    /// deliberately left to finish (never killed mid-flight), so the outcome
+    /// above is real work, but a rival may have run the same task in
+    /// parallel, and this run is the one that can report the overlap instead
+    /// of leaving it to whoever inspects the ledger's bumped fence (#1677).
+    pub lease_loss: Option<LeaseLoss>,
+}
+
+/// The record of a dispatch lease lost mid-attempt, carried on
+/// [`TaskHandle::lease_loss`] (#1677).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseLoss {
+    /// The rival session now holding the task — its run id, which embeds the
+    /// minting pid (see [`FleetConfig::run_id`]) — when the failed renewal
+    /// could read one. `None` when the ledger was unreadable, the row had
+    /// vanished, or this run's own lease had merely lapsed with no rival
+    /// taking it.
+    pub taken_by: Option<String>,
 }
 
 /// The result of running a whole plan.
@@ -658,7 +680,9 @@ where
     /// finish the work that is already paid for. It finishes. The row is not
     /// re-taken behind the rival's back — renewal fails and the guard's
     /// fenced release leaves the rival's claim alone — so the overlap is
-    /// visible in the ledger rather than silently repaired.
+    /// visible in the ledger, and the loss is stamped onto the settled
+    /// handle as [`TaskHandle::lease_loss`] so the run that can report two
+    /// workers on one task actually does (#1677).
     async fn dispatch_leased(
         &self,
         task: &Task,
@@ -667,12 +691,14 @@ where
         let beat = std::time::Duration::from_millis(lease.lease.heartbeat_interval_ms());
         let attempt = self.dispatch_claimed(task);
         tokio::pin!(attempt);
-        let mut holding = true;
+        let mut lease_loss: Option<LeaseLoss> = None;
         loop {
             tokio::select! {
                 biased;
-                settled = &mut attempt => return settled,
-                () = tokio::time::sleep(beat), if holding => {
+                settled = &mut attempt => {
+                    return settled.map(|handle| TaskHandle { lease_loss, ..handle });
+                }
+                () = tokio::time::sleep(beat), if lease_loss.is_none() => {
                     let now_ms = self.clock.now_ms();
                     let renewed = {
                         let ledger = self.lock_ledger();
@@ -680,10 +706,21 @@ where
                     };
                     match renewed {
                         Ok(RenewOutcome::Renewed(extended)) => lease.lease = extended,
-                        // Superseded, or the ledger is unreadable: either way
-                        // this attempt no longer has a lease to prove, so stop
-                        // beating and let the work it already paid for finish.
-                        Ok(RenewOutcome::Lost(_)) | Err(_) => holding = false,
+                        // Superseded: this attempt no longer has a lease to
+                        // prove, so stop beating and let the work it already
+                        // paid for finish — recording who took the task. A
+                        // row still naming THIS run is not a rival: the lease
+                        // merely lapsed unclaimed.
+                        Ok(RenewOutcome::Lost(claim)) => {
+                            lease_loss = Some(LeaseLoss {
+                                taken_by: claim
+                                    .filter(|c| c.owner != self.config.run_id)
+                                    .map(|c| c.owner),
+                            });
+                        }
+                        // The ledger is unreadable — same policy, no holder
+                        // to name.
+                        Err(_) => lease_loss = Some(LeaseLoss { taken_by: None }),
                     }
                 }
             }
@@ -846,6 +883,9 @@ where
             worktree,
             budget,
             ledger_error,
+            // A lease loss is observed by the heartbeat in `dispatch_leased`,
+            // which stamps it over this on the way out.
+            lease_loss: None,
         })
     }
 
@@ -1173,6 +1213,8 @@ where
             .commits_for_task(&self.config.run_id, task_id)?)
     }
 }
+
+pub mod notice;
 
 #[cfg(test)]
 mod tests;
