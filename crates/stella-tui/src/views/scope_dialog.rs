@@ -253,7 +253,11 @@ pub(crate) fn render(
             Line::from(Span::styled(
                 match input {
                     None => " one keypress decides · esc aborts ",
-                    Some(ScopeInput::Refine(_)) => " ⏎ send · ⇧⏎ newline · esc back ",
+                    // `⌥⏎` rather than the composer footer's terminal-aware
+                    // `⌘⏎`: it is the chord that reports correctly without the
+                    // kitty protocol, and this dialog does not carry the
+                    // `enter_submits` flag that footer switches on.
+                    Some(ScopeInput::Refine(_)) => " ⏎ send · ⌥⏎ newline · esc back ",
                     Some(ScopeInput::Shell(_)) => " ⏎ run · esc back ",
                 },
                 Style::new().fg(theme::TEXT_TERTIARY),
@@ -335,17 +339,51 @@ mod tests {
     /// `r` swaps the legend for the refine input, which echoes the note.
     #[test]
     fn the_refine_mode_echoes_the_typed_note() {
+        let note = ScopeInput::Refine("only the dialog".into());
         let frame = flat(Rect::new(0, 0, 80, 24), |buf| {
-            render(
-                &proposal(),
-                Some("only the dialog"),
-                Rect::new(0, 0, 80, 24),
-                buf,
-            );
+            render(&proposal(), Some(&note), Rect::new(0, 0, 80, 24), buf);
         });
         assert!(frame.contains("refine ▸ only the dialog"), "{frame}");
         assert!(frame.contains("⏎ send"), "{frame}");
         assert!(!frame.contains("one keypress decides"), "{frame}");
+    }
+
+    /// A multi-line note renders as multiple rows (#1630). The single-line
+    /// input tail-truncated, which is indistinguishable from a note that was
+    /// truncated on the way *in* — the reviewer could not tell whether the
+    /// planner would receive what they wrote.
+    #[test]
+    fn a_multi_line_refine_note_renders_every_line() {
+        let note = ScopeInput::Refine("drop step 2\nand re-scope 3".into());
+        let frame = flat(Rect::new(0, 0, 80, 24), |buf| {
+            render(&proposal(), Some(&note), Rect::new(0, 0, 80, 24), buf);
+        });
+        assert!(frame.contains("refine ▸ drop step 2"), "{frame}");
+        assert!(frame.contains("and re-scope 3"), "{frame}");
+        assert!(frame.contains("⌥⏎ newline"), "{frame}");
+    }
+
+    /// The shell field names itself and offers "run", not "send" — it does not
+    /// answer the gate, and the legend must not imply that it does (#1629).
+    #[test]
+    fn the_shell_field_offers_run_rather_than_send() {
+        let cmd = ScopeInput::Shell("git status".into());
+        let frame = flat(Rect::new(0, 0, 80, 24), |buf| {
+            render(&proposal(), Some(&cmd), Rect::new(0, 0, 80, 24), buf);
+        });
+        assert!(frame.contains("!git status"), "{frame}");
+        assert!(frame.contains("⏎ run"), "{frame}");
+        assert!(!frame.contains("⏎ send"), "{frame}");
+    }
+
+    /// The options row advertises the shell escape — an escape nobody can see
+    /// is an escape nobody uses.
+    #[test]
+    fn the_options_row_advertises_the_shell_escape() {
+        let frame = flat(Rect::new(0, 0, 80, 24), |buf| {
+            render(&proposal(), None, Rect::new(0, 0, 80, 24), buf);
+        });
+        assert!(frame.contains("shell"), "{frame}");
     }
 
     /// A long plan folds its tail and says so rather than overflowing the
