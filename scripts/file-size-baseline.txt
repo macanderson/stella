@@ -26,9 +26,9 @@
 2093 crates/stella-model/src/openai.rs
 1565 crates/stella-model/src/zai.rs
 1895 crates/stella-model/src/zai/tests.rs
-3642 crates/stella-pipeline/src/pipeline.rs
-2568 crates/stella-pipeline/src/pipeline/tests.rs
-2962 crates/stella-protocol/src/event.rs
+3616 crates/stella-pipeline/src/pipeline.rs
+2572 crates/stella-pipeline/src/pipeline/tests.rs
+2963 crates/stella-protocol/src/event.rs
 1995 crates/stella-store/src/lib.rs
 2268 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs

@@ -191,8 +191,14 @@ async fn a_self_graded_verdict_states_the_fact_on_its_snapshot() {
 
     let outcome = outcome.expect("the soft path proceeds and records");
     let verdict = outcome.verdict.expect("the model verdict is the outcome");
-    let snapshot = verdict.ladder.as_deref().expect("the verdict carries its snapshot");
-    assert_eq!(snapshot.rung, Some(stella_protocol::LadderRung::ModelVerdict));
+    let snapshot = verdict
+        .ladder
+        .as_deref()
+        .expect("the verdict carries its snapshot");
+    assert_eq!(
+        snapshot.rung,
+        Some(stella_protocol::LadderRung::ModelVerdict)
+    );
     assert_eq!(
         snapshot.verifier_independent,
         Some(false),
@@ -222,6 +228,9 @@ async fn an_independent_verdict_states_that_too() {
 
     let outcome = outcome.expect("the run proceeds");
     let verdict = outcome.verdict.expect("the model verdict is the outcome");
-    let snapshot = verdict.ladder.as_deref().expect("the verdict carries its snapshot");
+    let snapshot = verdict
+        .ladder
+        .as_deref()
+        .expect("the verdict carries its snapshot");
     assert_eq!(snapshot.verifier_independent, Some(true));
 }
