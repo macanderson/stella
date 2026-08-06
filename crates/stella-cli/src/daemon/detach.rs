@@ -115,8 +115,13 @@ pub(crate) fn posture(
 /// handle closes this process's ends of the two console tails and drops the
 /// `Child`, which on Unix neither signals nor reaps — the child is already a
 /// session leader with its own console files and its own liveness lock, so it
-/// notices nothing. The launcher then returns, and the run is reparented to
-/// init.
+/// notices nothing. The launcher then returns, the process exits, and the run
+/// is reparented to init, which is what will reap it.
+///
+/// That last hop is the reason nothing here waits: a launcher that stayed to
+/// reap would be the attached launcher. It also means the *only* correct way
+/// to ask whether a detached run is alive is the liveness lock rather than its
+/// pid — a pid answers "not yet reaped", which is a different question.
 ///
 /// The announcement is printed on **stderr** for the same reason the attached
 /// banner is: `--output-format json` writes the machine-readable answer to

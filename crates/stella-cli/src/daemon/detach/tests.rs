@@ -47,10 +47,16 @@ fn eventually(budget: Duration, mut predicate: impl FnMut() -> bool) -> bool {
     predicate()
 }
 
-fn alive(pid: i32) -> bool {
-    // SAFETY: signal 0 delivers nothing; it only asks whether the pid exists
-    // and is signallable. It cannot affect the target.
-    unsafe { libc::kill(pid, 0) == 0 }
+/// Whether the run behind `id` is still alive, asked the way the supervisor
+/// itself asks it.
+///
+/// Deliberately not `kill(pid, 0)`. Nothing reaps the child here — production's
+/// launcher exits and init does it, but this test *is* the launcher and stays —
+/// so a finished child lingers as a zombie whose pid still signals. The
+/// liveness lock has no such ambiguity: the kernel releases it when the process
+/// dies, zombie or not, which is exactly why `stop` reads it rather than a pid.
+fn alive(registry: &SessionRegistry, id: &str) -> bool {
+    lock_is_held(&registry.sidecar_dir(id)) == Some(true)
 }
 
 /// The witness for `--detach`: a run handed to the supervisor keeps running
@@ -70,7 +76,7 @@ fn alive(pid: i32) -> bool {
 fn a_detached_run_outlives_its_launcher_and_stays_discoverable_and_stoppable() {
     let (dir, registry) = temp_registry("outlives");
 
-    let (id, pid) = {
+    let id = {
         let run = spawn(
             &registry,
             "/tmp/workspace",
@@ -81,21 +87,15 @@ fn a_detached_run_outlives_its_launcher_and_stays_discoverable_and_stoppable() {
         )
         .expect("supervised spawn");
         let id = run.id.clone();
-        let pid = i32::try_from(run.child.id()).expect("pid fits");
         // The launcher returns here. Everything below runs with no handle.
         release(run).expect("release");
-        (id, pid)
+        id
     };
 
     // It outlived the handle.
     assert!(
-        alive(pid),
+        alive(&registry, &id),
         "the detached run died when its launcher let go of it"
-    );
-    assert_eq!(
-        lock_is_held(&registry.sidecar_dir(&id)),
-        Some(true),
-        "the detached run should still hold its liveness lock"
     );
 
     // It is discoverable — by full id and by the prefix a human would type.
@@ -125,7 +125,7 @@ fn a_detached_run_outlives_its_launcher_and_stays_discoverable_and_stoppable() {
     // And it is stoppable from here, where nothing holds it.
     stop(&registry, &id).expect("stop the detached run");
     assert!(
-        eventually(Duration::from_secs(10), || !alive(pid)),
+        eventually(Duration::from_secs(10), || !alive(&registry, &id)),
         "the detached run survived stop"
     );
     assert_eq!(
