@@ -17,17 +17,17 @@
 │    write_file              on                                                                                                                                │
 │  MCP                       on   1 tools                                                                                                                      │
 │    mcp__github__create_is… on                                                                                                                                │
-│  PROCESS                   on   1 tools  ┌ plan review ───────────────────────────────────────────────────────────┐                                          │
-│    start_process           on            │Refactor the automations store into a shared workspace package          │                                          │
-│                                          │                                                                        │                                          │
-│                                          │ ○  1. extract types                                                    │                                          │
-│                                          │ ○  2. move hooks                                                       │                                          │
-│                                          │ ○  3. update 9 imports                                                 │                                          │
-│                                          │                                                                        │                                          │
-│                                          │3 steps  ·  ~11 files  ·  est. ~$0.42                                   │                                          │
-│                                          │                                                                        │                                          │
-│                                          │a approve    t trim    r refine    x abort                              │                                          │
-│                                          └───────────────────────────────────── one keypress decides · esc aborts ┘                                          │
+│  PROCESS                   on   1 tools                                                                                                                      │
+│    start_process           on                                                                                                                                │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │

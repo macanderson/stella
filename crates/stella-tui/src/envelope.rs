@@ -1011,6 +1011,20 @@ pub struct RoleWiringRow {
     /// `agents.verifier.model`, `pipeline_triage_model`, `default_model`,
     /// `--model (this invocation)`, or `session default`.
     pub source: String,
+    /// What a session started **now** would resolve for this role, when a
+    /// saved settings edit makes that differ from the four cells above —
+    /// `None` when the saved settings agree with what is running, which is the
+    /// ordinary case.
+    ///
+    /// The cells above stay the session-start resolution, because "what is
+    /// running" is the question this dialog exists to answer and showing a
+    /// mid-session edit as though it were in force would misreport exactly
+    /// that. But saying nothing about the edit was its own lie: a user who
+    /// changed `pipeline_verifier_model` and saved saw their old pin with no
+    /// explanation, and read the dialog as having ignored the save (#1521).
+    /// So this is strictly *additional* information, pre-rendered driver-side
+    /// like every other cell, holding only the parts that differ.
+    pub next_session: Option<String>,
 }
 
 /// The full agent-engine configuration snapshot the ENGINE overlay renders

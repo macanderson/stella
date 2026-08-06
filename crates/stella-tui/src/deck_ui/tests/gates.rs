@@ -30,6 +30,20 @@ fn type_str(s: &str, model: &WorkspaceModel, ui: &mut DeckUi) {
     }
 }
 
+/// The dialog's open input as text, whichever field it is.
+fn note_of(ui: &DeckUi) -> Option<&str> {
+    ui.scope_input
+        .as_ref()
+        .map(crate::deck_ui::ScopeInput::text)
+}
+
+/// A modified `⏎` — the chord the composer used to compose a multi-line note.
+/// `ALT` is the one every terminal reports without the kitty protocol, which
+/// is why the dialog's legend advertises `⌥⏎`.
+fn newline_chord() -> KeyEvent {
+    KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
+}
+
 /// The ask: one keypress decides. `a` at the dialog approves the plan —
 /// no typing, no submit chord. (On the typed flow this keystroke merely put
 /// the letter "a" into the composer.)
@@ -81,9 +95,9 @@ fn r_opens_the_refine_input_and_enter_sends_the_note() {
         handle_deck_key(ch('r'), &model, &mut ui),
         DeckAction::Handled
     );
-    assert_eq!(ui.scope_note.as_deref(), Some(""));
+    assert_eq!(note_of(&ui), Some(""));
     type_str("only the dialog", &model, &mut ui);
-    assert_eq!(ui.scope_note.as_deref(), Some("only the dialog"));
+    assert_eq!(note_of(&ui), Some("only the dialog"));
     assert!(
         ui.composer.is_empty(),
         "the note types into the dialog, not the composer"
@@ -97,7 +111,7 @@ fn r_opens_the_refine_input_and_enter_sends_the_note() {
             }),
         })
     );
-    assert_eq!(ui.scope_note, None, "the input closes with the answer");
+    assert_eq!(note_of(&ui), None, "the input closes with the answer");
 }
 
 /// Backspace edits the note; Esc backs out of the input WITHOUT aborting the
@@ -111,12 +125,12 @@ fn esc_leaves_the_refine_input_without_aborting_the_plan() {
     handle_deck_key(ch('r'), &model, &mut ui);
     type_str("onlx", &model, &mut ui);
     handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
-    assert_eq!(ui.scope_note.as_deref(), Some("onl"));
+    assert_eq!(note_of(&ui), Some("onl"));
     assert_eq!(
         handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
         DeckAction::Handled
     );
-    assert_eq!(ui.scope_note, None, "back to the options");
+    assert_eq!(note_of(&ui), None, "back to the options");
     assert!(
         !ui.scope_answered.contains("lead"),
         "backing out of the note is not an abort"
@@ -137,8 +151,103 @@ fn a_blank_refine_note_is_not_an_answer() {
         handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
         DeckAction::Ignored
     );
-    assert!(ui.scope_note.is_some(), "still in the input");
+    assert!(ui.scope_input.is_some(), "still in the input");
     assert!(!ui.scope_answered.contains("lead"));
+}
+
+/// A modified `⏎` composes a multi-line note without answering the gate —
+/// the capability the composer had and the modal dropped (#1630). Long
+/// re-scoping instructions are the whole reason someone refines instead of
+/// approving, and a single-line buffer truncated exactly those.
+#[test]
+fn the_newline_chord_composes_a_multi_line_note_without_answering() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    handle_deck_key(ch('r'), &model, &mut ui);
+    type_str("drop step 2", &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(newline_chord(), &model, &mut ui),
+        DeckAction::Handled,
+        "the chord composes; it must not send"
+    );
+    assert!(
+        !ui.scope_answered.contains("lead"),
+        "a newline is not an answer"
+    );
+    type_str("and re-scope 3", &model, &mut ui);
+    assert_eq!(note_of(&ui), Some("drop step 2\nand re-scope 3"));
+
+    // A bare ⏎ still sends, and sends BOTH lines.
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::ToAgent {
+            agent: "lead".into(),
+            input: UserInput::ScopeDecision(ScopeDecision::Revise {
+                note: "drop step 2\nand re-scope 3".into()
+            }),
+        })
+    );
+}
+
+/// A paste into the refine note keeps its newlines: it is a multi-line
+/// surface now, and flattening a pasted instruction block was the same
+/// truncation by another route (#1630).
+#[test]
+fn a_pasted_block_keeps_its_lines_in_the_refine_note() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    handle_deck_key(ch('r'), &model, &mut ui);
+    ui.paste("first line\nsecond line");
+    assert_eq!(note_of(&ui), Some("first line\nsecond line"));
+}
+
+/// `!` runs a shell line while the plan-review dialog is up, and running it
+/// does NOT answer the gate (#1629). Reading back before deciding is part of
+/// reviewing a plan; the modal's alternative was "abort, look, ask again".
+#[test]
+fn a_shell_line_still_runs_while_a_scope_card_is_pending() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    assert_eq!(
+        handle_deck_key(ch('!'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    type_str("git status", &model, &mut ui);
+    assert!(
+        ui.composer.is_empty(),
+        "the command types into the dialog, not the composer behind it"
+    );
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Shell("git status".into())
+    );
+    assert!(
+        !ui.scope_answered.contains("lead"),
+        "running a command must not count as approving the plan it was run to evaluate"
+    );
+    assert!(
+        ui.scope_input.is_some(),
+        "the dialog stays in the shell field so the decision is made after reading the output"
+    );
+}
+
+/// The shell field is one command: a pasted blob's later lines must not
+/// become extra commands on a single `⏎`.
+#[test]
+fn a_paste_into_the_shell_field_cannot_smuggle_a_second_command() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    handle_deck_key(ch('!'), &model, &mut ui);
+    ui.paste("git status\nrm -rf /");
+    assert_eq!(note_of(&ui), Some("git statusrm -rf /"));
 }
 
 /// Esc at the options aborts — the same meaning it has always had at this
