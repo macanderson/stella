@@ -59,7 +59,11 @@ macro_rules! plan_walk_scenario {
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
         let outcome = pipeline
-            .run("Install and verify nginx end to end", &mut messages, &mut budget)
+            .run(
+                "Install and verify nginx end to end",
+                &mut messages,
+                &mut budget,
+            )
             .await
             .expect("run succeeds");
         (outcome, drain(&mut rx), provider.prompts())

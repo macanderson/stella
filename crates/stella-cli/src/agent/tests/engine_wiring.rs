@@ -59,14 +59,9 @@ fn the_turn_budget_flag_is_also_the_pipelines_run_deadline() {
     // folds settings into a `PipelineConfig`, so this is the one wire.
     let mut cfg = cfg_for("zai");
     cfg.turn_budget = Some(std::time::Duration::from_secs(840));
-    let tuned = crate::agent::apply_pipeline_tuning(
-        &cfg,
-        stella_pipeline::PipelineConfig::default(),
-    );
-    assert_eq!(
-        tuned.run_budget,
-        Some(std::time::Duration::from_secs(840)),
-    );
+    let tuned =
+        crate::agent::apply_pipeline_tuning(&cfg, stella_pipeline::PipelineConfig::default());
+    assert_eq!(tuned.run_budget, Some(std::time::Duration::from_secs(840)),);
 
     // Absent stays absent: an unmeasured clock axis must abstain, never
     // inherit a deadline nobody declared.

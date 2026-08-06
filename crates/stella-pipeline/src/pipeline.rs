@@ -2169,11 +2169,13 @@ impl<'a> Pipeline<'a> {
         } else {
             let n = steps.len();
             for (i, step) in steps.iter().enumerate() {
-                state.messages.push(CompletionMessage::user(plan_steps::step_prompt(
-                    i,
-                    n,
-                    &step.description,
-                )));
+                state
+                    .messages
+                    .push(CompletionMessage::user(plan_steps::step_prompt(
+                        i,
+                        n,
+                        &step.description,
+                    )));
                 match self
                     .run_engine_turn(
                         engine,

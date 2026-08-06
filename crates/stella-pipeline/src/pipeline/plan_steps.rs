@@ -78,7 +78,9 @@ mod tests {
         assert!(!goal_declared_complete(
             "I will reply with PLAN COMPLETE once the config is verified."
         ));
-        assert!(!goal_declared_complete("Step 3 done; the plan is complete."));
+        assert!(!goal_declared_complete(
+            "Step 3 done; the plan is complete."
+        ));
         assert!(!goal_declared_complete(""));
     }
 
