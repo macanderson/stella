@@ -710,7 +710,12 @@ impl Follower {
         })
     }
 
-    /// Relay everything new, in write order, and answer how many bytes moved.
+    /// Relay what is new, in write order, and answer how many bytes moved.
+    ///
+    /// One call is bounded — the raw path moves at most one [`super::Tail`]
+    /// chunk per stream — so a caller that must see everything loops until
+    /// this answers zero, and a live loop treats nonzero as "come straight
+    /// back".
     pub(crate) fn pump(
         &mut self,
         out: &mut impl Write,
@@ -762,11 +767,21 @@ impl Follower {
         Ok(moved)
     }
 
-    // There is deliberately no `skip_to_now` here. `interrupt_and_drain` was
-    // its only caller, and #1632 removed that call as a defect: seeking past
-    // everything already written threw away the run's shutdown output, which
-    // on the Ctrl-C path is precisely what the person who pressed the key is
-    // waiting to read.
+    /// Relay everything currently written, however many pumps that takes.
+    ///
+    /// This is what every *terminal* read must use — the raw-sweep half of
+    /// [`Self::pump`] is bounded by [`super::Tail::pump`]'s chunk, so a single
+    /// pump where the run has just ended can show the first chunk of what is
+    /// left and silently drop the rest. And the rest, at that moment, is the
+    /// run's answer.
+    pub(crate) fn drain(
+        &mut self,
+        out: &mut impl Write,
+        err: &mut impl Write,
+    ) -> Result<(), String> {
+        while self.pump(out, err)? > 0 {}
+        Ok(())
+    }
 
     fn stream_mut(&mut self, stream: Stream) -> &mut FollowedStream {
         match stream {
@@ -972,13 +987,8 @@ pub(crate) fn replay_logs(
     let mut ordered: Vec<(Stream, Vec<u8>)> = Vec::new();
     let mut marked: std::collections::HashMap<Stream, bool> = std::collections::HashMap::new();
     // Bytes written before the pump attached have no records; they are the
-    // front of the head region and replay first, per stream — in a fixed
-    // stream order, because they carry no chronology of their own and a
-    // HashMap walk would order them differently run to run.
-    for stream in [Stream::Stdout, Stream::Stderr] {
-        let Some(&(geometry, _total)) = streams.get(&stream) else {
-            continue;
-        };
+    // front of the head region and replay first, per stream.
+    for (&stream, &(geometry, _total)) in &streams {
         let Some(geometry) = geometry else { continue };
         let pre_pump = geometry.start.min(geometry.head);
         if pre_pump > 0 {
@@ -1022,26 +1032,26 @@ pub(crate) fn replay_logs(
         }
     }
 
-    // `-n`: each stream keeps its newest `lines` lines — computed per stream
-    // up front, then emitted in ONE pass over `ordered`. A stream-major pass
-    // here would regroup the output into the two monolithic blocks this whole
-    // function exists to avoid: the index order IS the chronology, and it
-    // must survive all the way to the sinks.
-    let skip_for = |stream: Stream| {
-        let total_lines: usize = ordered
+    // `-n`: each stream keeps its newest `lines` lines — computed per
+    // stream, but emitted in ONE pass over the index order, because that
+    // order is the point. A per-stream emit loop here would regroup the
+    // replay into the whole-stdout-then-whole-stderr shape the index exists
+    // to end.
+    let newest = |stream: Stream| -> usize {
+        ordered
             .iter()
             .filter(|(s, _)| *s == stream)
             .map(|(_, b)| bytecount_lines(b))
-            .sum();
-        total_lines.saturating_sub(lines)
+            .sum()
     };
-    let mut out_skip = skip_for(Stream::Stdout);
-    let mut err_skip = skip_for(Stream::Stderr);
+    let mut skip_out = newest(Stream::Stdout).saturating_sub(lines);
+    let mut skip_err = newest(Stream::Stderr).saturating_sub(lines);
     for (s, bytes) in &ordered {
-        match s {
-            Stream::Stdout => emit_after_skipping(bytes, &mut out_skip, &mut *out),
-            Stream::Stderr => emit_after_skipping(bytes, &mut err_skip, &mut *err),
-        }
+        let (sink, skip): (&mut dyn Write, &mut usize) = match s {
+            Stream::Stdout => (out, &mut skip_out),
+            Stream::Stderr => (err, &mut skip_err),
+        };
+        emit_after_skipping(bytes, skip, sink);
     }
     let _ = out.flush();
     let _ = err.flush();

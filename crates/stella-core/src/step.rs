@@ -56,6 +56,7 @@ use stella_protocol::{
 use crate::budget::BudgetGuard;
 use crate::driver::{EngineConfig, SPECULATION_DISCARD_ATTEMPT_FAILED, TurnMemos, TurnOutcome};
 use crate::event_sender::EventSender;
+use crate::loop_detect::LoopIdentity;
 use crate::speculation::SpeculationPool;
 
 /// The [`TurnOutcome::Aborted`] reason of a host-requested cancellation.
@@ -279,14 +280,14 @@ pub struct TurnState {
     /// drift correction. `None` until the first result lands — `CalibrationMap
     /// ::factor` then falls back to the session's single seeded entry.
     pub(crate) calibration_model: Option<String>,
-    /// The tool pattern this turn's one stuck-loop steering warning was
-    /// issued about (`driver::loop_escalation`), or `None` while the warning
-    /// is unspent. The next detection after `Some` aborts instead of warning
-    /// again; whether its pattern matches the recorded one is what decides
-    /// if the abort may claim the loop *persisted* (#1524). An empty vector
-    /// means "spent, pattern unknown" — a turn resumed from a checkpoint
-    /// written before the pattern was recorded.
-    pub(crate) loop_steered: Option<Vec<String>>,
+    /// The loop this turn's one stuck-loop steering warning was issued about
+    /// (`driver::loop_escalation`), or `None` while the warning is unspent.
+    /// The next detection after `Some` aborts instead of warning again;
+    /// whether it is the *same* loop is what decides if the abort may claim
+    /// the loop persisted (#1524). A [`LoopIdentity`] rather than a list of
+    /// tool names because `bash` is the tool most loops are made of, so
+    /// names alone made every `bash` loop in a turn read as one.
+    pub(crate) loop_steered: Option<LoopIdentity>,
     /// How many times the transcript has been rewritten in place rather than
     /// appended to. The live invalidation counter lives with the memos it
     /// invalidates (`TurnMemos`) and is an opaque type with no accessor; this
@@ -358,9 +359,10 @@ impl TurnState {
             budget: checkpoint.budget.restore(),
             total_cost_usd: checkpoint.total_cost_usd,
             calibration_model: checkpoint.calibration_model,
-            loop_steered: checkpoint
-                .loop_steered
-                .then_some(checkpoint.loop_steered_pattern),
+            loop_steered: checkpoint.loop_steered.then_some(LoopIdentity {
+                tools: checkpoint.loop_steered_pattern,
+                inputs: checkpoint.loop_steered_inputs,
+            }),
             transcript_rewrites: checkpoint.transcript_rewrites,
             step: checkpoint.step,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
@@ -385,7 +387,12 @@ impl TurnState {
             total_cost_usd: self.total_cost_usd,
             calibration_model: self.calibration_model.clone(),
             loop_steered: self.loop_steered.is_some(),
-            loop_steered_pattern: self.loop_steered.clone().unwrap_or_default(),
+            loop_steered_pattern: self
+                .loop_steered
+                .as_ref()
+                .map(|l| l.tools.clone())
+                .unwrap_or_default(),
+            loop_steered_inputs: self.loop_steered.as_ref().and_then(|l| l.inputs.clone()),
             transcript_rewrites: self.transcript_rewrites,
         }
     }
@@ -603,6 +610,19 @@ pub struct Checkpoint {
     /// claim the warned loop persisted and says so neutrally (#1524).
     #[serde(default)]
     pub loop_steered_pattern: Vec<String>,
+    /// The arguments that warning's loop repeated, one JSON string per entry
+    /// of [`Self::loop_steered_pattern`] — the other half of the warned
+    /// [`LoopIdentity`], without which two `bash` loops in one turn are
+    /// indistinguishable and the abort claims a loop the model broke had
+    /// persisted.
+    ///
+    /// `None` is "not recorded", NOT "no arguments": a checkpoint written
+    /// before this field carries the tools alone, and a resumed abort makes
+    /// no claim either way rather than falling back to comparing tool names,
+    /// which is the inference that was wrong. `Some([])` is a real identity
+    /// — a stagnation loop, whose arguments vary by definition.
+    #[serde(default)]
+    pub loop_steered_inputs: Option<Vec<String>>,
     /// How many in-place transcript rewrites this turn has performed.
     /// Informational on resume — the live revision counter restarts at zero
     /// because every memo keyed by it is rebuilt too (see
@@ -1058,7 +1078,10 @@ mod tests {
         let mut state = state;
         state.total_cost_usd = 0.375;
         state.calibration_model = Some("glm-5.2".into());
-        state.loop_steered = Some(vec!["bash".into()]);
+        state.loop_steered = Some(LoopIdentity {
+            tools: vec!["bash".into()],
+            inputs: Some(vec![r#"{"command":"cargo test"}"#.into()]),
+        });
         state.step = 3;
         state.mark_transcript_rewritten();
         state.mark_transcript_rewritten();
@@ -1092,10 +1115,14 @@ mod tests {
         assert!((state.total_cost_usd() - checkpoint.total_cost_usd).abs() < 1e-12);
         assert_eq!(state.calibration_model.as_deref(), Some("glm-5.2"));
         assert_eq!(
-            state.loop_steered.as_deref(),
-            Some(["bash".to_string()].as_slice()),
-            "the spent loop steer must not be re-earned, and the warned \
-             pattern must survive the resume"
+            state.loop_steered,
+            Some(LoopIdentity {
+                tools: vec!["bash".to_string()],
+                inputs: Some(vec![r#"{"command":"cargo test"}"#.to_string()]),
+            }),
+            "the spent loop steer must not be re-earned, and the warned loop \
+             must survive the resume WITH its arguments — tools alone cannot \
+             tell one `bash` loop from another"
         );
         assert_eq!(state.transcript_rewrites, checkpoint.transcript_rewrites);
         // And re-snapshotting the restored turn reproduces the checkpoint, so

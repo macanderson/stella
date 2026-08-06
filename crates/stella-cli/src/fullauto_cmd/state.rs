@@ -337,10 +337,10 @@ impl LoopState {
             if let Some(c) = cycle {
                 doc.insert("cycle".into(), c.into());
             }
-            if let Some(t) = tier {
-                if !t.is_empty() {
-                    doc.insert("tier".into(), t.into());
-                }
+            if let Some(t) = tier
+                && !t.is_empty()
+            {
+                doc.insert("tier".into(), t.into());
             }
             doc.entry("started_at".to_string())
                 .or_insert_with(|| Value::String(now.clone()));
@@ -429,10 +429,12 @@ impl LoopState {
 /// overwrite: if both exist the new home wins and the legacy directory is
 /// left untouched for the user to inspect.
 fn migrate_legacy_state(new_dir: &Path, slug: &str) {
-    // Through `crate::paths`, never `var_os("HOME")` — that indirection is
-    // what lets a test redirect the anchor without mutating process-global
-    // state (#1139), and `nothing_else_in_this_crate_reads_a_home_out_of_the_environment`
-    // enforces it.
+    // Through `crate::paths`, never straight out of the process environment —
+    // that indirection is what lets a test redirect the anchor without mutating
+    // process-global state (#1139), and
+    // `nothing_else_in_this_crate_reads_a_home_out_of_the_environment` enforces
+    // it. That guard matches raw source text, so naming the forbidden call here
+    // would trip it on the very comment describing the rule.
     let Some(home) = crate::paths::home() else {
         return;
     };

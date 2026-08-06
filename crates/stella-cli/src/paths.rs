@@ -408,9 +408,21 @@ mod tests {
         // `var("HOME")`, and it is a WRITE — a different question, guarded
         // elsewhere. Requiring a non-`_` before the match separates the two
         // without pinning the exact `std::env::` spelling a caller used.
+        // Comment lines are prose, not reads. A file that routes through
+        // `crate::paths` and says so — "never `var_os("HOME")`, because …" —
+        // was being reported as an offender for carrying the explanation of
+        // the very rule it obeys, which teaches the next author to delete the
+        // comment rather than keep the discipline. Only whole-line comments
+        // are skipped, so a read with a trailing comment
+        // (`let h = var_os("HOME"); // …`) is still matched: the line does not
+        // start with `//`.
         let reads = |body: &str, pattern: &str| {
-            body.match_indices(pattern)
-                .any(|(at, _)| at == 0 || !body[..at].ends_with('_'))
+            body.lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .any(|line| {
+                    line.match_indices(pattern)
+                        .any(|(at, _)| at == 0 || !line[..at].ends_with('_'))
+                })
         };
 
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
