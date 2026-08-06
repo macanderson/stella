@@ -768,6 +768,13 @@ impl ToolExecutor for CustomToolSet<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.get().drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded: letting the empty default stand would silently serialize the
+    /// inner executor's sibling spawns (see the port's contract). Custom
+    /// script tools spawn workspace subprocesses and make no such claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.get().parallel_safe_names()
+    }
 }
 
 #[cfg(test)]
