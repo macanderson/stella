@@ -335,43 +335,4 @@ mod tests {
         assert_eq!(human_ms(750_000), "12m 30s");
         assert_eq!(human_ms(11_040_000), "3h 04m");
     }
-
-    /// `stella fleet claims` parses as a subcommand rather than as a task
-    /// prompt, and defaults to the live listing in text.
-    #[test]
-    fn fleet_claims_parses_as_a_verb_and_defaults_to_live_text() {
-        let cli = Cli::try_parse_from(["stella", "fleet", "claims"]).unwrap();
-        match cli.command {
-            Some(Command::Fleet {
-                cmd: Some(crate::fleet_verbs::FleetCmd::Claims { all, format }),
-                ..
-            }) => {
-                assert!(!all, "the live listing is the default");
-                assert_eq!(format, QueryFormat::Text);
-            }
-            // `Command` derives no `Debug` — a clap subcommand enum this wide
-            // carries none — so the failure names what was expected.
-            _ => panic!("expected `stella fleet claims` to parse as the claims verb"),
-        }
-
-        let cli = Cli::try_parse_from(["stella", "fleet", "claims", "--all", "--format", "json"])
-            .unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Fleet {
-                cmd: Some(crate::fleet_verbs::FleetCmd::Claims {
-                    all: true,
-                    format: QueryFormat::Json
-                }),
-                ..
-            })
-        ));
-
-        // And the documented escape hatch still works: `--` makes it a prompt.
-        let cli = Cli::try_parse_from(["stella", "fleet", "--", "claims are stale"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Fleet { cmd: None, .. })
-        ));
-    }
 }

@@ -262,30 +262,50 @@ fn a_session_without_an_index_falls_back_to_raw_tails() {
     assert_eq!(String::from_utf8_lossy(&out), "legacy\n");
 }
 
-/// The #1616 witness for the new half of the drain path: whichever of the
-/// panic hook and the normal end-of-`main` cleanup reaches a shared guard
-/// first performs the one real drain, and — the specific hazard a panicking
-/// pump thread would create — a pump thread must never try to join itself.
-/// A guard over no streams needs no real fds (this module's own doc comment:
-/// hijacking the test runner's stdout to exercise the fd plumbing would be
-/// the tail wagging the dog), so this is fd-free logic, not glue. On `main`,
-/// `drain_shared` does not exist at all.
+/// The #1616 witness: a panic ends the pump instead of leaving it to die
+/// unjoined with the process.
+///
+/// What the drain does is restore the fd — which closes the pipe's last write
+/// end, so the pump reads EOF, writes everything it holds, and records its
+/// `Closed` marker. That marker is the assertion, because it is the one thing
+/// that cannot happen by luck: a pump that was never drained is still blocked
+/// on its pipe when the process exits, and up to a buffer of output (the panic
+/// message, in a real supervised child) dies with it. Asserting instead that
+/// the bytes reached the file would pass with the hook disarmed — a live pump
+/// in a process that keeps running flushes them on its own schedule.
+///
+/// The pump is interposed on a private descriptor rather than on fd 1, so the
+/// test runner's own stdout is never hijacked; everything downstream of the
+/// `dup2` is the production path.
+#[cfg(unix)]
 #[test]
-fn drain_shared_skips_a_pump_thread_draining_itself_but_runs_from_anywhere_else() {
-    let cell = Arc::new(Mutex::new(Some(ConsoleGuard {
-        pumps: Arc::new(Drainable {
-            streams: Mutex::new(Vec::new()),
-        }),
-    })));
+fn a_panic_drains_the_console_pump() {
+    use std::os::unix::io::IntoRawFd;
 
-    // Called as if FROM a pump thread: a no-op, or a real pump trying to
-    // join itself on its own panic would deadlock the whole process.
-    let from_pump = {
-        let cell = cell.clone();
-        std::thread::Builder::new()
-            .name(format!("{PUMP_THREAD_PREFIX}1"))
-            .spawn(move || ConsoleGuard::drain_shared(&cell))
-            .unwrap()
+    let dir = tempfile::tempdir().unwrap();
+    let sidecar = dir.path();
+    let console = sidecar.join(supervised::STDOUT_LOG);
+    // A descriptor naming the console file — what the OS redirect hands a
+    // supervised child, and what `pump_fd` expects to interpose on.
+    let target_fd = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&console)
+        .unwrap()
+        .into_raw_fd();
+    let stream = pump_fd(
+        console.clone(),
+        target_fd,
+        Stream::Stdout,
+        Arc::new(Mutex::new(Index::open(sidecar))),
+        Arc::new(SharedGeometry::default()),
+    )
+    .unwrap();
+    let guard = ConsoleGuard {
+        pumps: Arc::new(Drainable {
+            streams: Mutex::new(vec![stream]),
+        }),
     };
 
     arm_panic_drain(&guard);
