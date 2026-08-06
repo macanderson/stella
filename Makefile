@@ -300,6 +300,10 @@ self-driving-test: ## Test the self-driving control logic — digest, AIMD, aper
 smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic broken artifacts (hermetic; not part of `gate`)
 	./scripts/test-smoke-artifact.sh
 
+.PHONY: automerge-nudge-test
+automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not part of `gate`)
+	./scripts/test-automerge-nudge.sh
+
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)
 	git config core.hooksPath .githooks
