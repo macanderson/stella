@@ -99,6 +99,9 @@ contributing_alias() {
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;
   test) echo 'cargo test' ;;
+  # The one guard whose script is not check-*.sh: it is a test harness, not a
+  # tree guard, so it is named for what it tests.
+  self-driving-test) echo 'test-self-driving.sh' ;;
   *) echo "check-$1.sh" ;;
   esac
 }
