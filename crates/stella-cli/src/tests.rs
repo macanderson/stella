@@ -13,7 +13,9 @@ use super::build_info::{
 use super::term_policy::{
     PlainReason, accessible_env, animation_disabled, deck_decision, dumb_terminal,
 };
-use super::{AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json};
+use super::{
+    AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json, fleet_gc,
+};
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
 /// report otherwise costs a round trip. Both must agree about the version
@@ -412,6 +414,38 @@ fn session_flags_parse_after_subcommand() {
         }) => {
             assert_eq!(tasks, vec!["fix the flaky auth test".to_string()]);
             assert_eq!(max_concurrency, 2);
+        }
+        _ => panic!("expected the fleet subcommand"),
+    }
+}
+
+/// `stella fleet clean` is a maintenance verb on `fleet`, not a prompt, and
+/// it parses with no tasks despite `tasks` being otherwise required (#1217).
+/// The escape hatch matters as much: a prompt that genuinely begins with the
+/// word `clean` is still reachable after `--`.
+#[test]
+fn fleet_clean_parses_as_a_subcommand_and_a_prompt_survives_after_dashdash() {
+    let cli = Cli::try_parse_from(["stella", "fleet", "clean", "--dry-run", "--age", "14"])
+        .expect("`fleet clean` must parse with no task prompts");
+    match cli.command {
+        Some(Command::Fleet {
+            cmd: Some(fleet_gc::FleetCmd::Clean { dry_run, age, .. }),
+            tasks,
+            ..
+        }) => {
+            assert!(dry_run);
+            assert_eq!(age, Some(14));
+            assert!(tasks.is_empty());
+        }
+        _ => panic!("expected `fleet clean`"),
+    }
+
+    let cli = Cli::try_parse_from(["stella", "fleet", "--", "clean up the dead code"])
+        .expect("a prompt after `--` must stay a prompt");
+    match cli.command {
+        Some(Command::Fleet { cmd, tasks, .. }) => {
+            assert!(cmd.is_none(), "`--` must not select a subcommand");
+            assert_eq!(tasks, vec!["clean up the dead code".to_string()]);
         }
         _ => panic!("expected the fleet subcommand"),
     }

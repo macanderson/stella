@@ -37,6 +37,7 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::gc::WorktreeActivity;
 use crate::plan::{Isolation, Task, TaskId};
 
 /// A commit recorded in the ledger — also the shape a [`FleetWorker`] reports
@@ -404,6 +405,34 @@ impl Ledger {
             )
             .optional()?;
         Ok(matches!(finished, Some(Some(_))))
+    }
+
+    /// One row per worktree path this ledger has ever dispatched into: how
+    /// many of its attempts are still unfinished, and when its last attempt
+    /// finished — the ledger half of the GC decision (issue #1217).
+    ///
+    /// The unfinished count is what makes a sweep safe: an attempt row is
+    /// opened *before* its worker runs, so a worktree with an unfinished
+    /// attempt may still be in use and [`crate::gc::Gc`] keeps it
+    /// unconditionally. `NULL` finish times are excluded from the `MAX`, so an
+    /// in-flight attempt never dates a worktree.
+    pub fn worktree_activity(&self) -> Result<Vec<WorktreeActivity>, LedgerError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT worktree_path,
+                    SUM(CASE WHEN finished_at_ms IS NULL THEN 1 ELSE 0 END),
+                    MAX(finished_at_ms)
+             FROM attempts
+             GROUP BY worktree_path",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(WorktreeActivity {
+                worktree_path: row.get(0)?,
+                unfinished_attempts: row.get::<_, i64>(1)?.max(0) as u32,
+                last_finished_ms: row.get::<_, Option<i64>>(2)?.map(|ms| ms as u64),
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(LedgerError::from)
     }
 
     /// When a task last finished an attempt, across **every** run in this
@@ -839,6 +868,65 @@ mod tests {
         assert_eq!(ledger.total_spend("run").unwrap(), 0.0);
         assert!(ledger.commits_for_task("run", "t1").unwrap().is_empty());
         assert!(ledger.lineage_children("run").unwrap().is_empty());
+    }
+
+    /// The GC's ledger half (#1217): a worktree whose attempt never finished
+    /// must report as in flight, and a finished one must carry the finish
+    /// time the `--age` arithmetic reads.
+    #[test]
+    fn worktree_activity_separates_in_flight_from_finished() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        seed_run(&ledger, "run1");
+        let live = ledger
+            .start_attempt(&AttemptStart {
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                worktree_path: "/wt/live".into(),
+                branch: "fleet/live".into(),
+                started_at_ms: 10,
+            })
+            .unwrap();
+        let done = ledger
+            .start_attempt(&AttemptStart {
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                worktree_path: "/wt/done".into(),
+                branch: "fleet/done".into(),
+                started_at_ms: 11,
+            })
+            .unwrap();
+        ledger
+            .finish_attempt(&AttemptFinish {
+                attempt_id: done,
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                finished_at_ms: 42,
+                success: true,
+                summary: "done".into(),
+                commits: vec![],
+                cost_usd: 0.0,
+                spend_at_ms: 42,
+            })
+            .unwrap();
+        assert!(!ledger.attempt_is_finished(live).unwrap());
+
+        let mut activity = ledger.worktree_activity().unwrap();
+        activity.sort_by(|a, b| a.worktree_path.cmp(&b.worktree_path));
+        assert_eq!(
+            activity,
+            vec![
+                WorktreeActivity {
+                    worktree_path: "/wt/done".into(),
+                    unfinished_attempts: 0,
+                    last_finished_ms: Some(42),
+                },
+                WorktreeActivity {
+                    worktree_path: "/wt/live".into(),
+                    unfinished_attempts: 1,
+                    last_finished_ms: None,
+                },
+            ]
+        );
     }
 
     #[test]

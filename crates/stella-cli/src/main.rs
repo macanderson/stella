@@ -60,6 +60,7 @@ mod extensions;
 mod failure;
 mod fleet_cmd;
 mod fleet_commits;
+mod fleet_gc;
 mod fleet_spend;
 mod fleet_warmth;
 mod fullauto_cmd;
@@ -1064,6 +1065,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             )?;
         }
         Command::Fleet {
+            cmd: Some(sub),
+            ..
+        } => {
+            // Maintenance verbs never fan out, never supervise, and never
+            // touch a provider — dispatch before any of the run machinery.
+            signals::block_on_interruptible(rt()?, fleet_gc::run(&cfg, &sub))?;
+        }
+        Command::Fleet {
+            cmd: None,
             tasks,
             plan,
             max_concurrency,

@@ -15,9 +15,9 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fullauto_cmd,
-    ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats, storage_cmd,
-    tune_cmd, usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fleet_gc,
+    fullauto_cmd, ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats,
+    storage_cmd, tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -620,8 +620,17 @@ pub(crate) enum Command {
     /// rivals named), wave-scheduled by dependency, every attempt, commit,
     /// and dollar recorded in .stella/private/fleet.db. Tasks opting into
     /// isolation = "isolated" get a dedicated worktree whose `fleet/<task>`
-    /// branch is left in place for review.
+    /// branch is left in place for review — until `stella fleet clean`
+    /// reclaims the finished ones.
+    ///
+    /// A prompt whose first word is exactly a subcommand name (`clean`) is
+    /// read as that subcommand; pass the prompts after `--` when that bites.
+    #[command(subcommand_negates_reqs = true)]
     Fleet {
+        /// Maintenance verbs (`clean`) — omit to run a fan-out
+        #[command(subcommand)]
+        cmd: Option<fleet_gc::FleetCmd>,
+
         /// Task prompts — each becomes an independent task in the SHARED
         /// tree (cooperative claims coordinate writers; pass a plan file
         /// with `isolation = "isolated"` for per-task worktrees)
