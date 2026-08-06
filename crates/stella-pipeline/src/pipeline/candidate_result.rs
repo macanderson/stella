@@ -144,3 +144,60 @@ impl CandidateResult {
         }
     }
 }
+
+/// The abort reason for a candidate that wrote through its isolation
+/// (#1538): the post-seal check found the real tree already holding this
+/// candidate's own sealed bytes. Named as the candidate's defect — never a
+/// user edit, never an adoption conflict — because that misattribution is
+/// exactly what the check exists to remove.
+pub(super) fn escape_abort_reason(paths: &[String]) -> String {
+    // Same inline cap as adoption's conflict rendering: a candidate that
+    // escaped on a hundred paths must not paste a hundred paths into one
+    // error line.
+    const INLINE: usize = 4;
+    let shown = paths
+        .iter()
+        .take(INLINE)
+        .map(|path| format!("`{path}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let listed = match paths.len().checked_sub(INLINE) {
+        Some(rest) if rest > 0 => format!("{shown} (+{rest} more)"),
+        _ => shown,
+    };
+    format!(
+        "candidate wrote outside its isolated workspace: the real tree already holds its \
+         sealed bytes at {listed} — isolation was breached by the candidate, so its work is \
+         discarded rather than adopted"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_abort_reason;
+
+    #[test]
+    fn the_escape_reason_names_the_candidate_and_the_paths() {
+        let reason = escape_abort_reason(&["app/vm.js".to_string()]);
+        assert!(
+            reason.contains("wrote outside its isolated workspace"),
+            "{reason}"
+        );
+        assert!(reason.contains("`app/vm.js`"), "{reason}");
+        assert!(
+            !reason.contains("user"),
+            "the escape must never read as a user edit: {reason}"
+        );
+    }
+
+    #[test]
+    fn many_escaped_paths_are_summarized_not_pasted() {
+        let paths: Vec<String> = (0..9).map(|i| format!("f{i}.rs")).collect();
+        let reason = escape_abort_reason(&paths);
+        assert!(
+            reason.contains("`f3.rs`") && !reason.contains("`f4.rs`"),
+            "{reason}"
+        );
+        assert!(reason.contains("+5 more"), "{reason}");
+    }
+}

@@ -15,7 +15,7 @@
 //!   `NO_COLOR` → no animation, no cursor control; log lines print plainly,
 //!   exactly as before.
 //!
-//! Colors come from the brand palette (stella-tui/src/palette.rs) and are
+//! Colors come from the brand palette (crates/stella-tui/src/palette.rs) and are
 //! enforced by this module's tests: the two star/flame inks are the `SKY_DEEP`
 //! and `SKY` brand tokens, and the shell takes the deck's categorical violet.
 //! This module used to carry a private palette of its own that tracked nothing;

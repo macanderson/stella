@@ -7,7 +7,7 @@
 //!
 //! # Why events rather than mutation
 //!
-//! The DB proposal loop (`stella-cli/src/proposals_cmd.rs`) already records every
+//! The DB proposal loop (`crates/stella-cli/src/proposals_cmd.rs`) already records every
 //! decision as an immutable event so that replay reproduces state exactly, and the
 //! file-based surface mirrors it deliberately. Mutating a proposal in place would
 //! destroy the one thing review is *for*: a decline is evidence. Overwriting a
