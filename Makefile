@@ -32,7 +32,7 @@ CARGO_SCOPE ?= --workspace
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
-                    role-names stat-portability
+                    role-names stat-portability module-reachability
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The whole gate, in order, as one name. `gate` below is defined *from* this
@@ -280,6 +280,14 @@ role-names: ## Assert the agent-config role names match across Rust, Python and 
 .PHONY: stat-portability
 stat-portability: ## Assert file identity is read through MetadataExt, not a raw libc::stat (#1758)
 	@./scripts/check-stat-portability.sh
+
+.PHONY: module-reachability
+module-reachability: ## Assert every .rs under a crate's src/ is reachable from its crate root (#1750)
+	@python3 ./scripts/check-module-reachability.py
+
+.PHONY: module-reachability-test
+module-reachability-test: ## Test the module-reachability walker (hermetic; not part of `gate`)
+	./scripts/test-module-reachability.sh
 
 .PHONY: god-files
 god-files: ## Assert AGENTS.md and the crate READMEs name the baselined god files (#1435)

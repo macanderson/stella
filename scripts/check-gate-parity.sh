@@ -94,7 +94,9 @@ fi
 contributing_alias() {
   case "$1" in
   shellcheck) echo 'shellcheck ' ;;
+  # Two Python guards, so the `.sh` default below does not fit them.
   doc-links) echo 'check-doc-links' ;;
+  module-reachability) echo 'check-module-reachability' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;

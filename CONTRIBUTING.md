@@ -85,6 +85,7 @@ python3 ./scripts/check-doc-links.py check
 ./scripts/check-left-behind.sh
 ./scripts/check-role-names.sh
 ./scripts/check-stat-portability.sh
+python3 ./scripts/check-module-reachability.py
 ./scripts/check-wire-schema.sh
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo fmt --check
@@ -92,7 +93,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Or just `make gate`, which is the twenty-three of them in order.
+Or just `make gate`, which is the twenty-four of them in order.
 
 Do not maintain that list by hand. It is `GATE_STEPS` in the `Makefile`, and
 `./scripts/check-gate-parity.sh` — itself one of the steps — fails if this fence
