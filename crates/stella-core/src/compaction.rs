@@ -11,10 +11,11 @@
 //!    input per step than a comparator that holds its standing context flat).
 //!    An old tool output has usually been consumed within a few steps; past
 //!    the horizon its head and tail carry the framing and the errors, and the
-//!    stub says how to get the rest back. Aging fires in batches of at least
-//!    `RETENTION_MIN_BATCH` results so the prompt-cache prefix is mutated
-//!    once per several steps, not once per step (the same discipline as the
-//!    budget hysteresis below — invariant 7, #372).
+//!    stub says how to get the rest back. Aging fires only once at least
+//!    `RETENTION_MIN_RECLAIM_CHARS` are reclaimable, so the prompt-cache
+//!    prefix is mutated only when the rewrite buys real bytes, not once per
+//!    step (the same discipline as the budget hysteresis below — invariant
+//!    7, #372).
 //!
 //! The budget passes:
 //!
@@ -206,22 +207,31 @@ pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
     })
 }
 
-/// How many ageable results must accumulate past the horizon before the
-/// retention pass rewrites any of them.
+/// How many reclaimable bytes must accumulate past the horizon before the
+/// retention pass rewrites anything.
 ///
-/// Aging one result the moment it crosses the horizon would mutate the prompt
-/// prefix at the horizon depth on EVERY large-output step — the per-step
-/// cache-invalidating rewrite the budget passes' hysteresis exists to
-/// prevent, reintroduced at a different trigger. Batching amortizes it: the
-/// prefix ahead of the oldest aged result keeps hitting, and between batches
-/// the whole prefix is byte-stable.
-const RETENTION_MIN_BATCH: usize = 4;
+/// Every firing is a prompt-cache trade: it mutates the prefix at horizon
+/// depth, so everything behind that point re-writes at the cache-write rate
+/// on the next call. The original gate counted *results* (four ageable ones),
+/// which measured the wrong side of the trade both ways — four
+/// barely-over-threshold results fired a prefix rewrite to reclaim under
+/// 2 KB, while three 100 KB outputs could never fire at all and were re-sent
+/// verbatim on every remaining call of the turn. The gate now measures what
+/// the rewrite actually buys: the bytes the batch would remove. 20 KB is a
+/// few thousand tokens — enough that one firing pays for the suffix
+/// re-write it forces, and between firings the whole prefix is byte-stable
+/// (the same discipline as the budget hysteresis — invariant 7).
+const RETENTION_MIN_RECLAIM_CHARS: usize = 20_000;
+
+/// The bytes one aged payload retains: both kept ends plus the elision
+/// marker. What aging reclaims from a payload is its length minus this.
+const AGE_RETAINED_CHARS: usize = 2 * AGE_KEEP_CHARS + AGE_ELISION_MARKER.len();
 
 /// Age-based tool-result retention (pass 0, #1285): how many of the most
 /// recent tool-bearing steps keep their results verbatim.
 ///
 /// Results in older Tool messages are middle-out aged (`age_content`) once
-/// at least `RETENTION_MIN_BATCH` of them are large enough to be worth it —
+/// at least `RETENTION_MIN_RECLAIM_CHARS` of them are reclaimable —
 /// independent of the conversation's total size, which is what distinguishes
 /// this from the budget passes: they fire near the context ceiling, this
 /// shapes the standing context from the middle of a long turn.
@@ -234,7 +244,7 @@ pub struct RetentionPolicy {
 }
 
 /// Pass 0: age every large tool result older than the policy's horizon,
-/// batched per [`RETENTION_MIN_BATCH`]. Returns `(aged, aged_blocks,
+/// gated on [`RETENTION_MIN_RECLAIM_CHARS`]. Returns `(aged, aged_blocks,
 /// tokens_saved)`; block ids are captured before mutation so the report cites
 /// the identity the previous step's manifest recorded (§6.2). Token savings
 /// are measured per mutated message ([`estimate_message_tokens`] diffs),
@@ -260,23 +270,27 @@ fn age_stale_tool_results(
         return (0, Vec::new(), 0);
     }
     let stale = &tool_positions[..tool_positions.len() - keep];
-    let candidates: usize = stale
+    let reclaimable: usize = stale
         .iter()
         .map(|&idx| {
             messages[idx]
                 .tool_results
                 .iter()
-                .filter(|result| {
+                .map(|result| {
                     let payload = match &result.output {
                         ToolOutput::Ok { content } => content,
                         ToolOutput::Error { message } => message,
                     };
-                    payload.len() > AGE_THRESHOLD_CHARS
+                    if payload.len() > AGE_THRESHOLD_CHARS {
+                        payload.len().saturating_sub(AGE_RETAINED_CHARS)
+                    } else {
+                        0
+                    }
                 })
-                .count()
+                .sum::<usize>()
         })
         .sum();
-    if candidates < RETENTION_MIN_BATCH {
+    if reclaimable < RETENTION_MIN_RECLAIM_CHARS {
         return (0, Vec::new(), 0);
     }
     let mut aged = 0usize;
@@ -837,7 +851,7 @@ mod tests {
     #[test]
     fn retention_reports_the_block_identity_the_manifest_cited() {
         // §6.2 for pass 0: the aged block is named by its PRE-mutation id.
-        let mut messages = long_turn(6, 5_000);
+        let mut messages = long_turn(6, 6_000);
         let expected = tool_result_block_id(&messages[3].tool_results[0].output);
         let (_, report) = compact_measured(
             &mut messages,
@@ -858,9 +872,10 @@ mod tests {
     fn retention_waits_for_a_batch_before_touching_the_prefix() {
         // Cache-prefix discipline (invariant 7): aging one result the moment
         // it crosses the horizon would rewrite the prefix on every step.
-        // Below RETENTION_MIN_BATCH candidates, nothing moves.
-        let mut messages = long_turn(RETENTION_MIN_BATCH + 1, 5_000);
-        // Horizon leaves batch-1 stale results: one below the batch floor.
+        // Below RETENTION_MIN_RECLAIM_CHARS of reclaimable bytes, nothing
+        // moves.
+        let mut messages = long_turn(5, 5_000);
+        // Horizon leaves 3 stale results reclaiming ~10 KB: below the floor.
         let (_, report) = compact_measured(
             &mut messages,
             u64::MAX,
@@ -870,7 +885,46 @@ mod tests {
         );
         assert!(
             report.is_none(),
-            "below the batch floor the transcript must stay byte-stable: {report:?}"
+            "below the reclaim floor the transcript must stay byte-stable: {report:?}"
+        );
+    }
+
+    #[test]
+    fn retention_fires_on_reclaimable_bytes_before_any_count_floor() {
+        // The gate measures bytes, not results: two 100 KB outputs past the
+        // horizon are ~2.1M re-sent input tokens over a 25-step turn if the
+        // pass waits for more of them, so they must age as soon as the
+        // reclaim pays for the prefix rewrite — a count gate (the original
+        // four-result floor) held them verbatim for the rest of the turn.
+        let mut messages = long_turn(4, 100_000);
+        let (_, report) = compact_measured(
+            &mut messages,
+            u64::MAX,
+            Some(RetentionPolicy {
+                keep_recent_steps: 2,
+            }),
+        );
+        let report = report.expect("two 100 KB stale results must age");
+        assert_eq!(report.aged, 2, "{report:?}");
+    }
+
+    #[test]
+    fn retention_skips_a_trickle_of_barely_ageable_results() {
+        // The mirror image: many results only just over AGE_THRESHOLD_CHARS
+        // reclaim almost nothing — the original count gate fired a
+        // cache-invalidating prefix rewrite for under 4 KB back. The bytes
+        // gate must leave the transcript byte-stable instead.
+        let mut messages = long_turn(12, 2_100);
+        let (_, report) = compact_measured(
+            &mut messages,
+            u64::MAX,
+            Some(RetentionPolicy {
+                keep_recent_steps: 4,
+            }),
+        );
+        assert!(
+            report.is_none(),
+            "a reclaim under the floor must not buy a prefix rewrite: {report:?}"
         );
     }
 
