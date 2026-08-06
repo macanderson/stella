@@ -560,6 +560,16 @@ impl ToolExecutor for McpToolSet {
             .as_ref()
             .map_or(0.0, |native| native.drain_sub_agent_spend_usd())
     }
+
+    /// Forwarded from the native layer: letting the empty default stand would
+    /// silently serialize its sibling spawns (see the port's contract).
+    /// External MCP tools never carry this claim — the port pins their
+    /// concurrency to `read_only`, which they are advertised without.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.native
+            .as_ref()
+            .map_or_else(Default::default, |native| native.parallel_safe_names())
+    }
 }
 
 /// A Best-of-N candidate's tool surface (issue #248 Phase 1): built by
@@ -612,6 +622,13 @@ impl ToolExecutor for CandidateMcpView {
     /// budget (see the port's contract).
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
+    }
+
+    /// Forwarded from the candidate's own `native` layer — the executor every
+    /// non-`mcp__` name routes to in `execute` above. `inner`'s set would name
+    /// tools this view never runs, and MCP tools never carry the claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.native.parallel_safe_names()
     }
 }
 
@@ -667,6 +684,34 @@ mod tests {
                 content: format!("native ran {name}"),
             }
         }
+        fn parallel_safe_names(&self) -> HashSet<String> {
+            HashSet::from(["task".to_string()])
+        }
+    }
+
+    /// Both wrappers forward the native layer's concurrency claim — the empty
+    /// default would silently serialize sibling spawns in any MCP-connected
+    /// session (and in every Best-of-N candidate).
+    #[tokio::test]
+    async fn parallel_safe_names_forward_from_the_native_layer() {
+        let client = connected_client("files", "read").await;
+        let set = Arc::new(McpToolSet::from_clients(vec![client]).wrapping(Arc::new(FakeNative)));
+        assert!(
+            set.parallel_safe_names().contains("task"),
+            "the native layer's claim must survive the MCP set"
+        );
+
+        let view = set.for_candidates(Arc::new(FakeNative));
+        assert!(
+            view.parallel_safe_names().contains("task"),
+            "and the candidate view forwards its own native layer's claim"
+        );
+
+        let bare = McpToolSet::from_clients(Vec::new());
+        assert!(
+            bare.parallel_safe_names().is_empty(),
+            "no native layer, no claims"
+        );
     }
 
     /// A transport that never answers `tools/call` — used to prove the
