@@ -186,6 +186,11 @@ impl ApprovalGate for SidecarApprovalGate {
                 // land as a clean cancel instead of an escalated kill.
                 break ScopeDecision::Abort;
             }
+            // The deadline is enforced in one place — [`Self::next_poll`],
+            // below — rather than also at the top of the loop. Two checks
+            // would be two timeouts with two messages, and the one that
+            // clips the nap is the one that honours a sub-poll deadline to
+            // itself instead of to the next 250ms tick.
             match std::fs::read_to_string(self.sidecar.join(supervised::APPROVAL_ANSWER)) {
                 Ok(json) => {
                     // Unparseable is abort, not retry: the writer publishes
@@ -240,7 +245,8 @@ impl OneShotApprovalGate {
     /// computed from the same predicate, so that arm is a defensive
     /// impossibility, and failing closed is what a missing approver means.
     ///
-    /// `wait` is [`park_deadline`]'s reading of
+    /// `wait` is [`crate::settings::AgentEngineConfig::approval_wait`]'s
+    /// reading of
     /// `agent_engine_config.approval_wait_secs` (#1616), consulted only by
     /// the sidecar gate — the other two have a live reader on the other end,
     /// so a timer there would answer a question someone is already looking
@@ -278,21 +284,6 @@ impl ApprovalGate for OneShotApprovalGate {
             Self::Headless(gate) => gate.confirm(question).await,
         }
     }
-}
-
-/// The configured park deadline, or `None` for the shipped park-forever
-/// behaviour.
-///
-/// `0` is spelled and means "no deadline", the same convention
-/// `model_timeout_secs` uses for its own backstop: in a field whose absence
-/// already means "the default", zero is the only way to say *deliberately*
-/// unbounded — which matters when a user-scope file sets a deadline and one
-/// project wants out of it.
-pub(crate) fn park_deadline(
-    settings: Option<&crate::settings::AgentEngineConfig>,
-) -> Option<std::time::Duration> {
-    let secs = settings?.approval_wait_secs?;
-    (secs > 0).then(|| std::time::Duration::from_secs(secs))
 }
 
 /// The attached-terminal side: answer a parked scope review, if one is
@@ -526,7 +517,8 @@ mod tests {
     /// The #1616 witness: with `approval_wait_secs` armed, a review nobody
     /// answers unparks itself as an abort instead of waiting forever — and it
     /// hands the record back rather than leaving it stuck on `Needs Input`.
-    /// On `main` a gate has no deadline to arm (`with_wait` does not exist),
+    /// On `main` a gate has no deadline to arm (`with_deadline` does not
+    /// exist),
     /// so this is a type-level witness as well as a behavioural one.
     #[tokio::test]
     async fn an_expired_deadline_unparks_an_unanswered_review_as_an_abort() {
@@ -612,16 +604,20 @@ mod tests {
     /// The setting's three states, including the one that is easy to get
     /// wrong: `0` is a deliberate "no deadline", not a zero-length one that
     /// aborts every supervised review the instant it parks.
+    ///
+    /// Asserted against [`crate::settings::AgentEngineConfig::approval_wait`],
+    /// which is the copy `crate::agent::engine` actually calls. A second copy
+    /// of this arithmetic living beside the gate is what let #1616's merge
+    /// ship a reading of the setting that nothing consulted.
     #[test]
     fn the_setting_maps_absent_and_zero_to_park_forever() {
-        assert_eq!(park_deadline(None), None);
         let mut settings = crate::settings::AgentEngineConfig::default();
-        assert_eq!(park_deadline(Some(&settings)), None);
+        assert_eq!(settings.approval_wait(), None);
         settings.approval_wait_secs = Some(0);
-        assert_eq!(park_deadline(Some(&settings)), None);
+        assert_eq!(settings.approval_wait(), None);
         settings.approval_wait_secs = Some(90);
         assert_eq!(
-            park_deadline(Some(&settings)),
+            settings.approval_wait(),
             Some(std::time::Duration::from_secs(90))
         );
     }

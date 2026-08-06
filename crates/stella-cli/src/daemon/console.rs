@@ -524,6 +524,39 @@ impl Drainable {
     }
 }
 
+/// Drain the console when this process panics, before the panic message is
+/// lost (#1616).
+///
+/// The pump made the console's tail lossy on a violent death: a panic unwinds
+/// past `main`'s orderly [`ConsoleGuard::drain`], the process exits without
+/// joining the pump threads, and up to a pipe buffer of output — the panic
+/// message itself, most of the time — dies in the pipe. That is the one
+/// artifact a postmortem of a supervised child actually wants. Release builds
+/// run with `panic = "abort"`, so this hook is the only cleanup such a process
+/// ever gets.
+///
+/// The hook chains rather than replaces: whatever hook is already installed
+/// (the diagnostics dump, or the default printer) runs FIRST, so its output
+/// goes down the pipe like everything else, and only then is the pipe drained
+/// into the file. Draining first would restore the fds and leave the panic
+/// message to land raw — readable, but ahead of the pump's own `Closed`
+/// marker and outside the bound. The drain is synchronous inside the hook
+/// either way, so nothing is lost to scheduling; what differs is where the
+/// bytes end up.
+pub(crate) fn arm_panic_drain(guard: &ConsoleGuard) {
+    #[cfg(not(unix))]
+    let _ = guard;
+    #[cfg(unix)]
+    {
+        let pumps = guard.pumps.clone();
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            previous(info);
+            pumps.drain();
+        }));
+    }
+}
+
 /// Interpose the bounded pumps on this process's stdout and stderr.
 ///
 /// Called once, in the supervised child, before its first byte of ordinary
@@ -558,35 +591,6 @@ pub(crate) fn install_bounded(sidecar: &Path) -> Option<ConsoleGuard> {
                 streams: Mutex::new(streams),
             }),
         })
-    }
-}
-
-/// Drain the console when this process panics, before the panic message is
-/// lost (#1616).
-///
-/// The pump made the console's tail lossy on a violent death: a panic unwinds
-/// past `main`'s orderly [`ConsoleGuard::drain`], the process exits without
-/// joining the pump threads, and up to a pipe buffer of output — the panic
-/// message itself, most of the time — dies in the pipe. That is the one
-/// artifact a postmortem of a supervised child actually wants.
-///
-/// The hook chains rather than replaces: whatever hook is already installed
-/// (the diagnostics dump, or the default printer) runs FIRST, so its output
-/// goes down the pipe like everything else, and only then is the pipe drained
-/// into the file. Draining first would restore the fds and leave the panic
-/// message to land raw — readable, but ahead of the pump's own `Closed`
-/// marker and outside the bound.
-pub(crate) fn arm_panic_drain(guard: &ConsoleGuard) {
-    #[cfg(not(unix))]
-    let _ = guard;
-    #[cfg(unix)]
-    {
-        let pumps = guard.pumps.clone();
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            previous(info);
-            pumps.drain();
-        }));
     }
 }
 
