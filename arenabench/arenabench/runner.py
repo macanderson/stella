@@ -41,6 +41,7 @@ from .agents import (
     resolve_agent,
     routes_directly,
 )
+from .artifacts import mp4_is_finalized
 from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .monitor import Detection, MatchWatcher
@@ -335,8 +336,15 @@ class Match:
         trial = self.trial_dirs(contestant_id).get(task)
         if trial is None:
             return None
+        # Only a finalised recording is served. A file that exists but has no
+        # `moov` yet cannot be played, and handing one to a browser produces a
+        # broken player rather than an honest "not ready".
         video = trial / "arena" / "recording.mp4"
-        return video if video.exists() else None
+        return video if mp4_is_finalized(video) else None
+
+    def trial_dir_for(self, contestant_id: str, task: str) -> Path | None:
+        """The trial directory itself, for browsing everything it produced."""
+        return self.trial_dirs(contestant_id).get(task)
 
 
 class MatchRunner:

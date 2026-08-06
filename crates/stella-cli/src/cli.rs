@@ -15,9 +15,9 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fleet_verbs,
-    fullauto_cmd, ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats,
-    storage_cmd, tune_cmd, usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fullauto_cmd,
+    ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats, storage_cmd,
+    tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -319,15 +319,15 @@ pub(crate) enum DaemonCmd {
     /// already finished prints in full and exits. Detaching again (Ctrl-C)
     /// leaves the run alone — `stella daemon stop` is what stops it.
     Attach {
-        /// Run to attach to. A unique prefix of the id is enough. Omitted:
-        /// the most recently started supervised run.
+        /// Run to attach to. A unique prefix of the id, or the run's pid,
+        /// is enough. Omitted: the most recently started supervised run.
         id: Option<String>,
     },
 
     /// Print the tail of a supervised run's output and exit
     Logs {
-        /// Run to read. A unique prefix of the id is enough. Omitted: the
-        /// most recently started supervised run.
+        /// Run to read. A unique prefix of the id, or the run's pid, is
+        /// enough. Omitted: the most recently started supervised run.
         id: Option<String>,
 
         /// How many lines back to start from.
@@ -342,7 +342,8 @@ pub(crate) enum DaemonCmd {
     /// that has not stopped after the grace period is killed, and either way
     /// the stop is recorded as deliberate rather than left to read as a crash.
     Stop {
-        /// Run to stop. A unique prefix of the id is enough.
+        /// Run to stop. A unique prefix of the id, or the run's pid, is
+        /// enough.
         id: String,
     },
 
@@ -355,8 +356,8 @@ pub(crate) enum DaemonCmd {
     /// applied twice. A run that ended cleanly discarded its resume point on
     /// the way out, and resume says so instead of restarting it.
     Resume {
-        /// Run to resume. A unique prefix of the id is enough. Omitted: the
-        /// most recently started supervised run.
+        /// Run to resume. A unique prefix of the id, or the run's pid, is
+        /// enough. Omitted: the most recently started supervised run.
         id: Option<String>,
     },
 

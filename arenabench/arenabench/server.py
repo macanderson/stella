@@ -61,6 +61,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .agents import AGENTS
+from .artifacts import MAX_TEXT_BYTES, preview_kind, resolve_within, tree
 from .config import MatchTemplateError, dump_match, match_from_toml, required_env
 from .credentials import apply_saved_credentials
 from .model import EFFORTS, ROLES, MatchSpec
@@ -74,6 +75,17 @@ __all__ = ["ArenaServer", "serve"]
 log = logging.getLogger("arenabench.server")
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
+
+#: Inline-renderable image types, listed rather than sniffed. SVG is
+#: deliberately absent — it can carry script, and these files were written by a
+#: task container this process did not author.
+_IMAGE_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 #: How often the scoreboard stream re-reads the run tree.
 SNAPSHOT_INTERVAL_S = 1.0
@@ -358,6 +370,37 @@ class ArenaServer:
             return None
         return match.video_path(contestant_id, task)
 
+    def trial_root(self, match_id: str, contestant_id: str, task: str) -> Path | None:
+        match = self.runner.matches.get(match_id)
+        if match is None:
+            return None
+        return match.trial_dir_for(contestant_id, task)
+
+    def trial_files(self, match_id: str, contestant_id: str, task: str) -> dict:
+        """The artifact tree for one trial, for the file browser."""
+        root = self.trial_root(match_id, contestant_id, task)
+        if root is None or not root.is_dir():
+            raise KeyError(f"no trial for {contestant_id}/{task}")
+        return tree(root).to_json()
+
+    def trial_file(
+        self, match_id: str, contestant_id: str, task: str, relative: str
+    ) -> tuple[Path, str]:
+        """One file inside a trial, proved to be inside it.
+
+        Returns the resolved path and how a client should render it. Raises
+        ``KeyError`` for anything that does not resolve *within* the trial —
+        traversal and containment failures are deliberately indistinguishable
+        from "not found" on the wire, so probing tells an attacker nothing.
+        """
+        root = self.trial_root(match_id, contestant_id, task)
+        if root is None or not root.is_dir():
+            raise KeyError(f"no trial for {contestant_id}/{task}")
+        target = resolve_within(root, relative)
+        if target is None or not target.is_file():
+            raise KeyError(relative)
+        return target, preview_kind(target)
+
 
 # --------------------------------------------------------------------------
 # HTTP plumbing
@@ -486,6 +529,53 @@ def _handler_factory(
             self.end_headers()
             self.wfile.write(body)
 
+        def _artifact(self, path: Path, kind: str) -> None:
+            """Serve one file out of a trial directory.
+
+            Text is capped and served as plain UTF-8: an event stream can be
+            hundreds of megabytes, and a viewer handed all of it is a hung tab
+            rather than a feature. Anything else is sent as an octet-stream
+            attachment — deliberately *not* with a guessed content type, so a
+            file a container wrote can never be served as active content to the
+            browser that asked for it.
+            """
+            size = path.stat().st_size
+            if kind == "text":
+                raw = path.read_bytes()[:MAX_TEXT_BYTES]
+                body = raw.decode("utf-8", "replace").encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("X-Arena-Truncated", "1" if size > MAX_TEXT_BYTES else "0")
+                self.send_header("X-Arena-Size", str(size))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if kind == "image":
+                body = path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                # Images render inline, but still never sniffed.
+                content_type = _IMAGE_TYPES.get(
+                    path.suffix.lower(), "application/octet-stream"
+                )
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _video(self, path: Path) -> None:
             """Serve an MP4 with Range support so the player can seek.
 
@@ -596,9 +686,24 @@ def _handler_factory(
                 case ["matches", match_id, "video", contestant, task]:
                     video = arena.video(match_id, contestant, task)
                     if video is None:
+                        # Either there is no recording, or there is one that has
+                        # not been finalised and no player could open. Both are
+                        # "nothing to watch yet" from the client's side.
                         self._error(HTTPStatus.NOT_FOUND, "no recording for this trial")
                         return
                     self._video(video)
+                case ["matches", match_id, "files", contestant, task]:
+                    self._json(arena.trial_files(match_id, contestant, task))
+                case ["matches", match_id, "file", contestant, task]:
+                    query = parse_qs(urlparse(self.path).query)
+                    relative = (query.get("path") or [""])[0]
+                    target, kind = arena.trial_file(
+                        match_id, contestant, task, relative
+                    )
+                    if kind == "video":
+                        self._video(target)
+                    else:
+                        self._artifact(target, kind)
                 case _:
                     self._error(HTTPStatus.NOT_FOUND, "unknown endpoint")
 

@@ -1022,7 +1022,9 @@ pub async fn run_deck_session(
                             &mut messages,
                             &system_prompt,
                             &sidecar_dir,
-                            &subs.live_lanes(),
+                            &mut subs,
+                            registry.as_ref(),
+                            store.as_deref().zip(Some(session_record.id.as_str())),
                             &in_tx,
                         );
                         continue 'session;
@@ -2261,7 +2263,9 @@ pub async fn run_deck_session(
                     &mut messages,
                     &system_prompt,
                     &sidecar_dir,
-                    &subs.live_lanes(),
+                    &mut subs,
+                    registry.as_ref(),
+                    store.as_deref().zip(Some(session_record.id.as_str())),
                     &in_tx,
                 );
                 // No `continue`: the shared tail below re-snapshots the
@@ -2778,30 +2782,18 @@ fn handle_supervisor_msg(
             // A worker may have just pushed a branch / opened a PR — observe
             // now, not at the next 45s tick.
             pr_nudge.notify_one();
-            // A task worker finishing successfully completes its board task
-            // — the delegation loop closes without the lead's involvement. A
-            // failed or stopped worker leaves the task in progress: the
-            // board must not claim done what wasn't (the inbox notification
-            // names a failure; a stop was the user's own act).
-            if let Some(task_id) = lane.strip_prefix("sub:") {
-                let board = registry.task_board();
-                let items: Vec<TaskItem> = {
-                    let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
-                    if matches!(end, subsession::WorkerEnd::Done) {
-                        let _ = guard.set_status(task_id, stella_protocol::TaskStatus::Completed);
-                    }
-                    guard.items().to_vec()
-                };
-                let _ = in_tx.send(Inbound::Event {
-                    agent: LEAD.to_string(),
-                    event: AgentEvent::TaskUpdate {
-                        tasks: items.clone(),
-                    },
-                });
-                if let (Some(store), Some(exec)) = (store.as_ref(), execution_id) {
-                    let _ = store.record_task_board(exec, Some(session_id), &items, now_ms());
-                }
-            }
+            // The delegation loop closes against the task board — unless the
+            // worker predates a `/clear`, in which case there is no longer a
+            // board of its to close (#1692).
+            session_clear::settle_worker_task(
+                &lane,
+                generation,
+                &end,
+                subs,
+                registry,
+                session_clear::BoardMirror::of(store.as_ref(), session_id, execution_id),
+                in_tx,
+            );
             while subs.has_slot()
                 && let Some(request) = pending_spawns.pop_front()
             {
