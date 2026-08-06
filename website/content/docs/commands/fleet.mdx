@@ -22,6 +22,8 @@ Each task prompt becomes an independent task running **in the shared repository 
 
 Isolated worktrees and fleet branches are **not** cleaned up automatically: they stay on disk so you can inspect, test, and merge each result yourself. Reclaim the finished ones with [`stella fleet clean`](#stella-fleet-clean) when you are done reviewing. A failed task is never retried automatically, and its dependents end the run as `skipped`.
 
+**A task can only be dispatched by one session at a time.** Before starting a worker, the fleet takes a *dispatch claim* on the task — a short lease in `.stella/private/fleet.db`, held under the run's id. If a second `stella fleet` in the same workspace reaches the same task id while the first is still on it, that task is reported as a dispatch failure naming the run holding it, rather than running twice. The claim is a **lease, not a lock**: a live run renews it while its worker runs and releases it the instant the attempt settles, and a run that is killed outright loses its claim automatically once the lease lapses (15 minutes) — nothing has to be cleaned up by hand, and there is no override flag.
+
 <Callout type="info">
 For anything beyond a handful of independent prompts, use a plan file (`--plan`). It lets you declare task `id`, `title`, `prompt`, `depends_on` (to order the waves), `isolation` (`shared_tree` — the default — runs in the repo root under the claim discipline; `isolated` opts a task into its own worktree and branch, for genuinely divergent work like best-of-N attempts on the same files), and `claims` — file paths held as cooperative locks while a task runs, so two tasks never edit the same file at once. See [Agent Fleets](/docs/agent-fleets) for the full plan schema.
 </Callout>
