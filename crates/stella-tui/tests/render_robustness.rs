@@ -217,9 +217,7 @@ fn nasty_unicode_transcript_never_panics_at_any_width() {
         let mut model = WorkspaceModel::new();
         model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "t", 0)));
         for ev in [
-            AgentEvent::Text {
-                delta: text.clone(),
-            },
+            AgentEvent::Text { text: text.clone() },
             AgentEvent::Reasoning {
                 delta: text.clone(),
             },

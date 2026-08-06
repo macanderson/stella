@@ -1777,4 +1777,5 @@ fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
     }
 }
 
+mod cache_breakpoints;
 mod thinking;

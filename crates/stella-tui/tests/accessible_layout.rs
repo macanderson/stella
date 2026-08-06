@@ -193,7 +193,7 @@ fn scoped_session(accessible: bool) -> (WorkspaceModel, DeckUi) {
         name: StageKind::Execute,
     }));
     model.apply_inbound(&event(AgentEvent::Text {
-        delta: "the transcript body".into(),
+        text: "the transcript body".into(),
     }));
     (model, deck_ui(DeckTab::Session, accessible))
 }
@@ -261,7 +261,7 @@ fn the_live_pane_skips_whatever_is_already_in_scrollback() {
             AgentEvent::Stage {
                 name: StageKind::Execute,
             },
-            AgentEvent::Text { delta: line.into() },
+            AgentEvent::Text { text: line.into() },
         ] {
             model.apply_inbound(&Inbound::Event {
                 agent: "lead".into(),

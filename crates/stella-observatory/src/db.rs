@@ -1110,7 +1110,8 @@ fn recall_timings(conn: &Connection, execution_id: i64) -> Result<Vec<Value>, Db
 /// Shape one raw `events` row into the transcript entry the drawer renders.
 ///
 /// The payload is the internally-tagged `AgentEvent` JSON the store
-/// persisted (`{"type":"text","delta":…}`). Only the fields the transcript
+/// persisted (`{"type":"text","text":…}`; rows written before #1886 spell
+/// the field `delta`, so `text` reads both). Only the fields the transcript
 /// needs are lifted out, keyed by the row's own `event_type` column. A
 /// payload that no longer parses (a hand-edited store, a variant this binary
 /// predates) keeps its seq/type header with no body rather than erroring —
@@ -1134,7 +1135,12 @@ fn journal_entry(row: Value, full: bool) -> Value {
             out["label"] = payload["name"].clone();
         }
         "text" | "reasoning" => {
-            set_journal_body(&mut out, payload["delta"].as_str().unwrap_or(""), full);
+            // `text` carries `text` since #1886, `delta` before; `reasoning`
+            // still carries `delta`. One bilingual read covers all three.
+            let body = payload["text"]
+                .as_str()
+                .or_else(|| payload["delta"].as_str());
+            set_journal_body(&mut out, body.unwrap_or(""), full);
         }
         "tool_start" => {
             out["call_id"] = payload["call"]["call_id"].clone();

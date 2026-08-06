@@ -521,14 +521,14 @@ impl SessionModel {
                 }
                 self.transcript.push(TranscriptEntry::Stage(*name));
             }
-            AgentEvent::Text { delta } => {
+            AgentEvent::Text { text } => {
                 // The authoritative step text replaces any streamed preview
                 // outright — merging would duplicate (or, after a retry,
                 // garble) what the deltas already showed.
                 self.streaming_text.clear();
-                self.push_text(delta)
+                self.push_text(text)
             }
-            AgentEvent::TextDelta { text } => self.push_streaming_delta(text),
+            AgentEvent::TextDelta { delta } => self.push_streaming_delta(delta),
             AgentEvent::Reasoning { delta } => self.push_reasoning(delta),
             AgentEvent::ToolStart { call } => {
                 self.transcript.push(TranscriptEntry::ToolStart {

@@ -26,7 +26,7 @@ fn text_deltas_feed_the_preview_without_flooding_the_trace() {
         w.apply_inbound(&ev(
             "lead",
             AgentEvent::TextDelta {
-                text: "tok ".into(),
+                delta: "tok ".into(),
             },
         ));
     }
@@ -56,7 +56,7 @@ fn session_reset_blanks_transcript_zeroes_cost_and_stops_the_clock() {
     w.apply_inbound(&ev(
         "lead",
         AgentEvent::Text {
-            delta: "hi there".into(),
+            text: "hi there".into(),
         },
     ));
     if let Some(a) = w.agents.first_mut() {
@@ -291,7 +291,7 @@ fn register_then_events_route_to_the_right_agent() {
     w.apply_inbound(&reg("lead"));
     w.apply_inbound(&reg("sub"));
     assert_eq!(w.agents.len(), 2);
-    w.apply_inbound(&ev("sub", AgentEvent::Text { delta: "hi".into() }));
+    w.apply_inbound(&ev("sub", AgentEvent::Text { text: "hi".into() }));
     // The event landed on "sub"'s pure fold, not "lead"'s.
     let sub = &w.agents[w.index_of("sub").unwrap()];
     assert_eq!(sub.model.transcript.len(), 1);
@@ -527,7 +527,7 @@ fn supervisor_status_and_terminal_kill_are_respected() {
         status: AgentStatus::Killed,
     });
     // Even a fresh event cannot resurrect a killed agent's lifecycle.
-    w.apply_inbound(&ev("lead", AgentEvent::Text { delta: "x".into() }));
+    w.apply_inbound(&ev("lead", AgentEvent::Text { text: "x".into() }));
     assert_eq!(w.agents[0].status, AgentStatus::Killed);
 }
 

@@ -96,7 +96,7 @@ fn sqlite_integer_writes_reject_u64_overflow() {
         .unwrap();
     assert!(
         store
-            .record_event(id, u64::MAX, &AgentEvent::Text { delta: "x".into() })
+            .record_event(id, u64::MAX, &AgentEvent::Text { text: "x".into() })
             .is_err()
     );
     let telemetry = TelemetryRow {

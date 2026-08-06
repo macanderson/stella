@@ -209,7 +209,9 @@ mod tests {
 
     fn delta() -> ServerFrame {
         ServerFrame::Event {
-            event: AgentEvent::TextDelta { text: "tok".into() },
+            event: AgentEvent::TextDelta {
+                delta: "tok".into(),
+            },
         }
     }
 

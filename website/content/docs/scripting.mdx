@@ -45,6 +45,9 @@ a conformance fixture to test your client against.
 In particular, `text_delta` lines stream the answer token by token as a best-effort live
 preview — the `text` event that follows carries the full step text and is authoritative
 (replace any accumulated deltas with it; a retried model call re-streams its deltas).
+The fragment rides in `text_delta`'s `delta` field and the full body in `text`'s `text`
+field; streams recorded by older stellas spell the two fields crossed, so a reader that
+also processes archives should accept either spelling on either event.
 
 ```bash
 # One final JSON object

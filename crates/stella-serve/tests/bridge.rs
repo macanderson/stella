@@ -435,7 +435,7 @@ async fn streamed_provider_deltas_surface_as_events_before_the_completion() {
                     .unwrap();
             }
             ServerFrame::Event { event } => match event {
-                stella_protocol::AgentEvent::TextDelta { text } => {
+                stella_protocol::AgentEvent::TextDelta { delta: text } => {
                     text_deltas.push(text);
                 }
                 stella_protocol::AgentEvent::Reasoning { .. } => reasoning += 1,

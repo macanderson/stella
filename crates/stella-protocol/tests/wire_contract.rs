@@ -497,10 +497,10 @@ fn tool_call() -> ToolCall {
 fn sample_events() -> Vec<AgentEvent> {
     let mut events = vec![
         AgentEvent::Text {
-            delta: "the answer".into(),
+            text: "the answer".into(),
         },
         AgentEvent::TextDelta {
-            text: "the ".into(),
+            delta: "the ".into(),
         },
         AgentEvent::Reasoning {
             delta: "considering".into(),

@@ -535,7 +535,7 @@ async fn a_fan_out_narrates_each_candidate_and_names_the_winner() {
     let text: String = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::Text { delta } => Some(delta.as_str()),
+            AgentEvent::Text { text: delta } => Some(delta.as_str()),
             _ => None,
         })
         .collect();
@@ -609,7 +609,7 @@ async fn a_single_candidate_run_emits_no_fan_out_narration() {
     let text: String = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::Text { delta } => Some(delta.as_str()),
+            AgentEvent::Text { text: delta } => Some(delta.as_str()),
             _ => None,
         })
         .collect();
@@ -707,7 +707,7 @@ async fn every_isolated_candidate_also_sees_the_steer() {
     let text: String = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::Text { delta } => Some(delta.as_str()),
+            AgentEvent::Text { text: delta } => Some(delta.as_str()),
             _ => None,
         })
         .collect();
