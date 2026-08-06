@@ -1126,7 +1126,7 @@ mod tests {
             AgentEvent::Stage {
                 name: StageKind::Execute,
             },
-            AgentEvent::Text { delta: "t".into() },
+            AgentEvent::Text { text: "t".into() },
             AgentEvent::Reasoning { delta: "r".into() },
             AgentEvent::ToolStart {
                 call: ToolCall {

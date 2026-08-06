@@ -614,6 +614,7 @@ fn video_tools_register_only_with_a_video_capable_media_backend() {
         )),
         media_requires_host_approval: true,
         media_host_data_isolation: Some(crate::media::HostDataIsolation::ProcessFree),
+        ..Default::default()
     };
     let names = |backend, options: RegistryOptions| {
         let root = tempfile::tempdir().unwrap();

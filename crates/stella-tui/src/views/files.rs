@@ -559,7 +559,7 @@ mod tests {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Text {
-                delta: "an answer the clear must remove".into(),
+                text: "an answer the clear must remove".into(),
             },
         });
         model.apply_inbound(&Inbound::Event {

@@ -332,3 +332,60 @@ fn attaching_replaces_rather_than_stacking() {
     drop(second);
     assert!(slot.read().unwrap().is_empty());
 }
+
+/// **Witness (#1852).** Two children described identically must not share an
+/// agent id.
+///
+/// `agent_id` was `slug(description)` — a pure function of model-supplied
+/// text — so two siblings both described "research X" got the SAME id. Since
+/// sibling `task` calls from one step run concurrently (#1836), their
+/// `SubAgent::Started`/`Finished` brackets then interleave under one id on the
+/// parent's stream: the deck renders indistinguishable rows, and any consumer
+/// that pairs by `agent_id` cannot tell which child finished. The child
+/// thread's name is derived from this too, so two threads shared a name in
+/// every profiler and core dump as well.
+///
+/// Deterministic by call order, never random or time-based: replay
+/// determinism (invariant 7) means the same sequence must mint the same ids,
+/// and an id that changed between replays would make those brackets
+/// unmatchable in a journal.
+#[test]
+fn identical_descriptions_mint_distinct_agent_ids() {
+    let tool = SpawnSubAgent::new(Arc::default());
+
+    // The first keeps the bare slug: the overwhelmingly common case — one
+    // child per description — reads exactly as it did before.
+    assert_eq!(tool.mint_agent_id("research X"), "research-x");
+    assert_eq!(tool.mint_agent_id("research X"), "research-x-2");
+    assert_eq!(tool.mint_agent_id("research X"), "research-x-3");
+
+    // A different description is a different counter, not a shared one.
+    assert_eq!(tool.mint_agent_id("trace the caller"), "trace-the-caller");
+    assert_eq!(tool.mint_agent_id("research X"), "research-x-4");
+
+    // Two descriptions that SLUG the same collide in exactly the way the ids
+    // must not: the counter is keyed on the slug, which is what the id is
+    // built from, so this is covered rather than accidentally distinct.
+    assert_eq!(tool.mint_agent_id("Research  x!"), "research-x-5");
+}
+
+/// The same call order mints the same ids on a fresh tool — the replay
+/// property stated as a test rather than left to the doc comment.
+#[test]
+fn minting_is_a_function_of_call_order_alone() {
+    let ids = |()| {
+        let tool = SpawnSubAgent::new(Arc::default());
+        vec![
+            tool.mint_agent_id("a b"),
+            tool.mint_agent_id("a b"),
+            tool.mint_agent_id("c"),
+            tool.mint_agent_id("a b"),
+        ]
+    };
+    assert_eq!(
+        ids(()),
+        ids(()),
+        "replaying the same order must replay the ids"
+    );
+    assert_eq!(ids(()), vec!["a-b", "a-b-2", "c", "a-b-3"]);
+}

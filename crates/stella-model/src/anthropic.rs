@@ -27,6 +27,16 @@ pub struct AnthropicProvider {
     /// List pricing for `model`, resolved from the catalog at construction so
     /// `cost_usd` is computed on the real request path (see `zai.rs`).
     pricing: Option<Pricing>,
+    /// Where the PREVIOUS request's conversation-tail breakpoint landed, so
+    /// this one can re-stamp it and keep an anchor at a position the cache was
+    /// actually written to (#1837). See [`stamp_remembered_tail`].
+    ///
+    /// Session-scoped because the adapter is constructed once per session. A
+    /// `Mutex` rather than a cell: `complete_ref` takes `&self` and concurrent
+    /// calls through one provider are ordinary (sibling sub-agents, the
+    /// pipeline's management roles). Contention is one pointer write per
+    /// request.
+    previous_tail: std::sync::Mutex<Option<TailPosition>>,
 }
 
 impl AnthropicProvider {
@@ -49,6 +59,7 @@ impl AnthropicProvider {
             base_url: DEFAULT_BASE_URL.to_string(),
             model,
             pricing,
+            previous_tail: std::sync::Mutex::new(None),
         }
     }
 
@@ -269,7 +280,61 @@ const EPHEMERAL_CACHE: AnthropicCacheControl = AnthropicCacheControl { kind: "ep
 /// field, which Anthropic's unknown-parameter handling would reject with a
 /// 400); `tests/live_smoke.rs::anthropic_smoke` tracks whether that holds
 /// end-to-end.
-fn stamp_tail_cache_breakpoint(messages: &mut [AnthropicMessage]) {
+/// Where a request's conversation-tail breakpoint landed: `(message, block)`.
+///
+/// Carried on the provider so the NEXT request can re-stamp it — see
+/// [`stamp_tail_cache_breakpoint`] for why one breakpoint is not enough.
+type TailPosition = (usize, usize);
+
+/// Re-stamp the position the PREVIOUS request's tail breakpoint landed on.
+///
+/// This is the second of the two message breakpoints (#1837). Anthropic
+/// allows four; this adapter used two — one on the system block (which covers
+/// tools via the cache hierarchy) and one on the newest content block. The
+/// second is on content that *did not exist* on the previous request, so
+/// nothing was anchored at the position the previous turn actually wrote to,
+/// and the conversation tier was served only by Anthropic's bounded automatic
+/// lookback (~20 content blocks).
+///
+/// That bound is easy to exceed here: a step that fans out several reads emits
+/// ~11 content blocks (one `tool_use` + one `tool_result` per call), so two
+/// such steps push the previous write out of lookback and the whole replayed
+/// history re-bills at the full input rate and re-writes at 1.25×. Claude Code
+/// keeps a rolling pair for exactly this reason; measured, Stella sat at ~76%
+/// cache-read against its ~93%.
+///
+/// A remembered POSITION rather than a content digest, deliberately. The worst
+/// case if history shifted under it — compaction rewriting or evicting a
+/// message — is that the breakpoint anchors somewhere less useful, which costs
+/// a cache write and nothing else. A `cache_control` marker is an anchor, not
+/// an assertion: no answer here can be *wrong*, only suboptimal. Paying a hash
+/// of every block on every request to slightly improve an anchor would cost
+/// more than it saves.
+fn stamp_remembered_tail(messages: &mut [AnthropicMessage], at: TailPosition) {
+    let (message, block) = at;
+    // Never the newest block: that is the current tail's own position, and
+    // spending both message breakpoints on the same anchor is what this
+    // function exists to stop.
+    if let Some(target) = messages
+        .get_mut(message)
+        .and_then(|m| m.content.get_mut(block))
+    {
+        match target {
+            AnthropicContentBlock::Text { cache_control, .. }
+            | AnthropicContentBlock::ToolResult { cache_control, .. } => {
+                *cache_control = Some(EPHEMERAL_CACHE);
+            }
+            // The position now holds a block this adapter's schema cannot
+            // mark. Leave it: a missing second breakpoint is the old
+            // behaviour, and the tail breakpoint below is unaffected.
+            AnthropicContentBlock::Image { .. }
+            | AnthropicContentBlock::Document { .. }
+            | AnthropicContentBlock::ToolUse { .. } => {}
+        }
+    }
+}
+
+fn stamp_tail_cache_breakpoint(messages: &mut [AnthropicMessage]) -> Option<TailPosition> {
     // Walk BACKWARD to the newest stampable block rather than inspecting only
     // the literal last one. The loop's ordinary shape does end on Text or
     // ToolResult — but a user message that is *only* an attachment ends on a
@@ -280,13 +345,13 @@ fn stamp_tail_cache_breakpoint(messages: &mut [AnthropicMessage]) {
     // at the full input rate. Stamping the newest Text/ToolResult before the
     // media tail keeps the incremental tier alive at the cost of leaving only
     // the trailing attachment blocks uncached.
-    for message in messages.iter_mut().rev() {
-        for block in message.content.iter_mut().rev() {
+    for (mi, message) in messages.iter_mut().enumerate().rev() {
+        for (bi, block) in message.content.iter_mut().enumerate().rev() {
             match block {
                 AnthropicContentBlock::Text { cache_control, .. }
                 | AnthropicContentBlock::ToolResult { cache_control, .. } => {
                     *cache_control = Some(EPHEMERAL_CACHE);
-                    return;
+                    return Some((mi, bi));
                 }
                 // Media and tool_use blocks don't carry the marker in this
                 // adapter's schema — keep walking to the newest block that
@@ -298,6 +363,7 @@ fn stamp_tail_cache_breakpoint(messages: &mut [AnthropicMessage]) {
             }
         }
     }
+    None
 }
 
 #[derive(Serialize)]
@@ -702,7 +768,21 @@ impl AnthropicProvider {
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
         let (system, mut messages) = to_anthropic_messages(req.messages);
-        stamp_tail_cache_breakpoint(&mut messages);
+        // Two message breakpoints, not one (#1837): the previous request's
+        // tail — a position the cache was genuinely written to — and this
+        // request's own tail. Anthropic allows four and the system block takes
+        // one, so the second message breakpoint was simply unused.
+        //
+        // Previous first: `stamp_tail_cache_breakpoint` walks backward to the
+        // newest stampable block, and re-stamping the old position afterwards
+        // could otherwise land on the same block and spend both on one anchor.
+        let previous = *self.previous_tail.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(at) = previous {
+            stamp_remembered_tail(&mut messages, at);
+        }
+        if let Some(tail) = stamp_tail_cache_breakpoint(&mut messages) {
+            *self.previous_tail.lock().unwrap_or_else(|p| p.into_inner()) = Some(tail);
+        }
         let reasoning_on = req.reasoning == Some(true);
         let params = req.params.unwrap_or_default();
 

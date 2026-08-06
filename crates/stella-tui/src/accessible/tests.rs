@@ -14,7 +14,7 @@ fn say(agent: &str, text: &str) -> Inbound {
     Inbound::Event {
         agent: agent.into(),
         event: AgentEvent::Text {
-            delta: text.to_string(),
+            text: text.to_string(),
         },
     }
 }

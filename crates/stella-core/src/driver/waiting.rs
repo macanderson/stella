@@ -56,7 +56,7 @@ impl<'a> Engine<'a> {
         for call in replayed {
             if !read_only.contains(&call.name) {
                 let _ = events.send(AgentEvent::Text {
-                    delta: format!(
+                    text: format!(
                         "\n⚠ Ignoring a parked-wait request: `{}` is not a read-only tool, and \
                          the engine only replays read-only calls while the model is not looking.\n",
                         call.name
@@ -67,7 +67,7 @@ impl<'a> Engine<'a> {
         }
 
         let _ = events.send(AgentEvent::Text {
-            delta: format!(
+            text: format!(
                 "\n⏳ Parked: waiting until {} — probing every {}s for up to {}s, with no model \
                  calls while waiting.\n",
                 request.description,
@@ -126,7 +126,7 @@ impl<'a> Engine<'a> {
         };
         let message = wake_message(&request, reason, polls_used, detail.as_deref());
         let _ = events.send(AgentEvent::Text {
-            delta: format!(
+            text: format!(
                 "\n▶ Wait ended after {polls_used} probe{}: {}\n",
                 if polls_used == 1 { "" } else { "s" },
                 match reason {

@@ -513,17 +513,22 @@ impl<'a> Pipeline<'a> {
             }
             _ => WitnessAbort::rejected(error.to_string()),
         })?;
-        let path = fingerprints
-            .keys()
-            .next()
-            .expect("validated witness artifact contains exactly one path");
+        // Taken as a pair, so neither the path nor its fingerprint is
+        // recovered by indexing the map a second time (#1789): the validator
+        // above guarantees exactly one entry, and reading it once is how that
+        // guarantee stays a fact about this code rather than a comment.
+        let Some((path, fingerprint)) = fingerprints.iter().next() else {
+            return Err(WitnessAbort::rejected(
+                "the accepted witness artifact named no path".to_string(),
+            ));
+        };
         validate_witness_invocation(path, &invocation)
             .map_err(|error| WitnessAbort::rejected(error.to_string()))?;
         // Accept the artifact where it was written before copying it anywhere:
         // a symlink or multiply-linked file must be rejected in the snapshot
         // that produced it, never resolved by a copy.
         let authored = baseline.repo_status.artifact_identity(path).await;
-        validate_witness_identity(path, &fingerprints[path], authored.as_ref())
+        validate_witness_identity(path, fingerprint, authored)
             .map_err(|error| WitnessAbort::rejected(error.to_string()))?;
 
         // Cross into the tree that executed. A failure here is degradable: the
@@ -549,9 +554,8 @@ impl<'a> Pipeline<'a> {
         // execute — not the identity of the original in a snapshot that is
         // about to be deleted.
         let identity = candidate.repo_status.artifact_identity(path).await;
-        validate_witness_identity(path, &fingerprints[path], identity.as_ref())
+        let identity = validate_witness_identity(path, fingerprint, identity)
             .map_err(|error| WitnessAbort::rejected(error.to_string()))?;
-        let identity = identity.expect("validated witness identity is present");
         // Announced only here, past every integrity check: the rail's "witness
         // authored" row must mean the artifact was accepted AND pinned, never
         // that a model produced a file.

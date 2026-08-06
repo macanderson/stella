@@ -845,7 +845,7 @@ mod tests {
             tx.send(Inbound::Event {
                 agent: "lead".into(),
                 event: AgentEvent::TextDelta {
-                    text: format!("{n} "),
+                    delta: format!("{n} "),
                 },
             })
             .unwrap();

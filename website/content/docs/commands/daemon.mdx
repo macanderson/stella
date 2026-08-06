@@ -81,6 +81,28 @@ Two differences from an attached launch, both deliberate:
 - **A terminal is not required.** Plain supervision declines without one, since a run with no terminal to lose is already immune to the hangup. "Return now" is wanted from a pipe, a container, a `cron` job and a shell script exactly as much as from a terminal, so the flag forces supervision rather than merely permitting it.
 - **The exit code is the launch's, not the run's.** `stella run --detach; echo $?` answers "did the launch succeed". The run's own answer arrives in `stella daemon list`.
 
+### Detaching from a script
+
+The banner above is on **stderr**, so it never garnishes a pipe. Under `--output-format json` or `stream-json`, stdout carries one launch summary naming the session — the id a script needs before it can do anything at all with the run it just started:
+
+```bash
+$ stella run "migrate the config loader to serde" --detach --output-format json
+{
+  "schema_version": 1,
+  "status": "detached",
+  "session_id": "ses-1785956826121-25167",
+  "attach": "stella daemon attach ses-1785956826121-25167",
+  "stop": "stella daemon stop ses-1785956826121-25167"
+}
+```
+
+```bash
+id=$(stella run "…" --detach --output-format json | jq -r .session_id)
+stella daemon stop "$id"
+```
+
+`stream-json` gets the same object compact on one line, so the line-delimited contract holds. `status` is `detached` rather than `ok`: the launch succeeded, and the run's own verdict is a later, separate question — see [scripting](/docs/scripting) for the envelope family this joins.
+
 It applies to every supervised verb — `run`, `goal`, `monitor`, `fleet` — and `STELLA_DETACH=1` sets it for a whole shell. `--foreground` wins if both are given: the flag that asks for less machinery is the safer reading of a contradictory command line, and a declared conflict would break the supervised child, which re-parses its parent's argv (`--detach` included) with `STELLA_FOREGROUND=1` in its environment.
 
 A detached run cannot ask *this* terminal anything, because there is no longer one attached — but it does not lose the answer either. A plan that crosses the scope thresholds parks exactly as described below, and the next `stella daemon attach` asks the question.

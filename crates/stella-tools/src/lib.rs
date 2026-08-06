@@ -37,6 +37,7 @@ pub mod hunk;
 pub mod hunk_review;
 pub(crate) mod impact;
 pub mod input;
+pub mod issue_backend;
 pub mod issue_ops;
 pub mod issues;
 pub mod media;
@@ -69,6 +70,7 @@ pub mod web_egress;
 pub mod web_extract;
 pub mod write;
 
+pub use issue_backend::{AmbientIssueBackendProbe, IssueBackendProbe, IssueBackendSource};
 pub use registry::{RegistryOptions, ToolRegistry};
 
 /// Turn a workspace-relative `path` into a full path, refusing one that names

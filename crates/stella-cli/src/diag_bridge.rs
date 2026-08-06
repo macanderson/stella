@@ -193,9 +193,9 @@ impl DomainBridge {
 
         match event {
             // ---- Counted, never recorded (§3.8). ------------------------
-            AgentEvent::TextDelta { text } => {
+            AgentEvent::TextDelta { delta } => {
                 self.tally.text_deltas += 1;
-                self.tally.text_bytes += text.len() as u64;
+                self.tally.text_bytes += delta.len() as u64;
             }
             AgentEvent::Reasoning { delta } => {
                 self.tally.reasoning_deltas += 1;
@@ -212,8 +212,8 @@ impl DomainBridge {
             AgentEvent::BudgetTick { .. } => self.tally.budget_ticks += 1,
             // The whole answer, once per step. Its length is the only part of
             // it that is not content.
-            AgentEvent::Text { delta } => {
-                self.tally.text_bytes += delta.len() as u64;
+            AgentEvent::Text { text } => {
+                self.tally.text_bytes += text.len() as u64;
             }
 
             // ---- The model call: tokens, cost, latency, retries. ---------
@@ -768,7 +768,9 @@ mod tests {
     fn ten_thousand_text_deltas_produce_no_records() {
         let (mut bridge, records) = bridge();
         for _ in 0..10_000 {
-            bridge.observe(&AgentEvent::TextDelta { text: "tok".into() });
+            bridge.observe(&AgentEvent::TextDelta {
+                delta: "tok".into(),
+            });
         }
         assert!(
             records.records().is_empty(),
@@ -996,7 +998,7 @@ mod tests {
     fn the_sequence_counts_every_event_not_every_record() {
         let (mut bridge, records) = bridge();
         for _ in 0..5 {
-            bridge.observe(&AgentEvent::TextDelta { text: "x".into() });
+            bridge.observe(&AgentEvent::TextDelta { delta: "x".into() });
         }
         bridge.observe(&tool_call("bash", serde_json::json!({})));
 

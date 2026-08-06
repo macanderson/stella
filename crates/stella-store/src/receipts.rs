@@ -513,12 +513,12 @@ mod tests {
             )
             .unwrap();
         store
-            .record_event(solo, 1, &AgentEvent::Text { delta: "a".into() })
+            .record_event(solo, 1, &AgentEvent::Text { text: "a".into() })
             .unwrap();
         // A neighbouring execution's rows stay out of this journal.
         let other = store.begin_execution("run", "x", "zai", "glm-5.2").unwrap();
         store
-            .record_event(other, 0, &AgentEvent::Text { delta: "z".into() })
+            .record_event(other, 0, &AgentEvent::Text { text: "z".into() })
             .unwrap();
         // Genuine damage on the target execution is counted, not fatal.
         {

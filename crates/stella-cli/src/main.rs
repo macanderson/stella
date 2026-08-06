@@ -221,10 +221,11 @@ pub(crate) fn note_json_summary_emitted() {
 
 /// The version of the `--output-format json|stream-json` summary envelope this
 /// build emits. Every summary object carries it — the pipeline summary, the raw
-/// step-loop summary, and the pre-flight error envelope — so a consumer can
-/// branch on the shape instead of sniffing for keys.
+/// step-loop summary, the pre-flight error envelope, and the detached-launch
+/// summary ([`crate::daemon::detach`]) — so a consumer can branch on the shape
+/// instead of sniffing for keys.
 ///
-/// All three envelopes are structs with the version declared first, so a derived
+/// All four envelopes are structs with the version declared first, so a derived
 /// `Serialize` heads the object — a courtesy, not a promise: key order stays
 /// outside the contract and consumers must read by key. Building any with
 /// `serde_json::json!` would undo that (a `json!` object is a sorted map that
@@ -1033,6 +1034,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &prompt),
                     prompt.as_bytes(),
                     posture,
+                    output_format,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1085,6 +1087,9 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &goal),
                     goal.as_bytes(),
                     posture,
+                    // `goal` declares no `--output-format`, so there is no
+                    // machine-readable stream to name the session on.
+                    OutputFormat::Text,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1125,6 +1130,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     ),
                     &[],
                     posture,
+                    output_format,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1153,6 +1159,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &format!("monitor {target}")),
                     &[],
                     posture,
+                    // `monitor` declares no `--output-format` either.
+                    OutputFormat::Text,
                 ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status

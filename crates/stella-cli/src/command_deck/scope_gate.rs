@@ -110,7 +110,7 @@ impl ApprovalGate for DeckApprovalGate {
             let _ = self.inbound.send(Inbound::Event {
                 agent: self.agent.clone(),
                 event: AgentEvent::Text {
-                    delta: format!(
+                    text: format!(
                         "\n[scope trimmed to the first {keep} step{} — {dropped} dropped]\n",
                         if keep == 1 { "" } else { "s" },
                     ),
