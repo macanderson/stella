@@ -28,9 +28,9 @@
 //! * an inferred directive may never *start* blocking — enforced by
 //!   [`PromotionEventRecord::new`], which has no way to express it;
 //! * a proposal counts **distinct tasks**, never raw events — enforced by
-//!   [`ProposalRecord`] carrying `distinct_task_count` as a separate field from
-//!   `occurrence_count`, and by [`ProposalRecord::is_eligible`] reading only the
-//!   former.
+//!   [`ProposalScore`] carrying `distinct_tasks` as a separate field from
+//!   `occurrences`, and by [`ProposalRecord::is_eligible`] gating on the former
+//!   so no number of `occurrences` can substitute for it.
 
 use serde::{Deserialize, Serialize};
 
@@ -257,7 +257,8 @@ impl ProposalRecord {
 
     /// Whether this proposal clears the promotion gate.
     ///
-    /// Reads `distinct_tasks` and **never** `occurrences`. That single choice is
+    /// `distinct_tasks` must clear its own floor — `occurrences` is checked
+    /// alongside it and can **never** substitute for it. That single choice is
     /// spec §7's anti-poisoning rule: thirty repetitions inside one task produce
     /// `distinct_tasks == 1` and are refused, however many events back them.
     pub fn is_eligible(&self, min_distinct_tasks: u32, min_observations: u32) -> bool {

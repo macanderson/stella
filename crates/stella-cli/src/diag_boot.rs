@@ -32,7 +32,7 @@
 //! A **sink handle** is a different animal: process-wide configuration fixed at
 //! boot, exactly like the panic hook, which is genuinely global because it
 //! takes no parameter. The event drains ([`spawn_renderer`] and
-//! `spawn_forwarder`) are spawned from thirteen call sites across the deck,
+//! `spawn_forwarder`) are spawned from ten call sites across the deck,
 //! fleet and sub-session paths, most of which have no `Dx` in scope and no
 //! reason to grow a parameter for one. Threading it there would buy nothing
 //! §7.1 is protecting and cost a large, risky diff through code that has

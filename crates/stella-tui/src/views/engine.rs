@@ -1109,7 +1109,7 @@ fn render_row(
     Line::from(spans)
 }
 
-/// The model-picker sub-overlay, centered over the main popup: the graph
+/// The model-picker sub-overlay, centered over the ENGINE panel: the graph
 /// file picker's exact idiom (filter line, windowed matches, legend).
 fn render_model_picker(e: &EngineOverlay, area: Rect, buf: &mut Buffer) {
     let Some(picker) = &e.picker else { return };

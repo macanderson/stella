@@ -8,12 +8,13 @@
 //!
 //! # Why this is not "ingest every .md"
 //!
-//! This repository has 154 tracked markdown files. Eighteen of them contain the
-//! word "superseded", including one whose third line reads *"do not implement
-//! from it"*. Ingesting markdown indiscriminately turns a retired design
-//! document into confidently-stated steering — a record that is worse than no
-//! record at all, because without it an agent looks the answer up and with it
-//! the agent does the wrong thing on every turn the record is injected.
+//! This repository tracks well over a hundred markdown files, and roughly a
+//! fifth of them contain the word "superseded" — including a spec whose own
+//! banner reads *"do not implement from it"*. Ingesting markdown
+//! indiscriminately turns a retired design document into confidently-stated
+//! steering — a record that is worse than no record at all, because without it
+//! an agent looks the answer up and with it the agent does the wrong thing on
+//! every turn the record is injected.
 //!
 //! So discovery is broad and *offering* is tiered. Everything is found;
 //! [`Tier`] decides what gets proposed first, what gets proposed with a

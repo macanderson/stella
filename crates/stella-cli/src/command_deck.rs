@@ -702,7 +702,7 @@ pub async fn run_deck_session(
         });
 
     // The deck drives turns through the staged pipeline by default (triage →
-    // recall → plan → scope → witness → execute → verify → verdict); `/pipeline`
+    // recall → plan → scope → execute → witness → verify → verdict); `/pipeline`
     // toggles back to the raw `Engine::run_turn` loop (`run_lead_turn`). A
     // resumed session keeps whatever it last had — the same state the persona
     // choice above read, so driver and persona start the session agreeing.
@@ -847,7 +847,7 @@ pub async fn run_deck_session(
     let mut dispatch = HoldState::new();
     dispatch.held = resume_hold;
     // `/pipeline`: route lead turns through the staged pipeline (triage →
-    // witness → execute → verify → verdict) instead of the raw engine loop.
+    // execute → witness → verify → verdict) instead of the raw engine loop.
     // Session-local, ON at start (the deck loads with the pipeline active)
     // unless a resumed session had toggled it — mirrored to the PIPELINE
     // stat box via `Inbound::Pipeline`.
@@ -4421,7 +4421,7 @@ async fn run_lead_turn(
 /// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
 /// analogue of the `stella run` pipeline path — same tool stack, persistence,
 /// and event forwarding as [`run_lead_turn`], with `Pipeline::run` (triage →
-/// recall → plan → scope → witness → execute → verify → verdict → revise) in
+/// recall → plan → scope → execute → witness → verify → verdict → revise) in
 /// place of the raw `Engine::run_turn`.
 ///
 /// Deck-mode seams, all named:

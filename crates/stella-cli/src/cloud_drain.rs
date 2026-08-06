@@ -1,7 +1,7 @@
 //! The hub→cloud drain transport and invocation site (#404).
 //!
 //! Everything else already shipped: the wire contract (`DrainBatch`,
-//! `stella-store/src/drain.rs`, #468), the pager→deliver→ack loop with
+//! `crates/stella-store/src/drain.rs`, #468), the pager→deliver→ack loop with
 //! poison-row bisection (`drain_org`, #467), and the monotonic per-org cursor.
 //! This module supplies the two missing pieces — the HTTPS [`CloudIntake`]
 //! adapter and the code that actually invokes the loop — plus the attempt

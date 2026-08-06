@@ -3,7 +3,7 @@
 //! in the catalog is a hard, immediate, named error, never a silent
 //! fallback** (the TS-era phantom `glm-5.2-turbo` slug and gateway
 //! slug-drift lessons, L-M1/L-M2). The seed below covers every provider
-//! `stella-cli/src/config.rs`'s `PROVIDERS` table can select — it is
+//! `crates/stella-cli/src/config.rs`'s `PROVIDERS` table can select — it is
 //! the compile-time floor, always accepted. `stella models refresh` pulls
 //! the live master list (models.dev) into the on-disk catalog
 //! (`stella-store`'s model cards), and `stella-cli` installs the merged
@@ -1250,7 +1250,7 @@ mod tests {
 
     #[test]
     fn seed_covers_every_provider_stella_cli_can_select() {
-        // stella-cli/src/config.rs::PROVIDERS lists these providers; this
+        // crates/stella-cli/src/config.rs::PROVIDERS lists these providers; this
         // test doesn't import that crate (stella-cli depends on
         // stella-model, not the reverse) but pins the provider id set here
         // so the two can't silently drift apart again — the actual

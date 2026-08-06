@@ -119,7 +119,7 @@ mod verifier_stage;
 mod verify_probes;
 use verify_probes::DiffProbe;
 mod witness_stage;
-use candidate_result::{CandidateAbort, CandidateResult, TurnAbort};
+use candidate_result::{CandidateAbort, CandidateResult, TurnAbort, escape_abort_reason};
 use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
 pub use run_error::{PipelineError, PipelineRunError};
@@ -1000,8 +1000,8 @@ impl<'a> Pipeline<'a> {
         // Triage classified this as chat, not a software task (a greeting,
         // small talk, a question about the agent), and the deterministic floor
         // saw no task signal to overrule it (triage::resolve_conversational).
-        // Answer in one plain, tool-less completion and skip plan → witness →
-        // execute → verify entirely. This is the fix for "typing `hi` authored
+        // Answer in one plain, tool-less completion and skip plan → execute →
+        // witness → verify entirely. This is the fix for "typing `hi` authored
         // a witness test": a non-task must never enter the work pipeline.
         if assessment.conversational {
             return self
@@ -2212,14 +2212,26 @@ impl<'a> Pipeline<'a> {
         let witness_paths = Self::witness_paths(witness);
         let meter = repair_gate::RepairMeter::start(*total);
         loop {
-            if let Some(workspace) = surface.workspace
-                && let Err(error) = workspace.seal().await
-            {
-                return CandidateResult::aborted(
-                    state.messages,
-                    format!("candidate could not be sealed for verification: {error}"),
-                    AbortKind::Failure,
-                );
+            if let Some(workspace) = surface.workspace {
+                if let Err(error) = workspace.seal().await {
+                    return CandidateResult::aborted(
+                        state.messages,
+                        format!("candidate could not be sealed for verification: {error}"),
+                        AbortKind::Failure,
+                    );
+                }
+                // #1538: the seal just pinned this candidate's final bytes — a
+                // real tree already holding them means the candidate wrote
+                // through its isolation. Fail it in the round that caused it,
+                // not at the winner's adoption.
+                let escaped = workspace.escaped_paths().await;
+                if !escaped.is_empty() {
+                    return CandidateResult::aborted(
+                        state.messages,
+                        escape_abort_reason(&escaped),
+                        AbortKind::Failure,
+                    );
+                }
             }
             let (touched_tests_passed, test_tail, test_infra) = self
                 .observe_touched_tests(surface, effective_cmd, &mut state)
@@ -3598,5 +3610,7 @@ fn count_diff_lines(diff: &str) -> u32 {
         .count() as u32
 }
 
+#[cfg(test)]
+mod test_doubles;
 #[cfg(test)]
 mod tests;
