@@ -189,7 +189,6 @@ pub(crate) mod test_env {
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
 
 use clap::{FromArgMatches, ValueEnum};
 use colored::Colorize;
@@ -529,20 +528,19 @@ fn main() -> ExitCode {
     // before that boundary would race the env mutations it fences — and
     // drained as this function's last act so the final lines land.
     //
-    // The guard rides a shared cell rather than a plain local: a panic hook
-    // (#1616) races this function's own end-of-main drain to restore the
-    // real console fds first, so a panic message — which `run` below can
-    // still produce, and which release builds' `panic = "abort"` gives no
-    // unwind back to this point to handle otherwise — lands in the console
-    // file instead of a pipe a pump thread may never get scheduled to empty.
+    // A panic would unwind (or, under the release profile's
+    // `panic = "abort"`, not unwind at all) past that last act and strand up
+    // to a pipe buffer — usually including the panic message itself — so
+    // `arm_panic_drain` chains a hook that performs the same idempotent
+    // drain (#1616). Whichever of the two arrives first does the one real
+    // drain; the other finds the streams already taken.
     let console = daemon::supervised_id().and_then(|id| {
         daemon::console::install_bounded(
             &stella_store::SessionRegistry::open_default().sidecar_dir(&id),
         )
     });
-    let console = console.map(|guard| Arc::new(Mutex::new(Some(guard))));
-    if let Some(cell) = &console {
-        daemon::console::install_panic_drain(cell.clone());
+    if let Some(guard) = &console {
+        daemon::console::arm_panic_drain(guard);
     }
 
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
@@ -595,8 +593,8 @@ fn main() -> ExitCode {
     // After the last print of every path above: restore the raw fds and join
     // the pumps, so the console files carry this process's final lines. A
     // no-op if the panic hook installed above already won that race.
-    if let Some(cell) = console {
-        daemon::console::ConsoleGuard::drain_shared(&cell);
+    if let Some(guard) = console {
+        guard.drain();
     }
     code
 }

@@ -79,11 +79,10 @@ pub(crate) struct SidecarApprovalGate {
     /// behaviour is testable without raising a process-global signal flag.
     /// Production passes [`interrupted`].
     interrupted: fn() -> bool,
-    /// Wall-clock budget for a parked review before it unparks itself as an
-    /// abort (`agent_engine_config.approval_wait_secs`, #1616). `None` — the
-    /// constructor default — parks forever, which is the behaviour every run
-    /// had before this setting existed.
-    deadline: Option<std::time::Duration>,
+    /// How long the park may last before it resolves itself as an abort
+    /// (`agent_engine_config.approval_wait_secs`, #1616). `None` — the
+    /// shipped default — parks until answered or interrupted.
+    wait: Option<std::time::Duration>,
 }
 
 /// The production interrupt probe: has this process been asked to stop?
@@ -93,31 +92,31 @@ fn interrupted() -> bool {
 
 impl SidecarApprovalGate {
     /// The gate for this process's own supervised session, or `None` when the
-    /// process is not a supervised child. `deadline` is the operator's
+    /// process is not a supervised child. `wait` is the operator's
     /// `approval_wait_secs`, if set.
-    pub(crate) fn for_supervised_child(deadline: Option<std::time::Duration>) -> Option<Self> {
+    pub(crate) fn for_supervised_child(wait: Option<std::time::Duration>) -> Option<Self> {
         let id = super::supervised_id()?;
         let registry = SessionRegistry::open_default();
-        Some(Self::new(registry.sidecar_dir(&id), registry, id).with_deadline(deadline))
+        Some(Self::new(registry.sidecar_dir(&id), registry, id).with_wait(wait))
     }
 
     /// A gate over an explicit sidecar and registry — the testable
     /// constructor, and the one everything else is built from. Parks forever
-    /// until [`Self::with_deadline`] says otherwise.
+    /// until [`Self::with_wait`] says otherwise.
     pub(crate) fn new(sidecar: PathBuf, registry: SessionRegistry, id: String) -> Self {
         Self {
             sidecar,
             registry,
             id,
             interrupted,
-            deadline: None,
+            wait: None,
         }
     }
 
-    /// Bound how long a parked review waits before unparking as an abort.
-    /// `None` (the default) parks forever.
-    pub(crate) fn with_deadline(mut self, deadline: Option<std::time::Duration>) -> Self {
-        self.deadline = deadline;
+    /// Arm the opt-in park deadline (#1616). `None` keeps the park-forever
+    /// default, which is what an absent or `0` `approval_wait_secs` means.
+    pub(crate) fn with_wait(mut self, wait: Option<std::time::Duration>) -> Self {
+        self.wait = wait;
         self
     }
 
@@ -179,23 +178,12 @@ impl ApprovalGate for SidecarApprovalGate {
             .registry
             .set_status(&self.id, SessionStatus::NeedsInput);
 
-        let started = std::time::Instant::now();
+        let parked_at = std::time::Instant::now();
         let decision = loop {
             if (self.interrupted)() {
                 // The same answer the stdio gate gives on EOF: asked to stop
                 // is a no. Unparking here is what lets `stop`'s SIGTERM grace
                 // land as a clean cancel instead of an escalated kill.
-                break ScopeDecision::Abort;
-            }
-            if let Some(deadline) = self.deadline
-                && started.elapsed() >= deadline
-            {
-                eprintln!(
-                    "  {} scope review timed out after {}s with nobody attached \
-                     (approval_wait_secs) — aborting",
-                    "!".yellow(),
-                    deadline.as_secs(),
-                );
                 break ScopeDecision::Abort;
             }
             match std::fs::read_to_string(self.sidecar.join(supervised::APPROVAL_ANSWER)) {
@@ -252,17 +240,19 @@ impl OneShotApprovalGate {
     /// computed from the same predicate, so that arm is a defensive
     /// impossibility, and failing closed is what a missing approver means.
     ///
-    /// `approval_wait` is `agent_engine_config.approval_wait_secs` (#1616),
-    /// consulted only by the sidecar gate — the other two never park, so a
-    /// deadline has nothing to bound for them.
+    /// `wait` is [`park_deadline`]'s reading of
+    /// `agent_engine_config.approval_wait_secs` (#1616), consulted only by
+    /// the sidecar gate — the other two have a live reader on the other end,
+    /// so a timer there would answer a question someone is already looking
+    /// at.
     pub(crate) fn select(
         capability: crate::agent::PipelineApprovalCapability,
-        approval_wait: Option<std::time::Duration>,
+        wait: Option<std::time::Duration>,
     ) -> Self {
         use crate::agent::PipelineApprovalCapability as Capability;
         match capability {
             Capability::Stdio => Self::Stdio(stella_pipeline::StdioApprovalGate),
-            Capability::Sidecar => match SidecarApprovalGate::for_supervised_child(approval_wait) {
+            Capability::Sidecar => match SidecarApprovalGate::for_supervised_child(wait) {
                 Some(gate) => Self::Sidecar(gate),
                 None => Self::Headless(stella_pipeline::AlwaysAbortGate),
             },
@@ -467,29 +457,6 @@ mod tests {
         );
     }
 
-    /// The #1616 witness: with no `approval_wait_secs` set the gate parks
-    /// forever (proven here by outliving several poll intervals with no
-    /// answer and no interrupt); with one set, it unparks itself as an abort
-    /// once the deadline elapses — with nobody having answered and nobody
-    /// having interrupted it. On `main` a parked review has no deadline at
-    /// all, so this only passes once `SidecarApprovalGate` honours one.
-    #[tokio::test]
-    async fn a_deadline_unparks_an_unanswered_review_as_an_abort() {
-        let dir = tempfile::tempdir().unwrap();
-        let registry = registry_in(dir.path());
-        let record = parked_record(&registry);
-        let sidecar = registry.sidecar_dir(&record.id);
-        let gate = SidecarApprovalGate::new(sidecar.clone(), registry.clone(), record.id.clone())
-            .with_deadline(Some(std::time::Duration::from_millis(50)));
-
-        assert_eq!(gate.review(&proposal()).await, ScopeDecision::Abort);
-        assert_eq!(
-            registry.get(&record.id).unwrap().status,
-            SessionStatus::InProgress,
-            "a timed-out review still hands the record back, same as any other decision"
-        );
-    }
-
     /// A deadline that is set but has not yet elapsed must not preempt a real
     /// answer — the timeout is a backstop, not a race against the human.
     #[tokio::test]
@@ -499,7 +466,7 @@ mod tests {
         let record = parked_record(&registry);
         let sidecar = registry.sidecar_dir(&record.id);
         let gate = SidecarApprovalGate::new(sidecar.clone(), registry.clone(), record.id.clone())
-            .with_deadline(Some(std::time::Duration::from_secs(60)));
+            .with_wait(Some(std::time::Duration::from_secs(60)));
 
         let review = tokio::spawn(async move { gate.review(&proposal()).await });
         let request = sidecar.join(supervised::APPROVAL_REQUEST);
