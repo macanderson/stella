@@ -393,6 +393,33 @@ impl Catalog {
                 // reports as a capability difference. Approved as the Fable
                 // ceiling set (#1211 §6.2).
                 .with_max_output_tokens(Some(128_000)),
+                // Opus 5 was absent from this catalog on both routes, so any
+                // role pinned to it refused the run rather than falling back —
+                // correct behaviour, and useless to a benchmark that wants to
+                // seat a worker on Opus-tier. Seeded here and on `openrouter`
+                // together, because the parity tests below assert the two rows
+                // agree and a one-sided add is the failure they exist to catch.
+                //
+                // Half Fable's price at the same 1M window: $5/$25 per MTok
+                // against Fable's $10/$50 (checked 2026-08-06). Copying the
+                // Fable row would have doubled the reported spend on every
+                // Opus turn — the same class of error the Fable row's own
+                // comment above records, in the other direction.
+                CatalogEntry::new(
+                    "claude-opus-5",
+                    "anthropic",
+                    "claude",
+                    1_000_000,
+                    ToolDialect::AnthropicTools,
+                    Pricing {
+                        input_usd_per_mtok: 5.00,
+                        output_usd_per_mtok: 25.00,
+                        cached_input_usd_per_mtok: 0.50,
+                        cache_write_usd_per_mtok: 6.25,
+                    },
+                )
+                .with_reasoning(Some(true))
+                .with_max_output_tokens(Some(128_000)),
                 CatalogEntry::new(
                     "gpt-5.5",
                     "openai",
@@ -716,6 +743,40 @@ impl Catalog {
                 // `top_provider.max_completion_tokens = 128000` for
                 // `anthropic/claude-sonnet-5` (checked 2026-08-03). Route is
                 // not a model property — see the parity test below.
+                .with_max_output_tokens(Some(128_000)),
+                // Seeded so the head-to-head panel can seat Stella's *worker*
+                // on Opus-tier through the gateway. Without a row here the
+                // adapter refuses the run outright rather than falling back
+                // (`STELLA_CATALOG_AUTO_REFRESH=0`), so a benchmark that pins
+                // this slug fails at launch instead of quietly measuring a
+                // different model — the right failure, but only if the row a
+                // real match needs actually exists.
+                //
+                // Prices are OpenRouter's own quotes, read from its `/models`
+                // endpoint on 2026-08-06, not aliased from the first-party
+                // table: `input_cache_read` is $0.50/MTok and
+                // `input_cache_write` $6.25/MTok, which is where a
+                // cache-heavy agentic run actually spends. They happen to
+                // match Anthropic list here — unlike the Sonnet row above,
+                // where the gateway is cheaper — and that coincidence is
+                // exactly why the number has to be checked rather than
+                // assumed.
+                CatalogEntry::new(
+                    "anthropic/claude-opus-5",
+                    "openrouter",
+                    "claude",
+                    1_000_000,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
+                        input_usd_per_mtok: 5.00,
+                        output_usd_per_mtok: 25.00,
+                        cached_input_usd_per_mtok: 0.50,
+                        cache_write_usd_per_mtok: 6.25,
+                    },
+                )
+                .with_reasoning(Some(true))
+                // `top_provider.max_completion_tokens = 128000` on the same
+                // reading, matching the rest of the family on this route.
                 .with_max_output_tokens(Some(128_000)),
                 CatalogEntry::new(
                     "anthropic/claude-fable-5",
@@ -1058,6 +1119,7 @@ mod tests {
         for (slug, ceiling) in [
             ("claude-sonnet-5", 128_000),
             ("claude-sonnet-4-6", 128_000),
+            ("claude-opus-5", 128_000),
             ("claude-fable-5", 128_000),
         ] {
             assert_eq!(
@@ -1077,6 +1139,7 @@ mod tests {
         // Choosing a route is not supposed to change the model's ceiling.
         for (slug, ceiling) in [
             ("anthropic/claude-sonnet-5", 128_000),
+            ("anthropic/claude-opus-5", 128_000),
             ("anthropic/claude-fable-5", 128_000),
             // Lower than its siblings, on purpose and from the provider —
             // the row that keeps this loop from passing on a shared constant.
@@ -1094,6 +1157,41 @@ mod tests {
     }
 
     /// Route is not a model property: the direct and gateway rows for one
+    /// Opus 5 resolves on both routes, at its own price.
+    ///
+    /// The model was missing from the seed entirely, which is a launch-time
+    /// refusal rather than a wrong answer — `STELLA_CATALOG_AUTO_REFRESH=0` on
+    /// the benchmark adapter, so a role pinned to an unlisted slug stops the
+    /// run. Safe, and it made the model unusable for the head-to-head panel
+    /// that wants Stella's worker on Opus-tier.
+    ///
+    /// The price is asserted against a literal on purpose. A missing row fails
+    /// loudly; a row copied from the Fable 5 block beside it would resolve
+    /// fine and silently double the reported spend on every Opus turn, because
+    /// `cost_usd` is computed from this table. Opus 5 is half Fable's price at
+    /// the same context window, so the two are exactly the pair a copy-paste
+    /// gets wrong.
+    #[test]
+    fn opus_5_is_seeded_on_both_routes_at_its_own_price() {
+        let seed = Catalog::seed();
+        for (provider, slug) in [
+            ("anthropic", "claude-opus-5"),
+            ("openrouter", "anthropic/claude-opus-5"),
+        ] {
+            let entry = seed
+                .resolve_for(provider, slug)
+                .unwrap_or_else(|_| panic!("{provider}/{slug} is not in the seed catalog"));
+            assert_eq!(entry.pricing.input_usd_per_mtok, 5.00, "{slug} input price");
+            assert_eq!(entry.pricing.output_usd_per_mtok, 25.00, "{slug} output price");
+            assert_eq!(entry.context_window, 1_000_000, "{slug} context window");
+            assert_eq!(
+                entry.max_output_tokens,
+                Some(128_000),
+                "{slug} output ceiling",
+            );
+        }
+    }
+
     /// model must agree on its ceiling.
     ///
     /// Asserted as equality between the two rows rather than against a
@@ -1106,6 +1204,7 @@ mod tests {
         let seed = Catalog::seed();
         for (direct, gateway) in [
             ("claude-sonnet-5", "anthropic/claude-sonnet-5"),
+            ("claude-opus-5", "anthropic/claude-opus-5"),
             ("claude-fable-5", "anthropic/claude-fable-5"),
         ] {
             assert_eq!(

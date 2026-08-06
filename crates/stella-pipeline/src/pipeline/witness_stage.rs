@@ -14,16 +14,23 @@ use crate::witness::{RUNNER_VOCABULARY, runner_probe};
 /// itself. One version-style probe per vocabulary program, through the
 /// baseline's own [`TestRunner`] port; a port that cannot check answers
 /// `true` per its default, so this only ever narrows on real evidence.
+///
+/// Probed concurrently: the vocabulary is thirteen programs, each an awaited
+/// process spawn, and a best-of-N fan-out pays this per candidate — serially
+/// that was thirteen spawn round-trips of pure latency before any authoring
+/// could start. Order is restored from the vocabulary, not the completion
+/// order, so the prompt's listing stays deterministic (invariant 7).
 async fn runner_availability(tests: &dyn TestRunner) -> Vec<String> {
-    let mut available = Vec::new();
-    for program in RUNNER_VOCABULARY {
-        if let Some(probe) = runner_probe(program)
-            && tests.runner_available(&probe).await
-        {
-            available.push((*program).to_string());
-        }
-    }
-    available
+    let probes = RUNNER_VOCABULARY.iter().filter_map(|program| {
+        let probe = runner_probe(program)?;
+        Some(async move { (*program, tests.runner_available(&probe).await) })
+    });
+    futures_util::future::join_all(probes)
+        .await
+        .into_iter()
+        .filter(|(_, available)| *available)
+        .map(|(program, _)| program.to_string())
+        .collect()
 }
 
 /// Candidate-bound hook execution: both the hook process and the engine's
@@ -230,20 +237,13 @@ impl<'a> Pipeline<'a> {
 
         let mut messages = vec![
             CompletionMessage::system(WITNESS_SYSTEM_PROMPT),
-            CompletionMessage::user(witness_prompt(
-                goal,
-                frames,
-                &structure,
-                // Only a command that PARSED is offered as an anchor. An
-                // unparseable one names no runner the author could copy, and
-                // the run already refuses before reaching here.
-                self.configured_test
-                    .as_ref()
-                    .ok()
-                    .and_then(Option::as_ref)
-                    .and(self.config.test_command.as_deref()),
-                &available,
-            )),
+            // No project-test-command anchor rides here, structurally: this
+            // stage is only reachable when `config.test_command` is `None`
+            // (a configured command makes the pipeline its own oracle and
+            // authors nothing), so there is never a configured command to
+            // offer. The probed availability set is the toolchain fact the
+            // author gets instead.
+            CompletionMessage::user(witness_prompt(goal, frames, &structure, &available)),
         ];
         // Both tallies are local and discarded, on the same reasoning: they
         // measure the *witness author*, and the ladder's channels are about
@@ -252,6 +252,7 @@ impl<'a> Pipeline<'a> {
         // would let an authored witness disguise a worker that never acted.
         let mut file_changes = 0u32;
         let mut mutating_actions = 0u32;
+        let mut opaque_actions = 0u32;
         let text = match self
             .run_engine_turn(
                 &engine,
@@ -259,6 +260,7 @@ impl<'a> Pipeline<'a> {
                 budget,
                 &mut file_changes,
                 &mut mutating_actions,
+                &mut opaque_actions,
                 // No flip halt: this turn is the witness AUTHOR writing the
                 // test, not the worker fixing the code. Stopping it because
                 // the tracked command went green would abandon the artifact
@@ -319,6 +321,15 @@ impl<'a> Pipeline<'a> {
                  baseline cannot be established"
             )));
         }
+        // The failing run's output is part of the witness: it carries the
+        // failing test names that arm the oracle's same-failure rule (#867)
+        // when this observation is transplanted into the candidate's oracle.
+        // Combined the same way every other oracle observation is — some
+        // runners report through stdout, some through stderr.
+        let mut baseline_output = format!(
+            "{}\n{}",
+            first_baseline.stdout_tail, first_baseline.stderr_tail
+        );
         if first_baseline.passed() {
             messages.push(CompletionMessage::user(witness_repair_prompt(&command)));
             let mut repair_engine = Engine::with_sleeper(
@@ -338,6 +349,7 @@ impl<'a> Pipeline<'a> {
                     budget,
                     &mut file_changes,
                     &mut mutating_actions,
+                    &mut opaque_actions,
                     // Witness repair, same reasoning as the author turn.
                     None,
                 )
@@ -359,7 +371,18 @@ impl<'a> Pipeline<'a> {
                     )));
                 }
             };
-            command = parse_witness_command(&repaired).unwrap_or(command);
+            // A repair reply with no marker line used to fall back to the
+            // command that had JUST passed — deterministically re-running it,
+            // re-observing the pass, and paying a test run to learn nothing.
+            // The absent marker already is the answer: degrade now.
+            command = match parse_witness_command(&repaired) {
+                Some(repaired_command) => repaired_command,
+                None => {
+                    return Err(WitnessAbort::degradable(
+                        "witness repair produced no TEST_COMMAND line".to_string(),
+                    ));
+                }
+            };
             let Ok(repaired_invocation) = parse_test_invocation(&command) else {
                 return Err(WitnessAbort::degradable(format!(
                     "witness repair produced an unsafe or unsupported test command `{command}`"
@@ -388,6 +411,10 @@ impl<'a> Pipeline<'a> {
                     "witness test still passes on the unmodified code after one repair".to_string(),
                 ));
             }
+            baseline_output = format!(
+                "{}\n{}",
+                repaired_baseline.stdout_tail, repaired_baseline.stderr_tail
+            );
         }
 
         let tracked_after = baseline.repo_status.tracked_fingerprints().await;
@@ -398,7 +425,17 @@ impl<'a> Pipeline<'a> {
             &untracked_before,
             &untracked_after,
         )
-        .map_err(|error| WitnessAbort::rejected(error.to_string()))?;
+        .map_err(|error| match error {
+            // No file at all is a cannot-author condition, not an integrity
+            // violation: the worker's change is real and already done, and
+            // this stage's own contract says a witness that cannot be
+            // PRODUCED must not throw it away. Everything else — tracked
+            // mutations, wrong or multiple files — stays fail-closed.
+            crate::witness::WitnessArtifactError::NothingCreated => {
+                WitnessAbort::degradable(error.to_string())
+            }
+            _ => WitnessAbort::rejected(error.to_string()),
+        })?;
         let path = fingerprints
             .keys()
             .next()
@@ -445,6 +482,7 @@ impl<'a> Pipeline<'a> {
             command,
             invocation,
             files,
+            baseline_output,
         }))
     }
 
@@ -528,8 +566,15 @@ impl<'a> Pipeline<'a> {
         // The artifact failed in the baseline — `witness_stage` cannot return
         // it otherwise — and that snapshot was created for this candidate from
         // this candidate's own pre-execution tree. So this records an
-        // observation that was made, not one that is assumed.
-        state.oracle.observe(&witness.command, false);
+        // observation that was made, not one that is assumed. `observe_run`
+        // rather than `observe`: the failing tail carries the test names that
+        // arm the same-failure rule (#867), which the name-blind `observe`
+        // left permanently inert for authored witnesses — a flip could be
+        // credited to a pass whose listing never contained the baseline's
+        // failing test.
+        state
+            .oracle
+            .observe_run(&witness.command, false, &witness.baseline_output);
         // The graft added an untracked file after the pre-execution snapshot
         // was taken. Enrolling it as pre-existing keeps every later diff
         // gather (each revision re-gathers) from reading the scaffolding as
