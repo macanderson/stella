@@ -32,7 +32,12 @@ fi
 offenders="$(git ls-files --cached --ignored --exclude-standard)"
 
 if [ -z "$offenders" ]; then
-  echo "check-no-scratch: OK — no tracked file is gitignored."
+  # The verdict is already decided; the write is best-effort. SIGPIPE is
+  # ignored and the write's failure discarded, so a reader that closed the
+  # pipe (`| head -1`, `| true`) cannot turn a green verdict into a failure
+  # (#1815).
+  trap '' PIPE
+  echo "check-no-scratch: OK — no tracked file is gitignored." || true
   exit 0
 fi
 

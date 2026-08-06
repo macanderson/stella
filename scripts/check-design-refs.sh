@@ -123,4 +123,8 @@ if [ ${#violations[@]} -gt 0 ] || [ -n "$id_violations" ]; then
   exit 1
 fi
 
-echo "check-design-refs: no code cites docs/design, by path or by id ✔"
+# The verdict is already decided; the write is best-effort. SIGPIPE is ignored
+# and the write's failure discarded, so a reader that closed the pipe
+# (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
+trap '' PIPE
+echo "check-design-refs: no code cites docs/design, by path or by id ✔" || true
