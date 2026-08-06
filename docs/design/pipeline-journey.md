@@ -314,8 +314,9 @@ because `bench/evidence/` is frozen at the vocabulary each run was recorded in.
 
 A `Revise` decision (or a verifier `FAIL`) sends the evidence back into a fresh
 worker turn (`Pipeline::revise_candidate`), up to `max_revisions` times
-(default 2). On the **second consecutive** deterministic failure, the pipeline
-spends one verifier call on **distress guidance** (`verify::guidance_prompt`) —
+(default 2). On the **second** deterministic failure a candidate accumulates —
+consecutive or not (#868) — the pipeline spends one verifier call on
+**distress guidance** (`verify::guidance_prompt`) —
 a course-correction note that rides with the next revision prompt instead of
 letting the worker dig the same hole. Repeated identical failures also widen
 what the revision prompt discloses about the failure

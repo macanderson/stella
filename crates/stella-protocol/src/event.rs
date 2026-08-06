@@ -113,13 +113,15 @@ pub enum StageKind {
     Plan,
     /// The interactive approval gate a large plan passes through (L-E5).
     ScopeReview,
-    /// Witness authoring: before the worker executes, an independent model
-    /// (the verifier's resolution, never the worker's transcript) writes the
-    /// witness test — a test that FAILS on the current code and will pass
-    /// once the goal is met — arming the deterministic flip oracle (L-E11).
-    /// The witness is visible to the worker (iterating against a failing
-    /// test is where convergence comes from); integrity comes from tamper
-    /// exclusion at verify time, not from hiding the test.
+    /// Witness authoring: after the worker executes — once the warrant has
+    /// read the diff and found something worth proving — an independent
+    /// model (the verifier's resolution, never the worker's transcript)
+    /// writes the witness test in a pristine snapshot of the pre-execution
+    /// tree: a test that FAILS there and will pass once the goal is met,
+    /// arming the deterministic flip oracle (L-E11). The witness is visible
+    /// to the worker's revise turns (iterating against a failing test is
+    /// where convergence comes from); integrity comes from tamper exclusion
+    /// at verify time, not from hiding the test.
     Witness,
     /// The worker's own tool-calling loop — the steps that actually change
     /// the workspace.

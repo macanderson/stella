@@ -76,7 +76,7 @@ of re-running `rubric` will ever say so.
 
 ## What backs each lens (#1549)
 
-Every lens declares, on the record (`stella-core::self-driving::LENSES`, printed by
+Every lens declares, on the record (`stella-core::self_driving::LENSES`, printed by
 `aperture --list`), either the concrete command the cycle runs and how to
 interpret it, or that it is **model-only**. No lens is silently a no-op:
 

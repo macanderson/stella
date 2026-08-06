@@ -113,11 +113,16 @@ fi
 contributing_alias() {
   case "$1" in
   shellcheck) echo 'shellcheck ' ;;
+  # Two Python guards, so the `.sh` default below does not fit them.
   doc-links) echo 'check-doc-links' ;;
+  module-reachability) echo 'check-module-reachability' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;
   test) echo 'cargo test' ;;
+  # The one guard whose script is not check-*.sh: it is a test harness, not a
+  # tree guard, so it is named for what it tests.
+  self-driving-test) echo 'test-self-driving.sh' ;;
   *) echo "check-$1.sh" ;;
   esac
 }
