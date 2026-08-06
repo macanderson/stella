@@ -136,10 +136,10 @@ impl SidecarApprovalGate {
     /// Split out of the loop so the arithmetic — the part a wall-clock test
     /// cannot pin down without sleeping through it — is directly testable.
     fn next_poll(&self, parked_at: std::time::Instant) -> Option<std::time::Duration> {
-        let Some(deadline) = self.deadline else {
+        let Some(wait) = self.wait else {
             return Some(ANSWER_POLL);
         };
-        let remaining = deadline.checked_sub(parked_at.elapsed())?;
+        let remaining = wait.checked_sub(parked_at.elapsed())?;
         (!remaining.is_zero()).then(|| ANSWER_POLL.min(remaining))
     }
 
@@ -210,7 +210,7 @@ impl ApprovalGate for SidecarApprovalGate {
                             "{} scope review unanswered for {}s — aborting the run \
                              (agent_engine_config.approval_wait_secs)",
                             "▸ timed out".yellow().bold(),
-                            self.deadline.map_or(0, |d| d.as_secs()),
+                            self.wait.map_or(0, |w| w.as_secs()),
                         );
                         break ScopeDecision::Abort;
                     }
@@ -245,7 +245,8 @@ impl OneShotApprovalGate {
     /// computed from the same predicate, so that arm is a defensive
     /// impossibility, and failing closed is what a missing approver means.
     ///
-    /// `wait` is [`park_deadline`]'s reading of
+    /// `wait` is [`crate::settings::AgentEngineConfig::approval_wait`]'s
+    /// reading of
     /// `agent_engine_config.approval_wait_secs` (#1616), consulted only by
     /// the sidecar gate — the other two have a live reader on the other end,
     /// so a timer there would answer a question someone is already looking
