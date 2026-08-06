@@ -2366,9 +2366,13 @@ mod golden;
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
 /// `super::*`.
 mod mcp_prefetch;
+/// The plan-step walk and its early close-out (#1702). A child module, so it
+/// reaches the scripted ports above via `super::*`.
+mod plan_walk;
 mod scope_gate_interactive;
 mod shared_worktree;
 mod terminal_outcomes;
+mod triage_context;
 mod usage;
 /// Bounded repair after a refuted success claim (#1479).
 mod verdict_repair;

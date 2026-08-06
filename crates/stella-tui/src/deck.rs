@@ -642,16 +642,9 @@ impl WorkspaceModel {
                 });
             }
             // `/clear`: reset the agent's session to seq-0 — blank the
-            // transcript, zero the cost/token counters and the header clock, and
-            // return the HUD (progress bar) to idle. The prompt echo the paired
-            // `PromptStarted` pushed is wiped along with the rest.
-            //
-            // The file-touch half of the session model is deliberately NOT
-            // reset (`SessionModel::reset_conversation`): [`Self::ledger`] — the
-            // Files tab's rows — is untouched here, and the diffs those rows
-            // render live in the session model (L-T5). Blanking one store and
-            // not the other is what made every post-`/clear` row show accurate
-            // counts beside `(no diff captured)`.
+            // transcript, zero the counters and header clock, return the HUD to
+            // idle, wipe the prompt echo. The file-touch half and
+            // [`Self::ledger`] survive; why is on `SessionModel::reset_conversation`.
             Inbound::SessionReset { agent } => {
                 if let Some(idx) = self.index_of(agent) {
                     let entry = &mut self.agents[idx];
@@ -1088,53 +1081,10 @@ impl RouteLog {
     }
 }
 
-// ── Prompt queue: never blocks input ────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct QueuedPrompt {
-    pub text: String,
-    pub ts: u64,
-}
-
-/// The non-blocking prompt queue. Submitting a prompt always enqueues and
-/// returns; the deck never gates typing on a busy agent. Dispatch REMOVES
-/// the prompt (`take_next`), so the queue holds only the waiting backlog —
-/// no dispatched history is retained, keeping memory proportional to what is
-/// actually queued (the same discipline as the capped `RouteLog`/`TraceLog`).
-#[derive(Clone, Debug, Default)]
-pub struct PromptQueue {
-    pub items: VecDeque<QueuedPrompt>,
-}
-
-impl PromptQueue {
-    pub fn enqueue(&mut self, text: String, ts: u64) {
-        self.items.push_back(QueuedPrompt { text, ts });
-    }
-    /// Insert at the FRONT: a double-Esc requeue (the interrupted prompt
-    /// runs before the rest of the backlog) or the first submission after a
-    /// hold (the user's new prompt runs before even that).
-    pub fn enqueue_front(&mut self, text: String, ts: u64) {
-        self.items.push_front(QueuedPrompt { text, ts });
-    }
-    /// Number of not-yet-dispatched prompts.
-    pub fn pending(&self) -> usize {
-        self.items.len()
-    }
-    /// Remove the oldest pending prompt for dispatch, returning its text.
-    pub fn take_next(&mut self) -> Option<String> {
-        self.items.pop_front().map(|p| p.text)
-    }
-    /// Remove one queued prompt by position (0 = oldest), returning its text.
-    /// The queue is a *list* the user edits — deleting or pulling a prompt
-    /// back out for editing must never require dispatching it first.
-    pub fn remove(&mut self, index: usize) -> Option<String> {
-        self.items.remove(index).map(|p| p.text)
-    }
-    /// Drop every pending prompt (the deck gates this behind a confirm).
-    pub fn clear(&mut self) {
-        self.items.clear();
-    }
-}
+// The prompt queue moved to its own module when #1742's cross-store comment
+// pushed this file past its size ceiling; re-exported so call sites hold.
+mod prompt_queue;
+pub use prompt_queue::{PromptQueue, QueuedPrompt};
 
 // ── Trace log: unified cross-agent timeline ─────────────────────────────────
 

@@ -3,10 +3,10 @@ description: One cycle of the perpetual delivery loop — size to the machine, f
 argument-hint: "[--engine=stella|claude] [--bench=auto|loop|h2h|off] [--ship=auto|off] [--force-tier=light|normal|heavy]"
 ---
 
-# fullauto — one delivery cycle
+# self-driving — one delivery cycle
 
 You are running **one cycle** of Stella's perpetual delivery loop. Loop it:
-`/loop 45m /fullauto`.
+`/loop 45m /self-driving`.
 
 Two properties define this system, and every phase below serves one of them:
 
@@ -17,7 +17,7 @@ wakes when something changes. It changes duty cycle; it never declares itself
 finished.
 
 **It sizes itself.** You do not choose the batch size, the parallelism, or
-whether to compile locally. `scripts/fullauto.sh plan` reads the machine's real
+whether to compile locally. `scripts/self-driving.sh plan` reads the machine's real
 disk, memory, CPU and contention, combines it with what previous cycles proved
 this box survives, and hands you a plan. Follow it. A cycle that ignores the
 governor is how a 16 GiB laptop gets a killed compiler and how a measured
@@ -34,7 +34,7 @@ Three rules override everything below.
 
 1. **Nothing left behind.** Every defect you notice and do not fix becomes a
    GitHub issue *before this cycle ends*, written as a handoff a fresh agent can
-   execute. See `/fullauto:tickets`.
+   execute. See `/self-driving:tickets`.
 2. **Verified done, not claimed done.** Every behaviour fix ships with a witness
    test that fails on `main` and passes with the change. No witness, no merge —
    label the PR `needs-witness` and say so.
@@ -47,17 +47,17 @@ Three rules override everything below.
 ## Phase 0 — Plan this cycle against this machine
 
 ```bash
-eval "$(scripts/fullauto.sh cycle-begin)"
-eval "$(scripts/fullauto.sh plan)"
-scripts/fullauto.sh plan --explain      # the reasoning, for your report
-scripts/fullauto.sh preflight
+eval "$(scripts/self-driving.sh cycle-begin)"
+eval "$(scripts/self-driving.sh plan)"
+scripts/self-driving.sh plan --explain      # the reasoning, for your report
+scripts/self-driving.sh preflight
 ```
 
-You now have `FULLAUTO_TIER`, `FULLAUTO_BATCH`, `FULLAUTO_PARALLEL`,
-`FULLAUTO_LOCAL_BUILD`, `FULLAUTO_SCOPE`, `FULLAUTO_AUDIT`, `FULLAUTO_BENCH`,
-and `FULLAUTO_APERTURE`. **These are the cycle's budget. Do not exceed them.**
+You now have `SELF_DRIVING_TIER`, `SELF_DRIVING_BATCH`, `SELF_DRIVING_PARALLEL`,
+`SELF_DRIVING_LOCAL_BUILD`, `SELF_DRIVING_SCOPE`, `SELF_DRIVING_AUDIT`, `SELF_DRIVING_BENCH`,
+and `SELF_DRIVING_APERTURE`. **These are the cycle's budget. Do not exceed them.**
 
-`FULLAUTO_LOCAL_BUILD=0` is the one that matters most: it means *do not compile
+`SELF_DRIVING_LOCAL_BUILD=0` is the one that matters most: it means *do not compile
 here*. Push the branch and let CI run the gate. The governor sets it when disk
 is below the floor, memory is short, or a benchmark match owns the box — and in
 every one of those cases a local `cargo build` produces a killed compiler or a
@@ -80,14 +80,14 @@ someone else's breakage.
 ## Phase 2 — Fix the batch
 
 ```bash
-scripts/fullauto.sh queue --limit "$FULLAUTO_BATCH"
+scripts/self-driving.sh queue --limit "$SELF_DRIVING_BATCH"
 ```
 
 The ranked queue: open issues labelled `bug` or `triage`, P0 → P1 → P2 →
 unlabelled, oldest first inside a rank. Add anything the previous cycle's audit
 left unfixed.
 
-Work in coherent groups — **at most `$FULLAUTO_PARALLEL` worktrees at once**, one
+Work in coherent groups — **at most `$SELF_DRIVING_PARALLEL` worktrees at once**, one
 PR per group, at most ~5 issues per PR. Twenty fixes in one PR is not reviewable
 and will not be reviewed.
 
@@ -113,9 +113,9 @@ For each group:
   way — it must fail without your fix.
 - Gate according to the plan:
   ```bash
-  # FULLAUTO_LOCAL_BUILD=1
+  # SELF_DRIVING_LOCAL_BUILD=1
   make gate CARGO_SCOPE="$(make impacted RANGE=origin/main..HEAD)"
-  # FULLAUTO_LOCAL_BUILD=0 — do NOT compile. Push and read CI.
+  # SELF_DRIVING_LOCAL_BUILD=0 — do NOT compile. Push and read CI.
   git push -u origin HEAD && gh pr create --draft …
   ```
 - `Closes #N` **in the PR description and as a commit trailer** — both, because
@@ -128,7 +128,7 @@ Phase 4 with what you learned.
 
 ## Phase 3 — Audit through the current lens
 
-The open aperture is `$FULLAUTO_APERTURE`. Audit the **post-fix** tree, and audit
+The open aperture is `$SELF_DRIVING_APERTURE`. Audit the **post-fix** tree, and audit
 it *through that lens specifically* — the point of the ladder is that each lens
 sees what the others structurally cannot:
 
@@ -138,22 +138,22 @@ sees what the others structurally cannot:
 | `properties` | what is asserted by example that should be asserted by property | `rg --files-without-match 'proptest' -g '*.rs' crates/stella-core/src crates/stella-context/src crates/stella-fleet/src crates/stella-pipeline/src crates/stella-tui/src` — a pure decision module in that list is a finding |
 | `invariants` | where does the code violate AGENTS.md's numbered invariants | `make invariants` for the mechanical half; the semantic half — read each numbered invariant against the code — is yours |
 | `concurrency` | races, ordering, cancellation, partial failure | **model-only** — no tooling yet; say so in the report |
-| `performance` | allocation, cache voids, per-step cost regressions | `scripts/fullauto.sh bench loop` + the prompt-cache goldens (`cargo test -p stella-model`) — heavy tier only |
+| `performance` | allocation, cache voids, per-step cost regressions | `scripts/self-driving.sh bench loop` + the prompt-cache goldens (`cargo test -p stella-model`) — heavy tier only |
 | `supply-chain` | `cargo deny`, pinning, licence drift, unvendored risk | `make supply-chain` |
 | `security` | untrusted input, path handling, egress, credential surfaces | **model-only** — no tooling yet; say so in the report |
 | `docs` | where the docs and the code disagree — either one may be the bug | `make doc-links && make doc-report && scripts/check-command-docs.sh` |
-| `soak` | long-run behaviour: leaks, unbounded growth, wedged loops | `scripts/fullauto.sh bench h2h` (long task list) — heavy tier only |
+| `soak` | long-run behaviour: leaks, unbounded growth, wedged loops | `scripts/self-driving.sh bench h2h` (long task list) — heavy tier only |
 
 `cycle-begin` hands you the open lens's declared backing as
-`$FULLAUTO_APERTURE_TOOL`, and `stella fullauto aperture --list` prints the
+`$SELF_DRIVING_APERTURE_TOOL`, and `stella self-driving aperture --list` prints the
 whole table. A lens whose tool reports nothing can still go dry — but a
 missing tool must never read as "clean": the two `model-only` lenses work
 unaided and the report says so. Record what you *actually* ran with
 `--lens-tool` on `cycle-end`, so the ledger says which tool produced the
 findings.
 
-Run `$FULLAUTO_AUDIT` depth (`deep` = `/ultraudit`, `fast` = `/reaudit`). See
-`/fullauto:audit`.
+Run `$SELF_DRIVING_AUDIT` depth (`deep` = `/ultraudit`, `fast` = `/reaudit`). See
+`/self-driving:audit`.
 
 ## Phase 4 — Triage every finding into a fix or a ticket
 
@@ -161,33 +161,33 @@ For each finding: digest it, check whether it is new, search before filing, file
 it as a handoff, record it as seen.
 
 ```bash
-d=$(scripts/fullauto.sh seen --digest "<file> <one-line claim>")
-scripts/fullauto.sh seen --new "$d"        # prints only if unseen
+d=$(scripts/self-driving.sh seen --digest "<file> <one-line claim>")
+scripts/self-driving.sh seen --new "$d"        # prints only if unseen
 # … file the issue …
-scripts/fullauto.sh seen --add "$d"
+scripts/self-driving.sh seen --add "$d"
 ```
 
 Deduplicate by **digest, not issue number** — a finding closed as `wontfix` would
 otherwise reappear every cycle and the aperture would never advance. Full
-procedure in `/fullauto:tickets`.
+procedure in `/self-driving:tickets`.
 
 **Count the unseen findings.** That number is `--new` in Phase 7, and it is the
 only input to the aperture oracle.
 
 ## Phase 5 — Benchmark against Claude Code
 
-Run `$FULLAUTO_BENCH` — the governor already decided what this box can afford.
+Run `$SELF_DRIVING_BENCH` — the governor already decided what this box can afford.
 
 ```bash
-scripts/fullauto.sh bench loop        # loop-health gate in CI, well under $1
-scripts/fullauto.sh bench h2h --rig   # Claude Code vs Stella, TB2.1, measured
+scripts/self-driving.sh bench loop        # loop-health gate in CI, well under $1
+scripts/self-driving.sh bench h2h --rig   # Claude Code vs Stella, TB2.1, measured
 ```
 
-`FULLAUTO_BENCH=off` means the box cannot host a valid measurement right now.
+`SELF_DRIVING_BENCH=off` means the box cannot host a valid measurement right now.
 Record `skipped`. Do not override it — a benchmark run on a contended box is not
 a cheap result, it is a **wrong** one that will be quoted later.
 
-A regression **blocks the ship phase** and gets its own P0. See `/fullauto:bench`
+A regression **blocks the ship phase** and gets its own P0. See `/self-driving:bench`
 for the three failure shapes that look like a loss but are not.
 
 ## Phase 6 — Ship
@@ -196,14 +196,14 @@ for the three failure shapes that look like a loss but are not.
 green, benchmark not regressed, cycle dry.
 
 ```bash
-/fullauto:upgrade
+/self-driving:upgrade
 ```
 
 ## Phase 7 — Close the cycle and recalibrate
 
 ```bash
-scripts/fullauto.sh cycle-end \
-  --cycle "$FULLAUTO_CYCLE" --tier "$FULLAUTO_TIER" \
+scripts/self-driving.sh cycle-end \
+  --cycle "$SELF_DRIVING_CYCLE" --tier "$SELF_DRIVING_TIER" \
   --fixed <n> --filed <n> --new <unseen-findings> \
   --gate green|red|skipped --bench pass|regressed|skipped \
   --prs "1234,1235" --minutes <n> \
@@ -229,17 +229,17 @@ Report what it printed.
 ## Phase 8 — Every fifth cycle, improve the loop itself
 
 ```bash
-scripts/fullauto.sh metrics
+scripts/self-driving.sh metrics
 ```
 
-If `FULLAUTO_CYCLE % 5 == 0`, or `metrics` printed any `signals for
-/fullauto:evolve`, run `/fullauto:evolve`. This loop is part of the
+If `SELF_DRIVING_CYCLE % 5 == 0`, or `metrics` printed any `signals for
+/self-driving:evolve`, run `/self-driving:evolve`. This loop is part of the
 self-improvement loop: its own ledger is evidence about its own performance, and
 a pathology it can name it can fix.
 
 ## Phase 9 — Decide the next cycle
 
-- **Aperture advanced to `watch`** → run `scripts/fullauto.sh watch`. If it says
+- **Aperture advanced to `watch`** → run `scripts/self-driving.sh watch`. If it says
   `SLEEP`, stop this iteration having spent almost nothing and report that the
   loop is in watch mode. It will wake on a change. **Do not stop the `/loop`** —
   watch mode is the loop working, not the loop finishing.

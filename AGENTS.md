@@ -64,6 +64,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + command-docs + brand-case + file-size
                          #   + god-files
                          #   + gate-parity + left-behind + role-names
+                         #   + stat-portability
                          #   + wire-schema
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
@@ -71,7 +72,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + test (test --workspace)
 ```
 
-That is twenty-two steps, and the list is not maintained by hand: it is
+That is twenty-three steps, and the list is not maintained by hand: it is
 `GATE_STEPS` in the `Makefile`, and `gate-parity` (`scripts/check-gate-parity.sh`)
 fails if this block or CONTRIBUTING.md's stops matching it. The block had
 already drifted twice before that guard existed, both times by under-reporting
@@ -419,7 +420,7 @@ a plan needs and the part that rarely changes:
 | `stella-protocol` | `src/event.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tools` | `src/registry.rs`, `src/scripts.rs`, `src/media.rs` |
-| `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs`, `src/deck.rs` |
+| `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
 The other twelve crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the

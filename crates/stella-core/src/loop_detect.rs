@@ -206,12 +206,23 @@ impl LoopVerdict {
 
     /// A human-readable evidence string for the driver to surface when it
     /// steers or aborts. `None` for `NoLoop`.
+    ///
+    /// The quoted input is truncated through the same [`truncate`] and
+    /// [`MAX_DESCRIBED_INPUT`] [`LoopIdentity::describe`] uses, not a second
+    /// budget of its own. This string becomes an `AgentEvent::Error` message,
+    /// the abort reason on `TurnOutcome::Aborted`, the red line in the Command
+    /// Deck, and the `loop_detected` journal event — so an untruncated
+    /// `edit_file` or `write_file` loop, whose input carries whole old/new file
+    /// chunks, put kilobytes of JSON into all four (#1744). A `bash` loop's
+    /// one-line command is well under the cap and reads exactly as it always
+    /// did, which is why this went unnoticed.
     pub fn evidence(&self) -> Option<String> {
         match self {
             LoopVerdict::NoLoop => None,
             LoopVerdict::ExactRepeat { tool, input, count } => Some(format!(
                 "the same `{tool}` call with identical arguments repeated {count} times \
-                 consecutively, producing byte-identical output every time (input: {input})"
+                 consecutively, producing byte-identical output every time (input: {})",
+                truncate(&input.to_string(), MAX_DESCRIBED_INPUT)
             )),
             LoopVerdict::ShortCycle { pattern, repeats } => {
                 let names: Vec<String> = pattern.iter().map(|c| format!("`{}`", c.name)).collect();
@@ -1184,6 +1195,73 @@ mod tests {
         let evidence = verdict.evidence().expect("loop verdict has evidence");
         assert!(evidence.contains("read_file"));
         assert!(evidence.contains('4'));
+    }
+
+    /// An `edit_file` loop's input carries whole old/new file chunks, and this
+    /// string lands in the TUI, the journal, the store and the abort reason
+    /// (#1744). Bounded rather than "reasonable": the input is model-produced
+    /// runtime data with no size a caller controls.
+    #[test]
+    fn evidence_bounds_a_multi_kilobyte_edit_file_input() {
+        let chunk = "fn f() { let x = 1; }\n".repeat(400);
+        assert!(chunk.len() > 8_000, "fixture must be genuinely large");
+        let verdict = LoopVerdict::ExactRepeat {
+            tool: "edit_file".into(),
+            input: serde_json::json!({ "path": "a.rs", "old": chunk, "new": "" }),
+            count: 3,
+        };
+        let evidence = verdict.evidence().expect("loop verdict has evidence");
+
+        // The prose around the input is fixed-size, so the whole sentence is
+        // bounded once the input is. The slack covers that prose.
+        assert!(
+            evidence.chars().count() < MAX_DESCRIBED_INPUT + 200,
+            "evidence grew with the input ({} chars)",
+            evidence.chars().count()
+        );
+        assert!(
+            evidence.contains('…'),
+            "the drop must be marked: {evidence}"
+        );
+        // Still identifies the loop — a bound that erased the useful half
+        // would trade one defect for another.
+        assert!(evidence.contains("edit_file"));
+        assert!(evidence.contains('3'));
+    }
+
+    /// The common case must read exactly as it did before the bound existed: a
+    /// `bash` loop is a one-line command, and truncating it would make the
+    /// reason line worse to fix a problem it never had.
+    #[test]
+    fn evidence_leaves_a_short_bash_command_intact() {
+        let verdict = LoopVerdict::ExactRepeat {
+            tool: "bash".into(),
+            input: serde_json::json!({ "command": "cargo test -p stella-core" }),
+            count: 4,
+        };
+        let evidence = verdict.evidence().expect("loop verdict has evidence");
+        assert!(
+            evidence.contains("cargo test -p stella-core"),
+            "the whole command must survive: {evidence}"
+        );
+        assert!(!evidence.contains('…'), "nothing was dropped: {evidence}");
+    }
+
+    /// The input is model-produced UTF-8, so the cap must land on a char
+    /// boundary. A byte slice at 160 inside a multi-byte char panics — and
+    /// this path runs while the turn is already aborting.
+    #[test]
+    fn evidence_truncates_multi_byte_input_without_panicking() {
+        // Every char is 4 bytes, so a byte-indexed cut at MAX_DESCRIBED_INPUT
+        // lands mid-char.
+        let verdict = LoopVerdict::ExactRepeat {
+            tool: "write_file".into(),
+            input: serde_json::json!({ "text": "𝄞".repeat(500) }),
+            count: 3,
+        };
+        let evidence = verdict.evidence().expect("loop verdict has evidence");
+        assert!(evidence.chars().count() < MAX_DESCRIBED_INPUT + 200);
+        assert!(evidence.contains('…'));
     }
 
     #[test]
