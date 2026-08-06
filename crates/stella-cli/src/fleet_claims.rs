@@ -316,9 +316,14 @@ mod tests {
         assert_eq!(row.expires_in_ms, -120_000);
         assert!(!row.live);
 
-        // A claim minted by a clock ahead of ours must not wrap into the past.
+        // A claim minted by a clock impossibly far ahead of ours: the spans
+        // saturate, and — the property that matters — neither one wraps into
+        // the sign that would read as the opposite fact. Expiry stays in the
+        // future rather than reporting as lapsed, and the hold reads as
+        // negative rather than as an age of half a billion years.
         let skewed = ClaimRow::read(&claim("issue:1", "run-a", u64::MAX, u64::MAX), 0);
-        assert!(skewed.expires_in_ms < 0 && skewed.held_for_ms < 0);
+        assert_eq!(skewed.expires_in_ms, i64::MAX);
+        assert_eq!(skewed.held_for_ms, i64::MIN);
     }
 
     #[test]
