@@ -181,6 +181,18 @@ pub const CHECKPOINT_BLOB: &str = "checkpoint.json";
 /// the guarantee as its first.
 pub const OBSERVED_BLOB: &str = "observed.json";
 
+/// The reserved blob naming the staged pipeline the in-flight turn is running
+/// *inside*.
+///
+/// A deliberately separate blob rather than a widened [`CHECKPOINT_BLOB`]:
+/// the checkpoint is the engine's own shape and the engine must not learn
+/// pipeline shapes (architecture invariant 1). It shares the checkpoint's
+/// lifetime instead of the staleness map's — a frame describes one turn's
+/// staging and is retracted by [`WorkJournal::clear_checkpoint`] along with
+/// the resume point, because a frame that outlived its turn would tell the
+/// next resume it is re-entering a pipeline that already finished.
+pub const PIPELINE_BLOB: &str = "pipeline.json";
+
 impl WorkJournal {
     /// Open (creating on first use) the durable history for `workspace_root`.
     ///
@@ -414,10 +426,25 @@ impl WorkJournal {
     /// acting on content it believes it knows with the guard no longer watching
     /// (see `ToolRegistry::restore_observed`). `None` leaves whatever was last
     /// written in place.
-    pub fn record_checkpoint(&self, json: &str, observed: Option<&str>) -> Result<String> {
+    ///
+    /// `pipeline` rides along for the same reason and with the *checkpoint's*
+    /// lifetime rather than the map's: it names the staged pipeline this turn
+    /// is running inside ([`PIPELINE_BLOB`]), and a resume that read a frame
+    /// from one commit and a transcript from another could restore a pipeline
+    /// the transcript was never part of. `None` writes no frame, which is
+    /// exactly what a plain engine turn is.
+    pub fn record_checkpoint(
+        &self,
+        json: &str,
+        observed: Option<&str>,
+        pipeline: Option<&str>,
+    ) -> Result<String> {
         let mut blobs: Vec<(&str, Option<&str>)> = vec![(CHECKPOINT_BLOB, Some(json))];
         if let Some(observed) = observed {
             blobs.push((OBSERVED_BLOB, Some(observed)));
+        }
+        if let Some(pipeline) = pipeline {
+            blobs.push((PIPELINE_BLOB, Some(pipeline)));
         }
         self.record(&[], &blobs, "stella: turn checkpoint")
     }
@@ -428,23 +455,38 @@ impl WorkJournal {
         self.blob_at_tip(OBSERVED_BLOB)
     }
 
+    /// The staged-pipeline frame the interrupted turn was running inside, or
+    /// `None` when the turn was a plain engine turn (or the record is
+    /// unreadable — both mean "resume it as a bare turn").
+    pub fn pipeline_frame(&self) -> Option<String> {
+        self.blob_at_tip(PIPELINE_BLOB)
+    }
+
     /// Retract the resume point — the turn it described reached a terminal
     /// outcome, and a checkpoint that outlives its turn invites a resume that
     /// replays work the caller already saw finish.
     ///
+    /// The [`PIPELINE_BLOB`] frame goes with it, in the same commit: the two
+    /// describe the same turn, and a frame left behind by a turn that ended
+    /// would tell the next resume it is re-entering a pipeline nobody is
+    /// running.
+    ///
     /// Idempotent, and cheap when there is nothing to retract: every terminal
     /// path discards unconditionally, including turns that ended before their
-    /// first step boundary, so the common case must not cost a commit. One
-    /// `cat-file -e` answers that.
+    /// first step boundary, so the common case must not cost a commit. Two
+    /// `cat-file -e`s answer that.
     pub fn clear_checkpoint(&self) -> Result<()> {
-        if self.checkpoint().is_none() {
+        let mut retract: Vec<(&str, Option<&str>)> = Vec::new();
+        if self.checkpoint().is_some() {
+            retract.push((CHECKPOINT_BLOB, None));
+        }
+        if self.pipeline_frame().is_some() {
+            retract.push((PIPELINE_BLOB, None));
+        }
+        if retract.is_empty() {
             return Ok(());
         }
-        self.record(
-            &[],
-            &[(CHECKPOINT_BLOB, None)],
-            "stella: turn checkpoint retired",
-        )?;
+        self.record(&[], &retract, "stella: turn checkpoint retired")?;
         Ok(())
     }
 
@@ -908,7 +950,7 @@ mod tests {
             .expect("clearing an absent checkpoint is not an error");
 
         let json = r#"{"version":1,"step":3,"messages":[],"nested":{"quote":"\"x\""}}"#;
-        journal.record_checkpoint(json, None).unwrap();
+        journal.record_checkpoint(json, None, None).unwrap();
         assert_eq!(
             journal.checkpoint().as_deref(),
             Some(json),
@@ -917,7 +959,7 @@ mod tests {
 
         // Rewriting replaces rather than appends: one live turn, one point.
         let second = r#"{"version":1,"step":4}"#;
-        journal.record_checkpoint(second, None).unwrap();
+        journal.record_checkpoint(second, None, None).unwrap();
         assert_eq!(journal.checkpoint().as_deref(), Some(second));
 
         journal.clear_checkpoint().unwrap();
@@ -943,7 +985,9 @@ mod tests {
         journal
             .record(&["kept.txt".into()], &[], "the agent's write")
             .unwrap();
-        journal.record_checkpoint(r#"{"step":2}"#, None).unwrap();
+        journal
+            .record_checkpoint(r#"{"step":2}"#, None, None)
+            .unwrap();
 
         journal.clear_checkpoint().unwrap();
 
