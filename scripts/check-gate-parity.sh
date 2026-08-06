@@ -190,5 +190,5 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 emit
-printf 'check-gate-parity: OK — %s (%s) gate steps, named in %s and %s.\n' \
-  "$count" "$word" "$agents" "$contributing" || true
+printf 'check-gate-parity: OK — %s gate steps, named in %s and %s.\n' \
+  "$count" "$agents" "$contributing" || true
