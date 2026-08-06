@@ -343,7 +343,12 @@ async fn run_pipeline_one_shot(
     // stores the self-review 1:1 with it) and record the skills the block
     // below will inject — after the arm above, so a control turn that
     // injects nothing records nothing.
-    stamp_execution_and_record_skill_usage(&execution, memory.as_mut(), prompt, &cfg.workspace_root);
+    stamp_execution_and_record_skill_usage(
+        &execution,
+        memory.as_mut(),
+        prompt,
+        &cfg.workspace_root,
+    );
     if let Some(m) = &memory {
         // Frames ride the pipeline's own recall port below (`recall:` in the
         // ports), which recalls once, renders them into the goal message, and
