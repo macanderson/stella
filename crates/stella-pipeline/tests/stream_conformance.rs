@@ -105,7 +105,7 @@ fn corruptions() -> Vec<Corruption> {
             expect: "not the last event",
             apply: |events| {
                 events.push(AgentEvent::Text {
-                    delta: "one more thing".into(),
+                    text: "one more thing".into(),
                 });
             },
         },

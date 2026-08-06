@@ -276,7 +276,7 @@ mod tests {
                 id,
                 0,
                 &stella_protocol::AgentEvent::Text {
-                    delta: "done".into(),
+                    text: "done".into(),
                 },
             )
             .unwrap();

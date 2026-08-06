@@ -205,9 +205,9 @@ pub(crate) fn journal_preimages(
             } => {
                 out.tool_outputs.insert(call_id, output);
             }
-            AgentEvent::Text { delta } => {
+            AgentEvent::Text { text } => {
                 out.text_by_digest
-                    .insert(format!("sha256:{}", sha256_hex(&delta)), delta);
+                    .insert(format!("sha256:{}", sha256_hex(&text)), text);
             }
             _ => {}
         }

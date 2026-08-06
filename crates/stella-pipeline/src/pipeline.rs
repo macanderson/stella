@@ -1496,7 +1496,7 @@ impl<'a> Pipeline<'a> {
         // keeps context.
         messages.push(CompletionMessage::assistant(reply.clone()));
         self.emit(AgentEvent::Text {
-            delta: reply.clone(),
+            text: reply.clone(),
         });
         self.emit(AgentEvent::Stage {
             name: StageKind::Complete,
@@ -3271,8 +3271,8 @@ impl<'a> Pipeline<'a> {
     /// Emit a narration line when there is one — see `candidate_narration`,
     /// which returns `None` for a single-candidate run.
     fn emit_text(&self, notice: Option<String>) {
-        if let Some(delta) = notice {
-            self.emit(AgentEvent::Text { delta });
+        if let Some(text) = notice {
+            self.emit(AgentEvent::Text { text });
         }
     }
 

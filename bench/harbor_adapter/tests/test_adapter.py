@@ -225,6 +225,31 @@ class TestUtilityFunctions:
         assert envelope["_stella_stream"]["stream_complete"] is False
         assert envelope["_stella_stream"]["diagnostic_lines"] == 1
 
+    def test_stream_parser_reads_current_self_describing_text_fields(self) -> None:
+        # Stella #1886: the fragment now rides in `delta` and the
+        # consolidated body in `text` (the crossed spellings above are the
+        # pre-#1886 legacy). The parser reads both generations.
+        events = [
+            {
+                "type": "step_usage",
+                "model": "provider/model",
+                "input_tokens": 12,
+                "output_tokens": 3,
+                "cached_input_tokens": 0,
+                "cost_usd": 0.02,
+            },
+            {"type": "text_delta", "delta": "Inspec"},
+            {"type": "text", "text": "Inspecting now."},
+            {"type": "complete", "model": "provider/model", "cost_usd": 0.02},
+        ]
+        envelope = _stream_to_envelope(
+            "\n".join(json.dumps(event) for event in events),
+            process_returned=True,
+        )
+        assert envelope is not None
+        assert envelope["status"] == "completed"
+        assert envelope["text"] == "Inspecting now."
+
     def test_stream_parser_preserves_normal_error_terminal(self) -> None:
         events = [
             {
@@ -2052,6 +2077,29 @@ class TestAtifTrajectory:
         assert trajectory.steps[1].message == "authoritative"
         assert trajectory.steps[1].extra["usage_missing"] is True
         assert trajectory.final_metrics.total_prompt_tokens is None
+        Trajectory.model_validate(trajectory.to_json_dict())
+
+    def test_current_self_describing_text_fields_fold_identically(self) -> None:
+        # The same stream as above in the post-#1886 spelling: fragment in
+        # `delta`, consolidated body in `text`. Both generations fold to the
+        # same trajectory.
+        trajectory = envelope_to_trajectory(
+            {
+                "status": "completed",
+                "model": "provider/model",
+                "events": [
+                    {"type": "text_delta", "delta": "preview"},
+                    {"type": "text", "text": "authoritative"},
+                ],
+            },
+            instruction="Answer.",
+            session_id="session-unmetered",
+            agent_version="unknown",
+            default_model=None,
+            return_code=None,
+        )
+        assert len(trajectory.steps) == 2
+        assert trajectory.steps[1].message == "authoritative"
         Trajectory.model_validate(trajectory.to_json_dict())
 
     def test_populate_context_writes_public_trajectory(self, tmp_path: Path) -> None:

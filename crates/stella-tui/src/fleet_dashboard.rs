@@ -451,8 +451,8 @@ impl FleetBoard {
                     row.action = LastAction::Thinking;
                 }
             }
-            AgentEvent::Text { delta } => {
-                let line = first_line(delta);
+            AgentEvent::Text { text } => {
+                let line = first_line(text);
                 if !line.is_empty() {
                     row.action = LastAction::Message(line);
                 }

@@ -159,14 +159,14 @@ pub(crate) fn now_ms() -> u64 {
 /// CLI already uses on the normal screen for its own voice — costs a character
 /// and removes the lie.
 pub(crate) fn chrome_note(text: String) -> Inbound {
-    let delta = if text.starts_with(stella_tui::NOTICE_MARKER) {
+    let noted = if text.starts_with(stella_tui::NOTICE_MARKER) {
         text
     } else {
         format!("{}{text}", stella_tui::NOTICE_MARKER)
     };
     Inbound::Event {
         agent: LEAD.to_string(),
-        event: AgentEvent::Text { delta },
+        event: AgentEvent::Text { text: noted },
     }
 }
 
@@ -1439,7 +1439,7 @@ pub async fn run_deck_session(
                 if let Some(report) = custom.problems_report() {
                     let _ = in_tx.send(Inbound::Event {
                         agent: LEAD.to_string(),
-                        event: AgentEvent::Text { delta: report },
+                        event: AgentEvent::Text { text: report },
                     });
                     let _ = in_tx.send(Inbound::Status {
                         agent: LEAD.to_string(),
@@ -1554,7 +1554,7 @@ pub async fn run_deck_session(
             let _ = in_tx.send(Inbound::Event {
                 agent: LEAD.to_string(),
                 event: AgentEvent::Text {
-                    delta: "MCP servers are still connecting — this turn runs with native \
+                    text: "MCP servers are still connecting — this turn runs with native \
                             tools; connected servers join from the next turn"
                         .to_string(),
                 },
@@ -1755,7 +1755,7 @@ pub async fn run_deck_session(
                                 let _ = in_tx.send(Inbound::Event {
                                     agent: LEAD.to_string(),
                                     event: AgentEvent::Text {
-                                        delta: "\n[stopping at the next step boundary — Esc again to cancel immediately]\n".to_string(),
+                                        text: "\n[stopping at the next step boundary — Esc again to cancel immediately]\n".to_string(),
                                     },
                                 });
                             } else {
@@ -2040,7 +2040,7 @@ pub async fn run_deck_session(
                         let _ = in_tx.send(Inbound::Event {
                             agent: LEAD.to_string(),
                             event: AgentEvent::Text {
-                                delta: "\n[stopped at the step boundary — completed work kept]\n"
+                                text: "\n[stopped at the step boundary — completed work kept]\n"
                                     .to_string(),
                             },
                         });
@@ -2658,7 +2658,7 @@ fn handle_supervisor_msg(
                 let _ = in_tx.send(Inbound::Event {
                     agent: LEAD.to_string(),
                     event: AgentEvent::Text {
-                        delta: format!(
+                        text: format!(
                             "note: task #{} already has a live worker — the duplicate \
                              task_assign was not dispatched",
                             request.task_id
@@ -2833,7 +2833,7 @@ fn spawn_session_replay(
             let _ = in_tx.send(Inbound::Event {
                 agent: LEAD.to_string(),
                 event: AgentEvent::Text {
-                    delta: format!("session {id} is no longer in the registry"),
+                    text: format!("session {id} is no longer in the registry"),
                 },
             });
             return;
@@ -2846,9 +2846,9 @@ fn spawn_session_replay(
         let meta = AgentMeta::new(lane.clone(), format!("replay — {}", record.title), now_ms())
             .with_role("replay");
         let _ = in_tx.send(Inbound::Register(meta));
-        let lane_text = |delta: String| Inbound::Event {
+        let lane_text = |text: String| Inbound::Event {
             agent: lane.clone(),
-            event: AgentEvent::Text { delta },
+            event: AgentEvent::Text { text },
         };
         let Some(store) = agent::open_store(std::path::Path::new(&record.workspace)) else {
             let _ = in_tx.send(lane_text(format!(
@@ -3947,7 +3947,7 @@ async fn run_deck_command(
     let say = |text: String| {
         let _ = in_tx.send(Inbound::Event {
             agent: LEAD.to_string(),
-            event: AgentEvent::Text { delta: text },
+            event: AgentEvent::Text { text: text },
         });
     };
     match trimmed {
@@ -4436,7 +4436,7 @@ async fn run_lead_pipeline_turn(
         let wiring = agent::resolve_engine_wiring(cfg, &model_ref, &configured);
         for notice in &wiring.notices {
             let _ = tx.send(AgentEvent::Text {
-                delta: format!("! {notice}\n"),
+                text: format!("! {notice}\n"),
             });
         }
         let resolver =

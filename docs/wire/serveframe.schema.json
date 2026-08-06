@@ -21,9 +21,9 @@
           "type": "object"
         },
         {
-          "description": "The step's answer text, in full — the authoritative, durable record.\nThe field name `delta` is wire-frozen legacy and does NOT mean a\nfragment: the live fragments are [`AgentEvent::TextDelta`], which the\njournal deliberately drops. Consumers must REPLACE any accumulated\npreview with this value, never append it to one.",
+          "description": "The step's answer text, in full — the authoritative, durable record.\nNot a fragment, despite the live preview sibling\n[`AgentEvent::TextDelta`]: consumers must REPLACE any accumulated\npreview with this value, never append it to one.\n\nWire history (#1886): this field was spelled `delta` (and\n`text_delta`'s payload was spelled `text` — each variant carried the\nother's natural name). Serialization writes the self-describing name;\nthe alias keeps every recorded stream replaying. Raw-JSONL readers\nmust stay bilingual the same way: `text` first, legacy `delta` back.",
           "properties": {
-            "delta": {
+            "text": {
               "type": "string"
             },
             "type": {
@@ -33,14 +33,14 @@
           },
           "required": [
             "type",
-            "delta"
+            "text"
           ],
           "type": "object"
         },
         {
-          "description": "One in-order fragment of the answer text, emitted live while the\nmodel call streams. Strictly a best-effort preview: the step's\nfollowing `Text` event carries the full text and is authoritative —\nconsumers must REPLACE any accumulated deltas with it, never merge\n(a retried model call re-streams its deltas from the start, so the\naccumulation can be garbled; there is no reset marker). Additive to\nthe stream-json wire contract: consumers must tolerate `text_delta`\nlines appearing between events, and persistence layers may drop them\n(the `Text` event is the durable record).",
+          "description": "One in-order fragment of the answer text, emitted live while the\nmodel call streams. Strictly a best-effort preview: the step's\nfollowing `Text` event carries the full text and is authoritative —\nconsumers must REPLACE any accumulated deltas with it, never merge\n(a retried model call re-streams its deltas from the start, so the\naccumulation can be garbled; there is no reset marker). Additive to\nthe stream-json wire contract: consumers must tolerate `text_delta`\nlines appearing between events, and persistence layers may drop them\n(the `Text` event is the durable record). Wire history: `delta` was\nspelled `text` before #1886 — the alias accepts both; see [`AgentEvent::Text`].",
           "properties": {
-            "text": {
+            "delta": {
               "type": "string"
             },
             "type": {
@@ -50,7 +50,7 @@
           },
           "required": [
             "type",
-            "text"
+            "delta"
           ],
           "type": "object"
         },

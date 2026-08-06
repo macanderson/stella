@@ -191,7 +191,7 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
     let texts: Vec<&str> = events
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::Text { delta } => Some(delta.as_str()),
+            AgentEvent::Text { text: delta } => Some(delta.as_str()),
             _ => None,
         })
         .collect();
@@ -293,7 +293,7 @@ async fn a_non_read_only_probe_is_refused_not_replayed() {
         "a refused park must not fabricate a wake"
     );
     let refused = drain_events(&mut rx).into_iter().any(
-        |e| matches!(&e, AgentEvent::Text { delta } if delta.contains("not a read-only tool")),
+        |e| matches!(&e, AgentEvent::Text { text: delta } if delta.contains("not a read-only tool")),
     );
     assert!(refused, "the refusal must be visible on the stream");
 }
