@@ -382,13 +382,16 @@ fn the_supply_rungs_decide_the_tier() {
         d,
         ("light", true, 1, "impacted", "off", 5, "deep"),
     );
+    // Saturation sheds the bench arm too — a loop-bench timed on a box whose
+    // load already equals its cores is a number the ledger would mislearn
+    // from (#1564). The build stays: it runs slower, not wrong.
     assert_plan(
         Supply {
             load1: 8,
             ..base_supply()
         },
         d,
-        ("light", true, 1, "impacted", "loop", 5, "deep"),
+        ("light", true, 1, "impacted", "off", 5, "deep"),
     );
 }
 
