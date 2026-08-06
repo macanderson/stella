@@ -94,6 +94,20 @@ LIVENESS_NAMES: tuple[str, ...] = (
     "agent/sessions",
 )
 
+#: Per-trial paths written incrementally *while the agent runs*, probed —
+#: never read — for liveness. Stella appends its event stream per event;
+#: Harbor appends ``trial.log`` as the trial progresses; a Claude Code arm
+#: tees its stdout to ``claude-code.txt`` and appends session transcripts
+#: under ``sessions/``. Deliberately an allowlist rather than the directory
+#: tree: the verifier and the arena write into the same trial directory, and
+#: their activity must not read as the agent's pulse (#1571).
+LIVENESS_NAMES: tuple[str, ...] = (
+    EVENTS_NAME,
+    "trial.log",
+    "agent/claude-code.txt",
+    "agent/sessions",
+)
+
 
 def seat_manifest_path(job_dir: Path) -> Path:
     """Where the runner records a job's seat launch data.

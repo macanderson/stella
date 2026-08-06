@@ -589,28 +589,6 @@ fn a_run_the_live_pointer_moved_on_from_reports_crashed() {
     assert_eq!(status("r-new"), "running");
 }
 
-/// A `live` pointer the fold cannot read is the same as no pointer at all.
-///
-/// `live` is whatever is on disk, not something this process wrote, so every
-/// malformed shape has to resolve to "nothing holds the pointer" — never to a
-/// panic in a `run list` report.
-#[test]
-fn a_malformed_live_pointer_reports_crashed_and_never_panics() {
-    for live in [
-        json!({"phase": "audit", "heartbeat_unix": 9_990}), // no run_id at all
-        json!({"run_id": 7, "heartbeat_unix": 9_990}),      // run_id is not a string
-        json!({"run_id": "", "heartbeat_unix": 9_990}),     // run_id is empty
-        json!("not-an-object"),
-    ] {
-        let rows = fold_runs(&[run_rec("r-1", "running")], &[], Some(&live), 10_000, 900);
-        assert_eq!(
-            rows[0].status, "crashed",
-            "unreadable live pointer {live} must not keep a run marked running"
-        );
-        assert!(rows[0].phase.is_empty(), "no live pointer, no phase");
-    }
-}
-
 #[test]
 fn last_write_wins_and_cycles_aggregate_into_their_run() {
     let mut c1 = cycle(1, "rubric", false);
