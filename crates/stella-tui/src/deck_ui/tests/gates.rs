@@ -32,7 +32,9 @@ fn type_str(s: &str, model: &WorkspaceModel, ui: &mut DeckUi) {
 
 /// The dialog's open input as text, whichever field it is.
 fn note_of(ui: &DeckUi) -> Option<&str> {
-    ui.scope_input.as_ref().map(crate::deck_ui::ScopeInput::text)
+    ui.scope_input
+        .as_ref()
+        .map(crate::deck_ui::ScopeInput::text)
 }
 
 /// A modified `⏎` — the chord the composer used to compose a multi-line note.
