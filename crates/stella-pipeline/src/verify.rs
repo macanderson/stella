@@ -818,7 +818,8 @@ impl Verdict {
 /// Parse a Role::Verifier model response into a verdict. The verifier prompt (see
 /// [`verifier_prompt`]) asks for a leading `PASS` or `FAIL` token; this scans
 /// token-by-token (case-insensitive) for the first of either — honoring a
-/// nearby negator, so "the tests do not pass" reads as the FAIL it states —
+/// negator in the same clause, so "the tests do not pass" reads as the FAIL it
+/// states while "No issues. Not blocking. PASS" reads as the PASS it states —
 /// and treats the remainder as reasoning. Returns `None` when no verdict
 /// token appears — the signal the caller uses to invoke the
 /// [`heuristic_fallback`] verdict rather than trusting an unparseable
@@ -830,10 +831,17 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
     // obvious issues. PASS" as a FAIL because "no" was hit first.
     // A negated verdict token is not that verdict: "the tests do not pass" is
     // a FAIL, and crediting its "pass" token as a PASS inverted real verdicts.
-    // The negator must sit within two tokens of the verdict word ("do not
-    // pass" is adjacent, "cannot currently pass" has one token between) — a
-    // wider window would misread an approval lead-in like "not a problem.
-    // PASS". A negated PASS reads as the FAIL it states; a negated
+    // A negator's reach is bounded two ways, because either bound alone lets a
+    // real reply through wrong:
+    //   * It binds inside its own CLAUSE. Terminal punctuation ends it, so
+    //     "No issues. Not blocking. PASS" approves — the window cannot express
+    //     that, since the negator there is one token from the verdict, closer
+    //     than "cannot currently pass" needs.
+    //   * Within a clause it spans two tokens ("do not pass" is adjacent,
+    //     "cannot currently pass" has one token between). Unpunctuated prose
+    //     has no boundary to stop it, and "not a problem PASS" must still
+    //     approve.
+    // A negated PASS reads as the FAIL it states; a negated
     // FAIL ("did not fail") is skipped rather than trusted as a PASS, since
     // absence of failure is not the protocol's affirmative verdict. "no" is
     // deliberately not a negator for the same reason it is not a FAIL token:
@@ -842,39 +850,46 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
         "not", "never", "cannot", "don", "doesn", "didn", "isn", "aren", "wasn", "weren", "couldn",
         "wouldn", "shouldn", "won",
     ];
+    // Terminal punctuation only. A comma and an em-dash are deliberately
+    // absent: they join clauses at least as often as they separate them
+    // ("it does not, in this case, pass"), so counting them would drop real
+    // negations to buy back cases the token window already handles.
+    const CLAUSE_BREAKS: &[char] = &['.', '!', '?', ';', ':'];
     let first_line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
     let lower = first_line.to_ascii_lowercase();
-    let mut since_negation: Option<u32> = None;
-    for raw in lower.split(|c: char| !c.is_ascii_alphanumeric()) {
-        if raw.is_empty() {
-            continue;
-        }
-        // `distance` is 0 for the token immediately after the negator, so the
-        // bound of 1 is the documented two-token window: "not pass" and
-        // "not currently pass" negate; "not a problem. PASS" does not.
-        let negated = matches!(since_negation, Some(distance) if distance <= 1);
-        match raw {
-            "pass" | "passed" | "approve" | "approved" => {
-                return Some(Verdict {
-                    passed: !negated,
-                    reasoning: text.trim().to_string(),
-                    heuristic: false,
-                });
+    for clause in lower.split(CLAUSE_BREAKS) {
+        let mut since_negation: Option<u32> = None;
+        for raw in clause.split(|c: char| !c.is_ascii_alphanumeric()) {
+            if raw.is_empty() {
+                continue;
             }
-            "fail" | "failed" | "reject" | "rejected" if !negated => {
-                return Some(Verdict {
-                    passed: false,
-                    reasoning: text.trim().to_string(),
-                    heuristic: false,
-                });
+            // `distance` is 0 for the token immediately after the negator, so the
+            // bound of 1 is the documented two-token window: "not pass" and
+            // "not currently pass" negate; "not a problem PASS" does not.
+            let negated = matches!(since_negation, Some(distance) if distance <= 1);
+            match raw {
+                "pass" | "passed" | "approve" | "approved" => {
+                    return Some(Verdict {
+                        passed: !negated,
+                        reasoning: text.trim().to_string(),
+                        heuristic: false,
+                    });
+                }
+                "fail" | "failed" | "reject" | "rejected" if !negated => {
+                    return Some(Verdict {
+                        passed: false,
+                        reasoning: text.trim().to_string(),
+                        heuristic: false,
+                    });
+                }
+                _ => {}
             }
-            _ => {}
+            since_negation = if NEGATORS.contains(&raw) {
+                Some(0)
+            } else {
+                since_negation.map(|distance| distance + 1)
+            };
         }
-        since_negation = if NEGATORS.contains(&raw) {
-            Some(0)
-        } else {
-            since_negation.map(|distance| distance + 1)
-        };
     }
     None
 }
