@@ -77,6 +77,8 @@ pub(crate) fn pending<'m>(model: &'m WorkspaceModel, ui: &DeckUi) -> Option<&'m 
 /// `None` renders the one-keypress answers, `Some` renders the note being
 /// typed (`r` was pressed) with its own send/back legend.
 pub(crate) fn render(proposal: &ScopeProposal, note: Option<&str>, area: Rect, buf: &mut Buffer) {
+    // `clamp` panics when max < min; both bounds here are compile-time
+    // constants with 20 < DIALOG_MAX_W, so that case cannot arise.
     let w = area.width.saturating_sub(4).clamp(20, DIALOG_MAX_W);
     let inner_w = (w as usize).saturating_sub(4);
 
