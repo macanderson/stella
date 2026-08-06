@@ -2112,7 +2112,7 @@ impl<'a> Engine<'a> {
         // answer and must not stream a blank `Text` event.
         if !result.text.trim().is_empty() {
             let _ = events.send(AgentEvent::Text {
-                delta: result.text.clone(),
+                text: result.text.clone(),
             });
         }
         messages.push(CompletionMessage {
@@ -2205,7 +2205,7 @@ impl<'a> Engine<'a> {
         // then abort as "no text" — events and history stay consistent.
         if !result.text.trim().is_empty() {
             let _ = events.send(AgentEvent::Text {
-                delta: result.text.clone(),
+                text: result.text.clone(),
             });
         }
 
@@ -2235,7 +2235,7 @@ impl<'a> Engine<'a> {
                     ContinuationPlan::Continue(plan) => {
                         *length_continuations += 1;
                         let (note, appended) = plan.into_parts();
-                        let _ = events.send(AgentEvent::Text { delta: note });
+                        let _ = events.send(AgentEvent::Text { text: note });
                         messages.extend(appended);
                         return None;
                     }
@@ -2273,7 +2273,7 @@ impl<'a> Engine<'a> {
             // success past this point.
             if result.finish_reason == Some(FinishReason::Length) {
                 let _ = events.send(AgentEvent::Text {
-                    delta: if out_of_time {
+                    text: if out_of_time {
                         // Names the deadline, not the token limit, because the
                         // token limit is what happened and the deadline is why
                         // nothing followed it. A reader who sees only "output

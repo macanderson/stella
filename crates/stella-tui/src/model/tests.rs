@@ -11,9 +11,7 @@ use stella_protocol::{
 };
 
 fn text(delta: &str) -> AgentEvent {
-    AgentEvent::Text {
-        delta: delta.into(),
-    }
+    AgentEvent::Text { text: delta.into() }
 }
 
 #[test]
@@ -45,7 +43,7 @@ fn a_stage_between_text_deltas_breaks_coalescing() {
 }
 
 fn delta(text: &str) -> AgentEvent {
-    AgentEvent::TextDelta { text: text.into() }
+    AgentEvent::TextDelta { delta: text.into() }
 }
 
 #[test]

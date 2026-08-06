@@ -83,7 +83,7 @@ impl Pipeline<'_> {
                     // appears with no stated cause, which reads as the
                     // pipeline having restarted itself.
                     self.emit(AgentEvent::Text {
-                        delta: format!(
+                        text: format!(
                             "\n[re-planning ({spent_revisions}/{MAX_SCOPE_REVISIONS}) with your \
                              note: {note}]\n"
                         ),

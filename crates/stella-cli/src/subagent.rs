@@ -83,9 +83,19 @@
 //! Instead each child gets a fresh OS thread with a current-thread runtime:
 //! `block_on` imposes no `Send` bound, everything handed across is owned
 //! (`Arc`s and `Copy` values), and this task only awaits a oneshot. It also
-//! buys real isolation — a child that panics resolves to a refusal here
-//! instead of unwinding the parent's turn. The cost is one thread per live
-//! `task` call, bounded by the engine's own tool-call concurrency cap.
+//! buys isolation from a panicking child — **in builds that unwind**. The
+//! child turn runs under `catch_unwind`, so a panic settles the child's spend
+//! and reports as a refusal instead of tearing the parent's turn down.
+//!
+//! That claim used to be unqualified, and it was wrong for the builds users
+//! actually run: the workspace sets `panic = "abort"` (root `Cargo.toml`), so
+//! in release there is no unwind to catch and a child panic takes the whole
+//! process with it. A thread boundary cannot contain that; only a process
+//! boundary could. Stated rather than quietly implied, because the difference
+//! is invisible until it is a crash report (#1850).
+//!
+//! The cost is one thread per live `task` call, bounded by the engine's own
+//! tool-call concurrency cap.
 //!
 //! # Pause and stop reach these children too
 //!
@@ -412,18 +422,41 @@ impl SubAgentDispatcher for SessionSubAgents {
                 // stoppable without letting it steal the parent's messages.
                 let engine = Engine::with_sleeper(&*provider, &*tools, config, &TokioSleeper)
                     .with_turn_controls(&controls);
-                let outcome = runtime.block_on(engine.run_sub_agent_with_sender(
-                    SubAgentHost::new(&*provider),
-                    &spec,
-                    &mut view,
-                    &events,
-                ));
+                // `catch_unwind` so a panic INSIDE the turn cannot skip the
+                // settle below (#1850). Without it the unwind leaves this
+                // frame directly and real dollars the child had already spent
+                // landed in neither ledger — the comment at the `wait.await`
+                // claimed settling happened "on every path", and a panic was
+                // the path it did not.
+                //
+                // `AssertUnwindSafe` is the honest annotation, not a
+                // suppression: the values crossing the boundary are the
+                // engine, the spec and the event sender, and the one piece of
+                // state a torn turn could leave inconsistent — `view`, the
+                // budget carve — is exactly what is read afterwards, on
+                // purpose. A partially-billed carve is the number to settle.
+                //
+                // Only unwinds are catchable. Release builds set
+                // `panic = "abort"` (workspace Cargo.toml), so there a child
+                // panic takes the process down and nothing below runs — see
+                // this module's header, which no longer claims otherwise.
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    runtime.block_on(engine.run_sub_agent_with_sender(
+                        SubAgentHost::new(&*provider),
+                        &spec,
+                        &mut view,
+                        &events,
+                    ))
+                }));
 
                 // Settled HERE, before reporting, and deliberately not after
                 // the `wait.await` below: a parent cancelled mid-`task` never
                 // resumes that await, and dollars this child has already
                 // spent would land in no ledger at all. Charging late to the
                 // session is the ledger's doctrine; never charging is not.
+                //
+                // Now genuinely on every path the thread can take, panic
+                // included — which is what the `catch_unwind` above buys.
                 //
                 // Exactly once, because this is now the only writer on either
                 // side — the `task` tool no longer charges what it did not
@@ -440,7 +473,15 @@ impl SubAgentDispatcher for SessionSubAgents {
                     // engine drains into it at the next step boundary.
                     push_sub_agent_spend(&ledger, spent);
                 }
-                let _ = done.send(Ok(outcome));
+                // A caught panic reports as a refusal with a reason, rather
+                // than as a dropped sender the receiver has to infer one for.
+                // The spend above is already settled either way.
+                let _ = match outcome {
+                    Ok(outcome) => done.send(Ok(outcome)),
+                    Err(_) => done.send(Err(
+                        "the sub-agent panicked; its spend was still settled".into()
+                    )),
+                };
             });
         if let Err(err) = thread {
             return SubAgentOutcome::Refused {
@@ -448,9 +489,13 @@ impl SubAgentDispatcher for SessionSubAgents {
             };
         }
 
-        // A child that panicked drops its sender, which lands here as a
-        // refusal rather than unwinding the parent's turn. Nothing is settled
-        // on this side — the child already did it, on every path.
+        // A child that panicked reports a refusal naming the panic (an
+        // unwinding build) or drops its sender (anything else that killed the
+        // thread); both land here rather than unwinding the parent's turn.
+        // Nothing is settled on this side — the child already did it, and
+        // since #1850 that really is on every path the thread can take,
+        // because the turn runs under `catch_unwind` and the settle is after
+        // it rather than after the unwind.
         match wait.await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(reason)) => SubAgentOutcome::Refused { reason },

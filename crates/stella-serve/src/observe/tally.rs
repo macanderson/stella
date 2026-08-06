@@ -174,10 +174,10 @@ mod tests {
     fn payload_events_are_inert() {
         let mut fold = TallyFold::default();
         fold.observe(&AgentEvent::Text {
-            delta: "secret".to_string(),
+            text: "secret".to_string(),
         });
         fold.observe(&AgentEvent::TextDelta {
-            text: "secret".to_string(),
+            delta: "secret".to_string(),
         });
         fold.observe(&AgentEvent::Reasoning {
             delta: "secret".to_string(),

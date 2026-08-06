@@ -710,7 +710,7 @@ async fn text_deltas_precede_the_authoritative_text_and_concatenate_to_it() {
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
-            AgentEvent::TextDelta { text } => Some((i, text.as_str())),
+            AgentEvent::TextDelta { delta: text } => Some((i, text.as_str())),
             _ => None,
         })
         .collect();
@@ -721,7 +721,7 @@ async fn text_deltas_precede_the_authoritative_text_and_concatenate_to_it() {
     );
     let concatenated: String = deltas.iter().map(|(_, t)| *t).collect();
     match &events[text_idx] {
-        AgentEvent::Text { delta } => assert_eq!(
+        AgentEvent::Text { text: delta } => assert_eq!(
             &concatenated, delta,
             "on a clean run the preview equals the committed text"
         ),
@@ -1621,7 +1621,7 @@ async fn length_continuations_are_bounded_per_turn() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            AgentEvent::Text { delta } if delta.contains("Response was truncated")
+            AgentEvent::Text { text: delta } if delta.contains("Response was truncated")
         )),
         "the exhausted turn still carries the truncation warning"
     );

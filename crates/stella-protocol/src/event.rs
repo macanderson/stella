@@ -296,11 +296,19 @@ pub enum AgentEvent {
     /// in the order the pipeline walks them.
     Stage { name: StageKind },
     /// The step's answer text, in full — the authoritative, durable record.
-    /// The field name `delta` is wire-frozen legacy and does NOT mean a
-    /// fragment: the live fragments are [`AgentEvent::TextDelta`], which the
-    /// journal deliberately drops. Consumers must REPLACE any accumulated
+    /// Not a fragment, despite the live preview sibling
+    /// [`AgentEvent::TextDelta`]: consumers must REPLACE any accumulated
     /// preview with this value, never append it to one.
-    Text { delta: String },
+    ///
+    /// Wire history (#1886): this field was spelled `delta` (and
+    /// `text_delta`'s payload was spelled `text` — each variant carried the
+    /// other's natural name). Serialization writes the self-describing name;
+    /// the alias keeps every recorded stream replaying. Raw-JSONL readers
+    /// must stay bilingual the same way: `text` first, legacy `delta` back.
+    Text {
+        #[serde(alias = "delta")]
+        text: String,
+    },
     /// One in-order fragment of the answer text, emitted live while the
     /// model call streams. Strictly a best-effort preview: the step's
     /// following `Text` event carries the full text and is authoritative —
@@ -309,8 +317,12 @@ pub enum AgentEvent {
     /// accumulation can be garbled; there is no reset marker). Additive to
     /// the stream-json wire contract: consumers must tolerate `text_delta`
     /// lines appearing between events, and persistence layers may drop them
-    /// (the `Text` event is the durable record).
-    TextDelta { text: String },
+    /// (the `Text` event is the durable record). Wire history: `delta` was
+    /// spelled `text` before #1886 — the alias accepts both; see [`AgentEvent::Text`].
+    TextDelta {
+        #[serde(alias = "text")]
+        delta: String,
+    },
     /// One in-order fragment of the model's thinking/extended-reasoning
     /// stream, for the providers that expose it. Unlike [`AgentEvent::Text`]
     /// this really is a fragment — consumers accumulate, and the journal
@@ -1548,20 +1560,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn text_delta_roundtrips_with_its_own_type_tag() {
-        // `text_delta` is additive on the wire: a distinct tag from `text`,
-        // so a pre-delta consumer that skips unknown lines keeps parsing the
-        // authoritative `text` events unchanged.
-        let event = AgentEvent::TextDelta { text: "Hel".into() };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"type\":\"text_delta\""), "{json}");
-        let back: AgentEvent = serde_json::from_str(&json).unwrap();
-        match back {
-            AgentEvent::TextDelta { text } => assert_eq!(text, "Hel"),
-            other => panic!("unexpected variant: {other:?}"),
-        }
-    }
+    // The text / text_delta wire spellings — including the pre-#1886 crossed
+    // legacy — are witnessed in `tests/text_event_wire.rs`.
 
     #[test]
     fn tool_result_roundtrips_and_streams_without_speculated_still_parse() {
@@ -2313,7 +2313,7 @@ mod tests {
             AgentEvent::Stage {
                 name: StageKind::Triage,
             },
-            AgentEvent::Text { delta: "hi".into() },
+            AgentEvent::Text { text: "hi".into() },
             AgentEvent::Complete {
                 model: "glm-5.2".into(),
                 cost_usd: 0.001,
@@ -2703,8 +2703,8 @@ mod tests {
             AgentEvent::Stage {
                 name: StageKind::Triage,
             },
-            AgentEvent::Text { delta: "hi".into() },
-            AgentEvent::TextDelta { text: "h".into() },
+            AgentEvent::Text { text: "hi".into() },
+            AgentEvent::TextDelta { delta: "h".into() },
             AgentEvent::Reasoning { delta: "r".into() },
             AgentEvent::SpeculationDiscarded {
                 call_id: "c".into(),
@@ -2802,7 +2802,7 @@ mod tests {
         // Pin two exact tags so a wholesale serde-rename change is caught too.
         assert_eq!(
             AgentEvent::TextDelta {
-                text: String::new()
+                delta: String::new()
             }
             .type_tag(),
             "text_delta"
@@ -2953,13 +2953,13 @@ mod tests {
         // The hand-written codec must be a pass-through for known variants —
         // no tag rename, no extra wrapper, no reordering.
         let event = AgentEvent::Text {
-            delta: "hello".into(),
+            text: "hello".into(),
         };
         assert_eq!(
             serde_json::to_string(&event).unwrap(),
-            r#"{"type":"text","delta":"hello"}"#
+            r#"{"type":"text","text":"hello"}"#
         );
-        let back: AgentEvent = serde_json::from_str(r#"{"type":"text","delta":"hello"}"#).unwrap();
-        assert!(matches!(back, AgentEvent::Text { delta } if delta == "hello"));
+        let back: AgentEvent = serde_json::from_str(r#"{"type":"text","text":"hello"}"#).unwrap();
+        assert!(matches!(back, AgentEvent::Text { text } if text == "hello"));
     }
 }

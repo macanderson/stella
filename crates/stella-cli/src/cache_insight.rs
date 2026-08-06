@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn ignores_every_non_step_usage_event() {
-        let text = AgentEvent::Text { delta: "hi".into() };
+        let text = AgentEvent::Text { text: "hi".into() };
         assert!(cache_insight_for("anthropic", "lead", &text).is_none());
     }
 
