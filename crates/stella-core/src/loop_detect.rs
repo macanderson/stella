@@ -208,8 +208,7 @@ impl LoopVerdict {
     /// steers or aborts. `None` for `NoLoop`.
     ///
     /// The quoted input is truncated through the same `truncate` and
-    /// `MAX_DESCRIBED_INPUT` (private to this module) that
-    /// [`LoopIdentity::describe`] uses, not a second
+    /// `MAX_DESCRIBED_INPUT` [`LoopIdentity::describe`] uses, not a second
     /// budget of its own. This string becomes an `AgentEvent::Error` message,
     /// the abort reason on `TurnOutcome::Aborted`, the red line in the Command
     /// Deck, and the `loop_detected` journal event — so an untruncated
