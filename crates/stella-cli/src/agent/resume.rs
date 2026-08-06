@@ -31,14 +31,17 @@
 //!   turn-boundary resume regenerates it (rules may have changed); mid-turn,
 //!   fidelity wins — the transcript the provider priced and cached is the
 //!   transcript it gets back.
-//! - **A turn interrupted mid-pipeline resumes as a plain engine turn.** The
-//!   checkpoint captures the worker's turn, not the pipeline's staging, so
-//!   the verify/verdict stages that would have followed do not re-run. The
-//!   resumed turn still answers, and says what it did; re-verifying it is
-//!   `stella run` with the verifier of your choice.
+//! - **A turn interrupted mid-pipeline resumes as a plain engine turn** — but
+//!   never *silently*. The checkpoint captures the worker's turn, not the
+//!   pipeline's staging, so the verify/verdict stages that would have followed
+//!   do not re-run. The pipeline leaves a frame beside its checkpoint saying
+//!   so ([`crate::resume_frame`]), and this driver reads it before the first
+//!   step: the run names every stage it is not restoring, drops the green
+//!   tick, and files its audit row as `resumed_complete_unverified` (#1615).
+//!   Re-verifying it is `stella run` with the verifier of your choice.
 //! - **A turn that executed in a candidate worktree resumes in the
 //!   workspace.** The candidate died with the process; the restored staleness
-//!   map is what keeps the resumed writes honest.
+//!   map is what keeps the resumed writes honest. The frame reports this too.
 
 use super::outcome::turn_outcome_result;
 use super::*;
@@ -136,12 +139,29 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         )
     })?;
 
+    // Read BEFORE the first step, and print before it too: an operator who is
+    // going to be handed less than the run they lost has to learn that while
+    // they can still stop it, not from an audit row afterwards (#1615).
+    let frame = crate::resume_frame::ResumeFrame::read(&cfg.durability);
+
     let turn_start = Instant::now();
     let step = checkpoint.step;
     eprintln!(
         "  resuming {} at step {step} — completed steps stay done, nothing re-runs",
         record.id
     );
+    if let Some(advisory) = frame.advisory() {
+        for (i, line) in advisory.iter().enumerate() {
+            // The marker leads the summary line only; the rest are already
+            // indented continuations of it.
+            let marker = if i == 0 {
+                "!".yellow().bold().to_string()
+            } else {
+                " ".to_string()
+            };
+            eprintln!("  {marker} {line}");
+        }
+    }
     let execution = begin_execution(&store, "resume", &record.title, cfg, Some(&record.id));
     let files_before = tools_registry.files_touched().len();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -187,8 +207,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         .persistence_complete;
     let files = tools_registry.files_touched();
     if let Some((store, id)) = &execution {
+        // A degraded resume gets its own label: the scrollback warning is gone
+        // by the next command, and a stats query that cannot separate a
+        // verified resume from an unverified one reports the wrong number
+        // forever.
         let (label, cost) = match &outcome {
-            TurnOutcome::Completed { cost_usd, .. } => ("resumed_complete", *cost_usd),
+            TurnOutcome::Completed { cost_usd, .. } => (frame.completed_label(), *cost_usd),
             TurnOutcome::Aborted { cost_usd, .. } => ("resumed_aborted", *cost_usd),
         };
         if !record_execution_end(
@@ -216,10 +240,15 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         }
     };
     if matches!(outcome, TurnOutcome::Completed { .. }) {
-        println!(
-            "\n  {} resumed turn completed (from step {step})",
-            "✓".green().bold()
-        );
+        // A degraded resume does not get a green tick. The tick is this
+        // surface's claim that the run finished as it was meant to, and a turn
+        // whose verify and verdict stages never ran did not.
+        let (mark, banner) = if frame.degrades() {
+            ("!".yellow().bold(), frame.completed_banner(step))
+        } else {
+            ("✓".green().bold(), frame.completed_banner(step))
+        };
+        println!("\n  {mark} {banner}");
     }
     tui::cost_summary(
         cost_usd,
