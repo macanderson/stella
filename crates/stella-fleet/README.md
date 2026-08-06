@@ -88,7 +88,9 @@ is nearest today — split it before it crosses.
 | [`src/plan.rs`](src/plan.rs) | `Plan`/`Task`/`Isolation` and the pure DAG scheduling: `validate`, `topological_order`, `ready_tasks`, cycle detection. No I/O, no async — open it to change how waves are formed or what a plan may declare. |
 | [`src/fleet.rs`](src/fleet.rs) | `Fleet::dispatch` (the seam), `run_wave`, `run_plan`, the claim/control RAII guards, and the per-task pause/resume/stop verbs. The biggest file and the one that orders everything else. |
 | [`src/ledger.rs`](src/ledger.rs) | `fleet.db`: schema, migrations, and every read/write of runs, tasks, attempts, commits, lineage and spend. |
+| [`src/ledger/lease.rs`](src/ledger/lease.rs) | Dispatch claims (#1136): the check-and-set, expiring lease on one unit of dispatch — `claim_dispatch` / `renew_dispatch` / `release_dispatch` and the reads a human or a dispatcher asks "who is on this?" with. |
 | [`src/git.rs`](src/git.rs) | The `GitCli` port, `SystemGitCli`, and `WorktreeManager` — worktree create/remove/list plus the pathspec-only commit helper. |
+| [`src/gc.rs`](src/gc.rs) | `Gc::sweep` — the conservative reclaim of finished worktrees and `fleet/*` branches behind `stella fleet clean` (#1217). Nothing in flight, dirty, or unmerged goes without `--force`; every kept candidate carries a `KeepReason`. |
 | [`src/monitor.rs`](src/monitor.rs) | The `GhCli` port and `Monitor`: live PR reconciliation, the CI poll loop, the pure `decide` cap state machine, and the `AgentEvent` emit-shape helpers. |
 | [`src/cache_schedule.rs`](src/cache_schedule.rs) | `warmest_first` — the pure, no-I/O ordering heuristic for equal-priority runnable sessions. |
 
@@ -128,8 +130,27 @@ same thing. Note `task` is doubly loaded too: a fleet `TaskId` is a unit of
 work in a run, while a `tasks` row in `stella-store` is the agent's own
 task-board snapshot.
 
+**Two claims, two different questions.** A *file* claim (`file_locks`) asks
+"may I write this path?"; a **dispatch claim** ([`ledger/lease.rs`](src/ledger/lease.rs),
+#1136) asks "is another session already doing this work?". Only the second one
+stops two sessions duplicating an entire run, which is what actually happened:
+two agents scoped one issue, wrote the same fix, and the second PR merged as an
+empty commit. `dispatch` takes it first, keyed `task:<id>` and held under this
+run's id, in a single conditional SQL write whose affected-row count decides the
+winner — a read-then-write would leave exactly the window it exists to close.
+It is a **lease, not a lock**: it expires, a live attempt heartbeats it every
+TTL/3 for as long as its worker runs, and it is released the moment the attempt
+settles. So a session that is SIGKILLed cannot wedge a task — nothing has to be
+reaped, and there is no `--force` — while a session that is merely slow keeps
+its work. A lost lease never kills a running worker (see `Fleet::dispatch`).
+Every live claim is legible without `sqlite3` — `stella fleet claims` reads
+`live_dispatch_claims`, and `--all` adds the lapsed rows that say who died
+holding what. That surface is not decoration: #1136's collision was two
+*human-dispatched* sessions, and a claim nobody can read is one somebody
+collides with by hand.
+
 **What `dispatch` does, in order** ([`fleet.rs:463`](src/fleet.rs)): check the
-aggregate parent budget; claim the task's declared paths; allocate the
+aggregate parent budget; take the task's dispatch lease; claim its declared paths; allocate the
 workspace (a worktree only for `Isolation::Isolated`, otherwise the repo root);
 record task + lineage + attempt-open; register the worker's control lines and
 run it; meter the child's cost into the parent `BudgetGuard`; stamp the outcome
@@ -198,11 +219,20 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   matching `version < n` arm; `migrate` ([`ledger.rs:376`](src/ledger.rs))
   stamps `PRAGMA user_version` in the same transaction as the DDL it applies,
   the way `MIGRATION_V2` rebuilt `lineage` to add its uniqueness constraint.
-- **Nothing removes worktrees or branches.** `WorktreeManager::remove` exists
-  but neither `Fleet` nor `fleet_cmd` calls it; isolated worktrees under
+- **A run never removes its own worktree or branch.** Neither `Fleet` nor
+  `fleet_cmd` calls `WorktreeManager::remove`; isolated worktrees under
   `.stella/worktrees/<slug>` and their `fleet/<slug>-<hash>` branches are left
   for review. The slug hashes the run scope *and* the task id, so re-running a
   plan with the same task ids does not collide with what the last run kept.
+  Reclaiming them is an explicit, separate act: [`src/gc.rs`](src/gc.rs)'s
+  `Gc::sweep`, driven by `stella fleet clean`
+  (`crates/stella-cli/src/fleet_gc.rs`) — never automatic, and it removes only
+  a worktree with no unfinished attempt in the ledger, a clean tree, and a
+  branch the base ref already contains (#1217). `Gc` does its own
+  `worktree remove` rather than calling `WorktreeManager::remove`: the manager
+  judges a branch against the `base_ref` its `Worktree` value carries, which
+  the ledger does not record, and it has no `--force` rung. Consolidating the
+  two is tracked separately.
 - **Some of this crate's surface has no product caller yet.**
   `WorktreeManager::remove`/`list`/`commit_paths` are exercised only by this
   crate's own tests — `fleet_cmd` never calls them. They are API and tests,

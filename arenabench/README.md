@@ -49,9 +49,11 @@ arenabench run matches/glm-headtohead.toml --progress --results out.json
 ```
 
 `run` reads each seat's credentials from the **process environment** against
-the `required` list the template declares, and refuses to start if one is
-missing — an unauthenticated arm scores zero, and a zero is indistinguishable
-from a real result on a scoreboard. Override with `--allow-missing-env` if you
+the `required` list the template declares, falls back to the [saved credential
+set](#save-credentials-once-instead-of-pasting-them-every-time) for whatever
+the environment left unset, and refuses to start if a seat still has neither —
+an unauthenticated arm scores zero, and a zero is indistinguishable from a
+real result on a scoreboard. Override with `--allow-missing-env` if you
 genuinely mean it.
 
 While the match runs, `run` also applies the [watch rules](#watch-a-running-match-for-the-failures-that-invalidate-it)
@@ -208,6 +210,38 @@ match between two providers needs two credential sets, so credentials are
 per-contestant rather than global. Values live in the arena process and are
 handed only to that contestant's subprocess — the API returns key *names*,
 never values.
+
+### Save credentials once instead of pasting them every time
+
+Pasting the same `.env` into every match, or `export`-ing the same keys before
+every `arenabench run`, gets old fast. Put them in a saved credential file
+instead:
+
+```bash
+mkdir -p ~/.arenabench
+cat > ~/.arenabench/credentials.env <<'EOF'
+OPENROUTER_API_KEY=sk-or-...
+ANTHROPIC_API_KEY=sk-ant-...
+EOF
+```
+
+Same forgiving format as a pasted `.env` (`export FOO=bar`, quoted values,
+`#` comments) — `arenabench.credentials.load_credentials` parses it with the
+identical `parse_dotenv`. It lives at `~/.arenabench/credentials.env` by
+default (next to the price table and the default workspace — `ARENABENCH_HOME`
+moves all three together), or at an exact path you name with
+`ARENABENCH_CREDENTIALS`. Either way it is outside any git checkout, so there
+is no ignore rule to remember; `arenabench/.gitignore` also excludes
+`credentials.env`/`credentials.toml` defensively, in case you point the
+override at a path inside a checkout.
+
+**It only fills gaps.** Every seat's own credentials — whatever `run` found in
+the process environment, or whatever you pasted into the UI form — are checked
+first and always win; the saved file supplies only the names still missing
+after that, and only the ones that seat's provider actually declares (a seat
+on Anthropic never sees a saved OpenRouter key, even if both are in the file).
+Nothing is eliminated by this — pasting still works exactly as before, and
+still overrides the file whenever the two disagree.
 
 **Eight dimensions, live.**
 
@@ -422,8 +456,8 @@ arenabench/
                    monitor protocol (`arenabench watch`)
   recorder.py      MP4 sidecar supervisor
   server.py        stdlib HTTP + SSE
-  web/             the arena UI, BUILT — generated from ui/, committed so
-                   `pip install arenabench` needs no Node. Do not edit.
+  web/             the arena UI, BUILT — generated from ui/ by `npm run
+                   build`, gitignored. Do not edit.
 ui/                the arena UI, SOURCE — Next.js App Router, Tailwind v4,
                    shadcn-style components on Base UI, dark/light themes
 recorder/          Dockerfile + record.sh + render.py
@@ -442,8 +476,11 @@ cd ui && npm install && npm run dev  # live-reload dev server on :3900,
 npm run build                        # export + sync into arenabench/web/
 ```
 
-Commit the regenerated `web/` together with the `ui/` change that produced
-it — the committed export is what pip users run.
+The export is generated output and stays out of git — `npm run build`
+regenerates it from `ui/`, and packaging a wheel picks it up via the hatch
+`artifacts` entry in `pyproject.toml`. Build the UI before packaging;
+without a build, `arenabench serve` still runs the API and answers every
+`/api` route, it just 404s the client assets.
 
 **Everything displayed is read from files the run already writes.** Nothing
 talks to a container, an agent, or a provider. That is why the same code

@@ -17,13 +17,15 @@
 //! the terminal. Close the terminal and the parent dies; the child does not
 //! notice, because it left that session before it began.
 //!
-//! It is **not** engine-level checkpoint/resume. A supervised run survives a
-//! closed terminal, a logout, and an `ssh` disconnect. It does not survive its
-//! own process being killed: that loses the turn, and only the fact of it is
-//! recorded. `stella-engine` exists for the stronger property (drive the step
-//! loop from a durable host, checkpoint between steps) and is tracked
-//! separately — the weaker property is worth shipping first because it is what
-//! a closed laptop lid actually costs today.
+//! Process-level supervision is the weaker of the two properties #1552 named,
+//! and the engine-level one now stands behind it (#1586): every turn already
+//! checkpoints into the workspace's work journal at each committed step
+//! boundary, so a supervised run whose *process* is killed — OOM, `kill -9`,
+//! power loss — leaves a resume point where a mere closed terminal never
+//! needed one. [`resume_supervised`] is the verb that picks it up: it
+//! relaunches the same session under a fresh supervised child, which
+//! continues the interrupted turn from that boundary instead of restarting
+//! it (`crate::agent::resume`).
 //!
 //! # Why supervision keys on a controlling terminal
 //!
@@ -32,8 +34,15 @@
 //! close, so a process without one is already immune and supervising it buys
 //! nothing while adding a process, two files, and a copy to every byte of
 //! output. Concretely that leaves every non-interactive caller — CI, a pipe,
-//! `nohup`, and the Terminal-Bench harness, which runs `stella run` on pipes
-//! inside a container — on byte-for-byte the process shape they run today.
+//! a container, and the Terminal-Bench harness, which runs `stella run` on
+//! pipes with no terminal — on exactly the process shape they run today.
+//!
+//! `nohup` is deliberately NOT in that list. It redirects the standard
+//! streams but never detaches the controlling terminal, so
+//! `nohup stella run &` still opens `/dev/tty` and still gets supervised. It
+//! loses nothing by that — a supervised run is at least as durable as a
+//! nohup'd one — but its output is written to the sidecar consoles and copied
+//! to `nohup.out`, rather than only the latter.
 //!
 //! # The three bugs this inherits rather than rediscovers
 //!
@@ -65,17 +74,49 @@
 //! ([`stella_store::supervised::LOCK`]) for its entire life, taken in the same
 //! `pre_exec` as `setsid` and never closed. The kernel releases it when the
 //! process dies — `SIGKILL`, panic and power loss included — so a free lock
-//! means the run is over, and [`stop`] refuses to signal anything once it can
-//! take that lock itself.
+//! means the run is over, and [`stop`] does not signal once it can take that
+//! lock itself.
+//!
+//! Two things that discipline requires, both easy to get wrong:
+//!
+//! - The lock belongs to the **stella process**, not to its descendants.
+//!   `flock` is held by an open file description, which `fork`+`exec`
+//!   inherits, so [`hold_liveness_lock`] marks it `FD_CLOEXEC` the moment the
+//!   child is running. Without that a backgrounded dev server would go on
+//!   holding a finished run's lock, and `stop` would kill it on that run's
+//!   behalf.
+//! - "Does not signal once it can take the lock" is a check, not an
+//!   interlock. Nothing holds the lock between [`stop`]'s last poll and its
+//!   `kill`, so a run that ends inside that window is signalled anyway. It
+//!   takes full pid-space wraparound in tens of milliseconds to matter, which
+//!   is why this is a caveat rather than a design; POSIX offers no way to
+//!   close it.
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use colored::Colorize;
+use colored::{ColoredString, Colorize};
 use stella_store::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo, supervised};
 
 use crate::DaemonCmd;
+
+/// `install` / `uninstall`: the service-manager half (#1587) — what makes a
+/// registered invocation come back after the logout and reboot that
+/// supervision alone cannot cross.
+mod service;
+
+/// `resume-all` and `install --resume-all`: the boot-time sweep (#1627) that
+/// makes a registered service *continue* the turns a reboot killed rather
+/// than restart them.
+mod boot;
+
+pub(crate) mod approval;
+pub(crate) mod console;
+
+/// `--detach`: the same supervised launch, without the launcher staying to
+/// stream it (#1607).
+pub(crate) mod detach;
 
 /// Carries the supervised session's registry id into the child.
 ///
@@ -101,15 +142,33 @@ const STOP_GRACE: Duration = Duration::from_secs(8);
 /// offset or a lock, never a process.
 const POLL: Duration = Duration::from_millis(80);
 
+/// The two signals this module sends, named once so the call sites are not
+/// each a `cfg`. `libc`'s Windows module defines neither, and the rest of the
+/// file carries `#[cfg(not(unix))]` stubs — an ungated `libc::SIGKILL` would
+/// make that stated portability a compile error waiting for the first Windows
+/// build. Where these are unreachable, [`signal_group`] is already a no-op.
+#[cfg(unix)]
+use libc::{SIGKILL, SIGTERM};
+#[cfg(not(unix))]
+const SIGTERM: i32 = 15;
+#[cfg(not(unix))]
+const SIGKILL: i32 = 9;
+
 /// A live supervised child, owned by the parent that spawned it.
 pub(crate) struct Supervised {
     /// The registry id — what `stella daemon attach` takes.
     pub(crate) id: String,
-    /// The child's session sidecar, holding both console files.
-    sidecar: PathBuf,
     /// The child's process group, which is also its pid ([`spawn`]).
     pgid: i32,
     child: std::process::Child,
+    /// The two consoles, held across the whole supervision rather than
+    /// reopened per phase, so an interrupt resumes streaming from the byte the
+    /// terminal has actually seen. Reopening and seeking to the end instead
+    /// silently drops everything written since the last poll — which on the
+    /// interrupt path is the run's own shutdown output, the part a user who
+    /// just pressed Ctrl-C is most likely to want.
+    out: Tail,
+    err: Tail,
 }
 
 /// Whether this invocation should be handed to the supervisor.
@@ -126,11 +185,41 @@ pub(crate) fn should_supervise(
     !foreground && !already_supervised && has_controlling_terminal
 }
 
-/// This process's supervised session id, when it is itself a supervised child.
-pub(crate) fn supervised_id() -> Option<String> {
-    std::env::var(SUPERVISED_ENV)
+/// This process's supervised session id, captured once at startup.
+static SUPERVISED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Take [`SUPERVISED_ENV`] out of the environment and remember it.
+///
+/// **Consumed, not read.** Left in the environment it is inherited by every
+/// process the run spawns, and every one of those is a `stella` away from
+/// claiming to be this session. The repo's own workflow makes that concrete:
+/// a supervised run whose agent executes `make smoke` runs `stella models`,
+/// which on exit would stamp a terminal status onto its *parent's* still-live
+/// record. A nested long-running verb is worse — it reaches
+/// `agent::presence`, adopts the outer record, rewrites its title, and
+/// finishes it.
+///
+/// Takes the startup token for the same reason `credential_handoff` does:
+/// writing the process environment is only safe before the first thread, and
+/// the token is what bounds the window in code rather than in a comment.
+pub(crate) fn consume_supervised_env(_startup: &crate::startup::StartupPhase) {
+    let id = std::env::var(SUPERVISED_ENV)
         .ok()
-        .filter(|id| !id.trim().is_empty())
+        .filter(|id| !id.trim().is_empty());
+    if id.is_some() {
+        // SAFETY: single-threaded startup, holding the one token that permits
+        // an environment write (#1140).
+        unsafe { std::env::remove_var(SUPERVISED_ENV) };
+    }
+    let _ = SUPERVISED.set(id);
+}
+
+/// This process's supervised session id, when it is itself a supervised child.
+///
+/// Answers `None` in any process that never called [`consume_supervised_env`]
+/// — which is every test binary, and is the correct answer for them.
+pub(crate) fn supervised_id() -> Option<String> {
+    SUPERVISED.get().cloned().flatten()
 }
 
 /// The exit code a supervised child answered with, for `main` to forward.
@@ -159,25 +248,40 @@ pub(crate) fn forwarded_exit_code() -> Option<u8> {
 /// The child re-parses the same argv with `--foreground` appended, so the
 /// division of labour is exactly one process doing the work and one process
 /// watching — no argument is re-derived, re-quoted, or dropped on the way.
+///
+/// `posture` decides whether this process then stays: [`detach::Posture::Attached`]
+/// streams the child back here until it ends, [`detach::Posture::Detached`]
+/// returns the moment the child is registered (#1607). Both spawn through the
+/// same [`spawn`], because "the launcher does not stay" is the only difference
+/// between them and a second launch path is how the two would drift.
 pub(crate) fn supervise_this_invocation(
     rt: tokio::runtime::Runtime,
     workspace: &Path,
     title: &str,
     stdin: &[u8],
-    scope_review_lost: bool,
+    posture: detach::Posture,
 ) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to supervise: {e}"))?;
-    // This process's argv verbatim, plus the one flag that makes the child do
-    // the work rather than supervise it again. Verbatim because every
-    // alternative re-derives arguments that clap already parsed, and a
-    // reconstruction is one forgotten flag away from running something the
-    // user did not type. `SUPERVISED_ENV` is the backstop if it is ever lost.
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
-    args.push("--foreground".to_string());
+    // This process's argv **verbatim**: every alternative re-derives arguments
+    // clap already parsed, and a reconstruction is one forgotten flag away
+    // from running something the user did not type.
+    //
+    // Verbatim means verbatim — nothing is appended. `--foreground` used to
+    // be, and after a `--` separator clap treats everything as positional, so
+    // it silently became data: `stella run -- --my-prompt` (the invocation
+    // `--prompt`'s own help documents) got a second positional and died with a
+    // usage error, and `stella fleet -- 'fix a' 'fix b'` gained a THIRD task
+    // whose prompt was the word `--foreground`. The child is told through its
+    // environment instead, which no argument can be mistaken for.
+    //
+    // `args_os`, not `args`: the latter panics on argv that is not UTF-8, and
+    // clap accepts non-UTF-8 in any `PathBuf` argument — so a `--log-file`
+    // clap was happy with would abort the supervisor.
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
 
     let registry = SessionRegistry::open_default();
-    let mut run = spawn(
+    let run = spawn(
         &registry,
         &workspace.display().to_string(),
         title,
@@ -185,8 +289,27 @@ pub(crate) fn supervise_this_invocation(
         &args,
         stdin,
     )?;
-    run.announce(scope_review_lost);
+    if posture == detach::Posture::Detached {
+        return detach::release(run);
+    }
+    run.announce();
+    watch(rt, &registry, run)
+}
 
+/// Stream a just-spawned child to this terminal until it finishes — or until
+/// this terminal's human interrupts, which stops the child rather than
+/// abandoning it.
+///
+/// Shared by the two ways a supervised child comes to exist: a fresh
+/// [`supervise_this_invocation`] and a [`resume_supervised`] relaunch. One
+/// implementation because the interrupt path is the subtle half — Ctrl-C must
+/// reach the child as a stop, and a divergent copy here is how a resumed run
+/// would come to treat it as a detach.
+fn watch(
+    rt: tokio::runtime::Runtime,
+    registry: &SessionRegistry,
+    mut run: Supervised,
+) -> Result<(), String> {
     match rt.block_on(crate::signals::until_interrupted(run.follow())) {
         Ok(followed) => {
             rt.shutdown_timeout(Duration::from_secs(2));
@@ -201,8 +324,15 @@ pub(crate) fn supervise_this_invocation(
             // than dropping the work future the way `block_on_interruptible`
             // would. The work is not on this stack to drop.
             crate::signals::note_interrupt(signal);
+            // The child writes its own machine-readable error envelope, and
+            // this process copies it through verbatim. `main`'s catch-all
+            // would print a SECOND one describing the supervisor's view of
+            // the same interruption, leaving two JSON documents on the stdout
+            // of a `--output-format json | jq`. Claiming the slot the child
+            // already filled is what suppresses it.
+            crate::note_json_summary_emitted();
             let drained = rt.block_on(run.interrupt_and_drain());
-            mark_stopped(&registry, &run.id);
+            mark_stopped(registry, &run.id);
             rt.shutdown_timeout(Duration::from_secs(2));
             drained?;
             Err(signal.reason().to_string())
@@ -231,23 +361,6 @@ pub(crate) fn has_controlling_terminal() -> bool {
     }
 }
 
-/// Whether supervising this invocation takes away an interactive scope-review
-/// answer it would otherwise have had.
-///
-/// A supervised child's stdin is a file and its stdout is a log, so
-/// `approval_capability_for` resolves to `Unavailable` and the pipeline runs
-/// headless — where a plan that expands scope stops at a named error instead
-/// of asking. When the terminal invocation *would* have been able to answer,
-/// that is a capability the supervisor removed, and the run must say so before
-/// the first model call rather than after paying for several.
-///
-/// It warns rather than refuses: a headless run that never expands scope is
-/// the common case, and disabling the default surface to protect the uncommon
-/// one would cost every user something to save a few.
-pub(crate) fn loses_interactive_scope_review(had_stdio_approval: bool, bypass_on: bool) -> bool {
-    had_stdio_approval && !bypass_on
-}
-
 /// Launch `program args…` as a detached child and register it as a supervised
 /// session.
 ///
@@ -266,12 +379,52 @@ pub(crate) fn spawn(
     workspace: &str,
     title: &str,
     program: &Path,
-    args: &[String],
+    args: &[std::ffi::OsString],
     stdin: &[u8],
 ) -> Result<Supervised, String> {
-    // Minted before the spawn so the child can be told its own id, and so a
-    // failed spawn leaves a directory rather than a half-registered session.
-    let record = SessionRecord::new(workspace, title);
+    // Minted before the launch so a failed spawn leaves a directory rather
+    // than a half-registered session.
+    let mut record = SessionRecord::new(workspace, title);
+    record.summary = title.to_string();
+    launch(registry, record, program, args, stdin, Console::Fresh, None)
+}
+
+/// How a launched child's console files begin life.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Console {
+    /// A fresh run: truncate whatever a previous life left behind.
+    Fresh,
+    /// A resumed run (#1586): append, keeping the killed attempt's output —
+    /// that tail is the context a human reads to understand why there was
+    /// something to resume, and `attach --from-start` should show one
+    /// continuous story.
+    Preserve,
+}
+
+/// The mechanical half of [`spawn`], over a caller-supplied record: detach,
+/// take the liveness lock, wire the console, register. A fresh spawn mints
+/// its record; a resume ([`resume_supervised`]) re-launches under the record
+/// — and therefore the session id — it already has, because the checkpoint,
+/// the sidecar, and the registry row are all keyed by that id and a new one
+/// would strand every piece of state this exists to pick back up.
+///
+/// `cwd` pins the child's working directory. A fresh spawn inherits this
+/// process's (the child re-parses the same argv, and relative paths in it
+/// must keep meaning what the user meant); a resume sets the record's
+/// workspace, because the resuming parent may be run from anywhere.
+fn launch(
+    registry: &SessionRegistry,
+    mut record: SessionRecord,
+    program: &Path,
+    args: &[impl AsRef<std::ffi::OsStr>],
+    stdin: &[u8],
+    console: Console,
+    cwd: Option<&Path>,
+) -> Result<Supervised, String> {
+    // Forced back to in-progress up front: a fresh record is born live, but a
+    // resume's adopted record still carries the killed attempt's terminal
+    // reading, and the registration below must never show it.
+    record.status = SessionStatus::InProgress;
     let sidecar = registry
         .prepare_sidecar(&record.id)
         .map_err(|e| format!("cannot create the session directory: {e}"))?;
@@ -284,45 +437,92 @@ pub(crate) fn spawn(
 
     let out_path = sidecar.join(supervised::STDOUT_LOG);
     let err_path = sidecar.join(supervised::STDERR_LOG);
-    let out_file = create_console(&out_path)?;
-    let err_file = create_console(&err_path)?;
+    let out_file = create_console(&out_path, console)?;
+    let err_file = create_console(&err_path, console)?;
+
+    // Registered BEFORE the spawn. The child looks its own record up by id and
+    // continues it (`agent::presence`), and it can reach that lookup before a
+    // descheduled parent gets back to writing — on a loaded machine the parent
+    // has a file write to do and the child only has to finish `exec`. A miss
+    // there does not fail loudly; it mints a SECOND record, splitting the
+    // session into the two halves the adoption exists to prevent, with
+    // `daemon stop` holding one id and the journal accruing under the other.
+    //
+    // The pid is this process's until the spawn returns, and is corrected
+    // below. That is the safe direction to be briefly wrong in: a live record
+    // naming a live pid reads as running, which it is.
+    registry
+        .upsert(&record)
+        .map_err(|e| format!("cannot register the supervised run: {e}"))?;
 
     let mut command = std::process::Command::new(program);
     command
         .args(args)
         .env(SUPERVISED_ENV, &record.id)
+        // The child does the work rather than supervising it again. Through
+        // the environment, not argv, so a `--` separator cannot turn it into a
+        // prompt or a fleet task — see `supervise_this_invocation`.
+        .env("STELLA_FOREGROUND", "1")
         .stdin(std::process::Stdio::from(stdin_file))
         .stdout(std::process::Stdio::from(out_file))
         .stderr(std::process::Stdio::from(err_file));
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
     #[cfg(unix)]
     detach_before_exec(&mut command, sidecar.join(supervised::LOCK));
 
-    let child = command
-        .spawn()
-        .map_err(|e| format!("cannot start the supervised run: {e}"))?;
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = registry.remove(&record.id);
+            return Err(format!("cannot start the supervised run: {e}"));
+        }
+    };
 
     // The CHILD's pid, deliberately: the supervisor's says a supervisor
     // exists, this says the work is running. Every liveness check in the
-    // registry, and every signal `stop` sends, reads it.
+    // registry, and every signal `stop` sends, reads it. Status is forced
+    // back to in-progress for the resume path, whose adopted record still
+    // carries the killed attempt's terminal reading.
     let pid = child.id();
-    let pgid = i32::try_from(pid)
-        .map_err(|_| format!("supervised child pid {pid} does not fit a process group"))?;
-    let mut record = SessionRecord {
-        pid,
-        supervisor: Some(SupervisorInfo { pgid }),
-        ..record
+    let Ok(pgid) = i32::try_from(pid) else {
+        // The child is already running and detached. Leaving it would be
+        // leaving a process nothing can name, find, or stop.
+        abandon(registry, &record.id, &mut { child });
+        return Err(format!(
+            "supervised child pid {pid} does not fit a process group"
+        ));
     };
-    record.summary = title.to_string();
-    registry
-        .upsert(&record)
-        .map_err(|e| format!("cannot register the supervised run: {e}"))?;
+    record.pid = pid;
+    record.supervisor = Some(SupervisorInfo { pgid });
+    if let Err(e) = registry.upsert(&record) {
+        abandon(registry, &record.id, &mut { child });
+        return Err(format!("cannot register the supervised run: {e}"));
+    }
 
+    let out = Tail::open(&out_path)?;
+    let err = Tail::open(&err_path)?;
     Ok(Supervised {
         id: record.id,
-        sidecar,
         pgid,
         child,
+        out,
+        err,
     })
+}
+
+/// Take down a child that was spawned but could not be registered, and drop
+/// its record.
+///
+/// The alternative is returning an error while a detached process keeps
+/// running with no id, no row in `daemon list`, and no way to stop it short of
+/// `ps`. Signalling the pid rather than the group because the group is exactly
+/// the number we failed to establish.
+fn abandon(registry: &SessionRegistry, id: &str, child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = registry.remove(id);
 }
 
 /// Create a console file that is readable only by its owner.
@@ -331,9 +531,13 @@ pub(crate) fn spawn(
 /// printed. `ensure_private_dir` already restricts the directory; this keeps
 /// the file itself from being the exception if the directory's mode is ever
 /// widened by hand.
-fn create_console(path: &Path) -> Result<std::fs::File, String> {
+fn create_console(path: &Path, console: Console) -> Result<std::fs::File, String> {
     let mut options = std::fs::OpenOptions::new();
-    options.create(true).write(true).truncate(true);
+    options.create(true).write(true);
+    match console {
+        Console::Fresh => options.truncate(true),
+        Console::Preserve => options.append(true),
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -348,33 +552,40 @@ fn create_console(path: &Path) -> Result<std::fs::File, String> {
 /// genuinely detached: leave the terminal's session, and take the liveness
 /// lock.
 ///
-/// Both calls are async-signal-safe, which is the bar for anything running in
-/// this window. Either failing fails the spawn — a child that half-detached is
-/// worse than one that never started, because it looks supervised in the
-/// registry while still dying with the terminal.
+/// This runs in the post-`fork` window, so it does only what is safe there:
+/// three raw syscalls (`setsid` and `open` are on POSIX's async-signal-safe
+/// list; `flock` is not on the list but is a bare syscall with no library
+/// state), no allocation, and no lock any other thread of the forked parent
+/// could have held. The path is turned into a `CString` in the parent, above.
+///
+/// Either failing fails the spawn — a child that half-detached is worse than
+/// one that never started, because it looks supervised in the registry while
+/// still dying with the terminal.
 #[cfg(unix)]
 fn detach_before_exec(command: &mut std::process::Command, lock_path: PathBuf) {
     use std::os::unix::process::CommandExt;
 
+    // An empty string cannot be a real lock path (`sidecar.join(LOCK)` is
+    // never empty), so it doubles as the "path had an interior NUL" signal —
+    // and lets the post-fork closure report it with a plain errno instead of
+    // allocating an error message where it must not allocate.
     let lock = std::ffi::CString::new(lock_path.into_os_string().into_encoded_bytes())
         .unwrap_or_else(|_| c"".to_owned());
-    // SAFETY: `setsid`, `open` and `flock` are async-signal-safe, and this
-    // closure allocates nothing (the CString is built above, in the parent).
+    // SAFETY: see the doc comment — allocation-free, async-signal-safe calls
+    // only, on data prepared before the fork.
     unsafe {
         command.pre_exec(move || {
             if libc::setsid() == -1 {
                 return Err(std::io::Error::last_os_error());
             }
             if lock.as_bytes().is_empty() {
-                return Err(std::io::Error::other(
-                    "supervisor lock path is not a C string",
-                ));
+                return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
             }
-            // Deliberately NOT `O_CLOEXEC`, and deliberately never closed: the
-            // lock has to outlive both this function and the `exec` that
-            // follows it. The kernel is what closes this descriptor, when the
-            // process dies, which is precisely the event readers are asking
-            // about.
+            // Deliberately NOT `O_CLOEXEC`: the lock must survive the `exec`
+            // that follows, and only an inherited descriptor can. The child
+            // makes it non-inheritable again the moment it is running — see
+            // `hold_liveness_lock`, and the note there about why leaving it
+            // inheritable is not an option.
             let fd = libc::open(lock.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o600);
             if fd < 0 {
                 return Err(std::io::Error::last_os_error());
@@ -393,7 +604,12 @@ impl Supervised {
     /// It is printed rather than assumed because supervision changes two
     /// things a user can otherwise only discover the hard way: the run is no
     /// longer this terminal's to lose, and there is an id to come back to.
-    pub(crate) fn announce(&self, scope_review_lost: bool) {
+    ///
+    /// There is deliberately no scope-review caveat here any more: a
+    /// supervised plan that expands scope parks and asks through the sidecar
+    /// (#1585) — this terminal while it stays, any `stella daemon attach`
+    /// after it goes — so supervision no longer takes that answer away.
+    pub(crate) fn announce(&self) {
         eprintln!(
             "{} {} — survives this terminal closing",
             "▸ supervised".green().bold(),
@@ -403,14 +619,6 @@ impl Supervised {
             "  reattach with {}",
             format!("stella daemon attach {}", self.id).cyan()
         );
-        if scope_review_lost {
-            eprintln!(
-                "  {} a supervised run is headless: a plan that expands scope stops \
-                 instead of asking. Use --foreground to answer it here, or set \
-                 `headless_scope_bypass = \"on\"`.",
-                "note:".yellow()
-            );
-        }
     }
 
     /// Stream the child's console to this terminal until it exits, and answer
@@ -419,10 +627,8 @@ impl Supervised {
     /// stdout and stderr are replayed onto stdout and stderr, never merged:
     /// see [`stella_store::supervised::STDOUT_LOG`].
     pub(crate) async fn follow(&mut self) -> Result<Option<u8>, String> {
-        let mut out = Tail::open(&self.sidecar.join(supervised::STDOUT_LOG))?;
-        let mut err = Tail::open(&self.sidecar.join(supervised::STDERR_LOG))?;
         loop {
-            let moved = out.pump(&mut std::io::stdout())? + err.pump(&mut std::io::stderr())?;
+            let moved = self.pump()?;
             match self
                 .child
                 .try_wait()
@@ -432,14 +638,28 @@ impl Supervised {
                     // Ordered after the wait on purpose: this drain catches
                     // whatever the child wrote between the pump above and its
                     // exit, and once it has exited nothing more can appear.
-                    out.pump(&mut std::io::stdout())?;
-                    err.pump(&mut std::io::stderr())?;
+                    self.drain()?;
                     return Ok(exit_code(&status));
                 }
                 None if moved == 0 => tokio::time::sleep(POLL).await,
                 None => {}
             }
         }
+    }
+
+    /// Move one chunk of each console onto the matching stream, and answer how
+    /// many bytes that was. For the live loop, which comes straight back.
+    fn pump(&mut self) -> Result<usize, String> {
+        let out = self.out.pump(&mut std::io::stdout())?;
+        let err = self.err.pump(&mut std::io::stderr())?;
+        Ok(out + err)
+    }
+
+    /// Move everything both consoles hold. For the reads that will not come
+    /// back — see [`Tail::drain`].
+    fn drain(&mut self) -> Result<(), String> {
+        self.out.drain(&mut std::io::stdout())?;
+        self.err.drain(&mut std::io::stderr())
     }
 
     /// Ask the child to stop the way `SIGTERM` from anywhere else would, then
@@ -449,17 +669,18 @@ impl Supervised {
     /// only the foreground group, which the child left, so without this a
     /// Ctrl-C would detach the run rather than stop it — the opposite of what
     /// the key means everywhere else.
+    /// The consoles continue from wherever [`Self::follow`] left them. They
+    /// used to be reopened and seeked to the end here, which threw away
+    /// everything written since the last poll — on this path that is the run's
+    /// own shutdown output, which is exactly what somebody who just pressed
+    /// Ctrl-C is waiting to read.
     pub(crate) async fn interrupt_and_drain(&mut self) -> Result<(), String> {
-        signal_group(self.pgid, libc::SIGTERM);
+        signal_group(self.pgid, SIGTERM);
         let deadline = Instant::now() + STOP_GRACE;
-        let mut out = Tail::open(&self.sidecar.join(supervised::STDOUT_LOG))?;
-        let mut err = Tail::open(&self.sidecar.join(supervised::STDERR_LOG))?;
-        out.seek_to_end()?;
-        err.seek_to_end()?;
         while Instant::now() < deadline {
-            out.pump(&mut std::io::stdout())?;
-            err.pump(&mut std::io::stderr())?;
+            self.pump()?;
             if matches!(self.child.try_wait(), Ok(Some(_))) {
+                self.drain()?;
                 return Ok(());
             }
             tokio::time::sleep(POLL).await;
@@ -470,8 +691,9 @@ impl Supervised {
             self.id.dimmed(),
             STOP_GRACE.as_secs()
         );
-        signal_group(self.pgid, libc::SIGKILL);
+        signal_group(self.pgid, SIGKILL);
         let _ = self.child.wait();
+        self.drain()?;
         Ok(())
     }
 }
@@ -489,15 +711,12 @@ impl Tail {
         Ok(Self { file, offset: 0 })
     }
 
-    /// Skip whatever is already there — for a reader that only wants what
-    /// happens from now on.
-    fn seek_to_end(&mut self) -> Result<(), String> {
-        self.offset = self
-            .file
-            .seek(SeekFrom::End(0))
-            .map_err(|e| format!("cannot seek the console: {e}"))?;
-        Ok(())
-    }
+    // There is deliberately no `seek_to_end` here, for the same reason
+    // `console::Follower` carries no `skip_to_now`: that pair was the only
+    // caller, and #1632 removed it as a defect — seeking past everything
+    // already written threw away the run's shutdown output, which on the
+    // Ctrl-C path is precisely what the person who pressed the key is
+    // waiting to read.
 
     /// Start `lines` lines back from the end, or at the beginning if the file
     /// is shorter than that.
@@ -525,26 +744,51 @@ impl Tail {
         Ok(())
     }
 
-    /// Copy everything appended since the last call to `out`, and answer how
-    /// many bytes that was.
+    /// Copy up to [`PUMP_CHUNK`] bytes appended since the last call to `out`,
+    /// and answer how many that was.
+    ///
+    /// Bounded rather than "everything to EOF": attaching to a run that has
+    /// been writing `stream-json` for a day would otherwise read a console of
+    /// arbitrary size into one allocation before printing a byte of it. The
+    /// callers all loop until a terminal condition, so a partial pump is a
+    /// smaller step, never a lost one — and a nonzero return already means
+    /// "come straight back", so a backlog drains at memory speed.
     fn pump(&mut self, out: &mut impl Write) -> Result<usize, String> {
         self.file
             .seek(SeekFrom::Start(self.offset))
             .map_err(|e| format!("cannot seek the console: {e}"))?;
-        let mut buf = Vec::new();
+        let mut buf = vec![0u8; PUMP_CHUNK];
         let read = self
             .file
-            .read_to_end(&mut buf)
+            .read(&mut buf)
             .map_err(|e| format!("cannot read the console: {e}"))?;
         if read > 0 {
             // A closed pipe on the reading side is a routine way to stop
             // watching (`stella daemon attach … | head`), not an error worth
             // failing a run over.
-            let _ = out.write_all(&buf);
+            let _ = out.write_all(&buf[..read]);
             let _ = out.flush();
             self.offset += read as u64;
         }
         Ok(read)
+    }
+}
+
+/// The most one [`Tail::pump`] moves. Large enough that a normal run is one
+/// read, small enough that a huge console cannot be a huge allocation.
+const PUMP_CHUNK: usize = 64 * 1024;
+
+impl Tail {
+    /// Copy everything appended so far, however many [`PUMP_CHUNK`]s that
+    /// takes.
+    ///
+    /// This is what every *terminal* read must use. A single bounded `pump`
+    /// where the run has just ended shows the first 64KiB of what is left and
+    /// silently drops the rest — and the rest, at that moment, is the run's
+    /// answer.
+    fn drain(&mut self, out: &mut impl Write) -> Result<(), String> {
+        while self.pump(out)? > 0 {}
+        Ok(())
     }
 }
 
@@ -585,9 +829,15 @@ fn exit_code(status: &std::process::ExitStatus) -> Option<u8> {
 /// pid (see the module docs).
 ///
 /// `None` means the question could not be answered — no lock file, or a
-/// directory we cannot open — and callers treat that as "not live" rather than
-/// guessing, because every consequence of guessing wrong points one way:
-/// signalling something that is not ours.
+/// filesystem that does not implement `flock` (some NFS and FUSE mounts) —
+/// and callers treat that as "not live" rather than guessing, because every
+/// consequence of guessing wrong points one way: signalling something that is
+/// not ours.
+///
+/// Only `EWOULDBLOCK` means held. Reporting *every* `flock` failure as held
+/// would make a home directory on such a filesystem report every run as
+/// running forever, and `stop` would then signal on that basis — the exact
+/// inversion this function's caution is meant to prevent.
 fn lock_is_held(sidecar: &Path) -> Option<bool> {
     #[cfg(unix)]
     {
@@ -595,15 +845,16 @@ fn lock_is_held(sidecar: &Path) -> Option<bool> {
         let path = sidecar.join(supervised::LOCK);
         let file = std::fs::OpenOptions::new().read(true).open(path).ok()?;
         // SAFETY: `file` owns the descriptor for the whole call.
-        let taken = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if taken == 0 {
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
             // Nobody held it, so the run is over. Release immediately: this
             // process is a reader, not the new owner.
             // SAFETY: same descriptor, still owned by `file`.
             unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
-            Some(false)
-        } else {
-            Some(true)
+            return Some(false);
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EWOULDBLOCK) => Some(true),
+            _ => None,
         }
     }
     #[cfg(not(unix))]
@@ -613,22 +864,42 @@ fn lock_is_held(sidecar: &Path) -> Option<bool> {
     }
 }
 
-/// The child's side: hold the liveness lock for the rest of this process.
+/// The child's side of the liveness lock, run once at startup: claim the
+/// descriptor inherited from `pre_exec` so it stops being inherited any
+/// further, or take the lock outright if there is none.
 ///
-/// A no-op in the normal case — the lock was taken in `pre_exec` and the
-/// descriptor is still open — and exists for the case where it was not: a
-/// child started by hand with [`SUPERVISED_ENV`] set, or a future launcher
-/// (launchd, systemd) that spawns the child without going through [`spawn`].
-/// Without it those runs would read as already-finished to every other
-/// process the moment they started.
+/// # Why claiming matters more than taking
+///
+/// `flock` is held by an **open file description**, not by a process, and an
+/// inherited descriptor is the same description. Left alone, the lock
+/// `pre_exec` took is inherited by every process the run spawns — every
+/// `bash` tool, every build, every dev server the agent starts in the
+/// background — and stays held until the *last* of them exits.
+///
+/// That turns the liveness answer inside out. A run that finished an hour ago
+/// still reads as running because some backgrounded `npm run dev` holds the
+/// description; `stella daemon list` shows `Running` forever, and
+/// `stella daemon stop` believes it and `SIGKILL`s that process group.
+/// Setting `FD_CLOEXEC` here is what makes the module's claim — the lock is
+/// released when the process dies — actually true of the stella process.
+///
+/// The taking half is the fallback for a child that did not come through
+/// [`spawn`]: started by hand with [`SUPERVISED_ENV`] set, or by a future
+/// launchd/systemd unit. Those start with no sidecar and no lock file at all.
 pub(crate) fn hold_liveness_lock(registry: &SessionRegistry, id: &str) {
     #[cfg(unix)]
     {
         use std::os::unix::io::AsRawFd;
-        // Only a lock somebody already holds is a reason to stop. `None` — no
-        // lock file, no sidecar — is not that: it is precisely the state a
-        // child spawned outside `spawn` starts in, and returning on it would
-        // make this whole function a no-op in the one case it exists for.
+        let lock_path = registry.sidecar_dir(id).join(supervised::LOCK);
+        if let Some(inherited) = inherited_lock_fd(&lock_path) {
+            // SAFETY: `inherited` is an open descriptor of this process,
+            // identified by comparing its `fstat` identity to the lock file's.
+            // `F_SETFD` alters only the descriptor's inheritance flag.
+            unsafe { libc::fcntl(inherited, libc::F_SETFD, libc::FD_CLOEXEC) };
+            return;
+        }
+        // Nothing inherited. Either this child came from somewhere else, or
+        // the lock is genuinely free — but never steal one somebody holds.
         if lock_is_held(&registry.sidecar_dir(id)) == Some(true) {
             return;
         }
@@ -645,7 +916,8 @@ pub(crate) fn hold_liveness_lock(registry: &SessionRegistry, id: &str) {
             return;
         };
         // SAFETY: `file` owns the descriptor, and it is leaked below so it
-        // stays open — and the lock held — until the process exits.
+        // stays open — and the lock held — until the process exits. Rust opens
+        // files `O_CLOEXEC`, so this one is not inherited by tools either.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
             std::mem::forget(file);
         }
@@ -655,6 +927,51 @@ pub(crate) fn hold_liveness_lock(registry: &SessionRegistry, id: &str) {
         let _ = (registry, id);
     }
 }
+
+/// The descriptor this process inherited for `lock_path`, if any.
+///
+/// Found by identity rather than by number: `pre_exec` opens the lock after
+/// the standard streams are in place, so the number it lands on is whatever
+/// was free and is not ours to predict. Comparing `(st_dev, st_ino)` against
+/// the lock file answers exactly the question — is one of my open descriptors
+/// this file — without `/proc`, which macOS does not have.
+///
+/// The scan stops at [`LOCK_FD_SCAN_LIMIT`]: the descriptor is opened during
+/// startup, when only the standard streams and std's own spawn plumbing are
+/// open, so it is always a small number. Missing it is not a correctness
+/// failure — the caller falls through to taking the lock afresh.
+#[cfg(unix)]
+fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
+    use std::os::unix::fs::MetadataExt;
+
+    let lock = std::fs::metadata(lock_path).ok()?;
+    for fd in 3..LOCK_FD_SCAN_LIMIT {
+        // The identity is read through `MetadataExt`, not a raw `libc::stat`,
+        // because `dev_t` is unsigned on Linux and signed on macOS: no single
+        // conversion of `st_dev` compiles on both, while `dev()`/`ino()` are
+        // declared `u64` on every Unix.
+        //
+        // SAFETY: the descriptor is borrowed, never owned — `ManuallyDrop`
+        // keeps `File`'s destructor from closing an fd this only looks at.
+        // `metadata` is an `fstat`, which reports EBADF for a descriptor that
+        // is not open rather than doing anything with it.
+        let probe = std::mem::ManuallyDrop::new(unsafe {
+            <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd)
+        });
+        let Ok(stat) = probe.metadata() else {
+            continue;
+        };
+        if stat.dev() == lock.dev() && stat.ino() == lock.ino() {
+            return Some(fd);
+        }
+    }
+    None
+}
+
+/// How far [`inherited_lock_fd`] looks. Startup has the three standard
+/// streams and a handful of transient descriptors; the lock lands among them.
+#[cfg(unix)]
+const LOCK_FD_SCAN_LIMIT: i32 = 64;
 
 /// The child's side: stamp the terminal status on its way out.
 ///
@@ -673,15 +990,121 @@ pub(crate) fn record_outcome_if_supervised(ok: bool) {
     let Some(id) = supervised_id() else {
         return;
     };
-    let status = match (ok, crate::signals::interrupted_exit_code()) {
-        // A signal is not a failure: the run was stopped, and recording it as
-        // an error would put a deliberate `stella daemon stop` in the registry
-        // beside the runs that genuinely broke.
+    let _ = SessionRegistry::open_default().set_status(&id, outcome_status(ok));
+}
+
+/// The terminal status a finished run records.
+///
+/// A signal is not a failure: the run was stopped, and recording it as an
+/// error would put a deliberate `stella daemon stop` in the registry beside
+/// the runs that genuinely broke. Shared with the resume driver
+/// (`crate::agent::resume`), which writes its own terminal status for the
+/// hand-run `--foreground` case no supervised env var covers.
+pub(crate) fn outcome_status(ok: bool) -> SessionStatus {
+    match (ok, crate::signals::interrupted_exit_code()) {
         (_, Some(_)) => SessionStatus::Cancelled,
         (true, None) => SessionStatus::Complete,
         (false, None) => SessionStatus::Error,
+    }
+}
+
+/// `stella daemon resume` — the parent half (#1586).
+///
+/// Verifies there is genuinely something to resume — the run is over, and it
+/// left a resume point this build can read — then relaunches the SAME
+/// session as a fresh supervised child running `daemon resume <id>
+/// --foreground`, and stays to stream it exactly as the original launch
+/// would have. The child continues the interrupted turn from its last
+/// committed step boundary (`crate::agent::resume`); completed steps are
+/// already in the checkpointed transcript, so nothing re-runs and nothing is
+/// double-applied.
+pub(crate) fn resume_supervised(
+    rt: tokio::runtime::Runtime,
+    id: Option<&str>,
+) -> Result<(), String> {
+    let registry = SessionRegistry::open_default();
+    let record = resolve(&registry, id)?;
+    let sidecar = registry.sidecar_dir(&record.id);
+    if lock_is_held(&sidecar) == Some(true) {
+        return Err(format!(
+            "{} is still running — `stella daemon attach {}` streams it, `stella daemon \
+             stop {}` ends it",
+            record.id, record.id, record.id
+        ));
+    }
+    let workspace = PathBuf::from(&record.workspace);
+    if !workspace.is_dir() {
+        return Err(format!(
+            "{}'s workspace {} no longer exists, and a resumed turn must run where its \
+             work is",
+            record.id, record.workspace
+        ));
+    }
+    let checkpoint = resume_point(&record)?;
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("cannot locate the stella binary to resume with: {e}"))?;
+    let args: Vec<std::ffi::OsString> = vec![
+        "daemon".into(),
+        "resume".into(),
+        record.id.clone().into(),
+        "--foreground".into(),
+    ];
+    let id = record.id.clone();
+    let run = launch(
+        &registry,
+        record,
+        &exe,
+        &args,
+        b"",
+        Console::Preserve,
+        Some(&workspace),
+    )?;
+    eprintln!(
+        "{} {} — continuing its interrupted turn at step {}",
+        "▸ resuming".green().bold(),
+        id.dimmed(),
+        checkpoint.step
+    );
+    watch(rt, &registry, run)
+}
+
+/// `stella daemon resume-all` — the boot-time sweep (#1627).
+///
+/// Thin on purpose: the decision about *which* runs a boot continues, and the
+/// bound that stops it continuing them forever, live in [`boot`] where they
+/// are pure enough to witness.
+pub(crate) fn resume_all<F>(dry_run: bool, runtime: F) -> Result<(), String>
+where
+    F: FnMut() -> Result<tokio::runtime::Runtime, String>,
+{
+    boot::resume_all(dry_run, runtime)
+}
+
+/// The resume point `record` left behind, decoded — or the precise reason
+/// there is nothing to resume.
+///
+/// Decoded HERE, in the parent, so an absent or version-skewed checkpoint
+/// refuses before a child is spawned: the child would only discover the same
+/// thing after the operator has been told the run was resuming.
+fn resume_point(record: &SessionRecord) -> Result<stella_core::step::Checkpoint, String> {
+    let journal =
+        stella_store::work_journal::WorkJournal::open(Path::new(&record.workspace), &record.id)
+            .map_err(|e| format!("cannot open {}'s durable record: {e}", record.id))?;
+    let Some(json) = journal.checkpoint() else {
+        return Err(format!(
+            "{} has no resume point. A turn leaves one only when its process was killed \
+             mid-turn; a run that completed, was stopped, or aborted discards it on the \
+             way out",
+            record.id
+        ));
     };
-    let _ = SessionRegistry::open_default().set_status(&id, status);
+    stella_core::step::Checkpoint::from_json(&json).map_err(|e| {
+        format!(
+            "{}'s resume point cannot be read by this build ({e}); refusing to resume a \
+             turn from a shape this build half-recognizes",
+            record.id
+        )
+    })
 }
 
 /// Stop a supervised run from another process — `stella daemon stop`.
@@ -704,7 +1127,7 @@ pub(crate) fn stop(registry: &SessionRegistry, id: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    signal_group(supervisor.pgid, libc::SIGTERM);
+    signal_group(supervisor.pgid, SIGTERM);
     let deadline = Instant::now() + STOP_GRACE;
     while Instant::now() < deadline {
         if lock_is_held(&sidecar) != Some(true) {
@@ -721,7 +1144,7 @@ pub(crate) fn stop(registry: &SessionRegistry, id: &str) -> Result<(), String> {
         record.id,
         STOP_GRACE.as_secs()
     );
-    signal_group(supervisor.pgid, libc::SIGKILL);
+    signal_group(supervisor.pgid, SIGKILL);
     // Written here as well as on the graceful path, because on this one the
     // child's own shutdown never ran and nothing else will write it.
     mark_stopped(registry, &record.id);
@@ -751,10 +1174,16 @@ fn mark_stopped(registry: &SessionRegistry, id: &str) {
 /// Resolve a user-typed id to a record.
 ///
 /// Accepts a unique prefix, because the full form (`ses-1754431200000-84213`)
-/// is a timestamp and a pid and nobody is going to type it. `None` picks the
-/// most recent supervised run, which is what "the one I just started" means
-/// nine times in ten.
-fn resolve(registry: &SessionRegistry, id: Option<&str>) -> Result<SessionRecord, String> {
+/// is a timestamp and a pid and nobody is going to type it. It also accepts a
+/// bare **pid**, because that is the address `ps`, `top`, Activity Monitor and
+/// an OOM-killer log hand you, and without this rung translating one back to a
+/// run means eyeballing `stella daemon list` (#1690). `None` picks the most
+/// recent supervised run, which is what "the one I just started" means nine
+/// times in ten.
+pub(crate) fn resolve(
+    registry: &SessionRegistry,
+    id: Option<&str>,
+) -> Result<SessionRecord, String> {
     let supervised_runs: Vec<SessionRecord> = registry
         .list()
         .into_iter()
@@ -775,18 +1204,57 @@ fn resolve(registry: &SessionRegistry, id: Option<&str>) -> Result<SessionRecord
         return Ok(exact.clone());
     }
 
-    let mut matches = supervised_runs.into_iter().filter(|r| r.id.starts_with(id));
+    // An id begins `ses-`, so an argument that parses as a number cannot be a
+    // prefix of one: the two address spaces are disjoint, and a pid that hits
+    // nothing is reported as a pid rather than falling through to a prefix
+    // scan that could not have matched either. The ambiguity rule is the same
+    // one — pids are recycled, and a finished run keeps the one it ran under —
+    // but the advice is not, since there are no further digits to type.
+    if let Ok(pid) = id.parse::<u32>() {
+        return only(
+            supervised_runs.into_iter().filter(|r| r.pid == pid),
+            || {
+                format!(
+                    "no supervised run has pid {pid} — `stella daemon list` shows what there is"
+                )
+            },
+            |first, second| {
+                format!(
+                    "pid {pid} matches more than one run ({} and {}) — use the id `stella daemon list` prints",
+                    first.id, second.id
+                )
+            },
+        );
+    }
+
+    only(
+        supervised_runs.into_iter().filter(|r| r.id.starts_with(id)),
+        || format!("no supervised run matches `{id}` — `stella daemon list` shows what there is"),
+        |first, second| {
+            format!(
+                "`{id}` matches more than one run ({} and {}) — use more of the id",
+                first.id, second.id
+            )
+        },
+    )
+}
+
+/// The one record in `matches`, or the error for none and for several.
+///
+/// Shared by [`resolve`]'s prefix and pid rungs: the rule ("exactly one, or
+/// say so") is the same on both, while the sentences are not — what to type
+/// instead depends on which address space the caller was using.
+fn only(
+    mut matches: impl Iterator<Item = SessionRecord>,
+    miss: impl FnOnce() -> String,
+    ambiguous: impl FnOnce(&SessionRecord, &SessionRecord) -> String,
+) -> Result<SessionRecord, String> {
     let Some(first) = matches.next() else {
-        return Err(format!(
-            "no supervised run matches `{id}` — `stella daemon list` shows what there is"
-        ));
+        return Err(miss());
     };
     match matches.next() {
         None => Ok(first),
-        Some(second) => Err(format!(
-            "`{id}` matches more than one run ({} and {}) — use more of the id",
-            first.id, second.id
-        )),
+        Some(second) => Err(ambiguous(&first, &second)),
     }
 }
 
@@ -798,6 +1266,21 @@ pub(crate) fn run(cmd: &DaemonCmd) -> Result<(), String> {
         DaemonCmd::Attach { id } => attach(&registry, id.as_deref()),
         DaemonCmd::Logs { id, lines } => logs(&registry, id.as_deref(), *lines),
         DaemonCmd::Stop { id } => stop(&registry, id),
+        // Routed in `main` before this is reached: the parent half spawns
+        // from the registry alone ([`resume_supervised`]), while the
+        // `--foreground` child half needs the provider resolution this
+        // registry-only dispatcher exists to run before.
+        DaemonCmd::Resume { .. } => unreachable!("daemon resume is dispatched in main"),
+        // Same routing, same reason: the sweep spawns and streams the runs it
+        // continues, so it needs the runtime `main` owns (#1627).
+        DaemonCmd::ResumeAll { .. } => unreachable!("daemon resume-all is dispatched in main"),
+        DaemonCmd::Install {
+            label,
+            keep_alive,
+            resume_all,
+            command,
+        } => service::install(label.as_deref(), *keep_alive, *resume_all, command),
+        DaemonCmd::Uninstall { label } => service::uninstall(label),
     }
 }
 
@@ -817,27 +1300,69 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
         "STATUS".bold(),
         "WHAT".bold()
     );
+    let mut any_resumable = false;
     for run in runs {
         let live = lock_is_held(&registry.sidecar_dir(&run.id)) == Some(true);
         // The lock outranks the stored status for a live-looking record: the
         // status is what the child last wrote, and a child killed between two
         // writes never got to correct it.
-        let status = match (live, run.status) {
-            (true, status) if status.is_live() => status.label().green(),
-            (true, _) => "Running".green(),
-            (false, status) if status.is_live() => "Crashed".red(),
-            (false, status) => status.label().normal(),
+        let (label, paint): (&str, fn(&str) -> ColoredString) = match (live, run.status) {
+            (true, status) if status.is_live() => (status.label(), |s| s.green()),
+            (true, _) => ("Running", |s| s.green()),
+            // Probed only on this rare arm: a crashed run holding a resume
+            // point is exactly the row `daemon resume` exists for (#1586),
+            // and a killed run's journal already exists, so the probe opens
+            // rather than creates.
+            (false, status) if status.is_live() => {
+                if has_resume_point(&run) {
+                    any_resumable = true;
+                    ("Crashed ↩", |s| s.red())
+                } else {
+                    ("Crashed", |s| s.red())
+                }
+            }
+            (false, status) => (status.label(), |s| s.normal()),
         };
-        println!("{:<28} {:<12} {}", run.id, status, run.title);
+        // A crashed run earns the resume hint only if it actually left a
+        // resume point behind; a clean exit discarded its own on the way out.
+        if !live && run.status.is_live() && !any_resumable {
+            any_resumable = has_resume_point(&run);
+        }
+        // Padded before it is painted. A width applied to a `ColoredString`
+        // counts the ANSI escapes as characters, so every coloured cell comes
+        // out its escape-length too narrow and the last column ragged.
+        println!(
+            "{:<28} {} {}",
+            run.id,
+            paint(&format!("{label:<12}")),
+            run.title
+        );
+    }
+    if any_resumable {
+        println!(
+            "\n↩ killed mid-turn with a resume point — {} continues it",
+            "stella daemon resume <id>".cyan()
+        );
     }
     Ok(())
 }
 
+/// Whether `record` left a resume point — the cheap presence probe behind
+/// `list`'s `↩`, deliberately not decoding what [`resume_point`] will.
+fn has_resume_point(record: &SessionRecord) -> bool {
+    stella_store::work_journal::WorkJournal::open(Path::new(&record.workspace), &record.id)
+        .ok()
+        .and_then(|journal| journal.checkpoint())
+        .is_some()
+}
+
 fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
+    use std::io::IsTerminal;
     let record = resolve(registry, id)?;
     let sidecar = registry.sidecar_dir(&record.id);
-    let mut out = Tail::open(&sidecar.join(supervised::STDOUT_LOG))?;
-    let mut err = Tail::open(&sidecar.join(supervised::STDERR_LOG))?;
+    let mut console = console::Follower::open(&sidecar)?;
+    let interactive = std::io::stdin().is_terminal();
+    let mut approval_noted = false;
     eprintln!(
         "{} {} — {}",
         "▸ attached".green().bold(),
@@ -845,12 +1370,15 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
         record.title
     );
     loop {
-        let moved = out.pump(&mut std::io::stdout())? + err.pump(&mut std::io::stderr())?;
+        let moved = console.pump(&mut std::io::stdout(), &mut std::io::stderr())?;
+        // Attaching to a parked run is the issue's headline path (#1585):
+        // `daemon list` says Needs Input, attach asks the question.
+        approval::forward_pending_approval(&sidecar, interactive, &mut approval_noted);
         if lock_is_held(&sidecar) != Some(true) {
             // Same ordering as `follow`: drain after observing the end, so the
-            // last thing the run wrote is never the thing attach misses.
-            out.pump(&mut std::io::stdout())?;
-            err.pump(&mut std::io::stderr())?;
+            // last thing the run wrote is never the thing attach misses. The
+            // pump is bounded, so draining is pumping until nothing moves.
+            while console.pump(&mut std::io::stdout(), &mut std::io::stderr())? > 0 {}
             eprintln!("{} {} has finished", "▸".dimmed(), record.id.dimmed());
             return Ok(());
         }
@@ -863,12 +1391,24 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
 fn logs(registry: &SessionRegistry, id: Option<&str>, lines: usize) -> Result<(), String> {
     let record = resolve(registry, id)?;
     let sidecar = registry.sidecar_dir(&record.id);
+    // An indexed console replays in true cross-stream order (#1588). A
+    // session recorded before the index existed cannot be ordered — the raw
+    // files carry no timestamps — so it keeps the old two-block tail, which
+    // stays the honest answer for exactly those sessions.
+    if console::replay_logs(
+        &sidecar,
+        lines,
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+    )? {
+        return Ok(());
+    }
     let mut out = Tail::open(&sidecar.join(supervised::STDOUT_LOG))?;
     let mut err = Tail::open(&sidecar.join(supervised::STDERR_LOG))?;
     out.seek_back_lines(lines)?;
     err.seek_back_lines(lines)?;
-    out.pump(&mut std::io::stdout())?;
-    err.pump(&mut std::io::stderr())?;
+    out.drain(&mut std::io::stdout())?;
+    err.drain(&mut std::io::stderr())?;
     Ok(())
 }
 

@@ -7,6 +7,25 @@
 
 use super::*;
 
+use crate::witness::{RUNNER_VOCABULARY, runner_probe};
+
+/// Which of the closed vocabulary's runners this workspace can actually
+/// spawn (#1539) — the fact the capability-minimal author cannot discover
+/// itself. One version-style probe per vocabulary program, through the
+/// baseline's own [`TestRunner`] port; a port that cannot check answers
+/// `true` per its default, so this only ever narrows on real evidence.
+async fn runner_availability(tests: &dyn TestRunner) -> Vec<String> {
+    let mut available = Vec::new();
+    for program in RUNNER_VOCABULARY {
+        if let Some(probe) = runner_probe(program)
+            && tests.runner_available(&probe).await
+        {
+            available.push((*program).to_string());
+        }
+    }
+    available
+}
+
 /// Candidate-bound hook execution: both the hook process and the engine's
 /// payload use the isolated root, never the session root.
 pub(super) struct BoundHookRunner<'a> {
@@ -176,6 +195,21 @@ impl<'a> Pipeline<'a> {
             name: StageKind::Witness,
         });
 
+        // #1539: establish runner availability BEFORE spending a model turn.
+        // The author cannot execute anything, so a missing toolchain is
+        // invisible to it — it used to guess, and a wrong guess produced an
+        // unobservable baseline run that silently cost the run its witness.
+        // An empty set means no vocabulary runner is usable here: degrade
+        // now, honestly, with zero author spend.
+        let available = runner_availability(baseline.tests).await;
+        if available.is_empty() {
+            return Err(WitnessAbort::degradable(
+                "no supported test runner is available in this workspace, so an authored \
+                 witness could never be observed"
+                    .to_string(),
+            ));
+        }
+
         let tracked_before = baseline.repo_status.tracked_fingerprints().await;
         let untracked_before = baseline.repo_status.untracked_fingerprints().await;
         let structure = self.repo.structure_summary().await;
@@ -208,6 +242,7 @@ impl<'a> Pipeline<'a> {
                     .ok()
                     .and_then(Option::as_ref)
                     .and(self.config.test_command.as_deref()),
+                &available,
             )),
         ];
         // Both tallies are local and discarded, on the same reasoning: they
@@ -236,7 +271,9 @@ impl<'a> Pipeline<'a> {
                 *total += cost_usd;
                 text
             }
-            TurnOutcome::Aborted { reason, cost_usd } => {
+            TurnOutcome::Aborted {
+                reason, cost_usd, ..
+            } => {
                 *total += cost_usd;
                 if let Some(abort) = budget_abort(budget.evaluate()) {
                     return Err(WitnessAbort::rejected(abort.reason));
@@ -257,6 +294,18 @@ impl<'a> Pipeline<'a> {
                 "witness author produced an unsafe or unsupported test command `{command}`"
             )));
         };
+        // #1539: the availability constraint is enforced, not advisory. An
+        // author that names an unprobed runner anyway degrades HERE, with the
+        // real reason — never by spending a baseline run to discover an
+        // unobservable command and blaming generic infra.
+        if !available.contains(&invocation.program) {
+            return Err(WitnessAbort::degradable(format!(
+                "witness author chose `{}`, which is not available in this workspace \
+                 (available runners: {})",
+                invocation.program,
+                available.join(", ")
+            )));
+        }
         // #860: the "must fail first" gate needs a *completed* baseline run.
         // A timed-out or unspawnable run observed no assertion, so it can
         // neither arm the witness (a "failure" that was infra noise would
@@ -298,7 +347,9 @@ impl<'a> Pipeline<'a> {
                     *total += cost_usd;
                     text
                 }
-                TurnOutcome::Aborted { reason, cost_usd } => {
+                TurnOutcome::Aborted {
+                    reason, cost_usd, ..
+                } => {
                     *total += cost_usd;
                     if let Some(abort) = budget_abort(budget.evaluate()) {
                         return Err(WitnessAbort::rejected(abort.reason));
@@ -314,6 +365,17 @@ impl<'a> Pipeline<'a> {
                     "witness repair produced an unsafe or unsupported test command `{command}`"
                 )));
             };
+            // Same #1539 constraint on the repaired command: the repair turn
+            // may change the runner, and an unavailable one is just as
+            // unobservable the second time.
+            if !available.contains(&repaired_invocation.program) {
+                return Err(WitnessAbort::degradable(format!(
+                    "witness repair chose `{}`, which is not available in this workspace \
+                     (available runners: {})",
+                    repaired_invocation.program,
+                    available.join(", ")
+                )));
+            }
             invocation = repaired_invocation;
             let repaired_baseline = self.run_test_observed(baseline.tests, &invocation).await;
             if let Some(label) = repaired_baseline.infra_label() {
@@ -414,7 +476,7 @@ impl<'a> Pipeline<'a> {
         let Some(authoring) = authoring else {
             return Ok(None);
         };
-        if !warrant(&state.diff_text, state.file_changes).is_required() {
+        if !warrant(&state.diff_text, state.change_signals()).is_required() {
             // No Witness stage is emitted, because none runs. The reason is
             // not lost: `warranted_completion` reads the same warrant during
             // verification and records the sentence on the verdict, which is

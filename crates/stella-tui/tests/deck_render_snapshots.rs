@@ -639,10 +639,10 @@ fn deck_render_snapshots_pin_the_skills_scope_picker() {
     );
 }
 
-/// The five floating cards (D3–D6) over the scripted session.
+/// The three floating cards (D3–D6) over the scripted session.
 ///
-/// Cards are glyph-heavy by design — the `▸` selection marker, the task
-/// glyph vocabulary, the witness records' `red ──▸ green` — precisely so a
+/// Cards are glyph-heavy by design — the `▸` selection marker, the plan
+/// glyph vocabulary — precisely so a
 /// style-blind golden can pin them. One golden per card; the statline's
 /// collapsed form is captured in the same frame.
 #[test]

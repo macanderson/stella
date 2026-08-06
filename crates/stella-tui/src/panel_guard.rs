@@ -1,7 +1,7 @@
 //! The panel panic boundary (L-T7) — the crate's only one.
 //!
-//! A *band* is any rectangle of the frame drawn by one function: a
-//! panel ([`crate::render::guarded_panel`]), a deck chrome row, the deck's
+//! A *band* is any rectangle of the frame drawn by one function: a deck
+//! chrome row, the deck's
 //! active-tab content area, or a deck overlay. Each is drawn into its own
 //! scratch [`Buffer`] inside `catch_unwind`; on a panic the scratch is dropped
 //! and a red error card is painted in its place. Nothing unwinds out of
@@ -38,7 +38,7 @@
 //!
 //! 2. **Scroll and cursor clamps.** `ui.graph_cursor`, `ui.context_scroll`,
 //!    `ui.inspect_scroll`, the skills preview's `scroll`, the MCP inspector's
-//!    `scroll`, the installed panel's `created_scroll`, and the task card's
+//!    `scroll`, the installed panel's `created_scroll`, and the plan card's
 //!    `ui.cards.plan_sel` (`views::plan_card`). Every one is
 //!    `x = x.min(max_measured_this_frame)` — idempotent, and re-applied on
 //!    every frame the owning panel is drawn. A missed clamp leaves an offset

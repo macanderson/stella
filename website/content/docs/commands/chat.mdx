@@ -157,7 +157,11 @@ Open a tab or run an action:
     Show the deck's command list.
   </OptionCard>
   <OptionCard name="/clear">
-    Reset the conversation — blank the transcript and drop the history.
+    Reset the conversation — blank the transcript and drop the history. It
+    resets the **lead** only: sidecar workers still running on their own lanes
+    keep running, keep their own context, and are named in the cleared pane so
+    the reset never reads as an idle session. Press `s` on a lane to stop that
+    worker.
   </OptionCard>
   <OptionCard name="/models">
     List providers and models (the same output as `stella models`). Also accepts

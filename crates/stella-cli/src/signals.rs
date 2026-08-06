@@ -9,7 +9,7 @@
 //! spawned with `setsid()`, which puts it in its own session — and the tty
 //! delivers Ctrl-C's SIGINT only to the *foreground* process group. So the
 //! child never saw the signal either. `GroupKillGuard`
-//! (`stella-tools/src/exec.rs`) is the only thing that reaps that tree, and
+//! (`crates/stella-tools/src/exec.rs`) is the only thing that reaps that tree, and
 //! it could not fire. A cancelled build or test suite kept running,
 //! unattached, still mutating the workspace.
 //!
@@ -155,8 +155,9 @@ async fn race<F: Future>(
 
 /// Set when a top-level future was cut short, so `main` can return the
 /// shell-conventional exit code rather than a generic failure. A static
-/// because `run` threads a plain `Result<(), String>` and widening that
-/// error type would touch every `?` in it.
+/// because the signal fires inside `block_on_interruptible`, several frames
+/// below `main`'s exit-code decision, and `run`'s error type carries the
+/// failure's own message, not the signal's.
 static INTERRUPTED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Record that a signal cut this process short.
@@ -183,9 +184,10 @@ pub(crate) fn interrupted_exit_code() -> Option<u8> {
 /// dropping a multi-thread runtime blocks until every `spawn_blocking` task
 /// finishes, and one wedged indexing or embedding call would make Ctrl-C
 /// look ignored *after* the guards had already fired.
-pub(crate) fn block_on_interruptible<F>(rt: tokio::runtime::Runtime, work: F) -> Result<(), String>
+pub(crate) fn block_on_interruptible<F, E>(rt: tokio::runtime::Runtime, work: F) -> Result<(), E>
 where
-    F: Future<Output = Result<(), String>>,
+    F: Future<Output = Result<(), E>>,
+    E: From<String>,
 {
     match rt.block_on(until_interrupted(work)) {
         Ok(inner) => {
@@ -204,7 +206,7 @@ where
         Err(signal) => {
             note_interrupt(signal);
             rt.shutdown_timeout(std::time::Duration::from_secs(2));
-            Err(signal.reason().to_string())
+            Err(E::from(signal.reason().to_string()))
         }
     }
 }
@@ -240,7 +242,7 @@ mod tests {
             .expect("runtime");
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = block_on_interruptible(rt, async {
+            let result = block_on_interruptible::<_, String>(rt, async {
                 let started = Arc::new(AtomicBool::new(false));
                 let flag = started.clone();
                 // Detached on purpose — the handle is dropped, exactly like

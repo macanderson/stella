@@ -266,7 +266,9 @@ impl GitCandidateWorkspace {
 /// The blob id a `hash-object` / `rev-parse <rev>:<path>` probe reported, or
 /// `None` when the probe failed — which is how "that path is absent in that
 /// state" arrives, since both commands error rather than print an empty id.
-fn blob_id(probe: Result<String, String>) -> Option<String> {
+/// `pub(super)` because the post-seal escape check ([`super::escape`]) runs
+/// the same three probes proactively.
+pub(super) fn blob_id(probe: Result<String, String>) -> Option<String> {
     probe.ok().map(|id| id.trim().to_string())
 }
 

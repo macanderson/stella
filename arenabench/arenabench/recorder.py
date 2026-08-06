@@ -49,7 +49,11 @@ __all__ = [
 
 log = logging.getLogger("arenabench.recorder")
 
-IMAGE_TAG = "arenabench/recorder:1"
+#: Bumped to :2 when the recorder switched to fragmented MP4. The tag is what
+#: `image_present()` checks, so a host that already built :1 would otherwise
+#: keep filming with the old `+faststart` script forever and keep producing
+#: unplayable files after a hard kill — a fix nobody receives.
+IMAGE_TAG = "arenabench/recorder:2"
 
 #: Give ffmpeg time to write the moov atom. Docker's default 10s stop timeout
 #: is usually enough, but a long recording on a loaded host is not, and the

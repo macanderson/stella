@@ -31,8 +31,9 @@
 /// contributors are held to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoWitnessReason {
-    /// The turn changed no files at all — a question, a lookup, an
-    /// explanation. There is no behavior to prove.
+    /// The turn changed no files at all *and never asked to* — a question, a
+    /// lookup, an explanation. There is no behavior to prove. Both halves are
+    /// load-bearing; [`ChangeSignals`] says why.
     NothingChanged,
     /// Only documentation changed. Prose has no runtime behavior to flip.
     DocsOnly,
@@ -157,24 +158,69 @@ fn untracked_marker_paths(diff: &str) -> Vec<String> {
     paths
 }
 
+/// What the turn *did*, as distinct from what the diff *shows*.
+///
+/// Every field is a count the pipeline kept while the turn ran, and that is
+/// what earns them a say here. A probe that comes back empty may simply have
+/// been unable to look; a record of what was dispatched cannot be. So these
+/// are the only inputs [`warrant`] is willing to read as evidence of
+/// *absence* — the same asymmetry
+/// [`crate::verify::LadderInputs::nothing_was_attempted`] is built on.
+///
+/// `Default` is the all-quiet input: nothing observed, nothing dispatched.
+/// Callers name the fields they exercise and take the rest from it, so adding
+/// a signal does not rewrite every literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChangeSignals {
+    /// `FileChange` events the turn emitted, from the registry's
+    /// `FileTouchPort`. Non-zero is positive proof the tree moved even when
+    /// nothing can render *how*.
+    ///
+    /// Read it as a one-way signal only. Inside a best-of-N or witness
+    /// candidate the engine emits no `FileChange` events at all
+    /// (`crate::pipeline::verify_probes` documents why), so a zero here is
+    /// routinely a candidate's silence rather than a quiet workspace — which
+    /// is precisely why it cannot be the sole guard below.
+    pub file_changes: u32,
+    /// Tool calls this turn that were *capable* of changing the workspace:
+    /// every dispatched call except those whose tool the registry advertises
+    /// as `read_only`. A call whose tool is unknown counts as mutating, so an
+    /// unrecognized name can never be the reason a turn is written off.
+    pub mutating_actions: u32,
+}
+
 /// Decide from the change what the prompt could never tell us.
 ///
-/// `file_changes` is the count of `FileChange` events the turn emitted. It is
-/// consulted only to distinguish "genuinely changed nothing" from "changed
-/// something the diff machinery could not see" — the same honesty guard
-/// `verification_honest_diff` exists for. A turn that touched files but
-/// produced no readable diff is [`WitnessWarrant::Required`], never
-/// [`NoWitnessReason::NothingChanged`].
-pub fn warrant(diff: &str, file_changes: u32) -> WitnessWarrant {
+/// `signals` exists to distinguish "genuinely changed nothing" from "changed
+/// something this run cannot see" — the same honesty guard
+/// `verification_honest_diff` exists for. A turn that touched files, or merely
+/// *asked* to, but produced no readable diff is [`WitnessWarrant::Required`],
+/// never [`NoWitnessReason::NothingChanged`].
+pub fn warrant(diff: &str, signals: ChangeSignals) -> WitnessWarrant {
     let mut paths = changed_paths(diff);
 
     if paths.is_empty() {
-        // A blind diff over a turn that demonstrably touched files is the one
-        // case that must not read as "nothing happened". An untracked-only
-        // change lands here too (its markers are not diff headers) and stays
-        // `Required`: the marker names a path but shows no content, and a
-        // change this module cannot read is one it does not waive.
-        return if file_changes == 0 && diff.trim().is_empty() {
+        // A turn that demonstrably touched files — or dispatched a call able
+        // to — is the one case that must not read as "nothing happened". An
+        // untracked-only change lands here too (its markers are not diff
+        // headers) and stays `Required`: the marker names a path but shows no
+        // content, and a change this module cannot read is one it does not
+        // waive.
+        //
+        // `mutating_actions` is the half added by #1701, and it is the half
+        // that works inside a candidate. A system-configuration task —
+        // `apt-get install nginx`, then `/etc/nginx`, then `service nginx
+        // restart` — cannot land its effects under the candidate root, so the
+        // empty diff is the *expected* outcome and `file_changes` is
+        // structurally zero there. With only those two signals the module
+        // waived the witness and the run completed `passed: true,
+        // deterministic: true` over ten mutating calls it had itself
+        // dispatched. The dispatch record is the one channel that cannot go
+        // dark, so it is what keeps this branch honest.
+        return if signals.file_changes == 0
+            && signals.mutating_actions == 0
+            && diff.trim().is_empty()
+        {
             WitnessWarrant::NotRequired(NoWitnessReason::NothingChanged)
         } else {
             WitnessWarrant::Required

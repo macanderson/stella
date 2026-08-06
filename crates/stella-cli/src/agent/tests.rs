@@ -75,6 +75,7 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
         .begin_execution("run", "prompt", "anthropic", "claude-fable-5")
         .expect("begin execution");
     let event = AgentEvent::StepUsage {
+        reasoning_tokens: None,
         output_text: None,
         step: 0,
         role: stella_protocol::ModelCallRole::Worker,
@@ -905,17 +906,17 @@ fn approval_capability_for_requires_both_terminal_handles_not_just_text_format()
     // `is_text` check would wrongly select Stdio here and try to read an
     // approval decision from a pipe no one is at the other end of.
     assert_eq!(
-        approval_capability_for(true, false, true),
+        approval_capability_for(false, true, false, true),
         PipelineApprovalCapability::Unavailable,
         "text format alone must not select Stdio when stdin isn't a real terminal"
     );
     assert_eq!(
-        approval_capability_for(true, true, false),
+        approval_capability_for(false, true, true, false),
         PipelineApprovalCapability::Unavailable,
         "text format alone must not select Stdio when stdout isn't a real terminal"
     );
     assert_eq!(
-        approval_capability_for(true, false, false),
+        approval_capability_for(false, true, false, false),
         PipelineApprovalCapability::Unavailable
     );
 }
@@ -925,11 +926,11 @@ fn approval_capability_for_json_is_always_unavailable() {
     // Output serialization must never grant execution authority, regardless
     // of the terminal state — JSON output has nowhere to render a prompt.
     assert_eq!(
-        approval_capability_for(false, true, true),
+        approval_capability_for(false, false, true, true),
         PipelineApprovalCapability::Unavailable
     );
     assert_eq!(
-        approval_capability_for(false, false, false),
+        approval_capability_for(false, false, false, false),
         PipelineApprovalCapability::Unavailable
     );
 }
@@ -939,7 +940,7 @@ fn approval_capability_for_full_tty_text_is_stdio() {
     // Only the genuine interactive case — text format, real stdin, real
     // stdout — selects Stdio.
     assert_eq!(
-        approval_capability_for(true, true, true),
+        approval_capability_for(false, true, true, true),
         PipelineApprovalCapability::Stdio
     );
 }
@@ -961,7 +962,7 @@ fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_sco
     // A non-TTY text-format run (e.g. `stella run` piped in a script or CI)
     // must not select the interactive stdio approval gate, and its wired
     // config must stay headless.
-    let text_capability = approval_capability_for(true, false, false);
+    let text_capability = approval_capability_for(false, true, false, false);
     let text_config =
         pipeline_config_for_approval_capability(&cfg, text_capability, None, &model_ref);
     assert_ne!(
@@ -977,7 +978,7 @@ fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_sco
     // A JSON-format one-shot run is headless by construction — and even with
     // both terminal handles real, its wired config must never bypass scope
     // review; JSON has nowhere to render a prompt regardless of TTY state.
-    let json_capability = approval_capability_for(false, true, true);
+    let json_capability = approval_capability_for(false, false, true, true);
     let json_config =
         pipeline_config_for_approval_capability(&cfg, json_capability, None, &model_ref);
     assert!(json_config.headless);
@@ -1336,6 +1337,7 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
         model_error: None,
         cost_usd: 0.0042,
         events: vec![AgentEvent::StepUsage {
+            reasoning_tokens: None,
             output_text: None,
             step: 0,
             role: stella_protocol::ModelCallRole::Reflection,

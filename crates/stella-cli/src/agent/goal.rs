@@ -14,7 +14,7 @@ pub(crate) async fn run_raw_one_shot(
     prompt: &str,
     budget_limit: Option<f64>,
     format: OutputFormat,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     let provider = build_provider(cfg)?;
     let registry_options = registry_options(cfg);
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
@@ -198,7 +198,7 @@ pub(crate) async fn run_raw_one_shot(
 /// skills), same as `run_one_shot`.
 ///
 /// `use_pipeline` (the default) runs each working round through the staged
-/// pipeline (triage → recall → plan → witness → execute → verify → verdict);
+/// pipeline (triage → recall → plan → execute → witness → verify → verdict);
 /// `false` falls back to the raw `Engine::run_goal` step-loop.
 pub async fn run_goal_cmd(
     cfg: &Config,
@@ -545,7 +545,7 @@ pub(crate) async fn run_goal_turn(
 }
 
 /// One staged-pipeline goal turn: keep running the pipeline (triage → recall →
-/// plan → witness → execute → verify → verdict) until an independent goal verifier
+/// plan → execute → witness → verify → verdict) until an independent goal verifier
 /// assesses the goal as met, or a backstop ends the loop. This is the pipeline
 /// analogue of [`run_goal_turn`] — same goal-loop structure, same judgment,
 /// but each working round goes through the staged pipeline instead of the raw
@@ -769,7 +769,7 @@ async fn run_goal_pipeline_turn(
                             )));
                             break;
                         }
-                        PipelineStatus::Aborted { reason } => {
+                        PipelineStatus::Aborted { reason, .. } => {
                             result = Some(Err(format!(
                                 "goal not met: working round aborted: {reason}"
                             )));

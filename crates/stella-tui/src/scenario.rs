@@ -241,6 +241,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 output_tokens: 640,
                 cached_input_tokens: 9_000,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
                 estimated_input_tokens: 12_000,
                 cost_usd: 0.021,
                 duration_ms: 1830,
@@ -364,6 +365,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 output_tokens: 900,
                 cached_input_tokens: 6_000,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
                 estimated_input_tokens: 8_000,
                 cost_usd: 0.018,
                 duration_ms: 2100,
@@ -473,6 +475,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 output_tokens: 420,
                 cached_input_tokens: 3_000,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
                 estimated_input_tokens: 5_000,
                 cost_usd: 0.011,
                 duration_ms: 1400,
@@ -547,6 +550,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 output_tokens: 180,
                 cached_input_tokens: 0,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
                 estimated_input_tokens: 2_900,
                 cost_usd: 0.004,
                 duration_ms: 900,
@@ -557,8 +561,8 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             },
         ),
         // ── lead proposes a larger scope change (gate) ──────────────────
-        // Carries the full scope-card grid facts (repo/branch, globs, shell
-        // policy) so `/scope` renders every labeled row from scripted data.
+        // Carries the full envelope grid facts (repo/branch, globs, shell
+        // policy) so `/plan` renders every labeled row from scripted data.
         ev(
             lead,
             AgentEvent::ScopeReview {
@@ -604,6 +608,9 @@ pub fn demo_engine_config() -> crate::envelope::EngineConfigState {
         effort: effort.to_string(),
         thinking: thinking.to_string(),
         source: source.to_string(),
+        // The demo deck has no settings file behind it, so nothing is
+        // pending — the golden frames pin the ordinary case.
+        next_session: None,
     };
     crate::envelope::EngineConfigState {
         effort_auto: true,

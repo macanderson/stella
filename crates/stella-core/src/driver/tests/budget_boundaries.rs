@@ -97,8 +97,17 @@ async fn summary_induced_budget_breach_aborts_with_cost_before_next_provider_cal
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
     match outcome {
-        TurnOutcome::Aborted { reason, cost_usd } => {
+        TurnOutcome::Aborted {
+            reason,
+            kind,
+            cost_usd,
+        } => {
             assert!(reason.contains("budget"));
+            assert_eq!(
+                kind,
+                AbortKind::DeliberateStop,
+                "a budget stop is the engine's own policy, not a crash"
+            );
             assert!(
                 (cost_usd - 0.0001).abs() < 1e-9,
                 "the abort must retain the settled summary call: {cost_usd}"
@@ -189,7 +198,16 @@ async fn a_past_task_deadline_stops_the_turn_before_the_next_call_with_partial_w
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
     match outcome {
-        TurnOutcome::Aborted { reason, cost_usd } => {
+        TurnOutcome::Aborted {
+            reason,
+            kind,
+            cost_usd,
+        } => {
+            assert_eq!(
+                kind,
+                AbortKind::DeliberateStop,
+                "a deadline stop is the engine's own policy, not a crash"
+            );
             assert!(
                 reason.contains("deadline"),
                 "reason should name the deadline: {reason}"

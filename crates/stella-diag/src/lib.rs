@@ -80,6 +80,13 @@
 //!   for replay; the diagnostic plane references it by `seq` and never
 //!   restates it (§8).
 
+// Invariant #5: library code never panics on runtime data. This crate is at
+// zero production `unwrap`/`expect`, and this keeps it there — `make lint` runs
+// clippy with `-D warnings`, so a new one fails the gate instead of arriving
+// unremarked. `not(test)` scopes the lint exactly as the invariant does: the
+// rule is about runtime data, and `unwrap` in a test is fine.
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 mod crash;
 mod cx;
 mod dx;

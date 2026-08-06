@@ -13,6 +13,7 @@ fn metered_result(
         output_tokens,
         cached_input_tokens: input_tokens / 2,
         cache_write_tokens: 0,
+        reasoning_tokens: None,
         reported: true,
     };
     result
@@ -102,7 +103,7 @@ async fn aborted_pipeline_totals_match_every_management_and_execute_usage_record
         .expect("a loop abort is a clean pipeline outcome");
     assert!(matches!(
         &outcome.status,
-        PipelineStatus::Aborted { reason } if reason.contains("stuck-loop")
+        PipelineStatus::Aborted { reason, .. } if reason.contains("stuck-loop")
     ));
 
     let events = drain(&mut rx);

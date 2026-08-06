@@ -23,6 +23,7 @@ use stella_protocol::{
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
+use super::test_doubles::{FakeWorkspace, FakeWorkspacePort, NeverRepoStatus, NeverRunner};
 use crate::ports::{
     AdoptedChange, ArtifactIdentity, ArtifactKind, CmdOutcome, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, NoContextRecall, NoFileTouches, NoRepoStatus,
@@ -106,7 +107,7 @@ impl crate::ports::FileTouchPort for SeqTouches {
 /// `untracked_fingerprints` call, holding the last once exhausted. Lets a
 /// test make the working tree "change" between the witness stage, the
 /// execute turn, and the tamper check.
-struct SeqRepoStatus {
+pub(super) struct SeqRepoStatus {
     snapshots: std::sync::Mutex<VecDeque<HashMap<String, String>>>,
     last: std::sync::Mutex<HashMap<String, String>>,
     tracked_snapshots: std::sync::Mutex<VecDeque<HashMap<String, String>>>,
@@ -115,7 +116,7 @@ struct SeqRepoStatus {
     artifact_identities: std::sync::Mutex<VecDeque<Option<ArtifactIdentity>>>,
 }
 impl SeqRepoStatus {
-    fn new(snapshots: Vec<Vec<(&str, &str)>>) -> Self {
+    pub(super) fn new(snapshots: Vec<Vec<(&str, &str)>>) -> Self {
         let mapped: VecDeque<HashMap<String, String>> = snapshots
             .into_iter()
             .map(|files| {
@@ -317,12 +318,12 @@ enum TestScript {
     FailWith(&'static str),
 }
 
-struct ScriptedRunner {
+pub(super) struct ScriptedRunner {
     test_results: std::sync::Mutex<VecDeque<TestScript>>,
     /// Total `run_test` invocations, whatever they returned — the
     /// degradation gate pins this as the suite-run spend of a scenario.
     test_runs: std::sync::atomic::AtomicU32,
-    diff: String,
+    pub(super) diff: String,
     /// Untracked files this workspace reports, as `(path, added_lines)`.
     untracked: Vec<(String, u32)>,
     /// What a failing run prints. Configurable so a test can plant a
@@ -335,9 +336,13 @@ struct ScriptedRunner {
     /// repository" wording, which the pipeline reads to tell a permanently
     /// inapplicable probe from a transiently failed one.
     diff_stderr: String,
+    /// #1539: which runner programs the availability probe reports usable.
+    /// `None` (the default) keeps the port's own default — everything
+    /// available — so pre-existing scripts never see the constraint.
+    available_runners: Option<Vec<String>>,
 }
 impl ScriptedRunner {
-    fn new(test_results: Vec<bool>, diff: &str) -> Self {
+    pub(super) fn new(test_results: Vec<bool>, diff: &str) -> Self {
         Self::scripted(
             test_results
                 .into_iter()
@@ -361,6 +366,7 @@ impl ScriptedRunner {
             failure_tail: "test failed".to_string(),
             diff_exit_code: 0,
             diff_stderr: String::new(),
+            available_runners: None,
         }
     }
     /// How many times `run_test` was invoked on this runner.
@@ -386,11 +392,17 @@ impl ScriptedRunner {
         self.failure_tail = tail.to_string();
         self
     }
-    fn with_untracked(mut self, untracked: Vec<(&str, u32)>) -> Self {
+    pub(super) fn with_untracked(mut self, untracked: Vec<(&str, u32)>) -> Self {
         self.untracked = untracked
             .into_iter()
             .map(|(p, n)| (p.to_string(), n))
             .collect();
+        self
+    }
+    /// #1539: script the availability probe — only these programs report
+    /// usable. An empty vec models a workspace with no toolchain at all.
+    pub(super) fn with_available_runners(mut self, programs: Vec<&str>) -> Self {
+        self.available_runners = Some(programs.into_iter().map(str::to_string).collect());
         self
     }
 }
@@ -430,6 +442,13 @@ impl DiagnosticRunner for ScriptedRunner {
 
 #[async_trait]
 impl TestRunner for ScriptedRunner {
+    async fn runner_available(&self, probe: &TestInvocation) -> bool {
+        match &self.available_runners {
+            Some(programs) => programs.iter().any(|p| p == &probe.program),
+            None => true,
+        }
+    }
+
     async fn run_test(&self, _invocation: &TestInvocation) -> CmdOutcome {
         self.test_runs
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -486,7 +505,7 @@ impl TestRunner for ScriptedRunner {
     }
 }
 
-struct EmptyTools;
+pub(super) struct EmptyTools;
 #[async_trait]
 impl ToolExecutor for EmptyTools {
     fn schemas(&self) -> Vec<ToolSchema> {
@@ -495,212 +514,6 @@ impl ToolExecutor for EmptyTools {
     async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
         ToolOutput::Ok {
             content: String::new(),
-        }
-    }
-}
-
-/// Session ports that fail the test if touched — the witness that
-/// isolated candidates only ever reach their own workspace's surface,
-/// never the real tree's.
-struct NeverRunner;
-#[async_trait]
-impl DiagnosticRunner for NeverRunner {
-    async fn run_diagnostic(&self, invocation: &DiagnosticInvocation) -> CmdOutcome {
-        panic!(
-            "the session DiagnosticRunner must not serve isolated candidates (got {invocation:?})"
-        );
-    }
-}
-#[async_trait]
-impl TestRunner for NeverRunner {
-    async fn run_test(&self, invocation: &TestInvocation) -> CmdOutcome {
-        panic!("the session TestRunner must not serve isolated candidates (got {invocation:?})");
-    }
-}
-struct NeverRepoStatus;
-#[async_trait]
-impl RepoStatusPort for NeverRepoStatus {
-    async fn untracked_fingerprints(&self) -> HashMap<String, String> {
-        panic!("the session RepoStatusPort must not serve isolated candidates");
-    }
-}
-
-/// A scripted [`CandidateWorkspace`]: per-candidate command results, a
-/// canned adoption outcome, and a shared log of lifecycle calls.
-struct FakeWorkspace {
-    id: usize,
-    root: String,
-    tools: EmptyTools,
-    diagnostics: ScriptedRunner,
-    repo_status: SeqRepoStatus,
-    adopt_result: Result<Vec<AdoptedChange>, WorkspaceError>,
-    sealed_unchanged: bool,
-    /// Canned outcome for the one artifact copy between workspaces. `Err`
-    /// stands in for the real failures: the worker already wrote a file at
-    /// that path, or the parent directory is absent.
-    graft_result: Result<(), WorkspaceError>,
-    log: Arc<std::sync::Mutex<Vec<String>>>,
-}
-
-impl FakeWorkspace {
-    fn new(
-        id: usize,
-        test_results: Vec<bool>,
-        adopt_result: Result<Vec<AdoptedChange>, WorkspaceError>,
-        log: Arc<std::sync::Mutex<Vec<String>>>,
-    ) -> Self {
-        Self {
-            id,
-            root: "/candidate/workspace".into(),
-            tools: EmptyTools,
-            diagnostics: ScriptedRunner::new(test_results, "@@ -1 +1 @@\n-a\n+b"),
-            repo_status: SeqRepoStatus::new(vec![]),
-            adopt_result,
-            sealed_unchanged: true,
-            graft_result: Ok(()),
-            log,
-        }
-    }
-
-    fn with_repo_status(mut self, repo_status: SeqRepoStatus) -> Self {
-        self.repo_status = repo_status;
-        self
-    }
-
-    /// Untracked files this workspace reports, as `(path, added_lines)` —
-    /// what a diff gather bills to the turn unless the path was already known.
-    fn with_untracked(mut self, untracked: Vec<(&str, u32)>) -> Self {
-        self.diagnostics =
-            std::mem::replace(&mut self.diagnostics, ScriptedRunner::new(vec![], ""))
-                .with_untracked(untracked);
-        self
-    }
-
-    /// The diff this workspace reports after execution — what the warrant
-    /// reads to decide whether a witness is worth buying.
-    fn with_diff(mut self, diff: &str) -> Self {
-        self.diagnostics.diff = diff.to_string();
-        self
-    }
-
-    fn with_graft_failure(mut self, reason: &str) -> Self {
-        self.graft_result = Err(WorkspaceError::Graft {
-            reason: reason.into(),
-            path: "tests/witness.rs".into(),
-            workspace: "/candidate/workspace".into(),
-        });
-        self
-    }
-
-    fn with_post_verification_drift(mut self) -> Self {
-        self.sealed_unchanged = false;
-        self
-    }
-
-    fn with_root(mut self, root: impl Into<String>) -> Self {
-        self.root = root.into();
-        self
-    }
-}
-
-#[async_trait]
-impl CandidateWorkspace for FakeWorkspace {
-    fn root(&self) -> &str {
-        &self.root
-    }
-    fn tools(&self) -> &dyn ToolExecutor {
-        &self.tools
-    }
-    fn witness_tools(&self) -> &dyn ToolExecutor {
-        &self.tools
-    }
-    fn diagnostics(&self) -> &dyn DiagnosticRunner {
-        &self.diagnostics
-    }
-    fn tests(&self) -> &dyn TestRunner {
-        &self.diagnostics
-    }
-    fn repo_status(&self) -> &dyn RepoStatusPort {
-        &self.repo_status
-    }
-    async fn seal(&self) -> Result<(), WorkspaceError> {
-        self.log.lock().unwrap().push(format!("seal:{}", self.id));
-        Ok(())
-    }
-    async fn sealed_is_unchanged(&self) -> Result<bool, WorkspaceError> {
-        Ok(self.sealed_unchanged)
-    }
-    async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
-        // The withheld set is logged so tests can assert that an authored
-        // witness never reaches the real tree, without reaching for real git.
-        // Unchanged shape when nothing is withheld, so every pre-existing
-        // `adopt:<id>` assertion still reads the same.
-        self.log.lock().unwrap().push(if withhold.is_empty() {
-            format!("adopt:{}", self.id)
-        } else {
-            format!("adopt:{}:withhold={}", self.id, withhold.join(","))
-        });
-        self.adopt_result.clone()
-    }
-    async fn graft_witness(&self, source_root: &str, path: &str) -> Result<(), WorkspaceError> {
-        // Logged with the source so a test can prove the artifact came from a
-        // *different* workspace than the one it lands in — the whole point of
-        // authoring blind in a pristine snapshot.
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("graft:{}:{source_root}:{path}", self.id));
-        self.graft_result.clone()
-    }
-    async fn remove(&self) {
-        self.log.lock().unwrap().push(format!("remove:{}", self.id));
-    }
-}
-
-/// A scripted [`CandidateWorkspacePort`]: each `create` pops the next
-/// canned workspace (or failure). `panic_on_create` proves a path never
-/// touches isolation at all.
-struct FakeWorkspacePort {
-    script: std::sync::Mutex<VecDeque<Result<FakeWorkspace, WorkspaceError>>>,
-    log: Arc<std::sync::Mutex<Vec<String>>>,
-    panic_on_create: bool,
-}
-
-impl FakeWorkspacePort {
-    fn new(
-        script: Vec<Result<FakeWorkspace, WorkspaceError>>,
-        log: Arc<std::sync::Mutex<Vec<String>>>,
-    ) -> Self {
-        Self {
-            script: std::sync::Mutex::new(script.into_iter().collect()),
-            log,
-            panic_on_create: false,
-        }
-    }
-
-    fn untouchable() -> Self {
-        Self {
-            script: std::sync::Mutex::new(VecDeque::new()),
-            log: Arc::new(std::sync::Mutex::new(Vec::new())),
-            panic_on_create: true,
-        }
-    }
-}
-
-#[async_trait]
-impl CandidateWorkspacePort for FakeWorkspacePort {
-    async fn create(&self) -> Result<Box<dyn CandidateWorkspace>, WorkspaceError> {
-        assert!(
-            !self.panic_on_create,
-            "the candidate workspace port must not be touched on this path"
-        );
-        self.log.lock().unwrap().push("create".into());
-        match self.script.lock().unwrap().pop_front() {
-            Some(Ok(ws)) => Ok(Box::new(ws)),
-            Some(Err(e)) => Err(e),
-            None => Err(WorkspaceError::Snapshot {
-                reason: "workspace script exhausted".into(),
-            }),
         }
     }
 }
@@ -1292,7 +1105,7 @@ async fn clean_lookup_skips_plan_verify_and_verifier() {
 }
 
 /// A greeting takes the conversational fast path: **one** plain completion, no
-/// triage call, no plan / witness / execute / verify / verdict. This is the fix
+/// triage call, no plan / execute / witness / verify / verdict. This is the fix
 /// for "typing `hi` authored a witness test", and now also for "typing `hi`
 /// paid for a classification that could not change the answer".
 ///
@@ -1751,6 +1564,162 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
     );
 }
 
+/// #1538: a candidate that wrote through its isolation into the real tree is
+/// failed at verification, in the round that caused it — named as the
+/// candidate's own defect. Before the post-seal check, this escape survived
+/// verification and surfaced only when the winner's adoption collided with
+/// the stray copy, attributed to nobody.
+#[tokio::test]
+async fn a_candidate_that_wrote_outside_its_workspace_is_failed_not_adopted() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    // Same authored-witness scripting as the flip test above — the escape
+    // must be caught at *verification*, so the run has to get that far.
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone())
+        .with_repo_status(SeqRepoStatus::new(vec![
+            vec![],
+            vec![("tests/witness.rs", "w1")],
+        ]))
+        .with_escaped(vec!["app/vm.js"]);
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("run returns an outcome");
+
+    match &outcome.status {
+        PipelineStatus::Aborted { reason, .. } => {
+            assert!(
+                reason.contains("wrote outside its isolated workspace"),
+                "the escape is named as the candidate's defect: {reason}"
+            );
+            assert!(
+                reason.contains("`app/vm.js`"),
+                "the path is named: {reason}"
+            );
+            assert!(
+                !reason.contains("git apply"),
+                "caught at verification, not reported as an adoption conflict: {reason}"
+            );
+        }
+        other => panic!("an escaped candidate must abort the run, got {other:?}"),
+    }
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. } if message.contains("wrote outside its isolated workspace")
+        )),
+        "the escape reaches the event stream: {events:?}"
+    );
+    let log = log.lock().unwrap();
+    assert!(
+        !log.iter().any(|entry| entry.starts_with("adopt:")),
+        "escaped work must never be adopted: {log:?}"
+    );
+}
+
+/// #1539: an author that names a runner the workspace cannot spawn is caught
+/// by the availability constraint at parse time — degraded with the honest
+/// reason and the available set named, never by spending the baseline run to
+/// discover an unobservable command and blaming generic infra noise.
+#[tokio::test]
+async fn an_unavailable_runner_choice_degrades_naming_the_available_set() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: pytest tests/test_witness.py"),
+        // The unauthored ladder's verifier, after the witness degrades.
+        text_result("PASS looks right"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    let baseline = FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone())
+        .with_available_runners(vec!["cargo"]);
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert!(
+        !matches!(outcome.status, PipelineStatus::Aborted { .. }),
+        "an unavailable runner degrades the witness, never the run: {outcome:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. }
+                if message.contains("witness author chose `pytest`")
+                    && message.contains("available runners: cargo")
+        )),
+        "the degradation names the choice and the available set: {events:?}"
+    );
+}
+
+/// #1539: a workspace where NO vocabulary runner is usable degrades before
+/// the author turn is even dispatched — zero model spend on a witness that
+/// could never be observed, and the reason says so.
+#[tokio::test]
+async fn a_workspace_with_no_usable_runner_skips_the_author_turn() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        // The unauthored ladder's verifier — NOT a witness-author reply. If
+        // the author turn had run anyway, it would have consumed this text
+        // and degraded on "produced no TEST_COMMAND line" instead of the
+        // no-runner reason asserted below.
+        text_result("PASS looks right"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    let baseline =
+        FakeWorkspace::new(1, vec![], Ok(vec![]), log.clone()).with_available_runners(vec![]);
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert!(
+        !matches!(outcome.status, PipelineStatus::Aborted { .. }),
+        "an absent toolchain degrades honestly, never aborts: {outcome:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. }
+                if message.contains("no supported test runner is available")
+        )),
+        "the degradation states the toolchain fact: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. } if message.contains("produced no TEST_COMMAND")
+        )),
+        "the author turn must never have been dispatched: {events:?}"
+    );
+}
+
 /// The point of the assessment: triage can route work onto a cheaper path
 /// than the keyword floor would. This goal trips `deterministic_floor`'s
 /// "across the codebase" marker — under the old `max(model, floor)` rule it
@@ -2191,12 +2160,9 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
         .await
         .expect("a setup failure is a degradation, not a run-ending error");
 
-    assert_ne!(
-        outcome.status,
-        PipelineStatus::Aborted {
-            reason: "candidate isolation failed: workspace snapshot failed: not a git repo"
-                .to_string()
-        },
+    let iso = "candidate isolation failed: workspace snapshot failed: not a git repo";
+    assert!(
+        !matches!(&outcome.status, PipelineStatus::Aborted { reason, .. } if reason == iso),
         "an isolation setup failure must not end the turn: {outcome:?}"
     );
     assert!(

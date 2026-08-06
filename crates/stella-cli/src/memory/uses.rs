@@ -9,7 +9,7 @@
 //! The obvious design records a use where the use happens. It was rejected for
 //! two reasons, both structural:
 //!
-//! 1. **`record_execution_end` holds `store.db` only**, and has eight call
+//! 1. **`record_execution_end` holds `store.db` only**, and has nine call
 //!    sites (`run`, REPL, two `/goal` loops, three deck paths, fleet,
 //!    subsession). Threading a second database through all of them puts the
 //!    audit close-out — the function that decides `audit_complete` — one

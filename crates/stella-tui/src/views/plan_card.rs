@@ -39,7 +39,7 @@ use stella_protocol::ScopeProposal;
 
 use crate::deck::{AgentEntry, PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
-use crate::plan::{Plan, PlanState, PlanStepState};
+use crate::plan::{Plan, PlanState};
 use crate::theme;
 use crate::views::cards;
 
@@ -103,6 +103,8 @@ pub fn step_rows(
     plan: &Plan,
     width: usize,
     selected: Option<usize>,
+    now_ms: u64,
+    animate: bool,
 ) -> (Vec<Line<'static>>, Option<usize>) {
     let dim = Style::new().fg(theme::TEXT_TERTIARY);
     let steps = plan.steps();
@@ -124,46 +126,20 @@ pub fn step_rows(
         if Some(i) == selected {
             selected_row = Some(rows.len());
         }
-        let (glyph, ring, text) = match step.state {
-            PlanStepState::Planned => {
-                let grey = matches!(plan.state, PlanState::Draft | PlanState::PendingApproval);
-                let fg = if grey {
-                    theme::TEXT_TERTIARY
-                } else {
-                    theme::TEXT_PRIMARY
-                };
-                ("○", Style::new().fg(fg), Style::new().fg(fg))
-            }
-            PlanStepState::Started => (
-                "●",
-                Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
-                Style::new()
-                    .fg(theme::TEXT_PRIMARY)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            PlanStepState::Complete => (
-                "●",
-                Style::new().fg(theme::OK),
-                Style::new()
-                    .fg(theme::TEXT_TERTIARY)
-                    .add_modifier(Modifier::CROSSED_OUT),
-            ),
-            PlanStepState::Error => (
-                "●",
-                Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD),
-                Style::new().fg(theme::TEXT_SECONDARY),
-            ),
-        };
+        // The per-step visual is shared with the rail and the plan-review
+        // dialog (`crate::views::plan_style`) — one vocabulary, three surfaces.
+        let v = crate::views::plan_style::step_visual(step.state, now_ms, animate);
         let mut spans = vec![
             cards::marker(Some(i) == selected),
-            Span::styled(format!("{glyph} "), ring),
-            Span::styled(format!("{:<3}", step.id), dim),
-            Span::styled(step.title.clone(), text),
+            Span::styled(v.glyph, v.ring),
+            Span::styled(" ", v.gap),
+            Span::styled(format!("{:<3}", format!("{}.", step.id)), v.num),
+            Span::styled(step.title.clone(), v.text),
         ];
         if let Some(note) = &step.note {
-            spans.push(Span::styled(format!("  ({note})"), dim));
+            spans.push(Span::styled(format!("  ({note})"), v.meta));
         } else if let Some(owner) = &step.owner {
-            spans.push(Span::styled(format!("  ({owner})"), dim));
+            spans.push(Span::styled(format!("  ({owner})"), v.meta));
         }
         rows.push(Line::from(spans));
         // The elaboration, wrapped under the title at the title's indent.
@@ -304,7 +280,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     let step_count = plan.steps().len();
     let selected = (step_count > 0).then(|| ui.cards.plan_sel.min(step_count - 1));
     let offset = rows.len();
-    let (step_lines, selected_row) = step_rows(plan, inner_w, selected);
+    let (step_lines, selected_row) = step_rows(plan, inner_w, selected, model.now_ms, !ui.no_anim);
     rows.extend(step_lines);
     let selected_row = selected_row.map(|r| r + offset);
 
@@ -381,7 +357,7 @@ mod tests {
             status: TaskStatus::InProgress,
             owner: None,
         }]);
-        let text: String = step_rows(&plan, 52, None)
+        let text: String = step_rows(&plan, 52, None, 0, false)
             .0
             .iter()
             .map(text_of)
@@ -409,7 +385,7 @@ mod tests {
             status: TaskStatus::Pending,
             owner: None,
         }]);
-        let (rows, _) = step_rows(&plan, 40, None);
+        let (rows, _) = step_rows(&plan, 40, None, 0, false);
         assert!(rows.len() > 2, "the detail wrapped onto its own rows");
         // Re-joined on single spaces: the wrap indents every continuation row,
         // so a phrase that survived the break is only recognizable once the
@@ -437,7 +413,7 @@ mod tests {
 
     #[test]
     fn an_unproposed_plan_says_so_rather_than_showing_an_empty_list() {
-        let text = text_of(&step_rows(&Plan::default(), 52, None).0[0]);
+        let text = text_of(&step_rows(&Plan::default(), 52, None, 0, false).0[0]);
         assert!(text.contains("no plan has been proposed"), "{text}");
     }
 
@@ -448,7 +424,7 @@ mod tests {
         let mut plan = Plan::default();
         plan.propose(&proposal(&["one"]));
         plan.approve();
-        let text: String = step_rows(&plan, 52, None)
+        let text: String = step_rows(&plan, 52, None, 0, false)
             .0
             .iter()
             .map(text_of)

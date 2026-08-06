@@ -1,6 +1,6 @@
 ---
 title: stella daemon
-description: Find, watch, and stop runs that outlived the terminal they were started from.
+description: Find, watch, answer, resume, and stop runs that outlived the terminal they were started from.
 ---
 
 A long-running verb started from a terminal — [`run`](/docs/commands/run), [`goal`](/docs/commands/goal), [`monitor`](/docs/commands/monitor), [`fleet`](/docs/commands/fleet) — is handed to a **supervisor**. The work becomes a detached process that survives the window closing, an `ssh` disconnect, and a logout; the terminal you started it in stays only to stream its output. `stella daemon` is how you find that process again afterwards.
@@ -8,10 +8,16 @@ A long-running verb started from a terminal — [`run`](/docs/commands/run), [`g
 ## Synopsis
 
 ```bash
+stella run "…" --detach
 stella daemon list
 stella daemon attach [id]
 stella daemon logs [id] [-n LINES]
 stella daemon stop <id>
+stella daemon resume [id]
+stella daemon resume-all [--dry-run]
+stella daemon install [--label NAME] [--keep-alive] -- <stella args…>
+stella daemon install --resume-all [--label NAME]
+stella daemon uninstall <label>
 ```
 
 ## Why runs are supervised
@@ -35,9 +41,11 @@ ses-1785956826121-25167      Running      stella: migrate the config loader to s
 $ stella daemon attach ses-1785956826121
 ```
 
-## What supervision does and does not survive
+## What supervision survives
 
-It survives **the terminal**: a closed window, a dropped `ssh` session, a logout. It does not survive **the process**: a supervised run that is killed, or a machine that loses power, loses the turn it was in — only the fact of the run is recorded. Durable resume across a killed process is a different mechanism, and for interactive sessions [`stella resume`](/docs/commands/resume) is the one that exists today.
+It survives **the terminal**: a closed window, a dropped `ssh` session, a logout — the run never notices, because it left that terminal's session before it began.
+
+A killed **process** — OOM, `kill -9`, a reboot — is the stronger failure, and it is recoverable too: every turn checkpoints into the workspace's durable work journal at each committed step boundary, so a run killed mid-turn leaves a resume point where a closed window never needed one. [`resume`](#resume) picks it up. (For interactive deck sessions, [`stella resume`](/docs/commands/resume) remains the verb — it reopens a conversation; `daemon resume` continues a headless run's interrupted turn.)
 
 ## Which invocations are supervised
 
@@ -46,6 +54,7 @@ Only ones with a controlling terminal to lose. A terminal is exactly what can cl
 | Invocation | Supervised |
 |---|---|
 | `stella run "…"` typed in a terminal | yes |
+| `stella run "…" --detach` | yes — and the launcher returns immediately ([below](#--detach-start-it-and-get-the-prompt-back)) |
 | `stella run "…" --foreground` | no — runs in this process, as older releases did |
 | `cat spec.md \| stella run` with output redirected | no — no controlling terminal |
 | a CI step, a container, a `cron` job | no |
@@ -53,19 +62,44 @@ Only ones with a controlling terminal to lose. A terminal is exactly what can cl
 
 `--foreground` (or `STELLA_FOREGROUND=1`) opts any invocation out.
 
-<Callout type="warn">
-A supervised run is **headless**: its stdin is a file and its console is a log, so there is nobody to answer a scope-review prompt. A plan that expands scope stops with a named error instead of asking. The banner says so when it applies. Use `--foreground` to keep the interactive prompt, or set `headless_scope_bypass = "on"` in settings for a workspace where the tree is disposable.
-</Callout>
+## `--detach`: start it and get the prompt back
+
+Supervision keeps the run alive when the terminal goes; it does not hand the terminal back while the run continues. The launching process stays for the whole run streaming the console, and `Ctrl-C` there **stops** the run — deliberately, because that is what the key means everywhere else.
+
+`--detach` is the other half. The work is supervised exactly as it would be otherwise — same session id, same console, the whole `stella daemon` surface addresses it — but the launcher returns as soon as the run is registered:
+
+```bash
+$ stella run "migrate the config loader to serde" --detach
+▸ detached ses-1785956826121-25167 — running in the background
+  follow it with stella daemon attach ses-1785956826121-25167
+  stop it with   stella daemon stop ses-1785956826121-25167
+$
+```
+
+Two differences from an attached launch, both deliberate:
+
+- **A terminal is not required.** Plain supervision declines without one, since a run with no terminal to lose is already immune to the hangup. "Return now" is wanted from a pipe, a container, a `cron` job and a shell script exactly as much as from a terminal, so the flag forces supervision rather than merely permitting it.
+- **The exit code is the launch's, not the run's.** `stella run --detach; echo $?` answers "did the launch succeed". The run's own answer arrives in `stella daemon list`.
+
+It applies to every supervised verb — `run`, `goal`, `monitor`, `fleet` — and `STELLA_DETACH=1` sets it for a whole shell. `--foreground` wins if both are given: the flag that asks for less machinery is the safer reading of a contradictory command line, and a declared conflict would break the supervised child, which re-parses its parent's argv (`--detach` included) with `STELLA_FOREGROUND=1` in its environment.
+
+A detached run cannot ask *this* terminal anything, because there is no longer one attached — but it does not lose the answer either. A plan that crosses the scope thresholds parks exactly as described below, and the next `stella daemon attach` asks the question.
+
+## Scope review while supervised
+
+A supervised run's stdin is a file and its console is a log, so a scope-review prompt cannot use them — but supervision does not cost you the answer. When a `stella run` plan crosses the scope thresholds, the run **parks**: the proposal is written into the session's sidecar, `stella daemon list` shows the run as `Needs Input`, and whichever terminal is attached asks the question — the terminal that launched it, if it is still open, or any later `stella daemon attach`. The prompt rides the attached terminal's stderr, so `--output-format json` stdout stays parseable, and the same typed answers apply as at the foreground prompt: `y` approves, `n` (or an empty line) aborts, anything else is a revision note the planner re-plans from.
+
+A parked run holds its budget and its workspace until somebody answers; it is visible in `list` the whole time, and `stella daemon stop` (or any `SIGTERM`) unparks it as a clean abort. `headless_scope_bypass = "on"` still skips the gate entirely for a workspace whose tree is disposable, and other supervised verbs (`goal`, `fleet`, `monitor`) keep their deliberate headless posture.
 
 ## `list`
 
 Every supervised run on this machine, newest first. Local reads only — no API key, and no provider needs to resolve, so a run whose model configuration has since broken is still findable and stoppable.
 
-`STATUS` is answered by a lock the run holds for its whole life rather than by its pid, because the kernel releases that lock when the process dies — crash, kill and power loss included. A run whose process is gone without recording an outcome reads as `Crashed`.
+`STATUS` is answered by a lock the run holds for its whole life rather than by its pid, because the kernel releases that lock when the process dies — crash, kill and power loss included. A run whose process is gone without recording an outcome reads as `Crashed`, and one that left a resume point is marked `Crashed ↩` with the `resume` invocation named under the table. A run parked on a scope review reads `Needs Input`.
 
 ## `attach`
 
-Streams the run's output into this terminal, from the beginning, and stays until the run ends. A run that has already finished prints in full and exits. The id can be any unique prefix; omit it for the most recently started run.
+Streams the run's output into this terminal, from the beginning, and stays until the run ends. A run that has already finished prints in full and exits. The id can be any unique prefix — or the run's **pid**, which is the address `ps`, `top`, Activity Monitor and an OOM-killer log give you; omit it for the most recently started run. If the run is parked on a scope review, attach renders the proposal and delivers your answer.
 
 Detaching again — `Ctrl-C` — leaves the run alone. `stella daemon stop` is what stops it.
 
@@ -73,7 +107,9 @@ Detaching again — `Ctrl-C` — leaves the run alone. `stella daemon stop` is w
 
 The tail of a finished or running console, without following it. `-n` sets how many lines back to start (default 40).
 
-stdout and stderr are kept in two files and replayed onto the two streams they were written from, so `stella run --output-format json` stays parseable through a supervisor. One consequence is visible here: `logs` prints the stdout tail and then the stderr tail as separate blocks rather than interleaving them chronologically. `attach` on a live run interleaves naturally, because it follows both as they are written.
+stdout and stderr are kept in two files and replayed onto the two streams they were written from, so `stella run --output-format json` stays parseable through a supervisor. The console carries a small write index beside it, and `logs` uses it to replay the two streams **in the order they were written** rather than as two blocks. Only sessions recorded before the index existed fall back to the old shape — stdout tail, then stderr tail — because raw byte files carry no ordering to reconstruct.
+
+Each console is **bounded** (8 MiB per stream by default; `STELLA_CONSOLE_CAP_BYTES` overrides it). A run that outgrows the bound keeps the first eighth — how the run started — and the newest bytes, ring-buffered; the reclaimed middle is announced with a marker on stderr, never spliced into the stream bytes themselves. A run killed outright (`SIGKILL`, power loss) can additionally lose up to one pipe buffer (~64 KiB) of its very last output — the cost of enforcing the bound while the run is alive.
 
 ## `stop`
 
@@ -81,6 +117,98 @@ Asks the run to stop the way `Ctrl-C` would: the signal reaches the whole proces
 
 A run that has not stopped after 8 seconds is killed. Either way the stop is recorded as **cancelled**, deliberately: a run stopped by hand that recorded nothing would age into the registry indistinguishable from one that crashed.
 
+## `resume`
+
+Continues a killed run's interrupted turn from its last completed step. Every turn checkpoints at each committed step boundary — the one moment the transcript is guaranteed well-paired — and every turn that *ends* (completes, aborts, or is stopped) discards its checkpoint on the way out. A surviving resume point therefore means exactly one thing: the process died mid-turn.
+
+```bash
+$ stella daemon list
+ID                           STATUS       WHAT
+ses-1785956826121-25167      Crashed ↩    stella: migrate the config loader to serde
+
+↩ killed mid-turn with a resume point — stella daemon resume <id> continues it
+
+$ stella daemon resume ses-1785956826121
+▸ resuming ses-1785956826121-25167 — continuing its interrupted turn at step 14
+```
+
+The relaunch continues the **same session** — same id, same sidecar, the crashed attempt's console preserved — as a fresh supervised child. Completed steps are already in the checkpointed transcript, tool results included, so nothing re-runs and no tool effect is applied twice; the no-clobber staleness map rides the same checkpoint, so a file something else edited while the run was dead is refused rather than overwritten. A run that ended cleanly has nothing to resume, and `resume` says so instead of restarting it.
+
+Two honest limits remain — and neither is silent any more. A turn that was mid-*pipeline* resumes as a plain engine turn: the checkpoint captures the worker's turn, not the pipeline's staging, so the verify and verdict stages that would have followed do not re-run. A turn that was executing in a candidate worktree resumes in the workspace, because the candidate died with the process.
+
+Both are now *announced*. `stella run` leaves a pipeline frame beside its checkpoint, and `resume` reads it before the first step: the run names every stage it is not restoring — the verify command that will not re-run, the witness flip that will not be credited, the revision rounds that will not happen, the candidate worktree that is gone — drops the green tick, and files its audit row as `resumed_complete_unverified` rather than `resumed_complete`.
+
+```text
+$ stella daemon resume ses-1785956826121
+  resuming ses-1785956826121-25167 at step 14 — completed steps stay done, nothing re-runs
+  ! this was a staged pipeline run — the resume continues its interrupted TURN, not the pipeline around it
+    the verify stage will NOT re-run `cargo test`, and no verdict is recorded
+    the witness test's fail→pass flip is NOT credited — nothing proves this done
+    re-verify it with `stella run` before treating this as done
+```
+
+An unverified resume is a resume you can still act on; an unverified resume you were never told about is not. Re-verifying is `stella run` with the verifier of your choice.
+
+## `resume-all`
+
+`resume` continues one run you name. `resume-all` continues every run *this machine* interrupted, in one pass — the verb a boot-time service runs, and a useful one by hand after an unplanned reboot:
+
+```bash
+stella daemon resume-all --dry-run   # print the decision for every run, spend nothing
+stella daemon resume-all
+```
+
+It prints one line per supervised run, continued or skipped, with the reason:
+
+```text
+↩ continuing ses-1785956826121 — stella: finish the store migration
+▸ skipping    ses-1785956700004 — ended deliberately — only an interrupted run is resumed at boot
+▸ skipping    ses-1785956811930 — no resume point
+  boot-time resume 1 of 3 for ses-1785956826121
+```
+
+**What it continues.** Exactly the rows `list` paints `Crashed ↩`: a supervised run whose recorded status is still live while its liveness lock is gone, whose workspace still exists, and which left a resume point. A run that finished, was stopped, was set aside, or recorded an error is never resumed — every deliberate ending writes a status on the way out, and a process the kernel took writes nothing, so a live status with a dead lock is the signature of interruption and of nothing else. The rule is deliberately conservative on the one ambiguous case: work you ended on purpose is never resumed behind your back, at the cost of not resuming a crash that managed to record itself.
+
+**What bounds it.** Each run gets at most **three** boot-time resumes. The count is durable (`~/.stella/services/resume-boot.json`) and is written *before* the resume is spawned, so a run that takes the machine down with it is still charged for the attempt. Past three, the run is retired from the sweep and left for `stella daemon resume <id>` by hand — a human deciding to try again is what the bound exists to require. Runs are resumed one at a time; several turns resuming at once is several models spending at once on a machine nobody is watching.
+
+Everything `resume` says about a resumed turn applies here, including the honest limits above: a turn interrupted mid-pipeline resumes as a plain engine turn and says which stages it is not restoring — into the service console rather than a terminal.
+
+## `install` / `uninstall`
+
+Supervision and resume both act on runs a human started; neither makes anything *start by itself* after a reboot — nothing a process arranges for itself can. Starting again is the OS service manager's job, and `install` is the explicit handshake with it, registering **one stella invocation you choose** as a per-user service:
+
+```bash
+stella daemon install -- monitor --interval 300
+stella daemon install --label night-fleet --keep-alive -- fleet watch
+stella daemon uninstall night-fleet
+```
+
+On **macOS** it writes a launchd agent (`~/Library/LaunchAgents/sh.oxagen.stella.<label>.plist`) and loads it with `launchctl bootstrap`; the command starts at every login, including the login after a reboot. On **Linux** it writes a `systemd --user` unit (`~/.config/systemd/user/stella-<label>.service`), enables it, and turns on lingering (`loginctl enable-linger`) so the command starts at boot and keeps running through logout. When a `launchctl`/`systemctl` call fails, the definition is still written and the exact command to load it by hand is printed.
+
+**A registered command re-*starts*:** it begins a fresh turn, and a fresh spend, each time the manager launches it. So register standing verbs — a monitor, a fleet watch, a deliberately perpetual run — and let one-shot runs stay merely supervised. Nothing is ever registered implicitly.
+
+**To come back *continuing* the work a reboot interrupted, register the sweep instead:**
+
+```bash
+stella daemon install --resume-all
+```
+
+That registers exactly one thing — `stella daemon resume-all`, under the label `resume-boot`, console `~/.stella/services/resume-boot.log`. At every boot it continues the turns this machine killed from their last completed step and never restarts one; its selection rule and its three-attempt bound are [above](#resume-all). It takes no command of its own and refuses `--keep-alive`: a sweep restarted every minute would spend against its own attempt bound until it was exhausted. `stella daemon uninstall resume-boot` removes it like any other service.
+
+Two defaults keep a broken service from spending money unattended:
+
+- **A command that exits stays down** until the next boot. `--keep-alive` opts into restart-on-exit, throttled to once a minute, and on systemd additionally start-limited (five starts in ten minutes parks the unit in the failed state).
+- **The binary is resolved at load, loudly.** The service execs through a `/bin/sh` shim that tries the path recorded at install time, falls back to `PATH` (plus the usual Homebrew and cargo prefixes) — so a `brew upgrade` that moves the binary does not strand the service — and otherwise writes one line naming what is missing to the service console and exits 127.
+
+The service runs in the directory `install` was typed in, and its console is `~/.stella/services/<label>.log` (both streams, owner-only directory). A service-run stella has no terminal, so it is not re-supervised — the manager *is* its supervisor — and it does not appear in `stella daemon list`, which lists supervised runs. The platform's own query is its status surface:
+
+```bash
+launchctl print gui/$(id -u)/sh.oxagen.stella.<label>   # macOS
+systemctl --user status stella-<label>                  # Linux
+```
+
+`uninstall` unloads the service and deletes the definition — the queries above then report it gone. Uninstalling something already removed reports that and succeeds. On Linux, lingering is left as you set it, since other user services may depend on it.
+
 ## Where the state lives
 
-Beside the session registry, under the user-level stella home (`~/.stella/sessions/<id>/`, `STELLA_DATA_DIR` overrides): `stdout.log` and `stderr.log` are the console, `stdin` is the prompt the supervisor staged for the run, and `supervisor.lock` is the liveness lock. All owner-only. The prompt travels as a file rather than as an argument so it is not visible to every user on the machine in `ps`.
+Beside the session registry, under the user-level stella home (`~/.stella/sessions/<id>/`, `STELLA_DATA_DIR` overrides): `stdout.log` and `stderr.log` are the console, `console-index.jsonl` is the write index that bounds and orders them, `stdin` is the prompt the supervisor staged for the run, `supervisor.lock` is the liveness lock, and `approval-request.json` / `approval-answer.json` appear only while a scope review is parked. All owner-only. The prompt travels as a file rather than as an argument so it is not visible to every user on the machine in `ps`. The resume point itself is not here — it lives in the workspace's work journal, the same commit graph as the file changes it is a resume point for.

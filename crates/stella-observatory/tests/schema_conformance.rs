@@ -35,11 +35,19 @@
 
 use std::path::Path;
 
+use sha2::{Digest, Sha256};
 use stella_observatory::respond;
+use stella_protocol::{AgentEvent, ContextFrameRef, ProviderShare, ToolCall, ToolOutput};
 use stella_store::{
-    AgentUseRow, ExecutionReflectionRow, FileTouchRow, McpUsageRow, MemoryCitationRow,
-    ReflectionRow, SkillUsageRow, Store, TelemetryRow,
+    AgentUseRow, ContextBlockRow, ExecutionReflectionRow, FileTouchRow, ManifestBlockRow,
+    McpUsageRow, MemoryCitationRow, ReflectionRow, SkillUsageRow, StepManifestRow, Store,
+    TelemetryRow,
 };
+
+/// The seeded system prefix. Named because it is what the sent-context witness
+/// looks for: the system prompt is the part of a model call that exists nowhere
+/// else in the store, and reconstructing it is the whole point of the route.
+const SYSTEM_PROMPT: &str = "you are stella, and you are careful";
 
 /// Every `/api/*` route the router serves, paired with the JSON pointer that
 /// must resolve to seeded (non-empty) data.
@@ -57,6 +65,11 @@ const ROUTES: &[(&str, Option<&str>)] = &[
     ("/api/executions", Some("/0/id")),
     ("/api/execution?id=1", Some("/steps/0/step")),
     ("/api/execution-journal?id=1", Some("/0/type")),
+    ("/api/execution-context?id=1", Some("/calls/0/step")),
+    (
+        "/api/execution-context?id=1&turn=0&step=1&call_seq=0",
+        Some("/context/messages/0/role"),
+    ),
     ("/api/models", Some("/0/provider")),
     ("/api/tools", Some("/0/name")),
     ("/api/files", Some("/0/path")),
@@ -77,25 +90,34 @@ const ROUTES: &[(&str, Option<&str>)] = &[
 ];
 
 /// One tool call's full event round-trip — the announcement and its result.
-fn tool_round_trip(call_id: &str, name: &str) -> [stella_protocol::AgentEvent; 2] {
-    use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+///
+/// Takes the call and output rather than building them, so the receipts seeded
+/// below hash the **same** values these events carry. A second definition of
+/// "the tool call" would let the two drift and quietly turn the digest gate
+/// into a tautology.
+fn tool_round_trip(call: &ToolCall, output: &ToolOutput) -> [AgentEvent; 2] {
     [
-        AgentEvent::ToolStart {
-            call: ToolCall {
-                call_id: call_id.into(),
-                name: name.into(),
-                input: serde_json::json!({ "path": "src/lib.rs" }),
-            },
-        },
+        AgentEvent::ToolStart { call: call.clone() },
         AgentEvent::ToolResult {
-            call_id: call_id.into(),
-            output: ToolOutput::Ok {
-                content: "fn a() {}".into(),
-            },
+            call_id: call.call_id.clone(),
+            output: output.clone(),
             duration_ms: 12,
             speculated: false,
         },
     ]
+}
+
+/// `sha256:<hex>` over exactly these bytes — the digest shape the receipts
+/// plane records.
+fn digest(preimage: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(preimage.as_bytes());
+    let hex: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("sha256:{hex}")
 }
 
 /// Build a workspace whose `store.db` came from the **real** migration path,
@@ -114,11 +136,20 @@ fn real_store_workspace() -> tempfile::TempDir {
     // Tool calls arrive as events and are projected from them — seeding the
     // `tool_calls` table any other way would test a write path production
     // does not use.
-    for (seq, event) in tool_round_trip("c1", "read_file").into_iter().enumerate() {
+    let call = ToolCall {
+        call_id: "c1".into(),
+        name: "read_file".into(),
+        input: serde_json::json!({ "path": "src/lib.rs" }),
+    };
+    let output = ToolOutput::Ok {
+        content: "fn a() {}".into(),
+    };
+    for (seq, event) in tool_round_trip(&call, &output).into_iter().enumerate() {
         store
             .record_event(completed, seq as u64, &event)
             .expect("tool event");
     }
+    seed_receipt(&store, completed, &call, &output);
     store
         .record_telemetry(
             completed,
@@ -235,6 +266,109 @@ fn real_store_workspace() -> tempfile::TempDir {
     dir
 }
 
+/// One recorded model call's context receipt: the block registry plus the
+/// ordered manifest `/api/execution-context` reconstructs from (#1475).
+///
+/// The two journal-resolved blocks take their digest over `stella_protocol`'s
+/// **own** serialization of the very call and output the events above carry, so
+/// this seeds the byte-level half of the drift gate: the observatory builds
+/// that preimage by hand (it links no protocol crate), and reordering
+/// `ToolCall`'s fields would make its digests stop matching — here, at
+/// `cargo test`, rather than as an "unverified" banner on a user's dashboard.
+/// The system prefix is a gap block: its preimage is stored locally, exactly as
+/// the engine stores it, because the journal cannot carry it.
+fn seed_receipt(store: &Store, execution_id: i64, call: &ToolCall, output: &ToolOutput) {
+    let call_json = serde_json::to_string(call).expect("tool call json");
+    let output_json = serde_json::to_string(output).expect("tool output json");
+    let blocks = [
+        ContextBlockRow {
+            block_id: "blk_sys".into(),
+            kind: "system_prefix".into(),
+            origin_turn: 0,
+            origin_step: 0,
+            call_id: None,
+            memory_id: None,
+            token_cost: Some(40),
+            content_digest: digest(SYSTEM_PROMPT),
+            citation_label: None,
+            content: Some(SYSTEM_PROMPT.into()),
+        },
+        ContextBlockRow {
+            block_id: "blk_call".into(),
+            kind: "tool_call".into(),
+            origin_turn: 0,
+            origin_step: 1,
+            call_id: Some(call.call_id.clone()),
+            memory_id: None,
+            token_cost: Some(25),
+            content_digest: digest(&call_json),
+            citation_label: None,
+            content: None,
+        },
+        ContextBlockRow {
+            block_id: "blk_res".into(),
+            kind: "tool_result".into(),
+            origin_turn: 0,
+            origin_step: 1,
+            call_id: Some(call.call_id.clone()),
+            memory_id: None,
+            token_cost: Some(88),
+            content_digest: digest(&output_json),
+            citation_label: None,
+            content: None,
+        },
+    ];
+    for block in &blocks {
+        store
+            .record_context_block(execution_id, block)
+            .expect("context block");
+    }
+    store
+        .record_step_manifest(
+            execution_id,
+            &StepManifestRow {
+                turn_instance: 0,
+                step: 1,
+                call_seq: 0,
+                provider: "zai".into(),
+                model: "glm-5.2".into(),
+                call_role: "worker".into(),
+                effective_budget_tokens: 136_363,
+                calibration_factor: 1.1,
+                estimated_input_tokens: 203,
+                compiled_frame_id: None,
+                frame_hash: None,
+                blocks: vec![
+                    ManifestBlockRow {
+                        block_id: "blk_sys".into(),
+                        cache_zone: "stable_prefix".into(),
+                        token_cost: Some(40),
+                        resident_since_step: 0,
+                        message_index: 0,
+                        call_id: None,
+                    },
+                    ManifestBlockRow {
+                        block_id: "blk_call".into(),
+                        cache_zone: "volatile".into(),
+                        token_cost: Some(25),
+                        resident_since_step: 1,
+                        message_index: 1,
+                        call_id: Some(call.call_id.clone()),
+                    },
+                    ManifestBlockRow {
+                        block_id: "blk_res".into(),
+                        cache_zone: "volatile".into(),
+                        token_cost: Some(88),
+                        resident_since_step: 1,
+                        message_index: 2,
+                        call_id: Some(call.call_id.clone()),
+                    },
+                ],
+            },
+        )
+        .expect("step manifest");
+}
+
 /// The gate itself: every route, against a real-migration database.
 #[test]
 fn every_route_survives_the_real_store_schema() {
@@ -274,8 +408,6 @@ fn every_route_survives_the_real_store_schema() {
 /// the run ended — and stayed zero forever if it never did.
 #[test]
 fn an_unfinished_execution_reports_its_tool_calls() {
-    use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
-
     let dir = tempfile::TempDir::new().expect("tempdir");
     let store = Store::open(dir.path()).expect("store");
     let id = store
@@ -351,8 +483,6 @@ fn an_unfinished_execution_reports_its_tool_calls() {
 /// survivable. Both have to be true at the route, not just in the store.
 #[test]
 fn a_crashed_execution_recovers_its_calls_through_the_api() {
-    use stella_protocol::{AgentEvent, ToolCall};
-
     let dir = tempfile::TempDir::new().expect("tempdir");
     let store = Store::open(dir.path()).expect("store");
     let id = store
@@ -406,8 +536,6 @@ fn a_crashed_execution_recovers_its_calls_through_the_api() {
 /// reads it back through the real route.
 #[test]
 fn recall_latency_reaches_the_execution_detail() {
-    use stella_protocol::{AgentEvent, ContextFrameRef, ProviderShare};
-
     let dir = tempfile::TempDir::new().expect("tempdir");
     let store = Store::open(dir.path()).expect("store");
     let id = store
@@ -492,6 +620,43 @@ fn a_recall_without_a_measurement_reads_as_null_not_zero() {
         "unmeasured must not render as 0 ms: {detail}"
     );
     assert!(detail["recall"][0]["used_ann_index"].is_null());
+}
+
+/// Sent-context reconstruction, end to end against a real store (#1475).
+///
+/// The strongest form of the drift gate this suite exists for, because it
+/// checks a *byte-level* coupling rather than a column-level one. The
+/// observatory links no protocol crate, so it rebuilds a `tool_call` block's
+/// preimage by hand in `stella_protocol::ToolCall`'s declaration order; the
+/// receipt here was digested over that crate's own serializer. Reorder those
+/// fields and `verified` flips to false right here — the alternative being a
+/// silent "the journal is torn" banner on every dashboard in the field.
+#[test]
+fn sent_context_reconstructs_a_real_stores_receipt_and_verifies_it() {
+    let workspace = real_store_workspace();
+    let body = respond(
+        workspace.path(),
+        "/api/execution-context?id=1&turn=0&step=1&call_seq=0",
+    )
+    .body;
+    let v: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    let context = &v["context"];
+    assert_eq!(context["found"], true, "{v}");
+    assert_eq!(
+        context["messages"][0]["body"], SYSTEM_PROMPT,
+        "the system prompt the model was actually sent: {v}"
+    );
+    assert_eq!(context["messages"][0]["role"], "system");
+    assert_eq!(
+        context["messages"][2]["body"], "← tool_result c1\nfn a() {}",
+        "the tool result, recovered from the journal: {v}"
+    );
+    assert_eq!(
+        context["verified"], true,
+        "a journal-resolved block stopped re-hashing to the digest \
+         stella_protocol's own serializer produced — a wire shape moved under \
+         the observatory's hand-built preimage: {v}"
+    );
 }
 
 /// **The other half of the drift problem, and the one that actually bit.**

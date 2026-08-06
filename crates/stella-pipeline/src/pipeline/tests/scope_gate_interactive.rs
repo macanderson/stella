@@ -304,7 +304,7 @@ async fn endless_revision_notes_stop_at_the_cap_and_say_why() {
     );
     match outcome {
         Ok(o) => assert!(
-            matches!(&o.status, PipelineStatus::Aborted { reason } if reason.contains("revision limit")),
+            matches!(&o.status, PipelineStatus::Aborted { reason, .. } if reason.contains("revision limit")),
             "the outcome must name the cap as the cause: {:?}",
             o.status
         ),
@@ -540,7 +540,8 @@ async fn headless_scope_bypass_proceeds_instead_of_asking_a_gate_that_always_abo
     assert_ne!(
         outcome.status,
         PipelineStatus::Aborted {
-            reason: "aborted at scope review".to_string()
+            reason: "aborted at scope review".to_string(),
+            kind: AbortKind::DeliberateStop,
         },
         "a bypassed review must not abort at the gate it bypassed"
     );

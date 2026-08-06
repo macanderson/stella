@@ -18,6 +18,83 @@ pub(super) fn deck_slash_commands(
     commands
 }
 
+/// The deck's productized vocabulary, as `(name, menu description)`. One
+/// source of truth for the menu's 🔒 rows and the reserved-name guard: a
+/// custom definition can never run under one of these names — not from the
+/// menu (`slash_entries` drops it) and not typed with arguments either
+/// (`expand` refuses reserved heads).
+pub(super) const DECK_BUILTINS: &[(&str, &str)] = &[
+    ("/help", "show commands"),
+    ("/clear", "reset the conversation"),
+    (
+        "/model",
+        "set the default model (persists; no arg shows current + list)",
+    ),
+    (
+        "/models",
+        "model routing — the think · work · verify slots (`refresh` re-syncs)",
+    ),
+    (
+        "/profile",
+        "retune every role: fast · balanced · pro · ultra · auto",
+    ),
+    (
+        "/theme",
+        "switch colour theme (stella-dark · stella-light; persists; no arg shows current)",
+    ),
+    ("/init", "index the workspace: domains + code graph"),
+    (
+        "/agents",
+        "open the AGENTS tab: executions & installed agents",
+    ),
+    (
+        "/pipeline",
+        "toggle the staged pipeline (witness-verified turns)",
+    ),
+    (
+        "/export",
+        "export session telemetry to a ZIP + HTML dashboard",
+    ),
+    ("/files", "open the Files tab"),
+    ("/diff", "open the diff viewer"),
+    ("/graph", "open the code-graph tab"),
+    ("/skills", "open the SKILLS tab: manage · search · create"),
+    ("/mcp", "open the MCP servers tab"),
+    (
+        "/sessions",
+        "every stella session on this machine, grouped by status (also: ← on an empty prompt)",
+    ),
+    (
+        "/context",
+        "this session's active skills + MCP servers (also: → on an empty prompt)",
+    ),
+    (
+        "/plan",
+        "the plan — every step, with where it may write and spend",
+    ),
+    ("/budget", "set or clear the session spend cap"),
+    (
+        "/inspect",
+        "the context sent to the model on any recorded call (also: ⌃g)",
+    ),
+    ("/inbox", "notifications — messages persist until read"),
+    ("/mcp-search", "search the MCP registry & install servers"),
+    // `/model` sets the DEFAULT model from the prompt (persisted, parity
+    // with the tab). The full engine-config editor — per-agent models,
+    // provider pins, effort, prompts — lives on the SETTINGS tab; there are
+    // no per-agent slash commands.
+    (
+        "/settings",
+        "open the SETTINGS tab — the home of all config (models included)",
+    ),
+    ("/donate", "support stella — become a GitHub Sponsor"),
+];
+
+/// The deck's reserved command names — see [`DECK_BUILTINS`].
+pub(super) fn deck_reserved() -> Vec<&'static str> {
+    DECK_BUILTINS.iter().map(|(name, _)| *name).collect()
+}
+
 // SKILLS tab: driver-side ops (the deck routes `WorkspaceInput::Skill`)
 
 /// Snapshot the installed skills across BOTH scopes into an [`Inbound::Skills`].

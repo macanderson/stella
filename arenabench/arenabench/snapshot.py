@@ -110,6 +110,16 @@ class SnapshotEntry:
     patch: str | None
     #: Seconds since the trial's first snapshot. The number an operator reads.
     elapsed: float
+    #: The container directory this snapshot was taken of.
+    #:
+    #: Recorded rather than re-derived at replay time, because the two can
+    #: disagree: capture probes a container the agent has already been living
+    #: in, replay probes a fresh one from the pristine image, and a directory
+    #: the agent created will exist in the first and not the second. When they
+    #: disagreed the patch applied cleanly to the *wrong* directory and every
+    #: probe returned "did not pass" — surfacing as `flip_index=None`, which
+    #: reads as "the agent never solved it" rather than "this was misapplied".
+    workspace: str = ""
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -118,6 +128,7 @@ class SnapshotEntry:
             "sha": self.sha,
             "patch": self.patch,
             "elapsed": round(self.elapsed, 3),
+            "workspace": self.workspace,
         }
 
     @staticmethod
@@ -129,6 +140,9 @@ class SnapshotEntry:
                 sha=str(raw["sha"]),
                 patch=str(raw["patch"]) if raw.get("patch") else None,
                 elapsed=float(raw.get("elapsed") or 0.0),  # type: ignore[arg-type]
+                # Absent in manifests written before the field existed; replay
+                # falls back to probing when it is empty.
+                workspace=str(raw.get("workspace") or ""),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -542,6 +556,7 @@ class SnapshotSupervisor:
             sha=sha,
             patch=patch_name,
             elapsed=max(0.0, now - capture.started_at),
+            workspace=capture.workspace,
         )
         try:
             with (snap_dir / MANIFEST_NAME).open("a", encoding="utf-8") as handle:

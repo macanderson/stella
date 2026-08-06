@@ -63,7 +63,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::model::SessionModel;
-use crate::plan::{Plan, PlanState, PlanStepState};
+use crate::plan::{Plan, PlanState};
 use crate::proof::ProofState;
 use crate::render::truncate_spans;
 use crate::textline::Tone;
@@ -152,50 +152,10 @@ pub fn rail_visible(accessible: bool, frame_w: u16) -> bool {
 // State → colour
 // ---------------------------------------------------------------------------
 
-/// The status ring for one plan step, and how its title is styled.
-///
-/// The mapping is the product spec, and it is deliberately redundant: state is
-/// carried by *ring shape*, *ring colour*, and *text treatment* at once, so it
-/// survives a reader who is colour-blind, a terminal with a poor palette, and a
-/// glance too quick to read words.
-fn step_style(state: PlanStepState, plan: PlanState) -> (&'static str, Style, Style) {
-    match state {
-        // A step nobody has reached yet. Grey while the plan is still waiting
-        // on a decision — nothing is committed — and plain terminal text once
-        // it is approved, because then it genuinely is queued work.
-        PlanStepState::Planned => {
-            let pending_gate = matches!(plan, PlanState::Draft | PlanState::PendingApproval);
-            let fg = if pending_gate {
-                theme::TEXT_TERTIARY
-            } else {
-                theme::TEXT_PRIMARY
-            };
-            ("○", Style::new().fg(fg), Style::new().fg(fg))
-        }
-        // Working: a filled violet ring, bright text.
-        PlanStepState::Started => (
-            "●",
-            Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
-            Style::new()
-                .fg(theme::TEXT_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        // Done: green ring, and the title muted and struck through — the row
-        // stays legible as history without competing with the live one.
-        PlanStepState::Complete => (
-            "●",
-            Style::new().fg(theme::OK),
-            Style::new()
-                .fg(theme::TEXT_TERTIARY)
-                .add_modifier(Modifier::CROSSED_OUT),
-        ),
-        PlanStepState::Error => (
-            "●",
-            Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD),
-            Style::new().fg(theme::TEXT_SECONDARY),
-        ),
-    }
-}
+// The per-step visual (ring, number, title, row treatment) lives in
+// [`crate::views::plan_style`], shared with the `/plan` card and the
+// plan-review dialog so the three surfaces cannot drift apart.
+use crate::views::plan_style::step_visual;
 
 /// The plan's own ring, for the panel title.
 fn plan_ring(state: PlanState) -> (&'static str, Style) {
@@ -246,7 +206,7 @@ fn verify_ring(tone: Tone) -> (&'static str, Style) {
 /// and folds the finished tail into one dim row rather than dropping steps
 /// silently — a rail that shows four of nine steps without saying so is worse
 /// than one that shows three and admits it.
-pub fn plan_rows(plan: &Plan, cap: usize) -> Vec<Line<'static>> {
+pub fn plan_rows(plan: &Plan, cap: usize, now_ms: u64, animate: bool) -> Vec<Line<'static>> {
     if cap == 0 {
         return Vec::new();
     }
@@ -297,25 +257,17 @@ pub fn plan_rows(plan: &Plan, cap: usize) -> Vec<Line<'static>> {
     };
 
     for step in &shown {
-        let (glyph, ring, text) = step_style(step.state, plan.state);
+        let v = step_visual(step.state, now_ms, animate);
         let mut spans = vec![
-            Span::styled(format!("{glyph} "), ring),
-            Span::styled(
-                format!("{} ", step.id),
-                Style::new().fg(theme::TEXT_TERTIARY),
-            ),
-            Span::styled(step.title.clone(), text),
+            Span::styled(v.glyph, v.ring),
+            Span::styled(" ", v.gap),
+            Span::styled(format!("{}. ", step.id), v.num),
+            Span::styled(step.title.clone(), v.text),
         ];
         if let Some(note) = &step.note {
-            spans.push(Span::styled(
-                format!(" ({note})"),
-                Style::new().fg(theme::TEXT_TERTIARY),
-            ));
+            spans.push(Span::styled(format!(" ({note})"), v.meta));
         } else if let Some(owner) = &step.owner {
-            spans.push(Span::styled(
-                format!(" ({owner})"),
-                Style::new().fg(theme::TEXT_TERTIARY),
-            ));
+            spans.push(Span::styled(format!(" ({owner})"), v.meta));
         }
         rows.push(Line::from(spans));
     }
@@ -374,13 +326,13 @@ pub fn verification_rows(state: &ProofState) -> Vec<Line<'static>> {
 /// Verification takes its fixed seven rows first and the plan takes the rest,
 /// so the lights never move as the plan grows — a status light that changes
 /// position is a status light nobody learns to find.
-pub fn render(sm: &SessionModel, area: Rect, buf: &mut Buffer) {
+pub fn render(sm: &SessionModel, now_ms: u64, animate: bool, area: Rect, buf: &mut Buffer) {
     if area.height < 3 || area.width < 4 {
         return;
     }
     let verify_h = verification_height(area.height);
     let bands = Layout::vertical([Constraint::Min(0), Constraint::Length(verify_h)]).split(area);
-    render_plan(&sm.plan, bands[0], buf);
+    render_plan(&sm.plan, now_ms, animate, bands[0], buf);
     render_verification(&sm.proof, bands[1], buf);
 }
 
@@ -412,7 +364,7 @@ fn verification_height(height: u16) -> u16 {
 }
 
 /// The PLAN panel. Public so the narrow/accessible path can stack it.
-pub fn render_plan(plan: &Plan, area: Rect, buf: &mut Buffer) {
+pub fn render_plan(plan: &Plan, now_ms: u64, animate: bool, area: Rect, buf: &mut Buffer) {
     if area.height < 3 {
         return;
     }
@@ -431,10 +383,15 @@ pub fn render_plan(plan: &Plan, area: Rect, buf: &mut Buffer) {
             Style::new().fg(theme::TEXT_TERTIARY),
         ),
     ]);
-    let rows: Vec<Line<'static>> = plan_rows(plan, (area.height as usize).saturating_sub(2))
-        .into_iter()
-        .map(|line| Line::from(truncate_spans(line.spans, inner_w)))
-        .collect();
+    let rows: Vec<Line<'static>> = plan_rows(
+        plan,
+        (area.height as usize).saturating_sub(2),
+        now_ms,
+        animate,
+    )
+    .into_iter()
+    .map(|line| Line::from(truncate_spans(line.spans, inner_w)))
+    .collect();
     Paragraph::new(rows)
         .block(
             Block::default()
@@ -574,7 +531,7 @@ mod tests {
         let mut plan = Plan::default();
         plan.propose(&proposal(&["read the band layout", "fold the rail"]));
         plan.approve();
-        let rows = plan_rows(&plan, 12);
+        let rows = plan_rows(&plan, 12, 0, false);
         let text: Vec<String> = rows.iter().map(text_of).collect();
         assert!(
             text.iter().any(|r| r.contains("read the band layout")),
@@ -584,8 +541,9 @@ mod tests {
     }
 
     /// The colour contract, asserted on the spans rather than a screenshot:
-    /// done is a green ring with struck-through text, working is a violet ring
-    /// with bright text, queued is plain.
+    /// done is a check on the green indicator with bright struck-through text,
+    /// working carries the bright pulse tone, queued is muted grey — and each
+    /// row is numbered.
     #[test]
     fn each_step_state_carries_its_own_ring_and_text_treatment() {
         let mut plan = Plan::default();
@@ -595,13 +553,15 @@ mod tests {
             item("1", "one", TaskStatus::Completed),
             item("2", "two", TaskStatus::InProgress),
         ]);
-        let rows = plan_rows(&plan, 12);
-        // rows[0] is the summary line.
+        let rows = plan_rows(&plan, 12, 0, false);
+        // rows[0] is the summary line. Spans: glyph · gap · number · title.
         let done = &rows[1];
-        assert_eq!(done.spans[0].content.as_ref(), "● ");
-        assert_eq!(done.spans[0].style.fg, Some(theme::OK));
+        assert_eq!(done.spans[0].content.as_ref(), "✓");
+        assert_eq!(done.spans[0].style.bg, Some(theme::OK));
+        assert_eq!(done.spans[2].content.as_ref(), "1. ");
+        assert_eq!(done.spans[3].style.fg, Some(theme::TEXT_PRIMARY));
         assert!(
-            done.spans[2]
+            done.spans[3]
                 .style
                 .add_modifier
                 .contains(Modifier::CROSSED_OUT),
@@ -609,13 +569,28 @@ mod tests {
         );
 
         let working = &rows[2];
-        assert_eq!(working.spans[0].content.as_ref(), "● ");
-        assert_eq!(working.spans[0].style.fg, Some(theme::VIOLET));
-        assert_eq!(working.spans[2].style.fg, Some(theme::TEXT_PRIMARY));
+        assert_eq!(working.spans[0].content.as_ref(), "●");
+        assert_eq!(working.spans[0].style.fg, Some(theme::TEXT_PRIMARY));
+        assert_eq!(
+            working.spans[2].style.fg, working.spans[3].style.fg,
+            "the number carries the working tone with the title"
+        );
 
         let queued = &rows[3];
-        assert_eq!(queued.spans[0].content.as_ref(), "○ ");
-        assert_eq!(queued.spans[0].style.fg, Some(theme::TEXT_PRIMARY));
+        assert_eq!(queued.spans[0].content.as_ref(), "○");
+        assert_eq!(queued.spans[0].style.fg, Some(theme::TEXT_TERTIARY));
+    }
+
+    /// Un-started work is muted grey even AFTER approval — approval commits
+    /// the plan, it does not light up rows nobody is working on.
+    #[test]
+    fn a_planned_step_stays_muted_grey_after_approval() {
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one", "two"]));
+        plan.approve();
+        let rows = plan_rows(&plan, 12, 0, false);
+        assert_eq!(rows[1].spans[0].style.fg, Some(theme::TEXT_TERTIARY));
+        assert_eq!(rows[1].spans[3].style.fg, Some(theme::TEXT_TERTIARY));
     }
 
     /// Before the user answers the gate, nothing is committed — every ring is
@@ -626,18 +601,28 @@ mod tests {
         plan.propose(&proposal(&["one", "two"]));
         assert_eq!(plan.state, PlanState::PendingApproval);
         assert_eq!(plan_ring(plan.state).1.fg, Some(theme::TEXT_TERTIARY));
-        let rows = plan_rows(&plan, 12);
+        let rows = plan_rows(&plan, 12, 0, false);
         assert_eq!(rows[1].spans[0].style.fg, Some(theme::TEXT_TERTIARY));
     }
 
+    /// A failed/cancelled step paints its ENTIRE row red — glyph, number,
+    /// title and the reason — with the ✗ cut out of the indicator.
     #[test]
-    fn a_failed_step_rings_red_and_names_why() {
+    fn a_failed_step_paints_the_whole_row_red_and_names_why() {
         let mut plan = Plan::default();
         plan.propose(&proposal(&["one"]));
         plan.approve();
         plan.apply_board(&[item("1", "one", TaskStatus::Cancelled)]);
-        let rows = plan_rows(&plan, 12);
-        assert_eq!(rows[1].spans[0].style.fg, Some(theme::DANGER));
+        let rows = plan_rows(&plan, 12, 0, false);
+        assert_eq!(rows[1].spans[0].content.as_ref(), "✗");
+        for span in &rows[1].spans {
+            assert_eq!(
+                span.style.bg,
+                Some(theme::DANGER),
+                "{:?} must ride the red row",
+                span.content
+            );
+        }
         assert!(
             text_of(&rows[1]).contains("(cancelled)"),
             "{:?}",
@@ -654,7 +639,7 @@ mod tests {
         let refs: Vec<&str> = steps.iter().map(String::as_str).collect();
         plan.propose(&proposal(&refs));
         plan.approve();
-        let rows = plan_rows(&plan, 6);
+        let rows = plan_rows(&plan, 6, 0, false);
         assert!(rows.len() <= 6, "{} rows for a cap of 6", rows.len());
         assert!(
             text_of(rows.last().unwrap()).contains("more"),
@@ -665,7 +650,10 @@ mod tests {
 
     #[test]
     fn an_empty_plan_says_so_rather_than_rendering_nothing() {
-        let text: Vec<String> = plan_rows(&Plan::default(), 8).iter().map(text_of).collect();
+        let text: Vec<String> = plan_rows(&Plan::default(), 8, 0, false)
+            .iter()
+            .map(text_of)
+            .collect();
         assert!(text.iter().any(|r| r.contains("no plan yet")), "{text:?}");
     }
 
@@ -742,7 +730,7 @@ mod tests {
             .propose(&proposal(&["read the layout", "fold the rail"]));
         sm.plan.approve();
         let area = Rect::new(0, 0, 34, 20);
-        let text = rendered(area, |b| render(&sm, area, b));
+        let text = rendered(area, |b| render(&sm, 0, false, area, b));
         let plan_at = text.find("PLAN").expect("a PLAN panel");
         let verify_at = text
             .find("DONE VERIFICATION")
@@ -762,7 +750,7 @@ mod tests {
         ]));
         sm.plan.approve();
         let area = Rect::new(0, 0, 30, 20);
-        let text = rendered(area, |b| render(&sm, area, b));
+        let text = rendered(area, |b| render(&sm, 0, false, area, b));
         assert!(text.contains('…'), "no ellipsis marks the cut:\n{text}");
     }
 
@@ -776,7 +764,7 @@ mod tests {
         sm.plan.propose(&proposal(&["one", "two", "three"]));
         sm.plan.approve();
         let area = Rect::new(0, 0, 34, 9);
-        let text = rendered(area, |b| render(&sm, area, b));
+        let text = rendered(area, |b| render(&sm, 0, false, area, b));
         assert!(
             text.contains("PLAN"),
             "the plan survives the squeeze:\n{text}"
@@ -801,7 +789,7 @@ mod tests {
         let sm = SessionModel::default();
         for h in 0..8u16 {
             let area = Rect::new(0, 0, 30, h);
-            rendered(area, |b| render(&sm, area, b));
+            rendered(area, |b| render(&sm, 0, false, area, b));
         }
     }
 
@@ -810,7 +798,7 @@ mod tests {
         let sm = SessionModel::default();
         for w in 0..6u16 {
             let area = Rect::new(0, 0, w, 20);
-            rendered(area, |b| render(&sm, area, b));
+            rendered(area, |b| render(&sm, 0, false, area, b));
         }
     }
 
@@ -823,7 +811,7 @@ mod tests {
             let mut sm = SessionModel::default();
             sm.plan.propose(&proposal(steps));
             sm.plan.approve();
-            let text = rendered(area, |b| render(&sm, area, b));
+            let text = rendered(area, |b| render(&sm, 0, false, area, b));
             text.lines()
                 .position(|l| l.contains("warrant"))
                 .expect("a warrant row")

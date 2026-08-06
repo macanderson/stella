@@ -91,18 +91,19 @@ use lifecycle::{step_outcome_label, turn_outcome_payload};
 
 mod confident_zero;
 pub mod lifecycle;
+mod loop_escalation;
 pub mod loop_evidence;
 mod truncation;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, any_matcher_matches, run_hooks};
-use crate::loop_detect::{LoopDetectionConfig, LoopVerdict, detect_loop};
+use crate::loop_detect::LoopDetectionConfig;
 use crate::ports::ToolExecutor;
 use crate::receipts::ReceiptLedger;
 use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff_observed};
 use crate::speculation::{SpeculationGate, SpeculationPool, SpeculativeResult};
 use crate::step::{
-    BorrowedTurn, CancelUsageGuard, CompactionPass, SpeculationDropGuard, StepOutcome,
+    AbortKind, BorrowedTurn, CancelUsageGuard, CompactionPass, SpeculationDropGuard, StepOutcome,
     StreamProgress, SummarizerHealth, TurnState, bounded_generation,
 };
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
@@ -111,13 +112,19 @@ use truncation::{ContinuationBudget, ContinuationPlan, TIME_EXHAUSTED_PARTIAL, p
 // reaches it through `Continuation::into_parts`.
 #[cfg(test)]
 use truncation::LENGTH_CONTINUATION_NUDGE;
+// Named only by the loop-evidence tests (`tests::audit_fixes` and siblings);
+// the production path reaches all three through `loop_escalation`.
+#[cfg(test)]
+use crate::loop_detect::{LoopVerdict, detect_loop};
+#[cfg(test)]
+use loop_evidence::recent_call_records;
 // The latch count itself is only ever named by the test that pins it against
 // the number of failures the summarizer is actually allowed (`audit_fixes`);
 // the production path reads it through `SummarizerHealth::is_latched`.
 #[cfg(test)]
 use crate::step::SUMMARIZER_FAILURE_LATCH;
 use crate::{AccountedCall, AccountedCallError, run_accounted_call};
-use loop_evidence::{ResultIdentities, recent_call_records, snapshot_result_identities};
+use loop_evidence::{ResultIdentities, snapshot_result_identities};
 use tokio::sync::mpsc::UnboundedSender;
 
 mod settlement;
@@ -385,8 +392,14 @@ pub enum TurnOutcome {
     Completed { text: String, cost_usd: f64 },
     /// The turn ended before completion: budget enforced, a loop was
     /// detected, retries were exhausted, or the step cap was hit. Always a
-    /// *clean* abort — never mid-tool (see module docs).
-    Aborted { reason: String, cost_usd: f64 },
+    /// *clean* abort — never mid-tool (see module docs). `kind` says which
+    /// side of that list this was: the engine stopping on purpose or the
+    /// run failing underneath it ([`AbortKind`]).
+    Aborted {
+        reason: String,
+        kind: AbortKind,
+        cost_usd: f64,
+    },
 }
 
 /// The per-turn memos a step mutates but a [`crate::step::Checkpoint`]
@@ -903,6 +916,7 @@ impl<'a> Engine<'a> {
         });
         let outcome = TurnOutcome::Aborted {
             reason,
+            kind: AbortKind::DeliberateStop,
             cost_usd: turn.state.total_cost_usd,
         };
         // The step-cap exit is a turn ending like any other. Emitting only
@@ -1080,6 +1094,7 @@ impl<'a> Engine<'a> {
                 );
                 return StepOutcome::Aborted {
                     reason: SOFT_STOP_REASON.to_string(),
+                    kind: AbortKind::DeliberateStop,
                     cost_usd: state.total_cost_usd,
                 };
             }
@@ -1123,7 +1138,9 @@ impl<'a> Engine<'a> {
         let revision = state.memos.revision;
         state.memos.receipts.set_transcript_revision(revision);
 
-        if let Some(aborted) = self.check_loop_detection(
+        if let Some(aborted) = loop_escalation::check_loop_detection(
+            self.config.loop_detection,
+            self.config.turn_instance,
             &mut state.messages,
             &state.memos.identities,
             &mut state.loop_steered,
@@ -1181,6 +1198,7 @@ impl<'a> Engine<'a> {
                 );
                 return StepOutcome::Aborted {
                     reason,
+                    kind: AbortKind::Failure,
                     cost_usd: state.total_cost_usd,
                 };
             }
@@ -1629,84 +1647,6 @@ impl<'a> Engine<'a> {
         });
     }
 
-    /// Loop detection, before spending a model call on a step that's
-    /// already stuck. Progress-aware: each call is paired with the output
-    /// it produced ([`recent_call_records`]), so only repeats and cycles
-    /// with byte-identical outputs count — legitimate polling (identical
-    /// input, changing output) never trips it (`crate::loop_detect`).
-    /// `result_identities` is the turn's pre-compaction snapshot
-    /// ([`snapshot_result_identities`]) — compaction runs immediately
-    /// before this check and rewrites older results in place, so without it
-    /// a repeat streak reads as `[stub, stub, real]` and never counts.
-    ///
-    /// Steer first, abort second: the FIRST detection of a turn injects a
-    /// warning through the same seam as user steering — a user-role
-    /// message the model answers this very step, plus its `Steered`
-    /// transcript event — and lets the turn continue. Only a detection
-    /// after that warning is the turn's clean abort (`Some`): the model
-    /// was told, kept looping anyway, and more steps would be pure waste.
-    fn check_loop_detection(
-        &self,
-        messages: &mut Vec<CompletionMessage>,
-        result_identities: &ResultIdentities,
-        loop_steered: &mut bool,
-        total_cost_usd: f64,
-        events: &EventSender,
-    ) -> Option<TurnOutcome> {
-        let records = recent_call_records(messages, result_identities);
-        let verdict = detect_loop(&records, self.config.loop_detection);
-        // The typed twin of the prose steer/abort (receipts spec §6.3): a
-        // receipt parses this instead of string-matching "stuck-loop
-        // detected:" prefixes. Emitted for both outcomes — `aborted` says
-        // whether this detection steered or killed the turn. Matching the
-        // verdict is also the healthy-turn early return, so there is exactly
-        // one place that decides "is this a loop".
-        let (kind, pattern, repeats) = match &verdict {
-            LoopVerdict::NoLoop => return None,
-            LoopVerdict::ExactRepeat { tool, count, .. } => {
-                ("exact_repeat", vec![tool.clone()], *count)
-            }
-            LoopVerdict::ShortCycle { pattern, repeats } => (
-                "short_cycle",
-                pattern.iter().map(|c| c.name.clone()).collect(),
-                *repeats,
-            ),
-            LoopVerdict::Stagnant { tool, count } => ("stagnation", vec![tool.clone()], *count),
-        };
-        let reason = verdict
-            .evidence()
-            .unwrap_or_else(|| "loop detected".to_string());
-        let _ = events.send(AgentEvent::LoopDetected {
-            turn_instance: self.config.turn_instance,
-            kind: kind.to_string(),
-            pattern,
-            repeats,
-            evidence: reason.clone(),
-            aborted: *loop_steered,
-        });
-        if !*loop_steered {
-            *loop_steered = true;
-            let text = format!(
-                "{LOOP_STEER_PREFIX}] you appear to be looping: {reason}. Repeating the \
-                 same call cannot produce new information — change strategy: vary the \
-                 arguments, try a different tool, or report what is blocking you. If you \
-                 keep looping, the turn will be aborted."
-            );
-            let _ = events.send(AgentEvent::Steered { text: text.clone() });
-            messages.push(CompletionMessage::user(text));
-            return None;
-        }
-        let reason = format!("stuck-loop detected (persisted after a steering warning): {reason}");
-        let _ = events.send(AgentEvent::Error {
-            message: reason.clone(),
-            retryable: false,
-        });
-        Some(TurnOutcome::Aborted {
-            reason,
-            cost_usd: total_cost_usd,
-        })
-    }
-
     /// Whether any configured `PreToolUse`/`PostToolUse` hook matches
     /// `name`. Such a tool is never speculated: its hooks must fire exactly
     /// once, on the committed dispatch path (`PreToolUse` gates *before*
@@ -2021,6 +1961,7 @@ impl<'a> Engine<'a> {
             output_tokens: result.usage.output_tokens,
             cached_input_tokens: result.usage.cached_input_tokens,
             cache_write_tokens: result.usage.cache_write_tokens,
+            reasoning_tokens: result.usage.reasoning_tokens,
             estimated_input_tokens,
             cost_usd: result.cost_usd,
             duration_ms: call_duration_ms,
@@ -2233,6 +2174,7 @@ impl<'a> Engine<'a> {
         });
         Some(TurnOutcome::Aborted {
             reason,
+            kind: AbortKind::DeliberateStop,
             cost_usd: total_cost_usd,
         })
     }
@@ -2732,8 +2674,8 @@ type SpeculationFuture<'a> = Pin<Box<dyn Future<Output = SpeculationPool> + 'a>>
 pub(crate) const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
 
 /// Prefix of the engine-injected stuck-loop steering message
-/// ([`Engine::check_loop_detection`]). User-role on the wire like every
-/// steer, but engine-generated, not a real user turn — treating it as a
+/// ([`loop_escalation::check_loop_detection`]). User-role on the wire like
+/// every steer, but engine-generated, not a real user turn — treating it as a
 /// window boundary would erase the very evidence that triggered it, and
 /// the abort-on-re-detection would need a whole fresh threshold's worth of
 /// looping instead of one more no-progress call.

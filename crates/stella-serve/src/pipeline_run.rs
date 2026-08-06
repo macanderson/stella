@@ -350,14 +350,16 @@ pub(crate) async fn drive_pipeline(
                         cost_usd: outcome.total_cost_usd,
                     }
                 }
-                PipelineStatus::Aborted { reason } => TurnOutcome::Aborted {
+                PipelineStatus::Aborted { reason, kind } => TurnOutcome::Aborted {
                     reason,
+                    kind,
                     cost_usd: outcome.total_cost_usd,
                 },
             }
         }
         Err(err) => TurnOutcome::Aborted {
             reason: err.cause.to_string(),
+            kind: stella_core::AbortKind::Failure,
             cost_usd: err.total_cost_usd,
         },
     };

@@ -37,10 +37,10 @@ pub fn turn_warrants_reflection(turn_messages: &[CompletionMessage]) -> bool {
 /// own prefix.) Callers still pass `result.is_ok()` as
 /// `reflect_and_record`'s `succeeded` flag so a failure is recorded AS a
 /// failure.
-pub fn should_reflect_on(result: &Result<(), String>) -> bool {
+pub fn should_reflect_on<E: std::fmt::Display>(result: &Result<(), E>) -> bool {
     match result {
         Ok(()) => true,
-        Err(reason) => !reason.contains(stella_core::SOFT_STOP_REASON),
+        Err(reason) => !reason.to_string().contains(stella_core::SOFT_STOP_REASON),
     }
 }
 

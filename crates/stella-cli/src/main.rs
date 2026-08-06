@@ -57,9 +57,13 @@ mod enterprise_telemetry;
 mod env_files;
 mod export;
 mod extensions;
+mod failure;
+mod fleet_claims;
 mod fleet_cmd;
 mod fleet_commits;
+mod fleet_gc;
 mod fleet_spend;
+mod fleet_verbs;
 mod fleet_warmth;
 mod fullauto_cmd;
 mod ingest_cmd;
@@ -81,6 +85,7 @@ mod profile;
 mod prompt_source;
 mod proposals_cmd;
 mod query_format;
+mod resume_frame;
 mod rules;
 mod runtime;
 mod scripts_cmd;
@@ -304,41 +309,25 @@ pub(crate) use cli::{
     AuthCmd, Cli, Command, ConnectCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, TelemetryCmd,
 };
 
-/// Whether this invocation is handed to the supervisor (#1552), and what
-/// supervising it costs.
+/// How this invocation meets the supervisor (#1552, #1607).
 ///
-/// `None` runs the work in this process, exactly as every release before
-/// supervision existed. `Some(scope_review_lost)` supervises, and the flag
-/// says whether that took away an interactive scope-review answer this
-/// invocation would otherwise have had — see
-/// [`daemon::loses_interactive_scope_review`].
+/// [`daemon::detach::Posture::Foreground`] runs the work in this process, exactly as every
+/// release before supervision existed. Supervision costs no capability any
+/// more: a plan that expands scope parks and asks through the session sidecar
+/// (#1585) instead of dying at the headless scope-review error, so there is no
+/// longer a downgrade to warn about here. [`daemon::detach::Posture::Detached`] is the same
+/// supervised child with the launcher not staying — `--detach`.
 ///
-/// Computed here, once, because it is the only place the parsed flags, the
-/// resolved config, and the real terminal handles are all in hand; each
-/// long-running arm then asks one question instead of re-deriving three.
-fn supervision(
-    globals: &cli::GlobalArgs,
-    output_format: OutputFormat,
-    cfg: &config::Config,
-) -> Option<bool> {
-    if !daemon::should_supervise(
+/// Computed here, once, because it is the only place the parsed flags and
+/// the real terminal handle are both in hand; each long-running arm then
+/// asks one question instead of re-deriving four.
+fn supervision(globals: &cli::GlobalArgs) -> daemon::detach::Posture {
+    daemon::detach::posture(
         globals.foreground,
+        globals.detach,
         daemon::supervised_id().is_some(),
         daemon::has_controlling_terminal(),
-    ) {
-        return None;
-    }
-    let approval = agent::approval_capability_for(
-        matches!(output_format, OutputFormat::Text),
-        std::io::stdin().is_terminal(),
-        std::io::stdout().is_terminal(),
-    );
-    Some(daemon::loses_interactive_scope_review(
-        approval == agent::PipelineApprovalCapability::Stdio,
-        cfg.engine_settings
-            .as_ref()
-            .is_some_and(|engine| engine.headless_scope_bypass_on()),
-    ))
+    )
 }
 
 /// The registry title for a supervised run: the same
@@ -446,6 +435,12 @@ fn main() -> ExitCode {
     // loading, clap, a runtime, or any model/repository-controlled process.
     // The raw key is retained only in the credential module's in-memory slot;
     // it is never installed into this process's environment.
+    // Same window, same reason: if this is a supervised child, take its
+    // session id out of the environment before anything can inherit it. A
+    // tool subprocess that still saw it would be one `stella` invocation away
+    // from stamping a terminal status on its parent's live record (#1552).
+    daemon::consume_supervised_env(&startup);
+
     if let Err(error) = credential_handoff::consume_at_startup(&startup) {
         eprintln!(
             "{} secure credential handoff failed: {error}",
@@ -526,6 +521,28 @@ fn main() -> ExitCode {
         .names
         .retain(|name| !stella_tools::exec::is_sensitive_env_name(name));
 
+    // A supervised child's console becomes bounded and indexed from here on
+    // (#1588): everything this process prints below flows through the pump
+    // threads, which enforce the byte budget and write the ordering index.
+    // Installed after `startup.close()` — the pumps are threads, and threads
+    // before that boundary would race the env mutations it fences — and
+    // drained as this function's last act so the final lines land.
+    //
+    // A panic would unwind (or, under the release profile's
+    // `panic = "abort"`, not unwind at all) past that last act and strand up
+    // to a pipe buffer — usually including the panic message itself — so
+    // `arm_panic_drain` chains a hook that performs the same idempotent
+    // drain (#1616). Whichever of the two arrives first does the one real
+    // drain; the other finds the streams already taken.
+    let console = daemon::supervised_id().and_then(|id| {
+        daemon::console::install_bounded(
+            &stella_store::SessionRegistry::open_default().sidecar_dir(&id),
+        )
+    });
+    if let Some(guard) = &console {
+        daemon::console::arm_panic_drain(guard);
+    }
+
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
     // a human output format so it never pollutes json/stream-json.
     env_files::announce(&loaded_env, cli.output_format());
@@ -534,7 +551,7 @@ fn main() -> ExitCode {
     // requested format to honour the machine-readable error contract.
     let output_format = cli.output_format();
 
-    match run(cli, &loaded_env) {
+    let code = match run(cli, &loaded_env) {
         Ok(()) => {
             daemon::record_outcome_if_supervised(true);
             // A supervisor's own exit code says only whether it managed to
@@ -548,7 +565,7 @@ fn main() -> ExitCode {
         Err(e) => {
             daemon::record_outcome_if_supervised(false);
             eprintln!("{} {}", "stella:".red().bold(), e);
-            emit_error_summary(output_format, &e);
+            emit_error_summary(output_format, e.message());
             // §7.4's second trigger, and the one that fires more often: most
             // failures are a returned `Err`, not a panic, and those are exactly
             // the runs a user is about to open an issue about. Naming the file
@@ -565,12 +582,21 @@ fn main() -> ExitCode {
             // A turn cut short by SIGINT/SIGTERM exits 128 + the signal
             // number, the shell convention, so a script wrapping `stella
             // run` can tell "the user stopped this" from "this failed".
+            // Otherwise the failure itself decides: a deliberate stop exits
+            // distinctly from a crash (`failure::DELIBERATE_STOP_EXIT_CODE`).
             match signals::interrupted_exit_code() {
                 Some(code) => ExitCode::from(code),
-                None => ExitCode::FAILURE,
+                None => e.exit_code(),
             }
         }
+    };
+    // After the last print of every path above: restore the raw fds and join
+    // the pumps, so the console files carry this process's final lines. A
+    // no-op if the panic hook installed above already won that race.
+    if let Some(guard) = console {
+        guard.drain();
     }
+    code
 }
 
 /// The deck's presentation, resolved from the flags and their env synonyms.
@@ -586,7 +612,7 @@ fn deck_presentation(globals: &cli::GlobalArgs) -> term_policy::DeckPresentation
     }
 }
 
-fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
+fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailure> {
     // A supervised child holds its liveness lock from `pre_exec` onwards; this
     // is the backstop for a child started some other way (by hand with
     // STELLA_SUPERVISED set, or by a future launchd/systemd unit). Without it
@@ -595,6 +621,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     if let Some(id) = daemon::supervised_id() {
         daemon::hold_liveness_lock(&stella_store::SessionRegistry::open_default(), &id);
     }
+
+    // Above the keyless dispatch because `daemon resume`'s parent half needs
+    // a runtime (it streams the child it spawns) while staying keyless.
+    let rt = || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to start runtime: {e}"))
+    };
 
     // Models and Version don't need a configured provider/key.
     match &cli.command {
@@ -615,7 +650,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 Some(ModelsCmd::List { provider, all }) => {
                     model_catalog::run_list(provider.as_deref(), *all)
                 }
-            };
+            }
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Tools {
             validate,
@@ -649,48 +685,49 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 // a plain `stella tools` stays the lenient listing.
                 (Some(dir), None) => agent::run_tools_validation(dir.as_deref()),
                 (None, None) => agent::run_tools_listing(),
-            };
+            }
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Graph { op, target }) => {
             // Reads the local index only — works with zero API keys.
-            return contextgraph::run_graph(*op, target);
+            return contextgraph::run_graph(*op, target).map_err(failure::CliFailure::from);
         }
         Some(Command::Scripts { cmd }) => {
             // Static manifest parsing plus a local subprocess — works with
             // zero API keys.
-            return scripts_cmd::run_scripts(cmd);
+            return scripts_cmd::run_scripts(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Storage { cmd }) => {
             // Reads the local index + manifest only — zero API keys.
-            return storage_cmd::run_storage(cmd);
+            return storage_cmd::run_storage(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Commands { cmd }) => {
             // Reads (and, for convert, writes) definition files only.
-            return commands_cmd::run_commands(cmd);
+            return commands_cmd::run_commands(cmd).map_err(failure::CliFailure::from);
         }
         // Reads context-record TOML and the tree, and appends to the local
         // lifecycle ledger on the review actions (Phase 3, #714). `propose
         // --commit` writes a local branch and commit. No store, model, or
         // API key on any path.
         Some(Command::Context { cmd }) => {
-            return context_cmd::run_context(cmd);
+            return context_cmd::run_context(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Proposals { cmd }) => {
-            return proposals_cmd::run_proposals(cmd);
+            return proposals_cmd::run_proposals(cmd).map_err(failure::CliFailure::from);
         }
         // #831 first slice. Reads loop-bench result files + the local ledger;
         // writes settings only on `--promote`. No provider, no API key.
         Some(Command::Tune { cmd }) => {
-            return tune_cmd::run_tune(cmd);
+            return tune_cmd::run_tune(cmd).map_err(failure::CliFailure::from);
         }
         // #872. Folds .stella/private/store.db into a redacted trajectory
         // dataset and writes it owner-only. No provider, no API key.
         Some(Command::Dataset { cmd }) => {
-            return dataset_cmd::run_dataset(cmd);
+            return dataset_cmd::run_dataset(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Calibration { format }) => {
             // Reads the local event journal only — no provider, no API key.
-            return inspect::run_calibration(*format);
+            return inspect::run_calibration(*format).map_err(failure::CliFailure::from);
         }
         Some(Command::Inspect {
             execution_id,
@@ -714,7 +751,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 diff: *diff,
                 context: *context,
                 only: *only,
-            });
+            })
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Stats {
             format,
@@ -729,19 +767,20 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 None => stats::run_stats(*format, provider.as_deref()),
                 Some(stats::StatsCmd::Prune(args)) => stats::run_stats_prune(args),
                 Some(stats::StatsCmd::Graph(args)) => stats_graph::run_stats_graph(args),
-            };
+            }
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Usage { cmd }) => {
             // Hub-only reads/writes — no provider, no API keys.
-            return usage_cmd::run_usage(cmd.clone());
+            return usage_cmd::run_usage(cmd.clone()).map_err(failure::CliFailure::from);
         }
         Some(Command::Cloud { cmd }) => {
-            return usage_cmd::run_cloud(cmd.clone());
+            return usage_cmd::run_cloud(cmd.clone()).map_err(failure::CliFailure::from);
         }
         Some(Command::Telemetry { cmd }) => {
             // Managed operational export is independent of model/provider
             // configuration. Community/default status constructs no client.
-            return enterprise_telemetry::run_command(*cmd);
+            return enterprise_telemetry::run_command(*cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Ingest(args)) => {
             // Scanning (no paths) reads local markdown only; extracting from
@@ -752,11 +791,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 cli.globals.model.as_deref(),
                 cli.globals.api_key.as_deref(),
                 cli.globals.base_url.as_deref(),
-            );
+            )
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Scoreboard) => {
             // Reads .stella/private/store.db only.
-            return scoreboard_cmd::run();
+            return scoreboard_cmd::run().map_err(failure::CliFailure::from);
+        }
+        Some(Command::Fullauto { cmd }) => {
+            // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
+            // of the defect queue) — works with zero API keys.
+            return fullauto_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Fullauto { cmd }) => {
             // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
@@ -787,12 +832,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 }
                 memory_cmd::MemoryCmd::Compact(args) => memory_compact::run_memory_compact(args),
                 memory_cmd::MemoryCmd::Index(args) => memory_index::run_memory_index(args),
-            };
+            }
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Mcp { cmd }) => {
             // MCP management reads/writes local config + the registry over
             // HTTP — no provider or API key required.
-            return mcp_cmd::run(cmd);
+            return mcp_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Connect { cmd }) => {
             // Tracker OAuth talks only to the tracker the user is connecting
@@ -807,19 +853,19 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                      `stella connect linear --paste-key`"
                 );
             }
-            return connect_cmd::run(cmd);
+            return connect_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Auth { cmd }) => {
             // Reads/writes ~/.stella/credentials.toml directly — no
             // provider needs to already resolve (this is often how the
             // FIRST key gets configured), so this short-circuits before
             // `Config::load` like `Connect`/`Mcp` do.
-            return auth_cmd::run(cmd);
+            return auth_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Observe { port, open }) => {
             // Loopback-only dashboard over local telemetry — no provider or
             // API key required; the stores are opened strictly read-only.
-            return storage_cmd::run_observe(*port, *open);
+            return storage_cmd::run_observe(*port, *open).map_err(failure::CliFailure::from);
         }
         Some(Command::Migrate { cmd }) => {
             // Deliberately BEFORE `Config::load`, for the same reason as
@@ -832,7 +878,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             let root = std::env::current_dir()
                 .map_err(|e| format!("cannot determine workspace root: {e}"))?;
             println!("Migrating settings.json -> stella.toml\n");
-            return settings::migrate::run(&root, *dry_run);
+            return settings::migrate::run(&root, *dry_run).map_err(failure::CliFailure::from);
         }
         Some(Command::Doctor {
             repair,
@@ -849,7 +895,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 *last_failure,
                 cli.globals.model.as_deref(),
                 cli.globals.base_url.as_deref(),
-            );
+            )
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Completions { shell }) => {
             // Generated from the live `Command` tree, so a new subcommand or
@@ -865,7 +912,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         }
         Some(Command::Resume { list: true, .. }) => {
             // Listing reads the local registry only — no provider required.
-            return run_resume_list();
+            return run_resume_list().map_err(failure::CliFailure::from);
         }
         Some(Command::Daemon { .. }) => {
             // Finding, watching and stopping supervised runs is the local
@@ -876,17 +923,29 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             let Some(Command::Daemon { cmd }) = &cli.command else {
                 unreachable!("matched Command::Daemon")
             };
-            return daemon::run(cmd);
+            match cmd {
+                // `daemon resume` splits (#1586): the parent half below only
+                // spawns and streams, so it too works keyless from any
+                // directory — while the `--foreground` child half does the
+                // interrupted turn's actual work and falls through to
+                // provider resolution, its cwd already pinned to the
+                // record's workspace by the parent's launch.
+                DaemonCmd::Resume { id } if !cli.globals.foreground => {
+                    return daemon::resume_supervised(rt()?, id.as_deref())
+                        .map_err(failure::CliFailure::from);
+                }
+                DaemonCmd::Resume { .. } => {}
+                // The sweep is the parent half N times over — it resolves,
+                // spawns and streams each `daemon resume <id> --foreground`
+                // child — so it stays keyless here for the same reason.
+                DaemonCmd::ResumeAll { dry_run } => {
+                    return daemon::resume_all(*dry_run, rt).map_err(failure::CliFailure::from);
+                }
+                _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
+            }
         }
         _ => {}
     }
-
-    let rt = || {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to start runtime: {e}"))
-    };
 
     // Everything past here resolves a provider (and may build one), so the
     // model catalog must be live first: open catalog.db, auto-sync each
@@ -907,7 +966,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 cli.globals.base_url.as_deref(),
                 term_policy::animation_disabled(cli.globals.no_anim),
             ),
-        );
+        )
+        .map_err(failure::CliFailure::from);
     }
 
     // Run/Chat/Config need a resolved config (which requires an API key).
@@ -968,14 +1028,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             )?;
             // Resolved first on purpose: the prompt may have come from this
             // process's stdin, and a detached child has none to read.
-            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
+            let posture = supervision(&cli.globals);
+            if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &prompt),
                     prompt.as_bytes(),
-                    scope_review_lost,
-                );
+                    posture,
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1019,14 +1080,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 std::io::stdin().is_terminal(),
                 prompt_source::read_stdin_to_string,
             )?;
-            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
+            let posture = supervision(&cli.globals);
+            if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &goal),
                     goal.as_bytes(),
-                    scope_review_lost,
-                );
+                    posture,
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1034,6 +1096,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             )?;
         }
         Command::Fleet {
+            cmd: Some(sub),
+            ..
+        } => {
+            // Maintenance verbs never fan out, never supervise, and never
+            // touch a provider — dispatch before any of the run machinery.
+            signals::block_on_interruptible(rt()?, fleet_verbs::run(&cfg, &sub))?;
+        }
+        Command::Fleet {
+            cmd: None,
             tasks,
             plan,
             max_concurrency,
@@ -1043,7 +1114,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             task_timeout,
             output_format,
         } => {
-            if let Some(scope_review_lost) = supervision(&cli.globals, output_format, &cfg) {
+            let posture = supervision(&cli.globals);
+            if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
@@ -1055,8 +1127,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                         },
                     ),
                     &[],
-                    scope_review_lost,
-                );
+                    posture,
+                ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
                 rt()?,
@@ -1076,14 +1148,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         }
         Command::Monitor { target } => {
             let target = target.unwrap_or_else(|| "main".to_string());
-            if let Some(scope_review_lost) = supervision(&cli.globals, OutputFormat::Text, &cfg) {
+            let posture = supervision(&cli.globals);
+            if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
                     &supervised_title(&cfg, &format!("monitor {target}")),
                     &[],
-                    scope_review_lost,
-                );
+                    posture,
+                ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status
             // itself) ends the loop only on a fully green latest run.
@@ -1142,12 +1215,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // a deck feature — the plain REPL has no session to restore).
             debug_assert!(!list, "handled before provider resolution");
             if !term_policy::use_deck(cli.globals.plain) {
-                return Err(
+                return Err(failure::CliFailure::error(
                     "`stella resume` reopens a Command Deck session and needs a real \
                      terminal (it cannot combine with --plain / STELLA_PLAIN / a piped \
-                     stream). `stella resume --list` works anywhere."
-                        .to_string(),
-                );
+                     stream). `stella resume --list` works anywhere.",
+                ));
             }
             let request = match id {
                 Some(id) => session_persist::ResumeRequest::Id(id),
@@ -1161,6 +1233,18 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     deck_presentation(&cli.globals),
                     Some(request),
                 ),
+            )?;
+        }
+        // The `--foreground` child half of `daemon resume` (#1586): cfg has
+        // resolved from the record's workspace (the parent pinned the cwd),
+        // and the interrupted turn continues from its checkpoint. Every other
+        // daemon verb returned from the keyless dispatch above.
+        Command::Daemon {
+            cmd: DaemonCmd::Resume { id },
+        } => {
+            signals::block_on_interruptible(
+                rt()?,
+                agent::resume::run_resume(&cfg, id.as_deref()),
             )?;
         }
         // Models/Version (and Tools) short-circuit in the first match at the

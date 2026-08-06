@@ -1,10 +1,19 @@
 //! Supervisor tests (#1552).
 //!
 //! The decision half is pure and tested as arithmetic. The mechanical half —
-//! `setsid`, the liveness lock, the split console, the stop escalation — is
-//! tested against **real child processes**, because every one of those is a
-//! syscall whose behaviour is the thing under test: a fake would assert only
-//! that the fake was written to match the assertion.
+//! `setsid`, the liveness lock, the split console, both rungs of the stop
+//! escalation — is tested against **real child processes**, because every one
+//! of those is a syscall whose behaviour is the thing under test: a fake would
+//! assert only that the fake was written to match the assertion.
+//!
+//! What is NOT covered here, so the list is not mistaken for the whole
+//! surface: `Supervised::follow` and `interrupt_and_drain` write to this
+//! process's real stdout and stderr, which an in-process test cannot capture,
+//! so their streaming is exercised through [`Tail`] — which is where the
+//! truncation and lost-tail bugs actually live — rather than end to end. The
+//! end-to-end property (a `stella run` in a terminal survives that terminal's
+//! hangup) needs a pty and a live run; it is verified by hand, and the
+//! procedure is in the PR that added this module.
 
 use super::*;
 
@@ -28,7 +37,7 @@ fn spawn_sh(registry: &SessionRegistry, title: &str, script: &str) -> Supervised
         "/tmp/workspace",
         title,
         Path::new("/bin/sh"),
-        &["-c".to_string(), script.to_string()],
+        &["-c".into(), script.into()],
         b"",
     )
     .expect("supervised spawn")
@@ -78,17 +87,6 @@ fn a_terminal_run_is_supervised_and_everything_else_is_not() {
     // decision with `--foreground` lost, it must still refuse — one process
     // does the work, and this is the backstop that keeps it one.
     assert!(!should_supervise(false, true, true));
-}
-
-#[test]
-fn losing_scope_review_is_only_a_loss_when_there_was_something_to_lose() {
-    // A terminal run could have answered; supervised, it cannot. Say so.
-    assert!(loses_interactive_scope_review(true, false));
-    // The workspace opted out of the gate, so nothing was going to be asked.
-    assert!(!loses_interactive_scope_review(true, true));
-    // Already headless (piped, json): supervision took nothing away.
-    assert!(!loses_interactive_scope_review(false, false));
-    assert!(!loses_interactive_scope_review(false, true));
 }
 
 /// The witness for the whole feature: a supervised run leaves the terminal's
@@ -216,20 +214,31 @@ fn the_console_is_replayable_and_the_two_streams_stay_apart() {
 /// signals only the leader leaves the tools it spawned running, and a stop
 /// that never writes a terminal status leaves a run the operator ended by hand
 /// to be presented, forever, as a crash.
+/// # Why the liveness lock is the probe, and `kill(-pgid, 0)` is not (#1609)
+///
+/// This asserted an empty process group, and failed deterministically on
+/// Actions while passing on every developer's machine. `kill(-pgid, 0)`
+/// answers "does this group have members", and a **zombie is a member**: it
+/// stays in its group until it is reaped. The group here is `sh` plus the
+/// `sleep` it spawned, and `sleep` is our *grand*child — when `sh` dies it is
+/// reparented to PID 1, so nothing in this test can reap it. A PID 1 that
+/// reaps promptly (a normal desktop init) hides the flaw; the Actions runner's
+/// does not, and the probe reports a group of one dead process as alive.
+///
+/// Reaping harder cannot fix it — the unreapable process is the one we do not
+/// own. The lock can: a zombie holds no file descriptors, because the kernel
+/// closes them at exit, so a free lock proves every holder genuinely *exited*.
+/// That is both the property this test wants and a strictly stronger one than
+/// the probe it replaces.
 #[test]
-#[ignore = "the group-gone probe counts zombies: kill(-pgid, 0) succeeds while \
-            CI's PID 1 leaves the orphaned sleep unreaped, so this fails \
-            deterministically on Actions and only there — see #1609"]
 fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     let (dir, registry) = temp_registry("stop");
     // A child with a child: `sh` waits on `sleep`, so a signal that reaches
-    // only `sh` leaves `sleep` behind.
-    let run = spawn_sh(&registry, "stop", "sleep 120 & wait");
+    // only `sh` leaves `sleep` behind. `sleep` inherits the liveness lock,
+    // which is what makes the assertion below a statement about the whole
+    // group rather than only its leader.
+    let mut run = spawn_sh(&registry, "stop", "sleep 120 & wait");
     let sidecar = registry.sidecar_dir(&run.id);
-    let group = run.pgid;
-    // Deliberately dropped before the stop: the run's survival must not depend
-    // on the handle of the process that started it.
-    drop(run.child);
 
     let id = run.id.clone();
     stop(&registry, &id).expect("stop");
@@ -239,9 +248,13 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
         Some(false),
         "the run must actually be over"
     );
-    // SAFETY: probing a group with signal 0 sends nothing.
-    let group_alive = unsafe { libc::kill(-group, 0) } == 0;
-    assert!(!group_alive, "the whole process group must be gone");
+    // No `kill(-pgid, 0)` probe beside it: the doc comment above explains why
+    // the lock is the assertion and the group probe was retired (#1609). A
+    // zombie is still a group member, so the probe reports a group of one dead
+    // process as alive — deterministically, on Actions.
+
+    // Reap our own child so the test leaves no zombie of its own behind.
+    let _ = run.child.wait();
 
     assert_eq!(
         registry.get(&id).map(|r| r.status),
@@ -323,6 +336,70 @@ fn the_liveness_fallback_takes_a_lock_that_does_not_exist_yet() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The escalation rung. A run that ignores `SIGTERM` — a shell script with a
+/// `trap`, or an engine wedged below its own handler — must still end, and
+/// must still be recorded as stopped rather than left to age into a crash.
+///
+/// Deliberately slow: it waits out the real [`STOP_GRACE`], because a test
+/// that shortened the grace would be testing a different constant than the one
+/// that ships.
+#[test]
+fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
+    let (dir, registry) = temp_registry("stop-ignores-term");
+    let mut run = spawn_sh(&registry, "stubborn", "trap '' TERM; sleep 120");
+    let sidecar = registry.sidecar_dir(&run.id);
+    let id = run.id.clone();
+
+    let started = Instant::now();
+    stop(&registry, &id).expect("stop");
+    let took = started.elapsed();
+
+    assert!(
+        took >= STOP_GRACE,
+        "the child was killed after {took:?}, before its {STOP_GRACE:?} to shut down cleanly"
+    );
+    assert_eq!(
+        lock_is_held(&sidecar),
+        Some(false),
+        "a child that ignores TERM must still be gone"
+    );
+    assert_eq!(
+        registry.get(&id).map(|r| r.status),
+        Some(SessionStatus::Cancelled),
+        "the kill path must record the stop too — nothing else will"
+    );
+
+    let _ = run.child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Every terminal read goes through `drain`, because `pump` is bounded: a
+/// single bounded read where a run has just ended shows the first chunk of
+/// what is left and silently drops the rest — and the rest, at that moment, is
+/// the run's answer.
+#[test]
+fn draining_a_console_larger_than_one_chunk_delivers_all_of_it() {
+    let dir = std::env::temp_dir().join(format!("stella-daemon-chunks-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("console");
+    // Deliberately not a multiple of the chunk: an off-by-one in the loop's
+    // exit condition shows up in the remainder, not in the whole chunks.
+    let written = vec![b'x'; PUMP_CHUNK * 2 + 7];
+    std::fs::write(&path, &written).unwrap();
+
+    let mut tail = Tail::open(&path).unwrap();
+    let mut seen = Vec::new();
+    tail.drain(&mut seen).unwrap();
+    assert_eq!(seen.len(), written.len());
+
+    // One `pump` is one chunk, which is what makes `drain` necessary.
+    let mut once = Tail::open(&path).unwrap();
+    let mut partial = Vec::new();
+    assert_eq!(once.pump(&mut partial).unwrap(), PUMP_CHUNK);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn ids_resolve_by_unique_prefix_and_refuse_an_ambiguous_one() {
     let (dir, registry) = temp_registry("resolve");
@@ -345,6 +422,57 @@ fn ids_resolve_by_unique_prefix_and_refuse_an_ambiguous_one() {
     assert!(resolve(&registry, Some("ses-999")).is_err());
     // Unsupervised sessions are not this command's subject.
     assert!(resolve(&registry, Some("ses-200-3")).is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_bare_pid_resolves_the_run_that_is_running_under_it() {
+    let (dir, registry) = temp_registry("resolve-pid");
+    let mut supervised = SessionRecord::new("/w", "supervised");
+    supervised.id = "ses-100-4242".into();
+    supervised.pid = 4242;
+    supervised.supervisor = Some(SupervisorInfo { pgid: 4242 });
+    let mut plain = SessionRecord::new("/w", "unsupervised");
+    plain.id = "ses-200-777".into();
+    plain.pid = 777;
+    for record in [&supervised, &plain] {
+        registry.upsert(record).unwrap();
+    }
+
+    // The address `ps`, Activity Monitor and an OOM-killer log hand you.
+    assert_eq!(resolve(&registry, Some("4242")).unwrap().id, supervised.id);
+
+    // A miss is reported in the address space the caller used: an id begins
+    // `ses-`, so "9999" was never a prefix anything could have matched.
+    let miss = resolve(&registry, Some("9999")).unwrap_err();
+    assert!(miss.contains("pid 9999"), "{miss}");
+
+    // Unsupervised sessions are not this command's subject by pid either.
+    assert!(resolve(&registry, Some("777")).is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_pid_two_runs_have_held_is_refused_rather_than_guessed() {
+    let (dir, registry) = temp_registry("resolve-pid-recycled");
+    // The kernel recycles pids and a finished run keeps the one it ran under,
+    // so two records sharing one is reachable, not hypothetical — and picking
+    // whichever the registry listed first would stop the wrong run.
+    for id in ["ses-100-4242", "ses-900-4242"] {
+        let mut record = SessionRecord::new("/w", id);
+        record.id = id.into();
+        record.pid = 4242;
+        record.supervisor = Some(SupervisorInfo { pgid: 4242 });
+        registry.upsert(&record).unwrap();
+    }
+
+    let ambiguous = resolve(&registry, Some("4242")).unwrap_err();
+    assert!(ambiguous.contains("ses-100-4242"), "{ambiguous}");
+    assert!(ambiguous.contains("ses-900-4242"), "{ambiguous}");
+    // "use more of the id" is useless advice for a pid: there is no more of it.
+    assert!(ambiguous.contains("use the id"), "{ambiguous}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -406,4 +534,62 @@ fn a_partial_last_line_is_still_a_line() {
     assert_eq!(String::from_utf8_lossy(&seen), "two\nthree");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #1586: a resume relaunches under the SAME record — same id, same sidecar —
+/// and preserves the killed attempt's console rather than truncating it. On
+/// `main`, `launch` does not exist and every spawn mints a fresh record, so a
+/// resumed run would strand its checkpoint, its sidecar, and its history
+/// under an id nothing references.
+#[test]
+fn a_resumed_launch_keeps_the_record_and_the_crashed_console() {
+    let (_dir, registry) = temp_registry("resume-console");
+    let mut record = SessionRecord::new("/tmp/workspace", "resume");
+    record.summary = "resume".into();
+    // The killed attempt: a terminal-less status and a console tail a human
+    // still wants to read.
+    record.status = SessionStatus::Error;
+    let id = record.id.clone();
+    let sidecar = registry.prepare_sidecar(&id).unwrap();
+    std::fs::write(
+        sidecar.join(supervised::STDOUT_LOG),
+        b"the killed attempt's tail\n",
+    )
+    .unwrap();
+
+    let run = launch(
+        &registry,
+        record,
+        Path::new("/bin/sh"),
+        &[
+            std::ffi::OsString::from("-c"),
+            std::ffi::OsString::from("echo the resumed attempt"),
+        ],
+        b"",
+        Console::Preserve,
+        None,
+    )
+    .expect("relaunch");
+    assert_eq!(
+        run.id, id,
+        "resume must continue the session, not mint a second one"
+    );
+    assert!(
+        eventually(Duration::from_secs(10), || {
+            std::fs::read_to_string(sidecar.join(supervised::STDOUT_LOG))
+                .is_ok_and(|s| s.contains("the resumed attempt"))
+        }),
+        "the relaunched child's console must land"
+    );
+    let console = std::fs::read_to_string(sidecar.join(supervised::STDOUT_LOG)).unwrap();
+    assert!(
+        console.starts_with("the killed attempt's tail\n"),
+        "Console::Preserve must keep the crashed attempt's output: {console:?}"
+    );
+    let stored = registry.get(&id).unwrap();
+    assert_eq!(
+        stored.status,
+        SessionStatus::InProgress,
+        "a relaunch re-owns the record as live"
+    );
 }

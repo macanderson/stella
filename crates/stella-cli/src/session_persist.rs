@@ -991,6 +991,7 @@ mod tests {
             total_cost_usd: 0.25,
             calibration_model: None,
             loop_steered: false,
+            loop_steered_pattern: Vec::new(),
             transcript_rewrites: 0,
         };
         (checkpoint.to_json().expect("encode"), history)
@@ -1140,6 +1141,7 @@ mod tests {
             Inbound::Event {
                 agent: "lead".into(),
                 event: AgentEvent::StepUsage {
+                    reasoning_tokens: None,
                     output_text: None,
                     step: 1,
                     role: stella_protocol::ModelCallRole::Worker,

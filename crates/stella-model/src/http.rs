@@ -122,7 +122,7 @@ pub(crate) fn classify_unary_dispatch_error(label: &str, error: &reqwest::Error)
 }
 
 /// Parse a `Retry-After` header (RFC 9110 §10.2.3) into a millisecond hint
-/// for the retry policy — `stella-core/src/retry.rs` honors
+/// for the retry policy — `crates/stella-core/src/retry.rs` honors
 /// `RateLimited.retry_after_ms` when present. An absent or unparseable value
 /// yields `None` rather than an error.
 pub(crate) fn parse_retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {

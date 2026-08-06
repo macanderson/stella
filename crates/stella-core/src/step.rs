@@ -138,6 +138,41 @@ impl CancelToken {
     }
 }
 
+/// Why an aborted turn aborted: a stop the engine (or its user) *chose*, or
+/// the run failing underneath it.
+///
+/// The abort `reason` is prose for a human; this is the half a consumer may
+/// branch on. The distinction exists because the two ends of an aborted turn
+/// deserve opposite treatment at the process boundary: a deliberate stop is
+/// the engine doing its job (a benchmark should score it as "gave up", a
+/// wrapper script can retry with a different strategy), while a failure is
+/// the run falling over (score it as a crash, alert on it). Before this was
+/// typed, both exited identically and Harbor recorded a correct loop-abort
+/// as `NonZeroAgentExitCodeError` — the same row as a segfault (#1524).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbortKind {
+    /// A policy stop: the engine's own escalation (stuck loop, step cap,
+    /// budget, deadline, confident-zero close) or its user's decision (soft
+    /// stop, host cancel) ended the turn cleanly.
+    DeliberateStop,
+    /// The turn could not continue: the model call would not commit after
+    /// retries, or the model returned nothing usable at its output limit.
+    Failure,
+}
+
+impl AbortKind {
+    /// The stable snake_case label observability surfaces carry (the
+    /// lifecycle bus, JSON summaries). One definition so a consumer never
+    /// meets two spellings of the same kind.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            AbortKind::DeliberateStop => "deliberate_stop",
+            AbortKind::Failure => "failure",
+        }
+    }
+}
+
 /// How one call to [`crate::driver::Engine::run_step`] ended.
 ///
 /// The step-scoped twin of [`TurnOutcome`]: `Continue` is the case a turn
@@ -163,6 +198,9 @@ pub enum StepOutcome {
         /// Human-readable cause. [`CANCELLED_REASON`] and
         /// [`crate::driver::SOFT_STOP_REASON`] are the two a host matches on.
         reason: String,
+        /// Deliberate stop or failure — the half of `reason` a consumer may
+        /// branch on ([`AbortKind`]).
+        kind: AbortKind,
         /// Turn spend to date, in USD.
         cost_usd: f64,
     },
@@ -176,9 +214,15 @@ impl StepOutcome {
         match self {
             StepOutcome::Continue => None,
             StepOutcome::Done { text, cost_usd } => Some(TurnOutcome::Completed { text, cost_usd }),
-            StepOutcome::Aborted { reason, cost_usd } => {
-                Some(TurnOutcome::Aborted { reason, cost_usd })
-            }
+            StepOutcome::Aborted {
+                reason,
+                kind,
+                cost_usd,
+            } => Some(TurnOutcome::Aborted {
+                reason,
+                kind,
+                cost_usd,
+            }),
         }
     }
 }
@@ -192,7 +236,15 @@ impl From<TurnOutcome> for StepOutcome {
     fn from(outcome: TurnOutcome) -> Self {
         match outcome {
             TurnOutcome::Completed { text, cost_usd } => StepOutcome::Done { text, cost_usd },
-            TurnOutcome::Aborted { reason, cost_usd } => StepOutcome::Aborted { reason, cost_usd },
+            TurnOutcome::Aborted {
+                reason,
+                kind,
+                cost_usd,
+            } => StepOutcome::Aborted {
+                reason,
+                kind,
+                cost_usd,
+            },
         }
     }
 }
@@ -227,10 +279,14 @@ pub struct TurnState {
     /// drift correction. `None` until the first result lands — `CalibrationMap
     /// ::factor` then falls back to the session's single seeded entry.
     pub(crate) calibration_model: Option<String>,
-    /// Whether this turn already spent its one stuck-loop steering warning
-    /// (`Engine::check_loop_detection`) — the next detection aborts instead of
-    /// warning again.
-    pub(crate) loop_steered: bool,
+    /// The tool pattern this turn's one stuck-loop steering warning was
+    /// issued about (`driver::loop_escalation`), or `None` while the warning
+    /// is unspent. The next detection after `Some` aborts instead of warning
+    /// again; whether its pattern matches the recorded one is what decides
+    /// if the abort may claim the loop *persisted* (#1524). An empty vector
+    /// means "spent, pattern unknown" — a turn resumed from a checkpoint
+    /// written before the pattern was recorded.
+    pub(crate) loop_steered: Option<Vec<String>>,
     /// How many times the transcript has been rewritten in place rather than
     /// appended to. The live invalidation counter lives with the memos it
     /// invalidates (`TurnMemos`) and is an opaque type with no accessor; this
@@ -281,7 +337,7 @@ impl TurnState {
             budget,
             total_cost_usd: 0.0,
             calibration_model: None,
-            loop_steered: false,
+            loop_steered: None,
             transcript_rewrites: 0,
             step: 0,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
@@ -302,7 +358,9 @@ impl TurnState {
             budget: checkpoint.budget.restore(),
             total_cost_usd: checkpoint.total_cost_usd,
             calibration_model: checkpoint.calibration_model,
-            loop_steered: checkpoint.loop_steered,
+            loop_steered: checkpoint
+                .loop_steered
+                .then_some(checkpoint.loop_steered_pattern),
             transcript_rewrites: checkpoint.transcript_rewrites,
             step: checkpoint.step,
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
@@ -326,7 +384,8 @@ impl TurnState {
             budget: BudgetSnapshot::of(&self.budget),
             total_cost_usd: self.total_cost_usd,
             calibration_model: self.calibration_model.clone(),
-            loop_steered: self.loop_steered,
+            loop_steered: self.loop_steered.is_some(),
+            loop_steered_pattern: self.loop_steered.clone().unwrap_or_default(),
             transcript_rewrites: self.transcript_rewrites,
         }
     }
@@ -415,6 +474,7 @@ impl TurnState {
         close_open_tool_calls(&mut self.messages, CANCELLED_TOOL_RESULT, events);
         Some(StepOutcome::Aborted {
             reason: CANCELLED_REASON.to_string(),
+            kind: AbortKind::DeliberateStop,
             cost_usd: self.total_cost_usd,
         })
     }
@@ -537,6 +597,12 @@ pub struct Checkpoint {
     /// Restored so a resumed turn cannot earn a second warning for the same
     /// loop it was already told about.
     pub loop_steered: bool,
+    /// The tool pattern that warning was about, empty when `loop_steered` is
+    /// `false` — or when the checkpoint predates this field (`#[serde(default)]`
+    /// keeps v1 checkpoints readable), in which case a resumed abort cannot
+    /// claim the warned loop persisted and says so neutrally (#1524).
+    #[serde(default)]
+    pub loop_steered_pattern: Vec<String>,
     /// How many in-place transcript rewrites this turn has performed.
     /// Informational on resume — the live revision counter restarts at zero
     /// because every memo keyed by it is rebuilt too (see
@@ -992,7 +1058,7 @@ mod tests {
         let mut state = state;
         state.total_cost_usd = 0.375;
         state.calibration_model = Some("glm-5.2".into());
-        state.loop_steered = true;
+        state.loop_steered = Some(vec!["bash".into()]);
         state.step = 3;
         state.mark_transcript_rewritten();
         state.mark_transcript_rewritten();
@@ -1025,9 +1091,11 @@ mod tests {
         assert_eq!(state.messages(), checkpoint.messages.as_slice());
         assert!((state.total_cost_usd() - checkpoint.total_cost_usd).abs() < 1e-12);
         assert_eq!(state.calibration_model.as_deref(), Some("glm-5.2"));
-        assert!(
-            state.loop_steered,
-            "the spent loop steer must not be re-earned"
+        assert_eq!(
+            state.loop_steered.as_deref(),
+            Some(["bash".to_string()].as_slice()),
+            "the spent loop steer must not be re-earned, and the warned \
+             pattern must survive the resume"
         );
         assert_eq!(state.transcript_rewrites, checkpoint.transcript_rewrites);
         // And re-snapshotting the restored turn reproduces the checkpoint, so

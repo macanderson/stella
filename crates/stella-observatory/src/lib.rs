@@ -48,6 +48,7 @@ mod fsview;
 mod fullauto;
 mod global;
 mod live;
+mod sent_context;
 
 use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
@@ -234,6 +235,27 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                     id,
                     query_param(query, "full").is_some(),
                     query_param(query, "after_seq").and_then(|v| v.parse::<i64>().ok()),
+                ),
+                None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
+            }
+        }
+        // The sent-context inspection (#1475): the messages one model call was
+        // given, rebuilt from its receipt. Without `step` this is the index of
+        // the execution's recorded calls — what the drawer drills from;
+        // `turn`/`call_seq` default to the worker call, as on the CLI, and
+        // `full=1` lifts the per-message clip.
+        "/api/execution-context" => {
+            match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
+                Some(id) => obs.execution_context(
+                    id,
+                    query_param(query, "turn")
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(0),
+                    query_param(query, "step").and_then(|v| v.parse::<i64>().ok()),
+                    query_param(query, "call_seq")
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(0),
+                    query_param(query, "full").is_some(),
                 ),
                 None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
             }

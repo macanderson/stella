@@ -1,14 +1,67 @@
-//! The focused agent's blocking gates: the scope-review card, the per-hunk
+//! The focused agent's blocking gates: the plan-review dialog, the per-hunk
 //! approval card (#1265), and the `ask_user` question.
 //!
 //! All three follow one rule — a pending, unanswered gate owns the user's next
-//! submission. That rule is what makes a card answerable at all: the deck's
+//! submission. That rule is what makes a gate answerable at all: the deck's
 //! driver reads any other mid-turn submission as a *new request* and spawns a
 //! sidecar sub-session for it, so a gate that does not claim the submit chord
 //! watches the reviewer's words go to a different agent while it stays parked.
-//! Split out of `deck_ui.rs` beside `nav`/`create` (#458).
+//! The plan-review gate goes further: it is a modal dialog
+//! ([`crate::views::scope_dialog`]) that owns the whole keyboard, answered
+//! with a single keypress. Split out of `deck_ui.rs` beside `nav`/`create`
+//! (#458).
 
 use super::*;
+
+/// A text input open *inside* the plan-review dialog. The dialog is modal, so
+/// at most one is up at a time and the variant is what the keyboard means.
+///
+/// Both exist to restore something the typed-answer flow had and the modal
+/// dropped. The modal owns the whole keyboard — that is what makes a bare
+/// letter safe as a decision (see the collision history on
+/// `handle_focused_gates`, this module's `pub(super)` key handler) — but owning
+/// the keyboard also took the composer away, and with it two capabilities the
+/// reviewer used to have while deciding.
+/// Rather than hand the composer back (which reopens the collision), each one
+/// comes back as its own input *within* the dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeInput {
+    /// `r` — a refinement note for the planner (#1630).
+    ///
+    /// **Multi-line**, because re-scoping instructions are prose: a modified
+    /// `⏎` inserts a newline and a bare `⏎` sends, the same chord the composer
+    /// used. A single-line buffer silently truncated the long instructions
+    /// that are the whole reason someone refines instead of approving.
+    Refine(String),
+    /// `!` — a shell line run without leaving the dialog (#1629).
+    ///
+    /// **Single-line**: it is one command, and it does not answer the gate.
+    /// Reading back before deciding (`!git status`, `!cargo test -q`) is part
+    /// of reviewing a plan, and the alternative the modal left was "abort the
+    /// plan, look, then make the planner propose it again".
+    Shell(String),
+}
+
+impl ScopeInput {
+    /// The buffer as typed, for rendering.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Refine(s) | Self::Shell(s) => s,
+        }
+    }
+
+    /// Append a paste. The refine note takes the clipboard verbatim, newlines
+    /// and all — it is a multi-line surface like the agent editor. The shell
+    /// line flattens, because a pasted blob whose second line is another
+    /// command must not become two commands on one `⏎`.
+    pub fn paste(&mut self, text: &str) {
+        match self {
+            Self::Refine(note) => note.push_str(text),
+            Self::Shell(cmd) => super::push_single_line(cmd, text),
+        }
+    }
+}
 
 /// A reviewer's in-progress marks on one hunk-review card.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,68 +122,126 @@ pub(super) fn handle_focused_gates(
     let composer_empty = ui.composer.buffer().is_empty();
 
     // Scope review, while UNANSWERED — the pending gate clears on the engine's
-    // follow-on event, so the latch is what stops a second submit re-sending the
-    // decision during that round-trip; the card reads "decision sent" until
-    // then and keys type into the composer as usual.
+    // follow-on event, so the latch is what stops a second keypress re-sending
+    // the decision during that round-trip (the dialog drops the moment the
+    // latch is set — see `views::scope_dialog::pending`).
     //
-    // **Only non-text keys act on their own.** `Esc` aborts immediately; every
-    // other answer — `a`, `t`, `x`, `ok`, or a sentence describing a different
-    // scope — is typed into the composer and sent with the submit chord, read by
-    // [`ScopeDecision::from_typed`].
+    // The gate is a **modal dialog** now, answered with a single keypress:
+    // `a` approve · `t` trim · `r` refine (type a note, `⏎` sends it) ·
+    // `x`/Esc abort. Single letters were tried once before and removed,
+    // because the gate then rendered as a *band* while the composer stayed
+    // live underneath — the two surfaces competed for every letter, and a
+    // note opening "also do X" silently approved an eight-step plan. The
+    // dialog resolves that collision structurally instead of by ceremony:
+    // while it is up it owns the keyboard (every unclaimed key is swallowed
+    // here, never typed into the composer), so a letter can only ever mean
+    // what the dialog says it means — the same modality that makes `git`'s
+    // `y/n` and the routing card's `s/n/p` safe. What the composer used to
+    // provide survives as the dialog's own inputs ([`ScopeInput`]): `r` for a
+    // multi-line refinement note, `!` for a shell line.
     //
-    // A single unmodified letter used to commit from an empty composer, and that
-    // is wrong for *this* surface. A single-key commit is fine where the prompt
-    // is modal (git's `y/n`, a permission dialog) because nothing else wants the
-    // letter. Here the composer is an unconditional band, always live, and
-    // typing a note is now the advertised way to ask for a different scope — so
-    // the card was competing with the text field for `a`, and losing either way:
-    // a note opening "also do X" silently approved an eight-step plan, while a
-    // reviewer who typed past that first letter had no way to send what they
-    // wrote (it fell through to the driver, which reads a mid-turn prompt as a
-    // *new request* and spawns a sidecar sub-session for it — the gate stayed
-    // parked, the words went to a stranger agent, and the only key still
-    // reaching the card was Esc, which aborts).
+    // `PgUp`/`PgDn` deliberately fall through: they are pure transcript
+    // scroll, and a reviewer reads back for context before deciding — the
+    // same carve-out the hunk card makes. `!` shell lines, which the typed
+    // flow also carved out, come back as an input *inside* the dialog
+    // ([`ScopeInput::Shell`]) rather than as a hole in the modality: the
+    // composer stays unreachable, so no key ever leaks behind the dialog.
     //
-    // `Esc` keeps acting immediately because it cannot collide with prose, and
-    // because it is the direction that *stops* work rather than starting it.
-    // The one keystroke this costs buys deliberate consent at the one gate whose
-    // whole purpose is deliberate consent.
-    //
-    // Esc is claimed with a *non-empty* composer too, which the letter keys
-    // never are. Otherwise "type a note, change your mind, press Esc" fell past
-    // the gate into the turn-stop chain — and for a pipeline turn that is a hard
-    // cancel, so the same gesture ended the turn cleanly or violently depending
-    // on whether the user had started typing. While a card is up, Esc means one
-    // thing: get out of this card.
-    if entry.model.pending_scope_review.is_some() && !ui.scope_answered.contains(agent) {
-        let decision = match key.code {
-            KeyCode::Esc => Some(ScopeDecision::Abort),
-            // A `!` line is a shell command even while a gate is pending — it
-            // must run immediately, not be read as the decision (same carve-out
-            // as `ask_user`).
-            KeyCode::Enter
-                if classify_enter(&key) == EnterAction::Submit
-                    && !ui.composer.buffer().trim_start().starts_with('!') =>
-            {
-                match ui.composer.take_submission() {
-                    // A *modified* `⏎` is NOT claimed above (`classify_enter`
-                    // answers Newline for it), so a note can span lines
-                    // before a bare `⏎` sends it.
-                    Some(submission) => Some(ScopeDecision::from_typed(&submission.text)),
-                    // An empty submit while a card is pending: force an
-                    // explicit answer rather than sending a blank note.
-                    None => return Some(DeckAction::Ignored),
-                }
+    // Asked through `pending` rather than re-derived here. The predicate's own
+    // doc promises the renderer, this handler and the cursor-suppression check
+    // "can never disagree", and that only holds if all three ask it — a copy of
+    // the condition is a promise that decays on the next edit to either. It
+    // also carries the Session-tab scope, so the dialog can never own the
+    // keyboard on a tab that is not drawing it.
+    if crate::views::scope_dialog::pending(model, ui).is_some() {
+        // An input is open (`r` or `!` was pressed): the dialog is a text
+        // field until `⏎` acts on the line or Esc returns to the options.
+        if let Some(input) = ui.scope_input.as_mut() {
+            // Esc backs out of the input, never out of the gate — the plan is
+            // still unanswered and the dialog is still up behind this field.
+            if key.code == KeyCode::Esc {
+                ui.scope_input = None;
+                return Some(DeckAction::Handled);
             }
-            _ => None,
-        };
-        // A blank note is not an answer — keep the card up (the composer is
-        // already drained, so this is the "typed only whitespace" case).
-        if let Some(ScopeDecision::Revise { note }) = &decision
-            && note.is_empty()
-        {
-            return Some(DeckAction::Ignored);
+            match classify_enter(&key) {
+                EnterAction::Submit => {
+                    // A blank line is not an action, in either mode: stay in
+                    // the input, buffer untouched, rather than sending the
+                    // planner an empty revision or the shell an empty command.
+                    let line = input.text().trim().to_string();
+                    if line.is_empty() {
+                        return Some(DeckAction::Ignored);
+                    }
+                    return Some(match input {
+                        // A refine note answers the gate: latch it, send it.
+                        ScopeInput::Refine(_) => {
+                            ui.scope_input = None;
+                            ui.scope_answered.insert(agent.clone());
+                            DeckAction::Send(WorkspaceInput::ToAgent {
+                                agent: agent.clone(),
+                                input: UserInput::ScopeDecision(ScopeDecision::Revise {
+                                    note: line,
+                                }),
+                            })
+                        }
+                        // A shell line does NOT answer the gate: no latch, and
+                        // the dialog stays up — with the command still in the
+                        // field — so the reviewer decides *after* reading the
+                        // output. That is the whole point of having it:
+                        // running `!git status` must not count as approving
+                        // the plan it was run to evaluate.
+                        ScopeInput::Shell(_) => DeckAction::Shell(line),
+                    });
+                }
+                // A modified `⏎` composes: the refine note is prose and spans
+                // lines (the chord the composer used). A shell line is one
+                // command, so the chord does nothing there rather than
+                // building a buffer `⏎` would run as a single command.
+                EnterAction::Newline => {
+                    if let ScopeInput::Refine(note) = input {
+                        note.push('\n');
+                    }
+                    return Some(DeckAction::Handled);
+                }
+                EnterAction::NotEnter => {}
+            }
+            match key.code {
+                KeyCode::Backspace => {
+                    match input {
+                        ScopeInput::Refine(buf) | ScopeInput::Shell(buf) => buf.pop(),
+                    };
+                    return Some(DeckAction::Handled);
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    match input {
+                        ScopeInput::Refine(buf) | ScopeInput::Shell(buf) => buf.push(c),
+                    }
+                    return Some(DeckAction::Handled);
+                }
+                _ => return Some(DeckAction::Handled),
+            }
         }
+        let decision = match key.code {
+            KeyCode::Char('a') if key.modifiers.is_empty() => Some(ScopeDecision::Approve),
+            KeyCode::Char('t') if key.modifiers.is_empty() => Some(ScopeDecision::Trim),
+            KeyCode::Char('x') if key.modifiers.is_empty() => Some(ScopeDecision::Abort),
+            KeyCode::Esc => Some(ScopeDecision::Abort),
+            KeyCode::Char('r') if key.modifiers.is_empty() => {
+                ui.scope_input = Some(ScopeInput::Refine(String::new()));
+                return Some(DeckAction::Handled);
+            }
+            // The shell escape the typed flow had. `!` is not a decision
+            // letter and never has been, so it costs the dialog nothing.
+            KeyCode::Char('!') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                ui.scope_input = Some(ScopeInput::Shell(String::new()));
+                return Some(DeckAction::Handled);
+            }
+            // Pure scroll stays available — reading back is part of deciding.
+            KeyCode::PageUp | KeyCode::PageDown => None,
+            // Everything else is swallowed: a dialog whose keys leaked into
+            // the composer behind it would be worse than no dialog.
+            _ => return Some(DeckAction::Handled),
+        };
         if let Some(decision) = decision {
             ui.scope_answered.insert(agent.clone());
             return Some(DeckAction::Send(WorkspaceInput::ToAgent {

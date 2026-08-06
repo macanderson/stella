@@ -1361,6 +1361,7 @@ fn empty_result(finish_reason: Option<FinishReason>) -> CompletionResultAlias {
             output_tokens: 8192,
             cached_input_tokens: 0,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         },
         model: "scripted".into(),
         cost_usd: 0.05,
@@ -1497,6 +1498,7 @@ fn length_text_result(text: &str) -> CompletionResultAlias {
             output_tokens: 16384,
             cached_input_tokens: 0,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         },
         model: "scripted".into(),
         cost_usd: 0.001,
@@ -2059,16 +2061,16 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
-    match outcome {
-        TurnOutcome::Aborted { reason, cost_usd } => {
-            assert!(reason.contains("budget"));
-            assert!(
-                (cost_usd - 0.0001).abs() < 1e-9,
-                "the abort must retain the settled over-cap call: {cost_usd}"
-            );
-        }
-        other => panic!("expected a budget abort, got {other:?}"),
-    }
+    let TurnOutcome::Aborted {
+        reason, cost_usd, ..
+    } = outcome
+    else {
+        panic!("expected a budget abort, got {outcome:?}")
+    };
+    assert!(
+        reason.contains("budget") && (cost_usd - 0.0001).abs() < 1e-9,
+        "the abort must name the budget and retain the settled over-cap call: {reason} @ {cost_usd}"
+    );
     let events = drain_events(&mut rx);
     assert!(
         events
@@ -2473,6 +2475,7 @@ async fn every_committed_step_emits_exactly_one_step_usage_record() {
             output_tokens: 50,
             cached_input_tokens: 800,
             cache_write_tokens: 120,
+            reasoning_tokens: None,
         };
         result
     };
@@ -2648,6 +2651,7 @@ async fn each_committed_step_feeds_the_calibration_and_reports_its_estimate() {
             output_tokens: 50,
             cached_input_tokens: 0,
             cache_write_tokens: 0,
+            reasoning_tokens: None,
         };
         // Vary each input: three byte-identical bash calls are exactly what
         // `loop_detect` exists to abort — this test is about the
@@ -2734,6 +2738,7 @@ async fn cache_write_tokens_count_toward_the_calibration_actual() {
             output_tokens: 50,
             cached_input_tokens: 0,
             cache_write_tokens: 100_000,
+            reasoning_tokens: None,
         };
         if let Some(call) = result.tool_calls.first_mut() {
             call.input = serde_json::json!({ "cmd": format!("echo {}", call.call_id) });

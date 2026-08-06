@@ -3,6 +3,7 @@ use stella_protocol::ModelCallRole;
 
 fn usage(provider: &str, model: &str, cost_usd: f64) -> AgentEvent {
     AgentEvent::StepUsage {
+        reasoning_tokens: None,
         output_text: None,
         step: 0,
         role: ModelCallRole::Worker,

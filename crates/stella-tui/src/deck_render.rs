@@ -141,7 +141,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     if ui.queue_open {
         guarded_overlay(buf, area, "queue", |b| {
-            render_queue_popup(model, ui, area, b)
+            views::queue_popup::render(model, ui, area, b)
         });
     }
     // The STATE overlay (`⌃s`): the expansion of the Session tab's one-row
@@ -172,6 +172,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if ui.inspect_open {
         guarded_overlay(buf, area, "inspect", |b| {
             render_inspect_overlay(ui, area, b)
+        });
+    }
+    // The plan-review dialog: modal while the focused agent's scope gate is
+    // pending and unanswered — it is the surface that halts the session.
+    // Below the cards on purpose: raising `/plan` over it is how a reviewer
+    // reads the envelope detail before deciding (Esc lowers the card and the
+    // dialog is back on top).
+    if let Some(proposal) = views::scope_dialog::pending(model, ui) {
+        guarded_overlay(buf, area, "plan review", |b| {
+            views::scope_dialog::render(proposal, ui.scope_input.as_ref(), area, b)
         });
     }
     // The floating cards (`/plan` · `/models` · `/budget`): at most one is up
@@ -229,6 +239,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         // The routing card holds the user's words and owns every key until
         // they say where they go — it is checked first in `handle_deck_key`.
         || ui.pending_dispatch.is_some()
+        // The plan-review dialog answers on a single keypress — the caret
+        // must not sit in the composer while it is up (`gates.rs`).
+        || views::scope_dialog::pending(model, ui).is_some()
         // The INSTALLED AGENTS sub-modes (editor / create flow / version
         // picker) are modal text inputs while open.
         || ui.installed.mode != InstalledMode::Browse
@@ -311,72 +324,8 @@ fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
     Widget::render(tabs, area, buf);
 }
 
-/// The queue editor popup: every waiting prompt as a navigable list, newest
-/// last, with the edit/delete/clear legend (and the armed clear-all warning).
-fn render_queue_popup(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
-    let pending = model.queue.pending();
-    let w = area.width.min(64);
-    let h = ((pending + 4).min(14) as u16).min(area.height);
-    let popup = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
-    Clear.render(popup, buf);
-
-    let selected = ui.queue_sel.min(pending.saturating_sub(1));
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    if pending == 0 {
-        lines.push(Line::from(Span::styled("queue is empty", theme::muted())));
-    }
-    // Keep the selected row in view on long queues.
-    let visible_rows = (h as usize).saturating_sub(4).max(1);
-    let start = selected
-        .saturating_sub(visible_rows.saturating_sub(1) / 2)
-        .min(pending.saturating_sub(visible_rows));
-    for (i, item) in model
-        .queue
-        .items
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(visible_rows)
-    {
-        let is_sel = i == selected;
-        let marker = if is_sel { "▸ " } else { "  " };
-        let mut style = theme::body();
-        if is_sel {
-            style = style.add_modifier(Modifier::REVERSED);
-        }
-        let text: String = item
-            .text
-            .chars()
-            .take((w as usize).saturating_sub(6))
-            .collect();
-        lines.push(Line::from(vec![
-            Span::styled(format!("{marker}{}. ", i + 1), style.fg(theme::ACCENT)),
-            Span::styled(text, style),
-        ]));
-    }
-    lines.push(Line::default());
-    lines.push(if ui.queue_confirm_clear {
-        Line::from(Span::styled(
-            " press ctrl+d again to clear ALL queued prompts",
-            theme::body().fg(theme::WARN).add_modifier(Modifier::BOLD),
-        ))
-    } else {
-        Line::from(Span::styled(
-            " ↑/↓ select · enter edit · ctrl+x delete · ctrl+d ctrl+d clear · esc close",
-            theme::muted(),
-        ))
-    });
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(format!(" queue · {pending} pending "));
-    Paragraph::new(lines).block(block).render(popup, buf);
-}
+// The queue editor popup lives in `views::queue_popup` (split out beside the
+// other popup renderers under the god-file rule).
 
 /// The SESSIONS overlay (empty-prompt `←`, `/sessions`): every stella
 /// session on this machine from the cross-process registry, grouped by
@@ -815,9 +764,10 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             ),
             theme::muted(),
         )));
-        // The two failure modes read very differently and are never merged:
-        // an unresolved block is a documented coverage gap, a digest mismatch
-        // means the journal is torn or was altered.
+        // Never merged: unresolved is a coverage gap, a mismatch means the
+        // recovered bytes are not this block's. Neither is phrased as tampering
+        // — the common cause is a compaction rewrite the journal was never told
+        // about, and an alarm that fires on housekeeping is one nobody reads.
         if view.unresolved > 0 {
             lines.push(Line::from(Span::styled(
                 format!(
@@ -829,13 +779,12 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             )));
         }
         if view.digest_mismatches > 0 {
+            // Kept short enough to survive the overlay's clip: the cause is the
+            // whole point of the line, so it must not fall off the right edge.
+            let n = view.digest_mismatches;
             lines.push(Line::from(Span::styled(
-                format!(
-                    "  !! {} block(s) did not re-hash to the recorded digest — journal torn \
-                     or altered",
-                    view.digest_mismatches
-                ),
-                Style::default().fg(theme::DANGER),
+                format!("  ! {n} block(s) did not re-hash — showing closest preimage, likely a compaction rewrite"),
+                Style::default().fg(theme::WARN),
             )));
         }
         if view.verified {
@@ -1401,19 +1350,18 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ("←", "SESSIONS overlay — every session on this machine"),
             ("→", "CONTEXT overlay — active skills + MCP servers"),
             ("ctrl-g", "INSPECT — the context sent on any recorded call"),
-            // The overlay had no row for answering a card at all, while the
-            // global `⏎` row below promised the prompt would "run as its own
-            // agent" — so a reviewer typing at a scope card had every reason to
-            // expect the sidecar they got. Both halves are documented now.
             (
                 "a / t / x",
-                "scope card: approve · trim · abort — type it, then ⏎",
+                "plan review: approve · trim · abort — one keypress decides",
             ),
             (
-                "text ⏎",
-                "scope card: what to change — the plan is re-planned from it",
+                "r",
+                "plan review: refine — type what to change, ⏎ re-plans from it",
             ),
-            ("esc", "scope card: abort it (the one key that acts alone)"),
+            (
+                "esc",
+                "plan review: abort (from the refine input: back out)",
+            ),
         ],
         DeckTab::Agents => &[
             ("← →", "switch panes — executions / installed"),

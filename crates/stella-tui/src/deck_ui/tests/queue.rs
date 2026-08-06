@@ -50,6 +50,47 @@ fn bang_prefix_beats_a_pending_ask_user_gate() {
     );
 }
 
+/// The reported bug: `/clear` sat in the queue popup as "2. /clear · pending"
+/// while the agent worked. A reset that waits its turn is not a reset — the
+/// deck sends [`WorkspaceInput::SessionClear`] and the driver acts NOW, even
+/// mid-turn.
+#[test]
+fn slash_clear_resets_the_session_now_instead_of_queueing() {
+    let mut model = model_with(&["lead"]);
+    // Busy agent + backlog: exactly the screenshot's state.
+    model.apply_inbound(&Inbound::Status {
+        agent: "lead".into(),
+        status: crate::AgentStatus::Running,
+    });
+    let mut ui = ready_ui();
+    for c in "/clear".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::SessionClear),
+        "an Enqueue here is what left /clear pending in the queue popup"
+    );
+}
+
+/// …and a held dispatch (double-Esc) does not turn `/clear` into a
+/// front-queued prompt either — the reset outranks the hold.
+#[test]
+fn slash_clear_outranks_a_dispatch_hold() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.dispatch_held = true;
+    for c in "/clear".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::SessionClear)
+    );
+    assert!(!ui.dispatch_held, "the reset releases the hold");
+}
+
 #[test]
 fn ctrl_t_toggles_the_queue_editor() {
     let model = model_with_queue(&["one"]);

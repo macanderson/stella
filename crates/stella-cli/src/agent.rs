@@ -3,7 +3,7 @@
 //!
 //! `run_turn` drives `stella_core::Engine::run_turn` (the step-driver: one
 //! model call per step, retry+backoff, compaction, loop detection, budget
-//! checks — see `stella-core/src/driver.rs`) and renders its
+//! checks — see `crates/stella-core/src/driver.rs`) and renders its
 //! `AgentEvent` stream live via a spawned draining task.
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use stella_model::provider::Provider;
 use stella_pipeline::{
     AlwaysAbortGate, CmdOutcome, ContextRecallPort, McpPrefetchPort, NoContextRecall, Pipeline,
     PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStatusPort,
-    RepoStructurePort, StdioApprovalGate,
+    RepoStructurePort,
 };
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
@@ -34,9 +34,8 @@ use stella_tools::hook_runner::ShellHookRunner;
 use stella_tools::validate;
 use tokio::sync::mpsc;
 
-use crate::OutputFormat;
-use crate::config::Config;
 use crate::domains::{Domains, heuristic_domains, infer_domains};
+use crate::failure::CliFailure;
 use crate::interactive::{InteractiveToolSet, SkillRegistry, default_ask_io};
 use crate::memory::{
     ReflectionReport, SessionMemory, inject_recall_block, should_reflect_on,
@@ -44,6 +43,7 @@ use crate::memory::{
 };
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
+use crate::{OutputFormat, config::Config};
 use stella_context::EpisodeOutcome;
 
 mod coverage;
@@ -55,6 +55,7 @@ mod output;
 mod persistence;
 mod presence;
 mod prompt;
+pub(crate) mod resume;
 mod tools;
 
 pub(crate) use engine::*;
@@ -131,7 +132,7 @@ pub async fn run_one_shot(
     use_pipeline: bool,
     test_command: Option<&str>,
     keep_witness: bool,
-) -> Result<(), String> {
+) -> Result<(), CliFailure> {
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
@@ -236,7 +237,7 @@ async fn run_pipeline_one_shot(
     format: OutputFormat,
     test_command: Option<&str>,
     keep_witness: bool,
-) -> Result<(), String> {
+) -> Result<(), CliFailure> {
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let registry_options = registry_options(cfg);
@@ -395,6 +396,7 @@ async fn run_pipeline_one_shot(
         // squash-merge collapsed into a bare `is_text` check, with no test to
         // catch the regression.
         let approval_capability = approval_capability_for(
+            crate::daemon::supervised_id().is_some(),
             is_text,
             std::io::stdin().is_terminal(),
             std::io::stdout().is_terminal(),
@@ -414,7 +416,7 @@ async fn run_pipeline_one_shot(
         // witness promotion is a one-shot `--keep-witness` concern only.
         pipeline_config.keep_witness = keep_witness;
 
-        let stdio_gate = StdioApprovalGate;
+        let approval_gate = approval_gate_for(cfg, approval_capability);
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the pipeline's recall port so the
         // split-context planner sees the same durable lessons the worker's
@@ -437,11 +439,7 @@ async fn run_pipeline_one_shot(
             lint: Some(&ws_ports.lint_probe),
             mutation: Some(&ws_ports.mutation_probe),
             coverage: Some(&ws_ports.coverage_probe),
-            approvals: if approval_capability == PipelineApprovalCapability::Stdio {
-                &stdio_gate
-            } else {
-                &HEADLESS_APPROVAL_GATE
-            },
+            approvals: &approval_gate,
             sleeper: &TokioSleeper,
             hooks: cfg
                 .hooks
@@ -456,6 +454,7 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
+        crate::resume_frame::declare(&cfg.durability, &pipeline_config);
         let pipeline = Pipeline::new(ports, pipeline_event_sender(&tx, format), pipeline_config);
         pipeline.run(prompt, &mut messages, &mut budget).await
     };
@@ -678,7 +677,7 @@ async fn run_pipeline_one_shot(
                 };
                 summary.emit();
             }
-            Err(e.to_string())
+            Err(CliFailure::error(e.to_string()))
         }
     }
 }
@@ -1134,10 +1133,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
 /// same way as reflection so trivial conversational turns write nothing.
 /// `pub(crate)`: the Command Deck's turn driver records through the same
 /// helper.
-pub(crate) async fn record_turn_episode(
+pub(crate) async fn record_turn_episode<E>(
     memory: &Option<SessionMemory>,
     prompt: &str,
-    result: &Result<(), String>,
+    result: &Result<(), E>,
     registry: &ToolRegistry,
     files_before: usize,
     started_unix: i64,
@@ -1174,13 +1173,13 @@ pub(crate) async fn record_turn_episode(
 /// is excluded (`should_reflect_on`, issue #373 item 7). The gate reads only
 /// this turn's message slice (`turn_start..`) so a conversational turn never
 /// spends a model call.
-async fn reflect_on_interactive_turn(
+async fn reflect_on_interactive_turn<E: std::fmt::Display>(
     provider: &dyn Provider,
     cfg: &Config,
     memory: &mut Option<SessionMemory>,
     messages: &[CompletionMessage],
     turn_start: usize,
-    result: &Result<(), String>,
+    result: &Result<(), E>,
     budget: &mut BudgetGuard,
 ) {
     if should_reflect_on(result)
@@ -2064,7 +2063,7 @@ async fn run_turn(
     // reflects with the same memory afterwards, and a reflection that cannot
     // name its execution files an id-less row (NULL `self_rating`).
     session_memory: Option<&mut SessionMemory>,
-) -> Result<(), String> {
+) -> Result<(), CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
@@ -2180,9 +2179,9 @@ async fn run_turn(
             TurnOutcome::Completed { text, cost_usd } => {
                 ("completed", Some(text.clone()), Some(*cost_usd), None)
             }
-            TurnOutcome::Aborted { reason, cost_usd } => {
-                ("aborted", None, Some(*cost_usd), Some(reason.clone()))
-            }
+            TurnOutcome::Aborted {
+                reason, cost_usd, ..
+            } => ("aborted", None, Some(*cost_usd), Some(reason.clone())),
         };
         let summary = RawRunSummary {
             schema_version: crate::SUMMARY_SCHEMA_VERSION,
@@ -2216,7 +2215,7 @@ async fn run_turn(
             }
             Ok(())
         }
-        TurnOutcome::Aborted { reason, .. } => Err(reason),
+        TurnOutcome::Aborted { reason, kind, .. } => Err(CliFailure::from_abort(reason, kind)),
     }
 }
 

@@ -30,6 +30,13 @@
 //! since concurrent `getenv`/`setenv` is undefined behaviour on POSIX and the
 //! process environment is the one piece of global state a test cannot own.
 
+// Invariant #5: library code never panics on runtime data. This crate is at
+// zero production `unwrap`/`expect`, and this keeps it there — `make lint` runs
+// clippy with `-D warnings`, so a new one fails the gate instead of arriving
+// unremarked. `not(test)` scopes the lint exactly as the invariant does: the
+// rule is about runtime data, and `unwrap` in a test is fine.
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -105,6 +112,51 @@ pub fn resolve_data_dir(data_dir: Option<OsString>, stella_home: Option<PathBuf>
         Some(dir) => PathBuf::from(dir),
         None => stella_home.unwrap_or_else(|| PathBuf::from(".")),
     }
+}
+
+/// Where the user's `systemd --user` units live: `$XDG_CONFIG_HOME`, else
+/// `~/.config`, per the XDG base directory spec.
+pub const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
+
+/// The per-user launchd agent directory on macOS: `~/Library/LaunchAgents`.
+///
+/// Not a stella path — launchd only reads this one location, so no stella
+/// override can move it — but it is anchored on the user home, and this crate
+/// is the one place that resolves the home (see the module docs on reading
+/// the environment). `None` when no home directory is discoverable, which the
+/// caller must treat as "cannot install", never as a fallback location.
+#[must_use]
+pub fn launch_agents_dir() -> Option<PathBuf> {
+    resolve_launch_agents_dir(home_dir())
+}
+
+/// [`launch_agents_dir`] over anchors the caller supplies.
+#[must_use]
+pub fn resolve_launch_agents_dir(home: Option<PathBuf>) -> Option<PathBuf> {
+    home.map(|home| home.join("Library").join("LaunchAgents"))
+}
+
+/// The per-user systemd unit directory on Linux:
+/// `$XDG_CONFIG_HOME/systemd/user`, else `~/.config/systemd/user`.
+///
+/// Same contract as [`launch_agents_dir`]: this is where `systemd --user`
+/// looks, stella overrides cannot move it, and `None` means "cannot install".
+#[must_use]
+pub fn systemd_user_unit_dir() -> Option<PathBuf> {
+    resolve_systemd_user_unit_dir(read(XDG_CONFIG_HOME_ENV), home_dir())
+}
+
+/// [`systemd_user_unit_dir`] over anchors the caller supplies.
+#[must_use]
+pub fn resolve_systemd_user_unit_dir(
+    xdg_config_home: Option<OsString>,
+    home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let config = match xdg_config_home {
+        Some(dir) => PathBuf::from(dir),
+        None => home?.join(".config"),
+    };
+    Some(config.join("systemd").join("user"))
 }
 
 /// Whether any of [`OVERRIDE_ENV_VARS`] is set — i.e. whether resolution is
@@ -214,6 +266,34 @@ mod tests {
             PathBuf::from("/home/dev/.stella"),
             "then ~/.stella"
         );
+    }
+
+    /// Witness for #1587: the service installer's paths come from these
+    /// resolvers, not from `HOME` reads scattered through the CLI.
+    #[test]
+    fn service_directories_anchor_on_the_home_the_caller_supplies() {
+        let home = Some(PathBuf::from("/home/dev"));
+        assert_eq!(
+            resolve_launch_agents_dir(home.clone()),
+            Some(PathBuf::from("/home/dev/Library/LaunchAgents")),
+            "launchd reads exactly one per-user location"
+        );
+        assert_eq!(
+            resolve_launch_agents_dir(None),
+            None,
+            "no home means cannot install, never a fallback location"
+        );
+        assert_eq!(
+            resolve_systemd_user_unit_dir(None, home.clone()),
+            Some(PathBuf::from("/home/dev/.config/systemd/user")),
+            "the XDG default is ~/.config"
+        );
+        assert_eq!(
+            resolve_systemd_user_unit_dir(os("/etc/xdg-alt"), home),
+            Some(PathBuf::from("/etc/xdg-alt/systemd/user")),
+            "XDG_CONFIG_HOME moves the config root"
+        );
+        assert_eq!(resolve_systemd_user_unit_dir(None, None), None);
     }
 
     #[test]
