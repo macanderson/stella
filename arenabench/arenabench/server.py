@@ -531,6 +531,16 @@ def _handler_factory(
             except ValueError:
                 self._error(HTTPStatus.FORBIDDEN, "path escapes the web root")
                 return
+            # The exported client writes each route as `<route>.html` (and a
+            # directory route as `<route>/index.html`), but a browser asks for
+            # the clean path. Resolve the way the exporter wrote, never past
+            # the web root the check above already pinned.
+            if target.is_dir():
+                target = target / "index.html"
+            if not target.is_file() and not target.suffix:
+                sibling = target.with_suffix(".html")
+                if sibling.is_file():
+                    target = sibling
             if not target.is_file():
                 self._error(HTTPStatus.NOT_FOUND, f"no such asset: {rel}")
                 return
