@@ -99,7 +99,7 @@ that gates the merge anyway.
 
 ## State
 
-`~/.self-driving/<repo>/` — outside the repository, because `make no-scratch` fails
+`~/.stella/self-driving/<repo>/` — outside the repository, because `make no-scratch` fails
 the gate if a tracked file matches a `.gitignore` rule. Keyed off the **remote
 URL**, not the directory name, so a git worktree shares the main checkout's
 memory instead of starting a fresh one.
@@ -142,7 +142,7 @@ a parser, so every parsed `gh` call goes through `gh_plain`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SELF_DRIVING_STATE_DIR` | `~/.self-driving/<repo>` | ledger, seen set, aperture, calibration |
+| `SELF_DRIVING_STATE_DIR` | `~/.stella/self-driving/<repo>` | ledger, seen set, aperture, calibration |
 | `SELF_DRIVING_COMMAND_DIR` | `~/.claude/commands` | where `install-commands` writes |
 | `SELF_DRIVING_DRY_STREAK` | `2` | dry cycles that advance the aperture |
 | `SELF_DRIVING_BATCH_MAX` | `20` | AIMD hard ceiling |
