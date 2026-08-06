@@ -18,9 +18,10 @@ use super::*;
 ///
 /// Both exist to restore something the typed-answer flow had and the modal
 /// dropped. The modal owns the whole keyboard — that is what makes a bare
-/// letter safe as a decision (see the collision history in
-/// [`handle_focused_gates`]) — but owning the keyboard also took the composer
-/// away, and with it two capabilities the reviewer used to have while deciding.
+/// letter safe as a decision (see the collision history on
+/// `handle_focused_gates`, this module's `pub(super)` key handler) — but owning
+/// the keyboard also took the composer away, and with it two capabilities the
+/// reviewer used to have while deciding.
 /// Rather than hand the composer back (which reopens the collision), each one
 /// comes back as its own input *within* the dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
