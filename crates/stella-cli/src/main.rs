@@ -803,11 +803,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // of the defect queue) — works with zero API keys.
             return self_driving_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
-        Some(Command::SelfDriving { cmd }) => {
-            // Reads and writes ~/.stella/self-driving/<slug>/ (plus `gh` reads
-            // of the defect queue) — works with zero API keys.
-            return self_driving_cmd::run(cmd);
-        }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
             // (promote) — works with zero API keys.

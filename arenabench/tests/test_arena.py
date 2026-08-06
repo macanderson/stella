@@ -44,6 +44,24 @@ from arenabench.registry import DEFAULT_REGISTRY, Task, sample_tasks
 from arenabench.runner import ContestantRun, MatchRunner, _base_environment
 from arenabench.telemetry import seat_manifest_path
 
+
+def _fake_harbor(monkeypatch, *, version: str = "0.20.0", import_path_flag: bool = False):
+    """Stand in for an installed Harbor.
+
+    `_launch` resolves the binary and asks it for a version and a flag list
+    before it builds any argv, so a test that never touches Harbor still needs
+    those three answers. They are stubbed at the `arenabench.harbor` seam
+    rather than at `shutil.which`, because the version and the CLI shape are
+    the things the launch actually branches on — stubbing the lookup alone
+    would leave the real binary (or its absence) deciding the test's outcome.
+    """
+    monkeypatch.setattr("arenabench.harbor.harbor_bin", lambda: "/usr/bin/harbor")
+    monkeypatch.setattr("arenabench.harbor.harbor_version", lambda: version)
+    monkeypatch.setattr(
+        "arenabench.harbor.supports_agent_import_path", lambda: import_path_flag
+    )
+
+
 # --------------------------------------------------------------------------
 # model
 # --------------------------------------------------------------------------
@@ -276,9 +294,19 @@ class TestRegistry:
         assert tasks[0].difficulty == "easy"
 
 
-def test_every_registered_agent_declares_how_it_launches():
+@pytest.mark.parametrize("import_path_flag", [True, False])
+def test_every_registered_agent_declares_how_it_launches(monkeypatch, import_path_flag):
+    """Every agent in the registry can name the flags that launch it.
+
+    Harbor is stubbed because `launch_flags` asks the installed binary which
+    of `--agent-import-path`/`--agent` it takes, and this is an assertion
+    about the *registry*, not about what happens to be on PATH. Both answers
+    run: the fold between those two flags is the one thing that varies here,
+    and its docstring claims to work in both directions.
+    """
     from arenabench.agents import launch_flags
 
+    _fake_harbor(monkeypatch, import_path_flag=import_path_flag)
     for slug in AGENTS:
         seat = Contestant.from_json({"name": slug, "agent": slug, "engine": {"model": "m"}})
         assert launch_flags(seat), slug
@@ -638,6 +666,73 @@ class TestOfflineTaskSource:
         from arenabench.registry import TERMINAL_BENCH_21
         assert TERMINAL_BENCH_21.package_dir == "terminal-bench-2-1"
 
+    def test_a_backfilled_record_never_invents_a_harbor_version(self, tmp_path: Path):
+        """The whole point of the record is that a version you can trust looks
+        different from one nobody measured. Harbor writes its version nowhere,
+        so a reconstructed record must say so — a plausible guess here would be
+        indistinguishable from a real reading, which is the confusion this
+        exists to prevent."""
+        from arenabench import provenance
+
+        job = tmp_path / "jobs" / "m-seat"
+        job.mkdir(parents=True)
+        (job / "config.json").write_text(
+            json.dumps({
+                "job_name": "m-seat",
+                # No `install_only` / `extra_instruction_paths`: the shape a
+                # pre-0.20.0 Harbor wrote.
+                "datasets": [{
+                    "name": "terminal-bench/terminal-bench-2-1",
+                    "ref": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0"
+                           "ea7c4186773687d177ad3a0699a",
+                }],
+            })
+        )
+
+        record = provenance.backfill_match(tmp_path)
+        assert record is not None
+        assert record.harbor_version is None, "a guessed version is worse than none"
+        assert record.harbor_bound == "<0.20.0"
+        assert record.measured is False
+        assert record.source == provenance.SOURCE_BACKFILLED
+        # The digest IS recoverable here, and must be recovered.
+        assert record.dataset_digest.endswith("3a0699a")
+        assert record.dataset_key == "terminal-bench-2.1"
+
+    def test_a_measured_key_never_collides_with_an_unmeasured_one(self):
+        """Two result sets are only comparable when the apparatus matches. An
+        unknown Harbor must not produce the same grouping key as a known one,
+        or the labelling silently permits exactly the mixing it forbids."""
+        from arenabench.provenance import Provenance
+
+        measured = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version="0.6.1",
+        )
+        unmeasured = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version=None, harbor_bound="<0.20.0",
+        )
+        newer = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version="0.20.0",
+        )
+        keys = {measured.comparability_key, unmeasured.comparability_key,
+                newer.comparability_key}
+        assert len(keys) == 3, keys
+
+    def test_frontier_bench_declares_the_harbor_it_needs_to_grade_correctly(self):
+        """The floor is the point of the entry, not a nicety.
+
+        Every Frontier-Bench task sets `environment_mode = "separate"`, which
+        Harbor 0.6.1 drops silently — the run finishes and reports a score
+        graded against the wrong container topology. An entry without this
+        field would be an invitation to publish that number.
+        """
+        from arenabench.registry import FRONTIER_BENCH
+        assert FRONTIER_BENCH.min_harbor == "0.20.0"
+        assert DEFAULT_REGISTRY.get("frontier-bench") is not None
+
     def _launched_command(self, tmp_path: Path, monkeypatch, export: bool) -> list[str]:
         """The argv `_launch` actually hands Harbor, with the process stubbed."""
         if export:
@@ -645,7 +740,7 @@ class TestOfflineTaskSource:
             monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
         else:
             monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path / "nope"))
-        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+        _fake_harbor(monkeypatch)
 
         seen: dict = {}
 
@@ -695,7 +790,7 @@ class TestSeatLaunchRecord:
     def test_the_route_is_recorded_beside_the_job_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+        _fake_harbor(monkeypatch)
 
         class _Fake:
             def __init__(self, command, **kwargs):

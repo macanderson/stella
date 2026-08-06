@@ -124,8 +124,8 @@ pub(crate) mod detach;
 /// child is the only process guaranteed to still be there at the end, so a
 /// terminal status written by anyone else is a status that goes missing
 /// exactly when the terminal was closed. And it is the recursion backstop: a
-/// child that somehow reached [`should_supervise`] with an argv that lost
-/// `--foreground` still refuses to supervise itself.
+/// child that somehow reached [`should_supervise`] with an environment that
+/// lost `STELLA_FOREGROUND` still refuses to supervise itself.
 pub(crate) const SUPERVISED_ENV: &str = "STELLA_SUPERVISED";
 
 /// How long [`stop`] lets a child shut down before escalating to `SIGKILL`.
@@ -158,17 +158,18 @@ const SIGKILL: i32 = 9;
 pub(crate) struct Supervised {
     /// The registry id — what `stella daemon attach` takes.
     pub(crate) id: String,
+    /// The child's session sidecar, where a parked approval waits (#1585).
+    sidecar: PathBuf,
     /// The child's process group, which is also its pid ([`spawn`]).
     pgid: i32,
     child: std::process::Child,
-    /// The two consoles, held across the whole supervision rather than
+    /// The console reader, held across the whole supervision rather than
     /// reopened per phase, so an interrupt resumes streaming from the byte the
-    /// terminal has actually seen. Reopening and seeking to the end instead
+    /// terminal has actually seen. Reopening and skipping to now instead
     /// silently drops everything written since the last poll — which on the
     /// interrupt path is the run's own shutdown output, the part a user who
     /// just pressed Ctrl-C is most likely to want.
-    out: Tail,
-    err: Tail,
+    console: console::Follower,
 }
 
 /// Whether this invocation should be handed to the supervisor.
@@ -245,15 +246,10 @@ pub(crate) fn forwarded_exit_code() -> Option<u8> {
 /// Hand this entire invocation to a supervised child, and stream it back here
 /// until it finishes or this terminal goes away.
 ///
-/// The child re-parses the same argv with `--foreground` appended, so the
-/// division of labour is exactly one process doing the work and one process
-/// watching — no argument is re-derived, re-quoted, or dropped on the way.
-///
-/// `posture` decides whether this process then stays: [`detach::Posture::Attached`]
-/// streams the child back here until it ends, [`detach::Posture::Detached`]
-/// returns the moment the child is registered (#1607). Both spawn through the
-/// same [`spawn`], because "the launcher does not stay" is the only difference
-/// between them and a second launch path is how the two would drift.
+/// The child re-parses the same argv and is told through its environment to do
+/// the work rather than supervise it again, so the division of labour is
+/// exactly one process doing the work and one process watching — no argument
+/// is re-derived, re-quoted, or dropped on the way.
 pub(crate) fn supervise_this_invocation(
     rt: tokio::runtime::Runtime,
     workspace: &Path,
@@ -382,8 +378,8 @@ pub(crate) fn spawn(
     args: &[std::ffi::OsString],
     stdin: &[u8],
 ) -> Result<Supervised, String> {
-    // Minted before the launch so a failed spawn leaves a directory rather
-    // than a half-registered session.
+    // Minted before the spawn so the child can be told its own id, and so a
+    // failed spawn leaves a directory rather than a half-registered session.
     let mut record = SessionRecord::new(workspace, title);
     record.summary = title.to_string();
     launch(registry, record, program, args, stdin, Console::Fresh, None)
@@ -416,15 +412,11 @@ fn launch(
     registry: &SessionRegistry,
     mut record: SessionRecord,
     program: &Path,
-    args: &[impl AsRef<std::ffi::OsStr>],
+    args: &[std::ffi::OsString],
     stdin: &[u8],
     console: Console,
     cwd: Option<&Path>,
 ) -> Result<Supervised, String> {
-    // Forced back to in-progress up front: a fresh record is born live, but a
-    // resume's adopted record still carries the killed attempt's terminal
-    // reading, and the registration below must never show it.
-    record.status = SessionStatus::InProgress;
     let sidecar = registry
         .prepare_sidecar(&record.id)
         .map_err(|e| format!("cannot create the session directory: {e}"))?;
@@ -450,7 +442,11 @@ fn launch(
     //
     // The pid is this process's until the spawn returns, and is corrected
     // below. That is the safe direction to be briefly wrong in: a live record
-    // naming a live pid reads as running, which it is.
+    // naming a live pid reads as running, which it is. Status is forced back
+    // to in-progress for the same reason on the resume path, whose adopted
+    // record still carries the killed attempt's terminal reading.
+    record.pid = std::process::id();
+    record.status = SessionStatus::InProgress;
     registry
         .upsert(&record)
         .map_err(|e| format!("cannot register the supervised run: {e}"))?;
@@ -482,9 +478,7 @@ fn launch(
 
     // The CHILD's pid, deliberately: the supervisor's says a supervisor
     // exists, this says the work is running. Every liveness check in the
-    // registry, and every signal `stop` sends, reads it. Status is forced
-    // back to in-progress for the resume path, whose adopted record still
-    // carries the killed attempt's terminal reading.
+    // registry, and every signal `stop` sends, reads it.
     let pid = child.id();
     let Ok(pgid) = i32::try_from(pid) else {
         // The child is already running and detached. Leaving it would be
@@ -496,19 +490,19 @@ fn launch(
     };
     record.pid = pid;
     record.supervisor = Some(SupervisorInfo { pgid });
+    record.status = SessionStatus::InProgress;
     if let Err(e) = registry.upsert(&record) {
         abandon(registry, &record.id, &mut { child });
         return Err(format!("cannot register the supervised run: {e}"));
     }
 
-    let out = Tail::open(&out_path)?;
-    let err = Tail::open(&err_path)?;
+    let console = console::Follower::open(&sidecar)?;
     Ok(Supervised {
         id: record.id,
+        sidecar,
         pgid,
         child,
-        out,
-        err,
+        console,
     })
 }
 
@@ -627,8 +621,15 @@ impl Supervised {
     /// stdout and stderr are replayed onto stdout and stderr, never merged:
     /// see [`stella_store::supervised::STDOUT_LOG`].
     pub(crate) async fn follow(&mut self) -> Result<Option<u8>, String> {
+        use std::io::IsTerminal;
+        let interactive = std::io::stdin().is_terminal();
+        let mut approval_noted = false;
         loop {
             let moved = self.pump()?;
+            // The launching terminal is the first surface a parked scope
+            // review reaches (#1585) — this is the exact capability the
+            // supervisor used to take away.
+            approval::forward_pending_approval(&self.sidecar, interactive, &mut approval_noted);
             match self
                 .child
                 .try_wait()
@@ -647,19 +648,19 @@ impl Supervised {
         }
     }
 
-    /// Move one chunk of each console onto the matching stream, and answer how
-    /// many bytes that was. For the live loop, which comes straight back.
+    /// Move one batch of console output onto this terminal, in write order,
+    /// and answer how many bytes that was. For the live loop, which comes
+    /// straight back.
     fn pump(&mut self) -> Result<usize, String> {
-        let out = self.out.pump(&mut std::io::stdout())?;
-        let err = self.err.pump(&mut std::io::stderr())?;
-        Ok(out + err)
+        self.console
+            .pump(&mut std::io::stdout(), &mut std::io::stderr())
     }
 
-    /// Move everything both consoles hold. For the reads that will not come
-    /// back — see [`Tail::drain`].
+    /// Move everything the console holds. For the reads that will not come
+    /// back — see [`console::Follower::drain`].
     fn drain(&mut self) -> Result<(), String> {
-        self.out.drain(&mut std::io::stdout())?;
-        self.err.drain(&mut std::io::stderr())
+        self.console
+            .drain(&mut std::io::stdout(), &mut std::io::stderr())
     }
 
     /// Ask the child to stop the way `SIGTERM` from anywhere else would, then
@@ -669,10 +670,11 @@ impl Supervised {
     /// only the foreground group, which the child left, so without this a
     /// Ctrl-C would detach the run rather than stop it — the opposite of what
     /// the key means everywhere else.
-    /// The consoles continue from wherever [`Self::follow`] left them. They
-    /// used to be reopened and seeked to the end here, which threw away
-    /// everything written since the last poll — on this path that is the run's
-    /// own shutdown output, which is exactly what somebody who just pressed
+    ///
+    /// The console continues from wherever [`Self::follow`] left it. It used
+    /// to be reopened here and skipped to now, which threw away everything
+    /// written since the last poll — on this path that is the run's own
+    /// shutdown output, which is exactly what somebody who just pressed
     /// Ctrl-C is waiting to read.
     pub(crate) async fn interrupt_and_drain(&mut self) -> Result<(), String> {
         signal_group(self.pgid, SIGTERM);
@@ -961,6 +963,9 @@ fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
         let Ok(stat) = probe.metadata() else {
             continue;
         };
+        // `dev()`/`ino()` are `u64` on every Unix, so the comparison needs no
+        // cast and no `#[allow]` — which is the whole reason this reads through
+        // `MetadataExt` rather than a raw `libc::stat`.
         if stat.dev() == lock.dev() && stat.ino() == lock.ino() {
             return Some(fd);
         }
@@ -1043,6 +1048,10 @@ pub(crate) fn resume_supervised(
     let checkpoint = resume_point(&record)?;
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to resume with: {e}"))?;
+    // A fixed, self-authored argv — never after a `--`, so naming the flag
+    // here is safe where appending it to a user's argv was not. The launch
+    // sets `STELLA_FOREGROUND` too; the flag keeps the child's command line
+    // self-describing in `ps`.
     let args: Vec<std::ffi::OsString> = vec![
         "daemon".into(),
         "resume".into(),
@@ -1307,6 +1316,11 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
         // status is what the child last wrote, and a child killed between two
         // writes never got to correct it.
         let (label, paint): (&str, fn(&str) -> ColoredString) = match (live, run.status) {
+            // Yellow, not green: a parked run is waiting on the human reading
+            // this table (`stella daemon attach` answers it — #1585).
+            (true, SessionStatus::NeedsInput) => {
+                (SessionStatus::NeedsInput.label(), |s| s.yellow())
+            }
             (true, status) if status.is_live() => (status.label(), |s| s.green()),
             (true, _) => ("Running", |s| s.green()),
             // Probed only on this rare arm: a crashed run holding a resume
@@ -1316,9 +1330,9 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
             (false, status) if status.is_live() => {
                 if has_resume_point(&run) {
                     any_resumable = true;
-                    ("Crashed ↩", |s| s.red())
+                    ("Crashed ↩", |s: &str| s.red())
                 } else {
-                    ("Crashed", |s| s.red())
+                    ("Crashed", |s: &str| s.red())
                 }
             }
             (false, status) => (status.label(), |s| s.normal()),
@@ -1376,9 +1390,8 @@ fn attach(registry: &SessionRegistry, id: Option<&str>) -> Result<(), String> {
         approval::forward_pending_approval(&sidecar, interactive, &mut approval_noted);
         if lock_is_held(&sidecar) != Some(true) {
             // Same ordering as `follow`: drain after observing the end, so the
-            // last thing the run wrote is never the thing attach misses. The
-            // pump is bounded, so draining is pumping until nothing moves.
-            while console.pump(&mut std::io::stdout(), &mut std::io::stderr())? > 0 {}
+            // last thing the run wrote is never the thing attach misses.
+            console.drain(&mut std::io::stdout(), &mut std::io::stderr())?;
             eprintln!("{} {} has finished", "▸".dimmed(), record.id.dimmed());
             return Ok(());
         }

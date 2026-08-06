@@ -71,6 +71,11 @@ pub struct SessionModel {
     /// latest diff that rode its `FileChange` event (L-T5 — there is no
     /// second data path for diffs). Capped at [`MAX_TRACKED_FILES`]; the
     /// least-recently-touched path is evicted to admit a new one.
+    ///
+    /// Outlives the conversation: [`Self::reset_conversation`] keeps this and
+    /// the two fields below, because a `/clear` does not un-write the bytes on
+    /// disk — and `deck::WorkspaceModel::ledger`, the Files tab's rows, is not
+    /// reset either.
     pub files: Vec<FileState>,
     /// How many paths [`MAX_TRACKED_FILES`] eviction has dropped — surfaced
     /// in the files panel title so a capped ledger never reads as complete.
@@ -414,6 +419,49 @@ impl SessionModel {
     /// A fresh, empty model — the seq-0 state.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Rewind the **conversation** to seq-0 while keeping the record of what
+    /// this session did to the tree — what `/clear` means
+    /// (`Inbound::SessionReset`; `command_deck::session_clear`).
+    ///
+    /// Everything conversational resets: transcript, HUD, plan, proof rail,
+    /// pending gates, streaming preview. The file-touch half
+    /// ([`Self::files`], [`Self::files_evicted`], `file_touch_seq`) survives,
+    /// because those bytes are still on the user's disk after a clear and
+    /// `/clear` changes no identity — the session, its store row, its sidecar
+    /// dir and its worker lanes all continue.
+    ///
+    /// # Why this is not `*self = Self::new()`
+    ///
+    /// It was, and that made the Files tab lie. The tab's ROWS come from
+    /// `deck::WorkspaceModel::ledger`, which `/clear` deliberately leaves
+    /// alone; its diff TEXT is looked up here (L-T5 — there is no second data
+    /// path for diffs). Wholesale replacement cut one of those two and not the
+    /// other, so every row survived with its counts intact and every diff pane
+    /// went to `(no diff captured)`: an accurate `+64 -6` beside a claim that
+    /// nothing was captured.
+    ///
+    /// Carrying `file_touch_seq` across is load-bearing, not tidiness. It
+    /// stamps [`FileState::touched_seq`], the recency key
+    /// [`MAX_TRACKED_FILES`] eviction orders by; restarting it at 0 under
+    /// retained files would rank every surviving path above every new one and
+    /// evict newest-first.
+    ///
+    /// Written as a destructure-and-restore so the default for a field added
+    /// later is to RESET — new conversation state is the common case, and it
+    /// then needs no edit here; a new *file-ledger* field is what has to be
+    /// named.
+    pub fn reset_conversation(&mut self) {
+        let Self {
+            files,
+            files_evicted,
+            file_touch_seq,
+            ..
+        } = std::mem::take(self);
+        self.files = files;
+        self.files_evicted = files_evicted;
+        self.file_touch_seq = file_touch_seq;
     }
 
     /// Fold one event into the model. This is the **only** mutator; every

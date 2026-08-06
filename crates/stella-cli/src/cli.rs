@@ -15,9 +15,9 @@ use clap::{Parser, Subcommand};
 pub(crate) mod help;
 
 use crate::{
-    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, ingest_cmd,
-    inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, self_driving_cmd, stats,
-    storage_cmd, tune_cmd, usage_cmd,
+    OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fleet_verbs,
+    ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, self_driving_cmd,
+    stats, storage_cmd, tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
