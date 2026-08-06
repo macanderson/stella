@@ -48,11 +48,15 @@ pub(crate) fn dry_streak_target() -> u32 {
 }
 
 /// A heartbeat older than this means nobody is driving the cycle any more.
-/// Generous on purpose: a single model call inside an audit phase can
-/// legitimately run for minutes, and calling a live cycle dead is worse than
-/// noticing late.
+///
+/// The default comes from `stella-core` rather than a literal here, so the
+/// terminal and the observatory dashboard cannot disagree about when a run is
+/// dead — they used to hold separate `900`s (#1613).
 pub(crate) fn stale_after_secs() -> i64 {
-    env_u64("FULLAUTO_STALE_AFTER_SECS", 900) as i64
+    env_u64(
+        "FULLAUTO_STALE_AFTER_SECS",
+        stella_core::fullauto::DEFAULT_STALE_AFTER_SECS as u64,
+    ) as i64
 }
 
 pub(crate) fn aimd_limits() -> AimdLimits {

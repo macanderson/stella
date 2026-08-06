@@ -45,11 +45,12 @@ const MAX_JSONL_LINES: usize = 20_000;
 
 /// Seconds without a heartbeat after which a `running` run is reported crashed.
 ///
-/// Generous on purpose, and deliberately equal to fullauto's own
-/// `FULLAUTO_STALE_AFTER_SECS` default: a single model call inside an audit
-/// phase legitimately runs for minutes, and calling a live run dead is a worse
-/// error than noticing a dead one late.
-const STALE_AFTER_SECS: i64 = 900;
+/// Read from `stella-core` rather than restated, so this page and
+/// `stella fullauto` cannot disagree about when a run is dead. It used to be a
+/// local `900` "deliberately equal to" fullauto's own default — a comment
+/// asking a future reader to keep two numbers in step by hand, which is the
+/// same arrangement that let the NOISY threshold drift (#1613).
+const STALE_AFTER_SECS: i64 = stella_core::fullauto::DEFAULT_STALE_AFTER_SECS;
 
 /// `~/.stella/fullauto` — the root every loop's state directory sits under.
 ///
@@ -213,12 +214,20 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
         let mut live_block = Value::Null;
 
         if status == "running" {
-            if !live_id.is_empty() && live_id == id {
-                let live = l.live.clone().unwrap_or_else(|| json!({}));
-                let age = now - i64_at(&live, "heartbeat_unix");
-                if age > STALE_AFTER_SECS {
-                    status = "crashed".into();
-                }
+            // The two corrections above are `stella_core::fullauto::liveness`,
+            // not a second copy of the rule: a dashboard that decided
+            // "crashed" on its own terms would eventually disagree with the
+            // terminal about whether a run is alive, which is the exact drift
+            // #1613 was filed for.
+            let live = l.live.clone().unwrap_or_else(|| json!({}));
+            let heartbeat = i64_at(&live, "heartbeat_unix");
+            let verdict =
+                stella_core::fullauto::liveness(&id, &live_id, heartbeat, now, STALE_AFTER_SECS);
+            if verdict.is_crashed() {
+                status = "crashed".into();
+            }
+            if verdict != stella_core::fullauto::Liveness::Orphaned {
+                let age = now - heartbeat;
                 live_block = json!({
                     "phase": str_at(&live, "phase"),
                     "cycle": i64_at(&live, "cycle"),
@@ -231,8 +240,6 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
                     // cycles, which is a real and different state.
                     "cycle_pid": i64_at(&live, "cycle_pid"),
                 });
-            } else {
-                status = "crashed".into();
             }
         }
 
@@ -276,61 +283,77 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
 /// and the terminal never disagree about whether the loop is in trouble.
 fn self_improvement(cycles: &[&Value], calibration: &Value) -> Value {
     let n = cycles.len() as i64;
-    let mut signals = Vec::new();
     if n == 0 {
-        return json!({ "signals": signals, "cycles": 0 });
+        return json!({ "signals": Vec::<Value>::new(), "cycles": 0 });
     }
 
-    let fixed: i64 = cycles.iter().map(|c| i64_at(c, "fixed")).sum();
-    let filed: i64 = cycles.iter().map(|c| i64_at(c, "filed")).sum();
-    let new_findings: i64 = cycles.iter().map(|c| i64_at(c, "new_findings")).sum();
-    let zero_fix = cycles.iter().filter(|c| i64_at(c, "fixed") == 0).count() as i64;
-    let red = cycles.iter().filter(|c| str_at(c, "gate") == "red").count() as i64;
-    let clean_run = i64_at(calibration, "clean_run");
-    let batch_ceiling = calibration
-        .get("batch_ceiling")
-        .and_then(Value::as_i64)
-        .unwrap_or(20);
+    let records: Vec<stella_core::fullauto::CycleRecord> =
+        cycles.iter().filter_map(|c| as_cycle_record(c)).collect();
+    let m = stella_core::fullauto::metrics(&records);
+    let starved = stella_core::fullauto::starved(&as_calibration(calibration));
 
-    let tail_zero = cycles.len() >= 3
-        && cycles[cycles.len() - 3..]
-            .iter()
-            .all(|c| i64_at(c, "fixed") == 0);
-    if tail_zero {
-        signals.push(json!({
-            "code": "STUCK",
-            "text": "three consecutive zero-fix cycles — the blocker is structural, not the queue",
-        }));
-    }
-    if batch_ceiling <= 4 && clean_run >= 5 {
-        signals.push(json!({
-            "code": "STARVED",
-            "text": "the ceiling stayed low through five clean runs — a decrease never decayed",
-        }));
-    }
-    if n >= 5 && new_findings < n / 2 && filed > n * 2 {
-        signals.push(json!({
-            "code": "NOISY",
-            "text": "filing far more than it discovers — dedup is probably leaking",
-        }));
-    }
-    if red >= 2.max(n / 3) {
-        signals.push(json!({
-            "code": "FRAGILE",
-            "text": "a third of cycles end on a red gate — batches are too large or too mixed",
-        }));
+    // Named in this order rather than in whatever order the fold emits them,
+    // because the page has always listed them this way and the order is what a
+    // reader scans. STARVED is computed against the calibration rather than the
+    // ledger, so it arrives from a different call and has to be placed.
+    let mut signals = Vec::new();
+    for code in ["STUCK", "STARVED", "NOISY", "FRAGILE"] {
+        let signal = if code == "STARVED" {
+            starved
+        } else {
+            m.signals.iter().find(|s| s.code == code).copied()
+        };
+        if let Some(s) = signal {
+            signals.push(json!({ "code": s.code, "text": s.text }));
+        }
     }
 
+    let fixed = m.fixed as i64;
+    let new_findings = m.new_findings as i64;
     json!({
         "cycles": n,
         "fixed": fixed,
-        "filed": filed,
+        "filed": m.filed as i64,
         "discovery": new_findings,
         "fixed_per_cycle": fixed as f64 / n as f64,
         "discovery_per_cycle": new_findings as f64 / n as f64,
-        "zero_fix_cycles": zero_fix,
-        "red_gate_cycles": red,
+        "zero_fix_cycles": m.zero_fix_cycles as i64,
+        "red_gate_cycles": m.red_gate_cycles as i64,
         "signals": signals,
+    })
+}
+
+/// Read a ledger line as the typed record `stella-core` folds.
+///
+/// Tolerant where the observatory has to be and strict nowhere it matters:
+/// `ledger.jsonl` is an open, append-only file that may predate any given
+/// field, and a dashboard that dropped a whole run because one line was
+/// written by an older build would be worse than useless. Every field but
+/// `cycle` already carries a serde default, so seeding that one is the whole
+/// of the tolerance — the thresholds applied to the result are core's.
+fn as_cycle_record(v: &Value) -> Option<stella_core::fullauto::CycleRecord> {
+    let mut obj = v.as_object()?.clone();
+    obj.entry("cycle").or_insert(json!(0));
+    serde_json::from_value(Value::Object(obj)).ok()
+}
+
+/// Read `calibration.json` as the typed record `starved` argues from.
+///
+/// The two ceilings have no serde default in core — a calibration file the
+/// loop wrote is complete, and defaulting them there would hide a truncated
+/// write from the process that has to act on it. A *reader* wants the opposite,
+/// so the fallbacks live here: the same values this function used before it
+/// shared the threshold.
+fn as_calibration(v: &Value) -> stella_core::fullauto::Calibration {
+    let mut obj = v.as_object().cloned().unwrap_or_default();
+    obj.entry("batch_ceiling").or_insert(json!(20));
+    obj.entry("parallel_ceiling").or_insert(json!(2));
+    serde_json::from_value(Value::Object(obj)).unwrap_or(stella_core::fullauto::Calibration {
+        batch_ceiling: 20,
+        parallel_ceiling: 2,
+        clean_run: 0,
+        note: String::new(),
+        extra: serde_json::Map::new(),
     })
 }
 
@@ -707,5 +730,59 @@ mod tests {
         let si = self_improvement(&refs, &json!({ "clean_run": 6, "batch_ceiling": 20 }));
         assert_eq!(si["signals"].as_array().unwrap().len(), 0);
         assert_eq!(si["fixed"], 24);
+    }
+
+    /// The page and `stella fullauto metrics` must reach the SAME verdict on
+    /// the same ledger (#1613).
+    ///
+    /// Five cycles discovering two findings is the fixture that caught the
+    /// drift, and it is not an arbitrary one: this crate's private copy tested
+    /// `new_findings < n / 2` in integer arithmetic, so `2 < 5/2` is `2 < 2` —
+    /// false — while `stella-core` tests `2 * new_findings < n`, which is
+    /// `4 < 5` — true. Every ODD cycle count on the boundary disagreed, and
+    /// the two surfaces reported different health for the same loop.
+    ///
+    /// Asserting equality against `stella_core::fullauto::metrics` rather than
+    /// against the literal "NOISY" is the point: a future threshold change has
+    /// to move both surfaces or fail here, which is the property the duplicate
+    /// implementation could never have.
+    #[test]
+    fn the_page_and_the_terminal_agree_on_the_same_ledger() {
+        let cycles: Vec<Value> = (1..=5)
+            .map(|i| {
+                json!({
+                    "cycle": i,
+                    "fixed": 1,
+                    "filed": 3,
+                    // Two findings across five cycles: the odd-n boundary.
+                    "new_findings": i64::from(i <= 2),
+                    "gate": "green",
+                })
+            })
+            .collect();
+        let refs: Vec<&Value> = cycles.iter().collect();
+        let calibration = json!({ "clean_run": 1, "batch_ceiling": 20 });
+
+        let page: Vec<String> = self_improvement(&refs, &calibration)["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| str_at(s, "code"))
+            .collect();
+
+        let records: Vec<stella_core::fullauto::CycleRecord> =
+            refs.iter().filter_map(|c| as_cycle_record(c)).collect();
+        let terminal: Vec<String> = stella_core::fullauto::metrics(&records)
+            .signals
+            .iter()
+            .map(|s| s.code.to_string())
+            .collect();
+
+        assert_eq!(page, terminal, "the dashboard and the CLI disagree");
+        assert!(
+            page.contains(&"NOISY".to_string()),
+            "the fixture must actually raise the signal under test, or the \
+             assertion above is satisfied by both surfaces staying silent: {page:?}"
+        );
     }
 }
