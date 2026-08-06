@@ -8,6 +8,7 @@ A long-running verb started from a terminal — [`run`](/docs/commands/run), [`g
 ## Synopsis
 
 ```bash
+stella run "…" --detach
 stella daemon list
 stella daemon attach [id]
 stella daemon logs [id] [-n LINES]
@@ -51,12 +52,36 @@ Only ones with a controlling terminal to lose. A terminal is exactly what can cl
 | Invocation | Supervised |
 |---|---|
 | `stella run "…"` typed in a terminal | yes |
+| `stella run "…" --detach` | yes — and the launcher returns immediately ([below](#--detach-start-it-and-get-the-prompt-back)) |
 | `stella run "…" --foreground` | no — runs in this process, as older releases did |
 | `cat spec.md \| stella run` with output redirected | no — no controlling terminal |
 | a CI step, a container, a `cron` job | no |
 | [`stella chat`](/docs/commands/chat) / [`stella resume`](/docs/commands/resume) | no — the deck *is* the terminal |
 
 `--foreground` (or `STELLA_FOREGROUND=1`) opts any invocation out.
+
+## `--detach`: start it and get the prompt back
+
+Supervision keeps the run alive when the terminal goes; it does not hand the terminal back while the run continues. The launching process stays for the whole run streaming the console, and `Ctrl-C` there **stops** the run — deliberately, because that is what the key means everywhere else.
+
+`--detach` is the other half. The work is supervised exactly as it would be otherwise — same session id, same console, the whole `stella daemon` surface addresses it — but the launcher returns as soon as the run is registered:
+
+```bash
+$ stella run "migrate the config loader to serde" --detach
+▸ detached ses-1785956826121-25167 — running in the background
+  follow it with stella daemon attach ses-1785956826121-25167
+  stop it with   stella daemon stop ses-1785956826121-25167
+$
+```
+
+Two differences from an attached launch, both deliberate:
+
+- **A terminal is not required.** Plain supervision declines without one, since a run with no terminal to lose is already immune to the hangup. "Return now" is wanted from a pipe, a container, a `cron` job and a shell script exactly as much as from a terminal, so the flag forces supervision rather than merely permitting it.
+- **The exit code is the launch's, not the run's.** `stella run --detach; echo $?` answers "did the launch succeed". The run's own answer arrives in `stella daemon list`.
+
+It applies to every supervised verb — `run`, `goal`, `monitor`, `fleet` — and `STELLA_DETACH=1` sets it for a whole shell. `--foreground` wins if both are given: the flag that asks for less machinery is the safer reading of a contradictory command line, and a declared conflict would break the supervised child, which re-parses its parent's argv (`--detach` included) with `STELLA_FOREGROUND=1` in its environment.
+
+A detached run cannot ask *this* terminal anything, because there is no longer one attached — but it does not lose the answer either. A plan that crosses the scope thresholds parks exactly as described below, and the next `stella daemon attach` asks the question.
 
 ## Scope review while supervised
 
@@ -107,7 +132,20 @@ $ stella daemon resume ses-1785956826121
 
 The relaunch continues the **same session** — same id, same sidecar, the crashed attempt's console preserved — as a fresh supervised child. Completed steps are already in the checkpointed transcript, tool results included, so nothing re-runs and no tool effect is applied twice; the no-clobber staleness map rides the same checkpoint, so a file something else edited while the run was dead is refused rather than overwritten. A run that ended cleanly has nothing to resume, and `resume` says so instead of restarting it.
 
-Two honest limits: a turn that was mid-*pipeline* resumes as a plain engine turn (the verify stages that would have followed do not re-run), and a turn that was executing in a candidate worktree resumes in the workspace — the candidate died with the process.
+Two honest limits remain — and neither is silent any more. A turn that was mid-*pipeline* resumes as a plain engine turn: the checkpoint captures the worker's turn, not the pipeline's staging, so the verify and verdict stages that would have followed do not re-run. A turn that was executing in a candidate worktree resumes in the workspace, because the candidate died with the process.
+
+Both are now *announced*. `stella run` leaves a pipeline frame beside its checkpoint, and `resume` reads it before the first step: the run names every stage it is not restoring — the verify command that will not re-run, the witness flip that will not be credited, the revision rounds that will not happen, the candidate worktree that is gone — drops the green tick, and files its audit row as `resumed_complete_unverified` rather than `resumed_complete`.
+
+```text
+$ stella daemon resume ses-1785956826121
+  resuming ses-1785956826121-25167 at step 14 — completed steps stay done, nothing re-runs
+  ! this was a staged pipeline run — the resume continues its interrupted TURN, not the pipeline around it
+    the verify stage will NOT re-run `cargo test`, and no verdict is recorded
+    the witness test's fail→pass flip is NOT credited — nothing proves this done
+    re-verify it with `stella run` before treating this as done
+```
+
+An unverified resume is a resume you can still act on; an unverified resume you were never told about is not. Re-verifying is `stella run` with the verifier of your choice.
 
 ## `install` / `uninstall`
 

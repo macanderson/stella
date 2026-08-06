@@ -37,20 +37,102 @@
       "status": "living",
       "title": "Adaptive Context"
     },
+    "adaptive-context-plan": {
+      "path": "docs/spec/adaptive-context/adaptive-context-plan.md",
+      "sections": [
+        0
+      ],
+      "status": "proposed",
+      "title": "Adaptive Context \u2014 Implementation Plan"
+    },
+    "adr/0006-contextframe-vs-compiledcontextframe": {
+      "path": "docs/adr/0006-contextframe-vs-compiledcontextframe.md",
+      "status": "implemented",
+      "title": "ADR 0006: ContextFrame vs. CompiledContextFrame"
+    },
+    "adr/0009-enum-freeze-resolutions": {
+      "path": "docs/adr/0009-enum-freeze-resolutions.md",
+      "status": "implemented",
+      "title": "ADR 0009: Enum-Freeze Resolutions for Flagged Phase-1 Decisions"
+    },
+    "adr/0011-context-records-are-toml": {
+      "path": "docs/adr/0011-context-records-are-toml.md",
+      "status": "implemented",
+      "title": "ADR 0011: Context Records Are TOML (supersedes the surface decision in 0008)"
+    },
+    "adr/0012-context-record-field-schema": {
+      "path": "docs/adr/0012-context-record-field-schema.md",
+      "status": "implemented",
+      "title": "ADR 0012: The context-record field schema, and records-live-in-files"
+    },
+    "adr/0013-session-artifact-boundary": {
+      "path": "docs/adr/0013-session-artifact-boundary.md",
+      "status": "proposed",
+      "title": "ADR 0013: The session artifact boundary"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
       "title": "The agent monitor protocol"
     },
+    "agent-native-delivery": {
+      "path": "docs/design/agent-native-delivery.md",
+      "sections": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "status": "proposed",
+      "title": "Agent-Native Delivery \u2014 the issue tracker as the agent's working memory"
+    },
+    "audit/2026-08-parity-gap-followup": {
+      "path": "docs/audit/2026-08-parity-gap-followup.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "status": "archived",
+      "title": "Parity follow-up to the July 2026 audit \u2014 August 2026"
+    },
     "audit/2026-08-ultraudit-round-3": {
       "path": "docs/audit/2026-08-04-ultraudit-round-3.md",
-      "status": "living",
+      "status": "archived",
       "title": "Ultraudit round 3 \u2014 2026-08-04"
     },
     "brand": {
       "path": "docs/brand/README.md",
       "status": "living",
       "title": "stella\\* \u2014 brand kit v1.0"
+    },
+    "config-system": {
+      "path": "docs/spec/config-system/DESIGN.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "status": "implemented",
+      "title": "Design: `stella.toml` \u2014 one config file, and the five features it unlocks"
     },
     "context-frame-spec": {
       "path": "docs/spec/adaptive-context/context-frame-spec.md",
@@ -152,6 +234,21 @@
       "status": "vendored",
       "title": "Context reuse: identity, accounting, consent, and verification"
     },
+    "deterministic-engine": {
+      "path": "docs/papers/deterministic-engine.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "status": "living",
+      "title": "The Deterministic Engine: Why Single-Thread Beats the Swarm"
+    },
     "diagnostics": {
       "path": "docs/spec/diagnostics.md",
       "sections": [
@@ -242,6 +339,27 @@
       "path": "docs/spec/filesystem-layout.md",
       "status": "living",
       "title": "Where Stella puts things on your disk"
+    },
+    "pipeline-journey": {
+      "path": "docs/design/pipeline-journey.md",
+      "sections": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "status": "living",
+      "title": "The journey of a prompt \u2014 full pipeline mode, in plain language"
     },
     "remote-sandboxes": {
       "path": "docs/spec/remote-sandboxes.md",

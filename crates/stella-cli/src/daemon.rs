@@ -109,6 +109,10 @@ mod service;
 pub(crate) mod approval;
 pub(crate) mod console;
 
+/// `--detach`: the same supervised launch, without the launcher staying to
+/// stream it (#1607).
+pub(crate) mod detach;
+
 /// Carries the supervised session's registry id into the child.
 ///
 /// Two jobs. It tells the child which record to stamp on its way out — the
@@ -239,11 +243,18 @@ pub(crate) fn forwarded_exit_code() -> Option<u8> {
 /// The child re-parses the same argv with `--foreground` appended, so the
 /// division of labour is exactly one process doing the work and one process
 /// watching — no argument is re-derived, re-quoted, or dropped on the way.
+///
+/// `posture` decides whether this process then stays: [`detach::Posture::Attached`]
+/// streams the child back here until it ends, [`detach::Posture::Detached`]
+/// returns the moment the child is registered (#1607). Both spawn through the
+/// same [`spawn`], because "the launcher does not stay" is the only difference
+/// between them and a second launch path is how the two would drift.
 pub(crate) fn supervise_this_invocation(
     rt: tokio::runtime::Runtime,
     workspace: &Path,
     title: &str,
     stdin: &[u8],
+    posture: detach::Posture,
 ) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to supervise: {e}"))?;
@@ -273,6 +284,9 @@ pub(crate) fn supervise_this_invocation(
         &args,
         stdin,
     )?;
+    if posture == detach::Posture::Detached {
+        return detach::release(run);
+    }
     run.announce();
     watch(rt, &registry, run)
 }

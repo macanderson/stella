@@ -1,3 +1,9 @@
+---
+id: deterministic-engine
+title: "The Deterministic Engine: Why Single-Thread Beats the Swarm"
+status: living
+---
+
 # The Deterministic Engine: Why Single-Thread Beats the Swarm
 
 > **Research note.** This paper is a focused analysis of one defensible

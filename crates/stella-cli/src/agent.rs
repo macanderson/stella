@@ -417,7 +417,7 @@ async fn run_pipeline_one_shot(
         pipeline_config.keep_witness = keep_witness;
 
         let approval_gate =
-            crate::daemon::approval::OneShotApprovalGate::select(approval_capability);
+            crate::daemon::approval::OneShotApprovalGate::select(approval_capability, cfg);
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the pipeline's recall port so the
         // split-context planner sees the same durable lessons the worker's
@@ -455,6 +455,7 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
+        crate::resume_frame::declare(&cfg.durability, &pipeline_config);
         let pipeline = Pipeline::new(ports, pipeline_event_sender(&tx, format), pipeline_config);
         pipeline.run(prompt, &mut messages, &mut budget).await
     };

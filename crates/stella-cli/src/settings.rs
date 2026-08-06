@@ -518,6 +518,24 @@ pub struct AgentEngineConfig {
     /// compaction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_result_horizon_steps: Option<u64>,
+    /// Seconds a *supervised* run may sit parked on a scope review before it
+    /// aborts itself (#1616). Absent or `0` parks until answered or
+    /// interrupted, which is what every run did before this key existed.
+    ///
+    /// Only the sidecar gate reads it (`stella run` under `stella daemon
+    /// start`): the interactive gates have a human looking at the prompt, so a
+    /// timer there would answer a question someone is already reading. The
+    /// expiry resolves as an *abort* — never an approval — because it is a
+    /// human's yes that failed to arrive, and this gate exists so nothing over
+    /// the scope thresholds runs without one.
+    ///
+    /// Set it where nobody is watching: an overnight batch, a CI supervisor, a
+    /// benchmark harness that must not hold a worktree hostage. Leave it unset
+    /// wherever an operator will eventually attach — the parked run is
+    /// discoverable as `Needs Input` in `stella daemon list`, and waiting
+    /// costs nothing but a session slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_wait_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }

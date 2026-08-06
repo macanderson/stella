@@ -1,3 +1,9 @@
+---
+id: adr/0013-session-artifact-boundary
+title: "ADR 0013: The session artifact boundary"
+status: proposed
+---
+
 # ADR 0013: The session artifact boundary
 
 - Status: **Proposed** — awaiting ratification by the repository owner.

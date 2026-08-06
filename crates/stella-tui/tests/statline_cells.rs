@@ -154,6 +154,7 @@ fn model_serving_a_board() -> WorkspaceModel {
     m.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
         event: AgentEvent::StepUsage {
+            reasoning_tokens: None,
             output_text: None,
             step: 1,
             role: stella_protocol::event::ModelCallRole::Worker,
