@@ -55,6 +55,13 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// Thread-name prefix for the pump threads (`console-pump-1`/`console-pump-2`,
+/// set at spawn in [`pump_fd`]). Shared with [`ConsoleGuard::drain_shared`],
+/// which must never try to join a pump thread from inside that very thread —
+/// a self-join deadlocks forever, the one failure mode worse than losing the
+/// panic message the drain exists to save (#1616).
+const PUMP_THREAD_PREFIX: &str = "console-pump-";
+
 use stella_store::supervised;
 
 /// The index's name in the sidecar, beside the two consoles it orders.
@@ -477,6 +484,45 @@ impl ConsoleGuard {
             }
         }
     }
+
+    /// Drain whatever guard is still in `cell`, unless the CURRENT thread is
+    /// one of the pumps it owns — see [`PUMP_THREAD_PREFIX`]. Idempotent and
+    /// safe to call from both the normal end-of-`main` path and a panic hook:
+    /// the two race to be first, and whichever wins performs the one real
+    /// drain; the loser finds `None` and does nothing.
+    pub(crate) fn drain_shared(cell: &Mutex<Option<ConsoleGuard>>) {
+        if std::thread::current()
+            .name()
+            .is_some_and(|name| name.starts_with(PUMP_THREAD_PREFIX))
+        {
+            return;
+        }
+        let guard = cell.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(guard) = guard {
+            guard.drain();
+        }
+    }
+}
+
+/// Install a panic hook that drains `cell`'s console guard — restoring the
+/// real console fds via `dup2` — BEFORE the previously installed hook (the
+/// diagnostics ring dump, and beneath that the default hook) prints the
+/// panic message (#1616).
+///
+/// Release builds run with `panic = "abort"` (`Cargo.toml`), so this hook is
+/// the only cleanup this process ever gets on a panic — there is no unwind
+/// back to `main`'s own `drain_shared` call to fall back to. Without it, the
+/// default hook's message goes out fd 2 while it is still the pipe a pump
+/// thread reads asynchronously, and a process that aborts before the pump is
+/// next scheduled loses it — usually the one line a postmortem most wants.
+/// Restoring the fd first makes the same `eprintln!` land as an ordinary
+/// synchronous write to the console file instead.
+pub(crate) fn install_panic_drain(cell: Arc<Mutex<Option<ConsoleGuard>>>) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        ConsoleGuard::drain_shared(&cell);
+        previous(info);
+    }));
 }
 
 /// Interpose the bounded pumps on this process's stdout and stderr.
@@ -569,7 +615,7 @@ fn pump_fd(
     // takes ownership and closes it when the pump exits.
     let mut pipe = unsafe { std::fs::File::from_raw_fd(read_fd) };
     let pump = std::thread::Builder::new()
-        .name(format!("console-pump-{target_fd}"))
+        .name(format!("{PUMP_THREAD_PREFIX}{target_fd}"))
         .spawn(move || {
             let mut buf = [0u8; 64 * 1024];
             loop {

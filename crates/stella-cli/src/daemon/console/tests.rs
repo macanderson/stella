@@ -261,3 +261,43 @@ fn a_session_without_an_index_falls_back_to_raw_tails() {
     follower.pump(&mut out, &mut err).unwrap();
     assert_eq!(String::from_utf8_lossy(&out), "legacy\n");
 }
+
+/// The #1616 witness for the new half of the drain path: whichever of the
+/// panic hook and the normal end-of-`main` cleanup reaches a shared guard
+/// first performs the one real drain, and — the specific hazard a panicking
+/// pump thread would create — a pump thread must never try to join itself.
+/// `ConsoleGuard { streams: Vec::new() }` needs no real fds (this module's own
+/// doc comment: hijacking the test runner's stdout to exercise the fd
+/// plumbing would be the tail wagging the dog), so this is fd-free logic, not
+/// glue. On `main`, `drain_shared` does not exist at all.
+#[test]
+fn drain_shared_skips_a_pump_thread_draining_itself_but_runs_from_anywhere_else() {
+    let cell = Arc::new(Mutex::new(Some(ConsoleGuard {
+        streams: Vec::new(),
+    })));
+
+    // Called as if FROM a pump thread: a no-op, or a real pump trying to
+    // join itself on its own panic would deadlock the whole process.
+    let from_pump = {
+        let cell = cell.clone();
+        std::thread::Builder::new()
+            .name(format!("{PUMP_THREAD_PREFIX}1"))
+            .spawn(move || ConsoleGuard::drain_shared(&cell))
+            .unwrap()
+    };
+    from_pump.join().unwrap();
+    assert!(
+        cell.lock().unwrap().is_some(),
+        "a pump thread must never drain its own guard"
+    );
+
+    // Called from any other thread — the panic hook's thread, or main's own
+    // end-of-run cleanup — it drains for real.
+    ConsoleGuard::drain_shared(&cell);
+    assert!(cell.lock().unwrap().is_none());
+
+    // Idempotent: whichever caller loses the race to be first finds nothing
+    // left to drain, rather than draining twice.
+    ConsoleGuard::drain_shared(&cell);
+    assert!(cell.lock().unwrap().is_none());
+}

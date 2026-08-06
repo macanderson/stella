@@ -267,6 +267,18 @@ Set any of the three autos to `"on"` and stop thinking about it:
     64,000 stops on the timeout, which looks like a model that could not
     finish rather than a ceiling nobody scaled.
   </OptionCard>
+  <OptionCard name="approval_wait_secs" defaultValue="0">
+    Seconds a [supervised](/docs/commands/daemon) run's parked [scope
+    review](/docs/inference-pipeline) waits for `stella daemon attach` before
+    unparking itself as an abort. `0` (the default) parks forever, bounded
+    only by discoverability (`Needs Input` in `stella daemon list`) and an
+    explicit `stella daemon stop`.
+
+    Deliberately fails **closed**, not open: timing out to an automatic
+    approval would defeat the gate scope review exists to be. Set this only
+    where you have decided that sacrificing an unattended run is the better
+    trade than leaving it parked indefinitely.
+  </OptionCard>
 </CardGrid>
 
 When an auto is `"on"` it overrides the corresponding per-agent setting —
