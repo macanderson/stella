@@ -37,6 +37,7 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::gc::WorktreeActivity;
 use crate::plan::{Isolation, Task, TaskId};
 
 /// A commit recorded in the ledger — also the shape a [`FleetWorker`] reports
@@ -404,6 +405,33 @@ impl Ledger {
             )
             .optional()?;
         Ok(matches!(finished, Some(Some(_))))
+    }
+
+    /// One row per worktree path this ledger has ever dispatched into: how
+    /// many of its attempts are still unfinished, and when its last attempt
+    /// finished — the ledger half of the GC decision (issue #1217).
+    ///
+    /// The unfinished count is what makes a sweep safe: an attempt row is
+    /// opened *before* its worker runs, so a worktree with an unfinished
+    /// attempt may still be in use and [`crate::gc::Gc`] keeps it
+    /// unconditionally. `NULL` finish times are excluded from the `MAX`, so an
+    /// in-flight attempt never dates a worktree.
+    pub fn worktree_activity(&self) -> Result<Vec<WorktreeActivity>, LedgerError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT worktree_path,
+                    SUM(CASE WHEN finished_at_ms IS NULL THEN 1 ELSE 0 END),
+                    MAX(finished_at_ms)
+             FROM attempts
+             GROUP BY worktree_path",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(WorktreeActivity {
+                worktree_path: row.get(0)?,
+                unfinished_attempts: row.get::<_, i64>(1)?.max(0) as u32,
+                last_finished_ms: row.get::<_, Option<i64>>(2)?.map(|ms| ms as u64),
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(LedgerError::from)
     }
 
     /// When a task last finished an attempt, across **every** run in this
