@@ -780,6 +780,70 @@ pub fn rank_defects(issues: Vec<QueueIssue>) -> Vec<QueueIssue> {
 // The run fold — running / completed / cancelled / crashed
 // ---------------------------------------------------------------------------
 
+/// Seconds without a heartbeat after which a `running` run is reported crashed.
+///
+/// Generous on purpose: a single model call inside an audit phase legitimately
+/// runs for minutes, and calling a live run dead is a worse error than
+/// noticing a dead one late. `FULLAUTO_STALE_AFTER_SECS` overrides it.
+///
+/// Public because every surface that resolves a run's liveness needs the same
+/// number, and this constant is the only copy — `stella-cli`'s env default and
+/// the observatory's dashboard both read it. Two of the three used to hold
+/// their own `900` (#1613).
+pub const DEFAULT_STALE_AFTER_SECS: i64 = 900;
+
+/// Whether a run whose last record says `running` really is.
+///
+/// The status a run reports is not simply the last thing it wrote, and only a
+/// reader can make the correction, because the process that would have written
+/// the truth is gone. Both ways of being wrong are named rather than collapsed
+/// into a bool: they have different causes and a surface may want to say which
+/// happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    /// Holds the live pointer and its heartbeat is current.
+    Live,
+    /// The live pointer names a different run, or no run at all — nothing is
+    /// driving this one.
+    Orphaned,
+    /// Holds the live pointer, but has not drawn breath inside the window.
+    Stale,
+}
+
+impl Liveness {
+    /// Whether a `running` record should be reported as `crashed`.
+    #[must_use]
+    pub fn is_crashed(self) -> bool {
+        !matches!(self, Liveness::Live)
+    }
+}
+
+/// Resolve a `running` run against the live pointer and the clock.
+///
+/// Pure by construction — the caller supplies the clock — which is what lets
+/// the terminal and the dashboard share one answer instead of each reading
+/// `SystemTime::now()` behind its own copy of the rule.
+///
+/// The heartbeat is the witness, never the pid: every self-driving subcommand is
+/// its own short-lived process, so a recorded pid is dead moments after it is
+/// written and would declare every run crashed.
+#[must_use]
+pub fn liveness(
+    run_id: &str,
+    live_run_id: &str,
+    live_heartbeat_unix: i64,
+    now_unix: i64,
+    stale_after_secs: i64,
+) -> Liveness {
+    if live_run_id.is_empty() || live_run_id != run_id {
+        return Liveness::Orphaned;
+    }
+    if now_unix - live_heartbeat_unix > stale_after_secs {
+        return Liveness::Stale;
+    }
+    Liveness::Live
+}
+
 /// One folded run for the `run list` report.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunRow {
@@ -839,23 +903,20 @@ pub fn fold_runs(
         let mut phase = String::new();
 
         if status == "running" {
-            if !live_id.is_empty() && live_id == id {
-                let live = live.expect("live_id came from live");
-                let heartbeat = live
-                    .get("heartbeat_unix")
-                    .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(0);
-                let age = now_unix - heartbeat;
+            let heartbeat = live
+                .and_then(|l| l.get("heartbeat_unix"))
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let verdict = liveness(&id, live_id, heartbeat, now_unix, stale_after_secs);
+            if verdict != Liveness::Orphaned {
+                let live = live.expect("a non-orphaned run holds the live pointer");
                 phase = format!(
-                    "{} ({age}s ago)",
-                    live.get("phase").and_then(|v| v.as_str()).unwrap_or("?")
+                    "{} ({}s ago)",
+                    live.get("phase").and_then(|v| v.as_str()).unwrap_or("?"),
+                    now_unix - heartbeat
                 );
-                if age > stale_after_secs {
-                    status = "crashed".to_string();
-                }
-            } else {
-                // Last record says running, but nothing holds the live
-                // pointer.
+            }
+            if verdict.is_crashed() {
                 status = "crashed".to_string();
             }
         }

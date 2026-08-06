@@ -3270,6 +3270,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "sha2 0.11.0",
+ "stella-core",
  "stella-home",
  "stella-protocol",
  "stella-store",

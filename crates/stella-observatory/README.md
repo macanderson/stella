@@ -9,23 +9,38 @@ enforced by construction rather than policy: the listener binds `127.0.0.1`
 only, every database handle is opened `SQLITE_OPEN_READ_ONLY`, and the page is
 `include_str!`'d with zero external references. Outside its tests, nothing here
 opens an outbound connection, writes a file, or answers a method other than
-`GET`. The crate also links **no other workspace crate**, and must not.
+`GET`. The crate links **no workspace crate that opens anything** — see *Where
+it sits* for the two pure ones it does link, and why that is a different rule
+than a dependency count.
 
 ## Where it sits
 
 Nearly a leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
-`sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and exactly one
-`stella-*` dependency, [`stella-home`](../stella-home), which has no
-dependencies of its own. Everything heavier is excluded deliberately:
-`stella_store::Store::open` creates `.stella/` and runs schema migrations, and
-an observer that migrates what it observes is not an observer.
+`sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and two
+`stella-*` dependencies: [`stella-home`](../stella-home), which has no
+dependencies of its own, and [`stella-core`](../stella-core), for the
+`self_driving` fold and its signal thresholds. Everything heavier is excluded
+deliberately: `stella_store::Store::open` creates `.stella/` and runs schema
+migrations, and an observer that migrates what it observes is not an observer.
 
-The price used to be three acknowledged copies. `global::data_dir` was one of
+**The rule is about the write path, not about the dependency count.** This
+crate re-reads artifacts instead of linking the crates that produce them, which
+is why it opens `store.db` with `rusqlite` rather than linking `stella-store`.
+Both crates above are the opposite shape and neither opens anything:
+`stella-home` is path arithmetic over environment variables, and
+`stella-core::self_driving` is pure decision logic over owned data (no I/O, by
+invariant 2) with the clock passed in as a parameter.
+
+The price used to be four acknowledged copies. `global::data_dir` was one of
 them — a hand-synced mirror of `../stella-store/src/usage.rs` with a comment
 asking readers to keep it equal — and is now shared through `stella-home`
-instead (#1139); linking a crate that is pure path arithmetic over environment
-variables and opens nothing costs none of the isolation above. Three copies
-remain: `project_id_for` ([`src/global.rs`](src/global.rs)) still mirrors the
+instead (#1139). `src/self_driving.rs` was another: a private `fold_runs` and
+`self_improvement`, written when the only other implementation was shell, and
+the two had already drifted — the dashboard and `stella self-driving metrics`
+disagreed about whether the loop was NOISY for every odd cycle count, because
+one tested `2 * new < n` and the other `new < n / 2` in integer arithmetic
+(#1613). Both now come from `stella-core`. Three copies remain:
+`project_id_for` ([`src/global.rs`](src/global.rs)) still mirrors the
 store's, `/api/explorations` re-hashes exploration manifests itself, and
 [`src/sent_context.rs`](src/sent_context.rs) re-implements the receipt
 reconstruction `stella_store::Store::reconstruct_call` performs (#1475). The
