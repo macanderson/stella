@@ -694,7 +694,8 @@ async fn run_goal_pipeline_turn(
         // the read-only tool view, the verifier tuning, and the session
         // calibration (keyed per model, so a cross-family verifier learns its
         // own drift) into each assessment.
-        let read_only = stella_core::ports::ReadOnlyTools::new(&tools);
+        let scoped = VerifierScopedTools::new(&tools);
+        let read_only = stella_core::ports::ReadOnlyTools::new(&scoped);
         let verifier_engine = Engine::with_sleeper(
             verifier,
             &read_only,
@@ -875,4 +876,138 @@ async fn run_goal_pipeline_turn(
     }
     tui::files_touched_panel(&files);
     goal_result
+}
+
+/// The six tools the goal verifier's system prompt promises
+/// (`stella_core::goal::VERIFIER_SYSTEM_PROMPT`), and the only ones it is
+/// offered. Pinned against the prompt by a test below so the two cannot
+/// drift.
+const VERIFIER_TOOL_ALLOWLIST: &[&str] = &[
+    "read_file",
+    "grep",
+    "glob",
+    "explorations",
+    "ci_status",
+    "search_issues",
+];
+
+/// The goal verifier's tool surface (#1783): the session stack narrowed to
+/// [`VERIFIER_TOOL_ALLOWLIST`] BEFORE the read-only view applies. The bare
+/// `ReadOnlyTools` wrap admitted every schema claiming `read_only: true` —
+/// ~25 tools including `web_fetch`/`web_search` (outbound HTTP from a role
+/// that reads worker-influenced content: a prompt-injection egress channel)
+/// and any MCP/custom tool that self-declares read-only. The pipeline's
+/// verdict call carries zero tools; this is the goal loop's equivalent
+/// posture: exactly what the prompt names, enforced at execution rather
+/// than by prompt.
+struct VerifierScopedTools<'a> {
+    inner: &'a dyn stella_core::ToolExecutor,
+}
+
+impl<'a> VerifierScopedTools<'a> {
+    fn new(inner: &'a dyn stella_core::ToolExecutor) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
+    fn schemas(&self) -> Vec<stella_protocol::ToolSchema> {
+        self.inner
+            .schemas()
+            .into_iter()
+            .filter(|schema| VERIFIER_TOOL_ALLOWLIST.contains(&schema.name.as_str()))
+            .collect()
+    }
+
+    async fn execute(&self, name: &str, input: &serde_json::Value) -> stella_protocol::ToolOutput {
+        if !VERIFIER_TOOL_ALLOWLIST.contains(&name) {
+            return stella_protocol::ToolOutput::Error {
+                message: format!(
+                    "`{name}` is not available to the goal verifier: only the tools its \
+                     instructions name ({}) may be called",
+                    VERIFIER_TOOL_ALLOWLIST.join(", ")
+                ),
+            };
+        }
+        self.inner.execute(name, input).await
+    }
+
+    // Forwarded, not zeroed (the trait doc's decorator rule): nothing on the
+    // allowlist dispatches sub-agents today, but a wrapper that drops spend
+    // is wrong the day that changes.
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        self.inner.drain_sub_agent_spend_usd()
+    }
+}
+
+#[cfg(test)]
+mod verifier_tools_tests {
+    use super::*;
+    use stella_protocol::{ToolOutput, ToolSchema};
+
+    struct FakeStack;
+    #[async_trait::async_trait]
+    impl stella_core::ToolExecutor for FakeStack {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            ["read_file", "grep", "web_fetch", "mcp__srv__read", "bash"]
+                .into_iter()
+                .map(|name| ToolSchema {
+                    name: name.into(),
+                    description: String::new(),
+                    input_schema: serde_json::json!({}),
+                    // Everything claims read-only — the exact shape a
+                    // self-declaring MCP tool or the web group presents.
+                    read_only: true,
+                    speculation_safe: false,
+                })
+                .collect()
+        }
+        async fn execute(&self, name: &str, _input: &serde_json::Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: format!("ran {name}"),
+            }
+        }
+    }
+
+    /// #1783's witness: the goal verifier is offered exactly what its
+    /// prompt names — a read-only claim alone (web egress, a self-declared
+    /// MCP read) no longer admits a tool, and execution is enforced, not
+    /// prompted.
+    #[tokio::test]
+    async fn the_goal_verifier_gets_only_the_tools_its_prompt_names() {
+        let stack = FakeStack;
+        let scoped = VerifierScopedTools::new(&stack);
+        let names: Vec<_> = scoped
+            .schemas()
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+        assert_eq!(names, vec!["read_file", "grep"]);
+        for denied in ["web_fetch", "mcp__srv__read", "bash", "web_search"] {
+            assert!(
+                scoped
+                    .execute(denied, &serde_json::json!({}))
+                    .await
+                    .is_error(),
+                "{denied} must be refused at execution"
+            );
+        }
+        assert!(matches!(
+            scoped.execute("read_file", &serde_json::json!({})).await,
+            ToolOutput::Ok { .. }
+        ));
+    }
+
+    /// The allowlist and the prompt must name the same six tools — the
+    /// drift this pins is exactly how the surface grew to ~25 unnoticed.
+    #[test]
+    fn the_allowlist_matches_what_the_prompt_promises() {
+        for name in VERIFIER_TOOL_ALLOWLIST {
+            assert!(
+                stella_core::goal::VERIFIER_SYSTEM_PROMPT.contains(name),
+                "allowlisted `{name}` is not named by the verifier prompt"
+            );
+        }
+    }
 }

@@ -759,6 +759,30 @@ fn a_negated_pass_is_the_fail_it_states() {
     );
 }
 
+/// #1787 (the bounded half): verifier prose forwarded into a revision
+/// prompt has a ceiling. An unbounded reply rode into every subsequent
+/// turn of the conversation; the head is kept because the verdict protocol
+/// puts the verdict and its core reason first.
+#[test]
+fn forwarded_reasoning_is_bounded_with_an_explicit_marker() {
+    let short = "FAIL — the parser drops the last field";
+    assert_eq!(bound_forwarded_reasoning(short), short);
+
+    let long = "x".repeat(FORWARDED_REASONING_MAX_CHARS + 500);
+    let bounded = bound_forwarded_reasoning(&long);
+    assert!(bounded.len() < long.len());
+    assert!(
+        bounded.ends_with("[verifier reasoning truncated]"),
+        "{bounded}"
+    );
+
+    // Truncation lands on a char boundary even when the ceiling splits a
+    // multi-byte character.
+    let multibyte = "é".repeat(FORWARDED_REASONING_MAX_CHARS);
+    let bounded = bound_forwarded_reasoning(&multibyte);
+    assert!(bounded.ends_with("[verifier reasoning truncated]"));
+}
+
 #[test]
 fn unparseable_verifier_response_is_none() {
     assert_eq!(parse_verifier_response("hmm, hard to say"), None);

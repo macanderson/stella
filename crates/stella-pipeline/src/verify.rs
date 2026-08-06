@@ -879,6 +879,31 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
     None
 }
 
+/// Ceiling on verifier prose forwarded into a worker's revision prompt.
+///
+/// `Verdict::reasoning` is the model's whole reply and has no length
+/// contract; on a FAIL it becomes the revision reason, and an unbounded
+/// reply would ride into every subsequent turn of the conversation. The
+/// trusted evidence summary and the diff are budgeted — the one
+/// model-authored blob crossing to the worker should not be the exception.
+/// Head-kept: the verdict protocol puts the verdict and its core reason
+/// first, so the head is the load-bearing part.
+pub const FORWARDED_REASONING_MAX_CHARS: usize = 4_000;
+
+/// Bound one piece of verifier prose for forwarding to the worker. A
+/// char-boundary-safe head truncation with an explicit marker, so the worker
+/// reads "there was more" rather than a sentence that stops mid-claim.
+pub fn bound_forwarded_reasoning(text: &str) -> String {
+    if text.len() <= FORWARDED_REASONING_MAX_CHARS {
+        return text.to_string();
+    }
+    let mut end = FORWARDED_REASONING_MAX_CHARS;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n[verifier reasoning truncated]", &text[..end])
+}
+
 /// The conservative heuristic verdict used when the *verifier model call itself*
 /// fails or its response is unparseable (L-E11: "a heuristic fallback verdict
 /// if the verifier call itself fails"). It never fabricates confidence: it

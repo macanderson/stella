@@ -1281,7 +1281,7 @@
         },
         {
           "const": "witness",
-          "description": "Witness authoring: before the worker executes, an independent model\n(the verifier's resolution, never the worker's transcript) writes the\nwitness test — a test that FAILS on the current code and will pass\nonce the goal is met — arming the deterministic flip oracle (L-E11).\nThe witness is visible to the worker (iterating against a failing\ntest is where convergence comes from); integrity comes from tamper\nexclusion at verify time, not from hiding the test.",
+          "description": "Witness authoring: after the worker executes — once the warrant has\nread the diff and found something worth proving — an independent\nmodel (the verifier's resolution, never the worker's transcript)\nwrites the witness test in a pristine snapshot of the pre-execution\ntree: a test that FAILS there and will pass once the goal is met,\narming the deterministic flip oracle (L-E11). The witness is visible\nto the worker's revise turns (iterating against a failing test is\nwhere convergence comes from); integrity comes from tamper exclusion\nat verify time, not from hiding the test.",
           "type": "string"
         },
         {

@@ -161,10 +161,6 @@ const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software e
      no test. Do not invent a task. If it fits, add one short line inviting \
      them to describe a change, bug, or question about their codebase.";
 
-/// Small fixed system prompt for the independent witness author.
-const WITNESS_SYSTEM_PROMPT: &str = "You are a precise test author. You write minimal failing tests that pin down intended \
-     behavior. You never modify production code and never fix the problem yourself.";
-
 /// Per-role request overrides for the pipeline's raw completion calls
 /// (triage / verifier / guidance), resolved by the caller from
 /// `agent_engine_config`. Every field is optional and falls through to the
@@ -183,10 +179,13 @@ pub struct RoleCallOverrides {
     pub params: Option<stella_protocol::GenerationParams>,
 }
 
-/// The pipeline's per-role override set. Worker (and plan/witness, which
-/// ride the worker's tier) is configured through
-/// [`PipelineConfig::engine`] directly; only the two roles with their own
-/// models get their own request shaping.
+/// The pipeline's per-role override set. Worker (and plan, which rides the
+/// worker's tier) is configured through [`PipelineConfig::engine`] directly;
+/// only the two roles with their own models get their own request shaping.
+/// The witness author/repair engines ride the verifier's model, so they take
+/// the `verifier` row's shaping too (#1785) — everything except `prompt`,
+/// which stays scoped to the raw verdict/guidance calls
+/// (`Pipeline::witness_engine_config` says why).
 #[derive(Debug, Clone, Default)]
 pub struct PipelineRoleOverrides {
     pub triage: RoleCallOverrides,
@@ -2871,6 +2870,7 @@ impl<'a> Pipeline<'a> {
                     // than being forwarded (§4.3).
                     let feedback = self
                         .airlock_forward(&verdict.reasoning, "verifier_reasoning", &sealed)
+                        .map(|text| crate::verify::bound_forwarded_reasoning(&text))
                         .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
                     if let Err(abort) = self
                         .revise_candidate(engine, surface, budget, &feedback, total, &mut state)
