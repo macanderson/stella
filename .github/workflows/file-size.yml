@@ -1,0 +1,63 @@
+name: file-size
+
+# The 1500-line ratchet as its own status context (#1800).
+#
+# `file-size` already runs inside ci.yml's required "fmt + clippy + test" job,
+# which is correct but expensive: that job compiles and tests the workspace, so
+# requiring it is requiring an hour. This workflow runs the same guard in
+# seconds with no toolchain at all, which is what makes it *requirable on its
+# own* — the cheapest of the three fixes #1800 lists, and the one that does not
+# need admin to write the code for.
+#
+# Why that matters here specifically. Three separate god files landed on `main`
+# over their ceiling in a single day, and each one turned EVERY open PR red —
+# including PRs touching none of the affected crates. #1757 burned a full CI
+# cycle and a merge round-trip on `deck.rs` alone, having touched no
+# `stella-tui` file. The guard fires for the next person rather than the author,
+# and the cost is paid by everyone at once.
+#
+# **Making this required is still a repository setting**, and this workflow does
+# not perform it — it only makes the switch cheap to flip, by giving branch
+# protection a context that costs seconds rather than an hour. See #1800 and
+# #1645; `enforce_admins: true` is the broader fix that closes the same hole for
+# every gate step.
+#
+# No paths-ignore, deliberately: the ratchet covers Rust, Python and shell
+# across the whole tree, and ci.yml's filters exist to keep prose off the Rust
+# gate — a distinction this job does not need, because it has no Rust gate.
+
+on:
+  pull_request:
+  merge_group:
+
+# Reads the repository and nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: file-size-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  file-size:
+    name: file size ratchet
+    runs-on: ubuntu-latest
+    steps:
+      # Full history is not needed — the guard reads the working tree and the
+      # committed baseline, never a diff against the base.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The guard's own tests first: they are hermetic and they are what proves
+      # it can still FAIL. A ratchet that has quietly become incapable of
+      # failing reports green forever, which is worse than not having one.
+      - name: guard self-test
+        run: ./scripts/test-file-size.sh
+
+      - name: file-size ratchet
+        run: ./scripts/check-file-size.sh
+
+      # The three prose copies of the god-file list must agree with the
+      # baseline, or a file that left the list stays named as one. Same tier,
+      # same cost, and the two failures are always fixed in one commit.
+      - name: god-file lists agree
+        run: ./scripts/check-god-files.sh
