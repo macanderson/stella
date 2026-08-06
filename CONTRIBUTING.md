@@ -90,9 +90,11 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo build -p stella-cli --bin stella && \
+  STELLA_BIN="$PWD/target/debug/stella" ./scripts/test-self-driving.sh
 ```
 
-Or just `make gate`, which is the twenty-three of them in order.
+Or just `make gate`, which is the twenty-four of them in order.
 
 Do not maintain that list by hand. It is `GATE_STEPS` in the `Makefile`, and
 `./scripts/check-gate-parity.sh` — itself one of the steps — fails if this fence
