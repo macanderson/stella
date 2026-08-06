@@ -841,14 +841,6 @@ impl AgentEngineConfig {
         self.hunk_review.is_some_and(Toggle::is_on)
     }
 
-    /// The parked-approval deadline, if the operator set one (#1616).
-    /// `None` (absent or `0`) parks forever.
-    pub fn approval_wait(&self) -> Option<std::time::Duration> {
-        self.approval_wait_secs
-            .filter(|secs| *secs > 0)
-            .map(std::time::Duration::from_secs)
-    }
-
     /// Persist THIS config as the `agent_engine_config` key of the
     /// settings file at `path`, preserving every other key in the file
     /// byte-for-byte at the value level (providers, hooks, mcp, and any
