@@ -422,10 +422,14 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-core estimator CalibrationMap: per-model token-drift correction feeding compaction",
         engine_entries: &["with_calibration"],
         cli: SurfacePosture::ShippedUnwitnessed {
-            mechanism: "seed_calibration from the store plus with_calibration on every driver path",
+            mechanism: "seed_calibration from the store plus with_calibration on the interactive, \
+                        raw one-shot, goal, deck and sub-session paths — NOT on the default \
+                        `stella run` staged-pipeline path or on fleet workers (#1595)",
             missing: "a CLI-side test pinning that persisted drift samples reach the engine's \
                       calibration on session start (stella-core and stella-store each test their \
-                      half; the CLI seam between them has no witness)",
+                      half; the CLI seam between them has no witness) — and the same test would \
+                      have caught the two paths above, which is why this row is unwitnessed and \
+                      wrong at the same time",
         },
         api: SurfacePosture::Shipped {
             mechanism: "a process-lifetime CalibrationMap per provider_id, fed by every \
