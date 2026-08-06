@@ -132,6 +132,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 mod dispatch;
 mod settlement;
+mod waiting;
 use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
 
 /// Everything about a turn's execution that isn't the provider/tools
@@ -530,27 +531,6 @@ pub fn step_cap_reason(max_steps: usize) -> String {
     )
 }
 
-/// The most recent non-empty assistant text in a turn's transcript.
-///
-/// Used only by the halt path ([`TurnHalt`]), which ends a turn at a step
-/// boundary and therefore has no "final" model text of its own to report. An
-/// assistant message that only made tool calls carries empty `content`, so
-/// this walks back to the last thing the model actually *said* rather than
-/// reporting a blank answer for a turn that did real work.
-///
-/// `None` when the model has said nothing yet — a turn halted after a first
-/// step of pure tool calls — which the caller renders as the halt reason.
-fn last_assistant_text(state: &crate::step::TurnState) -> Option<String> {
-    state
-        .messages
-        .iter()
-        .rev()
-        .find(|message| {
-            message.role == MessageRole::Assistant && !message.content.trim().is_empty()
-        })
-        .map(|message| message.content.clone())
-}
-
 /// Upper bound on tool calls from one step executing concurrently. Tools
 /// are I/O-bound (process spawns, file reads), so this caps descriptor and
 /// process pressure, not CPU.
@@ -900,7 +880,8 @@ impl<'a> Engine<'a> {
                 // predicate's reason when the final step was pure tool calls
                 // (an assistant message that only called tools has empty
                 // `content`), so the turn never reports an empty answer.
-                let text = last_assistant_text(&turn.state).unwrap_or_else(|| reason.clone());
+                let text =
+                    settlement::last_assistant_text(&turn.state).unwrap_or_else(|| reason.clone());
                 let outcome = TurnOutcome::Completed {
                     text,
                     cost_usd: turn.state.total_cost_usd,
@@ -1260,6 +1241,13 @@ impl<'a> Engine<'a> {
             .await
         {
             return completed.into();
+        }
+
+        // A tool may have asked to park the turn (#1471, `driver::waiting`):
+        // the engine probes on its own clock and the model wakes to the
+        // delta. `Some` only when cancelled while parked.
+        if let Some(cancelled) = self.maybe_park(state, events).await {
+            return cancelled;
         }
 
         // Advanced only by a step that committed and continued, so the index
