@@ -454,6 +454,30 @@ impl Observatory {
         }
     }
 
+    /// Every session of this workspace: the registry's live/crashed view
+    /// joined with the store's per-session rollups. The fold lives in
+    /// `sessions`, which documents the two-source merge.
+    pub fn sessions(&self) -> Result<Value, DbError> {
+        crate::sessions::sessions(self.store().as_ref(), &self.workspace_root)
+    }
+
+    /// One session drilled to its turns, plus the session-scoped surfaces the
+    /// per-turn view can't show (skills, MCP traffic, task board, PRs,
+    /// lessons, memory writes).
+    pub fn session(&self, id: &str) -> Result<Value, DbError> {
+        crate::sessions::session_detail(self.store().as_ref(), &self.workspace_root, id)
+    }
+
+    /// One execution's behavioural tendencies (retries, loop detections,
+    /// compactions, policy verdicts), folded from its journal slice — the
+    /// fourth sanctioned `events` read; see `sessions::execution_tendencies`.
+    pub fn execution_tendencies(&self, id: i64) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(Value::Null);
+        };
+        crate::sessions::execution_tendencies(&conn, id)
+    }
+
     /// Per-(provider, model) usage — the same rows `stella stats` prints,
     /// same semantics (`resolved` = outcome `completed`, `off-grid` = local).
     pub fn models(&self) -> Result<Value, DbError> {

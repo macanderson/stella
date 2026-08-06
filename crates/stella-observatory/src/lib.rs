@@ -49,6 +49,7 @@ mod global;
 mod live;
 mod self_driving;
 mod sent_context;
+mod sessions;
 
 use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
@@ -257,6 +258,26 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                         .unwrap_or(0),
                     query_param(query, "full").is_some(),
                 ),
+                None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
+            }
+        }
+        // The sessions plane: the registry's live/crashed view joined with
+        // the store's per-session rollups, and one session drilled to its
+        // turns. The deeper layers (transcript, sent context) stay on the
+        // per-execution routes above — that is the sanctioned shape for
+        // `events` reads, and the drawer the session view drills into
+        // already speaks them.
+        "/api/sessions" => obs.sessions(),
+        "/api/session" => match query_param(query, "id") {
+            Some(id) => obs.session(&id),
+            None => return Response::error("400 Bad Request", "missing ?id=<session id>"),
+        },
+        // One execution's behavioural tendencies — retries, loop detections,
+        // compactions, policy verdicts — folded from its journal slice for
+        // the drawer's tendency strip.
+        "/api/execution-tendencies" => {
+            match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
+                Some(id) => obs.execution_tendencies(id),
                 None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
             }
         }

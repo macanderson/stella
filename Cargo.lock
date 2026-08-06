@@ -3267,6 +3267,7 @@ dependencies = [
 name = "stella-observatory"
 version = "0.6.126"
 dependencies = [
+ "libc",
  "rusqlite",
  "serde_json",
  "sha2 0.11.0",
