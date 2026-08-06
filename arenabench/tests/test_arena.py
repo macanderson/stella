@@ -656,6 +656,61 @@ class TestOfflineTaskSource:
         from arenabench.registry import TERMINAL_BENCH_21
         assert TERMINAL_BENCH_21.package_dir == "terminal-bench-2-1"
 
+    def test_a_backfilled_record_never_invents_a_harbor_version(self, tmp_path: Path):
+        """The whole point of the record is that a version you can trust looks
+        different from one nobody measured. Harbor writes its version nowhere,
+        so a reconstructed record must say so — a plausible guess here would be
+        indistinguishable from a real reading, which is the confusion this
+        exists to prevent."""
+        from arenabench import provenance
+
+        job = tmp_path / "jobs" / "m-seat"
+        job.mkdir(parents=True)
+        (job / "config.json").write_text(
+            json.dumps({
+                "job_name": "m-seat",
+                # No `install_only` / `extra_instruction_paths`: the shape a
+                # pre-0.20.0 Harbor wrote.
+                "datasets": [{
+                    "name": "terminal-bench/terminal-bench-2-1",
+                    "ref": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0"
+                           "ea7c4186773687d177ad3a0699a",
+                }],
+            })
+        )
+
+        record = provenance.backfill_match(tmp_path)
+        assert record is not None
+        assert record.harbor_version is None, "a guessed version is worse than none"
+        assert record.harbor_bound == "<0.20.0"
+        assert record.measured is False
+        assert record.source == provenance.SOURCE_BACKFILLED
+        # The digest IS recoverable here, and must be recovered.
+        assert record.dataset_digest.endswith("3a0699a")
+        assert record.dataset_key == "terminal-bench-2.1"
+
+    def test_a_measured_key_never_collides_with_an_unmeasured_one(self):
+        """Two result sets are only comparable when the apparatus matches. An
+        unknown Harbor must not produce the same grouping key as a known one,
+        or the labelling silently permits exactly the mixing it forbids."""
+        from arenabench.provenance import Provenance
+
+        measured = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version="0.6.1",
+        )
+        unmeasured = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version=None, harbor_bound="<0.20.0",
+        )
+        newer = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version="0.20.0",
+        )
+        keys = {measured.comparability_key, unmeasured.comparability_key,
+                newer.comparability_key}
+        assert len(keys) == 3, keys
+
     def test_frontier_bench_declares_the_harbor_it_needs_to_grade_correctly(self):
         """The floor is the point of the entry, not a nicety.
 

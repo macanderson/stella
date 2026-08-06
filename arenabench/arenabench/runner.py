@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import harbor
+from . import harbor, provenance
 from .agents import (
     credential_env_for,
     launch_flags,
@@ -103,6 +103,34 @@ def _base_environment() -> dict[str, str]:
     return env
 
 
+def _provenance_for(match: Match) -> provenance.Provenance:
+    """The apparatus this match is about to run on.
+
+    Harbor is asked for its version here rather than trusted from config: the
+    binary on PATH can change between one match and the next, and the record
+    has to say what actually graded *these* trials.
+    """
+    from . import __version__
+
+    try:
+        version: str | None = harbor.harbor_version()
+        binary = harbor.harbor_bin()
+    except harbor.HarborUnavailableError:
+        # The launch below will fail and say so properly. The record still
+        # gets written, unknown rather than absent, so a half-started match
+        # is not mistaken later for one that ran on the current Harbor.
+        version, binary = None, ""
+    return provenance.Provenance(
+        dataset_key=match.spec.dataset,
+        dataset_ref=match.dataset.harbor_id,
+        dataset_digest=match.dataset.digest,
+        harbor_version=version,
+        harbor_bin=binary,
+        arenabench_version=__version__,
+        source=provenance.SOURCE_RECORDED,
+    )
+
+
 @dataclass
 class ContestantRun:
     """One contestant's Harbor process and everything read back from it."""
@@ -148,6 +176,9 @@ class Match:
         self.started_at: float | None = None
         self.finished_at: float | None = None
         self.status = "created"  # created | running | finished | cancelled | failed
+        #: What this match's numbers were measured with. Set at `start`, and
+        #: read back from disk for a match reconstructed after the fact.
+        self.provenance: provenance.Provenance | None = None
         self.runs: dict[str, ContestantRun] = {}
         self.recorder: RecorderSupervisor | None = None
         self.snapshots: SnapshotSupervisor | None = None
@@ -228,6 +259,9 @@ class Match:
         return {
             "match": self.spec.to_json(),
             "dataset": self.dataset.to_json(),
+            # Rides every snapshot so a viewer can never read a number without
+            # the apparatus that produced it being one field away.
+            "provenance": self.provenance.to_json() if self.provenance else None,
             "status": self.status,
             "note": self.note,
             "created_at": self.created_at,
@@ -333,6 +367,13 @@ class MatchRunner:
             return
         match.status = "running"
         match.started_at = time.time()
+
+        # Record the apparatus before the first trial, not after the last one:
+        # a match that is killed mid-run still produced trials, and a trial
+        # whose grading stack is unrecorded cannot be compared to anything
+        # later (see `arenabench.provenance`).
+        match.provenance = _provenance_for(match)
+        provenance.write_match(match.workspace, match.provenance)
 
         for contestant in match.spec.contestants:
             try:
