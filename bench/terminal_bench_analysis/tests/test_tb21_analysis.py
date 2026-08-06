@@ -524,37 +524,11 @@ _POSTURE, _POSTURE_JSON, _POSTURE_SHA256 = analysis_module.canonical_engine_post
     _READINESS_POSTURE_JSON,
     _READINESS_POSTURE_SHA256,
 ) = analysis_module.canonical_engine_posture(_READINESS_MODEL)
-# The digest every registered TB2.1 arm was claimed under. Re-frozen when the
-# `judge` agent slot became `verifier`: a slot rename is a NEW posture
-# generation, not a cosmetic edit, because runs under `8530a36f…` booked an
-# agent under the old key and are not hash-comparable with runs under this one.
-#
-# This is a constant, not an assertion. It used to be `assert _POSTURE_SHA256
-# == …` at module scope, which ran at import — so one stale hex string reported
-# as `Interrupted: 1 error during collection` and took all 258 tests in this
-# file with it, hiding whatever else was broken here (#1452). The check now
-# lives in `test_the_engine_posture_digest_is_the_registered_one` below, which
-# fails alone and by name.
-_REGISTERED_POSTURE_SHA256 = (
-    "8ce2e82029af25d9c9ee5d3f0f024f6e97c08fe39543486edb66926cb55b84a9"
-)
-
-
-def test_the_engine_posture_digest_is_the_registered_one() -> None:
-    """The posture this module computes still hashes to the registered digest.
-
-    Every fixture below is built from the *computed* posture, so a drifted
-    digest does not silently fabricate a posture the fixtures then agree with —
-    it fails here, once, naming both halves. Renaming anything that appears in a
-    posture key (an agent slot, an effort, a model id) re-hashes every
-    registered arm; see `bench/READINESS.md` §8.4.4.
-    """
-    assert _POSTURE_SHA256 == _REGISTERED_POSTURE_SHA256, (
-        f"the canonical posture for {_MODEL} now hashes to {_POSTURE_SHA256}, "
-        f"but every registered arm was claimed under {_REGISTERED_POSTURE_SHA256}. "
-        "If the posture legitimately changed, re-freeze this constant and treat "
-        "prior runs as a different generation — they are not hash-comparable."
-    )
+# The registered-digest check that used to sit here as a module-scope `assert`
+# now lives in tests/test_posture_digest.py. It ran at import, so one stale hex
+# string reported as `Interrupted: 1 error during collection` and took every
+# test in this file with it (#1452). Fixtures below use the *computed* posture,
+# which is what makes moving the check out safe.
 
 
 def test_the_readme_digests_match_the_postures_printed_beside_them() -> None:
