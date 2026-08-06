@@ -841,8 +841,14 @@ impl AgentEngineConfig {
         self.hunk_review.is_some_and(Toggle::is_on)
     }
 
-    /// The parked-approval deadline, if the operator set one (#1616).
-    /// `None` (absent or `0`) parks forever.
+    /// The parked-approval deadline, if the operator set one (#1616), or
+    /// `None` for the shipped park-forever behaviour.
+    ///
+    /// `0` is spelled and means "no deadline", the same convention
+    /// `model_timeout_secs` uses for its own backstop: in a field whose
+    /// absence already means "the default", zero is the only way to say
+    /// *deliberately* unbounded — which matters when a user-scope file sets a
+    /// deadline and one project wants out of it.
     pub fn approval_wait(&self) -> Option<std::time::Duration> {
         self.approval_wait_secs
             .filter(|secs| *secs > 0)

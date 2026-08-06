@@ -137,10 +137,10 @@ impl SidecarApprovalGate {
     /// Split out of the loop so the arithmetic — the part a wall-clock test
     /// cannot pin down without sleeping through it — is directly testable.
     fn next_poll(&self, parked_at: std::time::Instant) -> Option<std::time::Duration> {
-        let Some(wait) = self.wait else {
+        let Some(deadline) = self.deadline else {
             return Some(ANSWER_POLL);
         };
-        let remaining = wait.checked_sub(parked_at.elapsed())?;
+        let remaining = deadline.checked_sub(parked_at.elapsed())?;
         (!remaining.is_zero()).then(|| ANSWER_POLL.min(remaining))
     }
 
@@ -179,7 +179,7 @@ impl ApprovalGate for SidecarApprovalGate {
             .registry
             .set_status(&self.id, SessionStatus::NeedsInput);
 
-        let started = std::time::Instant::now();
+        let parked_at = std::time::Instant::now();
         let decision = loop {
             if (self.interrupted)() {
                 // The same answer the stdio gate gives on EOF: asked to stop
@@ -187,17 +187,11 @@ impl ApprovalGate for SidecarApprovalGate {
                 // land as a clean cancel instead of an escalated kill.
                 break ScopeDecision::Abort;
             }
-            if let Some(deadline) = self.deadline
-                && started.elapsed() >= deadline
-            {
-                eprintln!(
-                    "  {} scope review timed out after {}s with nobody attached \
-                     (approval_wait_secs) — aborting",
-                    "!".yellow(),
-                    deadline.as_secs(),
-                );
-                break ScopeDecision::Abort;
-            }
+            // The deadline is checked in exactly one place — `next_poll`
+            // returning `None` below. A second check at the top of the loop
+            // would be a second definition of "expired", and this file has
+            // already paid for that once: two PRs implemented #1616
+            // independently and the merge kept half of each.
             match std::fs::read_to_string(self.sidecar.join(supervised::APPROVAL_ANSWER)) {
                 Ok(json) => {
                     // Unparseable is abort, not retry: the writer publishes
@@ -217,7 +211,7 @@ impl ApprovalGate for SidecarApprovalGate {
                             "{} scope review unanswered for {}s — aborting the run \
                              (agent_engine_config.approval_wait_secs)",
                             "▸ timed out".yellow().bold(),
-                            self.wait.map_or(0, |w| w.as_secs()),
+                            self.deadline.map_or(0, |d| d.as_secs()),
                         );
                         break ScopeDecision::Abort;
                     }
@@ -288,21 +282,6 @@ impl ApprovalGate for OneShotApprovalGate {
             Self::Headless(gate) => gate.confirm(question).await,
         }
     }
-}
-
-/// The configured park deadline, or `None` for the shipped park-forever
-/// behaviour.
-///
-/// `0` is spelled and means "no deadline", the same convention
-/// `model_timeout_secs` uses for its own backstop: in a field whose absence
-/// already means "the default", zero is the only way to say *deliberately*
-/// unbounded — which matters when a user-scope file sets a deadline and one
-/// project wants out of it.
-pub(crate) fn park_deadline(
-    settings: Option<&crate::settings::AgentEngineConfig>,
-) -> Option<std::time::Duration> {
-    let secs = settings?.approval_wait_secs?;
-    (secs > 0).then(|| std::time::Duration::from_secs(secs))
 }
 
 /// The attached-terminal side: answer a parked scope review, if one is
@@ -467,29 +446,6 @@ mod tests {
         );
     }
 
-    /// The #1616 witness: with no `approval_wait_secs` set the gate parks
-    /// forever (proven here by outliving several poll intervals with no
-    /// answer and no interrupt); with one set, it unparks itself as an abort
-    /// once the deadline elapses — with nobody having answered and nobody
-    /// having interrupted it. On `main` a parked review has no deadline at
-    /// all, so this only passes once `SidecarApprovalGate` honours one.
-    #[tokio::test]
-    async fn a_deadline_unparks_an_unanswered_review_as_an_abort() {
-        let dir = tempfile::tempdir().unwrap();
-        let registry = registry_in(dir.path());
-        let record = parked_record(&registry);
-        let sidecar = registry.sidecar_dir(&record.id);
-        let gate = SidecarApprovalGate::new(sidecar.clone(), registry.clone(), record.id.clone())
-            .with_deadline(Some(std::time::Duration::from_millis(50)));
-
-        assert_eq!(gate.review(&proposal()).await, ScopeDecision::Abort);
-        assert_eq!(
-            registry.get(&record.id).unwrap().status,
-            SessionStatus::InProgress,
-            "a timed-out review still hands the record back, same as any other decision"
-        );
-    }
-
     /// A deadline that is set but has not yet elapsed must not preempt a real
     /// answer — the timeout is a backstop, not a race against the human.
     #[tokio::test]
@@ -559,8 +515,8 @@ mod tests {
     /// The #1616 witness: with `approval_wait_secs` armed, a review nobody
     /// answers unparks itself as an abort instead of waiting forever — and it
     /// hands the record back rather than leaving it stuck on `Needs Input`.
-    /// On `main` a gate has no deadline to arm (`with_wait` does not exist),
-    /// so this is a type-level witness as well as a behavioural one.
+    /// On `main` a gate has no deadline to arm (`with_deadline` does not
+    /// exist), so this is a type-level witness as well as a behavioural one.
     #[tokio::test]
     async fn an_expired_deadline_unparks_an_unanswered_review_as_an_abort() {
         let dir = tempfile::tempdir().unwrap();
@@ -568,7 +524,7 @@ mod tests {
         let record = parked_record(&registry);
         let sidecar = registry.sidecar_dir(&record.id);
         let gate = SidecarApprovalGate::new(sidecar.clone(), registry.clone(), record.id.clone())
-            .with_wait(Some(std::time::Duration::from_millis(30)));
+            .with_deadline(Some(std::time::Duration::from_millis(30)));
 
         // The outer timeout is the assertion's teeth: on a gate without a
         // deadline this future never resolves, and the test would hang rather
@@ -632,7 +588,7 @@ mod tests {
         // up to the poll interval.
         let short =
             SidecarApprovalGate::new(dir.path().into(), registry_in(dir.path()), "id".into())
-                .with_wait(Some(std::time::Duration::from_millis(5)));
+                .with_deadline(Some(std::time::Duration::from_millis(5)));
         let nap = short.next_poll(now).expect("5ms is still ahead");
         assert!(nap <= std::time::Duration::from_millis(5), "{nap:?}");
         // And a deadline already in the past ends the park.
@@ -645,16 +601,19 @@ mod tests {
     /// The setting's three states, including the one that is easy to get
     /// wrong: `0` is a deliberate "no deadline", not a zero-length one that
     /// aborts every supervised review the instant it parks.
+    ///
+    /// Read through `AgentEngineConfig::approval_wait`, which is the single
+    /// definition the production gate is wired to
+    /// (`crate::agent::engine::approval_gate_for`).
     #[test]
     fn the_setting_maps_absent_and_zero_to_park_forever() {
-        assert_eq!(park_deadline(None), None);
         let mut settings = crate::settings::AgentEngineConfig::default();
-        assert_eq!(park_deadline(Some(&settings)), None);
+        assert_eq!(settings.approval_wait(), None);
         settings.approval_wait_secs = Some(0);
-        assert_eq!(park_deadline(Some(&settings)), None);
+        assert_eq!(settings.approval_wait(), None);
         settings.approval_wait_secs = Some(90);
         assert_eq!(
-            park_deadline(Some(&settings)),
+            settings.approval_wait(),
             Some(std::time::Duration::from_secs(90))
         );
     }
