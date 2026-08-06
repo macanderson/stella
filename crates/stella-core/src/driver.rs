@@ -1312,13 +1312,11 @@ impl<'a> Engine<'a> {
     /// bounds how far either way a noisy sample can move this.
     fn effective_compaction_budget(&self, calibration_model: Option<&str>) -> (u64, f64) {
         match self.calibration {
-            Some(calibration) => {
-                let factor = calibration.factor(calibration_model);
-                (
-                    (self.config.compaction_budget_tokens as f64 / factor) as u64,
-                    factor,
-                )
-            }
+            // Solves for the conversation size the budget allows, subtracting
+            // the fitted per-request overhead ONCE rather than folding it into
+            // a factor that then scales the whole budget (#1841).
+            Some(calibration) => calibration
+                .effective_budget(calibration_model, self.config.compaction_budget_tokens),
             None => (self.config.compaction_budget_tokens, 1.0),
         }
     }
