@@ -326,35 +326,38 @@ mod tests {
     #[test]
     fn fleet_claims_parses_as_a_verb_and_defaults_to_live_text() {
         let cli = Cli::try_parse_from(["stella", "fleet", "claims"]).unwrap();
+        // `Command` derives no `Debug`, so the mismatch arm cannot print what
+        // it got — it says what was expected instead, which is the half a
+        // reader of the failure actually needs.
         match cli.command {
-            Command::Fleet {
+            Some(Command::Fleet {
                 cmd: Some(crate::fleet_verbs::FleetCmd::Claims { all, format }),
                 ..
-            } => {
+            }) => {
                 assert!(!all, "the live listing is the default");
                 assert_eq!(format, QueryFormat::Text);
             }
-            other => panic!("expected `fleet claims`, got {other:?}"),
+            _ => panic!("`stella fleet claims` must parse as the claims verb"),
         }
 
         let cli = Cli::try_parse_from(["stella", "fleet", "claims", "--all", "--format", "json"])
             .unwrap();
         assert!(matches!(
             cli.command,
-            Command::Fleet {
+            Some(Command::Fleet {
                 cmd: Some(crate::fleet_verbs::FleetCmd::Claims {
                     all: true,
                     format: QueryFormat::Json
                 }),
                 ..
-            }
+            })
         ));
 
         // And the documented escape hatch still works: `--` makes it a prompt.
         let cli = Cli::try_parse_from(["stella", "fleet", "--", "claims are stale"]).unwrap();
         assert!(matches!(
             cli.command,
-            Command::Fleet { cmd: None, .. }
+            Some(Command::Fleet { cmd: None, .. })
         ));
     }
 }
