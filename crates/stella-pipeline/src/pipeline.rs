@@ -161,10 +161,6 @@ const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software e
      no test. Do not invent a task. If it fits, add one short line inviting \
      them to describe a change, bug, or question about their codebase.";
 
-/// Small fixed system prompt for the independent witness author.
-const WITNESS_SYSTEM_PROMPT: &str = "You are a precise test author. You write minimal failing tests that pin down intended \
-     behavior. You never modify production code and never fix the problem yourself.";
-
 /// Per-role request overrides for the pipeline's raw completion calls
 /// (triage / verifier / guidance), resolved by the caller from
 /// `agent_engine_config`. Every field is optional and falls through to the
@@ -183,10 +179,13 @@ pub struct RoleCallOverrides {
     pub params: Option<stella_protocol::GenerationParams>,
 }
 
-/// The pipeline's per-role override set. Worker (and plan/witness, which
-/// ride the worker's tier) is configured through
-/// [`PipelineConfig::engine`] directly; only the two roles with their own
-/// models get their own request shaping.
+/// The pipeline's per-role override set. Worker (and plan, which rides the
+/// worker's tier) is configured through [`PipelineConfig::engine`] directly;
+/// only the two roles with their own models get their own request shaping.
+/// The witness author/repair engines ride the verifier's model, so they take
+/// the `verifier` row's shaping too (#1785) — everything except `prompt`,
+/// which stays scoped to the raw verdict/guidance calls
+/// (`Pipeline::witness_engine_config` says why).
 #[derive(Debug, Clone, Default)]
 pub struct PipelineRoleOverrides {
     pub triage: RoleCallOverrides,
@@ -283,12 +282,12 @@ pub struct PipelineConfig {
     /// unchanged either way, since the witness has already done its job by
     /// the time adoption happens.
     pub keep_witness: bool,
-    /// Distress-triggered course-correction: on the *second consecutive*
-    /// deterministic verification failure, spend one verifier call for guidance
-    /// that rides with the next revision prompt ([`crate::verify::guidance_prompt`]).
-    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded
-    /// by `max_revisions` (at most `max_revisions - 1` guidance calls per
-    /// candidate).
+    /// Distress-triggered course-correction: on a candidate's *second*
+    /// deterministic verification failure — cumulative, not necessarily
+    /// consecutive (#868) — spend one verifier call for guidance that rides
+    /// with the next revision prompt ([`crate::verify::guidance_prompt`]).
+    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded by
+    /// `max_revisions` (at most `max_revisions - 1` guidance calls per candidate).
     pub distress_guidance: bool,
     /// The closed diagnostic that reports what the turn changed. `None`
     /// disables diff-size and zero-diff inspection.
@@ -1701,7 +1700,7 @@ impl<'a> Pipeline<'a> {
         total: &mut f64,
     ) -> Result<(CandidateResult, Option<String>, u32), PipelineError> {
         // Orchestrator pre-fetch (issue #248) — see `crate::mcp_prefetch::fold`.
-        let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, goal, n, base_messages).await;
+        let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, n, base_messages).await;
         let base_messages: &[CompletionMessage] = prefetched.as_deref().unwrap_or(base_messages);
         let Some(port) = self.candidate_workspaces else {
             if author_witness {
@@ -2613,16 +2612,16 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(false)),
                         );
                     }
-                    // Distress trigger: a SECOND consecutive deterministic
-                    // failure means the evidence alone didn't steer the
-                    // worker — spend one verifier call on course-correction
+                    // Distress trigger: a SECOND deterministic failure of this
+                    // candidate — the ledger is cumulative, so the two need not
+                    // be consecutive (#868) — means the evidence alone didn't
+                    // steer the worker: spend one verifier call on course-correction
                     // (event-triggered, never a fixed midpoint checkpoint).
-                    // Counted from the deterministic-failure ledger
-                    // (`deterministic_disclosure` just recorded this round's
-                    // fingerprint), not from `revisions`: a prior model-verifier
-                    // FAIL also increments `revisions`, and gating on it paid
-                    // a guidance call on the FIRST deterministic red while
-                    // telling the verifier the agent had "failed twice in a row".
+                    // Counted from that ledger (`deterministic_disclosure` just
+                    // recorded this round's fingerprint), not from `revisions`:
+                    // a prior model-verifier FAIL also increments `revisions`,
+                    // and gating on it paid a guidance call on the FIRST deterministic
+                    // red while telling the verifier the agent had "failed twice in a row".
                     let mut reason = brief.message();
                     if self.config.distress_guidance && state.failures.len() >= 2 {
                         // Same witness exclusion as the verdict call (#1433):
@@ -2871,6 +2870,7 @@ impl<'a> Pipeline<'a> {
                     // than being forwarded (§4.3).
                     let feedback = self
                         .airlock_forward(&verdict.reasoning, "verifier_reasoning", &sealed)
+                        .map(|text| crate::verify::bound_forwarded_reasoning(&text))
                         .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
                     if let Err(abort) = self
                         .revise_candidate(engine, surface, budget, &feedback, total, &mut state)

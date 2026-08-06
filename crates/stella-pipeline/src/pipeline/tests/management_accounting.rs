@@ -470,3 +470,168 @@ async fn a_late_plan_is_abandoned_and_falls_back_to_the_single_step_plan() {
         "the missed deadline must surface as an explicit incomplete-usage record: {events:?}"
     );
 }
+
+/// Serves one scripted result per call while recording the request-shaping
+/// fields that reached it, so a test can assert the *allowance* a management
+/// call was dispatched with — `ScriptedProvider` records prompts, not bounds.
+struct BoundsProvider {
+    script: TokioMutex<VecDeque<CompletionResult>>,
+    bounds: std::sync::Mutex<Vec<(Option<u32>, Option<stella_protocol::ReasoningEffort>)>>,
+}
+
+impl BoundsProvider {
+    fn new(results: Vec<CompletionResult>) -> Self {
+        Self {
+            script: TokioMutex::new(results.into_iter().collect()),
+            bounds: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Each request's `(max_output_tokens, effort)`, in call order.
+    fn bounds(&self) -> Vec<(Option<u32>, Option<stella_protocol::ReasoningEffort>)> {
+        self.bounds.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl Provider for BoundsProvider {
+    fn id(&self) -> &str {
+        "bounds"
+    }
+
+    async fn complete_ref(
+        &self,
+        req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.bounds
+            .lock()
+            .unwrap()
+            .push((req.max_output_tokens, req.effort));
+        let mut q = self.script.lock().await;
+        q.pop_front()
+            .ok_or_else(|| ProviderError::Terminal("bounds provider exhausted".into()))
+    }
+}
+
+/// Triage answers in three lines, but with no role bounds it inherited the
+/// worker's whole allowance: `engine.max_output_tokens` (the model catalog's
+/// full ceiling once the CLI seeds it) and an unset effort, which leaves the
+/// provider's default (high) reasoning allowance burning thinking tokens on a
+/// classification. The chokepoint must pin the bounded shape instead.
+#[tokio::test]
+async fn triage_dispatches_with_pinned_management_bounds() {
+    let provider = BoundsProvider::new(vec![text_result("single")]);
+    let resolver = AnyProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None);
+    let mut total = 0.0;
+
+    pipeline
+        .triage("fix the failing parser test", &mut budget, &mut total)
+        .await
+        .expect("a served triage call must classify");
+
+    assert_eq!(
+        provider.bounds(),
+        vec![(Some(512), Some(stella_protocol::ReasoningEffort::Low))],
+        "the triage dispatch must carry the pinned management bounds, not \
+         fall through to the worker-tier allowance"
+    );
+}
+
+/// A settings-supplied role override must keep winning over the pinned role
+/// bounds — the bounds are a default between the caller's explicit overrides
+/// and the engine base, never a cap on operator intent.
+#[tokio::test]
+async fn explicit_triage_overrides_win_over_the_role_bounds() {
+    let provider = BoundsProvider::new(vec![text_result("single")]);
+    let resolver = AnyProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            role_overrides: PipelineRoleOverrides {
+                triage: RoleCallOverrides {
+                    max_output_tokens: Some(9000),
+                    effort: Some(stella_protocol::ReasoningEffort::High),
+                    ..RoleCallOverrides::default()
+                },
+                ..PipelineRoleOverrides::default()
+            },
+            ..PipelineConfig::default()
+        },
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None);
+    let mut total = 0.0;
+
+    pipeline
+        .triage("fix the failing parser test", &mut budget, &mut total)
+        .await
+        .expect("a served triage call must classify");
+
+    assert_eq!(
+        provider.bounds(),
+        vec![(Some(9000), Some(stella_protocol::ReasoningEffort::High))],
+        "explicit role overrides must not be shadowed by the role bounds"
+    );
+}

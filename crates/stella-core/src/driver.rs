@@ -158,9 +158,9 @@ pub struct EngineConfig {
     /// own observed tokens rather than raw heuristic tokens.
     pub compaction_budget_tokens: u64,
     /// Age-based tool-result retention (#1285): results older than this many
-    /// tool-bearing steps are middle-out aged on every step, batched so the
-    /// prompt-cache prefix is rewritten once per several steps rather than
-    /// per step (`compaction::RETENTION_MIN_BATCH`). This is what holds the
+    /// tool-bearing steps are middle-out aged on every step, gated so the
+    /// prompt-cache prefix is rewritten only when real bytes come back
+    /// (`compaction::RETENTION_MIN_RECLAIM_CHARS`). This is what holds the
     /// standing context roughly flat through a long turn — the budget above
     /// fires only near the context ceiling, which on a long trial is the very
     /// end of exactly the runs it should have shaped from the middle

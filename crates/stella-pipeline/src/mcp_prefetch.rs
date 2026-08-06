@@ -16,17 +16,17 @@ use crate::ports::McpPrefetchPort;
 /// whole one.
 const PREFETCH_BUDGET_CHARS: usize = 20_000;
 
-/// `goal`/`n` describe the fan-out about to start; `port` is `None` when the
-/// caller wired no pre-fetch hook. `Some` only when there is genuinely new
+/// `n` is the width of the fan-out about to start; `port` is `None` when the
+/// caller wired no pre-fetch hook. The sweep is goal-blind by contract
+/// ([`McpPrefetchPort`], #1779). `Some` only when there is genuinely new
 /// context to share — `None` means the caller's original `base_messages`
 /// must be used unchanged (never allocate a redundant clone).
 pub(crate) async fn fold(
     port: Option<&dyn McpPrefetchPort>,
-    goal: &str,
     n: u32,
     base_messages: &[CompletionMessage],
 ) -> Option<Vec<CompletionMessage>> {
-    let context = port?.prefetch(goal).await?;
+    let context = port?.prefetch().await?;
     let context = {
         let mut kept: String = context.chars().take(PREFETCH_BUDGET_CHARS).collect();
         if kept.chars().count() < context.chars().count() {
