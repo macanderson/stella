@@ -527,7 +527,7 @@ mod tests {
         let record = parked_record(&registry);
         let sidecar = registry.sidecar_dir(&record.id);
         let gate = SidecarApprovalGate::new(sidecar.clone(), registry.clone(), record.id.clone())
-            .with_deadline(Some(std::time::Duration::from_millis(30)));
+            .with_wait(Some(std::time::Duration::from_millis(30)));
 
         // The outer timeout is the assertion's teeth: on a gate without a
         // deadline this future never resolves, and the test would hang rather
@@ -591,7 +591,7 @@ mod tests {
         // up to the poll interval.
         let short =
             SidecarApprovalGate::new(dir.path().into(), registry_in(dir.path()), "id".into())
-                .with_deadline(Some(std::time::Duration::from_millis(5)));
+                .with_wait(Some(std::time::Duration::from_millis(5)));
         let nap = short.next_poll(now).expect("5ms is still ahead");
         assert!(nap <= std::time::Duration::from_millis(5), "{nap:?}");
         // And a deadline already in the past ends the park.
