@@ -368,9 +368,6 @@ mod tests {
 
         // And the documented escape hatch still works: `--` makes it a prompt.
         let cli = Cli::try_parse_from(["stella", "fleet", "--", "claims are stale"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Fleet { cmd: None, .. })
-        ));
+        assert!(matches!(cli.command, Command::Fleet { cmd: None, .. }));
     }
 }
