@@ -164,6 +164,79 @@ fn seeded_workspace() -> TempDir {
              (1, 5, 'text', '{"type":"text","delta":"added the function"}');"#,
     )
     .unwrap();
+    // The context receipts (#1475), also in their own batch: one recorded
+    // worker call plus the overflow summarizer that shares its step, so a
+    // reconstruction has to be scoped by `call_seq` rather than by step.
+    //
+    // The two gap blocks carry their preimage locally (`content`); the other
+    // three resolve from the events above and their `content_digest` is the
+    // real sha256 of the exact preimage bytes — that is what makes the
+    // verification verdict a fact here rather than a fixture constant. The
+    // tool_call digest covers `{"call_id":…,"name":…,"input":…}` in
+    // `stella_protocol::ToolCall`'s declaration order.
+    conn.execute_batch(
+        "CREATE TABLE step_receipt (
+             execution_id INTEGER NOT NULL, turn_instance INTEGER NOT NULL,
+             step INTEGER NOT NULL, call_seq INTEGER NOT NULL DEFAULT 0,
+             provider TEXT NOT NULL, model TEXT NOT NULL, call_role TEXT NOT NULL,
+             effective_budget_tokens INTEGER NOT NULL,
+             calibration_factor REAL NOT NULL,
+             estimated_input_tokens INTEGER NOT NULL,
+             compiled_frame_id TEXT, frame_hash TEXT,
+             PRIMARY KEY (execution_id, turn_instance, step, call_seq));
+           CREATE TABLE step_manifest (
+             execution_id INTEGER NOT NULL, turn_instance INTEGER NOT NULL,
+             step INTEGER NOT NULL, call_seq INTEGER NOT NULL DEFAULT 0,
+             ordinal INTEGER NOT NULL, block_id TEXT NOT NULL,
+             cache_zone TEXT NOT NULL, resident_since_step INTEGER NOT NULL,
+             message_index INTEGER NOT NULL DEFAULT 0, call_id TEXT,
+             PRIMARY KEY (execution_id, turn_instance, step, call_seq, ordinal));
+           CREATE TABLE context_blocks (
+             execution_id INTEGER NOT NULL, block_id TEXT NOT NULL,
+             kind TEXT NOT NULL, origin_turn INTEGER NOT NULL,
+             origin_step INTEGER NOT NULL, call_id TEXT, memory_id TEXT,
+             token_cost INTEGER, content_digest TEXT NOT NULL,
+             citation_label TEXT, content TEXT,
+             first_seen_ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY (execution_id, block_id));
+           INSERT INTO step_receipt
+             (execution_id, turn_instance, step, call_seq, provider, model,
+              call_role, effective_budget_tokens, calibration_factor,
+              estimated_input_tokens)
+           VALUES
+             (1, 0, 1, 0, 'zai', 'glm-5.2', 'worker', 136363, 1.1, 203),
+             (1, 0, 1, 1, 'zai', 'glm-5.2', 'overflow_summarizer', 136363, 1.1, 12);
+           INSERT INTO context_blocks
+             (execution_id, block_id, kind, origin_turn, origin_step, call_id,
+              token_cost, content_digest, content)
+           VALUES
+             (1, 'blk_sys', 'system_prefix', 0, 0, NULL, 40,
+              'sha256:0bf72c9a096fc5a3c095d830189524ae60b197a0e78dde2c80b914abb1e07b3d',
+              'you are careful'),
+             (1, 'blk_user', 'user_goal', 0, 0, NULL, 30,
+              'sha256:11360c09a451a0c3a39d7fdc2697800d5b500a6b445b8120fba6ad5c0b5eb4e6',
+              'add a function'),
+             (1, 'blk_text', 'assistant_text', 0, 1, NULL, 20,
+              'sha256:f9cbfada6f746168b93daa674d776cd0407b6e3c3777ef3aaf3ca253ba5ae07c',
+              NULL),
+             (1, 'blk_call', 'tool_call', 0, 1, 'c1', 25,
+              'sha256:70b207f5a306abb1d8d7b4534452d37806896cd51569a8e8554f0e4e5109e4ad',
+              NULL),
+             (1, 'blk_res', 'tool_result', 0, 1, 'c1', 88,
+              'sha256:bfd1986b0e5cdf2925326cf75fa8d40320722e0a3971274a7844b2147ac927e7',
+              NULL);
+           INSERT INTO step_manifest
+             (execution_id, turn_instance, step, call_seq, ordinal, block_id,
+              cache_zone, resident_since_step, message_index, call_id)
+           VALUES
+             (1, 0, 1, 0, 0, 'blk_sys',  'stable_prefix', 0, 0, NULL),
+             (1, 0, 1, 0, 1, 'blk_user', 'cacheable',     0, 1, NULL),
+             (1, 0, 1, 0, 2, 'blk_text', 'volatile',      1, 2, NULL),
+             (1, 0, 1, 0, 3, 'blk_call', 'volatile',      1, 2, 'c1'),
+             (1, 0, 1, 0, 4, 'blk_res',  'volatile',      1, 3, 'c1'),
+             (1, 0, 1, 1, 0, 'blk_sys',  'stable_prefix', 0, 0, NULL);",
+    )
+    .unwrap();
     dir
 }
 
@@ -385,6 +458,135 @@ fn execution_journal_clips_long_bodies_unless_full() {
     assert_eq!(v[0]["body"].as_str().unwrap().chars().count(), long.len());
 }
 
+/// The witness for sent-context inspection (#1475): the reconstructed message
+/// array carries the system prompt the receipt recorded, in wire order, and
+/// says so verifiably.
+///
+/// This is the question the dashboard could not answer — the transcript shows
+/// what a run *did*, never what a call was *sent* — and the system prompt is
+/// the part of it that exists nowhere else in the store.
+#[test]
+fn execution_context_rebuilds_the_message_array_a_call_was_sent() {
+    let ws = seeded_workspace();
+    let response = respond(
+        ws.path(),
+        "/api/execution-context?id=1&turn=0&step=1&call_seq=0",
+    );
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(v["receipts_recorded"], true, "{v}");
+    // The index the drawer drills from: both calls that shared step 1.
+    let calls = v["calls"].as_array().unwrap();
+    assert_eq!(calls.len(), 2, "{v}");
+    assert_eq!(calls[0]["call_role"], "worker");
+    assert_eq!(calls[0]["estimated_input_tokens"], 203);
+    assert_eq!(calls[1]["call_role"], "overflow_summarizer");
+    // Frame identity is absent for a receipt written with the lifecycle off,
+    // and null must read as "not computed", never as "computed and empty".
+    assert!(calls[0]["compiled_frame_id"].is_null());
+
+    let context = &v["context"];
+    assert_eq!(context["found"], true, "{v}");
+    let messages = context["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, ["system", "user", "assistant", "tool"], "{v}");
+    assert_eq!(
+        messages[0]["body"], "you are careful",
+        "the system prompt the model actually saw"
+    );
+    assert_eq!(messages[1]["body"], "add a function");
+    // One message, several blocks: the assistant text and the tool call it
+    // carried regroup by `message_index`, in manifest order.
+    assert_eq!(
+        messages[2]["body"],
+        "added the function\n→ tool_call c1 read_file {\"path\":\"src/lib.rs\"}"
+    );
+    assert_eq!(messages[3]["body"], "← tool_result c1\nfn a() {}");
+    // Verified means the journal-resolved blocks re-hashed to the digests the
+    // receipt recorded — a fact re-derived here, not a stored verdict.
+    assert_eq!(context["verified"], true, "{v}");
+    assert_eq!(context["unresolved"], serde_json::json!([]));
+    assert_eq!(context["digest_mismatches"], serde_json::json!([]));
+    // A gap block's preimage is stored locally, so its check is tautological
+    // and is deliberately not reported as evidence.
+    assert!(messages[0]["blocks"][0]["digest_verified"].is_null());
+    assert_eq!(messages[3]["blocks"][0]["digest_verified"], true);
+    assert_eq!(messages[3]["blocks"][0]["cache_zone"], "volatile");
+    assert_eq!(messages[3]["blocks"][0]["token_cost"], 88);
+}
+
+/// A step can hold several model calls, and each was sent its own context.
+/// Addressing one must never fold in the other's blocks.
+#[test]
+fn execution_context_is_scoped_to_one_call_seq_not_the_whole_step() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/execution-context?id=1&step=1&call_seq=1");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let messages = v["context"]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1, "the summarizer's own manifest: {v}");
+    assert_eq!(messages[0]["role"], "system");
+    // Coordinates with no receipt are answered, not errored.
+    let none = respond(ws.path(), "/api/execution-context?id=1&step=9");
+    let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
+    assert_eq!(none.status, "200 OK");
+    assert_eq!(v["context"]["found"], false, "{v}");
+    assert!(
+        v["context"]["note"].as_str().unwrap().contains("step 9"),
+        "{v}"
+    );
+}
+
+/// An execution recorded with `context.lifecycle` off has no receipts, and
+/// that is a state with its own answer — the wording `stella inspect` uses —
+/// not a 500 and not an empty array pretending nothing was sent.
+#[test]
+fn execution_context_without_receipts_says_so_instead_of_erroring() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/execution-context?id=2&step=1");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(response.status, "200 OK");
+    assert_eq!(v["receipts_recorded"], false, "{v}");
+    assert_eq!(v["calls"], serde_json::json!([]));
+    assert!(v["context"].is_null());
+    assert!(
+        v["note"]
+            .as_str()
+            .unwrap()
+            .contains("has no recorded receipts"),
+        "{v}"
+    );
+}
+
+/// A reconstructed message obeys the transcript route's clip policy: past
+/// `db::JOURNAL_BODY_CLIP` chars it is cut and flagged, and `?full=1` returns
+/// the bytes. A system prompt is thousands of stable lines, so this is the
+/// common case here rather than the edge one.
+#[test]
+fn execution_context_clips_long_messages_unless_full() {
+    use crate::db::JOURNAL_BODY_CLIP;
+    let ws = seeded_workspace();
+    let long = "x".repeat(JOURNAL_BODY_CLIP + 100);
+    Connection::open(ws.path().join(".stella/private/store.db"))
+        .unwrap()
+        .execute(
+            "UPDATE context_blocks SET content = ?1 WHERE block_id = 'blk_sys'",
+            [long.as_str()],
+        )
+        .unwrap();
+    let clipped = respond(ws.path(), "/api/execution-context?id=1&step=1");
+    let v: serde_json::Value = serde_json::from_slice(&clipped.body).unwrap();
+    assert_eq!(v["context"]["messages"][0]["truncated"], true, "{v}");
+    let full = respond(ws.path(), "/api/execution-context?id=1&step=1&full=1");
+    let v: serde_json::Value = serde_json::from_slice(&full.body).unwrap();
+    assert_eq!(v["context"]["messages"][0]["truncated"], false);
+    assert_eq!(
+        v["context"]["messages"][0]["body"].as_str().unwrap().len(),
+        long.len()
+    );
+}
+
 #[test]
 fn tool_leaderboard_counts_errors() {
     let ws = seeded_workspace();
@@ -409,6 +611,8 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
         "/api/executions",
         "/api/execution-journal?id=1",
         "/api/execution-journal?id=1&after_seq=0",
+        "/api/execution-context?id=1",
+        "/api/execution-context?id=1&turn=0&step=1&call_seq=0",
         "/api/models",
         "/api/tools",
         "/api/files",
