@@ -646,7 +646,7 @@ async fn stop_or_abandoned(
 
 /// One worker turn in `root`, on the calling thread's runtime. When
 /// `use_pipeline` is true (the default), the turn runs through the staged
-/// pipeline (triage → recall → plan → witness → execute → verify → verdict);
+/// pipeline (triage → recall → plan → execute → witness → verify → verdict);
 /// otherwise it falls back to the raw `Engine::run_turn` step-loop.
 #[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
 async fn run_task(
@@ -1284,6 +1284,7 @@ mod tests {
             false,
         );
         tx.send(AgentEvent::StepUsage {
+            reasoning_tokens: None,
             output_text: None,
             step: 0,
             role: stella_protocol::ModelCallRole::Worker,

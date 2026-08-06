@@ -27,7 +27,7 @@
 //!
 //! ## The match is exhaustive on purpose
 //!
-//! `stella-protocol/src/event.rs` carries a checklist of every downstream
+//! `crates/stella-protocol/src/event.rs` carries a checklist of every downstream
 //! matcher a new variant must be considered against, and it distinguishes
 //! *compile-enforced* matchers from *silent* ones that would quietly ignore a
 //! new variant. This one is compile-enforced: there is no `_` arm, so adding
@@ -665,7 +665,11 @@ fn stage_name(stage: StageKind) -> &'static str {
         StageKind::Witness => "witness",
         StageKind::Execute => "execute",
         StageKind::Verify => "verify",
-        StageKind::Verdict => "verifier",
+        // The stage is `verdict`; the *model* that runs it is the verifier
+        // (see `role_name`). Naming the stage after its model is the exact
+        // `verify → verifier` adjacency #1394's rename existed to remove, so
+        // this field follows the wire enum rather than lagging it (#1465).
+        StageKind::Verdict => "verdict",
         StageKind::Reflect => "reflect",
         StageKind::ContextWrite => "context_write",
         StageKind::Complete => "complete",
@@ -745,6 +749,17 @@ mod tests {
                 input,
             },
         }
+    }
+
+    /// The closed vocabulary keeps the project's settled distinction: the
+    /// **stage** is `verdict`, the **model** that runs it is the `verifier`.
+    /// Both names live in this file, one line apart, and having the stage
+    /// borrow the model's name is what put the diagnostic field out of step
+    /// with the wire enum it is derived from (#1465).
+    #[test]
+    fn the_stage_is_verdict_and_only_the_role_is_the_verifier() {
+        assert_eq!(stage_name(StageKind::Verdict), "verdict");
+        assert_eq!(role_name(ModelCallRole::Verdict), "verifier");
     }
 
     /// §3.8 and property 6 of §12: a turn of any length produces a record count
@@ -911,6 +926,7 @@ mod tests {
     fn step_usage_carries_the_model_through_the_reviewed_hatch() {
         let (mut bridge, records) = bridge();
         bridge.observe(&AgentEvent::StepUsage {
+            reasoning_tokens: None,
             step: 1,
             role: ModelCallRole::Worker,
             provider: "anthropic".into(),

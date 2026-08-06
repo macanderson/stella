@@ -45,6 +45,7 @@ use crate::cache_schedule::{RunnableSession, warmest_first};
 use crate::git::{GitCli, Worktree, WorktreeError, WorktreeManager};
 use crate::ledger::{
     AttemptFinish, AttemptId, AttemptStart, CommitRecord, Ledger, LedgerError, RunRecord,
+    lease::{ClaimOutcome, DispatchLease, RenewOutcome},
 };
 use crate::plan::{Isolation, Plan, PlanError, Task, TaskId};
 
@@ -130,6 +131,33 @@ impl Drop for ClaimGuard<'_> {
         for path in self.paths {
             let _ = store.release_file_lock(path, &self.holder);
         }
+    }
+}
+
+/// Holds one attempt's **dispatch claim** (#1136) — the lease that stops a
+/// second session starting the same task — for exactly the scope it lives in,
+/// releasing it on `Drop`.
+///
+/// Same reason as [`ClaimGuard`]: release must be tied to a scope, not to
+/// reaching a statement, because a panicking worker and a dropped dispatch
+/// future both skip the statement. Unlike a file lock, a leaked claim here is
+/// self-healing — it expires — but making the next session wait out
+/// [`DISPATCH_LEASE_TTL`] for work that settled seconds ago is a bad enough
+/// experience to be worth a guard.
+///
+/// Release is fenced (see [`Ledger::release_dispatch`]), so a guard whose
+/// lease was already reclaimed by a rival drops without touching the rival's
+/// row. It never panics: a failed release only leaves a row that expires on
+/// its own.
+struct LeaseGuard<'a> {
+    ledger: &'a Mutex<Ledger>,
+    lease: DispatchLease,
+}
+
+impl Drop for LeaseGuard<'_> {
+    fn drop(&mut self) {
+        let ledger = self.ledger.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = ledger.release_dispatch(&self.lease);
     }
 }
 
@@ -246,6 +274,28 @@ impl FleetConfig {
 /// grace is the cheap path and the synthesis the last resort.
 const TASK_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How long a dispatch claim stays live without a heartbeat (#1136).
+///
+/// It bounds only the *crash* case — a healthy attempt renews every
+/// [`DispatchLease::heartbeat_interval_ms`] (a third of this) for as long as
+/// its worker runs, so the TTL never has to cover a task's duration. What it
+/// does have to cover is the longest pause a live dispatch can take between
+/// beats without being dead, which is why it is minutes rather than seconds:
+/// a machine that swaps, a laptop lid, or a `SIGSTOP`ped process should not
+/// hand its work to a rival. The other direction costs a human's patience —
+/// after a hard kill, this is how long the task looks taken.
+const DISPATCH_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// The ledger key one fleet task is claimed under (#1136).
+///
+/// Namespaced because the claim table is shared with every other kind of
+/// dispatcher in a workspace — an issue-driven session claims `issue:<n>` —
+/// and a bare task id could collide with one of those by accident.
+#[must_use]
+pub fn dispatch_claim_key(task_id: &str) -> String {
+    format!("task:{task_id}")
+}
+
 /// The completed record of one dispatched task: what the worker produced, the
 /// worktree it ran in (if isolated), the ledger attempt id, and the parent
 /// budget's disposition after metering this child's spend.
@@ -334,6 +384,25 @@ pub enum FleetError {
         task: TaskId,
         path: String,
         holder: String,
+    },
+    /// Another session already holds the dispatch lease on this task
+    /// (#1136), so this fleet did not start a second worker on it. The holder
+    /// is named — it is the rival's run id, which embeds its pid — and so is
+    /// the instant its lease lapses, because "somebody is on it" and "it has
+    /// been stuck since Tuesday" are different problems and only the second
+    /// is the user's to act on.
+    ///
+    /// Terminal for that task within this run, like a claim conflict:
+    /// [`Fleet::run_plan`] records it as a dispatch failure rather than
+    /// waiting out a lease it cannot bound.
+    #[error(
+        "task `{task}` is already claimed by `{holder}` (lease expires at {expires_at_ms}ms); \
+         another session is working it"
+    )]
+    DispatchClaimed {
+        task: TaskId,
+        holder: String,
+        expires_at_ms: u64,
     },
     /// The plan declares claims but no claim store is wired
     /// ([`Fleet::with_claim_store`]) — refusing to run unenforced claims
@@ -529,8 +598,96 @@ where
         //    retries), on a panicking worker, and on this future being
         //    dropped mid-flight. The rows are DURABLE, so a missed release
         //    would outlive the process — see [`ClaimGuard`].
+        //
+        // 0c. Claim the TASK ITSELF before its paths (#1136). Path claims stop
+        //    two workers writing one file; they say nothing about two sessions
+        //    doing the same work — a second `stella fleet` in this workspace
+        //    used to re-dispatch a task another run was already on, and both
+        //    ran to completion. This is the dispatch-level check-and-set, and
+        //    it comes first because losing it means doing nothing at all.
+        let mut lease = self.acquire_dispatch_lease(task)?;
         let _claims = self.acquire_claims(task)?;
-        self.dispatch_claimed(task).await
+        self.dispatch_leased(task, &mut lease).await
+    }
+
+    /// Take this task's dispatch lease, or fail with the rival that holds it.
+    ///
+    /// Keyed `task:<id>` in the workspace's ledger, held under this run's id
+    /// (which embeds the minting pid — see [`FleetConfig::run_id`]), so the
+    /// holder in a refusal names a session a human can go look for.
+    fn acquire_dispatch_lease(&self, task: &Task) -> Result<LeaseGuard<'_>, FleetError> {
+        let now_ms = self.clock.now_ms();
+        let outcome = {
+            let ledger = self.lock_ledger();
+            ledger.claim_dispatch(
+                &dispatch_claim_key(&task.id),
+                &self.config.run_id,
+                now_ms,
+                DISPATCH_LEASE_TTL.as_millis().min(u128::from(u64::MAX)) as u64,
+            )?
+        };
+        match outcome {
+            ClaimOutcome::Granted(lease) => Ok(LeaseGuard {
+                ledger: &self.ledger,
+                lease,
+            }),
+            ClaimOutcome::Held(held) => Err(FleetError::DispatchClaimed {
+                task: task.id.clone(),
+                holder: held
+                    .as_ref()
+                    .map_or_else(|| "another session".to_string(), |c| c.owner.clone()),
+                expires_at_ms: held.as_ref().map_or(now_ms, |c| c.expires_at_ms),
+            }),
+        }
+    }
+
+    /// [`dispatch`](Self::dispatch) with the task's dispatch lease held,
+    /// heartbeating it for as long as the attempt runs.
+    ///
+    /// The heartbeat rides in this future rather than a spawned task on
+    /// purpose: it needs nothing `'static`, it cannot outlive the dispatch it
+    /// is proving alive, and a cancelled dispatch stops beating by
+    /// construction. `biased` polls the attempt first, so a worker that
+    /// settles on the same tick as a beat is never delayed by one.
+    ///
+    /// **A lost lease does not stop the worker.** If this attempt is
+    /// superseded anyway — stalled past its TTL, or a clock that jumped — the
+    /// honest options are to kill a worker mid-flight (which this codebase
+    /// refuses to do anywhere else: budget aborts wait for a safe boundary,
+    /// and a timeout asks the worker to stop rather than dropping it) or to
+    /// finish the work that is already paid for. It finishes. The row is not
+    /// re-taken behind the rival's back — renewal fails and the guard's
+    /// fenced release leaves the rival's claim alone — so the overlap is
+    /// visible in the ledger rather than silently repaired.
+    async fn dispatch_leased(
+        &self,
+        task: &Task,
+        lease: &mut LeaseGuard<'_>,
+    ) -> Result<TaskHandle, FleetError> {
+        let beat = std::time::Duration::from_millis(lease.lease.heartbeat_interval_ms());
+        let attempt = self.dispatch_claimed(task);
+        tokio::pin!(attempt);
+        let mut holding = true;
+        loop {
+            tokio::select! {
+                biased;
+                settled = &mut attempt => return settled,
+                () = tokio::time::sleep(beat), if holding => {
+                    let now_ms = self.clock.now_ms();
+                    let renewed = {
+                        let ledger = self.lock_ledger();
+                        ledger.renew_dispatch(&lease.lease, now_ms)
+                    };
+                    match renewed {
+                        Ok(RenewOutcome::Renewed(extended)) => lease.lease = extended,
+                        // Superseded, or the ledger is unreadable: either way
+                        // this attempt no longer has a lease to prove, so stop
+                        // beating and let the work it already paid for finish.
+                        Ok(RenewOutcome::Lost(_)) | Err(_) => holding = false,
+                    }
+                }
+            }
+        }
     }
 
     /// [`dispatch`](Self::dispatch) after the task's claims are held.
@@ -699,6 +856,20 @@ where
     /// — see the contract on [`FleetConfig::run_id`].
     fn claim_holder(&self, task: &Task) -> String {
         format!("{}/{}", self.config.run_id, task.id)
+    }
+
+    /// This fleet's view of who currently holds a task, live or lapsed —
+    /// `None` when nobody has claimed it. A dispatcher can ask before
+    /// planning; the answer is advisory (only [`Fleet::dispatch`]'s own
+    /// check-and-set decides anything), which is exactly why it is a separate,
+    /// clearly-named read.
+    pub fn dispatch_claim_holder(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<crate::ledger::lease::DispatchClaim>, FleetError> {
+        Ok(self
+            .lock_ledger()
+            .dispatch_claim(&dispatch_claim_key(task_id))?)
     }
 
     /// Acquire every path in `task.claims` — all-or-nothing: on a conflict

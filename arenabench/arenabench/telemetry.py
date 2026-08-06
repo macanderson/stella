@@ -53,6 +53,7 @@ from pathlib import Path
 from stat import S_ISDIR
 from typing import Any
 
+from .artifacts import mp4_is_finalized
 from .pricing import Price, price_for, price_for_route, price_on_route, trial_cost
 
 __all__ = [
@@ -78,6 +79,20 @@ SEAT_MANIFEST_SUFFIX = ".seat.json"
 #: reader, for the same reason as :func:`seat_manifest_path`: the writer
 #: imports it, so the two can never disagree about the location.
 FLIP_NAME = "arena/flip.json"
+
+#: Per-trial paths written incrementally *while the agent runs*, probed —
+#: never read — for liveness. Stella appends its event stream per event;
+#: Harbor appends ``trial.log`` as the trial progresses; a Claude Code arm
+#: tees its stdout to ``claude-code.txt`` and appends session transcripts
+#: under ``sessions/``. Deliberately an allowlist rather than the directory
+#: tree: the verifier and the arena write into the same trial directory, and
+#: their activity must not read as the agent's pulse (#1571).
+LIVENESS_NAMES: tuple[str, ...] = (
+    EVENTS_NAME,
+    "trial.log",
+    "agent/claude-code.txt",
+    "agent/sessions",
+)
 
 #: Per-trial paths written incrementally *while the agent runs*, probed —
 #: never read — for liveness. Stella appends its event stream per event;
@@ -672,7 +687,12 @@ class MetricsReader:
             if isinstance(wasted, (int, float)):
                 metrics.wasted_elapsed = float(wasted)
 
-        metrics.has_video = (trial_dir / "arena" / "recording.mp4").exists()
+        # Existence is not playability. The recorder writes the index (`moov`)
+        # at the *end* of encoding, so a live trial has a growing file that no
+        # player can open, and a killed one keeps that file forever. Offering a
+        # player in either window is a broken box in the UI, so this reports a
+        # video only once the recording has actually been finalised.
+        metrics.has_video = mp4_is_finalized(trial_dir / "arena" / "recording.mp4")
         return metrics
 
 

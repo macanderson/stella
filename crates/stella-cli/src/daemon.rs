@@ -101,8 +101,22 @@ use stella_store::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo
 
 use crate::DaemonCmd;
 
+/// `install` / `uninstall`: the service-manager half (#1587) — what makes a
+/// registered invocation come back after the logout and reboot that
+/// supervision alone cannot cross.
+mod service;
+
+/// `resume-all` and `install --resume-all`: the boot-time sweep (#1627) that
+/// makes a registered service *continue* the turns a reboot killed rather
+/// than restart them.
+mod boot;
+
 pub(crate) mod approval;
 pub(crate) mod console;
+
+/// `--detach`: the same supervised launch, without the launcher staying to
+/// stream it (#1607).
+pub(crate) mod detach;
 
 /// Carries the supervised session's registry id into the child.
 ///
@@ -241,6 +255,7 @@ pub(crate) fn supervise_this_invocation(
     workspace: &Path,
     title: &str,
     stdin: &[u8],
+    posture: detach::Posture,
 ) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to supervise: {e}"))?;
@@ -270,6 +285,9 @@ pub(crate) fn supervise_this_invocation(
         &args,
         stdin,
     )?;
+    if posture == detach::Posture::Detached {
+        return detach::release(run);
+    }
     run.announce();
     watch(rt, &registry, run)
 }
@@ -695,6 +713,13 @@ impl Tail {
         Ok(Self { file, offset: 0 })
     }
 
+    // There is deliberately no `seek_to_end` here, for the same reason
+    // `console::Follower` carries no `skip_to_now`: that pair was the only
+    // caller, and #1632 removed it as a defect — seeking past everything
+    // already written threw away the run's shutdown output, which on the
+    // Ctrl-C path is precisely what the person who pressed the key is
+    // waiting to read.
+
     /// Start `lines` lines back from the end, or at the beginning if the file
     /// is shorter than that.
     ///
@@ -923,10 +948,19 @@ fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
 
     let lock = std::fs::metadata(lock_path).ok()?;
     for fd in 3..LOCK_FD_SCAN_LIMIT {
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: `fstat` writes only into `stat`, and reports EBADF for a
-        // descriptor that is not open rather than doing anything with it.
-        if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        // The identity is read through `MetadataExt`, not a raw `libc::stat`,
+        // because `dev_t` is unsigned on Linux and signed on macOS: no single
+        // conversion of `st_dev` compiles on both, while `dev()`/`ino()` are
+        // declared `u64` on every Unix.
+        //
+        // SAFETY: the descriptor is borrowed, never owned — `ManuallyDrop`
+        // keeps `File`'s destructor from closing an fd this only looks at.
+        // `metadata` is an `fstat`, which reports EBADF for a descriptor that
+        // is not open rather than doing anything with it.
+        let probe = std::mem::ManuallyDrop::new(unsafe {
+            <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd)
+        });
+        let Ok(stat) = probe.metadata() else {
             continue;
         }
         // SAFETY: `fstat` returned success, so it initialized the struct.
@@ -1047,6 +1081,18 @@ pub(crate) fn resume_supervised(
     watch(rt, &registry, run)
 }
 
+/// `stella daemon resume-all` — the boot-time sweep (#1627).
+///
+/// Thin on purpose: the decision about *which* runs a boot continues, and the
+/// bound that stops it continuing them forever, live in [`boot`] where they
+/// are pure enough to witness.
+pub(crate) fn resume_all<F>(dry_run: bool, runtime: F) -> Result<(), String>
+where
+    F: FnMut() -> Result<tokio::runtime::Runtime, String>,
+{
+    boot::resume_all(dry_run, runtime)
+}
+
 /// The resume point `record` left behind, decoded — or the precise reason
 /// there is nothing to resume.
 ///
@@ -1141,9 +1187,12 @@ fn mark_stopped(registry: &SessionRegistry, id: &str) {
 /// Resolve a user-typed id to a record.
 ///
 /// Accepts a unique prefix, because the full form (`ses-1754431200000-84213`)
-/// is a timestamp and a pid and nobody is going to type it. `None` picks the
-/// most recent supervised run, which is what "the one I just started" means
-/// nine times in ten.
+/// is a timestamp and a pid and nobody is going to type it. It also accepts a
+/// bare **pid**, because that is the address `ps`, `top`, Activity Monitor and
+/// an OOM-killer log hand you, and without this rung translating one back to a
+/// run means eyeballing `stella daemon list` (#1690). `None` picks the most
+/// recent supervised run, which is what "the one I just started" means nine
+/// times in ten.
 pub(crate) fn resolve(
     registry: &SessionRegistry,
     id: Option<&str>,
@@ -1168,18 +1217,57 @@ pub(crate) fn resolve(
         return Ok(exact.clone());
     }
 
-    let mut matches = supervised_runs.into_iter().filter(|r| r.id.starts_with(id));
+    // An id begins `ses-`, so an argument that parses as a number cannot be a
+    // prefix of one: the two address spaces are disjoint, and a pid that hits
+    // nothing is reported as a pid rather than falling through to a prefix
+    // scan that could not have matched either. The ambiguity rule is the same
+    // one — pids are recycled, and a finished run keeps the one it ran under —
+    // but the advice is not, since there are no further digits to type.
+    if let Ok(pid) = id.parse::<u32>() {
+        return only(
+            supervised_runs.into_iter().filter(|r| r.pid == pid),
+            || {
+                format!(
+                    "no supervised run has pid {pid} — `stella daemon list` shows what there is"
+                )
+            },
+            |first, second| {
+                format!(
+                    "pid {pid} matches more than one run ({} and {}) — use the id `stella daemon list` prints",
+                    first.id, second.id
+                )
+            },
+        );
+    }
+
+    only(
+        supervised_runs.into_iter().filter(|r| r.id.starts_with(id)),
+        || format!("no supervised run matches `{id}` — `stella daemon list` shows what there is"),
+        |first, second| {
+            format!(
+                "`{id}` matches more than one run ({} and {}) — use more of the id",
+                first.id, second.id
+            )
+        },
+    )
+}
+
+/// The one record in `matches`, or the error for none and for several.
+///
+/// Shared by [`resolve`]'s prefix and pid rungs: the rule ("exactly one, or
+/// say so") is the same on both, while the sentences are not — what to type
+/// instead depends on which address space the caller was using.
+fn only(
+    mut matches: impl Iterator<Item = SessionRecord>,
+    miss: impl FnOnce() -> String,
+    ambiguous: impl FnOnce(&SessionRecord, &SessionRecord) -> String,
+) -> Result<SessionRecord, String> {
     let Some(first) = matches.next() else {
-        return Err(format!(
-            "no supervised run matches `{id}` — `stella daemon list` shows what there is"
-        ));
+        return Err(miss());
     };
     match matches.next() {
         None => Ok(first),
-        Some(second) => Err(format!(
-            "`{id}` matches more than one run ({} and {}) — use more of the id",
-            first.id, second.id
-        )),
+        Some(second) => Err(ambiguous(&first, &second)),
     }
 }
 
@@ -1196,6 +1284,16 @@ pub(crate) fn run(cmd: &DaemonCmd) -> Result<(), String> {
         // `--foreground` child half needs the provider resolution this
         // registry-only dispatcher exists to run before.
         DaemonCmd::Resume { .. } => unreachable!("daemon resume is dispatched in main"),
+        // Same routing, same reason: the sweep spawns and streams the runs it
+        // continues, so it needs the runtime `main` owns (#1627).
+        DaemonCmd::ResumeAll { .. } => unreachable!("daemon resume-all is dispatched in main"),
+        DaemonCmd::Install {
+            label,
+            keep_alive,
+            resume_all,
+            command,
+        } => service::install(label.as_deref(), *keep_alive, *resume_all, command),
+        DaemonCmd::Uninstall { label } => service::uninstall(label),
     }
 }
 
@@ -1243,6 +1341,11 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
             }
             (false, status) => (status.label(), |s| s.normal()),
         };
+        // A crashed run earns the resume hint only if it actually left a
+        // resume point behind; a clean exit discarded its own on the way out.
+        if !live && run.status.is_live() && !any_resumable {
+            any_resumable = has_resume_point(&run);
+        }
         // Padded before it is painted. A width applied to a `ColoredString`
         // counts the ANSI escapes as characters, so every coloured cell comes
         // out its escape-length too narrow and the last column ragged.

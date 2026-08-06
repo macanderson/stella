@@ -17,24 +17,24 @@
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ plan review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│Refactor the automations store into a shared workspace package                                                                                                │
-│3 steps  ·  ~11 files  ·  est. cost ~$0.42                                                                                                                    │
-│type approve  trim  xabort  ·  or what to change  —  then ⏎                                                                                                   │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                                                                                                      ││Refactor the automations store into a…│
-│● read_file    apps/app/automations/page.tsx                                                                          ││○ 1 extract types                     │
-│  ⎿ 312 lines                                                                                                     42ms││○ 2 move hooks                        │
-│                                                                                                                      ││○ 3 update 9 imports                  │
-│☰  plan  5/7  ·  Workflows canvas                                                                                     ││                                      │
-│                                                   ┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐           │└────────────────────── /plan reads it ┘
-│⏸ plan  Refactor the automations store into a share│run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │           │┌ DONE VERIFICATION ───────────────────┐
-│                                                   │new cap $                                             │           ││● flip ✓ red→green                    │
+└──────────────────────────────────────────┌ plan review ───────────────────────────────────────────────────────────┐──────────────────────────────────────────┘
+┌ transcript · 21 lines · following ───────│Refactor the automations store into a shared workspace package          │──┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│                                          │                                                                        │  ││Refactor the automations store into a…│
+│  Planning the automations cluster: list, │ ○  1. extract types                                                    │  ││○ 1. extract types                    │
+│                                          │ ○  2. move hooks                                                       │  ││○ 2. move hooks                       │
+│☰  plan  4/7  ·  Wire the triggers API    │ ○  3. update 9 imports                                                 │  ││○ 3. update 9 imports                 │
+│                                          │                                                                        │  ││                                      │
+│── WITNESS ───────────────────────────────│3 steps  ·  ~11 files  ·  est. ~$0.42                                   │──││                                      │
+│                                          │                                                                        │  ││                                      │
+│── EXECUTE ───────────────────────────────│a approve   t trim   r refine   x abort   ! shell                       │──││                                      │
+│                                          └───────────────────────────────────── one keypress decides · esc aborts ┘  ││                                      │
+│● read_file    apps/app/automations/page.tsx                                                                          │└────────────────────── /plan reads it ┘
+│  ⎿ 312 lines                                                                                                     42ms│┌ DONE VERIFICATION ───────────────────┐
+│                                                                                                                      ││○ warrant  pending                    │
+│☰  plan  5/7  ·  Workflows canvas                                                                                     ││● witness  authored  apps/app/automat…│
+│                                                   ┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐           ││● oracle   ✗ fails on base → ✓ passes…│
+│⏸ plan  Refactor the automations store into a share│run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │           ││○ tamper   pinned  sha256:9f3c1d2e4…  │
+│                                                   │new cap $                                             │           ││○ verdict  pending                    │
 └─────────────────────────────────────────── ↑ selec│the cap applies when the driver's budget stream folds │nd · /plan ┘└──────────────────────────────────────┘
 ────────────────────────────────────────────────────└──────────────────────────────────────────────────────┘────────────────────────────────────────────────────
  ▸ stage  Refactor the automations store into a shared workspace package

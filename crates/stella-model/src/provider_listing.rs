@@ -7,7 +7,8 @@
 //! it on top of the master list for every provider whose credential is
 //! configured.
 //!
-//! Four wire shapes cover every built-in provider:
+//! Four wire shapes cover every built-in provider that publishes a listing
+//! endpoint (Vertex and Bedrock publish none — the master list covers them):
 //! - **OpenRouter** — `GET {base}/models`, public. The richest listing:
 //!   per-token pricing strings, context/completion limits, and
 //!   `supported_parameters` (which is where per-model reasoning/tool

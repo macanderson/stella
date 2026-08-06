@@ -178,7 +178,7 @@ pub enum Inbound {
     /// custom commands/skills so the menu reflects them without a restart.
     SlashCommands(Vec<crate::composer::SlashCommand>),
     /// The driver toggled staged-pipeline routing (`/pipeline`): subsequent
-    /// turns run triage → witness → execute → verify → verdict instead of the
+    /// turns run triage → plan → execute → witness → verify → verdict, not the
     /// raw engine loop. Folded into [`crate::deck::WorkspaceModel::pipeline`]
     /// so the `PIPELINE` stat box flips live.
     Pipeline(bool),
@@ -453,8 +453,11 @@ pub struct InspectView {
     /// Blocks with no recoverable preimage — a documented coverage gap
     /// (synthetic results, discarded speculation, attachments).
     pub unresolved: usize,
-    /// Blocks whose bytes did NOT re-hash — a torn or altered journal. Kept
-    /// distinct from `unresolved`: the two mean very different things.
+    /// Blocks whose recovered bytes did NOT re-hash to the digest they
+    /// recorded — the preimage shown is the closest one the journal holds, not
+    /// the exact bytes this step sent. Usually a compaction rewrite the journal
+    /// was never told about, not evidence of tampering. Kept distinct from
+    /// `unresolved`: the two mean very different things.
     pub digest_mismatches: usize,
 }
 
@@ -688,6 +691,15 @@ pub enum WorkspaceInput {
     /// Drop every not-yet-dispatched prompt (the deck confirms with a second
     /// `ctrl+d` before sending this).
     QueueClear,
+    /// `/clear`, as an event rather than a queued prompt: reset the session to
+    /// its seq-0 state NOW — even mid-turn, where the driver cancels the
+    /// in-flight turn first. The deck sends this instead of enqueueing the
+    /// text, because a reset that waits behind the backlog is not a reset (the
+    /// user watched `/clear` sit in the queue popup as "pending"). The driver
+    /// answers with [`Inbound::SessionReset`] once its own history is blanked;
+    /// the deck's only optimistic mirror is dropping its queue view, since a
+    /// session reset to seq-0 has no backlog by definition.
+    SessionClear,
     /// Pause / resume / stop / restart a specific agent.
     Control {
         agent: AgentId,
@@ -882,12 +894,12 @@ pub enum WorkspaceInput {
         step: u64,
         call_seq: u64,
     },
-    /// Task card (`/tasks`): ask the driver to skip one still-open task on
-    /// `agent`'s board. Send-and-forget — the row's state changes only when
+    /// Plan card (`/plan`), `x`: ask the driver to skip one still-open step on
+    /// `agent`'s plan. Send-and-forget — the row's state changes only when
     /// the driver's next `TaskUpdate` snapshot folds back, so the card can
     /// never show a skip the engine refused.
     TaskSkip { agent: AgentId, id: String },
-    /// Scope card (`/scope`), post-approval `e`: ask the driver to open a
+    /// Plan card (`/plan`), post-approval `e`: ask the driver to open a
     /// scope-change proposal for `agent`'s locked scope. The deck never edits
     /// scope locally — a granted change arrives back as a fresh
     /// `ScopeReview` fold.
@@ -1002,6 +1014,20 @@ pub struct RoleWiringRow {
     /// `agents.verifier.model`, `pipeline_triage_model`, `default_model`,
     /// `--model (this invocation)`, or `session default`.
     pub source: String,
+    /// What a session started **now** would resolve for this role, when a
+    /// saved settings edit makes that differ from the four cells above —
+    /// `None` when the saved settings agree with what is running, which is the
+    /// ordinary case.
+    ///
+    /// The cells above stay the session-start resolution, because "what is
+    /// running" is the question this dialog exists to answer and showing a
+    /// mid-session edit as though it were in force would misreport exactly
+    /// that. But saying nothing about the edit was its own lie: a user who
+    /// changed `pipeline_verifier_model` and saved saw their old pin with no
+    /// explanation, and read the dialog as having ignored the save (#1521).
+    /// So this is strictly *additional* information, pre-rendered driver-side
+    /// like every other cell, holding only the parts that differ.
+    pub next_session: Option<String>,
 }
 
 /// The full agent-engine configuration snapshot the ENGINE overlay renders

@@ -2,7 +2,7 @@
 //! user config.
 //!
 //! Until now every context provider was in-process (`workspace-memory`,
-//! `code-graph`) and `stella-context/src/provider.rs` documented the external
+//! `code-graph`) and `crates/stella-context/src/provider.rs` documented the external
 //! seam as "designed here but not yet built". The pinned CGP rev ships
 //! `contextgraph-host`'s stdio and HTTP transports, so a third-party provider
 //! is now a config entry rather than a fork.

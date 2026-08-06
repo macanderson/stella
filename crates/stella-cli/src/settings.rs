@@ -518,6 +518,23 @@ pub struct AgentEngineConfig {
     /// compaction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_result_horizon_steps: Option<u64>,
+    /// Seconds a supervised run's parked scope-review approval
+    /// (`SidecarApprovalGate::review`, #1585) waits for an attached
+    /// terminal's decision before unparking itself as
+    /// `ScopeDecision::Abort`. Absent or `0` (the same "0 opts out"
+    /// convention as `model_timeout_secs`) parks forever, the shipped
+    /// default — bounded only by discoverability (`Needs Input` in `stella
+    /// daemon list`) and an explicit `stella daemon stop`.
+    ///
+    /// The default is deliberate: scope review exists to keep a large blast
+    /// radius from landing unattended, so timing it out to `Approve` would
+    /// defeat the gate, and a fail-open default nobody asked for is worse
+    /// than a run that stays parked until a human looks. This is the knob
+    /// for an operator who has decided the opposite trade for their own
+    /// workspace — fail CLOSED after N minutes unattended, sacrificing the
+    /// run rather than leaving it parked indefinitely (#1616).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_wait_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }
@@ -715,6 +732,7 @@ impl AgentEngineConfig {
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
         take!(tool_result_horizon_steps);
+        take!(approval_wait_secs);
         if let Some(agents) = &other.agents {
             let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
             for kind in EngineAgentKind::ALL {
@@ -821,6 +839,23 @@ impl AgentEngineConfig {
     /// Whether interactive surfaces gate writes on per-hunk approval (#1265).
     pub fn hunk_review_on(&self) -> bool {
         self.hunk_review.is_some_and(Toggle::is_on)
+    }
+
+    /// The parked-approval deadline, if the operator set one (#1616).
+    ///
+    /// `0` is spelled and means "no deadline", the same convention
+    /// `model_timeout_secs` uses: in a field whose absence already means
+    /// "the default", zero is the only way for one project to opt out of a
+    /// deadline a user-scope file set. Absent and `0` therefore agree, and
+    /// both park forever.
+    ///
+    /// The single copy of this reading, deliberately: #1616 merged twice,
+    /// and one of the two mappings that resulted was consulted by nothing.
+    /// Witness: `daemon::approval::tests::the_setting_maps_absent_and_zero_to_park_forever`.
+    pub fn approval_wait(&self) -> Option<std::time::Duration> {
+        self.approval_wait_secs
+            .filter(|secs| *secs > 0)
+            .map(std::time::Duration::from_secs)
     }
 
     /// Persist THIS config as the `agent_engine_config` key of the

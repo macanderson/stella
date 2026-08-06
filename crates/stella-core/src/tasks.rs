@@ -11,8 +11,8 @@
 //!
 //! `task_assign` does not spawn anything itself — spawning is I/O. It
 //! validates the transition and records a [`SpawnRequest`]; the session
-//! driver drains requests and dispatches sub-agents through the fleet seam
-//! (L-E9: `Fleet::dispatch` is THE dispatch seam).
+//! driver drains them (`stella-tools`' `ToolRegistry::take_spawn_requests`)
+//! and runs each on its own deck sub-session lane.
 
 use stella_protocol::{TaskItem, TaskStatus};
 
@@ -60,6 +60,21 @@ impl TaskBoard {
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    /// Empty the board — `/clear`'s half of a session destroy-and-reset
+    /// (#1692). Ids restart at "1" with the next [`Self::create`], which is
+    /// the point: the cleared session is a new session as far as the board
+    /// is concerned, and its plan is numbered from the top like any other.
+    ///
+    /// That id reuse is also why a clear cannot simply be "wipe and carry
+    /// on". A worker that was already running for pre-clear task "1" can
+    /// still report in afterwards, and its task id would now address a
+    /// *different* task. Rejecting those late reports is the caller's job —
+    /// see `stella-cli`'s `command_deck::session_clear`, which seals the
+    /// board against every worker generation that predates the clear.
+    pub fn clear(&mut self) {
+        self.items.clear();
     }
 
     /// Create a task in `Pending`; returns the new item. Ids are ordinal and
@@ -161,6 +176,37 @@ mod tests {
         let ids: Vec<&str> = board.items().iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["1", "2", "3"]);
         assert_eq!(board.items()[2].subject, "three");
+    }
+
+    /// `/clear` takes the whole board, terminal rows included, and the next
+    /// plan is numbered from the top. The id restart is asserted rather than
+    /// merely observed because it is what makes a pre-clear worker's task id
+    /// dangerous — see the callers in `stella-cli`'s `session_clear` (#1692).
+    #[test]
+    fn clear_empties_the_board_and_restarts_the_ids() {
+        let mut board = TaskBoard::new();
+        board.create("one", None);
+        board.create("two", None);
+        board.set_status("1", TaskStatus::Completed).unwrap();
+        board.assign("2", "sub:2").unwrap();
+
+        board.clear();
+
+        assert!(board.is_empty());
+        assert!(board.items().is_empty());
+        let fresh = board.create("a brand new plan", None);
+        assert_eq!(
+            fresh.id, "1",
+            "ids restart — the cleared board is a new one"
+        );
+        assert_eq!(fresh.status, TaskStatus::Pending);
+        // And seeding works again, which it would not if `clear` had merely
+        // hidden the rows: `seed_from_plan` no-ops on a non-empty board.
+        let mut seeded = TaskBoard::new();
+        seeded.create("stale", None);
+        seeded.clear();
+        assert!(seeded.seed_from_plan(&["step one", "step two"]));
+        assert_eq!(seeded.items().len(), 2);
     }
 
     #[test]

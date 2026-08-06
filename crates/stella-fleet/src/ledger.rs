@@ -31,13 +31,21 @@
 //! the ledger is *not* a cache. It is the authoritative record of a subagent's
 //! commits and of real money spent, and nothing can reconstruct it once
 //! written.
+//!
+//! Beside the audit trail it also holds the **dispatch claims** ([`lease`]):
+//! the check-and-set lease that stops two sessions picking up the same unit
+//! of work (#1136). It lives here because a claim has to outlive the process
+//! that took it, and this is the fleet's only durable file.
 
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::gc::WorktreeActivity;
 use crate::plan::{Isolation, Task, TaskId};
+
+pub mod lease;
 
 /// A commit recorded in the ledger — also the shape a [`FleetWorker`] reports
 /// back (`crate::fleet::WorkerOutcome::commits`) and the value the emit-shape
@@ -406,6 +414,34 @@ impl Ledger {
         Ok(matches!(finished, Some(Some(_))))
     }
 
+    /// One row per worktree path this ledger has ever dispatched into: how
+    /// many of its attempts are still unfinished, and when its last attempt
+    /// finished — the ledger half of the GC decision (issue #1217).
+    ///
+    /// The unfinished count is what makes a sweep safe: an attempt row is
+    /// opened *before* its worker runs, so a worktree with an unfinished
+    /// attempt may still be in use and [`crate::gc::Gc`] keeps it
+    /// unconditionally. `NULL` finish times are excluded from the `MAX`, so an
+    /// in-flight attempt never dates a worktree.
+    pub fn worktree_activity(&self) -> Result<Vec<WorktreeActivity>, LedgerError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT worktree_path,
+                    SUM(CASE WHEN finished_at_ms IS NULL THEN 1 ELSE 0 END),
+                    MAX(finished_at_ms)
+             FROM attempts
+             GROUP BY worktree_path",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(WorktreeActivity {
+                worktree_path: row.get(0)?,
+                unfinished_attempts: row.get::<_, i64>(1)?.max(0) as u32,
+                last_finished_ms: row.get::<_, Option<i64>>(2)?.map(|ms| ms as u64),
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(LedgerError::from)
+    }
+
     /// When a task last finished an attempt, across **every** run in this
     /// ledger — the per-task half of the prompt-cache warmth signal
     /// (issue #1222): on a re-run of a plan the task ids repeat, so this is
@@ -448,7 +484,7 @@ impl Ledger {
 
 /// The schema version `migrate` brings a `fleet.db` up to. Bump it in the
 /// same commit that adds a `MIGRATION_V<n>` step and its `version < n` arm.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Apply pending migration steps inside ONE transaction that stamps
 /// `user_version` atomically with the DDL — the same shape `stella-store`'s
@@ -502,6 +538,9 @@ fn migrate(conn: &Connection) -> Result<(), LedgerError> {
     }
     if version < 2 {
         tx.execute_batch(MIGRATION_V2)?;
+    }
+    if version < 3 {
+        tx.execute_batch(MIGRATION_V3)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -617,6 +656,15 @@ CREATE TABLE spend (
     recorded_at_ms INTEGER NOT NULL
 );
 CREATE INDEX spend_by_run ON spend (run_id);
+CREATE TABLE dispatch_claims (
+    claim_key      TEXT PRIMARY KEY,
+    owner          TEXT NOT NULL,
+    fence          INTEGER NOT NULL,
+    acquired_at_ms INTEGER NOT NULL,
+    renewed_at_ms  INTEGER NOT NULL,
+    expires_at_ms  INTEGER NOT NULL
+);
+CREATE INDEX dispatch_claims_by_expiry ON dispatch_claims (expires_at_ms);
 ";
 
 /// v1 — the schema as it originally shipped (unversioned). Every statement is
@@ -700,6 +748,29 @@ INSERT INTO lineage_v2 (parent_run_id, child_task_id, recorded_at_ms)
 DROP TABLE lineage;
 ALTER TABLE lineage_v2 RENAME TO lineage;
 CREATE INDEX IF NOT EXISTS lineage_by_parent ON lineage (parent_run_id);
+";
+
+/// v3 — the dispatch claims table (#1136): one row per unit of dispatch,
+/// holding the check-and-set lease in [`lease`].
+///
+/// Purely additive, so it is `IF NOT EXISTS` and replay-safe. `claim_key` is
+/// the primary key precisely because the claim is an upsert on it — the
+/// uniqueness constraint is what makes "exactly one holder" a property of the
+/// storage engine rather than of the calling code.
+///
+/// `owner` carries no `REFERENCES runs (id)`: a claimant need not be a fleet
+/// run (a bare agent session working an issue is the case #1136 was filed
+/// for), and a claim must survive being read after its run row is gone.
+const MIGRATION_V3: &str = "\
+CREATE TABLE IF NOT EXISTS dispatch_claims (
+    claim_key      TEXT PRIMARY KEY,
+    owner          TEXT NOT NULL,
+    fence          INTEGER NOT NULL,
+    acquired_at_ms INTEGER NOT NULL,
+    renewed_at_ms  INTEGER NOT NULL,
+    expires_at_ms  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS dispatch_claims_by_expiry ON dispatch_claims (expires_at_ms);
 ";
 
 #[cfg(test)]
@@ -839,6 +910,65 @@ mod tests {
         assert_eq!(ledger.total_spend("run").unwrap(), 0.0);
         assert!(ledger.commits_for_task("run", "t1").unwrap().is_empty());
         assert!(ledger.lineage_children("run").unwrap().is_empty());
+    }
+
+    /// The GC's ledger half (#1217): a worktree whose attempt never finished
+    /// must report as in flight, and a finished one must carry the finish
+    /// time the `--age` arithmetic reads.
+    #[test]
+    fn worktree_activity_separates_in_flight_from_finished() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        seed_run(&ledger, "run1");
+        let live = ledger
+            .start_attempt(&AttemptStart {
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                worktree_path: "/wt/live".into(),
+                branch: "fleet/live".into(),
+                started_at_ms: 10,
+            })
+            .unwrap();
+        let done = ledger
+            .start_attempt(&AttemptStart {
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                worktree_path: "/wt/done".into(),
+                branch: "fleet/done".into(),
+                started_at_ms: 11,
+            })
+            .unwrap();
+        ledger
+            .finish_attempt(&AttemptFinish {
+                attempt_id: done,
+                run_id: "run1".into(),
+                task_id: "t1".into(),
+                finished_at_ms: 42,
+                success: true,
+                summary: "done".into(),
+                commits: vec![],
+                cost_usd: 0.0,
+                spend_at_ms: 42,
+            })
+            .unwrap();
+        assert!(!ledger.attempt_is_finished(live).unwrap());
+
+        let mut activity = ledger.worktree_activity().unwrap();
+        activity.sort_by(|a, b| a.worktree_path.cmp(&b.worktree_path));
+        assert_eq!(
+            activity,
+            vec![
+                WorktreeActivity {
+                    worktree_path: "/wt/done".into(),
+                    unfinished_attempts: 0,
+                    last_finished_ms: Some(42),
+                },
+                WorktreeActivity {
+                    worktree_path: "/wt/live".into(),
+                    unfinished_attempts: 1,
+                    last_finished_ms: None,
+                },
+            ]
+        );
     }
 
     #[test]

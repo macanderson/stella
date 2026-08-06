@@ -1,3 +1,9 @@
+---
+id: pipeline-journey
+title: "The journey of a prompt — full pipeline mode, in plain language"
+status: living
+---
+
 # The journey of a prompt — full pipeline mode, in plain language
 
 **Status:** Living document. Describes the staged pipeline as of 0.6.x.

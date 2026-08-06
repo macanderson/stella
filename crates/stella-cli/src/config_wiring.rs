@@ -292,10 +292,20 @@ pub fn deck_rows(
         cfg.model_pinned_by_flag,
         &is_provider,
     );
+    // The same resolution against the settings **as saved on disk right now**,
+    // which is what a session started from here would get. `next` is only ever
+    // read to say "this cell would differ" — the running answer above is never
+    // taken from it.
+    let next = next_session_wiring(cfg, &session, &is_provider);
+
     rows(&wiring)
         .into_iter()
         .map(
             |[role, model, effort, thinking, source]| stella_tui::envelope::RoleWiringRow {
+                next_session: next.as_ref().and_then(|next| {
+                    let row = next.iter().find(|n| n[0] == role)?;
+                    next_session_note(&[&model, &effort, &thinking, &source], row)
+                }),
                 role,
                 model,
                 effort,
@@ -304,6 +314,44 @@ pub fn deck_rows(
             },
         )
         .collect()
+}
+
+/// Re-resolve every role from the settings as they sit on disk *now*.
+///
+/// `None` when the settings cannot be read — an unreadable file is not
+/// evidence of a pending change, and the dialog must not claim one.
+fn next_session_wiring(
+    cfg: &crate::config::Config,
+    session: &ModelSpec,
+    is_provider: &impl Fn(&str) -> bool,
+) -> Option<Vec<[String; 5]>> {
+    let saved = crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()?
+        .agent_engine_config;
+    // Resolving with the *same* session pin and `--model` flag isolates the
+    // one variable in question: a difference here is a settings edit, never
+    // an artifact of comparing two differently-seeded resolutions.
+    Some(rows(&resolve(
+        saved.as_ref(),
+        session,
+        cfg.model_pinned_by_flag,
+        is_provider,
+    )))
+}
+
+/// The cells of `next` that differ from `current`, joined the way the rest of
+/// this module joins a role's detail — or `None` when nothing differs.
+///
+/// Only the differing cells, because the note sits *under* a row that already
+/// prints all four: repeating the ones that agree would bury the change that
+/// is the entire reason the note is there.
+fn next_session_note(current: &[&str; 4], next: &[String; 5]) -> Option<String> {
+    // `next[0]` is the role key; cells 1..=4 line up with `current`.
+    let changed: Vec<&str> = (1..=4)
+        .filter(|i| next[*i] != current[i - 1])
+        .map(|i| next[i].as_str())
+        .collect();
+    (!changed.is_empty()).then(|| changed.join(" · "))
 }
 
 #[cfg(test)]

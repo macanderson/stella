@@ -23,6 +23,8 @@ Because it is non-interactive, `stella run` is the natural place to combine `--o
 `stella run` uses the same tools, providers, and credential chain as every other command. All [global flags](/docs/commands) apply.
 </Callout>
 
+A run typed at a terminal is [supervised](/docs/commands/daemon): it survives the window closing, and this terminal stays only to stream it. Add [`--detach`](/docs/commands/daemon#--detach-start-it-and-get-the-prompt-back) to get the prompt back immediately instead — the run keeps going, and `stella daemon list | attach | logs | stop` address it afterwards. That works from a script or a CI step too, where nothing is supervised by default.
+
 ## Flags
 
 `stella run` adds three command-specific flags on top of the [global flags](/docs/commands):

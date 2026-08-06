@@ -3,7 +3,7 @@
 //!
 //! `run_turn` drives `stella_core::Engine::run_turn` (the step-driver: one
 //! model call per step, retry+backoff, compaction, loop detection, budget
-//! checks — see `stella-core/src/driver.rs`) and renders its
+//! checks — see `crates/stella-core/src/driver.rs`) and renders its
 //! `AgentEvent` stream live via a spawned draining task.
 
 use std::collections::HashMap;
@@ -416,8 +416,7 @@ async fn run_pipeline_one_shot(
         // witness promotion is a one-shot `--keep-witness` concern only.
         pipeline_config.keep_witness = keep_witness;
 
-        let approval_gate =
-            crate::daemon::approval::OneShotApprovalGate::select(approval_capability);
+        let approval_gate = approval_gate_for(cfg, approval_capability);
         let no_recall = NoContextRecall;
         // The workspace memory doubles as the pipeline's recall port so the
         // split-context planner sees the same durable lessons the worker's
@@ -455,6 +454,7 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
+        crate::resume_frame::declare(&cfg.durability, &pipeline_config);
         let pipeline = Pipeline::new(ports, pipeline_event_sender(&tx, format), pipeline_config);
         pipeline.run(prompt, &mut messages, &mut budget).await
     };

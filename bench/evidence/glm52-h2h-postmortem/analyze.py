@@ -3,7 +3,7 @@
 head-to-head table.
 
 The input is the same per-task JSON the public docs page renders
-(`stella-docs/benchmarks/terminal-bench-2-1-glm-5-2.json`): one row per task,
+(`docs/benchmarks/terminal-bench-2-1-glm-5-2.json`): one row per task,
 one cell per arm, produced by the live-feed reducer in
 `bench/harbor_adapter/stella_harbor/live_feed.py`. That reducer defines the
 `cap_hits` metric this post-mortem is about: a `step_usage` event with
@@ -33,7 +33,7 @@ CAP_HIT_MIN_OUTPUT = 16384  # mirrors live_feed._CAP_HIT_MIN_OUTPUT
 
 DATA = (
     Path(__file__).resolve().parents[3]
-    / "stella-docs"
+    / "docs"
     / "benchmarks"
     / "terminal-bench-2-1-glm-5-2.json"
 )
@@ -74,9 +74,15 @@ def main() -> None:
     print(
         f"input tokens: stella {s_in:,} claude {c_in:,} ratio {s_in / c_in:.2f}x"
     )
+    # `cap_hits` is Stella-only telemetry, read from stella-events.jsonl, which
+    # the Claude Code arm does not write. Its per-row value is null — no source,
+    # not a measured zero — so there is no cross-arm comparison to print here
+    # (#1227). Summing it as if null meant zero is the exact flattering-artifact
+    # the data file was corrected to prevent.
     print(
-        f"cap hits: stella {sum(r['stella']['cap_hits'] for r in rows)}, "
-        f"claude {sum(r['claude']['cap_hits'] for r in rows)}"
+        f"cap hits: stella {sum(r['stella']['cap_hits'] for r in rows)} "
+        f"({d['totals']['stella']['cap_hits_source']}), "
+        f"claude: no source — the arm does not emit this telemetry"
     )
 
     print("\n== cap-hit outcome split (README §2.1) ==")

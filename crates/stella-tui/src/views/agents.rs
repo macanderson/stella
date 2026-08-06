@@ -490,6 +490,7 @@ mod tests {
                 output_tokens: 12_400,
                 cached_input_tokens: 0,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
                 estimated_input_tokens: 60_000,
                 cost_usd: 0.42, // NOT folded into cost_usd — StepUsage feeds tokens only.
                 duration_ms: 100,
@@ -553,6 +554,7 @@ mod tests {
                 output_tokens: 100,
                 cached_input_tokens: 750,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
                 estimated_input_tokens: 0,
                 cost_usd: 0.01,
                 duration_ms: 100,

@@ -555,6 +555,15 @@
               "description": "Provider which actually served this call, never the session's\nconfigured default. Empty only on legacy events.",
               "type": "string"
             },
+            "reasoning_tokens": {
+              "description": "The reasoning share of `output_tokens`, when the provider breaks it\nout (`CompletionUsage::reasoning_tokens`). Already inside\n`output_tokens` — a diagnostic split, never its own cost line.\n\nAbsent means the provider does not report it (every Anthropic\nMessages API call, which folds thinking into `output_tokens`);\n`0` means it reported no reasoning on this call. A consumer that\nreads absent as zero would conclude the entire Anthropic-direct\nroute never thinks, so this stays `Option` rather than defaulting.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "retries": {
               "format": "uint32",
               "minimum": 0,
@@ -1656,6 +1665,15 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "reasoning_tokens": {
+          "description": "The subset of `output_tokens` the model spent on reasoning, when the\nprovider breaks it out (`completion_tokens_details.reasoning_tokens`\non the OpenAI-compatible dialects, `output_tokens_details` on the\nResponses API).\n\n`None` means NOT REPORTED, and is not the same fact as `Some(0)`.\nAnthropic's Messages API folds thinking into `output_tokens` with no\nbreakdown at all, so every anthropic.rs call records `None` — while a\nreasoning-capable model that genuinely did no thinking on a call\nrecords `Some(0)`. Collapsing the two would report \"this model never\nthinks\" for the entire Anthropic-direct route, which is the same class\nof error as reading an unfilled placeholder column as a measured zero.\n\nAlready inside `output_tokens` for billing on every provider that\nreports it, so it is a diagnostic breakdown and never its own cost\nline.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "reported": {
           "default": false,

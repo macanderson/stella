@@ -31,38 +31,51 @@
 //!   turn-boundary resume regenerates it (rules may have changed); mid-turn,
 //!   fidelity wins — the transcript the provider priced and cached is the
 //!   transcript it gets back.
-//! - **A turn interrupted mid-pipeline resumes as a plain engine turn.** The
-//!   checkpoint captures the worker's turn, not the pipeline's staging, so
-//!   the verify/verdict stages that would have followed do not re-run. The
-//!   resumed turn still answers, and says what it did; re-verifying it is
-//!   `stella run` with the verifier of your choice.
+//! - **A turn interrupted mid-pipeline resumes as a plain engine turn** — but
+//!   never *silently*. The checkpoint captures the worker's turn, not the
+//!   pipeline's staging, so the verify/verdict stages that would have followed
+//!   do not re-run. The pipeline leaves a frame beside its checkpoint saying
+//!   so ([`crate::resume_frame`]), and this driver reads it before the first
+//!   step: the run names every stage it is not restoring, drops the green
+//!   tick, and files its audit row as `resumed_complete_unverified` (#1615).
+//!   Re-verifying it is `stella run` with the verifier of your choice.
 //! - **A turn that executed in a candidate worktree resumes in the
 //!   workspace.** The candidate died with the process; the restored staleness
-//!   map is what keeps the resumed writes honest.
+//!   map is what keeps the resumed writes honest. The frame reports this too.
 
+use super::outcome::turn_outcome_result;
 use super::*;
+use crate::failure::CliFailure;
 
 /// The child driver: adopt the record, rebuild the turn, drive it to an end.
 ///
 /// `id` is the record to resume (a unique prefix is enough); `None` falls
 /// back to this process's own supervised identity, which is how the spawned
 /// child path always arrives.
-pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), String> {
+///
+/// Answers in [`CliFailure`], not a `String`, because a resumed turn must end
+/// the process exactly as an un-resumed one would: a resumed deliberate stop
+/// (a stuck loop escalated, the step cap reached) exits
+/// [`crate::failure::DELIBERATE_STOP_EXIT_CODE`] and a resumed failure exits
+/// `1`. The parent half (`crate::daemon::resume_supervised`) already forwards
+/// its child's code verbatim, so retyping this boundary is the whole of what
+/// the resumed path was missing (#1637).
+pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), CliFailure> {
     let registry = stella_store::SessionRegistry::open_default();
     let record = match (id, crate::daemon::supervised_id()) {
         (Some(id), _) => crate::daemon::resolve(&registry, Some(id))?,
         (None, Some(own)) => crate::daemon::resolve(&registry, Some(&own))?,
-        (None, None) => return Err("daemon resume needs a run id".to_string()),
+        (None, None) => return Err(CliFailure::error("daemon resume needs a run id")),
     };
     // The hand-run `--foreground` guard: a resumed turn must run where its
     // work is. The spawned child always passes (the parent pinned its cwd).
     let recorded = std::fs::canonicalize(&record.workspace).unwrap_or_default();
     let current = std::fs::canonicalize(&cfg.workspace_root).unwrap_or_default();
     if recorded != current {
-        return Err(format!(
+        return Err(CliFailure::error(format!(
             "{} belongs to {} — resume it from there, or without --foreground",
             record.id, record.workspace
-        ));
+        )));
     }
 
     let provider = build_provider(cfg)?;
@@ -111,12 +124,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
         eprintln!("  {warning}");
     }
     let Some(json) = cfg.durability.checkpoint() else {
-        return Err(format!(
+        return Err(CliFailure::error(format!(
             "{} has no resume point. A turn leaves one only when its process was killed \
              mid-turn; a run that completed, was stopped, or aborted discards it on the \
              way out",
             record.id
-        ));
+        )));
     };
     let checkpoint = stella_core::step::Checkpoint::from_json(&json).map_err(|e| {
         format!(
@@ -126,12 +139,29 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
         )
     })?;
 
+    // Read BEFORE the first step, and print before it too: an operator who is
+    // going to be handed less than the run they lost has to learn that while
+    // they can still stop it, not from an audit row afterwards (#1615).
+    let frame = crate::resume_frame::ResumeFrame::read(&cfg.durability);
+
     let turn_start = Instant::now();
     let step = checkpoint.step;
     eprintln!(
         "  resuming {} at step {step} — completed steps stay done, nothing re-runs",
         record.id
     );
+    if let Some(advisory) = frame.advisory() {
+        for (i, line) in advisory.iter().enumerate() {
+            // The marker leads the summary line only; the rest are already
+            // indented continuations of it.
+            let marker = if i == 0 {
+                "!".yellow().bold().to_string()
+            } else {
+                " ".to_string()
+            };
+            eprintln!("  {marker} {line}");
+        }
+    }
     let execution = begin_execution(&store, "resume", &record.title, cfg, Some(&record.id));
     let files_before = tools_registry.files_touched().len();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -177,8 +207,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
         .persistence_complete;
     let files = tools_registry.files_touched();
     if let Some((store, id)) = &execution {
+        // A degraded resume gets its own label: the scrollback warning is gone
+        // by the next command, and a stats query that cannot separate a
+        // verified resume from an unverified one reports the wrong number
+        // forever.
         let (label, cost) = match &outcome {
-            TurnOutcome::Completed { cost_usd, .. } => ("resumed_complete", *cost_usd),
+            TurnOutcome::Completed { cost_usd, .. } => (frame.completed_label(), *cost_usd),
             TurnOutcome::Aborted { cost_usd, .. } => ("resumed_aborted", *cost_usd),
         };
         if !record_execution_end(
@@ -200,30 +234,30 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Str
         set.close_all().await;
     }
 
-    let result = match outcome {
-        TurnOutcome::Completed { cost_usd, .. } => {
-            println!(
-                "\n  {} resumed turn completed (from step {step})",
-                "✓".green().bold()
-            );
-            tui::cost_summary(
-                cost_usd,
-                &format!("{}/{}", cfg.provider.id, cfg.model_id),
-                turn_start.elapsed(),
-            );
-            Ok(())
-        }
-        TurnOutcome::Aborted {
-            reason, cost_usd, ..
-        } => {
-            tui::cost_summary(
-                cost_usd,
-                &format!("{}/{}", cfg.provider.id, cfg.model_id),
-                turn_start.elapsed(),
-            );
-            Err(reason)
+    let cost_usd = match &outcome {
+        TurnOutcome::Completed { cost_usd, .. } | TurnOutcome::Aborted { cost_usd, .. } => {
+            *cost_usd
         }
     };
+    if matches!(outcome, TurnOutcome::Completed { .. }) {
+        // A degraded resume does not get a green tick. The tick is this
+        // surface's claim that the run finished as it was meant to, and a turn
+        // whose verify and verdict stages never ran did not.
+        let (mark, banner) = if frame.degrades() {
+            ("!".yellow().bold(), frame.completed_banner(step))
+        } else {
+            ("✓".green().bold(), frame.completed_banner(step))
+        };
+        println!("\n  {mark} {banner}");
+    }
+    tui::cost_summary(
+        cost_usd,
+        &format!("{}/{}", cfg.provider.id, cfg.model_id),
+        turn_start.elapsed(),
+    );
+    // The abort's typed `kind` decides the exit code here exactly as it does
+    // for a fresh turn — a resumed stuck-loop stop exits `3`, not `1` (#1637).
+    let result = turn_outcome_result(&outcome);
     // Written here as well as by `record_outcome_if_supervised` (which only
     // covers the spawned child), so the hand-run `--foreground` case records
     // a terminal status too. Same value on both paths; double-writing it is
@@ -263,9 +297,9 @@ pub(crate) async fn drive_resumed_turn(
             engine.discard_checkpoint();
             return TurnOutcome::Aborted {
                 reason,
-                // The engine's own cap exit calls this a policy stop, and a
-                // resumed turn must exit exactly as a fresh one would.
-                kind: stella_core::step::AbortKind::DeliberateStop,
+                // The engine's own escalation, same as the in-turn cap: the
+                // run stopped by policy, it did not fall over (#1524).
+                kind: stella_core::AbortKind::DeliberateStop,
                 cost_usd: state.total_cost_usd(),
             };
         }
@@ -515,6 +549,60 @@ mod tests {
         assert!(
             provider.requests.lock().unwrap().is_empty(),
             "no model call may happen past the cap"
+        );
+    }
+
+    /// The #1637 witness: a resumed turn's deliberate stop reaches the process
+    /// boundary AS a deliberate stop.
+    ///
+    /// It drives the real resume path — `drive_resumed_turn` over a restored
+    /// checkpoint, stopping at the step cap the crash was carrying — through
+    /// the exact projection `run_resume` now ends with, and asserts the exit
+    /// code is [`DELIBERATE_STOP_EXIT_CODE`] rather than the generic `1`.
+    ///
+    /// The fail half on `main` is type-level and therefore total: `run_resume`
+    /// answered with a `String`, `turn_outcome_result` did not exist, and no
+    /// value on this path could carry an [`AbortKind`] — so this test does not
+    /// compile there, let alone pass. A full end-to-end `run_resume` witness
+    /// would need a spawned supervised child, a session registry and a live
+    /// provider; the composition below pins the same claim without them, and
+    /// the last mile (`Err(CliFailure)` → `main`'s `e.exit_code()`) is the
+    /// unconditional boundary `crate::failure`'s own tests already cover.
+    ///
+    /// [`AbortKind`]: stella_core::AbortKind
+    /// [`DELIBERATE_STOP_EXIT_CODE`]: crate::failure::DELIBERATE_STOP_EXIT_CODE
+    #[tokio::test]
+    async fn a_resumed_deliberate_stop_exits_distinctly_from_a_crash() {
+        let provider = ScriptedProvider {
+            requests: Mutex::new(Vec::new()),
+        };
+        let tools = NoTools;
+        let config = EngineConfig::default();
+        let mut at_cap = killed_mid_turn();
+        at_cap.step = config.max_steps;
+        let state = TurnState::from_checkpoint(at_cap, &config);
+        let engine = Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
+        let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let events = stella_core::EventSender::new(tx);
+
+        let outcome = drive_resumed_turn(&engine, state, &events).await;
+
+        assert!(
+            matches!(
+                outcome,
+                TurnOutcome::Aborted {
+                    kind: stella_core::AbortKind::DeliberateStop,
+                    ..
+                }
+            ),
+            "reaching the step cap is the engine stopping by policy: {outcome:?}"
+        );
+        let failure = turn_outcome_result(&outcome).expect_err("an aborted turn is not a success");
+        assert_eq!(
+            failure.exit_code(),
+            std::process::ExitCode::from(crate::failure::DELIBERATE_STOP_EXIT_CODE),
+            "a resumed stop must exit 3, the same code the un-resumed stop gives — \
+             exiting 1 tells a wrapper the run fell over"
         );
     }
 }

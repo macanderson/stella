@@ -119,7 +119,7 @@ mod verifier_stage;
 mod verify_probes;
 use verify_probes::DiffProbe;
 mod witness_stage;
-use candidate_result::{CandidateAbort, CandidateResult, TurnAbort};
+use candidate_result::{CandidateAbort, CandidateResult, TurnAbort, escape_abort_reason};
 use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
 pub use run_error::{PipelineError, PipelineRunError};
@@ -1000,8 +1000,8 @@ impl<'a> Pipeline<'a> {
         // Triage classified this as chat, not a software task (a greeting,
         // small talk, a question about the agent), and the deterministic floor
         // saw no task signal to overrule it (triage::resolve_conversational).
-        // Answer in one plain, tool-less completion and skip plan → witness →
-        // execute → verify entirely. This is the fix for "typing `hi` authored
+        // Answer in one plain, tool-less completion and skip plan → execute →
+        // witness → verify entirely. This is the fix for "typing `hi` authored
         // a witness test": a non-task must never enter the work pipeline.
         if assessment.conversational {
             return self
@@ -2072,7 +2072,7 @@ impl<'a> Pipeline<'a> {
         // early when a test IS required. Emitting from either would make the
         // rail's first row appear only on some runs, which is the failure this
         // whole surface exists to end.
-        let warrant = warrant(&state.diff_text, state.file_changes);
+        let warrant = warrant(&state.diff_text, state.change_signals());
         self.emit_proof(ProofStep::Warrant {
             required: warrant.is_required(),
             reason: warrant.reason().map(|r| r.sentence().to_string()),
@@ -2212,14 +2212,26 @@ impl<'a> Pipeline<'a> {
         let witness_paths = Self::witness_paths(witness);
         let meter = repair_gate::RepairMeter::start(*total);
         loop {
-            if let Some(workspace) = surface.workspace
-                && let Err(error) = workspace.seal().await
-            {
-                return CandidateResult::aborted(
-                    state.messages,
-                    format!("candidate could not be sealed for verification: {error}"),
-                    AbortKind::Failure,
-                );
+            if let Some(workspace) = surface.workspace {
+                if let Err(error) = workspace.seal().await {
+                    return CandidateResult::aborted(
+                        state.messages,
+                        format!("candidate could not be sealed for verification: {error}"),
+                        AbortKind::Failure,
+                    );
+                }
+                // #1538: the seal just pinned this candidate's final bytes — a
+                // real tree already holding them means the candidate wrote
+                // through its isolation. Fail it in the round that caused it,
+                // not at the winner's adoption.
+                let escaped = workspace.escaped_paths().await;
+                if !escaped.is_empty() {
+                    return CandidateResult::aborted(
+                        state.messages,
+                        escape_abort_reason(&escaped),
+                        AbortKind::Failure,
+                    );
+                }
             }
             let (touched_tests_passed, test_tail, test_infra) = self
                 .observe_touched_tests(surface, effective_cmd, &mut state)
@@ -2512,9 +2524,11 @@ impl<'a> Pipeline<'a> {
                     }
                 }
                 LadderDecision::Unverifiable => {
-                    // Every channel was blind. The verifier is not asked, because
-                    // the only thing it could do is guess from an empty record
-                    // — which in the wild it did, returning `FAIL … the file
+                    // The turn went unobserved — every channel blind, or every
+                    // channel clear-eyed and empty over dispatched mutating
+                    // calls (#1701). The verifier is not asked, because the
+                    // only thing it could do is guess from an empty record —
+                    // which in the wild it did, returning `FAIL … the file
                     // likely does not exist` about a file that was in the
                     // container (#973).
                     //
@@ -2527,15 +2541,13 @@ impl<'a> Pipeline<'a> {
                     // best-of-N and then win the smaller-diff tiebreak.
                     //
                     // The arm above is what makes this defensible. Reaching
-                    // here now means the turn *did* dispatch mutating calls and
-                    // no channel could see their effect — the state the abstain
-                    // rung was built for, and a real one: a Terminal-Bench
+                    // here means the turn *did* dispatch mutating calls and no
+                    // channel saw their effect — a real state: a Terminal-Bench
                     // trial that wrote its answer through shell redirects
                     // recorded no touch, could not be diffed, landed here, and
                     // scored 1.0 against its verifier. Failing that closed
-                    // would report a correct run as broken, and no revision
-                    // could ever clear it, because nothing about that workspace
-                    // will ever become observable.
+                    // would report a correct run as broken, and no revision can
+                    // clear it — that workspace never becomes observable.
                     let mut evidence = unverifiable_evidence(&inputs);
                     evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.unverifiable(&evidence.summary);
@@ -3598,5 +3610,7 @@ fn count_diff_lines(diff: &str) -> u32 {
         .count() as u32
 }
 
+#[cfg(test)]
+mod test_doubles;
 #[cfg(test)]
 mod tests;

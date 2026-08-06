@@ -38,6 +38,7 @@ from .snapshot import (
     SnapshotEntry,
     bisect_first_pass,
     confirm_first_pass,
+    detect_workspace,
     load_manifest,
     read_task_image,
     summarise_flip,
@@ -134,20 +135,48 @@ class _Probe:
         return None
 
     def _apply(self, name: str, entry: SnapshotEntry) -> bool:
+        """Bring the probe container's workspace to this snapshot's state.
+
+        The patch is applied **on the host**, not in the container, and the
+        result is copied back. Two reasons, both found by running this against
+        a real image rather than reasoning about it:
+
+        * ``git`` is not guaranteed to exist in a task image. The capture side
+          gets away with assuming it because Stella's adapter installs git into
+          the *task* container; a replay probe is a fresh container from the
+          pristine image and gets no such help. Applying in-container failed
+          with ``sh: 1: git: not found`` and — far worse than crashing —
+          reported the snapshot as *unknown*, which surfaced as
+          ``flip_index=None``, i.e. "the agent never solved it".
+        * Snapshots are captured with ``--work-tree=<workspace>``, so the paths
+          inside the patch are workspace-relative. Applying them at ``/``, as
+          this used to, would put every file in the wrong place even where git
+          was present.
+        """
         patch = self.trial_dir / "arena" / "snapshots" / str(entry.patch)
         if not patch.is_file():
             log.warning("snapshot %d: patch file missing", entry.index)
             return False
-        copied = _run(["docker", "cp", str(patch), f"{name}:/tmp/snap.patch"], timeout=300)
-        if copied.returncode != 0:
-            log.warning("snapshot %d: could not copy patch in", entry.index)
+        # The workspace the snapshot was *taken of*, not whatever this fresh
+        # container happens to probe as. Falls back to probing only for
+        # manifests written before the field existed.
+        workspace = entry.workspace or detect_workspace(name)
+        if workspace is None:
+            log.warning("snapshot %d: no workspace found in the probe", entry.index)
             return False
+        # A directory the agent created will not exist in the pristine image.
+        _run(["docker", "exec", name, "mkdir", "-p", workspace], timeout=120)
+
+        stage = self.scratch / f"{name}-ws"
+        shutil.rmtree(stage, ignore_errors=True)
+        stage.mkdir(parents=True, exist_ok=True)
+        out = _run(["docker", "cp", f"{name}:{workspace}/.", str(stage)], timeout=900)
+        if out.returncode != 0:
+            log.warning("snapshot %d: could not stage the workspace", entry.index)
+            return False
+
         applied = _run(
-            [
-                "docker", "exec", "-w", "/", name, "sh", "-c",
-                "cd / && git apply --binary --unsafe-paths --directory=/ /tmp/snap.patch"
-                " 2>/dev/null || git apply --binary /tmp/snap.patch",
-            ],
+            ["git", "-C", str(stage), "apply", "--binary", "--whitespace=nowarn", str(patch)],
             timeout=600,
         )
         if applied.returncode != 0:
@@ -155,7 +184,48 @@ class _Probe:
                 "snapshot %d: patch did not apply: %s", entry.index, applied.stderr[-300:]
             )
             return False
+
+        back = _run(["docker", "cp", f"{stage}/.", f"{name}:{workspace}"], timeout=900)
+        if back.returncode != 0:
+            log.warning("snapshot %d: could not restore the workspace", entry.index)
+            return False
+        shutil.rmtree(stage, ignore_errors=True)
         return True
+
+
+def _require_bind_mount(scratch: Path, image: str) -> None:
+    """Fail early if the container runtime cannot see ``scratch``.
+
+    The verifier reports its verdict by writing ``/logs/verifier/reward.txt``
+    into a bind mount. If that mount is invisible to the host, no reward file
+    ever appears and *every* probe returns unknown — which summarises as
+    ``flip_index=None``, indistinguishable from an agent that never solved
+    anything. The cause is mundane and easy to hit: a VM-backed Docker (Colima,
+    Docker Desktop) shares only some host paths, and a macOS temp directory
+    under ``/var/folders`` is typically not one of them. Measured: a marker
+    file written there is simply absent inside the container.
+
+    One container start to convert a silent, wrong benchmark number into a
+    sentence naming the fix.
+    """
+    marker = scratch / ".arena-mount-probe"
+    try:
+        marker.write_text("ok", encoding="utf-8")
+    except OSError as exc:
+        raise ReplayError(f"scratch directory is not writable: {exc}") from exc
+    seen = _run(
+        ["docker", "run", "--rm", "-v", f"{scratch}:/probe", image,
+         "sh", "-c", "cat /probe/.arena-mount-probe 2>/dev/null"],
+        timeout=600,
+    )
+    marker.unlink(missing_ok=True)
+    if seen.stdout.strip() != "ok":
+        raise ReplayError(
+            f"the container runtime cannot read {scratch} — the verifier's reward "
+            "would be invisible and every snapshot would read as 'did not pass'. "
+            "Pass --scratch (or place the workspace) under a directory your Docker "
+            "shares with the host, e.g. somewhere under your home directory."
+        )
 
 
 def replay_flip(
@@ -172,6 +242,13 @@ def replay_flip(
     """
     if shutil.which("docker") is None:
         raise ReplayError("docker is not available on this host")
+    # Patches are applied host-side (see `_Probe._apply`), so host git is a
+    # hard precondition. Raised here rather than discovered per-probe: without
+    # it every patched snapshot returns *unknown*, and a run of unknowns
+    # summarises as `flip_index=None`, which reads as "the agent never solved
+    # it" rather than "this could not be measured".
+    if shutil.which("git") is None:
+        raise ReplayError("git is not available on this host; replay applies patches locally")
     entries = load_manifest(trial_dir)
     if not entries:
         raise ReplayError(f"no snapshots captured for {trial_dir.name}")
@@ -183,6 +260,7 @@ def replay_flip(
 
     scratch = scratch or (trial_dir / "arena" / "replay")
     scratch.mkdir(parents=True, exist_ok=True)
+    _require_bind_mount(scratch, image)
     probe = _Probe(
         image=image,
         task_dir=task_dir,

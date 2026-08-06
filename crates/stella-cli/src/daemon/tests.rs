@@ -425,6 +425,57 @@ fn ids_resolve_by_unique_prefix_and_refuse_an_ambiguous_one() {
 }
 
 #[test]
+fn a_bare_pid_resolves_the_run_that_is_running_under_it() {
+    let (dir, registry) = temp_registry("resolve-pid");
+    let mut supervised = SessionRecord::new("/w", "supervised");
+    supervised.id = "ses-100-4242".into();
+    supervised.pid = 4242;
+    supervised.supervisor = Some(SupervisorInfo { pgid: 4242 });
+    let mut plain = SessionRecord::new("/w", "unsupervised");
+    plain.id = "ses-200-777".into();
+    plain.pid = 777;
+    for record in [&supervised, &plain] {
+        registry.upsert(record).unwrap();
+    }
+
+    // The address `ps`, Activity Monitor and an OOM-killer log hand you.
+    assert_eq!(resolve(&registry, Some("4242")).unwrap().id, supervised.id);
+
+    // A miss is reported in the address space the caller used: an id begins
+    // `ses-`, so "9999" was never a prefix anything could have matched.
+    let miss = resolve(&registry, Some("9999")).unwrap_err();
+    assert!(miss.contains("pid 9999"), "{miss}");
+
+    // Unsupervised sessions are not this command's subject by pid either.
+    assert!(resolve(&registry, Some("777")).is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_pid_two_runs_have_held_is_refused_rather_than_guessed() {
+    let (dir, registry) = temp_registry("resolve-pid-recycled");
+    // The kernel recycles pids and a finished run keeps the one it ran under,
+    // so two records sharing one is reachable, not hypothetical — and picking
+    // whichever the registry listed first would stop the wrong run.
+    for id in ["ses-100-4242", "ses-900-4242"] {
+        let mut record = SessionRecord::new("/w", id);
+        record.id = id.into();
+        record.pid = 4242;
+        record.supervisor = Some(SupervisorInfo { pgid: 4242 });
+        registry.upsert(&record).unwrap();
+    }
+
+    let ambiguous = resolve(&registry, Some("4242")).unwrap_err();
+    assert!(ambiguous.contains("ses-100-4242"), "{ambiguous}");
+    assert!(ambiguous.contains("ses-900-4242"), "{ambiguous}");
+    // "use more of the id" is useless advice for a pid: there is no more of it.
+    assert!(ambiguous.contains("use the id"), "{ambiguous}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn an_exit_code_is_forwarded_the_way_a_shell_reports_it() {
     let status = |script: &str| {
         std::process::Command::new("/bin/sh")

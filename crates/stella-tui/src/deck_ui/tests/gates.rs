@@ -30,203 +30,316 @@ fn type_str(s: &str, model: &WorkspaceModel, ui: &mut DeckUi) {
     }
 }
 
-/// The reported bug, as a test. A reviewer typed a line at the scope card and
-/// hit ⏎; the deck read it as a new mid-turn request and enqueued it, which the
-/// driver drains into a sidecar sub-session ("req:1 started in parallel…") while
-/// the gate stays parked. The submission belongs to the gate.
-#[test]
-fn a_typed_note_at_a_scope_card_answers_the_card_instead_of_spawning_a_sidecar() {
-    let mut model = model_with(&["lead"]);
-    let mut ui = ready_ui();
-    ingest_inbound(&scope_card(), &mut model, &mut ui);
-
-    type_str("only the ctrl+O dialog", &model, &mut ui);
-    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
-
-    assert_eq!(
-        action,
-        DeckAction::Send(WorkspaceInput::ToAgent {
-            agent: "lead".into(),
-            input: UserInput::ScopeDecision(ScopeDecision::Revise {
-                note: "only the ctrl+O dialog".into()
-            }),
-        }),
-        "the note answers the review; it must never become an Enqueue"
-    );
-    assert!(
-        !matches!(action, DeckAction::Send(WorkspaceInput::Enqueue { .. })),
-        "an Enqueue here is what the driver turns into a sidecar sub-session"
-    );
+/// The dialog's open input as text, whichever field it is.
+fn note_of(ui: &DeckUi) -> Option<&str> {
+    ui.scope_input
+        .as_ref()
+        .map(crate::deck_ui::ScopeInput::text)
 }
 
-/// The literal second submission from the report: the reviewer typed "ok",
-/// meaning approve. It spawned a second sidecar instead.
+/// A modified `⏎` — the chord the composer used to compose a multi-line note.
+/// `ALT` is the one every terminal reports without the kitty protocol, which
+/// is why the dialog's legend advertises `⌥⏎`.
+fn newline_chord() -> KeyEvent {
+    KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
+}
+
+/// The ask: one keypress decides. `a` at the dialog approves the plan —
+/// no typing, no submit chord. (On the typed flow this keystroke merely put
+/// the letter "a" into the composer.)
 #[test]
-fn typing_ok_at_a_scope_card_approves_it() {
+fn a_single_keypress_approves_the_plan() {
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
 
-    type_str("ok", &model, &mut ui);
     assert_eq!(
-        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        handle_deck_key(ch('a'), &model, &mut ui),
         DeckAction::Send(WorkspaceInput::ToAgent {
             agent: "lead".into(),
             input: UserInput::ScopeDecision(ScopeDecision::Approve),
         })
     );
+    assert!(ui.scope_answered.contains("lead"), "the latch arms");
+    assert!(ui.composer.is_empty(), "nothing leaked into the composer");
 }
 
-/// A note can span lines: the newline chord composes, only the submit chord
-/// answers. Otherwise a multi-line revision would be impossible to write.
+/// The other two single-key answers resolve to what the legend advertises.
+#[test]
+fn t_trims_and_x_aborts_with_one_keypress() {
+    for (c, decision) in [('t', ScopeDecision::Trim), ('x', ScopeDecision::Abort)] {
+        let mut model = model_with(&["lead"]);
+        let mut ui = ready_ui();
+        ingest_inbound(&scope_card(), &mut model, &mut ui);
+        assert_eq!(
+            handle_deck_key(ch(c), &model, &mut ui),
+            DeckAction::Send(WorkspaceInput::ToAgent {
+                agent: "lead".into(),
+                input: UserInput::ScopeDecision(decision),
+            }),
+            "{c}"
+        );
+    }
+}
+
+/// `r` sends the plan back for refinement: it opens the dialog's own note
+/// input, the note is typed THERE (never the composer), and `⏎` sends it as
+/// the revision.
+#[test]
+fn r_opens_the_refine_input_and_enter_sends_the_note() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    assert_eq!(
+        handle_deck_key(ch('r'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(note_of(&ui), Some(""));
+    type_str("only the dialog", &model, &mut ui);
+    assert_eq!(note_of(&ui), Some("only the dialog"));
+    assert!(
+        ui.composer.is_empty(),
+        "the note types into the dialog, not the composer"
+    );
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::ToAgent {
+            agent: "lead".into(),
+            input: UserInput::ScopeDecision(ScopeDecision::Revise {
+                note: "only the dialog".into()
+            }),
+        })
+    );
+    assert_eq!(note_of(&ui), None, "the input closes with the answer");
+}
+
+/// Backspace edits the note; Esc backs out of the input WITHOUT aborting the
+/// plan — the options come back and a decision is still owed.
+#[test]
+fn esc_leaves_the_refine_input_without_aborting_the_plan() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    handle_deck_key(ch('r'), &model, &mut ui);
+    type_str("onlx", &model, &mut ui);
+    handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
+    assert_eq!(note_of(&ui), Some("onl"));
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(note_of(&ui), None, "back to the options");
+    assert!(
+        !ui.scope_answered.contains("lead"),
+        "backing out of the note is not an abort"
+    );
+}
+
+/// A blank refine note is not an answer — `⏎` keeps the input up rather than
+/// sending a note the planner would have nothing to do with.
+#[test]
+fn a_blank_refine_note_is_not_an_answer() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    handle_deck_key(ch('r'), &model, &mut ui);
+    type_str("   ", &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Ignored
+    );
+    assert!(ui.scope_input.is_some(), "still in the input");
+    assert!(!ui.scope_answered.contains("lead"));
+}
+
+/// A modified `⏎` composes a multi-line note without answering the gate —
+/// the capability the composer had and the modal dropped (#1630). Long
+/// re-scoping instructions are the whole reason someone refines instead of
+/// approving, and a single-line buffer truncated exactly those.
 #[test]
 fn the_newline_chord_composes_a_multi_line_note_without_answering() {
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
 
-    type_str("only the dialog", &model, &mut ui);
+    handle_deck_key(ch('r'), &model, &mut ui);
+    type_str("drop step 2", &model, &mut ui);
     assert_eq!(
-        handle_deck_key(cmd_enter(), &model, &mut ui),
+        handle_deck_key(newline_chord(), &model, &mut ui),
         DeckAction::Handled,
-        "the newline chord edits — it does not answer the card"
+        "the chord composes; it must not send"
     );
-    type_str("and nothing else", &model, &mut ui);
+    assert!(
+        !ui.scope_answered.contains("lead"),
+        "a newline is not an answer"
+    );
+    type_str("and re-scope 3", &model, &mut ui);
+    assert_eq!(note_of(&ui), Some("drop step 2\nand re-scope 3"));
+
+    // A bare ⏎ still sends, and sends BOTH lines.
     assert_eq!(
         handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
         DeckAction::Send(WorkspaceInput::ToAgent {
             agent: "lead".into(),
             input: UserInput::ScopeDecision(ScopeDecision::Revise {
-                note: "only the dialog\nand nothing else".into()
+                note: "drop step 2\nand re-scope 3".into()
             }),
         })
     );
 }
 
-/// `!` is a shell command even while a gate is pending — the same carve-out
-/// `ask_user` makes. A reviewer checking `!git status` before deciding must not
-/// have it read as their revision note.
+/// A paste into the refine note keeps its newlines: it is a multi-line
+/// surface now, and flattening a pasted instruction block was the same
+/// truncation by another route (#1630).
+#[test]
+fn a_pasted_block_keeps_its_lines_in_the_refine_note() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    handle_deck_key(ch('r'), &model, &mut ui);
+    ui.paste("first line\nsecond line");
+    assert_eq!(note_of(&ui), Some("first line\nsecond line"));
+}
+
+/// `!` runs a shell line while the plan-review dialog is up, and running it
+/// does NOT answer the gate (#1629). Reading back before deciding is part of
+/// reviewing a plan; the modal's alternative was "abort, look, ask again".
 #[test]
 fn a_shell_line_still_runs_while_a_scope_card_is_pending() {
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
 
-    type_str("!git status", &model, &mut ui);
+    assert_eq!(
+        handle_deck_key(ch('!'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    type_str("git status", &model, &mut ui);
+    assert!(
+        ui.composer.is_empty(),
+        "the command types into the dialog, not the composer behind it"
+    );
     assert_eq!(
         handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
         DeckAction::Shell("git status".into())
     );
     assert!(
         !ui.scope_answered.contains("lead"),
-        "running a shell command must not answer the review"
+        "running a command must not count as approving the plan it was run to evaluate"
+    );
+    assert!(
+        ui.scope_input.is_some(),
+        "the dialog stays in the shell field so the decision is made after reading the output"
     );
 }
 
-/// An empty submit is not an answer — the card stays up rather than sending a
-/// blank note the planner would have nothing to do with.
+/// The shell field is one command: a pasted blob's later lines must not
+/// become extra commands on a single `⏎`.
 #[test]
-fn an_empty_submit_at_a_scope_card_keeps_the_card_up() {
+fn a_paste_into_the_shell_field_cannot_smuggle_a_second_command() {
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
 
-    assert_eq!(
-        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
-        DeckAction::Ignored
-    );
-    assert!(!ui.scope_answered.contains("lead"));
+    handle_deck_key(ch('!'), &model, &mut ui);
+    ui.paste("git status\nrm -rf /");
+    assert_eq!(note_of(&ui), Some("git statusrm -rf /"));
 }
 
-/// Whitespace-only is the same case, after the composer has been drained.
+/// Esc at the options aborts — the same meaning it has always had at this
+/// gate, now from the dialog.
 #[test]
-fn a_whitespace_only_note_keeps_the_card_up() {
+fn esc_at_the_options_aborts_the_plan() {
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
-
-    type_str("   ", &model, &mut ui);
     assert_eq!(
-        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
-        DeckAction::Ignored
-    );
-    assert!(!ui.scope_answered.contains("lead"));
-}
-
-/// No letter answers the card, from any composer state — the rule that lets a
-/// note begin with any word at all. `a`/`t`/`x` are ordinary prompt characters,
-/// and a card that claimed them from a live text field turned a note opening
-/// "also do X" into a silent approve of an eight-step plan.
-#[test]
-fn no_bare_letter_answers_the_scope_card() {
-    let mut model = model_with(&["lead"]);
-    let mut ui = ready_ui();
-    ingest_inbound(&scope_card(), &mut model, &mut ui);
-
-    // From an EMPTY composer — the keystroke that used to commit.
-    for c in ['a', 't', 'x'] {
-        assert_eq!(
-            handle_deck_key(ch(c), &model, &mut ui),
-            DeckAction::Handled,
-            "{c} types; it must not answer the card on its own"
-        );
-    }
-    assert_eq!(ui.composer.buffer(), "atx");
-    assert!(!ui.scope_answered.contains("lead"));
-}
-
-/// The case that named the rule: "also do the tests" is a revision, and its
-/// first letter used to approve the plan it was arguing with.
-#[test]
-fn a_note_opening_with_a_decision_letter_is_a_revision_not_an_approval() {
-    let mut model = model_with(&["lead"]);
-    let mut ui = ready_ui();
-    ingest_inbound(&scope_card(), &mut model, &mut ui);
-
-    type_str("also do the tests", &model, &mut ui);
-    assert_eq!(
-        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
         DeckAction::Send(WorkspaceInput::ToAgent {
             agent: "lead".into(),
-            input: UserInput::ScopeDecision(ScopeDecision::Revise {
-                note: "also do the tests".into()
-            }),
+            input: UserInput::ScopeDecision(ScopeDecision::Abort),
         })
     );
 }
 
-/// `Esc` is the one key that still acts alone — it cannot collide with prose,
-/// and it stops work rather than starting it. It means the same thing with a
-/// half-typed note in the composer: without that, "type a note, change your
-/// mind, press Esc" fell past the card into the turn-stop chain, which for a
-/// pipeline turn is a *hard cancel* — the same gesture ending the turn cleanly
-/// or violently depending on whether the user had started typing.
+/// The dialog is MODAL: a key that is not an answer is swallowed, never typed
+/// into the composer behind it. This is the structural fix that makes single
+/// keypresses safe where the band's letter keys were not — there is no live
+/// text field competing for the letter.
 #[test]
-fn esc_aborts_the_card_whether_or_not_a_note_is_half_typed() {
-    let abort = DeckAction::Send(WorkspaceInput::ToAgent {
-        agent: "lead".into(),
-        input: UserInput::ScopeDecision(ScopeDecision::Abort),
-    });
-
+fn the_dialog_owns_the_keyboard_while_it_is_up() {
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
-    assert_eq!(handle_deck_key(key(KeyCode::Esc), &model, &mut ui), abort);
 
+    type_str("hello", &model, &mut ui);
+    assert!(
+        ui.composer.is_empty(),
+        "typing leaked into the composer behind the dialog: {:?}",
+        ui.composer.buffer()
+    );
+    // 'h', 'e', 'l', 'o' were swallowed — and none of them answered.
+    assert!(!ui.scope_answered.contains("lead"));
+}
+
+/// Pure transcript scroll stays available — reading back for context is part
+/// of deciding (the same carve-out the hunk card documents).
+#[test]
+fn page_scroll_falls_through_the_dialog() {
+    let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     ingest_inbound(&scope_card(), &mut model, &mut ui);
-    type_str("only the dial", &model, &mut ui);
+
+    let action = handle_deck_key(key(KeyCode::PageUp), &model, &mut ui);
+    assert!(
+        !matches!(
+            action,
+            DeckAction::Send(WorkspaceInput::ToAgent {
+                input: UserInput::ScopeDecision(_),
+                ..
+            })
+        ),
+        "PgUp is scroll, not an answer"
+    );
+    assert!(!ui.scope_answered.contains("lead"));
+}
+
+/// The answered latch: once the decision is sent, a second keypress cannot
+/// re-send it during the engine round-trip — the dialog has dropped and the
+/// key is ordinary typing again.
+#[test]
+fn a_second_keypress_cannot_double_send_the_decision() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_card(), &mut model, &mut ui);
+
+    handle_deck_key(ch('a'), &model, &mut ui);
+    let second = handle_deck_key(ch('a'), &model, &mut ui);
+    assert!(
+        !matches!(
+            second,
+            DeckAction::Send(WorkspaceInput::ToAgent {
+                input: UserInput::ScopeDecision(_),
+                ..
+            })
+        ),
+        "the latch must absorb the second press"
+    );
     assert_eq!(
-        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
-        abort,
-        "a half-typed note must not turn Esc into a turn cancel"
+        ui.composer.buffer(),
+        "a",
+        "the key is ordinary typing again"
     );
 }
 
-/// With no card pending, a submission is still a prompt — the sidecar path is
-/// correct behavior and must not be collateral damage of this fix.
+/// With no dialog pending, a submission is still a prompt — the sidecar path
+/// is correct behavior and must not be collateral damage.
 #[test]
-fn without_a_pending_card_a_submission_is_still_an_ordinary_prompt() {
+fn without_a_pending_dialog_a_submission_is_still_an_ordinary_prompt() {
     let model = model_with(&["lead"]);
     let mut ui = ready_ui();
 

@@ -115,6 +115,7 @@ mod lead_control;
 mod model_cmd;
 mod profile_cmd;
 mod scope_gate;
+mod session_clear;
 mod settle;
 mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
@@ -227,6 +228,10 @@ enum TurnEnd {
     /// (which runs ahead of it). A plain cancel (`hold: false`) lets the
     /// loop auto-dispatch the next queued prompt as usual.
     Cancelled { hold: bool },
+    /// `/clear` landed mid-turn ([`WorkspaceInput::SessionClear`]): the turn
+    /// future was dropped and the loop resets the session to its seq-0 state
+    /// — history, backlog, deck pane — retaining nothing.
+    Cleared,
     /// The deck is going down; stop driving entirely.
     Quit,
 }
@@ -270,6 +275,13 @@ impl HoldState {
     /// A user submission releases the hold and runs immediately.
     fn release(&mut self) {
         self.held = false;
+    }
+
+    /// `/clear`: a reset session holds nothing — neither the park nor a
+    /// retained prompt for a later escalation to resurrect.
+    fn reset(&mut self) {
+        self.held = false;
+        self.cancelled = None;
     }
 
     /// A plain cancel (single Esc / dashboard stop): retain the dropped
@@ -690,7 +702,7 @@ pub async fn run_deck_session(
         });
 
     // The deck drives turns through the staged pipeline by default (triage →
-    // recall → plan → scope → witness → execute → verify → verdict); `/pipeline`
+    // recall → plan → scope → execute → witness → verify → verdict); `/pipeline`
     // toggles back to the raw `Engine::run_turn` loop (`run_lead_turn`). A
     // resumed session keeps whatever it last had — the same state the persona
     // choice above read, so driver and persona start the session agreeing.
@@ -835,7 +847,7 @@ pub async fn run_deck_session(
     let mut dispatch = HoldState::new();
     dispatch.held = resume_hold;
     // `/pipeline`: route lead turns through the staged pipeline (triage →
-    // witness → execute → verify → verdict) instead of the raw engine loop.
+    // execute → witness → verify → verdict) instead of the raw engine loop.
     // Session-local, ON at start (the deck loads with the pipeline active)
     // unless a resumed session had toggled it — mirrored to the PIPELINE
     // stat box via `Inbound::Pipeline`.
@@ -998,6 +1010,23 @@ pub async fn run_deck_session(
                     }
                     Some(WorkspaceInput::QueueClear) => {
                         queue.clear();
+                        continue 'session;
+                    }
+                    // `/clear` between turns: reset NOW — the deck never
+                    // queues it, and the backlog goes with it (a session
+                    // reset to seq-0 has nothing pending by definition).
+                    Some(WorkspaceInput::SessionClear) => {
+                        dispatch.reset();
+                        queue.clear();
+                        session_clear::reset_lead(
+                            &mut messages,
+                            &system_prompt,
+                            &sidecar_dir,
+                            &mut subs,
+                            registry.as_ref(),
+                            store.as_deref().zip(Some(session_record.id.as_str())),
+                            &in_tx,
+                        );
                         continue 'session;
                     }
                     // The double-Esc escalation, landing AFTER its pair's plain
@@ -1701,6 +1730,9 @@ pub async fn run_deck_session(
                             }
                         }
                         Some(WorkspaceInput::QueueClear) => queue.clear(),
+                        // `/clear` mid-turn: drop the turn future and
+                        // reset at the boundary below — keep nothing.
+                        Some(WorkspaceInput::SessionClear) => break TurnEnd::Cleared,
                         Some(WorkspaceInput::ToAgent {
                             input: UserInput::AskUserAnswer { answer, .. }, ..
                         }) => {
@@ -2202,6 +2234,42 @@ pub async fn run_deck_session(
                 // Registry: an interrupted turn leaves the session waiting on
                 // the user; if the deck exits from this state, it exits
                 // Cancelled (the user abandoned the interrupted work).
+                session_exit = stella_store::SessionStatus::Cancelled;
+                session_record.status = stella_store::SessionStatus::NeedsInput;
+                let _ = session_registry.upsert(&session_record);
+            }
+            // `/clear` mid-turn: dropped like a cancel, retaining nothing.
+            // The dying turn's events precede the `SessionReset` on the FIFO
+            // inbound channel, so no stale delta repaints the cleared pane.
+            TurnEnd::Cleared => {
+                messages.truncate(turn_base);
+                // Free the lead's write claims the dropped future never
+                // released (same as a cancel).
+                if let Some(store) = &store {
+                    let _ = store.release_file_locks_for_holder(&lead_holder);
+                }
+                dispatch.reset();
+                queue.clear();
+                let cleared_cost =
+                    agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd());
+                session_clear::close_cleared_execution(
+                    execution.as_ref(),
+                    registry.as_ref(),
+                    files_before,
+                    cleared_cost,
+                    &in_tx,
+                );
+                session_clear::reset_lead(
+                    &mut messages,
+                    &system_prompt,
+                    &sidecar_dir,
+                    &mut subs,
+                    registry.as_ref(),
+                    store.as_deref().zip(Some(session_record.id.as_str())),
+                    &in_tx,
+                );
+                // No `continue`: the shared tail below re-snapshots the
+                // reset history (a no-op) and still services a parked create.
                 session_exit = stella_store::SessionStatus::Cancelled;
                 session_record.status = stella_store::SessionStatus::NeedsInput;
                 let _ = session_registry.upsert(&session_record);
@@ -2714,30 +2782,18 @@ fn handle_supervisor_msg(
             // A worker may have just pushed a branch / opened a PR — observe
             // now, not at the next 45s tick.
             pr_nudge.notify_one();
-            // A task worker finishing successfully completes its board task
-            // — the delegation loop closes without the lead's involvement. A
-            // failed or stopped worker leaves the task in progress: the
-            // board must not claim done what wasn't (the inbox notification
-            // names a failure; a stop was the user's own act).
-            if let Some(task_id) = lane.strip_prefix("sub:") {
-                let board = registry.task_board();
-                let items: Vec<TaskItem> = {
-                    let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
-                    if matches!(end, subsession::WorkerEnd::Done) {
-                        let _ = guard.set_status(task_id, stella_protocol::TaskStatus::Completed);
-                    }
-                    guard.items().to_vec()
-                };
-                let _ = in_tx.send(Inbound::Event {
-                    agent: LEAD.to_string(),
-                    event: AgentEvent::TaskUpdate {
-                        tasks: items.clone(),
-                    },
-                });
-                if let (Some(store), Some(exec)) = (store.as_ref(), execution_id) {
-                    let _ = store.record_task_board(exec, Some(session_id), &items, now_ms());
-                }
-            }
+            // The delegation loop closes against the task board — unless the
+            // worker predates a `/clear`, in which case there is no longer a
+            // board of its to close (#1692).
+            session_clear::settle_worker_task(
+                &lane,
+                generation,
+                &end,
+                subs,
+                registry,
+                session_clear::BoardMirror::of(store.as_ref(), session_id, execution_id),
+                in_tx,
+            );
             while subs.has_slot()
                 && let Some(request) = pending_spawns.pop_front()
             {
@@ -3577,82 +3633,9 @@ enum DeckCommand {
     InitCompleted,
 }
 
-/// The deck's productized vocabulary, as `(name, menu description)`. One
-/// source of truth for the menu's 🔒 rows and the reserved-name guard: a
-/// custom definition can never run under one of these names — not from the
-/// menu (`slash_entries` drops it) and not typed with arguments either
-/// (`expand` refuses reserved heads).
-const DECK_BUILTINS: &[(&str, &str)] = &[
-    ("/help", "show commands"),
-    ("/clear", "reset the conversation"),
-    (
-        "/model",
-        "set the default model (persists; no arg shows current + list)",
-    ),
-    (
-        "/models",
-        "model routing — the think · work · verify slots (`refresh` re-syncs)",
-    ),
-    (
-        "/profile",
-        "retune every role: fast · balanced · pro · ultra · auto",
-    ),
-    (
-        "/theme",
-        "switch colour theme (stella-dark · stella-light; persists; no arg shows current)",
-    ),
-    ("/init", "index the workspace: domains + code graph"),
-    (
-        "/agents",
-        "open the AGENTS tab: executions & installed agents",
-    ),
-    (
-        "/pipeline",
-        "toggle the staged pipeline (witness-verified turns)",
-    ),
-    (
-        "/export",
-        "export session telemetry to a ZIP + HTML dashboard",
-    ),
-    ("/files", "open the Files tab"),
-    ("/diff", "open the diff viewer"),
-    ("/graph", "open the code-graph tab"),
-    ("/skills", "open the SKILLS tab: manage · search · create"),
-    ("/mcp", "open the MCP servers tab"),
-    (
-        "/sessions",
-        "every stella session on this machine, grouped by status (also: ← on an empty prompt)",
-    ),
-    (
-        "/context",
-        "this session's active skills + MCP servers (also: → on an empty prompt)",
-    ),
-    (
-        "/plan",
-        "the plan — every step, with where it may write and spend",
-    ),
-    ("/budget", "set or clear the session spend cap"),
-    (
-        "/inspect",
-        "the context sent to the model on any recorded call (also: ⌃g)",
-    ),
-    ("/inbox", "notifications — messages persist until read"),
-    ("/mcp-search", "search the MCP registry & install servers"),
-    // `/model` sets the DEFAULT model from the prompt (persisted, parity
-    // with the tab). The full engine-config editor — per-agent models,
-    // provider pins, effort, prompts — lives on the SETTINGS tab; there are
-    // no per-agent slash commands.
-    (
-        "/settings",
-        "open the SETTINGS tab — the home of all config (models included)",
-    ),
-    ("/donate", "support stella — become a GitHub Sponsor"),
-];
-
-/// The deck's reserved command names — see [`DECK_BUILTINS`].
-fn deck_reserved() -> Vec<&'static str> {
-    DECK_BUILTINS.iter().map(|(name, _)| *name).collect()
-}
+// The deck's productized vocabulary (`DECK_BUILTINS`) and the
+// reserved-name guard (`deck_reserved`) live in `skills`, beside the
+// slash-menu builder that consumes them (the god-file rule).
 
 /// An argument-carrying form of `/models` — handled model-free: when the
 /// configured model itself is broken, `/models refresh` is how the user
@@ -4073,8 +4056,9 @@ async fn run_deck_command(
                  witness → execute → verify → verdict, with bounded revision. Triage already \
                  right-sizes each turn: chat answers in one completion, and only genuinely \
                  multi-step goals plan at all. The witness stage authors a failing test that \
-                 must flip to green before work counts as done; a large plan raises the scope \
-                 card and waits for you (a approve · t trim · x abort). \
+                 must flip to green before work counts as done; a large plan raises the \
+                 plan-review dialog and waits for you (one keypress: a approve · t trim · \
+                 r refine · x abort). \
                  `/pipeline` again to return to the raw engine loop."
                     .to_string()
             } else {
@@ -4245,7 +4229,7 @@ async fn run_deck_command(
             // thing` stays a model prompt even if a custom `init` exists).
             // An AGENT invocation additionally records a usage-telemetry
             // row (agent, pinned version, task) on the registry's ledger.
-            if let Some(expanded) = custom.expand(trimmed, &deck_reserved()) {
+            if let Some(expanded) = custom.expand(trimmed, &skills::deck_reserved()) {
                 record_agent_invocation(trimmed, custom, registry);
                 return DeckCommand::Expanded(expanded);
             }
@@ -4422,7 +4406,7 @@ async fn run_lead_turn(
 /// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
 /// analogue of the `stella run` pipeline path — same tool stack, persistence,
 /// and event forwarding as [`run_lead_turn`], with `Pipeline::run` (triage →
-/// recall → plan → scope → witness → execute → verify → verdict → revise) in
+/// recall → plan → scope → execute → witness → verify → verdict → revise) in
 /// place of the raw `Engine::run_turn`.
 ///
 /// Deck-mode seams, all named:

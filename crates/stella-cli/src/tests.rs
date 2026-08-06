@@ -13,7 +13,10 @@ use super::build_info::{
 use super::term_policy::{
     PlainReason, accessible_env, animation_disabled, deck_decision, dumb_terminal,
 };
-use super::{AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json};
+use super::{
+    AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json, fleet_verbs,
+    query_format,
+};
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
 /// report otherwise costs a round trip. Both must agree about the version
@@ -412,6 +415,87 @@ fn session_flags_parse_after_subcommand() {
         }) => {
             assert_eq!(tasks, vec!["fix the flaky auth test".to_string()]);
             assert_eq!(max_concurrency, 2);
+        }
+        _ => panic!("expected the fleet subcommand"),
+    }
+}
+
+/// `stella fleet clean` is a maintenance verb on `fleet`, not a prompt, and
+/// it parses with no tasks despite `tasks` being otherwise required (#1217).
+/// The escape hatch matters as much: a prompt that genuinely begins with the
+/// word `clean` is still reachable after `--`.
+#[test]
+fn fleet_clean_parses_as_a_subcommand_and_a_prompt_survives_after_dashdash() {
+    let cli = Cli::try_parse_from(["stella", "fleet", "clean", "--dry-run", "--age", "14"])
+        .expect("`fleet clean` must parse with no task prompts");
+    match cli.command {
+        Some(Command::Fleet {
+            cmd: Some(fleet_verbs::FleetCmd::Clean { dry_run, age, .. }),
+            tasks,
+            ..
+        }) => {
+            assert!(dry_run);
+            assert_eq!(age, Some(14));
+            assert!(tasks.is_empty());
+        }
+        _ => panic!("expected `fleet clean`"),
+    }
+
+    let cli = Cli::try_parse_from(["stella", "fleet", "--", "clean up the dead code"])
+        .expect("a prompt after `--` must stay a prompt");
+    match cli.command {
+        Some(Command::Fleet { cmd, tasks, .. }) => {
+            assert!(cmd.is_none(), "`--` must not select a subcommand");
+            assert_eq!(tasks, vec!["clean up the dead code".to_string()]);
+        }
+        _ => panic!("expected the fleet subcommand"),
+    }
+}
+
+/// The witness for #1675's read surface: `stella fleet claims` reaches a verb
+/// rather than being read as a task prompt, defaults to the live listing in
+/// text, and takes the shared query `--format` rather than a `--json` boolean.
+///
+/// The second verb also re-tests the collision the first one documented — a
+/// prompt whose first word is a subcommand name — because that hazard grows
+/// with every verb added, and `claims` is a far more likely opening word for
+/// a real task prompt than `clean`.
+#[test]
+fn fleet_claims_parses_as_a_verb_and_defaults_to_the_live_listing() {
+    let cli = Cli::try_parse_from(["stella", "fleet", "claims"])
+        .expect("`fleet claims` must parse with no task prompts");
+    match cli.command {
+        Some(Command::Fleet {
+            cmd: Some(fleet_verbs::FleetCmd::Claims { all, format }),
+            tasks,
+            ..
+        }) => {
+            assert!(!all, "the live listing is the default");
+            assert_eq!(format, query_format::QueryFormat::Text);
+            assert!(tasks.is_empty());
+        }
+        _ => panic!("expected `fleet claims`"),
+    }
+
+    let cli = Cli::try_parse_from(["stella", "fleet", "claims", "--all", "--format", "json"])
+        .expect("`--all --format json` must parse");
+    assert!(matches!(
+        cli.command,
+        Some(Command::Fleet {
+            cmd: Some(fleet_verbs::FleetCmd::Claims {
+                all: true,
+                format: query_format::QueryFormat::Json,
+            }),
+            ..
+        })
+    ));
+
+    let cli = Cli::try_parse_from(["stella", "fleet", "--", "claims are stale, audit them"])
+        .expect("a prompt after `--` must stay a prompt");
+    match cli.command {
+        Some(Command::Fleet { cmd, tasks, .. }) => {
+            assert!(cmd.is_none(), "`--` must not select a subcommand");
+            assert_eq!(tasks, vec!["claims are stale, audit them".to_string()]);
         }
         _ => panic!("expected the fleet subcommand"),
     }

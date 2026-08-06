@@ -80,6 +80,10 @@ pin just the verifier model while your user scope keeps everything else.
     // long steps stop on the timeout instead of the cap.
     "model_timeout_secs": 816,
 
+    // Seconds a supervised run may sit parked on a scope review nobody
+    // answers before it aborts. 0 (the default) parks until answered.
+    "approval_wait_secs": 0,
+
     // Per-agent deep config. Set a field and it goes on the wire; leave it
     // out and the provider default applies.
     "agents": {
@@ -266,6 +270,18 @@ Set any of the three autos to `"on"` and stop thinking about it:
     budget: a step allowed 128,000 output tokens against a timeout sized for
     64,000 stops on the timeout, which looks like a model that could not
     finish rather than a ceiling nobody scaled.
+  </OptionCard>
+  <OptionCard name="approval_wait_secs" defaultValue="0">
+    Seconds a [supervised](/docs/commands/daemon) run's parked [scope
+    review](/docs/inference-pipeline) waits for `stella daemon attach` before
+    unparking itself as an abort. `0` (the default) parks forever, bounded
+    only by discoverability (`Needs Input` in `stella daemon list`) and an
+    explicit `stella daemon stop`.
+
+    Deliberately fails **closed**, not open: timing out to an automatic
+    approval would defeat the gate scope review exists to be. Set this only
+    where you have decided that sacrificing an unattended run is the better
+    trade than leaving it parked indefinitely.
   </OptionCard>
 </CardGrid>
 
