@@ -301,7 +301,29 @@ fn base_ui(tab: DeckTab) -> DeckUi {
     // The driver seeds this at session start, so every frame the real deck
     // draws has it — including the one `/models` renders from.
     ui.engine.pristine = Some(stella_tui::scenario::demo_engine_config());
+    answer_the_scope_gate(&mut ui);
     ui
+}
+
+/// Answer the scripted scenario's pending scope review, the way
+/// `deck_snapshot.rs::answered_ui` does (#1651).
+///
+/// `demo_inbound` reaches a pending scope review, and `deck_render.rs` draws
+/// that dialog **centered over the whole frame**. A golden blessed with it up
+/// pins the dialog across the eleven rows it covers instead of the tab it
+/// exists to pin — so a column that shifted or a row that vanished inside that
+/// band became invisible to the suite, which is the one thing AGENTS.md says
+/// these frames are for.
+///
+/// Applied to every frame rather than only the tabs the dialog currently
+/// reaches: which tabs that is has already changed once, and a harness that
+/// defends only today's answer rots into the same failure the next time it
+/// widens. [`deck_render_snapshots_pin_the_plan_review_dialog`] is what keeps
+/// the dialog itself covered.
+fn answer_the_scope_gate(ui: &mut DeckUi) {
+    for entry in &fixture_model().agents {
+        ui.scope_answered.insert(entry.meta.id.clone());
+    }
 }
 
 fn fixture_skills() -> SkillsView {
@@ -663,6 +685,35 @@ fn deck_render_snapshots_pin_the_floating_cards() {
         let frame = render_frame(&model, &mut ui, W, H);
         assert_golden(name, description, W, H, &frame);
     }
+}
+
+/// The plan-review dialog, on the one frame that is *about* it.
+///
+/// Every other golden now answers the scope gate, so this is the only place
+/// the modal is still pinned — deliberately, because removing it from the
+/// frames it was obscuring must not remove it from the suite (#1651). Rendered
+/// over SESSION, which is the tab the real deck parks on when a plan review
+/// arrives.
+#[test]
+fn deck_render_snapshots_pin_the_plan_review_dialog() {
+    let model = fixture_model();
+    let mut ui = ui_for(DeckTab::Session);
+    // Deliberately unanswered: this frame is the dialog.
+    ui.scope_answered.clear();
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("plan review"),
+        "the scenario stopped producing a pending scope review, so this golden \
+         no longer pins the dialog it is named for — and the frames that answer \
+         the gate are now answering nothing:\n{frame}"
+    );
+    assert_golden(
+        "overlay_plan_review",
+        "the pending plan-review dialog, modal over SESSION",
+        W,
+        H,
+        &frame,
+    );
 }
 
 // ─────────────────────────── the harness itself ───────────────────────────
