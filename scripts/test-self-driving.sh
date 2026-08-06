@@ -315,8 +315,8 @@ want_plan "a breached memory floor reads like a busy box" \
   g-m1 "light 0 1 ci off 5 deep" SELF_DRIVING_PROBE_MEM_FREE_GB=2
 want_plan "battery sheds compute but keeps the local build" \
   g-p1 "light 1 1 impacted off 5 deep" SELF_DRIVING_PROBE_ON_BATTERY=1
-want_plan "a saturated box narrows concurrency and nothing else" \
-  g-l1 "light 1 1 impacted loop 5 deep" SELF_DRIVING_PROBE_LOAD1=8
+want_plan "a saturated box narrows concurrency and sheds the bench arm" \
+  g-l1 "light 1 1 impacted off 5 deep" SELF_DRIVING_PROBE_LOAD1=8
 
 # Demand rungs: the queue can shrink the batch, and a P0 can rescue a light
 # cycle — but demand never upgrades the tier and never widens the batch.

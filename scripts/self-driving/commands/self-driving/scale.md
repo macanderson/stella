@@ -43,7 +43,7 @@ explained gets overridden and then ignored.
 | a build or match owns the box | `light` | **no local build**, serial — a concurrent cargo run corrupts a measured match |
 | free memory < 4 GB | `light` | **no local build**, serial — this swap-thrashes |
 | on battery | `light` | serial, no bench — shed compute, keep the cycle useful |
-| load ≥ cores | `light` | serial — the box is already saturated |
+| load ≥ cores | `light` | serial, no bench — the box is already saturated, and a bench timed here is a number the loop cannot trust |
 | ≥32 GB, ≥100 GB free, load < half the cores | `heavy` | full workspace scope, measured head-to-head |
 | otherwise | `normal` | the calibrated ceiling |
 
