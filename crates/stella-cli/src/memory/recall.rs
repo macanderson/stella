@@ -585,11 +585,27 @@ pub fn inject_recall_block(messages: &mut Vec<CompletionMessage>, block: Option<
     let is_marker =
         |m: &CompletionMessage| m.role == MessageRole::User && m.content.starts_with(RECALL_MARKER);
     let Some(content) = block else { return };
+    // Against EVERY prior marker, not just the most recent one.
+    //
+    // Comparing only the latest made the dedup order-sensitive: an A → B → A
+    // recall sequence re-appended A, because by then B was the newest marker.
+    // Recall content genuinely does oscillate — it is a function of the
+    // prompt, so returning to an earlier subject returns to an earlier block —
+    // and each one is up to ~3k tokens that nothing can ever reclaim. These
+    // are User messages, and compaction passes 1–4 only rewrite tool results,
+    // so only the overflow summarizer can remove them. A 30-turn REPL session
+    // with shifting recall accumulated ~90k tokens of superseded blocks,
+    // permanently in the paid prefix (#1846).
+    //
+    // A set membership test rather than superseding the old marker in place:
+    // rewriting an earlier message byte-changes the replayed prefix from that
+    // point on, which is precisely the full-rate re-bill the index-1 refresh
+    // was removed for (see this function's header, L-E8). Skipping an append
+    // costs nothing and breaks nothing — the model has already been shown that
+    // block, and it is still in history where it can see it.
     if messages
         .iter()
-        .rev()
-        .find(|m| is_marker(m))
-        .is_some_and(|m| m.content == content)
+        .any(|m| is_marker(m) && m.content == content)
     {
         return;
     }
