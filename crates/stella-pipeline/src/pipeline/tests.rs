@@ -2372,6 +2372,7 @@ mod plan_walk;
 mod scope_gate_interactive;
 mod shared_worktree;
 mod terminal_outcomes;
+mod triage_context;
 mod usage;
 /// Bounded repair after a refuted success claim (#1479).
 mod verdict_repair;

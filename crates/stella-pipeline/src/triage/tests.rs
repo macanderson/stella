@@ -326,7 +326,7 @@ fn action_request_matching_is_whole_word() {
 
 #[test]
 fn the_triage_prompt_does_not_frame_every_real_class_as_code() {
-    let p = triage_prompt("anything").rendered();
+    let p = triage_prompt("anything", "").rendered();
     // The regression: `lookup`/`single`/`multi` each said "code", leaving a
     // non-code task no bucket but `chat`.
     assert!(
@@ -491,7 +491,7 @@ fn the_ceiling_leaves_every_other_witness_decision_untouched() {
 
 #[test]
 fn triage_prompt_names_all_four_class_tokens_and_the_goal() {
-    let p = triage_prompt("Fix the failing test").rendered();
+    let p = triage_prompt("Fix the failing test", "").rendered();
     assert!(p.contains("chat"));
     assert!(p.contains("lookup"));
     assert!(p.contains("single"));
@@ -598,10 +598,80 @@ fn requirement_bullets_do_not_floor_to_multi_step() {
 
 #[test]
 fn the_verifier_nudge_prefers_review_when_unsure() {
-    let p = triage_prompt("anything").rendered();
+    let p = triage_prompt("anything", "").rendered();
     // The witness keeps its skip-nudge; the verifier must not share it —
     // the verifier is only ever consulted when no test settled the outcome,
     // which is exactly when review has value.
     assert!(p.contains("when unsure, say yes"));
     assert!(!p.contains("Prefer `no` for both"));
+}
+
+#[test]
+fn the_triage_payload_carries_the_workspace_listing_when_one_exists() {
+    let p = triage_prompt(
+        "Fix the failing test",
+        "src/main.rs\nsrc/lib.rs\ntests/smoke.rs",
+    );
+    // Evidence rides in the volatile payload half, never the cacheable
+    // instruction block (#1434) — an instruction block that varied per
+    // workspace would kill the prefix cache on every triage call.
+    assert!(p.payload.contains("Workspace listing (truncated):"));
+    assert!(p.payload.contains("tests/smoke.rs"));
+    assert!(!p.instructions.contains("src/main.rs"));
+    // The Task:/Answer: pair stays adjacent at the end, after the listing.
+    let listing_at = p
+        .payload
+        .find("Workspace listing")
+        .expect("listing section");
+    let task_at = p.payload.find("Task:").expect("task section");
+    assert!(
+        listing_at < task_at,
+        "the listing is context and must precede the task, not interrupt it"
+    );
+    assert!(p.payload.trim_end().ends_with("Answer:"));
+}
+
+#[test]
+fn an_empty_structure_renders_the_legacy_goal_only_payload() {
+    // No git, no port, a bare directory: the listing is evidence when it
+    // exists, never a requirement — and the fallback is byte-identical to
+    // the pre-structure payload, not a payload with an empty section.
+    let with_empty = triage_prompt("Fix the failing test", "");
+    let with_blank = triage_prompt("Fix the failing test", "   \n  ");
+    assert_eq!(with_empty.payload, "Task:\nFix the failing test\n\nAnswer:");
+    assert_eq!(with_blank.payload, with_empty.payload);
+    assert!(!with_empty.payload.contains("Workspace listing"));
+}
+
+#[test]
+fn an_oversized_listing_is_truncated_at_the_triage_budget() {
+    // One long sorted listing — far past the ceiling.
+    let huge: String = (0..2_000)
+        .map(|i| format!("src/module_{i:04}.rs\n"))
+        .collect();
+    let p = triage_prompt("anything", &huge);
+    assert!(
+        p.payload
+            .contains("[… listing truncated at the triage budget …]"),
+        "a truncated listing must never read as the whole workspace"
+    );
+    // The payload stays the same order of magnitude as the budget — the
+    // listing must not grow the cheap tier's per-call cost unboundedly.
+    assert!(
+        p.payload.chars().count() < TRIAGE_STRUCTURE_CHARS + 200,
+        "payload {} chars exceeds the triage structure budget",
+        p.payload.chars().count()
+    );
+    // Head-kept: the earliest paths survive, the tail is what drops.
+    assert!(p.payload.contains("src/module_0000.rs"));
+    assert!(!p.payload.contains("src/module_1999.rs"));
+}
+
+#[test]
+fn the_instructions_ground_the_listing_as_evidence_not_the_ask() {
+    let p = triage_prompt("anything", "src/lib.rs").rendered();
+    assert!(p.contains("Classify the message, never the listing"));
+    // The witness call is the decision the listing exists to inform: a
+    // workspace that cannot run a test should not buy witness authoring.
+    assert!(p.contains("whether a test could even run"));
 }
