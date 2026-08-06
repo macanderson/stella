@@ -40,7 +40,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use stella_protocol::ScopeProposal;
 
-use crate::deck::WorkspaceModel;
+use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::plan::PlanStepState;
 use crate::theme;
@@ -54,7 +54,18 @@ const DIALOG_MAX_W: u16 = 74;
 /// The focused agent's unanswered scope proposal, if any — the single
 /// predicate for "the dialog is up". Shared by the renderer, the key handler's
 /// caller and the cursor-suppression check so they can never disagree.
+///
+/// Scoped to the Session tab, like every other tab-owned modal in
+/// `deck_render`'s cursor-suppression list (`DeckTab::Issues`'s sub-modes,
+/// `DeckTab::Settings`'s config editors). The gate belongs to the focused
+/// agent's REPL surface — it was a band above that transcript before it became
+/// a dialog, and its reach did not widen when its shape changed. Without this
+/// the frame-sized overlay paints over AGENTS, TRACES, GRAPH, FILES and MCP,
+/// blanking tabs that answer questions the dialog cannot.
 pub(crate) fn pending<'m>(model: &'m WorkspaceModel, ui: &DeckUi) -> Option<&'m ScopeProposal> {
+    if ui.tab != DeckTab::Session {
+        return None;
+    }
     let entry = model.agents.get(ui.focused)?;
     if ui.scope_answered.contains(&entry.meta.id) {
         return None;
