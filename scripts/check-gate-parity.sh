@@ -26,13 +26,14 @@
 #   2. Every step is named in CONTRIBUTING.md's gate fence, via the alias table
 #      below (that fence lists raw commands, on purpose — its reader wants to
 #      run them without make).
-#   3. Both documents' spelled-out count matches the real number of steps.
-#   4. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
+#   3. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
 #      gate step — which is how a removed guard leaves a ghost behind. Only
 #      that fence is checked this way: it is a delimited list of commands,
 #      whereas AGENTS.md's block is prose with parenthetical glosses.
 #
-# What it deliberately does NOT check: the prose *around* the lists. Whether
+# What it deliberately does NOT check: the spelled-out step total — that check
+# existed and was removed; see "The count is deliberately NOT checked any
+# more" below (#1883) — and the prose *around* the lists. Whether
 # "ci.yml's required job runs everything except invariants and doc-links" is
 # still true is a claim about a workflow, not about this list, and pretending a
 # grep could settle it would be worse than leaving it to review.
