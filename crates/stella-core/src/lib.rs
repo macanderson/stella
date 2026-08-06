@@ -68,7 +68,7 @@ pub use extensions::{
 };
 pub use goal::{GoalConfig, GoalOutcome, GoalVerifierVerdict};
 pub use hooks::{HookEvent, HookPayload, HookRunOutcome, HookRunner, Hooks, run_hooks};
-pub use loop_detect::{CallRecord, LoopDetectionConfig, LoopVerdict, detect_loop};
+pub use loop_detect::{CallRecord, LoopDetectionConfig, LoopIdentity, LoopVerdict, detect_loop};
 pub use mcp_usage::{McpUsageLedger, McpUsageRecord, drain_usage, push_usage};
 pub use ports::{Clock, ToolExecutor};
 pub use repair::{RepairCost, RepairHeadroom, RepairPlan, RepairRefusal, plan_repair};
