@@ -1,8 +1,8 @@
-//! The fullauto loop's durable state: `~/.stella/fullauto/<slug>/`.
+//! The self-driving loop's durable state: `~/.stella/self-driving/<slug>/`.
 //!
 //! This module is the single writer of that directory (the shell driver
 //! delegates here since #1548); the observatory reads it back read-only
-//! (`stella-observatory/src/fullauto.rs`), so every shape written here is a
+//! (`stella-observatory/src/self_driving.rs`), so every shape written here is a
 //! cross-process contract, not an implementation detail:
 //!
 //! - `ledger.jsonl` — one append per completed cycle.
@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{Map, Value};
-use stella_core::fullauto::{AimdLimits, Calibration, CycleRecord, Floors};
+use stella_core::self_driving::{AimdLimits, Calibration, CycleRecord, Floors};
 
 use crate::timefmt::{now_unix, rfc3339_utc_now};
 
@@ -44,7 +44,7 @@ fn env_u64(name: &str, default: u64) -> u64 {
 
 /// Two consecutive dry audits close an APERTURE, not the loop.
 pub(crate) fn dry_streak_target() -> u32 {
-    env_u64("FULLAUTO_DRY_STREAK", 2) as u32
+    env_u64("SELF_DRIVING_DRY_STREAK", 2) as u32
 }
 
 /// A heartbeat older than this means nobody is driving the cycle any more.
@@ -52,21 +52,21 @@ pub(crate) fn dry_streak_target() -> u32 {
 /// legitimately run for minutes, and calling a live cycle dead is worse than
 /// noticing late.
 pub(crate) fn stale_after_secs() -> i64 {
-    env_u64("FULLAUTO_STALE_AFTER_SECS", 900) as i64
+    env_u64("SELF_DRIVING_STALE_AFTER_SECS", 900) as i64
 }
 
 pub(crate) fn aimd_limits() -> AimdLimits {
     AimdLimits {
-        batch_max: env_u64("FULLAUTO_BATCH_MAX", 20) as u32,
+        batch_max: env_u64("SELF_DRIVING_BATCH_MAX", 20) as u32,
         batch_min: 2,
-        parallel_max: env_u64("FULLAUTO_PARALLEL_MAX", 4) as u32,
+        parallel_max: env_u64("SELF_DRIVING_PARALLEL_MAX", 4) as u32,
     }
 }
 
 pub(crate) fn floors() -> Floors {
     Floors {
-        disk_gb: env_u64("FULLAUTO_DISK_FLOOR_GB", 15),
-        mem_gb: env_u64("FULLAUTO_MEM_FLOOR_GB", 4),
+        disk_gb: env_u64("SELF_DRIVING_DISK_FLOOR_GB", 15),
+        mem_gb: env_u64("SELF_DRIVING_MEM_FLOOR_GB", 4),
     }
 }
 
@@ -126,20 +126,19 @@ pub(crate) struct LoopState {
 }
 
 impl LoopState {
-    /// Resolve `$FULLAUTO_STATE_DIR`, else `<stella home>/fullauto/<slug>`,
-    /// migrating a legacy `~/.fullauto/<slug>` once rather than silently
-    /// starting a fresh ledger — losing the seen-set would re-file every
-    /// finding ever triaged.
+    /// Resolve `$SELF_DRIVING_STATE_DIR`, else `<stella home>/self-driving/<slug>`,
+    /// migrating a legacy home once rather than silently starting a fresh
+    /// ledger — losing the seen-set would re-file every finding ever triaged.
     pub fn open() -> Result<Self, String> {
         let repo_root = repo_root();
-        let dir = match std::env::var_os("FULLAUTO_STATE_DIR") {
+        let dir = match std::env::var_os("SELF_DRIVING_STATE_DIR") {
             Some(dir) if !dir.is_empty() => PathBuf::from(dir),
             _ => {
                 let home = stella_home::stella_home()
                     .ok_or_else(|| "cannot resolve the stella home directory".to_string())?;
                 let slug = repo_slug(&repo_root);
-                let dir = home.join("fullauto").join(&slug);
-                migrate_legacy_state(&dir, &slug);
+                let dir = home.join("self-driving").join(&slug);
+                migrate_legacy_state(&dir, &slug, &home);
                 dir
             }
         };
@@ -331,7 +330,8 @@ impl LoopState {
     /// of cycle 12".
     pub fn run_write(&self, phase: &str, cycle: Option<u64>, tier: Option<&str>) {
         let aperture = self.aperture();
-        let driver = std::env::var("FULLAUTO_DRIVER").unwrap_or_else(|_| "interactive".to_string());
+        let driver =
+            std::env::var("SELF_DRIVING_DRIVER").unwrap_or_else(|_| "interactive".to_string());
         let now = rfc3339_utc_now();
         self.update_run_doc(|doc| {
             if let Some(c) = cycle {
@@ -425,29 +425,41 @@ impl LoopState {
     }
 }
 
-/// An earlier build kept state at `~/.fullauto/<slug>`. Move it, once. Never
-/// overwrite: if both exist the new home wins and the legacy directory is
-/// left untouched for the user to inspect.
-fn migrate_legacy_state(new_dir: &Path, slug: &str) {
+/// Two earlier builds kept this state elsewhere, newest first:
+///
+/// 1. `<stella home>/fullauto/<slug>` — before the loop was renamed
+///    `self-driving`. The spelling is a fact about bytes already on disk, so it
+///    survives the rename verbatim; rewriting it here would point the migration
+///    at a directory that has never existed and silently orphan a live ledger.
+/// 2. `~/.fullauto/<slug>` — the original home, before the state moved under
+///    the stella home.
+///
+/// Move the first one that exists, once. Never overwrite: if both exist the new
+/// home wins and the legacy directory is left untouched for the user to inspect.
+fn migrate_legacy_state(new_dir: &Path, slug: &str, stella_home: &Path) {
+    if new_dir.exists() {
+        return;
+    }
+    let mut candidates = vec![stella_home.join("fullauto").join(slug)];
     // Through `crate::paths`, never straight out of the process environment —
     // that indirection is what lets a test redirect the anchor without mutating
     // process-global state (#1139), and
     // `nothing_else_in_this_crate_reads_a_home_out_of_the_environment` enforces
     // it. That guard matches raw source text, so naming the forbidden call here
     // would trip it on the very comment describing the rule.
-    let Some(home) = crate::paths::home() else {
+    if let Some(home) = crate::paths::home() {
+        candidates.push(home.join(".fullauto").join(slug));
+    }
+
+    let Some(legacy) = candidates.into_iter().find(|c| c.is_dir()) else {
         return;
     };
-    let legacy = home.join(".fullauto").join(slug);
-    if !legacy.is_dir() || new_dir.exists() {
-        return;
-    }
     if let Some(parent) = new_dir.parent()
         && std::fs::create_dir_all(parent).is_ok()
         && std::fs::rename(&legacy, new_dir).is_ok()
     {
         eprintln!(
-            "  ! migrated fullauto state: {} -> {}",
+            "  ! migrated self-driving state: {} -> {}",
             legacy.display(),
             new_dir.display()
         );

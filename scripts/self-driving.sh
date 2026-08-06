@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# The shell face of `fullauto` — the autonomous delivery loop.
+# The shell face of `self-driving` — the autonomous delivery loop.
 #
-# The deterministic half of the loop is `stella fullauto` (#1548): the
+# The deterministic half of the loop is `stella self-driving` (#1548): the
 # governor, the ledger, the aperture ladder, the dedup oracle, and the run
-# lifecycle are engine code with types and tests (stella-core::fullauto +
-# stella-cli's fullauto_cmd). This script keeps only what is genuinely shell
+# lifecycle are engine code with types and tests (stella-core::self-driving +
+# stella-cli's self-driving_cmd). This script keeps only what is genuinely shell
 # work — the benchmark arms, the Homebrew ship step, the daemon's process
 # supervision, and the Claude command install — and DELEGATES every ported
 # verb one-for-one, so exactly one copy of every decision exists.
 #
-#   scripts/fullauto.sh preflight          # is this machine able to run a cycle?
-#   scripts/fullauto.sh plan --explain     # -> stella fullauto plan
-#   scripts/fullauto.sh queue --limit 20   # -> stella fullauto queue
-#   scripts/fullauto.sh cycle-begin        # -> stella fullauto cycle begin
-#   scripts/fullauto.sh seen --new <sha>…  # -> stella fullauto seen
-#   scripts/fullauto.sh cycle-end …        # -> stella fullauto cycle end
-#   scripts/fullauto.sh aperture --list    # -> stella fullauto aperture
-#   scripts/fullauto.sh watch              # -> stella fullauto watch
-#   scripts/fullauto.sh metrics            # -> stella fullauto metrics
-#   scripts/fullauto.sh bench loop|h2h     # the comparator arm (h2h: --rig,
+#   scripts/self-driving.sh preflight          # is this machine able to run a cycle?
+#   scripts/self-driving.sh plan --explain     # -> stella self-driving plan
+#   scripts/self-driving.sh queue --limit 20   # -> stella self-driving queue
+#   scripts/self-driving.sh cycle-begin        # -> stella self-driving cycle begin
+#   scripts/self-driving.sh seen --new <sha>…  # -> stella self-driving seen
+#   scripts/self-driving.sh cycle-end …        # -> stella self-driving cycle end
+#   scripts/self-driving.sh aperture --list    # -> stella self-driving aperture
+#   scripts/self-driving.sh watch              # -> stella self-driving watch
+#   scripts/self-driving.sh metrics            # -> stella self-driving metrics
+#   scripts/self-driving.sh bench loop|h2h     # the comparator arm (h2h: --rig,
 #                                          #   --rig --dry-run = free rehearsal)
-#   scripts/fullauto.sh daemon start       # the loop outlives this terminal
-#   scripts/fullauto.sh upgrade            # ship: brew from the tap, drop the shadow
-#   scripts/fullauto.sh install-commands   # put /fullauto in ~/.claude/commands
+#   scripts/self-driving.sh daemon start       # the loop outlives this terminal
+#   scripts/self-driving.sh upgrade            # ship: brew from the tap, drop the shadow
+#   scripts/self-driving.sh install-commands   # put /self-driving in ~/.claude/commands
 #
-# The loop does not terminate — see `stella fullauto aperture --list`. State
-# lives at ~/.stella/fullauto/<slug>/ (outside the repo: `make no-scratch`,
+# The loop does not terminate — see `stella self-driving aperture --list`. State
+# lives at ~/.stella/self-driving/<slug>/ (outside the repo: `make no-scratch`,
 # #448) and is owned by the binary; this script never writes a state file.
 set -uo pipefail
 
@@ -52,22 +52,22 @@ readonly SHADOW_PATH_LINE='export PATH="$HOME/Projects/stella/target/release:$PA
 # The Terminal-Bench rig. Native x86_64 Linux Docker host; see
 # bench/RUNBOOK.md Part 0. It bills $1.90/hr RUNNING, so every path that starts
 # it also stops it, including on failure.
-readonly RIG_INSTANCE="${FULLAUTO_RIG_INSTANCE:-i-07d46341dcc9a31b3}"
-readonly RIG_REGION="${FULLAUTO_RIG_REGION:-us-east-1}"
+readonly RIG_INSTANCE="${SELF_DRIVING_RIG_INSTANCE:-i-07d46341dcc9a31b3}"
+readonly RIG_REGION="${SELF_DRIVING_RIG_REGION:-us-east-1}"
 readonly RIG_USER="ubuntu"
 # A credential is not a document: the key lives under the stella home, not in
 # the repository. Its old home was the docs/design scratchpad, which
 # check-design-refs forbids citing — and a key that sits in a docs tree is one
 # `git add -A` away from being published.
-readonly RIG_KEY="${FULLAUTO_RIG_KEY:-${STELLA_HOME:-$HOME/.stella}/keys/tb909-key.pem}"
+readonly RIG_KEY="${SELF_DRIVING_RIG_KEY:-${STELLA_HOME:-$HOME/.stella}/keys/tb909-key.pem}"
 
 # The head-to-head match: Claude Code vs Stella on Terminal-Bench 2.1, same
 # model on both arms so the agent architecture is the variable under test.
-readonly H2H_MATCH="${FULLAUTO_MATCH:-arenabench/matches/fable5-claude-code-vs-stella.toml}"
+readonly H2H_MATCH="${SELF_DRIVING_MATCH:-arenabench/matches/fable5-claude-code-vs-stella.toml}"
 
 # The controller ceilings, the floors, the aperture ladder, and the dry-streak
-# target all live in the binary now (stella-core::fullauto), still answering
-# to the same FULLAUTO_* environment knobs they always did.
+# target all live in the binary now (stella-core::self-driving), still answering
+# to the same SELF_DRIVING_* environment knobs they always did.
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 readonly REPO_ROOT
@@ -94,7 +94,7 @@ repo_slug() {
   esac
 }
 
-# State lives under the stella home, not a top-level ~/.fullauto, so it sits
+# State lives under the stella home, not a top-level ~/.self-driving, so it sits
 # beside every other durable per-user artifact and `STELLA_HOME` moves it with
 # the rest. The observatory resolves the same path through `stella-home` and
 # reads it read-only.
@@ -102,7 +102,7 @@ stella_home() {
   if [ -n "${STELLA_HOME:-}" ]; then printf '%s' "$STELLA_HOME"; else printf '%s' "$HOME/.stella"; fi
 }
 
-STATE_DIR="${FULLAUTO_STATE_DIR:-$(stella_home)/fullauto/$(repo_slug)}"
+STATE_DIR="${SELF_DRIVING_STATE_DIR:-$(stella_home)/self-driving/$(repo_slug)}"
 readonly STATE_DIR
 
 # `gh` colorizes --json output even when it is redirected to a file, if
@@ -137,7 +137,7 @@ say()  { printf '\n%s%s%s\n' "$C_B" "$*" "$C_0"; }
 pass() { printf '  %s✓%s %s\n' "$C_G" "$C_0" "$*"; }
 warn() { printf '  %s!%s %s\n' "$C_Y" "$C_0" "$*"; }
 fail() { printf '  %s✗%s %s\n' "$C_R" "$C_0" "$*"; HARD_FAIL=1; }
-die()  { printf '%sfullauto: %s%s\n' "$C_R" "$*" "$C_0" >&2; exit 1; }
+die()  { printf '%sself-driving: %s%s\n' "$C_R" "$*" "$C_0" >&2; exit 1; }
 
 HARD_FAIL=0
 
@@ -160,25 +160,25 @@ ensure_state_dir() {
 # subcommand", which reads like a bug in this script rather than a stale
 # install. NEVER suggest bare `brew install stella`: homebrew-core's `stella`
 # is an Atari 2600 emulator, and installing it exits 0.
-STELLA_FULLAUTO_OK=""
+STELLA_SELF_DRIVING_OK=""
 require_stella() {
   # Memoized: the daemon loop delegates several times per cycle, and the
   # probe is a whole extra binary spawn each time otherwise.
-  [ "$STELLA_FULLAUTO_OK" = "1" ] && return 0
-  have stella || die "this verb lives in \`stella fullauto\` and needs stella on PATH.
+  [ "$STELLA_SELF_DRIVING_OK" = "1" ] && return 0
+  have stella || die "this verb lives in \`stella self-driving\` and needs stella on PATH.
    Install:  brew install macanderson/stella/stella
    Dev:      cargo build --release -p stella-cli  (then target/release/stella)"
-  if ! stella fullauto --help >/dev/null 2>&1; then
-    die "the stella on PATH ($(command -v stella)) predates \`stella fullauto\` — upgrade it (see \`$0 upgrade\`)"
+  if ! stella self-driving --help >/dev/null 2>&1; then
+    die "the stella on PATH ($(command -v stella)) predates \`stella self-driving\` — upgrade it (see \`$0 upgrade\`)"
   fi
-  STELLA_FULLAUTO_OK=1
+  STELLA_SELF_DRIVING_OK=1
 }
 
 # The daemon's internal calls into the ported verbs go through here, so its
 # state writes ride the exact code path every other caller uses.
-run_fullauto() {
+run_self-driving() {
   require_stella
-  stella fullauto "$@"
+  stella self-driving "$@"
 }
 
 # Is the headless scope-review bypass on in any settings scope this run will
@@ -225,7 +225,7 @@ cmd_preflight() {
   if [ -f "$REPO_ROOT/AGENTS.md" ] && [ -f "$REPO_ROOT/Makefile" ]; then
     pass "AGENTS.md + Makefile present (this is the stella workspace)"
   else
-    fail "AGENTS.md or Makefile missing — fullauto is scoped to the stella workspace"
+    fail "AGENTS.md or Makefile missing — self-driving is scoped to the stella workspace"
   fi
 
   say "2. Fix + gate tier (required)"
@@ -247,10 +247,10 @@ cmd_preflight() {
     # The ported verbs (plan, cycle, aperture, seen, …) live in the binary
     # now, so a stale install does not merely weaken the fix batch — it
     # removes the loop's controls entirely.
-    if stella fullauto --help >/dev/null 2>&1; then
-      pass "stella fullauto present — the loop's deterministic verbs resolve"
+    if stella self-driving --help >/dev/null 2>&1; then
+      pass "stella self-driving present — the loop's deterministic verbs resolve"
     else
-      fail "this stella predates \`stella fullauto\` — the delegated verbs cannot run; upgrade it"
+      fail "this stella predates \`stella self-driving\` — the delegated verbs cannot run; upgrade it"
     fi
     # Measured, not theorised: the first live daemon cycle died here. A cycle
     # of any real size trips scope review, and a headless run has nobody to
@@ -312,7 +312,7 @@ cmd_preflight() {
 # daemon — the loop outlives the terminal that started it
 # ---------------------------------------------------------------------------
 #
-# `/loop /fullauto` dies with the terminal app. The state was always durable —
+# `/loop /self-driving` dies with the terminal app. The state was always durable —
 # it is files on disk — but the DRIVER was not, so quitting the terminal ended
 # the loop with no record of why. The daemon detaches the driver from the tty:
 # nohup so SIGHUP cannot reach it, a pidfile so it can be found again, and a
@@ -333,8 +333,8 @@ daemon_alive() {
 # Stella itself — this loop is Stella making Stella better, so the daemon
 # dogfoods by default and only falls back when asked to.
 cycle_command() {
-  if [ -n "${FULLAUTO_CYCLE_CMD:-}" ]; then
-    printf '%s' "$FULLAUTO_CYCLE_CMD"
+  if [ -n "${SELF_DRIVING_CYCLE_CMD:-}" ]; then
+    printf '%s' "$SELF_DRIVING_CYCLE_CMD"
     return 0
   fi
   # `stella run` takes its prompt positionally or on stdin, and reads stdin when
@@ -343,8 +343,8 @@ cycle_command() {
   #
   # The budget is per-cycle and enforced by the engine, aborting only at a safe
   # boundary between model calls (invariant 6) — never mid-tool.
-  printf 'cat %s/scripts/fullauto/commands/fullauto.md | stella run --budget %s' \
-    "$REPO_ROOT" "${FULLAUTO_BUDGET_USD:-10}"
+  printf 'cat %s/scripts/self-driving/commands/self-driving.md | stella run --budget %s' \
+    "$REPO_ROOT" "${SELF_DRIVING_BUDGET_USD:-10}"
 }
 
 cmd_daemon() {
@@ -368,7 +368,7 @@ daemon_start() {
     warn "daemon already running (pid $(cat "$DAEMON_PID"))"
     return 0
   fi
-  # The run records the daemon writes now go through `stella fullauto`, so a
+  # The run records the daemon writes now go through `stella self-driving`, so a
   # missing binary must fail HERE, in the terminal — not minutes later inside
   # a nohup'd loop whose death nobody sees.
   require_stella
@@ -387,8 +387,8 @@ daemon_start() {
 
 daemon_loop() {
   local interval="${1:-2700}" once="${2:-}"
-  export FULLAUTO_DRIVER=daemon
-  run_fullauto run start >/dev/null
+  export SELF_DRIVING_DRIVER=daemon
+  run_self-driving run start >/dev/null
 
   # The cycle runs as a tracked BACKGROUND child so the signal handler can take
   # it down. Running it in the foreground meant a TERM reached this supervisor
@@ -405,7 +405,7 @@ daemon_loop() {
       sleep 2
       kill -KILL "-$CYCLE_PID" 2>/dev/null || kill -KILL "$CYCLE_PID" 2>/dev/null || true
     fi
-    run_fullauto run end --status cancelled --reason "daemon stopped" >/dev/null 2>&1
+    run_self-driving run end --status cancelled --reason "daemon stopped" >/dev/null 2>&1
     rm -f "$DAEMON_PID"
     exit 0
   }
@@ -415,7 +415,7 @@ daemon_loop() {
   cmd="$(cycle_command)"
   while true; do
     printf '\n=== %s :: cycle start ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    run_fullauto phase cycle >/dev/null
+    run_self-driving phase cycle >/dev/null
     # `set -m` puts the child in its own process group, so `kill -TERM -PID`
     # above reaches the whole `sh -c … | stella run` pipeline rather than only
     # the wrapper shell.
@@ -427,18 +427,18 @@ daemon_loop() {
     # daemon exists; this says the cycle is actually executing, and it is the
     # only handle anything outside this script has on the child — `sh -c` is
     # exec-optimized away, so the child is unrecognisable in the process table.
-    run_fullauto run stamp-cycle-pid "$CYCLE_PID" >/dev/null
+    run_self-driving run stamp-cycle-pid "$CYCLE_PID" >/dev/null
     wait "$CYCLE_PID" || warn "cycle command exited nonzero"
     CYCLE_PID=""
-    run_fullauto run stamp-cycle-pid >/dev/null
+    run_self-driving run stamp-cycle-pid >/dev/null
     if [ "$once" = "--once" ]; then
       printf '=== %s :: single cycle done ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      run_fullauto run end --status completed --reason "single cycle (--once)" >/dev/null
+      run_self-driving run end --status completed --reason "single cycle (--once)" >/dev/null
       rm -f "$DAEMON_PID"
       return 0
     fi
     printf '=== %s :: sleeping %ss ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$interval"
-    run_fullauto phase sleeping >/dev/null
+    run_self-driving phase sleeping >/dev/null
     sleep "$interval"
   done
 }
@@ -468,7 +468,7 @@ daemon_stop() {
     kill -KILL "$pid" 2>/dev/null || true
     # The handler never ran, so nothing recorded the transition. Do it here
     # rather than leaving a hand-stopped run to age into `crashed`.
-    run_fullauto run end --status cancelled --reason "daemon killed after refusing TERM" >/dev/null 2>&1 || true
+    run_self-driving run end --status cancelled --reason "daemon killed after refusing TERM" >/dev/null 2>&1 || true
   fi
   rm -f "$DAEMON_PID"
   say "daemon stopped"
@@ -480,10 +480,10 @@ daemon_status() {
   else
     warn "daemon not running"
   fi
-  run_fullauto runs
+  run_self-driving runs
 }
 
-launchd_label() { printf 'sh.oxagen.fullauto.%s' "$(repo_slug)"; }
+launchd_label() { printf 'sh.oxagen.self-driving.%s' "$(repo_slug)"; }
 launchd_plist() { printf '%s/Library/LaunchAgents/%s.plist' "$HOME" "$(launchd_label)"; }
 
 # launchd is the only thing on macOS that restarts the loop after a logout or a
@@ -501,7 +501,7 @@ daemon_install() {
   <key>Label</key><string>$label</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$REPO_ROOT/scripts/fullauto.sh</string>
+    <string>$REPO_ROOT/scripts/self-driving.sh</string>
     <string>daemon</string>
     <string>loop</string>
     <string>2700</string>
@@ -589,7 +589,7 @@ bench_h2h() {
     die "--dry-run rehearses the rig path; add --rig"
   fi
 
-  # An absolute FULLAUTO_MATCH points at an exported match file outside the
+  # An absolute SELF_DRIVING_MATCH points at an exported match file outside the
   # repo (the harbor `--path` shape); a relative one is resolved against the
   # repo root. The rig's own copy is always addressed relative to ~/stella,
   # so an absolute local override only affects the local arm.
@@ -603,9 +603,9 @@ bench_h2h() {
   if [ "$use_rig" -eq 0 ]; then
     have arenabench || die "arenabench not installed (pip install arenabench)"
     docker info >/dev/null 2>&1 || die "docker unreachable"
-    if [ "$(uname -s)/$(uname -m)" != "Linux/x86_64" ] && [ -z "${FULLAUTO_ALLOW_EMULATED:-}" ]; then
+    if [ "$(uname -s)/$(uname -m)" != "Linux/x86_64" ] && [ -z "${SELF_DRIVING_ALLOW_EMULATED:-}" ]; then
       die "$(uname -s)/$(uname -m) is not a claim-eligible host (RUNBOOK Part 0).
-     Use --rig, or set FULLAUTO_ALLOW_EMULATED=1 for a throwaway signal run."
+     Use --rig, or set SELF_DRIVING_ALLOW_EMULATED=1 for a throwaway signal run."
     fi
     say "running $H2H_MATCH locally"
     DOCKER_DEFAULT_PLATFORM=linux/amd64 \
@@ -627,7 +627,7 @@ bench_h2h() {
     chmod 600 "$RIG_KEY" 2>/dev/null || true
     pass "rig key: $RIG_KEY"
   else
-    fail "rig key not found at $RIG_KEY (place it there, or point FULLAUTO_RIG_KEY at it)"
+    fail "rig key not found at $RIG_KEY (place it there, or point SELF_DRIVING_RIG_KEY at it)"
   fi
   local state
   if have aws; then
@@ -655,7 +655,7 @@ bench_h2h() {
       printf '  aws ec2 wait instance-running --region %s --instance-ids %s\n' "$RIG_REGION" "$RIG_INSTANCE"
       printf '  ip=$(aws ec2 describe-instances ... PublicIpAddress)  # read fresh: it changes across stop/start\n'
       printf '  ssh -i %s %s@$ip true                                 # polled, up to %s x 10s\n' \
-        "$RIG_KEY" "$RIG_USER" "${FULLAUTO_RIG_SSH_TRIES:-20}"
+        "$RIG_KEY" "$RIG_USER" "${SELF_DRIVING_RIG_SSH_TRIES:-20}"
       printf '  ssh ... "test -d ~/stella && command -v arenabench && docker info"  # remote preflight, BEFORE the match\n'
       printf '  ssh ... "cd ~/stella && DOCKER_DEFAULT_PLATFORM=linux/amd64 arenabench run %s --results /tmp/h2h.json"\n' \
         "$H2H_MATCH"
@@ -716,8 +716,8 @@ bench_h2h() {
 
   # SSH can be refused for a minute after instance-running; poll rather than
   # racing it. The bound is a knob because 20 x 10s is a guess, not a
-  # measurement — pin FULLAUTO_RIG_SSH_TRIES when the rig proves slower.
-  local tries=0 max_tries="${FULLAUTO_RIG_SSH_TRIES:-20}"
+  # measurement — pin SELF_DRIVING_RIG_SSH_TRIES when the rig proves slower.
+  local tries=0 max_tries="${SELF_DRIVING_RIG_SSH_TRIES:-20}"
   until ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
         -i "$RIG_KEY" "$RIG_USER@$ip" true 2>/dev/null; do
     tries=$((tries + 1))
@@ -769,7 +769,7 @@ bench_h2h() {
 # the rc file does not contain the shadow line verbatim, it edits nothing.
 
 cmd_upgrade() {
-  local apply=1 keep_dev_alias=1 skip_brew=0 rc="${FULLAUTO_RC:-$HOME/.zshrc}"
+  local apply=1 keep_dev_alias=1 skip_brew=0 rc="${SELF_DRIVING_RC:-$HOME/.zshrc}"
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) apply=0; shift ;;
@@ -844,7 +844,7 @@ upgrade_unshadow() {
     printf '        %s\n' "$SHADOW_PATH_LINE"
   else
     local backup
-    backup="$rc.fullauto-$(date -u +%Y%m%dT%H%M%SZ).bak"
+    backup="$rc.self-driving-$(date -u +%Y%m%dT%H%M%SZ).bak"
     cp "$rc" "$backup" || die "could not back up $rc"
     pass "backup: $backup"
     # Comment out rather than delete: a commented line is self-documenting and
@@ -861,7 +861,7 @@ for ln in lines:
         # unqualified next to a disabled shadow makes the file lie to whoever
         # reads it next, and a stale comment is a bug like any other.
         out.append("# --- NOTE: the commentary above is HISTORICAL as of the line below. ---")
-        out.append("# `scripts/fullauto.sh upgrade` disabled this prepend. It used to shadow")
+        out.append("# `scripts/self-driving.sh upgrade` disabled this prepend. It used to shadow")
         out.append("# the Homebrew release with the local dev build; `stella` now resolves to")
         out.append("# the tap build (macanderson/stella/stella), which is what a user gets.")
         out.append("# " + shadow)
@@ -886,7 +886,7 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# install-commands — put /fullauto where Claude Code will find it
+# install-commands — put /self-driving where Claude Code will find it
 # ---------------------------------------------------------------------------
 #
 # The canonical copies are committed here; `.claude/` is gitignored in this
@@ -894,20 +894,20 @@ PY
 # This copies them into the user-scope command directory instead.
 
 cmd_install_commands() {
-  local src="$REPO_ROOT/scripts/fullauto/commands"
-  local dst="${FULLAUTO_COMMAND_DIR:-$HOME/.claude/commands}"
+  local src="$REPO_ROOT/scripts/self-driving/commands"
+  local dst="${SELF_DRIVING_COMMAND_DIR:-$HOME/.claude/commands}"
   [ -d "$src" ] || die "no command sources at $src"
-  mkdir -p "$dst/fullauto" || die "cannot write $dst"
-  cp "$src/fullauto.md" "$dst/fullauto.md" || die "copy failed"
-  cp "$src"/fullauto/*.md "$dst/fullauto/" || die "copy failed"
+  mkdir -p "$dst/self-driving" || die "cannot write $dst"
+  cp "$src/self-driving.md" "$dst/self-driving.md" || die "copy failed"
+  cp "$src"/self-driving/*.md "$dst/self-driving/" || die "copy failed"
   say "installed into $dst"
-  pass "/fullauto"
+  pass "/self-driving"
   local f
-  for f in "$src"/fullauto/*.md; do
-    pass "/fullauto:$(basename "$f" .md)"
+  for f in "$src"/self-driving/*.md; do
+    pass "/self-driving:$(basename "$f" .md)"
   done
   echo
-  printf '  Loop it with:  /loop 45m /fullauto\n'
+  printf '  Loop it with:  /loop 45m /self-driving\n'
 }
 
 # ---------------------------------------------------------------------------
@@ -926,19 +926,19 @@ main() {
 
     # The ported verbs (#1548): one exec each, flags passed through verbatim.
     # The spellings are identical on both sides, so nothing here can drift
-    # from the binary's behaviour — and `make fullauto-test` drives these
+    # from the binary's behaviour — and `make self-driving-test` drives these
     # delegations end-to-end.
     plan|calibrate|aperture|watch|metrics|queue|state|seen|runs|phase)
       require_stella
-      exec stella fullauto "$sub" "$@" ;;
+      exec stella self-driving "$sub" "$@" ;;
     run)
       require_stella
       case "${1:-status}" in
-        status) shift || true; exec stella fullauto run list "$@" ;;
-        *)      exec stella fullauto run "$@" ;;
+        status) shift || true; exec stella self-driving run list "$@" ;;
+        *)      exec stella self-driving run "$@" ;;
       esac ;;
-    cycle-begin)  require_stella; exec stella fullauto cycle begin "$@" ;;
-    cycle-end)    require_stella; exec stella fullauto cycle end "$@" ;;
+    cycle-begin)  require_stella; exec stella self-driving cycle begin "$@" ;;
+    cycle-end)    require_stella; exec stella self-driving cycle end "$@" ;;
 
     daemon)            cmd_daemon "$@" ;;
     bench)             cmd_bench "$@" ;;

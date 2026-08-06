@@ -39,7 +39,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Run many at once",
-        &["fleet", "monitor", "fullauto", "arena"],
+        &["fleet", "monitor", "self-driving", "arena"],
     ),
     (
         "Ask about this workspace",

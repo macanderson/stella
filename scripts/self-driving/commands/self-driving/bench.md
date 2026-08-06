@@ -3,14 +3,14 @@ description: Benchmark phase — Stella vs Claude Code on Terminal-Bench 2.1, pl
 argument-hint: "[loop|h2h] [--rig] [--out PATH]"
 ---
 
-# fullauto:bench — the comparator arm
+# self-driving:bench — the comparator arm
 
 Two arms, deliberately different in cost. Run the cheap one every cycle; the
 measured one when something could actually have moved.
 
 ```bash
-scripts/fullauto.sh bench loop        # loop-health gate in CI, well under $1
-scripts/fullauto.sh bench h2h --rig   # Claude Code vs Stella, TB2.1, measured
+scripts/self-driving.sh bench loop        # loop-health gate in CI, well under $1
+scripts/self-driving.sh bench h2h --rig   # Claude Code vs Stella, TB2.1, measured
 ```
 
 ---
@@ -28,7 +28,7 @@ cheap model, and it is what makes a per-cycle benchmark affordable. Run it every
 cycle.
 
 ```bash
-scripts/fullauto.sh bench loop
+scripts/self-driving.sh bench loop
 gh run watch <id>
 ```
 
@@ -61,13 +61,13 @@ real result on a scoreboard. The runner refuses to start rather than produce one
 `linux/amd64`; on Apple silicon a multi-arch base builds arm64 and then cannot
 exec the agent binary, which Harbor records as an *agent crash* rather than a
 platform mistake. `bench h2h` refuses a non-Linux/x86_64 host unless you set
-`FULLAUTO_ALLOW_EMULATED=1`, and that flag is for throwaway signal, never a
+`SELF_DRIVING_ALLOW_EMULATED=1`, and that flag is for throwaway signal, never a
 number anyone quotes.
 
 `--rig` drives the EC2 host instead:
 
 - Instance `stella-vs-cc-rig`, `us-east-1`, 32 vCPU / 123 GB.
-- Key at `~/.stella/keys/tb909-key.pem` (override with `FULLAUTO_RIG_KEY`),
+- Key at `~/.stella/keys/tb909-key.pem` (override with `SELF_DRIVING_RIG_KEY`),
   user `ubuntu`. The public IP changes across stop/start — always read it from
   AWS, never hardcode.
 - **It bills $1.90/hr and $45.56/day.** Left idle from one run it alone pushed a
@@ -132,7 +132,7 @@ directories are the source of truth** (`~/tb21/jobs/<run>-armA-stella`,
 ## What a result means for the cycle
 
 Compare against the previous cycle's entry in the ledger
-(`scripts/fullauto.sh state`).
+(`scripts/self-driving.sh state`).
 
 - **Regressed** → file a `P0` `area:core` issue with both result files attached,
   and **block the ship phase**. Shipping a measured regression is the one thing

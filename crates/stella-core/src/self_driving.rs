@@ -1,6 +1,6 @@
-//! The deterministic half of the `fullauto` delivery loop.
+//! The deterministic half of the `self-driving` delivery loop.
 //!
-//! `fullauto` is a cycle: fix a batch of defects, audit what is left, file
+//! `self-driving` is a cycle: fix a batch of defects, audit what is left, file
 //! what it cannot fix, benchmark against the comparator, ship, and repeat.
 //! Everything a machine can decide without a model lives here, so the model
 //! never has to re-derive it and cannot get it subtly wrong: the AIMD
@@ -11,12 +11,12 @@
 //!
 //! No I/O (invariant 2): every function here is synchronous over owned data.
 //! The probes that read the machine, the files that hold the state, and the
-//! processes that run tools all live in `stella-cli` (`fullauto_cmd`), which
+//! processes that run tools all live in `stella-cli` (`self_driving_cmd`), which
 //! feeds their results in and writes the decisions out. That split is what
 //! makes this module property-testable — and it is the same telemetry the
-//! observatory reads back read-only (`stella-observatory/src/fullauto.rs`).
+//! observatory reads back read-only (`stella-observatory/src/self_driving.rs`).
 //!
-//! Ported from `scripts/fullauto.sh` (#1548); the shell driver now delegates
+//! Ported from `scripts/self-driving.sh` (#1548); the shell driver now delegates
 //! these decisions instead of carrying a second copy of them.
 
 use std::fmt::Write as _;
@@ -251,7 +251,7 @@ pub const LENSES: &[Lens] = &[
     Lens {
         name: "performance",
         tooling: Tooling::Command {
-            run: "scripts/fullauto.sh bench loop, plus the prompt-cache golden \
+            run: "scripts/self-driving.sh bench loop, plus the prompt-cache golden \
                   fixtures (cargo test -p stella-model)",
             interpret: "a regression against the previous loop-bench run or a \
                         golden diff is a finding",
@@ -290,7 +290,7 @@ pub const LENSES: &[Lens] = &[
     Lens {
         name: "soak",
         tooling: Tooling::Command {
-            run: "scripts/fullauto.sh bench h2h (the long task list; rehearse \
+            run: "scripts/self-driving.sh bench h2h (the long task list; rehearse \
                   with --rig --dry-run first)",
             interpret: "aborts, stalls, and stuck-loop detections across the \
                         long run are findings",
@@ -402,7 +402,7 @@ pub fn dry_streak(rows: &[CycleRecord], lens: &str) -> u32 {
 
 /// What the box has right now, as the probes report it. Every field is a
 /// point-in-time reading; `stella-cli` owns how each is measured (and lets an
-/// operator pin any of them via `FULLAUTO_PROBE_*`).
+/// operator pin any of them via `SELF_DRIVING_PROBE_*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Supply {
     pub cpu: u32,
@@ -653,7 +653,7 @@ pub struct Signal {
     pub text: &'static str,
 }
 
-/// The ledger folded into the numbers `/fullauto:evolve` argues from.
+/// The ledger folded into the numbers `/self-driving:evolve` argues from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Metrics {
     pub cycles: u64,
