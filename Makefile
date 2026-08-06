@@ -312,6 +312,10 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 file-size-test: ## Test which languages the file-size ratchet actually watches (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
 
+.PHONY: guard-sigpipe-test
+guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)
+	./scripts/test-guard-sigpipe.sh
+
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)
 	git config core.hooksPath .githooks
