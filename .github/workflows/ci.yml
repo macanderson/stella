@@ -172,6 +172,14 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-brand-case.sh
 
+      # Also toolchain-free. `make file-size-update` regenerates the baseline
+      # and touches neither AGENTS.md's god-file table nor the twenty crate
+      # READMEs that restate it, so a split or rename stranded all three
+      # silently — the same duplicated-normative-prose shape as #630 (#1435).
+      - name: the god-file prose matches the baseline
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-god-files.sh
+
       # Also toolchain-free. #1394 renamed an agent-config role and the Rust
       # compiler found every Rust call site and none of the others — a Python
       # dict and a JavaScript literal kept the old spelling, and the arenabench

@@ -1,6 +1,6 @@
 name: docs-guards
 
-# Five guards over prose. None needs a Rust toolchain, which is why they live
+# Six guards over prose. None needs a Rust toolchain, which is why they live
 # here rather than in ci.yml -- that workflow deliberately ignores `docs/**`,
 # `website/**` and `*.md`, and this one triggers on exactly those paths.
 #
@@ -36,6 +36,11 @@ name: docs-guards
 #     by omitting a guard that had just been added (#1437). The real list is
 #     `GATE_STEPS` in the Makefile, which this reads via `make`.
 #
+#  6. god-files (scripts/check-god-files.sh): AGENTS.md's per-crate god-file
+#     table and the twenty crate READMEs that restate it are held to
+#     scripts/file-size-baseline.txt, which `make file-size-update` rewrites
+#     without touching either (#1435).
+#
 # Rust sources are in the path filter because the first three read them: a
 # citation added to a .rs comment is exactly how one goes stale, and the
 # subcommand list the third guard checks is itself a Rust enum.
@@ -51,6 +56,8 @@ on:
       - "scripts/check-command-docs.sh"
       - "scripts/check-brand-case.sh"
       - "scripts/check-gate-parity.sh"
+      - "scripts/check-god-files.sh"
+      - "scripts/file-size-baseline.txt"
       - ".github/workflows/docs-guards.yml"
   push:
     branches: [main]
@@ -64,6 +71,8 @@ on:
       - "scripts/check-command-docs.sh"
       - "scripts/check-brand-case.sh"
       - "scripts/check-gate-parity.sh"
+      - "scripts/check-god-files.sh"
+      - "scripts/file-size-baseline.txt"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
 
@@ -116,3 +125,10 @@ jobs:
       - name: the documented gate is the real gate
         if: ${{ !cancelled() }}
         run: bash scripts/check-gate-parity.sh
+
+      # Same two directions. The baseline moving is a non-md change ci.yml
+      # catches; a README dropping a god file from its list, or a crate quietly
+      # claiming it has none, arrives as pure markdown (#1435).
+      - name: the god-file prose matches the baseline
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-god-files.sh

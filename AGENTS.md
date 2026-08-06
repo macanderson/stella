@@ -62,6 +62,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
                          #   + command-docs + brand-case + file-size
+                         #   + god-files
                          #   + gate-parity + left-behind + role-names
                          #   + wire-schema
                          #   + doc-warnings (rustdoc -D warnings)
@@ -70,7 +71,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + test (test --workspace)
 ```
 
-That is twenty-one steps, and the list is not maintained by hand: it is
+That is twenty-two steps, and the list is not maintained by hand: it is
 `GATE_STEPS` in the `Makefile`, and `gate-parity` (`scripts/check-gate-parity.sh`)
 fails if this block or CONTRIBUTING.md's stops matching it. The block had
 already drifted twice before that guard existed, both times by under-reporting
@@ -417,6 +418,15 @@ a plan needs and the part that rarely changes:
 The other twelve crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
+
+All three copies — this table, those README lists, and each clean crate's "no
+god files" claim — are checked against `scripts/file-size-baseline.txt` by
+`god-files` (`scripts/check-god-files.sh`). `make file-size-update` rewrites the
+baseline and touches no prose, so before that guard existed the next split or
+rename stranded every copy silently (#1435). The baseline is the tiebreaker: it
+is generated and gate-enforced, so the prose follows it and never the reverse.
+Only *which* files are named is checked — the ceilings stay in the baseline
+alone, because a number in two places is how the last limit died.
 
 **Status — what ships.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /

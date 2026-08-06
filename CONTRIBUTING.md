@@ -80,6 +80,7 @@ python3 ./scripts/check-doc-links.py check
 ./scripts/check-command-docs.sh
 ./scripts/check-brand-case.sh
 ./scripts/check-file-size.sh
+./scripts/check-god-files.sh
 ./scripts/check-gate-parity.sh
 ./scripts/check-left-behind.sh
 ./scripts/check-role-names.sh
@@ -90,7 +91,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Or just `make gate`, which is the twenty-one of them in order.
+Or just `make gate`, which is the twenty-two of them in order.
 
 Do not maintain that list by hand. It is `GATE_STEPS` in the `Makefile`, and
 `./scripts/check-gate-parity.sh` — itself one of the steps — fails if this fence
