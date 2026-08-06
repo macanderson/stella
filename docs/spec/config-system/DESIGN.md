@@ -1,3 +1,9 @@
+---
+id: config-system
+title: "Design: `stella.toml` — one config file, and the five features it unlocks"
+status: implemented
+---
+
 # Design: `stella.toml` — one config file, and the five features it unlocks
 
 **Status:** Phase 0 and Phase 1 implemented. Phases 2–6 unbuilt. ·

@@ -1,3 +1,9 @@
+---
+id: adaptive-context-plan
+title: "Adaptive Context — Implementation Plan"
+status: proposed
+---
+
 # Adaptive Context — Implementation Plan
 
 **Status:** Plan — supersedes the eleven-phase roadmap

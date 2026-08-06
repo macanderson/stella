@@ -33,6 +33,8 @@ _MODULE_PATH = Path(__file__).resolve().parents[1] / "stella_harbor" / "git_base
 _spec = importlib.util.spec_from_file_location(
     "stella_harbor_git_baseline", _MODULE_PATH
 )
+# Module-scope assert, deliberately: an import precondition, not a constant
+# check — without it there is nothing to collect (see #1452's sweep).
 assert _spec is not None and _spec.loader is not None
 _git_baseline = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_git_baseline)

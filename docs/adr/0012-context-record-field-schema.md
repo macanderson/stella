@@ -1,3 +1,9 @@
+---
+id: adr/0012-context-record-field-schema
+title: "ADR 0012: The context-record field schema, and records-live-in-files"
+status: implemented
+---
+
 # ADR 0012: The context-record field schema, and records-live-in-files
 
 - Status: **Accepted** — ratified by repository owner 2026-07-30 (was: Proposed).
