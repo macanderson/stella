@@ -280,6 +280,26 @@ pub struct TurnState {
     /// drift correction. `None` until the first result lands — `CalibrationMap
     /// ::factor` then falls back to the session's single seeded entry.
     pub(crate) calibration_model: Option<String>,
+    /// The compaction budget this turn settled on, latched once the model is
+    /// known (#1841).
+    ///
+    /// The drift factor is re-recorded on every committed step, so recomputing
+    /// the budget per step made the denominator MOVE mid-turn: a conversation
+    /// parked just under compaction's hysteresis low-watermark could be pushed
+    /// back over it by a factor update alone, re-triggering the oldest-first
+    /// passes and rewriting the earliest tool result — the worst position to
+    /// mutate for the prompt cache, and precisely what that hysteresis exists
+    /// to prevent.
+    ///
+    /// Deliberately NOT latched while [`Self::calibration_model`] is `None`.
+    /// It is unset until the first result lands, and a value captured then is
+    /// keyed on nothing: `CalibrationMap::effective_budget(None, …)` resolves
+    /// through the single-entry fallback on a one-model session but returns
+    /// the UNCORRECTED budget on a multi-model one — so latching at step 0
+    /// would silently disable drift correction for exactly the sessions that
+    /// route triage, verifier and worker to different models, while leaving
+    /// every single-model test green.
+    pub(crate) effective_budget: Option<(u64, f64)>,
     /// The loop this turn's one stuck-loop steering warning was issued about
     /// (`driver::loop_escalation`), or `None` while the warning is unspent.
     /// The next detection after `Some` aborts instead of warning again;
@@ -338,6 +358,7 @@ impl TurnState {
             budget,
             total_cost_usd: 0.0,
             calibration_model: None,
+            effective_budget: None,
             loop_steered: None,
             transcript_rewrites: 0,
             step: 0,
@@ -359,6 +380,11 @@ impl TurnState {
             budget: checkpoint.budget.restore(),
             total_cost_usd: checkpoint.total_cost_usd,
             calibration_model: checkpoint.calibration_model,
+            // Not carried across the checkpoint: a resumed turn re-latches
+            // from live calibration, which has learned from every step since
+            // the snapshot. Restoring it would pin the resumed turn to a
+            // budget computed before that.
+            effective_budget: None,
             loop_steered: checkpoint.loop_steered.then_some(LoopIdentity {
                 tools: checkpoint.loop_steered_pattern,
                 inputs: checkpoint.loop_steered_inputs,
@@ -371,6 +397,19 @@ impl TurnState {
             last_step: None,
             cancel: CancelToken::new(),
         }
+    }
+
+    /// The compaction budget to use this step: `fresh` until the model is
+    /// known, then whatever was latched the first time it was (#1841).
+    ///
+    /// Takes the freshly-computed value rather than a closure so the caller
+    /// keeps ownership of how it is derived — this type knows nothing about
+    /// calibration beyond the model string it already carries.
+    pub(crate) fn latch_effective_budget(&mut self, fresh: (u64, f64)) -> (u64, f64) {
+        if self.calibration_model.is_none() {
+            return fresh;
+        }
+        *self.effective_budget.get_or_insert(fresh)
     }
 
     /// Snapshot this turn for durable storage. Cheap-ish (it clones the
@@ -1258,5 +1297,69 @@ mod tests {
         assert!(!state.cancel.is_cancelled());
         handed_off.cancel();
         assert!(state.cancel.is_cancelled(), "a clone shares the flag");
+    }
+
+    /// **Witness (#1841).** The compaction budget stops moving between steps
+    /// once the model is known.
+    ///
+    /// The drift factor is re-recorded on every committed step, so the budget
+    /// was recomputed — and moved — on every one. A conversation parked just
+    /// under compaction's hysteresis low-watermark could be pushed back over
+    /// it by a factor update alone, re-triggering the oldest-first passes and
+    /// rewriting the earliest tool result: the worst position to mutate for
+    /// the prompt cache, and exactly what that hysteresis exists to prevent.
+    ///
+    /// The fresh values here descend the way a warming calibration's do.
+    #[test]
+    fn the_compaction_budget_is_latched_once_the_model_is_known() {
+        let mut state = TurnState::new(
+            Vec::new(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            &EngineConfig::default(),
+        );
+        state.calibration_model = Some("anthropic/claude-fable-5".to_string());
+
+        let first = state.latch_effective_budget((150_000, 1.0));
+        assert_eq!(first, (150_000, 1.0));
+
+        for moving in [(120_000, 1.25), (98_000, 1.53), (75_000, 2.0)] {
+            assert_eq!(
+                state.latch_effective_budget(moving),
+                first,
+                "a factor update alone must not move the budget mid-turn"
+            );
+        }
+    }
+
+    /// …and NOT before, because a value latched then is keyed on nothing.
+    ///
+    /// `calibration_model` is unset until the first result lands.
+    /// `CalibrationMap::effective_budget(None, …)` resolves through the
+    /// single-entry fallback on a one-model session but returns the
+    /// UNCORRECTED budget on a multi-model one — so latching at step 0 would
+    /// silently disable drift correction for exactly the sessions that route
+    /// triage, verifier and worker to different models, while leaving every
+    /// single-model test green.
+    #[test]
+    fn nothing_is_latched_while_the_model_is_still_unknown() {
+        let mut state = TurnState::new(
+            Vec::new(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            &EngineConfig::default(),
+        );
+        assert!(state.calibration_model.is_none());
+
+        assert_eq!(state.latch_effective_budget((150_000, 1.0)), (150_000, 1.0));
+        assert_eq!(
+            state.latch_effective_budget((120_000, 1.25)),
+            (120_000, 1.25),
+            "step 0 tracks the live value — there is no model to latch against"
+        );
+        assert!(state.effective_budget.is_none(), "and nothing was captured");
+
+        // The moment the first result lands, the next value sticks.
+        state.calibration_model = Some("zai/glm-5.2".to_string());
+        let latched = state.latch_effective_budget((118_000, 1.27));
+        assert_eq!(state.latch_effective_budget((75_000, 2.0)), latched);
     }
 }
