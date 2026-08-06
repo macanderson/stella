@@ -72,7 +72,7 @@ is a loop that destroys findings, and that is worse than a loop that does not ru
 
 ## Resetting
 
-The state lives in `~/.self-driving/stella/` (`ledger.jsonl`, `seen.txt`, `cycle`) —
+The state lives in `~/.stella/self-driving/stella/` (`ledger.jsonl`, `seen.txt`, `cycle`) —
 outside the repo, because `make no-scratch` fails the gate if a tracked file
 matches a `.gitignore` rule.
 
@@ -80,7 +80,7 @@ To start a fresh convergence run over the same codebase, move it aside rather
 than deleting it — the old ledger is the record of what previous cycles decided:
 
 ```bash
-mv ~/.self-driving/stella ~/.self-driving/stella.$(date -u +%Y%m%d)
+mv ~/.stella/self-driving/stella ~/.stella/self-driving/stella.$(date -u +%Y%m%d)
 ```
 
 Clearing `seen.txt` alone re-opens every finding ever triaged, including the ones

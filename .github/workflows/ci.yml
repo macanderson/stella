@@ -201,6 +201,15 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-stat-portability.sh
 
+      # Toolchain-free, and it has to be: the three gates that would normally
+      # catch a broken file all walk `mod` declarations from the crate root, so
+      # deleting one line hides a file from rustc, rustfmt and clippy at the
+      # same moment while `cargo test` still reports ok. #1739 lost 19 tests
+      # that way and only a reviewer reading the diff noticed (#1750).
+      - name: every src/ file is reachable from its crate root
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-module-reachability.py
+
       # Also toolchain-free. AGENTS.md requires that anything noticed and not
       # fixed becomes an issue written as a handoff; nothing checked it, and an
       # unenforced standard reads as one the codebase is meeting. The decidable

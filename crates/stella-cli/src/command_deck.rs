@@ -116,6 +116,7 @@ mod model_cmd;
 mod profile_cmd;
 mod scope_gate;
 mod session_clear;
+mod sessions_view;
 mod settle;
 mod task_tap;
 use task_tap::TaskTap;
@@ -126,6 +127,7 @@ use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::spawn_forwarder;
 use scope_gate::DeckApprovalGate;
+use sessions_view::sessions_inbound;
 
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
@@ -2623,57 +2625,6 @@ fn recorded_call_info(call: &stella_store::RecordedCall) -> stella_tui::Recorded
         provider: call.provider.clone(),
         model: call.model.clone(),
         estimated_input_tokens: call.estimated_input_tokens,
-    }
-}
-
-/// The SESSIONS overlay snapshot: every registry record mapped to the deck's
-/// [`stella_tui::SessionInfo`], flagging this process's own record and the
-/// rows that can be reopened HERE (no live owner, this workspace, durable
-/// state on disk — ⏎ navigates into those).
-fn sessions_inbound(
-    registry: &stella_store::SessionRegistry,
-    mine: &str,
-    workspace: &str,
-) -> Inbound {
-    let sessions = registry
-        .list()
-        .into_iter()
-        .map(|r| {
-            // A session mid-mapping advertises its slices right in the
-            // summary line, so a human sees "already being mapped" before
-            // typing a prompt that would duplicate the exploration.
-            let summary = if r.exploring.is_empty() {
-                r.summary
-            } else {
-                format!("{} [mapping: {}]", r.summary, r.exploring.join(", "))
-            };
-            stella_tui::SessionInfo {
-                mine: r.id == mine,
-                resumable: r.id != mine && r.workspace == workspace && registry.resumable(&r.id),
-                phase: session_phase(r.status),
-                id: r.id,
-                title: r.title,
-                summary,
-                workspace: r.workspace,
-                started_ms: r.started_at_ms,
-                updated_ms: r.updated_at_ms,
-            }
-        })
-        .collect();
-    Inbound::Sessions(sessions)
-}
-
-/// Store status → TUI phase (the TUI mirrors the enum so it never links the
-/// store crate).
-fn session_phase(status: stella_store::SessionStatus) -> stella_tui::SessionPhase {
-    match status {
-        stella_store::SessionStatus::InProgress => stella_tui::SessionPhase::InProgress,
-        stella_store::SessionStatus::NeedsInput => stella_tui::SessionPhase::NeedsInput,
-        stella_store::SessionStatus::Paused => stella_tui::SessionPhase::Paused,
-        stella_store::SessionStatus::Cancelled => stella_tui::SessionPhase::Cancelled,
-        stella_store::SessionStatus::Complete => stella_tui::SessionPhase::Complete,
-        stella_store::SessionStatus::Archived => stella_tui::SessionPhase::Archived,
-        stella_store::SessionStatus::Error => stella_tui::SessionPhase::Error,
     }
 }
 

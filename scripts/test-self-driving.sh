@@ -2,10 +2,16 @@
 # Hermetic tests for the self-driving control logic.
 #
 # Everything here runs against a throwaway $SELF_DRIVING_STATE_DIR: no network, no
-# `gh`, no writes outside the temp tree. Deliberately NOT part of `make gate` —
-# same posture as `impacted-test` and `dev-env-test`.
+# `gh`, no writes outside the temp tree.
 #
-#   make self-driving-test        # or: scripts/test-self-driving.sh
+# A `make gate` step since #1753. It was deliberately excluded before that, on
+# the same reasoning as `impacted-test` and `dev-env-test` — and the cost of
+# the exclusion was three cases sitting red on `main` with nobody watching,
+# testing a `plan` that silently skipped the batch clamp. Hermetic and under a
+# minute, so the usual reason to leave a suite out of the gate never applied.
+#
+#   make self-driving-test        # builds and PINS the binary — prefer this
+#   ./scripts/test-self-driving.sh   # uses whatever locate_stella finds
 #
 # The cases here are the ones whose failure modes are SILENT and PERMANENT: a
 # digest that over-normalizes merges two defects and the second is never filed;
@@ -20,7 +26,7 @@
 # CI runner), and queue ranking (a stub `gh` first on PATH serves fixtures, so
 # "no network" holds even where the real `gh` is installed). The observatory
 # half of the same contract is tested in
-# crates/stella-observatory/src/self-driving.rs.
+# crates/stella-observatory/src/self_driving.rs.
 #
 # Since #1548 the ported verbs delegate to `stella self-driving`, so the one thing
 # this suite needs beyond a shell is a stella binary (located or built by
@@ -34,8 +40,8 @@
 # starting.
 set -uo pipefail
 
-FA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/self-driving.sh"
-readonly FA
+SD_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/self-driving.sh"
+readonly SD_SH
 ROOT="$(mktemp -d)"
 readonly ROOT
 trap 'rm -rf "$ROOT"' EXIT
@@ -51,7 +57,7 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 # seen-set or ledger decide a later one's result.
 fa() {
   local case_dir="$1"; shift
-  SELF_DRIVING_STATE_DIR="$ROOT/$case_dir" "$FA" "$@"
+  SELF_DRIVING_STATE_DIR="$ROOT/$case_dir" "$SD_SH" "$@"
 }
 
 check_eq() {
@@ -75,6 +81,12 @@ locate_stella() {
   printf '%s' "$root/target/debug/stella"
 }
 STELLA="$(locate_stella)" || { echo "self-driving-test: cannot obtain a stella binary" >&2; exit 1; }
+# Say which binary is under test, always. `locate_stella` prefers
+# target/release over target/debug, so a stale release build silently wins over
+# the code you just changed — three cases once went red against a months-old
+# binary that predated the subcommand they exercise, and nothing on screen said
+# so (#1753). One line turns an hour of misattribution into a glance.
+printf 'self-driving-test: binary under test: %s\n' "$STELLA" >&2
 mkdir -p "$ROOT/stella-bin"
 ln -sf "$STELLA" "$ROOT/stella-bin/stella"
 # In front of the system PATH so the wrapper's `stella` resolves to the build
@@ -232,7 +244,7 @@ head_ "daemon — a stop that does not stop costs real money"
 # turns a working daemon into a red test and sends the reader hunting a bug
 # that is not there. (Both happened while writing this.)
 SELF_DRIVING_STATE_DIR="$ROOT/dmn" SELF_DRIVING_CYCLE_CMD="sleep 120" \
-  "$FA" daemon start 60 >/dev/null 2>&1
+  "$SD_SH" daemon start 60 >/dev/null 2>&1
 sleep 3
 cycle_pid="$(python3 -c 'import json,sys
 try: print(json.load(open(sys.argv[1])).get("cycle_pid",""))
@@ -243,7 +255,7 @@ else
   bad "the daemon never started (or never recorded) its cycle child"
 fi
 
-stop_out="$(SELF_DRIVING_STATE_DIR="$ROOT/dmn" "$FA" daemon stop 2>&1)"
+stop_out="$(SELF_DRIVING_STATE_DIR="$ROOT/dmn" "$SD_SH" daemon stop 2>&1)"
 sleep 1
 if [ -n "$cycle_pid" ] && kill -0 "$cycle_pid" 2>/dev/null; then
   bad "daemon stop ORPHANED the in-flight cycle (pid $cycle_pid still running, still spending)"
@@ -258,7 +270,7 @@ else
   ok "daemon stop lets the shutdown handler finish instead of racing it"
 fi
 
-dmn_status="$(SELF_DRIVING_STATE_DIR="$ROOT/dmn" "$FA" runs | awk '/^r-/ {print $2}')"
+dmn_status="$(SELF_DRIVING_STATE_DIR="$ROOT/dmn" "$SD_SH" runs | awk '/^r-/ {print $2}')"
 check_eq "cancelled" "$dmn_status" "a hand-stopped run records cancelled, not crashed"
 
 # ---------------------------------------------------------------------------
@@ -279,7 +291,7 @@ want_plan() { # want_plan <name> <case_dir> "<tier build par scope bench batch a
       SELF_DRIVING_PROBE_CPU=8 SELF_DRIVING_PROBE_LOAD1=1 \
       SELF_DRIVING_PROBE_MEM_TOTAL_GB=16 SELF_DRIVING_PROBE_MEM_FREE_GB=8 \
       SELF_DRIVING_PROBE_DISK_FREE_GB=50 SELF_DRIVING_PROBE_ON_BATTERY=0 \
-      SELF_DRIVING_PROBE_CONTENTION=0 "$@" "$FA" plan \
+      SELF_DRIVING_PROBE_CONTENTION=0 "$@" "$SD_SH" plan \
     | awk -F= '
         $1 == "SELF_DRIVING_TIER"        { t = $2 }
         $1 == "SELF_DRIVING_LOCAL_BUILD" { b = $2 }
@@ -315,8 +327,8 @@ want_plan "a breached memory floor reads like a busy box" \
   g-m1 "light 0 1 ci off 5 deep" SELF_DRIVING_PROBE_MEM_FREE_GB=2
 want_plan "battery sheds compute but keeps the local build" \
   g-p1 "light 1 1 impacted off 5 deep" SELF_DRIVING_PROBE_ON_BATTERY=1
-want_plan "a saturated box narrows concurrency and nothing else" \
-  g-l1 "light 1 1 impacted loop 5 deep" SELF_DRIVING_PROBE_LOAD1=8
+want_plan "a saturated box narrows concurrency and sheds the bench arm" \
+  g-l1 "light 1 1 impacted off 5 deep" SELF_DRIVING_PROBE_LOAD1=8
 
 # Demand rungs: the queue can shrink the batch, and a P0 can rescue a light
 # cycle — but demand never upgrades the tier and never widens the batch.
@@ -351,7 +363,7 @@ JSON
 
 queue_numbers() { # queue_numbers <limit>
   env PATH="$STUB_BIN:$PATH" GH_FIX_QUEUE="$QFIX" SELF_DRIVING_STATE_DIR="$ROOT/qr" \
-    "$FA" queue --format json --limit "$1" \
+    "$SD_SH" queue --format json --limit "$1" \
     | python3 -c 'import json,sys;print(" ".join(str(i["number"]) for i in json.load(sys.stdin)["rows"]))'
 }
 
@@ -418,7 +430,7 @@ rig_h2h() { # rig_h2h <case_dir> [VAR=v ...] -- [extra h2h flags ...]
   env PATH="$STUB_BIN:$PATH" SELF_DRIVING_STATE_DIR="$ROOT/$dir" \
       SELF_DRIVING_RIG_KEY="$RIG_FIX_KEY" SELF_DRIVING_MATCH="$RIG_FIX_MATCH" \
       STUB_LOG="$ROOT/$dir/stub.log" \
-      ${envs[@]+"${envs[@]}"} "$FA" bench h2h --rig "$@"
+      ${envs[@]+"${envs[@]}"} "$SD_SH" bench h2h --rig "$@"
 }
 
 # The dry run: every check runs, the plan prints, the instance never starts.
@@ -493,6 +505,70 @@ if grep -q 'ec2 stop-instances' "$ROOT/rg-ok/stub.log" 2>/dev/null; then
   ok "the stop trap fires on success as well — ALWAYS stop"
 else
   bad "the stop trap missed the success path"
+fi
+
+# ---------------------------------------------------------------------------
+head_ "install-commands — the rename must not leave a broken /fullauto behind"
+
+# #1763: install wrote the new tree but never removed the old one, so a user
+# who had run install-commands before #1757 kept a `/fullauto` that still
+# autocompletes and still tells the agent to run `scripts/fullauto.sh` — a
+# script that no longer exists. Nothing warned them.
+CMDS="$ROOT/commands"
+mkdir -p "$CMDS/fullauto"
+: > "$CMDS/fullauto.md"
+: > "$CMDS/fullauto/audit.md"
+: > "$CMDS/fullauto/bench.md"
+# Two files this project never installed: one the user wrote by hand, and one
+# belonging to some other tool. Neither is ours to delete.
+: > "$CMDS/fullauto/my-own-notes.md"
+: > "$CMDS/unrelated-tool.md"
+
+SELF_DRIVING_COMMAND_DIR="$CMDS" "$SD_SH" install-commands >/dev/null 2>&1
+
+if [ -f "$CMDS/self-driving.md" ] && [ -f "$CMDS/self-driving/audit.md" ]; then
+  ok "the current /self-driving tree is installed"
+else
+  bad "install-commands did not install /self-driving"
+fi
+if [ ! -e "$CMDS/fullauto.md" ]; then
+  ok "the stale /fullauto command is removed"
+else
+  bad "the stale /fullauto command survived — it still names scripts/fullauto.sh"
+fi
+if [ ! -e "$CMDS/fullauto/audit.md" ] && [ ! -e "$CMDS/fullauto/bench.md" ]; then
+  ok "the stale /fullauto:<verb> commands are removed"
+else
+  bad "a stale /fullauto:<verb> command survived"
+fi
+if [ -f "$CMDS/fullauto/my-own-notes.md" ]; then
+  ok "a file this project never installed is left alone"
+else
+  bad "install-commands deleted a user file it did not install (data loss)"
+fi
+if [ -f "$CMDS/unrelated-tool.md" ]; then
+  ok "another tool's command in the shared dir is untouched"
+else
+  bad "install-commands deleted another tool's command"
+fi
+
+# Second run: the prune must be idempotent, not an error once the tree is gone.
+if SELF_DRIVING_COMMAND_DIR="$CMDS" "$SD_SH" install-commands >/dev/null 2>&1; then
+  ok "a second install-commands is a clean no-op"
+else
+  bad "install-commands is not idempotent"
+fi
+
+# A directory left empty by the prune is removed; one holding a stranger's
+# file is not.
+rm -f "$CMDS/fullauto/my-own-notes.md"
+mkdir -p "$CMDS/fullauto"
+: > "$CMDS/fullauto/scale.md"
+SELF_DRIVING_COMMAND_DIR="$CMDS" "$SD_SH" install-commands >/dev/null 2>&1
+if [ ! -d "$CMDS/fullauto" ]; then
+  ok "the legacy directory is removed once the prune empties it"
+else
+  bad "an empty legacy directory was left behind"
 fi
 
 # ---------------------------------------------------------------------------

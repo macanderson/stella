@@ -63,7 +63,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .agents import AGENTS
 from .artifacts import MAX_TEXT_BYTES, preview_kind, resolve_within, tree
 from .config import MatchTemplateError, dump_match, match_from_toml, required_env
-from .credentials import apply_saved_credentials
+from .credentials import (
+    apply_ambient_credentials,
+    apply_saved_credentials,
+    credentials_path,
+    missing_required_credentials,
+)
 from .model import EFFORTS, ROLES, MatchSpec
 from .recorder import preflight as recorder_preflight
 from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
@@ -218,9 +223,24 @@ class ArenaServer:
         payload = dict(payload)
         payload.setdefault("id", uuid.uuid4().hex[:12])
         spec = MatchSpec.from_json(payload)
-        # Fills gaps only: a seat's own pasted `.env` always wins over the
-        # saved credential set — see `apply_saved_credentials`.
+        # A seat's declared credential names resolve from the arena's own
+        # environment first, then the saved credential set fills whatever is
+        # still unset. Both fill gaps only: a seat's own pasted `.env` always
+        # wins — see `apply_saved_credentials`.
+        spec = apply_ambient_credentials(spec)
         spec = apply_saved_credentials(spec)
+        missing = missing_required_credentials(spec)
+        if missing:
+            # Refuse rather than launch: an unauthenticated arm scores a 0.0
+            # indistinguishable from a real loss on the scoreboard (#1777).
+            lines = "; ".join(
+                f"{name} needs any of {', '.join(names)}"
+                for name, names in missing.items()
+            )
+            raise ValueError(
+                f"required credentials are not set: {lines} — export them in "
+                f"the arena's environment or save them at {credentials_path()}"
+            )
         match = self.runner.create(spec)
         if spec.record_video:
             ok, reason = recorder_preflight()

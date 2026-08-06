@@ -868,12 +868,19 @@ pub trait CandidateWorkspacePort: Send + Sync {
 /// even at N=1), and a single-shot run isolated into a throwaway worktree
 /// (`isolate_in_worktree` answering yes). Only a single-shot run executing
 /// in the session tree never reaches it.
+///
+/// Deliberately goal-blind (#1779): the sweep calls every candidate-safe
+/// zero-argument tool with `{}` and concatenates the output, so there is
+/// nothing a goal could steer — a `goal` parameter here would advertise
+/// relevance no implementor delivers. A goal-aware prefetch that runs ahead
+/// of planning is the research-stage design deferred to #1778, which may
+/// subsume this port entirely.
 #[async_trait]
 pub trait McpPrefetchPort: Send + Sync {
     /// Best-effort: `None` when there is nothing worth injecting (no
     /// candidate-safe servers connected, every call failed, or every call
     /// returned nothing) — a prefetch miss never aborts the run.
-    async fn prefetch(&self, goal: &str) -> Option<String>;
+    async fn prefetch(&self) -> Option<String>;
 }
 
 /// A human's decision at the scope-review gate (L-E5). `Trim` carries the

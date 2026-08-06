@@ -327,12 +327,18 @@ def missing_credentials(contestant: Contestant) -> list[str]:
     credentialled either way: ``ZAI_API_KEY`` is what the provider calls it
     and ``ANTHROPIC_AUTH_TOKEN`` is what Claude Code reads it from, and
     warning about the one an operator did not use would be noise.
+
+    A seat that *declared* its own list (``[contestant.env] required = [...]``)
+    is measured against that list alone — the declaration is the seat's whole
+    credential contract (#1777).
     """
-    spec = resolve_agent(contestant.agent)
-    candidates = list(credential_env_for(contestant.engine.api))
-    for name in spec.token_env + spec.alt_credential_env:
-        if name not in candidates:
-            candidates.append(name)
+    candidates = list(contestant.required_env)
+    if not candidates:
+        spec = resolve_agent(contestant.agent)
+        candidates = list(credential_env_for(contestant.engine.api))
+        for name in spec.token_env + spec.alt_credential_env:
+            if name not in candidates:
+                candidates.append(name)
     if not candidates:
         return []
     if any(contestant.env.get(name) for name in candidates):

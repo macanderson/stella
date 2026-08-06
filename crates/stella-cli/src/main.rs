@@ -553,7 +553,7 @@ fn main() -> ExitCode {
 
     let code = match run(cli, &loaded_env) {
         Ok(()) => {
-            daemon::record_outcome_if_supervised(true);
+            daemon::record_outcome_if_supervised(Ok(()));
             // A supervisor's own exit code says only whether it managed to
             // stream a log. What a script wrapping `stella run` is asking
             // about is the run, so the child's code is forwarded verbatim.
@@ -563,7 +563,9 @@ fn main() -> ExitCode {
             }
         }
         Err(e) => {
-            daemon::record_outcome_if_supervised(false);
+            // The failure itself, not a bool: a deliberate stop must reach
+            // the registry as a stop, not age into it as a crash (#1653).
+            daemon::record_outcome_if_supervised(Err(&e));
             eprintln!("{} {}", "stella:".red().bold(), e);
             emit_error_summary(output_format, e.message());
             // §7.4's second trigger, and the one that fires more often: most

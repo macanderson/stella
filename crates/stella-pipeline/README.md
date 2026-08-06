@@ -157,10 +157,10 @@ red → `Revise` (a red test is already deterministic; never pay a verifier to c
 `ModelVerifier`. `touched_tests_passed: None` means "couldn't run" — inconclusive, never a
 pass. Linters and typecheckers are never fed to `FlipOracle::observe`. A verifier call that
 fails or returns unparseable text falls back to `heuristic_fallback`, which passes only on
-observed-green tests, so an outage never degrades to a blanket pass. On the second
-consecutive deterministic failure, `distress_guidance` buys one verifier call for
-course-correction that rides with the next revision prompt — event-triggered, never a fixed
-mid-run checkpoint. When the verifier PASSES on nothing but its own opinion,
+observed-green tests, so an outage never degrades to a blanket pass. On a candidate's
+second deterministic failure — cumulative, not necessarily consecutive (#868) —
+`distress_guidance` buys one verifier call for course-correction that rides with the next
+revision prompt — event-triggered, never a fixed mid-run checkpoint. When the verifier PASSES on nothing but its own opinion,
 `verifier_evidence_demand` buys one revision asking the worker for corroboration instead —
 once per candidate, and only where a tracked command exists to answer it, because with none
 resolved neither a flip nor a green touched test is reachable and the ask would be pure
