@@ -8,6 +8,7 @@ A long-running verb started from a terminal — [`run`](/docs/commands/run), [`g
 ## Synopsis
 
 ```bash
+stella run "…" --detach
 stella daemon list
 stella daemon attach [id]
 stella daemon logs [id] [-n LINES]
@@ -51,12 +52,36 @@ Only ones with a controlling terminal to lose. A terminal is exactly what can cl
 | Invocation | Supervised |
 |---|---|
 | `stella run "…"` typed in a terminal | yes |
+| `stella run "…" --detach` | yes — and the launcher returns immediately ([below](#--detach-start-it-and-get-the-prompt-back)) |
 | `stella run "…" --foreground` | no — runs in this process, as older releases did |
 | `cat spec.md \| stella run` with output redirected | no — no controlling terminal |
 | a CI step, a container, a `cron` job | no |
 | [`stella chat`](/docs/commands/chat) / [`stella resume`](/docs/commands/resume) | no — the deck *is* the terminal |
 
 `--foreground` (or `STELLA_FOREGROUND=1`) opts any invocation out.
+
+## `--detach`: start it and get the prompt back
+
+Supervision keeps the run alive when the terminal goes; it does not hand the terminal back while the run continues. The launching process stays for the whole run streaming the console, and `Ctrl-C` there **stops** the run — deliberately, because that is what the key means everywhere else.
+
+`--detach` is the other half. The work is supervised exactly as it would be otherwise — same session id, same console, the whole `stella daemon` surface addresses it — but the launcher returns as soon as the run is registered:
+
+```bash
+$ stella run "migrate the config loader to serde" --detach
+▸ detached ses-1785956826121-25167 — running in the background
+  follow it with stella daemon attach ses-1785956826121-25167
+  stop it with   stella daemon stop ses-1785956826121-25167
+$
+```
+
+Two differences from an attached launch, both deliberate:
+
+- **A terminal is not required.** Plain supervision declines without one, since a run with no terminal to lose is already immune to the hangup. "Return now" is wanted from a pipe, a container, a `cron` job and a shell script exactly as much as from a terminal, so the flag forces supervision rather than merely permitting it.
+- **The exit code is the launch's, not the run's.** `stella run --detach; echo $?` answers "did the launch succeed". The run's own answer arrives in `stella daemon list`.
+
+It applies to every supervised verb — `run`, `goal`, `monitor`, `fleet` — and `STELLA_DETACH=1` sets it for a whole shell. `--foreground` wins if both are given: the flag that asks for less machinery is the safer reading of a contradictory command line, and a declared conflict would break the supervised child, which re-parses its parent's argv (`--detach` included) with `STELLA_FOREGROUND=1` in its environment.
+
+A detached run cannot ask *this* terminal anything, because there is no longer one attached — but it does not lose the answer either. A plan that crosses the scope thresholds parks exactly as described below, and the next `stella daemon attach` asks the question.
 
 ## Scope review while supervised
 
