@@ -4,14 +4,18 @@
 //! `crate::loop_detect` decides *whether* the turn is looping, and
 //! `super::loop_evidence` assembles what it reasons over. This module owns
 //! what happens next: the first detection of a turn injects a steering
-//! warning through the same seam as user steering and records the pattern it
-//! warned about; any detection after that is the turn's clean abort. The
-//! recorded pattern is what keeps the abort message honest — "persisted
-//! after a steering warning" is a claim about the *warned* loop, and the
-//! nightly loop-bench caught the old unconditional phrasing blaming a fresh
-//! `edit_file` loop on a `write_file` warning the model had actually obeyed
-//! (#1524). Split out of `driver.rs` the same way `super::settlement` was:
-//! the parent file sits at its file-size ceiling.
+//! warning through the same seam as user steering and records the
+//! [`LoopIdentity`] it warned about; any detection after that is the turn's
+//! clean abort. The recorded identity is what keeps the abort message honest
+//! — "persisted after a steering warning" is a claim about the *warned*
+//! loop, and the nightly loop-bench caught the old unconditional phrasing
+//! blaming a fresh `edit_file` loop on a `write_file` warning the model had
+//! actually obeyed (#1524). Identity is the loop's tools *and* its
+//! arguments, because the first pass recorded tool names alone and every
+//! `bash` loop in a turn therefore read as one loop — the same false claim,
+//! surviving underneath its own fix for the tool that loops most. Split out
+//! of `driver.rs` the same way `super::settlement` was: the parent file sits
+//! at its file-size ceiling.
 
 use stella_protocol::{AgentEvent, CompletionMessage};
 
@@ -35,11 +39,13 @@ use super::{LOOP_STEER_PREFIX, TurnOutcome};
 /// Steer first, abort second: the FIRST detection of a turn injects a
 /// warning through the same seam as user steering — a user-role message the
 /// model answers this very step, plus its `Steered` transcript event — and
-/// lets the turn continue, recording the detected pattern in `loop_steered`.
-/// Only a detection after that warning is the turn's clean abort (`Some`):
-/// the model was told and the turn is looping *again*, so more steps would
-/// be pure waste. Whether the abort may claim the warned loop persisted is
-/// [`abort_reason`]'s job, not a given.
+/// lets the turn continue, recording the detected loop's [`LoopIdentity`] in
+/// `loop_steered`. Only a detection after that warning is the turn's clean
+/// abort (`Some`): the model was told and the turn is looping *again*, so
+/// more steps would be pure waste. Whether the abort may claim the warned
+/// loop persisted is [`abort_reason`]'s job, not a given — and when the
+/// second loop is a genuinely different one, the honest answer is that the
+/// steer worked (see #1524 and the identity it now compares).
 pub(super) fn check_loop_detection(
     loop_detection: LoopDetectionConfig,
     turn_instance: u32,
@@ -73,10 +79,9 @@ pub(super) fn check_loop_detection(
         .evidence()
         .unwrap_or_else(|| "loop detected".to_string());
     // `identity` is `Some` for every verdict but `NoLoop`, which returned
-    // above. Handled rather than unwrapped: nothing here is worth a panic.
-    let Some(identity) = verdict.identity() else {
-        return None;
-    };
+    // above. Propagated rather than unwrapped: nothing here is worth a panic,
+    // and `None` here means the same thing it means above — not a loop.
+    let identity = verdict.identity()?;
     let _ = events.send(AgentEvent::LoopDetected {
         turn_instance,
         kind: kind.to_string(),
@@ -255,7 +260,11 @@ mod tests {
              arguments, so identity must too"
         );
 
-        let reason = abort_reason(&warned, &detected, "the same `bash` call … repeated 3 times");
+        let reason = abort_reason(
+            &warned,
+            &detected,
+            "the same `bash` call … repeated 3 times",
+        );
         assert!(
             !reason.contains("persisted"),
             "the model obeyed the steer and broke the warned loop; the abort \
