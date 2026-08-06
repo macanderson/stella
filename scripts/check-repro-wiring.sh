@@ -28,9 +28,27 @@ builder="scripts/repro-build.sh"
 packer="scripts/package-tarball.py"
 
 fail=0
+
+# The verdict is decided before anything is written (#1815). Failure lines are
+# buffered while the checks run and emitted in one final write: a guard that
+# prints as it scans dies mid-report when its reader exits early, and under
+# `set -euo pipefail` whatever partial state it had reached becomes the exit
+# status. scripts/check-file-size.sh is the shape being copied.
+report=""
 note() {
-  echo "check-repro-wiring: $1" >&2
+  report="${report}check-repro-wiring: $1"$'\n'
   fail=1
+}
+# A raw report line, no prefix and no verdict change — continuation output.
+plain() { report="${report}$1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
 }
 
 for f in "$workflow" "$local_release" "$builder" "$packer"; do
@@ -39,6 +57,7 @@ for f in "$workflow" "$local_release" "$builder" "$packer"; do
   fi
 done
 if [ "$fail" -ne 0 ]; then
+  emit
   exit 1
 fi
 
@@ -58,7 +77,7 @@ for f in "$workflow" "$local_release"; do
   bare="$(sed 's/^[[:space:]]*#.*$//' "$f" | grep -nE 'cargo (zig)?build .*--release' || true)"
   if [ -n "$bare" ]; then
     note "$f builds a release binary directly instead of through ${builder}:"
-    printf '%s\n' "$bare" >&2
+    plain "$bare"
   fi
 done
 
@@ -102,11 +121,13 @@ if [ "${published:-0}" -lt 2 ]; then
 fi
 
 if [ "$fail" -ne 0 ]; then
-  echo >&2
-  echo "Release builds must go through ${builder} (see #910). It is the single" >&2
-  echo "place that remaps \$CARGO_HOME and the rustup sysroot out of the binary," >&2
-  echo "asserts the rust-toolchain.toml pin, and emits the per-target checksum." >&2
+  plain ""
+  plain "Release builds must go through ${builder} (see #910). It is the single"
+  plain "place that remaps \$CARGO_HOME and the rustup sysroot out of the binary,"
+  plain "asserts the rust-toolchain.toml pin, and emits the per-target checksum."
+  emit
   exit 1
 fi
 
-echo "check-repro-wiring: OK — both release paths build through ${builder}, and publication waits on verify-reproducible."
+emit
+echo "check-repro-wiring: OK — both release paths build through ${builder}, and publication waits on verify-reproducible." || true

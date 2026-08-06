@@ -49,11 +49,30 @@ baseline="scripts/file-size-baseline.txt"
 agents="AGENTS.md"
 
 fail=0
-note() { printf 'check-god-files: %s\n' "$1" >&2; }
+
+# The verdict is decided before anything is written (#1815). Every line is
+# buffered while the comparisons run and emitted in one final write, because a
+# guard that prints as it scans dies mid-report the moment its reader exits
+# early (`| head`, a `tail` that has seen enough) — and under `set -euo
+# pipefail` whatever partial comparison state it had reached becomes the exit
+# status: a false failure naming whichever crate the race landed on.
+# scripts/check-file-size.sh is the shape being copied.
+report=""
+note() { report="${report}check-god-files: $1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
+}
 
 if [ ! -f "$baseline" ]; then
   note "FAIL — $baseline does not exist. It is the only correct copy of the"
   note "     god-file set; this guard has nothing to compare prose against."
+  emit
   exit 1
 fi
 
@@ -73,6 +92,7 @@ grep -v '^#' "$baseline" |
 
 if [ ! -s "$work/truth" ]; then
   note "FAIL — no crates/ entries in $baseline; the extraction must have broken."
+  emit
   exit 1
 fi
 
@@ -84,8 +104,23 @@ all_crates="$(
     LC_ALL=C sort
 )"
 
+# Membership over the newline-delimited crate list, in pure shell.
+#
+# Deliberately NOT `printf ... | grep -qx`: under `set -o pipefail` that is a
+# race, not a test — `grep -q` exits the moment it matches, `printf` then dies
+# of SIGPIPE, and pipefail reports the pipeline as failed, so a crate that IS
+# present intermittently reads as absent. That race is #1815: it made this
+# guard blame a different innocent crate on every piped run. Same shape as
+# contains() in scripts/check-command-docs.sh.
 has_god_files() {
-  printf '%s\n' "$crates_with_god_files" | grep -qx "$1"
+  case "
+$crates_with_god_files
+" in
+  *"
+$1
+"*) return 0 ;;
+  *) return 1 ;;
+  esac
 }
 
 # Backticked crate-relative source paths on stdin, one per line, sorted.
@@ -134,6 +169,7 @@ compare() {
 
 if [ ! -f "$agents" ]; then
   note "FAIL — $agents does not exist."
+  emit
   exit 1
 fi
 
@@ -201,10 +237,12 @@ if [ "$fail" -ne 0 ]; then
   note "set that can stay correct, so the prose follows it, never the reverse."
   note "After \`make file-size-update\`, update AGENTS.md's table and the affected"
   note "crate README in the same PR."
+  emit
   exit 1
 fi
 
+emit
 printf 'check-god-files: OK — %d god file(s) across %d crate(s), named identically in %s and every crate README.\n' \
   "$(wc -l <"$work/truth" | tr -d ' ')" \
   "$(printf '%s\n' "$crates_with_god_files" | wc -l | tr -d ' ')" \
-  "$agents"
+  "$agents" || true

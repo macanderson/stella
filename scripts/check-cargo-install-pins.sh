@@ -57,6 +57,24 @@ if [ -z "$install_lines" ]; then
 fi
 
 fail=0
+
+# The verdict is decided before anything is written (#1815). Failure lines are
+# buffered while the scan runs and emitted in one final write: a guard that
+# prints as it scans dies mid-report when its reader exits early, and under
+# `set -euo pipefail` whatever partial state it had reached becomes the exit
+# status. scripts/check-file-size.sh is the shape being copied.
+report=""
+note() { report="${report}$1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
+}
+
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   file_and_rest="${line%%:*}"
@@ -71,7 +89,7 @@ while IFS= read -r line; do
       \\) continue ;;
       *@*) continue ;;
       *)
-        echo "check-cargo-install-pins: $file_and_rest:$lineno installs '$tok' with no @version pin." >&2
+        note "check-cargo-install-pins: $file_and_rest:$lineno installs '$tok' with no @version pin."
         fail=1
         ;;
     esac
@@ -81,11 +99,13 @@ $install_lines
 EOF
 
 if [ "$fail" -ne 0 ]; then
-  echo >&2
-  echo "Pin each crate to an exact version, e.g.:" >&2
-  echo >&2
-  echo "    run: cargo install --locked cargo-deny@0.20.2" >&2
+  note ""
+  note "Pin each crate to an exact version, e.g.:"
+  note ""
+  note "    run: cargo install --locked cargo-deny@0.20.2"
+  emit
   exit 1
 fi
 
-echo "check-cargo-install-pins: OK — every 'cargo install' crate is pinned to a version."
+emit
+echo "check-cargo-install-pins: OK — every 'cargo install' crate is pinned to a version." || true
