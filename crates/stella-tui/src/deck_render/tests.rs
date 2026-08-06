@@ -107,6 +107,7 @@ fn full_deck_frame_grows_a_second_statline_row_for_a_diagnosed_agent() {
                 output_tokens: 500,
                 cached_input_tokens: 0,
                 cache_write_tokens: 0,
+                reasoning_tokens: None,
                 estimated_input_tokens: 0,
                 cost_usd: 0.05,
                 duration_ms: 100,

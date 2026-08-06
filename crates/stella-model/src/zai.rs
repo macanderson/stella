@@ -1331,9 +1331,8 @@ async fn aggregate_zai_stream(
                 // Only overwrite when this frame carried the breakdown: a
                 // later usage frame without the detail object must not erase
                 // a count an earlier one reported.
-                if let Some(reasoning) = u
-                    .completion_tokens_details
-                    .and_then(|d| d.reasoning_tokens)
+                if let Some(reasoning) =
+                    u.completion_tokens_details.and_then(|d| d.reasoning_tokens)
                 {
                     usage.reasoning_tokens = Some(reasoning);
                 }

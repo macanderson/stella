@@ -765,6 +765,11 @@ mod tests {
                     output_tokens: 8,
                     cached_input_tokens: 0,
                     cache_write_tokens: 0,
+                    // `None`, not `Some(0)`: this fake gateway reports a usage
+                    // envelope with no reasoning breakdown in it, which is the
+                    // "not reported" fact — the distinction this field exists
+                    // to keep.
+                    reasoning_tokens: None,
                 },
                 model: "z-ai/glm-5.2".into(),
                 cost_usd: 0.0042,
