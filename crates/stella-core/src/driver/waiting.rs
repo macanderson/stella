@@ -17,7 +17,7 @@ use stella_protocol::{AgentEvent, CompletionMessage, ToolCall, ToolOutput};
 use super::Engine;
 use crate::event_sender::EventSender;
 use crate::step::{StepOutcome, TurnState};
-use crate::waiting::{WaitCall, WaitRequest, WakeReason, decide, probe_fingerprint, wake_message};
+use crate::waiting::{WaitCall, WakeReason, decide, probe_fingerprint, wake_message};
 
 /// The synthetic `call_id` probe and wake replays carry. They never enter
 /// the transcript, so the id only needs to be recognizable in hook payloads

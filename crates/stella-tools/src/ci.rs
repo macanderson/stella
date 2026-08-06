@@ -15,6 +15,11 @@ use crate::registry::Tool;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
+/// Seconds between settledness probes while the turn is parked. CI runs
+/// change state on minute timescales; 15s keeps the wake latency small
+/// against a multi-minute wait without hammering the forge (#923).
+const PARK_POLL_INTERVAL_SECS: u64 = 15;
+
 /// `ci_status`'s `timeout_secs`, through the crate-wide clamp
 /// ([`crate::exec::timeout_from`]): an unclamped model-supplied u64 would
 /// disable the hang backstop for every `gh` sub-call (u64::MAX ≈ never).
@@ -22,7 +27,15 @@ fn ci_timeout(input: &Value) -> u64 {
     crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS)
 }
 
-pub struct CiStatus;
+/// The tool, plus the parked-wait deposit slot the registry drains
+/// (`Tool::take_wait_request`, #1471). Interior mutability because
+/// `execute` takes `&self`; the slot holds at most the latest request and
+/// is overwritten (never appended) so a request a host never drained
+/// cannot go stale across calls.
+#[derive(Default)]
+pub struct CiStatus {
+    pending_wait: std::sync::Mutex<Option<stella_core::WaitRequest>>,
+}
 
 #[async_trait]
 impl Tool for CiStatus {
@@ -31,8 +44,11 @@ impl Tool for CiStatus {
             name: "ci_status".into(),
             description: "CI state via GitHub (gh). Give branch, pr, or commit; returns runs, \
                           conclusions, and a failure log tail scoped to the target's current \
-                          head commit. wait=true blocks until every run for the target has \
-                          completed, or timeout_secs expires — not just the newest-created one."
+                          head commit. wait=true returns the current status immediately and \
+                          PARKS the turn until every run for the target has completed (or \
+                          timeout_secs, default 30 minutes): the engine probes on its own \
+                          clock with no model calls, and you wake with the fresh status — \
+                          never poll ci_status in a loop or sleep in bash to wait for CI."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -65,9 +81,32 @@ impl Tool for CiStatus {
             };
         }
 
+        // Probe replay for a parked wait (#1471): answer with the single
+        // word `settled` or `pending`, deliberately free of run names,
+        // elapsed times, or counts — anything that changes poll-to-poll
+        // would fake the state change the engine is watching for. Probe
+        // inputs deposited below carry the already-resolved branch, so this
+        // path re-resolves a PR head only when a caller passes `pr` itself.
+        if input.get("probe").and_then(|v| v.as_bool()).unwrap_or(false) {
+            let pr_head = match input.get("pr").and_then(|v| v.as_u64()) {
+                Some(pr) => resolve_pr_head(pr, root, timeout_secs).await,
+                None => None,
+            };
+            let scope = gh_run_scope(input, pr_head.as_ref());
+            return match exec::run_github(&settled_command(&scope), root, timeout_secs).await {
+                Ok((0, out)) => ToolOutput::Ok {
+                    content: out.trim().to_string(),
+                },
+                Ok((code, out)) => ToolOutput::Error {
+                    message: format!("gh failed (exit {code}): {out}"),
+                },
+                Err(message) => ToolOutput::Error { message },
+            };
+        }
+
         let list_cmd = primary_command(input);
 
-        let (code, mut report) = match exec::run_github(&list_cmd, root, timeout_secs).await {
+        let (code, report) = match exec::run_github(&list_cmd, root, timeout_secs).await {
             Ok(pair) => pair,
             Err(e) => return ToolOutput::Error { message: e },
         };
@@ -93,13 +132,33 @@ impl Tool for CiStatus {
         // attach logs from an UNRELATED branch's most-recent run.
         let scope = gh_run_scope(input, pr_head.as_ref());
 
-        // Optionally block until EVERY run for THIS target has completed
-        // (not just the newest-created one — #1466), then re-list.
+        // wait=true used to BLOCK here in a composed shell poll loop, capped
+        // by the exec backstop at 10 minutes — every second of it inside one
+        // tool call, aging the provider prompt cache and ending in a
+        // tool-timeout error for any real CI run (#1471's evidence). It now
+        // checks settledness once and, when runs are still pending, deposits
+        // a parked-wait request: the ENGINE probes between model calls
+        // (`settled`/`pending` via the probe input above, #1466's
+        // whole-incomplete-set semantics) and the model wakes exactly once,
+        // to the fresh status the `on_wake` replay fetches.
         if wait {
-            let _ = exec::run_github(&wait_command(&scope), root, timeout_secs).await;
-            if let Ok((0, fresh)) = exec::run_github(&list_cmd, root, timeout_secs).await {
-                report = fresh;
+            let settled = exec::run_github(&settled_command(&scope), root, timeout_secs).await;
+            if matches!(&settled, Ok((0, out)) if out.trim() == "pending") {
+                *self
+                    .pending_wait
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                    Some(park_request(input, pr_head.as_ref()));
+                return ToolOutput::Ok {
+                    content: format!(
+                        "{report}\n⏳ Runs are still in progress. Parking the turn until CI \
+                         settles — the engine probes every {PARK_POLL_INTERVAL_SECS}s with no \
+                         model calls, and you will be woken with the fresh status. Do not poll."
+                    ),
+                };
             }
+            // Already settled — or the check itself failed, in which case
+            // reporting the state we have beats blocking on a broken probe.
         }
 
         // Attach failure logs for THIS target's most recent failed run at
@@ -122,12 +181,90 @@ impl Tool for CiStatus {
     }
 
     // A `bash -c` composer joins the `command.started` fence (#804). The
-    // gate sees the primary query line; the pr-head resolution, wait-watch
-    // and failure-log sub-queries are same-target derivatives of the same
+    // gate sees the primary query line — or, for a parked-wait probe
+    // replay, the settledness line itself; the pr-head resolution and
+    // failure-log sub-queries are same-target derivatives of the same
     // input ([`resolve_pr_head`], [`gh_run_scope`]) riding the same
     // approval, and the `command -v gh` probe is a constant.
     async fn command_for_gate(&self, input: &Value, _root: &std::path::Path) -> Option<String> {
-        Some(primary_command(input))
+        if input.get("probe").and_then(|v| v.as_bool()).unwrap_or(false) {
+            Some(settled_command(&gh_run_scope(input, None)))
+        } else {
+            Some(primary_command(input))
+        }
+    }
+
+    fn take_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.pending_wait
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+    }
+}
+
+/// The parked-wait request one pending `wait=true` call deposits (#1471).
+///
+/// The probe input embeds the target the top-level call already resolved —
+/// a PR becomes its resolved head branch, so the engine's per-poll replay
+/// never re-pays the `gh pr view` round trip #1526 hoisted out of the old
+/// wait loop (the unresolved-head fallback keeps the `pr` field and its
+/// embedded lookup, exactly like the composed sub-queries). The wake call
+/// is this same tool minus `wait`: full status plus the head-scoped failure
+/// logs, fetched once, riding the wake message.
+fn park_request(input: &Value, pr_head: Option<&PrHead>) -> stella_core::WaitRequest {
+    let mut probe = serde_json::Map::new();
+    probe.insert("probe".into(), Value::Bool(true));
+    let (target_key, target, description) = if let Some(pr) = input.get("pr").and_then(Value::as_u64)
+    {
+        match pr_head {
+            Some(head) => (
+                "branch",
+                Value::String(head.branch.clone()),
+                format!("CI for PR #{pr} (branch {}) settles", head.branch),
+            ),
+            None => ("pr", Value::from(pr), format!("CI for PR #{pr} settles")),
+        }
+    } else if let Some(commit) = input.get("commit").and_then(Value::as_str) {
+        (
+            "commit",
+            Value::String(commit.into()),
+            format!("CI for commit {commit} settles"),
+        )
+    } else {
+        let branch = input
+            .get("branch")
+            .and_then(Value::as_str)
+            .unwrap_or("main");
+        (
+            "branch",
+            Value::String(branch.into()),
+            format!("CI for branch {branch} settles"),
+        )
+    };
+    probe.insert(target_key.into(), target);
+    let mut on_wake = input.as_object().cloned().unwrap_or_default();
+    on_wake.remove("wait");
+    stella_core::WaitRequest {
+        description,
+        probe: stella_core::WaitCall {
+            name: "ci_status".into(),
+            input: Value::Object(probe),
+        },
+        // The deposit happens precisely because the settledness check said
+        // `pending`, so that is the baseline the first diverging probe
+        // (`settled`) wakes against.
+        baseline: "pending".into(),
+        on_wake: Some(stella_core::WaitCall {
+            name: "ci_status".into(),
+            input: Value::Object(on_wake),
+        }),
+        poll_interval_secs: PARK_POLL_INTERVAL_SECS,
+        // 0 defers to the engine's default park deadline (30 minutes) —
+        // only an explicit request overrides it, clamped by the engine.
+        timeout_secs: input
+            .get("timeout_secs")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
     }
 }
 
@@ -219,30 +356,26 @@ fn gh_run_scope(input: &Value, pr_head: Option<&PrHead>) -> String {
     }
 }
 
-/// The wait-loop composed as one shell line: repeatedly re-lists THIS
-/// target's runs and polls until none remain incomplete (`status !=
-/// "completed"`), relying on the caller's own `timeout_secs` (the
-/// process-group kill in `exec::drive`) as the hang backstop rather than a
-/// bound of its own.
+/// One settledness check for THIS target, composed as a single shell line:
+/// `settled` when no run remains incomplete (`status != "completed"`),
+/// `pending` otherwise. The successor of the pre-#1471 in-tool wait loop,
+/// keeping #1466's semantics — it counts the WHOLE incomplete set for the
+/// target, never a single newest-created run (`gh run list --limit 1` +
+/// `gh run watch`), whose short-sibling-finished-first flakiness that issue
+/// documents. A `gh run list`/`jq` hiccup yields an empty `$n`, which
+/// compares unequal to `"0"` and reads as `pending` — a transient failure
+/// keeps the parked turn waiting rather than falsely waking it "done".
 ///
-/// Pulled out of `execute` so it is unit-testable the same way
-/// `primary_command`/`gh_run_scope` are (#1466). The pre-fix version watched
-/// only the single newest-CREATED run (`gh run list --limit 1` then `gh run
-/// watch` on it) — when one push triggers several workflows, the
-/// newest-created one is often a short job that is already done, so the
-/// watch returned instantly while a long sibling run from the SAME push was
-/// still in flight. This polls the WHOLE incomplete set for the target
-/// instead of a single arbitrarily-chosen run. A `gh run list`/`jq` hiccup
-/// yields an empty `$n`, which compares unequal to `"0"` — so a transient
-/// failure keeps the loop waiting rather than falsely reporting "done".
-fn wait_command(scope: &str) -> String {
+/// The one-word output is deliberate: the engine wakes the turn on ANY
+/// fingerprint change (`stella-core`'s `waiting::decide`), so the
+/// probe's answer must be constant while runs are in flight — a count
+/// (`3 incomplete`) would wake on every finished sibling, and a run list
+/// would wake on elapsed-time noise.
+fn settled_command(scope: &str) -> String {
     format!(
-        "while :; do \
-           n=$(gh run list {scope} --limit 15 --json status \
-               --jq '[.[] | select(.status != \"completed\")] | length' 2>/dev/null); \
-           [ \"$n\" = \"0\" ] && break; \
-           sleep 5; \
-         done"
+        "n=$(gh run list {scope} --limit 15 --json status \
+             --jq '[.[] | select(.status != \"completed\")] | length' 2>/dev/null); \
+         [ \"$n\" = \"0\" ] && echo settled || echo pending"
     )
 }
 
@@ -305,7 +438,7 @@ mod tests {
 
     #[test]
     fn schema_is_read_only_for_verifier_use() {
-        assert!(CiStatus.schema().read_only);
+        assert!(CiStatus::default().schema().read_only);
     }
 
     #[test]
@@ -345,14 +478,14 @@ mod tests {
         };
         let scope = gh_run_scope(&input, Some(&head));
         // The scope is the literal branch, exactly as a branch target's is —
-        // so the wait loop, which re-runs its scope EVERY poll iteration, no
-        // longer pays a forge round trip per poll.
+        // so the settledness probe, which the parked engine replays EVERY
+        // poll, never pays a forge round trip re-resolving the head.
         assert_eq!(scope, "--branch 'feat/x'");
-        let wait = wait_command(&scope);
+        let settled = settled_command(&scope);
         let logs = failure_log_command(&scope, &input, Some(&head));
         assert!(
-            !wait.contains("gh pr view") && !logs.contains("gh pr view"),
-            "no composed sub-query may re-resolve the PR head:\n{wait}\n{logs}"
+            !settled.contains("gh pr view") && !logs.contains("gh pr view"),
+            "no composed sub-query may re-resolve the PR head:\n{settled}\n{logs}"
         );
         // The failure-log SHA filter uses the resolved OID as a literal, and
         // stays conjoined with the failure selection (#1470's semantics).
@@ -401,17 +534,17 @@ mod tests {
         assert_eq!(shell_quote("a'b"), r"'a'\''b'");
     }
 
-    // --- #1466: wait=true must watch every run for the target, not just ---
-    // --- the newest-created one. -------------------------------------------
+    // --- #1466 (semantics kept through #1471): settledness must consider ---
+    // --- every run for the target, not just the newest-created one. --------
 
     #[test]
-    fn wait_command_polls_the_whole_incomplete_set_instead_of_one_run() {
-        let cmd = wait_command("--branch 'main'");
-        // The pre-fix bug: `gh run list --limit 1` picked a single
+    fn settled_command_answers_on_the_whole_incomplete_set_not_one_run() {
+        let cmd = settled_command("--branch 'main'");
+        // The pre-#1466 bug: `gh run list --limit 1` picked a single
         // newest-created run to `gh run watch`, which returns instantly if
         // THAT run happens to be a short sibling job while a long one from
-        // the same push is still going. The fixed command must not select a
-        // single run at all.
+        // the same push is still going. The probe must not select a single
+        // run at all.
         assert!(
             // Trailing space matters: "--limit 15" also contains the bare
             // substring "--limit 1".
@@ -422,23 +555,76 @@ mod tests {
             !cmd.contains("gh run watch"),
             "must not delegate to watching one arbitrarily-chosen run: {cmd}"
         );
-        // It must loop, re-listing THIS target's scope, until nothing is
-        // left incomplete.
-        assert!(cmd.contains("while"), "must loop: {cmd}");
+        // Single-shot: the WAIT loop is the engine's now (#1471) — a shell
+        // loop inside the tool call is exactly the cache-aging block this
+        // probe replaced.
+        assert!(!cmd.contains("while"), "must not loop in-tool: {cmd}");
+        assert!(!cmd.contains("sleep"), "must not sleep in-tool: {cmd}");
         assert!(cmd.contains("--branch 'main'"), "must stay scoped: {cmd}");
         assert!(
             cmd.contains("status != \"completed\""),
-            "must terminate on 'no incomplete runs', not one run's exit: {cmd}"
+            "settled means 'no incomplete runs', not one run's exit: {cmd}"
         );
     }
 
     #[test]
-    fn wait_command_treats_a_list_failure_as_still_incomplete() {
-        // An empty `$n` (gh/jq hiccup) must compare unequal to "0" so the
-        // loop keeps waiting rather than falsely declaring done — the outer
-        // `timeout_secs` process-group kill is the only backstop.
-        let cmd = wait_command("--branch 'main'");
+    fn settled_command_reads_a_list_failure_as_pending() {
+        // An empty `$n` (gh/jq hiccup) must compare unequal to "0" so a
+        // transient failure keeps the parked turn waiting — the park
+        // deadline is the backstop, never a phantom "settled".
+        let cmd = settled_command("--branch 'main'");
         assert!(cmd.contains(r#"[ "$n" = "0" ]"#), "{cmd}");
+        assert!(
+            cmd.contains("echo settled") && cmd.contains("echo pending"),
+            "the probe's whole vocabulary is two stable words: {cmd}"
+        );
+    }
+
+    // --- #1471: the parked-wait deposit. -----------------------------------
+
+    #[test]
+    fn park_request_probes_by_resolved_head_and_wakes_without_wait() {
+        let input = serde_json::json!({ "pr": 42, "wait": true, "timeout_secs": 900 });
+        let head = PrHead {
+            branch: "feat/x".into(),
+            oid: "abc123def".into(),
+        };
+        let req = park_request(&input, Some(&head));
+        // The probe replays by the literal resolved branch — one `gh pr
+        // view` per wait, never one per poll (#1526's discipline).
+        assert_eq!(
+            req.probe.input,
+            serde_json::json!({ "probe": true, "branch": "feat/x" })
+        );
+        assert_eq!(req.baseline, "pending");
+        assert_eq!(req.poll_interval_secs, PARK_POLL_INTERVAL_SECS);
+        assert_eq!(req.timeout_secs, 900);
+        // The wake call is this same tool minus `wait` — full status plus
+        // failure logs, and no re-park loop.
+        let wake = req.on_wake.expect("a wake call");
+        assert_eq!(wake.name, "ci_status");
+        assert_eq!(
+            wake.input,
+            serde_json::json!({ "pr": 42, "timeout_secs": 900 })
+        );
+    }
+
+    #[test]
+    fn park_request_defaults_and_fallbacks_stay_safe() {
+        // No explicit timeout defers to the engine's park default (0 marks
+        // "unset" — `stella_core::waiting` maps it to 30 minutes).
+        let req = park_request(&serde_json::json!({ "branch": "main", "wait": true }), None);
+        assert_eq!(req.timeout_secs, 0);
+        assert_eq!(
+            req.probe.input,
+            serde_json::json!({ "probe": true, "branch": "main" })
+        );
+        assert!(req.description.contains("branch main"), "{}", req.description);
+        // An unresolved PR head keeps the `pr` field, whose probe-side scope
+        // falls back to the embedded lookup exactly like every other
+        // composed sub-query.
+        let req = park_request(&serde_json::json!({ "pr": 7, "wait": true }), None);
+        assert_eq!(req.probe.input, serde_json::json!({ "probe": true, "pr": 7 }));
     }
 
     // --- #1470: the failure-log tail must be scoped to the target's ---

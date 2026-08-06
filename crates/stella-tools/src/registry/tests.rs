@@ -38,6 +38,7 @@ fn with_ambient_search(mut names: Vec<&'static str>) -> Vec<&'static str> {
 /// once-per-session hint on a file it doesn't cover.
 #[test]
 fn mentions_path_requires_token_boundaries() {
+    use crate::exploration::mentions_path;
     assert!(mentions_path("src/lib.rs:12: pub fn x()", "src/lib.rs"));
     assert!(mentions_path("lib.rs", "lib.rs"));
     // An absolute spelling of a covered relative path still matches.
