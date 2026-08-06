@@ -89,6 +89,7 @@ is nearest today — split it before it crosses.
 | [`src/fleet.rs`](src/fleet.rs) | `Fleet::dispatch` (the seam), `run_wave`, `run_plan`, the claim/control RAII guards, and the per-task pause/resume/stop verbs. The biggest file and the one that orders everything else. |
 | [`src/ledger.rs`](src/ledger.rs) | `fleet.db`: schema, migrations, and every read/write of runs, tasks, attempts, commits, lineage and spend. |
 | [`src/git.rs`](src/git.rs) | The `GitCli` port, `SystemGitCli`, and `WorktreeManager` — worktree create/remove/list plus the pathspec-only commit helper. |
+| [`src/gc.rs`](src/gc.rs) | `Gc::sweep` — the conservative reclaim of finished worktrees and `fleet/*` branches behind `stella fleet clean` (#1217). Nothing in flight, dirty, or unmerged goes without `--force`; every kept candidate carries a `KeepReason`. |
 | [`src/monitor.rs`](src/monitor.rs) | The `GhCli` port and `Monitor`: live PR reconciliation, the CI poll loop, the pure `decide` cap state machine, and the `AgentEvent` emit-shape helpers. |
 | [`src/cache_schedule.rs`](src/cache_schedule.rs) | `warmest_first` — the pure, no-I/O ordering heuristic for equal-priority runnable sessions. |
 
@@ -198,11 +199,20 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   matching `version < n` arm; `migrate` ([`ledger.rs:376`](src/ledger.rs))
   stamps `PRAGMA user_version` in the same transaction as the DDL it applies,
   the way `MIGRATION_V2` rebuilt `lineage` to add its uniqueness constraint.
-- **Nothing removes worktrees or branches.** `WorktreeManager::remove` exists
-  but neither `Fleet` nor `fleet_cmd` calls it; isolated worktrees under
+- **A run never removes its own worktree or branch.** Neither `Fleet` nor
+  `fleet_cmd` calls `WorktreeManager::remove`; isolated worktrees under
   `.stella/worktrees/<slug>` and their `fleet/<slug>-<hash>` branches are left
   for review. The slug hashes the run scope *and* the task id, so re-running a
   plan with the same task ids does not collide with what the last run kept.
+  Reclaiming them is an explicit, separate act: [`src/gc.rs`](src/gc.rs)'s
+  `Gc::sweep`, driven by `stella fleet clean`
+  (`crates/stella-cli/src/fleet_gc.rs`) — never automatic, and it removes only
+  a worktree with no unfinished attempt in the ledger, a clean tree, and a
+  branch the base ref already contains (#1217). `Gc` does its own
+  `worktree remove` rather than calling `WorktreeManager::remove`: the manager
+  judges a branch against the `base_ref` its `Worktree` value carries, which
+  the ledger does not record, and it has no `--force` rung. Consolidating the
+  two is tracked separately.
 - **Some of this crate's surface has no product caller yet.**
   `WorktreeManager::remove`/`list`/`commit_paths` are exercised only by this
   crate's own tests — `fleet_cmd` never calls them. They are API and tests,
