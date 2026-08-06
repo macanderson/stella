@@ -47,6 +47,19 @@ pub trait Tool: Send + Sync {
     async fn command_for_gate(&self, _input: &Value, _root: &std::path::Path) -> Option<String> {
         None
     }
+
+    /// Whether sibling calls to this tool (and to read-only tools) in one
+    /// step may be dispatched concurrently despite the schema not claiming
+    /// `read_only`. The registry aggregates this into
+    /// `ToolExecutor::parallel_safe_names` for the engine's dispatch
+    /// grouping. Defaults to false — the safe direction. Override only when
+    /// the tool mutates no workspace state AND its own machinery is built
+    /// for concurrent siblings; the shipped case is the sub-agent spawn
+    /// tool (`crate::subagent`), whose children are read-only by
+    /// construction and whose dispatcher carves budget per child.
+    fn parallel_safe(&self) -> bool {
+        false
+    }
 }
 
 /// A file op classified before execution: the normalized path the ledger
@@ -2207,6 +2220,28 @@ impl ToolExecutor for ToolRegistry {
     /// whatever this returns, so reporting twice would bill twice.
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         stella_core::subagent::drain_sub_agent_spend(&self.sub_agent_spend)
+    }
+
+    /// Aggregate each registered tool's [`Tool::parallel_safe`] claim for the
+    /// engine's dispatch grouping. Consults the primary map and the
+    /// late-enabled overlay — the same two sources every other read path
+    /// (`schemas`, dispatch) reads, so a late-enabled tool's claim cannot be
+    /// lost.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        let mut names: std::collections::HashSet<String> = self
+            .tools
+            .iter()
+            .filter(|(_, tool)| tool.parallel_safe())
+            .map(|(name, _)| name.clone())
+            .collect();
+        if let Ok(late) = self.late_tools.read() {
+            names.extend(
+                late.iter()
+                    .filter(|(_, tool)| tool.parallel_safe())
+                    .map(|(name, _)| name.clone()),
+            );
+        }
+        names
     }
 }
 

@@ -32,6 +32,21 @@
 //! [`stella_core::MAX_SUB_AGENT_DEPTH`] remains the primitive's own cap for
 //! programmatic callers (the goal loop's verifier is one).
 //!
+//! # Sibling spawns run concurrently
+//!
+//! `read_only: false` used to also mean sibling `task` calls in one step
+//! were serialized — the engine's dispatch scheduler made every
+//! non-read-only call its own barrier, so the fan-out this dispatcher was
+//! built for (thread per child, snapshot-carve, delta settle) was
+//! unreachable from the model's side. The tool now declares
+//! [`crate::registry::Tool::parallel_safe`], the executor-level claim the
+//! scheduler unions with the read-only set: children mutate nothing (they
+//! run behind `ReadOnlyTools` with `write_access` hard-coded off), so
+//! sibling spawns have no observable ordering, and each child's budget is
+//! carved before it runs. The flag itself stays `false` — it is load-bearing
+//! for the nesting fence and for permission surfaces, which is exactly why
+//! concurrency needed its own claim.
+//!
 //! # Spend
 //!
 //! The dispatcher pushes each child's cost to the
@@ -165,7 +180,10 @@ impl Tool for SpawnSubAgent {
                  would otherwise mean reading many files you do not need to keep — 'which of \
                  these modules defines X', 'how is Y wired end to end', 'find every caller of \
                  Z and summarize the patterns'. Prefer it over running the same searches \
-                 yourself whenever the evidence is bulky and only the conclusion matters. Not \
+                 yourself whenever the evidence is bulky and only the conclusion matters. \
+                 Independent questions should be dispatched as SEVERAL task calls in the \
+                 same step — they run concurrently, so three parallel investigations cost \
+                 the wall-clock of the slowest, not the sum. Not \
                  for work that must edit files (the sub-agent cannot write), and not for a \
                  single lookup you already know the location of — one read_file is cheaper \
                  than a sub-agent."
@@ -195,6 +213,14 @@ impl Tool for SpawnSubAgent {
             read_only: false,
             speculation_safe: false,
         }
+    }
+
+    /// Sibling spawns are safe to dispatch concurrently: children mutate
+    /// nothing and the dispatcher carves budget per child — see the module
+    /// docs ("Sibling spawns run concurrently") for why this is a separate
+    /// claim from `read_only`.
+    fn parallel_safe(&self) -> bool {
+        true
     }
 
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {

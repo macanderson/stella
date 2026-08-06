@@ -44,8 +44,11 @@
 //! spend.
 //!
 //! The pool lock is deliberately not held across the child's run, so sibling
-//! `task` calls from one step still execute concurrently. Two siblings can
-//! therefore each carve against the same headroom before either settles —
+//! `task` calls from one step execute concurrently — reachable since the
+//! engine's dispatch scheduler groups the spawn tool with read-only calls
+//! (`Tool::parallel_safe`; before that claim existed, every non-read-only
+//! call was its own barrier and this concurrency was dead code). Two siblings
+//! can therefore each carve against the same headroom before either settles —
 //! an overshoot bounded by one child's cap, and caught by the parent's guard
 //! at the next step boundary regardless.
 //!
