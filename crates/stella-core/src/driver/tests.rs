@@ -3,8 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_protocol::CompletionUsage;
-use stella_protocol::ToolSchema;
+use stella_protocol::{CompletionUsage, ToolSchema};
 use stella_protocol::event::BudgetMode;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
@@ -3377,6 +3376,7 @@ mod compute_passes;
 mod context_efficiency;
 mod lifecycle_bus;
 mod loop_abort;
+mod parked_wait;
 mod steer_midturn;
 mod usage_completeness;
 mod zero_copy_request;
