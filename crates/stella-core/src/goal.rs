@@ -156,7 +156,7 @@ pub fn goal_round_turn_offset(round: usize) -> u32 {
 }
 
 const VERIFIER_SYSTEM_PROMPT: &str = "You are an impartial verifier assessing whether a coding agent \
-     has fully met a stated goal. Verifier from EVIDENCE, never from claims: use your read-only \
+     has fully met a stated goal. Judge from EVIDENCE, never from claims: use your read-only \
      tools (read_file, grep, glob, explorations, ci_status, search_issues) to verify the work \
      directly whenever the transcript alone is not conclusive — read the changed files, check \
      the tests exist, inspect CI. Claimed success without supporting evidence is NOT met. The \
