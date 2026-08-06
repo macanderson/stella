@@ -47,10 +47,12 @@
 //! `task` calls from one step execute concurrently — reachable since the
 //! engine's dispatch scheduler groups the spawn tool with read-only calls
 //! (`Tool::parallel_safe`; before that claim existed, every non-read-only
-//! call was its own barrier and this concurrency was dead code). Two siblings
-//! can therefore each carve against the same headroom before either settles —
-//! an overshoot bounded by one child's cap, and caught by the parent's guard
-//! at the next step boundary regardless.
+//! call was its own barrier and this concurrency was dead code). Every
+//! sibling in one dispatch group can therefore carve against the same
+//! headroom before any settles — an overshoot bounded by one child's cap per
+//! concurrently-running sibling (up to the engine's dispatch cap of 8, so
+//! seven extra caps in the worst case, not one), and caught by the parent's
+//! guard at the next step boundary regardless.
 //!
 //! ## Settling is the child's job
 //!

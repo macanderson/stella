@@ -754,6 +754,36 @@ impl Tool for SaveExploration {
     }
 }
 
+/// True when `haystack` mentions `path` as a whole path token: the hit may
+/// not extend into path characters on either side, so a map covering
+/// `lib.rs` never fires on `mylib.rs` or `graphlib.rs` — a false positive
+/// would permanently consume that map's once-per-session coverage hint
+/// (the registry's exploration-coverage footer is the caller).
+pub(crate) fn mentions_path(haystack: &str, path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    let is_path_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/');
+    let mut from = 0;
+    while let Some(pos) = haystack[from..].find(path) {
+        let start = from + pos;
+        let end = start + path.len();
+        // A preceding `/` is a component boundary, not an embedding: search
+        // results routinely print the workspace-relative map path with an
+        // absolute prefix (`/tmp/ws/covered.rs` covers `covered.rs`).
+        let clear_before = !haystack[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| is_path_char(c) && c != '/');
+        let clear_after = !haystack[end..].chars().next().is_some_and(is_path_char);
+        if clear_before && clear_after {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

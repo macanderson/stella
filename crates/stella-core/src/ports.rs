@@ -50,6 +50,32 @@ pub trait ToolExecutor: Send + Sync {
         0.0
     }
 
+    /// The parked-wait request a tool deposited during its last `execute`,
+    /// **taken** (not peeked) — the engine consumes it at the next step
+    /// boundary and parks the turn on the engine's own clock instead of
+    /// letting the model poll (#1471, `crate::waiting`).
+    ///
+    /// The same "written by one object, drained by another" seam as
+    /// [`Self::drain_sub_agent_spend_usd`], for the same structural reason:
+    /// a tool returns only a `ToolOutput`, and by the time the engine is at
+    /// a boundary where parking is safe (invariant 6 — between model calls,
+    /// never mid-tool) the tool call is long finished.
+    ///
+    /// # Decorators MUST forward this
+    ///
+    /// The default returns `None`, which reads as "no tool of mine ever
+    /// asks to wait" — correct for a leaf, and **wrong for a wrapper**. A
+    /// decorator that forgets to forward silently turns parked waits off
+    /// for every surface composed through it, and the model falls back to
+    /// burning steps on polling — the exact regression #1471 removes. The
+    /// shipped composition is pinned by `stella-cli`'s
+    /// `the_production_tool_stack_forwards_wait_requests`.
+    ///
+    /// Destructive by contract: two drains of one request would park twice.
+    fn drain_wait_request(&self) -> Option<crate::waiting::WaitRequest> {
+        None
+    }
+
     /// Names of tools that are safe to run **concurrently with each other and
     /// with read-only calls** despite not declaring `read_only` — the
     /// executor-level claim behind the driver's dispatch grouping. The
@@ -139,6 +165,13 @@ impl ToolExecutor for ReadOnlyTools<'_> {
     /// supposed to bound it.
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
+    }
+
+    /// Forwarded: a verifier legitimately waits on external state (CI is the
+    /// canonical read-only evidence source), and its probe replays through
+    /// this same view — so the read-only restriction holds while parked too.
+    fn drain_wait_request(&self) -> Option<crate::waiting::WaitRequest> {
+        self.inner.drain_wait_request()
     }
 
     // `parallel_safe_names` deliberately keeps the empty default rather than
