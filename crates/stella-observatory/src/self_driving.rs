@@ -221,8 +221,13 @@ fn fold_runs(l: &Loop) -> Vec<Value> {
             // #1613 was filed for.
             let live = l.live.clone().unwrap_or_else(|| json!({}));
             let heartbeat = i64_at(&live, "heartbeat_unix");
-            let verdict =
-                stella_core::self_driving::liveness(&id, &live_id, heartbeat, now, STALE_AFTER_SECS);
+            let verdict = stella_core::self_driving::liveness(
+                &id,
+                &live_id,
+                heartbeat,
+                now,
+                STALE_AFTER_SECS,
+            );
             if verdict.is_crashed() {
                 status = "crashed".into();
             }
