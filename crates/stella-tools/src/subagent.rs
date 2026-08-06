@@ -160,12 +160,48 @@ const CHILD_SYSTEM_PROMPT: &str = "You are a research sub-agent. You have been g
 /// `task` — delegate a bounded research question to a read-only sub-agent.
 pub struct SpawnSubAgent {
     dispatcher: DispatcherSlot,
+    /// How many children this session has already minted per slug, so a
+    /// second child described the same way gets a distinct id (#1852).
+    ///
+    /// A counter rather than a random or time-based suffix: replay
+    /// determinism (invariant 7) means the same call order must produce the
+    /// same ids, and an id that changed between replays would make the
+    /// journal's `SubAgent` brackets unmatchable.
+    minted: std::sync::Mutex<std::collections::HashMap<String, u32>>,
 }
 
 impl SpawnSubAgent {
     #[must_use]
     pub fn new(dispatcher: DispatcherSlot) -> Self {
-        Self { dispatcher }
+        Self {
+            dispatcher,
+            minted: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// A session-unique agent id for `description`.
+    ///
+    /// `slug(description)` alone is a pure function of model-supplied text, so
+    /// two siblings described "research X" got the SAME id. Since sibling
+    /// `task` calls from one step run concurrently, their
+    /// `SubAgent::Started`/`Finished` brackets then interleave under one id on
+    /// the parent's stream: the deck renders indistinguishable rows and any
+    /// consumer that pairs by `agent_id` mis-correlates which child finished.
+    /// The child thread's name is derived from this too, so two threads shared
+    /// a name in every profiler and core dump as well.
+    ///
+    /// First use keeps the bare slug — the overwhelmingly common case reads
+    /// exactly as it did — and each repeat takes the next ordinal.
+    fn mint_agent_id(&self, description: &str) -> String {
+        let base = slug(description);
+        let mut minted = self.minted.lock().unwrap_or_else(|p| p.into_inner());
+        let seen = minted.entry(base.clone()).or_insert(0);
+        *seen += 1;
+        if *seen == 1 {
+            base
+        } else {
+            format!("{base}-{seen}")
+        }
     }
 }
 
@@ -254,7 +290,7 @@ impl Tool for SpawnSubAgent {
         };
 
         let spec = SubAgentSpec {
-            agent_id: slug(description),
+            agent_id: self.mint_agent_id(description),
             system_prompt: Some(CHILD_SYSTEM_PROMPT.to_string()),
             instruction: prompt.to_string(),
             max_steps: MAX_STEPS,
