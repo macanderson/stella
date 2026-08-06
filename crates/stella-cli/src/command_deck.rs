@@ -225,7 +225,7 @@ fn debug_log_path() -> Option<PathBuf> {
 /// How one dispatched turn ended, as seen by the driver loop.
 enum TurnEnd {
     /// The turn future resolved (completed or aborted-with-reason).
-    Finished(Result<(), String>),
+    Finished(Result<(), crate::failure::CliFailure>),
     /// The user stopped it mid-flight; the future was dropped. `hold` is the
     /// double-Esc variant: the interrupted prompt goes back to the FRONT of
     /// the backlog and dispatch parks until the user's next submission
@@ -1593,7 +1593,7 @@ pub async fn run_deck_session(
         // The lead lane's pause seam — `p` on the lead row (#1219).
         let lead_pause = lead_control::LeadPause::new();
         let end = {
-            // Both arms return `Result<(), String>`, so one pinned future
+            // Both arms return `Result<(), CliFailure>`, so one pinned future
             // drives either path through the same select loop.
             let turn = async {
                 if pipeline_on {
@@ -2053,7 +2053,7 @@ pub async fn run_deck_session(
         match end {
             TurnEnd::Finished(outcome) => {
                 if let Err(reason) = &outcome {
-                    if reason == stella_core::SOFT_STOP_REASON {
+                    if reason.message() == stella_core::SOFT_STOP_REASON {
                         // A user choice, not a failure: no Error row — the
                         // work is kept and the next prompt continues from it.
                         let _ = in_tx.send(Inbound::Event {
@@ -2069,7 +2069,7 @@ pub async fn run_deck_session(
                         let _ = in_tx.send(Inbound::Event {
                             agent: LEAD.to_string(),
                             event: AgentEvent::Error {
-                                message: reason.clone(),
+                                message: reason.to_string(),
                                 retryable: false,
                             },
                         });
@@ -2122,11 +2122,9 @@ pub async fn run_deck_session(
                 // ones someone comparing turns wants to see — so this is not
                 // conditioned on the outcome.
                 cfg.durability.mark_turn_end();
-                session_exit = if outcome.is_err() {
-                    stella_store::SessionStatus::Error
-                } else {
-                    stella_store::SessionStatus::Complete
-                };
+                // One decider for every terminal writer (#1653/#1826/#1862):
+                // a lead turn that ended in a deliberate stop exits `Stopped`.
+                session_exit = crate::daemon::outcome_status(outcome.as_ref().map(|_| ()));
                 session_record.status = stella_store::SessionStatus::NeedsInput;
                 let _ = session_registry.upsert(&session_record);
                 let turn_secs = crate::memory::unix_now_secs().saturating_sub(started_unix);
@@ -4230,7 +4228,7 @@ async fn run_lead_turn(
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall runs before this channel exists.
     recall_event: Option<AgentEvent>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -4350,10 +4348,9 @@ async fn run_lead_turn(
         }
     }
 
-    match outcome {
-        TurnOutcome::Completed { .. } => Ok(()),
-        TurnOutcome::Aborted { reason, .. } => Err(reason),
-    }
+    // The abort's typed kind rides through (#1862): the session-exit writer
+    // reads it off the same projection as every other terminal writer.
+    agent::outcome::turn_outcome_result(&outcome)
 }
 
 /// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
@@ -4398,7 +4395,7 @@ async fn run_lead_pipeline_turn(
     steering: &Arc<subsession::SteeringTap>,
     pause: &lead_control::LeadPause,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -4557,14 +4554,10 @@ async fn run_lead_pipeline_turn(
     }
 
     match result {
-        Ok(outcome) => match outcome.status {
-            PipelineStatus::Completed => Ok(()),
-            PipelineStatus::VerificationFailed { verdict } => {
-                Err(format!("verification failed: {}", verdict.summary))
-            }
-            PipelineStatus::Aborted { reason, .. } => Err(reason),
-        },
-        Err(e) => Err(e.to_string()),
+        // The shared projection keeps the abort's typed kind (#1862) and the
+        // exact messages the string arms carried before.
+        Ok(outcome) => agent::outcome::pipeline_status_result(&outcome.status),
+        Err(e) => Err(crate::failure::CliFailure::error(e.to_string())),
     }
 }
 

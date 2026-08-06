@@ -45,6 +45,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::budget::BudgetGuard;
 use crate::driver::{Engine, TurnOutcome};
+use crate::step::AbortKind;
 use crate::subagent::{SubAgentHost, SubAgentOutcome, SubAgentSpec, truncate_chars};
 
 /// Tuning for [`Engine::run_goal`]. `Default` is sized for interactive
@@ -89,6 +90,13 @@ pub enum GoalOutcome {
         rounds: usize,
         reason: String,
         cost_usd: f64,
+        /// The typed kind of the abort that ended the loop, carried from
+        /// [`TurnOutcome::Aborted`] when a working turn aborted — the bit a
+        /// terminal status writer needs to record a deliberate stop
+        /// distinctly from a crash (#1862). `None` for the backstops that
+        /// are not turn aborts (round cap, unreachable verifier), which
+        /// read as plain failures.
+        kind: Option<AbortKind>,
     },
 }
 
@@ -201,11 +209,12 @@ impl Engine<'_> {
                 self.with_turn_instance(self.config.turn_instance.saturating_add(round_offset));
             match round_engine.run_turn(messages, budget, events).await {
                 TurnOutcome::Completed { .. } => {}
-                TurnOutcome::Aborted { reason, .. } => {
+                TurnOutcome::Aborted { reason, kind, .. } => {
                     return GoalOutcome::Unmet {
                         rounds: round,
                         reason: format!("working turn aborted: {reason}"),
                         cost_usd: budget.session_spent_usd() - starting_cost_usd,
+                        kind: Some(kind),
                     };
                 }
             }
@@ -227,6 +236,7 @@ impl Engine<'_> {
                         rounds: round,
                         reason: format!("verifier unavailable: {reason}"),
                         cost_usd: budget.session_spent_usd() - starting_cost_usd,
+                        kind: None,
                     };
                 }
             };
@@ -262,6 +272,7 @@ impl Engine<'_> {
                 goal_config.max_rounds
             ),
             cost_usd: budget.session_spent_usd() - starting_cost_usd,
+            kind: None,
         }
     }
 
@@ -815,12 +826,16 @@ mod tests {
                 rounds,
                 reason,
                 cost_usd,
+                kind,
             } => {
                 // Stopped well before the round cap, on the budget backstop…
                 assert!(
                     rounds < config.max_rounds,
                     "the loop ran to the round cap ({rounds}) instead of the budget"
                 );
+                // …whose typed kind survives the loop (#1862): an enforced
+                // budget is the engine choosing to stop, not falling over.
+                assert_eq!(kind, Some(AbortKind::DeliberateStop));
                 assert!(
                     reason.contains("budget"),
                     "the abort reason should cite the budget: {reason}"
@@ -1047,8 +1062,10 @@ mod tests {
             .await;
 
         match outcome {
-            GoalOutcome::Unmet { reason, .. } => {
+            GoalOutcome::Unmet { reason, kind, .. } => {
                 assert!(reason.contains("working turn aborted"), "{reason}");
+                // A provider failure keeps its typed kind too (#1862).
+                assert_eq!(kind, Some(AbortKind::Failure));
                 // The verifier was never consulted about an aborted turn.
                 assert_eq!(verifier.calls.load(Ordering::SeqCst), 0);
             }

@@ -81,7 +81,7 @@ pub(super) fn forward_reflection_events(
 pub(super) async fn record_and_reflect_turn(
     memory: &mut Option<SessionMemory>,
     prompt: &str,
-    outcome: &Result<(), String>,
+    outcome: &Result<(), crate::failure::CliFailure>,
     registry: &ToolRegistry,
     files_before: usize,
     started_unix: i64,
