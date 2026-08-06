@@ -784,7 +784,7 @@ pub fn rank_defects(issues: Vec<QueueIssue>) -> Vec<QueueIssue> {
 ///
 /// Generous on purpose: a single model call inside an audit phase legitimately
 /// runs for minutes, and calling a live run dead is a worse error than
-/// noticing a dead one late. `FULLAUTO_STALE_AFTER_SECS` overrides it.
+/// noticing a dead one late. `SELF_DRIVING_STALE_AFTER_SECS` overrides it.
 ///
 /// Public because every surface that resolves a run's liveness needs the same
 /// number, and this constant is the only copy — `stella-cli`'s env default and
