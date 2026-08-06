@@ -695,7 +695,7 @@ mod tests {
         assert!(
             journal_record(&Inbound::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Text { delta: "x".into() },
+                event: AgentEvent::Text { text: "x".into() },
             })
             .is_some()
         );
@@ -768,7 +768,7 @@ mod tests {
             },
             JournalRecord::Event {
                 agent: "req:1".into(),
-                event: AgentEvent::Text { delta: "x".into() },
+                event: AgentEvent::Text { text: "x".into() },
             },
             JournalRecord::Pipeline { on: true },
             JournalRecord::PromptStarted {
@@ -854,7 +854,7 @@ mod tests {
             journal_record(&Inbound::Event {
                 agent: lane.clone(),
                 event: AgentEvent::Text {
-                    delta: "historic".into(),
+                    text: "historic".into(),
                 },
             })
             .is_none()
@@ -871,7 +871,7 @@ mod tests {
             journal_record(&Inbound::Event {
                 agent: "req:1".into(),
                 event: AgentEvent::Text {
-                    delta: "live".into()
+                    text: "live".into()
                 },
             })
             .is_some()
@@ -924,7 +924,7 @@ mod tests {
             },
             Inbound::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Text { delta: "on".into() },
+                event: AgentEvent::Text { text: "on".into() },
             },
             Inbound::Event {
                 agent: "lead".into(),
@@ -1108,14 +1108,12 @@ mod tests {
             },
             Inbound::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Text {
-                    delta: "loo".into(),
-                },
+                event: AgentEvent::Text { text: "loo".into() },
             },
             Inbound::Event {
                 agent: "lead".into(),
                 event: AgentEvent::Text {
-                    delta: "king…".into(),
+                    text: "king…".into(),
                 },
             },
             Inbound::Event {
@@ -1164,7 +1162,7 @@ mod tests {
             Inbound::Event {
                 agent: "lead".into(),
                 event: AgentEvent::Text {
-                    delta: "done.".into(),
+                    text: "done.".into(),
                 },
             },
             Inbound::Event {

@@ -126,6 +126,14 @@ pub(super) struct BootCandidate {
     pub(super) has_resume_point: bool,
     /// Whether the workspace the turn must continue in still exists.
     pub(super) workspace_exists: bool,
+    /// Whether the run left an unanswered approval request in its sidecar
+    /// ([`supervised::APPROVAL_REQUEST`]).
+    ///
+    /// Such a run does not fail on resume — it *parks*, waiting for a human
+    /// who is not there. The sweep resumes one run at a time and streams each
+    /// to completion, so a parked run never returns and every later id stays
+    /// unresumed with nothing said about why (#1698).
+    pub(super) parked: bool,
     /// Boot-time resumes already spent on this run.
     pub(super) attempts: u32,
 }
@@ -145,6 +153,9 @@ pub(super) enum SkipReason {
     NoResumePoint,
     /// The workspace is gone; a resumed turn must run where its work is.
     WorkspaceGone,
+    /// The run is waiting on an approval nobody is present to give. Resuming
+    /// it at boot would park it again and stall the whole sweep behind it.
+    NeedsInput,
     /// `MAX_BOOT_ATTEMPTS` boot-time resumes have already been spent.
     AttemptsExhausted,
 }
@@ -160,6 +171,9 @@ impl SkipReason {
             }
             Self::NoResumePoint => "no resume point".to_string(),
             Self::WorkspaceGone => "workspace no longer exists".to_string(),
+            Self::NeedsInput => "waiting on an approval — answer it with \
+                 `stella daemon attach <id>`, then `stella daemon resume <id>`"
+                .to_string(),
             Self::AttemptsExhausted => format!(
                 "retired after {MAX_BOOT_ATTEMPTS} boot-time resumes — \
                  `stella daemon resume <id>` tries again by hand"
@@ -202,6 +216,13 @@ pub(super) fn decide(candidate: &BootCandidate) -> BootDecision {
     }
     if !candidate.workspace_exists {
         return BootDecision::Skip(SkipReason::WorkspaceGone);
+    }
+    // Before the attempts brake, deliberately: a parked run has not failed at
+    // anything, so spending a boot attempt on it — and retiring it after
+    // `MAX_BOOT_ATTEMPTS` reboots — would punish it for waiting. It resumes
+    // the moment somebody answers.
+    if candidate.parked {
+        return BootDecision::Skip(SkipReason::NeedsInput);
     }
     if candidate.attempts >= MAX_BOOT_ATTEMPTS {
         return BootDecision::Skip(SkipReason::AttemptsExhausted);
@@ -306,6 +327,15 @@ fn candidate(
         lock_held: super::lock_is_held(&registry.sidecar_dir(&record.id)) == Some(true),
         has_resume_point: super::has_resume_point(record),
         workspace_exists: Path::new(&record.workspace).is_dir(),
+        // The request file, not the answer: an answered request is removed by
+        // the child that consumed it, so a leftover request is exactly the
+        // "still waiting" state. Probing the filesystem here rather than in
+        // `decide` keeps that function pure over already-observed facts, like
+        // every other field on this struct.
+        parked: registry
+            .sidecar_dir(&record.id)
+            .join(stella_store::supervised::APPROVAL_REQUEST)
+            .exists(),
         attempts: ledger.attempts(&record.id),
     }
 }

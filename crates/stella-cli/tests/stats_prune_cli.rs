@@ -48,7 +48,7 @@ fn record_turn(store: &Store, prompt: &str) -> i64 {
             id,
             0,
             &stella_protocol::AgentEvent::Text {
-                delta: format!("worked on {prompt}"),
+                text: format!("worked on {prompt}"),
             },
         )
         .expect("event");

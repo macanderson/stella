@@ -258,7 +258,7 @@ mod pipeline_sender_tests {
         let events = EventSender::new(raw);
         let pipeline = pipeline_event_sender(&events, format);
         pipeline
-            .send(AgentEvent::Text { delta: "hi".into() })
+            .send(AgentEvent::Text { text: "hi".into() })
             .unwrap();
         pipeline
             .send(AgentEvent::Complete {

@@ -603,17 +603,36 @@ class TestTranscript:
         self, tmp_path: Path
     ):
         """Stella emits both `text_delta` fragments and one consolidated
-        `text` event per message (the field names are crossed on the wire:
-        the fragment rides in `text`, the complete body in `delta`).
-        Appending both rendered every response twice in the transcript —
-        once assembled, once whole. The consolidated event must replace the
-        run under the same seq, not extend it.
+        `text` event per message. In streams recorded before stella #1886
+        the field names are crossed on the wire: the fragment rides in
+        `text`, the complete body in `delta`. Appending both rendered every
+        response twice in the transcript — once assembled, once whole. The
+        consolidated event must replace the run under the same seq, not
+        extend it.
         """
         path = tmp_path / "e.jsonl"
         write_events(path, [
             {"type": "text_delta", "text": "The work"},
             {"type": "text_delta", "text": "space root is `/app`."},
             {"type": "text", "delta": "The workspace root is `/app`."},
+        ])
+        entries = TranscriptReader().read(path)
+        text = [e for e in entries if e["kind"] == "text"]
+        assert len({e["seq"] for e in text}) == 1, "one message, one entry"
+        assert text[-1]["body"] == "The workspace root is `/app`."
+
+    def test_the_current_self_describing_field_names_read_identically(
+        self, tmp_path: Path
+    ):
+        """Stella #1886 fixed the crossed spellings: fragments now ride in
+        `delta` and the consolidated body in `text`. The reader stays
+        bilingual — both generations of stream produce the same transcript.
+        """
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            {"type": "text_delta", "delta": "The work"},
+            {"type": "text_delta", "delta": "space root is `/app`."},
+            {"type": "text", "text": "The workspace root is `/app`."},
         ])
         entries = TranscriptReader().read(path)
         text = [e for e in entries if e["kind"] == "text"]

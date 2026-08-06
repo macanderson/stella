@@ -424,7 +424,7 @@ mod tests {
         );
         let Inbound::Event {
             agent,
-            event: AgentEvent::Text { delta },
+            event: AgentEvent::Text { text: delta },
         } = &sent[1]
         else {
             panic!(
@@ -603,7 +603,7 @@ mod tests {
         let [
             Inbound::Event {
                 agent,
-                event: AgentEvent::Text { delta },
+                event: AgentEvent::Text { text: delta },
             },
         ] = &sent[..]
         else {

@@ -25,10 +25,10 @@ export type AgentEvent = {
   name: StageKind;
   type: "stage";
 } | {
-  delta: string;
+  text: string;
   type: "text";
 } | {
-  text: string;
+  delta: string;
   type: "text_delta";
 } | {
   delta: string;

@@ -832,7 +832,7 @@ mod tests {
         let key_after = rebuilt.0.clone();
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
-            event: AgentEvent::Text { delta: "hi".into() },
+            event: AgentEvent::Text { text: "hi".into() },
         });
         let mut buf = Buffer::empty(area);
         render(&model, &mut ui, area, &mut buf);
@@ -851,7 +851,7 @@ mod tests {
             model.apply_inbound(&Inbound::Event {
                 agent: "lead".into(),
                 event: AgentEvent::TextDelta {
-                    text: fragment.into(),
+                    delta: fragment.into(),
                 },
             });
         }
@@ -870,7 +870,7 @@ mod tests {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Text {
-                delta: "streamed tokens arriving".into(),
+                text: "streamed tokens arriving".into(),
             },
         });
         let mut buf = Buffer::empty(area);
@@ -1129,7 +1129,7 @@ mod tests {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Text {
-                delta: "first-message".into(),
+                text: "first-message".into(),
             },
         });
 
@@ -1152,7 +1152,7 @@ mod tests {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Text {
-                delta: "\nnoise".repeat(40),
+                text: "\nnoise".repeat(40),
             },
         });
         let mut buf2 = Buffer::empty(area);
@@ -1525,7 +1525,7 @@ mod tests {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::Text {
-                delta: "working".into(),
+                text: "working".into(),
             },
         });
         let area = Rect::new(0, 0, 80, 1);

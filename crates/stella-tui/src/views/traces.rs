@@ -243,7 +243,7 @@ mod tests {
         model.apply_inbound(&ev(
             "a",
             AgentEvent::Text {
-                delta: "building the auth refactor".into(),
+                text: "building the auth refactor".into(),
             },
         ));
         model.apply_inbound(&ev(
