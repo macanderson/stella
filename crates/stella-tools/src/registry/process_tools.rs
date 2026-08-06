@@ -34,7 +34,7 @@ pub(super) fn builtins(
         Arc::new(crate::repo::RepoPush(repo.clone())),
         Arc::new(crate::repo::RepoPull(repo.clone())),
         Arc::new(crate::repo::RepoRollback(repo)),
-        Arc::new(crate::ci::CiStatus),
+        Arc::new(crate::ci::CiStatus::default()),
         Arc::new(crate::screenshot::Screenshot),
         Arc::new(crate::tasks::TaskAssign(task_board, spawn_queue)),
     ]

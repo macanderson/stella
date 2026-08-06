@@ -51,8 +51,8 @@ fn apply_role_shaping(mut config: EngineConfig, overrides: &RoleCallOverrides) -
     if let Some(max_output_tokens) = overrides.max_output_tokens {
         config.max_output_tokens = Some(max_output_tokens);
     }
-    if let Some(params) = &overrides.params {
-        config.params = Some(params.clone());
+    if let Some(params) = overrides.params {
+        config.params = Some(params);
     }
     config
 }
@@ -725,10 +725,12 @@ mod tests {
     /// `EngineConfig` knob — the type system keeps it raw-call-scoped).
     #[test]
     fn verifier_shaping_overlays_the_worker_engine_config() {
-        let mut worker = EngineConfig::default();
-        worker.temperature = Some(0.7);
-        worker.max_output_tokens = Some(1000);
-        worker.effort = None;
+        let worker = EngineConfig {
+            temperature: Some(0.7),
+            max_output_tokens: Some(1000),
+            effort: None,
+            ..EngineConfig::default()
+        };
 
         let shaped = apply_role_shaping(
             worker.clone(),

@@ -34,6 +34,23 @@ fi
 home="AGENTS.md"
 status=0
 
+# The verdict is decided before anything is written (#1815). Failure lines are
+# buffered while the scans run and emitted in one final write: a guard that
+# prints as it scans dies mid-report when its reader exits early, and under
+# `set -euo pipefail` whatever partial scan state it had reached becomes the
+# exit status. scripts/check-file-size.sh is the shape being copied.
+report=""
+note() { report="${report}$1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
+}
+
 if [ ! -f "$home" ]; then
   echo "check-invariants: $home not found; skipping."
   exit 0
@@ -48,9 +65,10 @@ invariant_re='^[0-9]+\. \*\*[^*]+\*\*'
 home_count="$(grep -cE "$invariant_re" "$home" || true)"
 
 if [ "$home_count" -eq 0 ]; then
-  echo "FAIL $home carries no numbered invariant list." >&2
-  echo "     This guard expects the normative list to live here. If it moved," >&2
-  echo "     update \$home in scripts/check-invariants.sh in the same PR." >&2
+  note "FAIL $home carries no numbered invariant list."
+  note "     This guard expects the normative list to live here. If it moved,"
+  note "     update \$home in scripts/check-invariants.sh in the same PR."
+  emit
   exit 1
 fi
 
@@ -75,7 +93,7 @@ while IFS= read -r file; do
     # Strip a trailing period so "Serde-first." matches "Serde-first".
     bare="$(printf '%s\n' "$name" | sed 's/\.$//')"
     if grep -qF "**$bare" "$home"; then
-      echo "FAIL $file:$line restates invariant \"$bare\", which is normative in $home." >&2
+      note "FAIL $file:$line restates invariant \"$bare\", which is normative in $home."
       status=1
     fi
   done <<EOF2
@@ -86,10 +104,11 @@ $(git ls-files '*.md')
 EOF
 
 if [ "$status" -ne 0 ]; then
-  echo "" >&2
-  echo "     The invariants have one home: $home. Replace the copy with a" >&2
-  echo "     pointer to it. A second copy drifts, and when it does there is no" >&2
-  echo "     way to tell which one governs." >&2
+  note ""
+  note "     The invariants have one home: $home. Replace the copy with a"
+  note "     pointer to it. A second copy drifts, and when it does there is no"
+  note "     way to tell which one governs."
+  emit
   exit 1
 fi
 
@@ -112,15 +131,16 @@ while IFS= read -r hit; do
   [ -n "$n" ] || continue
   checked=$((checked + 1))
   if ! grep -qE "^${n}\. \*\*" "$home"; then
-    echo "FAIL $file:$line cites $home invariant #${n}, which does not exist." >&2
-    echo "     $home defines 1..$home_count." >&2
+    note "FAIL $file:$line cites $home invariant #${n}, which does not exist."
+    note "     $home defines 1..$home_count."
     status=1
   fi
 done <<EOF
 $cited
 EOF
 
+emit
 if [ "$status" -eq 0 ]; then
-  echo "check-invariants: OK — $home_count invariants, one normative home, $checked citation(s) resolve."
+  echo "check-invariants: OK — $home_count invariants, one normative home, $checked citation(s) resolve." || true
 fi
 exit "$status"

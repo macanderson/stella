@@ -46,6 +46,23 @@ exempt_file="scripts/command-docs-exempt.txt"
 
 status=0
 
+# The verdict is decided before anything is written (#1815). Failure lines are
+# buffered while the checks run and emitted in one final write: a guard that
+# prints as it scans dies mid-report when its reader exits early, and under
+# `set -euo pipefail` whatever partial state it had reached becomes the exit
+# status. scripts/check-file-size.sh is the shape being copied.
+report=""
+note() { report="${report}$1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
+}
+
 # Membership over a newline-delimited list, in pure shell.
 #
 # Deliberately NOT `printf ... | grep -qx`: under `set -o pipefail` that is a
@@ -66,16 +83,18 @@ $2
 }
 
 if [ ! -f "$enum_file" ]; then
-  echo "FAIL $enum_file not found." >&2
-  echo "     This guard reads the top-level subcommand list from that file. If" >&2
-  echo "     it moved, update \$enum_file in scripts/check-command-docs.sh in" >&2
-  echo "     the same PR." >&2
+  note "FAIL $enum_file not found."
+  note "     This guard reads the top-level subcommand list from that file. If"
+  note "     it moved, update \$enum_file in scripts/check-command-docs.sh in"
+  note "     the same PR."
+  emit
   exit 1
 fi
 
 if [ ! -d "$docs_dir" ]; then
-  echo "FAIL $docs_dir not found." >&2
-  echo "     This guard expects the command reference pages to live there." >&2
+  note "FAIL $docs_dir not found."
+  note "     This guard expects the command reference pages to live there."
+  emit
   exit 1
 fi
 
@@ -96,10 +115,11 @@ variants="$(awk -v decl="$enum_decl" '
 ' "$enum_file")"
 
 if [ -z "$variants" ]; then
-  echo "FAIL parsed zero variants from $enum_file." >&2
-  echo "     Expected a block opening with: $enum_decl" >&2
-  echo "     If the declaration changed, update \$enum_decl in" >&2
-  echo "     scripts/check-command-docs.sh in the same PR." >&2
+  note "FAIL parsed zero variants from $enum_file."
+  note "     Expected a block opening with: $enum_decl"
+  note "     If the declaration changed, update \$enum_decl in"
+  note "     scripts/check-command-docs.sh in the same PR."
+  emit
   exit 1
 fi
 
@@ -145,7 +165,7 @@ while IFS= read -r slug; do
   [ -n "$slug" ] || continue
   is_exempt "$slug" && continue
   if [ ! -f "$docs_dir/$slug.mdx" ]; then
-    echo "FAIL \`stella $slug\` has no reference page: $docs_dir/$slug.mdx" >&2
+    note "FAIL \`stella $slug\` has no reference page: $docs_dir/$slug.mdx"
     missing=$((missing + 1))
     status=1
   fi
@@ -154,9 +174,9 @@ $slugs
 EOF
 
 if [ "$missing" -ne 0 ]; then
-  echo "" >&2
-  echo "     Write the page, or add the slug to $exempt_file with a reason." >&2
-  echo "     An exemption is a decision on the record; a missing page is not." >&2
+  note ""
+  note "     Write the page, or add the slug to $exempt_file with a reason."
+  note "     An exemption is a decision on the record; a missing page is not."
 fi
 
 # --- 2. Every page is reachable from the sidebar ----------------------------
@@ -167,7 +187,7 @@ if [ -n "$sidebar" ]; then
     is_exempt "$slug" && continue
     [ -f "$docs_dir/$slug.mdx" ] || continue
     if ! contains "$sidebar" "$slug"; then
-      echo "FAIL $docs_dir/$slug.mdx is not listed in $meta_file." >&2
+      note "FAIL $docs_dir/$slug.mdx is not listed in $meta_file."
       unlisted=$((unlisted + 1))
       status=1
     fi
@@ -175,9 +195,9 @@ if [ -n "$sidebar" ]; then
 $slugs
 EOF
   if [ "$unlisted" -ne 0 ]; then
-    echo "" >&2
-    echo "     A page no sidebar lists is undocumented to anyone browsing." >&2
-    echo "     Add the slug to the \"pages\" array under the right group." >&2
+    note ""
+    note "     A page no sidebar lists is undocumented to anyone browsing."
+    note "     Add the slug to the \"pages\" array under the right group."
   fi
 fi
 
@@ -186,7 +206,7 @@ orphans=0
 while IFS= read -r page; do
   [ -n "$page" ] || continue
   if ! contains "$slugs" "$page"; then
-    echo "FAIL $docs_dir/$page.mdx documents no \`Command\` variant." >&2
+    note "FAIL $docs_dir/$page.mdx documents no \`Command\` variant."
     orphans=$((orphans + 1))
     status=1
   fi
@@ -195,9 +215,9 @@ $pages
 EOF
 
 if [ "$orphans" -ne 0 ]; then
-  echo "" >&2
-  echo "     The command was renamed or removed and its page outlived it." >&2
-  echo "     Delete the page, or repoint it at the surface that replaced it." >&2
+  note ""
+  note "     The command was renamed or removed and its page outlived it."
+  note "     Delete the page, or repoint it at the surface that replaced it."
 fi
 
 # --- 4. No stale exemptions -------------------------------------------------
@@ -205,9 +225,9 @@ if [ -n "$exempt" ]; then
   while IFS= read -r slug; do
     [ -n "$slug" ] || continue
     if ! contains "$slugs" "$slug"; then
-      echo "FAIL $exempt_file exempts \"$slug\", which is not a subcommand." >&2
-      echo "     Remove the line: a stale exemption silently covers a future" >&2
-      echo "     command that happens to reuse the name." >&2
+      note "FAIL $exempt_file exempts \"$slug\", which is not a subcommand."
+      note "     Remove the line: a stale exemption silently covers a future"
+      note "     command that happens to reuse the name."
       status=1
     fi
   done <<EOF
@@ -215,8 +235,9 @@ $exempt
 EOF
 fi
 
+emit
 if [ "$status" -eq 0 ]; then
   count="$(printf '%s\n' "$slugs" | wc -l | tr -d '[:blank:]')"
-  echo "check-command-docs: OK — $count subcommands, each with a listed reference page."
+  echo "check-command-docs: OK — $count subcommands, each with a listed reference page." || true
 fi
 exit "$status"
