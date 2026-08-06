@@ -21,7 +21,7 @@
 //! and only a reader can say so — the process that would have written it is
 //! gone. That resolution happens in [`fold_runs`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -52,12 +52,27 @@ const MAX_JSONL_LINES: usize = 20_000;
 /// same arrangement that let the NOISY threshold drift (#1613).
 const STALE_AFTER_SECS: i64 = stella_core::self_driving::DEFAULT_STALE_AFTER_SECS;
 
-/// `~/.stella/self-driving` — the root every loop's state directory sits under.
+/// Every root a loop's state directory can sit under, current first.
 ///
 /// Resolved through `stella-home` rather than re-derived, so `STELLA_HOME`
-/// moves the observatory's view and the loop's writes together.
-fn state_root() -> Option<PathBuf> {
-    stella_home::stella_home().map(|home| home.join("self-driving"))
+/// moves the observatory's view and the loop's writes together — and so the
+/// reader cannot spell a root differently from the writer.
+///
+/// The legacy roots are included because migration is **lazy and belongs to
+/// the CLI**: `<stella home>/fullauto/<slug>` is only moved the next time a
+/// `stella self-driving` subcommand runs. Reading only the current root showed
+/// "no self-driving runs on this machine yet" to an operator whose ledger was
+/// sitting one directory over, which reads as a broken feature rather than a
+/// pending migration.
+///
+/// This is read-only by contract: the dashboard must never perform the move
+/// itself. Renaming a directory out from under a loop that is mid-cycle is a
+/// far worse failure than showing it from its old home for one more run.
+fn state_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::with_capacity(3);
+    roots.extend(stella_home::self_driving_root());
+    roots.extend(stella_home::legacy_self_driving_roots());
+    roots
 }
 
 fn now_unix() -> i64 {
@@ -148,18 +163,34 @@ fn load_loop(dir: &Path) -> Option<Loop> {
 }
 
 fn load_loops() -> Vec<Loop> {
-    let Some(root) = state_root() else {
-        return Vec::new();
-    };
-    let Ok(entries) = std::fs::read_dir(&root) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for entry in entries.flatten().take(MAX_LOOPS) {
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
-            && let Some(l) = load_loop(&entry.path())
-        {
-            out.push(l);
+    load_loops_from(&state_roots())
+}
+
+/// [`load_loops`] over roots the caller supplies, current root first.
+///
+/// A slug found in more than one root is loaded from the FIRST root that has
+/// it, so a half-migrated machine — the new directory written, the legacy one
+/// not yet cleaned up — reports the live ledger rather than the stale copy,
+/// and never lists the same loop twice.
+fn load_loops_from(roots: &[PathBuf]) -> Vec<Loop> {
+    let mut out: Vec<Loop> = Vec::new();
+    let mut seen_slugs: BTreeSet<String> = BTreeSet::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten().take(MAX_LOOPS) {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            if let Some(l) = load_loop(&entry.path())
+                && seen_slugs.insert(l.slug.clone())
+            {
+                out.push(l);
+            }
+        }
+        if out.len() >= MAX_LOOPS {
+            break;
         }
     }
     out.sort_by(|a, b| a.slug.cmp(&b.slug));
@@ -788,6 +819,94 @@ mod tests {
             page.contains(&"NOISY".to_string()),
             "the fixture must actually raise the signal under test, or the \
              assertion above is satisfied by both surfaces staying silent: {page:?}"
+        );
+    }
+
+    /// Witness for #1755. Migration is lazy and belongs to the CLI, so between
+    /// upgrading and the next `stella self-driving` run the ledger still lives
+    /// under the pre-rename root. Reading only the current root reported "no
+    /// runs on this machine" for a machine with a full ledger.
+    #[test]
+    fn a_loop_that_has_not_been_migrated_yet_is_still_listed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy_root = tmp.path().join("fullauto");
+        seed(
+            &legacy_root.join("demo"),
+            &[&run_rec("r1", "running")],
+            &[],
+            Some(&format!(
+                r#"{{"run_id":"r1","heartbeat_unix":{}}}"#,
+                now_unix()
+            )),
+        );
+
+        let current_only = load_loops_from(&[tmp.path().join("self-driving")]);
+        assert!(
+            current_only.is_empty(),
+            "fixture check: the loop must exist ONLY under the legacy root, or \
+             the assertion below cannot distinguish the fix from the bug"
+        );
+
+        let both = load_loops_from(&[tmp.path().join("self-driving"), legacy_root]);
+        assert_eq!(
+            both.len(),
+            1,
+            "an un-migrated loop must still be visible to the dashboard"
+        );
+        assert_eq!(both[0].slug, "demo");
+    }
+
+    /// A half-migrated machine has the same slug under both roots. The live
+    /// ledger is the one the CLI just wrote; listing the stale copy too would
+    /// double every row.
+    #[test]
+    fn the_current_root_wins_over_a_leftover_legacy_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let current_root = tmp.path().join("self-driving");
+        let legacy_root = tmp.path().join("fullauto");
+        seed(
+            &current_root.join("demo"),
+            &[&run_rec("new", "completed")],
+            &[],
+            None,
+        );
+        seed(
+            &legacy_root.join("demo"),
+            &[&run_rec("stale", "completed")],
+            &[],
+            None,
+        );
+
+        let loops = load_loops_from(&[current_root, legacy_root]);
+        assert_eq!(loops.len(), 1, "one slug must yield exactly one loop row");
+        assert_eq!(
+            str_at(&fold_runs(&loops[0])[0], "run_id"),
+            "new",
+            "the current root holds what the CLI just wrote; the legacy copy \
+             is what it migrated away from"
+        );
+    }
+
+    /// The dashboard is read-only by contract. Renaming a directory out from
+    /// under a loop that is mid-cycle is worse than showing it from its old
+    /// home for one more run, so reading must never migrate.
+    #[test]
+    fn reading_a_legacy_root_never_moves_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy_root = tmp.path().join("fullauto");
+        let legacy_dir = legacy_root.join("demo");
+        seed(&legacy_dir, &[&run_rec("r1", "completed")], &[], None);
+
+        let _ = load_loops_from(&[tmp.path().join("self-driving"), legacy_root]);
+
+        assert!(
+            legacy_dir.join("runs.jsonl").exists(),
+            "the legacy state must be left exactly where it was"
+        );
+        assert!(
+            !tmp.path().join("self-driving").join("demo").exists(),
+            "the observatory must not create the new home — that is the CLI's \
+             migration, and doing it here races a live writer"
         );
     }
 }
