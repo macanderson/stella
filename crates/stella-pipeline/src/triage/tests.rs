@@ -608,7 +608,10 @@ fn the_verifier_nudge_prefers_review_when_unsure() {
 
 #[test]
 fn the_triage_payload_carries_the_workspace_listing_when_one_exists() {
-    let p = triage_prompt("Fix the failing test", "src/main.rs\nsrc/lib.rs\ntests/smoke.rs");
+    let p = triage_prompt(
+        "Fix the failing test",
+        "src/main.rs\nsrc/lib.rs\ntests/smoke.rs",
+    );
     // Evidence rides in the volatile payload half, never the cacheable
     // instruction block (#1434) — an instruction block that varied per
     // workspace would kill the prefix cache on every triage call.
