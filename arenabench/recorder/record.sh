@@ -24,6 +24,20 @@ EVENTS="${ARENA_EVENTS:-/logs/agent/stella-events.jsonl}"
 OUTPUT="${ARENA_OUTPUT:-/out/recording.mp4}"
 DISPLAY_NUM="${ARENA_DISPLAY:-:99}"
 
+# x264 sizes its thread pool from the number of CPUs it can SEE, which is the
+# host's core count -- `--cpus` is a scheduling quota and does not change it.
+# Each thread carries its own frame buffers, so on a big machine the encoder
+# alone outgrows the recorder's 512 MB cgroup: measured on a 32-vCPU bench rig,
+# x264 chose 28 threads and the container was OOM-killed within a second of
+# ffmpeg starting. The kill is SIGKILL, so nothing is logged and no fragment is
+# flushed -- every recording came out as a 28-byte `ftyp` stub and the run
+# looked like the renderer had silently done nothing.
+#
+# Pinning the pool makes the encoder's footprint a property of this file rather
+# than of whatever host it lands on. Two threads is ample for a 10 fps terminal
+# capture at `--cpus 0.5`, which cannot keep more than that busy anyway.
+THREADS="${ARENA_THREADS:-2}"
+
 mkdir -p "$(dirname "$OUTPUT")"
 
 log() { printf '[arena-recorder] %s\n' "$*" >&2; }
@@ -125,6 +139,7 @@ sleep 0.6
 ffmpeg -nostdin -loglevel error \
   -f x11grab -video_size "${WIDTH}x${HEIGHT}" -framerate "$FPS" -i "$DISPLAY_NUM" \
   -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p \
+  -threads "$THREADS" \
   -movflags +frag_keyframe+empty_moov+default_base_moof \
   -y "$OUTPUT" &
 FFMPEG_PID=$!
