@@ -164,9 +164,19 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
             > wake_idx,
         "the model call that answers the wake must observe it"
     );
+    // Probe outputs are the verbatim words `pending`/`settled`; neither may
+    // surface anywhere — not as a message, not as a tool result.
     let polls_in_transcript = messages
         .iter()
-        .filter(|m| m.content.contains("pending") || m.content.contains("settled"))
+        .flat_map(|m| {
+            std::iter::once(m.content.trim().to_string()).chain(m.tool_results.iter().map(|r| {
+                match &r.output {
+                    ToolOutput::Ok { content } => content.trim().to_string(),
+                    ToolOutput::Error { message } => message.trim().to_string(),
+                }
+            }))
+        })
+        .filter(|content| content == "pending" || content == "settled")
         .count();
     assert_eq!(
         polls_in_transcript, 0,
