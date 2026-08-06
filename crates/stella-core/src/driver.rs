@@ -80,7 +80,6 @@ use futures_util::StreamExt;
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionRequest, CompletionRequestRef, FinishReason,
     MessageRole, Provider, ProviderError, ReasoningEffort, StageKind, ToolCall, ToolOutput,
-    ToolResult,
 };
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
@@ -125,6 +124,10 @@ use loop_evidence::recent_call_records;
 use crate::step::SUMMARIZER_FAILURE_LATCH;
 use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 use loop_evidence::{ResultIdentities, snapshot_result_identities};
+// Named only by tests that build literal tool results; the production path
+// constructs `ToolResult` in `driver/dispatch.rs`.
+#[cfg(test)]
+use stella_protocol::ToolResult;
 use tokio::sync::mpsc::UnboundedSender;
 
 mod dispatch;

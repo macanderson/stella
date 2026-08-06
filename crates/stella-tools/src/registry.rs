@@ -18,8 +18,8 @@ use crate::file_touch::{
 };
 
 mod belief;
-mod process_tools;
 mod classify;
+mod process_tools;
 mod turn_probe;
 
 use belief::{Belief, Coverage};
