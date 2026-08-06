@@ -10,83 +10,21 @@
 //!
 //! Everything that decides *what may go* lives in
 //! [`stella_fleet::gc`] behind the `GitCli` port; this
-//! module is the flag surface, the ledger read, and the printed report. It is
-//! a sibling of `fleet_cmd.rs` rather than a section of it because that file
-//! is a grandfathered god file closed to growth (AGENTS.md § *God files*).
+//! module is the ledger read and the printed report, and the flags it is
+//! driven by live with the rest of the verb surface in
+//! [`crate::fleet_verbs`]. It is a sibling of `fleet_cmd.rs` rather than a
+//! section of it because that file is a grandfathered god file closed to
+//! growth (AGENTS.md § *God files*).
 
 use std::path::Path;
 
-use clap::Subcommand;
 use colored::Colorize;
 use stella_fleet::{BranchAction, Gc, GcOptions, GcReport, Ledger, SystemGitCli, WorktreeAction};
 
-use crate::config::Config;
 use crate::tui;
 
-/// The `stella fleet <cmd>` subcommands. Kept in its own enum (rather than
-/// more flags on `stella fleet`) so the maintenance verb cannot be confused
-/// with a task prompt — with one caveat worth knowing: a positional prompt
-/// whose **first word** is exactly a subcommand name is read as that
-/// subcommand. Prefix the prompts with `--` when that happens
-/// (`stella fleet -- clean up the dead code`).
-#[derive(Subcommand, Debug, Clone)]
-pub enum FleetCmd {
-    /// Reclaim finished isolated worktrees and their fleet/* branches
-    ///
-    /// Sweeps .stella/worktrees/ and the fleet/ branch namespace, removing
-    /// only what is provably safe to remove: a worktree with no unfinished
-    /// attempt in the ledger, a clean working tree, and a branch whose
-    /// commits the base ref already contains. Anything else is KEPT and the
-    /// reason printed. The main checkout and every branch outside fleet/ are
-    /// never touched, with or without --force. Offline: git plus
-    /// .stella/private/fleet.db, needs no API key.
-    Clean {
-        /// Decide and print, remove nothing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Also reclaim worktrees with uncommitted changes and branches whose
-        /// commits are not in the base ref — this DESTROYS that work. Never
-        /// touches a worktree whose attempt is still in flight.
-        #[arg(long)]
-        force: bool,
-
-        /// Only consider worktrees whose last attempt finished at least this
-        /// many days ago (a worktree with no recorded finish time is kept)
-        #[arg(long, value_name = "DAYS")]
-        age: Option<u32>,
-
-        /// The ref a branch's commits must already be contained in to count
-        /// as reclaimable (default: origin/HEAD, else main, else master)
-        #[arg(long, value_name = "REF")]
-        base_ref: Option<String>,
-    },
-}
-
-/// Run one `stella fleet` subcommand.
-pub async fn run(cfg: &Config, cmd: &FleetCmd) -> Result<(), String> {
-    match cmd {
-        FleetCmd::Clean {
-            dry_run,
-            force,
-            age,
-            base_ref,
-        } => {
-            clean(
-                &cfg.workspace_root,
-                &GcOptions {
-                    dry_run: *dry_run,
-                    force: *force,
-                    min_age_days: *age,
-                    base_ref: base_ref.clone(),
-                },
-            )
-            .await
-        }
-    }
-}
-
-async fn clean(root: &Path, opts: &GcOptions) -> Result<(), String> {
+/// Sweep the workspace's finished worktrees and `fleet/*` branches.
+pub(crate) async fn clean(root: &Path, opts: &GcOptions) -> Result<(), String> {
     // The ledger is the only thing that knows whether a run is still using a
     // worktree, so a sweep that cannot read it must not proceed on the files
     // alone — an in-flight worktree looks exactly like a finished one on disk.

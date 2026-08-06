@@ -31,6 +31,11 @@
 //! the ledger is *not* a cache. It is the authoritative record of a subagent's
 //! commits and of real money spent, and nothing can reconstruct it once
 //! written.
+//!
+//! Beside the audit trail it also holds the **dispatch claims** ([`lease`]):
+//! the check-and-set lease that stops two sessions picking up the same unit
+//! of work (#1136). It lives here because a claim has to outlive the process
+//! that took it, and this is the fleet's only durable file.
 
 use std::path::Path;
 
@@ -39,6 +44,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::gc::WorktreeActivity;
 use crate::plan::{Isolation, Task, TaskId};
+
+pub mod lease;
 
 /// A commit recorded in the ledger — also the shape a [`FleetWorker`] reports
 /// back (`crate::fleet::WorkerOutcome::commits`) and the value the emit-shape
@@ -477,7 +484,7 @@ impl Ledger {
 
 /// The schema version `migrate` brings a `fleet.db` up to. Bump it in the
 /// same commit that adds a `MIGRATION_V<n>` step and its `version < n` arm.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Apply pending migration steps inside ONE transaction that stamps
 /// `user_version` atomically with the DDL — the same shape `stella-store`'s
@@ -531,6 +538,9 @@ fn migrate(conn: &Connection) -> Result<(), LedgerError> {
     }
     if version < 2 {
         tx.execute_batch(MIGRATION_V2)?;
+    }
+    if version < 3 {
+        tx.execute_batch(MIGRATION_V3)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -646,6 +656,15 @@ CREATE TABLE spend (
     recorded_at_ms INTEGER NOT NULL
 );
 CREATE INDEX spend_by_run ON spend (run_id);
+CREATE TABLE dispatch_claims (
+    claim_key      TEXT PRIMARY KEY,
+    owner          TEXT NOT NULL,
+    fence          INTEGER NOT NULL,
+    acquired_at_ms INTEGER NOT NULL,
+    renewed_at_ms  INTEGER NOT NULL,
+    expires_at_ms  INTEGER NOT NULL
+);
+CREATE INDEX dispatch_claims_by_expiry ON dispatch_claims (expires_at_ms);
 ";
 
 /// v1 — the schema as it originally shipped (unversioned). Every statement is
@@ -729,6 +748,29 @@ INSERT INTO lineage_v2 (parent_run_id, child_task_id, recorded_at_ms)
 DROP TABLE lineage;
 ALTER TABLE lineage_v2 RENAME TO lineage;
 CREATE INDEX IF NOT EXISTS lineage_by_parent ON lineage (parent_run_id);
+";
+
+/// v3 — the dispatch claims table (#1136): one row per unit of dispatch,
+/// holding the check-and-set lease in [`lease`].
+///
+/// Purely additive, so it is `IF NOT EXISTS` and replay-safe. `claim_key` is
+/// the primary key precisely because the claim is an upsert on it — the
+/// uniqueness constraint is what makes "exactly one holder" a property of the
+/// storage engine rather than of the calling code.
+///
+/// `owner` carries no `REFERENCES runs (id)`: a claimant need not be a fleet
+/// run (a bare agent session working an issue is the case #1136 was filed
+/// for), and a claim must survive being read after its run row is gone.
+const MIGRATION_V3: &str = "\
+CREATE TABLE IF NOT EXISTS dispatch_claims (
+    claim_key      TEXT PRIMARY KEY,
+    owner          TEXT NOT NULL,
+    fence          INTEGER NOT NULL,
+    acquired_at_ms INTEGER NOT NULL,
+    renewed_at_ms  INTEGER NOT NULL,
+    expires_at_ms  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS dispatch_claims_by_expiry ON dispatch_claims (expires_at_ms);
 ";
 
 #[cfg(test)]
