@@ -87,6 +87,7 @@ is nearest today — split it before it crosses.
 | [`src/lib.rs`](src/lib.rs) | The five-pieces-one-seam overview and the crate's re-exports. Read it first. |
 | [`src/plan.rs`](src/plan.rs) | `Plan`/`Task`/`Isolation` and the pure DAG scheduling: `validate`, `topological_order`, `ready_tasks`, cycle detection. No I/O, no async — open it to change how waves are formed or what a plan may declare. |
 | [`src/fleet.rs`](src/fleet.rs) | `Fleet::dispatch` (the seam), `run_wave`, `run_plan`, the claim/control RAII guards, and the per-task pause/resume/stop verbs. The biggest file and the one that orders everything else. |
+| [`src/fleet/notice.rs`](src/fleet/notice.rs) | `handle_notices` — the per-handle warning lines (`ledger_error`, `lease_loss`, #1677) the `stella fleet` report prints; composed here because `fleet_cmd.rs` is at its file-size ceiling. |
 | [`src/ledger.rs`](src/ledger.rs) | `fleet.db`: schema, migrations, and every read/write of runs, tasks, attempts, commits, lineage and spend. |
 | [`src/ledger/lease.rs`](src/ledger/lease.rs) | Dispatch claims (#1136): the check-and-set, expiring lease on one unit of dispatch — `claim_dispatch` / `renew_dispatch` / `release_dispatch` and the reads a human or a dispatcher asks "who is on this?" with. |
 | [`src/git.rs`](src/git.rs) | The `GitCli` port, `SystemGitCli`, and `WorktreeManager` — worktree create/remove/list plus the pathspec-only commit helper. |

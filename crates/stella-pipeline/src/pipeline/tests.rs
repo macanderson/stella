@@ -1988,7 +1988,7 @@ async fn a_witness_that_never_fails_finishes_the_run_without_re_executing_it() {
 /// evidence alone; the SECOND spends one verifier call whose course-correction
 /// rides with the next revision prompt.
 #[tokio::test]
-async fn second_consecutive_red_verification_gets_verifier_guidance() {
+async fn second_deterministic_red_verification_gets_verifier_guidance() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),      // worker

@@ -5,6 +5,7 @@
 use super::*;
 use proptest::prelude::*;
 
+mod parse;
 mod uncollected;
 
 // FlipOracle transitions
@@ -685,85 +686,7 @@ fn tests_indeterminate_escalates_to_verifier() {
     assert_eq!(decision, LadderDecision::ModelVerdict);
 }
 
-// verifier parsing + fallback
-
-#[test]
-fn parses_pass_and_fail_verdicts() {
-    assert_eq!(
-        parse_verifier_response("PASS — looks correct").map(|v| v.passed),
-        Some(true)
-    );
-    assert_eq!(
-        parse_verifier_response("FAIL: missing edge case").map(|v| v.passed),
-        Some(false)
-    );
-    assert_eq!(
-        parse_verifier_response("Verdict: approved").map(|v| v.passed),
-        Some(true)
-    );
-    // A PASS line whose reasoning contains "no" must not be flipped to
-    // FAIL by an over-eager "no" match.
-    assert_eq!(
-        parse_verifier_response("PASS — no obvious issues").map(|v| v.passed),
-        Some(true)
-    );
-    // Only the first non-empty line is authoritative.
-    assert_eq!(
-        parse_verifier_response("FAIL\nthe change looks fine otherwise").map(|v| v.passed),
-        Some(false)
-    );
-}
-
-/// A negated verdict token states the OPPOSITE verdict, and the parser used
-/// to credit it as written: "The tests do not pass" parsed as a PASS — the
-/// most damaging possible misread, converting a stated refusal into the
-/// verdict that ends the run. The `yes`/`no` mirror of this bug was found
-/// and fixed years earlier (see `parses_pass_and_fail_verdicts`); the
-/// `pass`/`fail` half had no negation handling and no test.
-#[test]
-fn a_negated_pass_is_the_fail_it_states() {
-    for line in [
-        "The tests do not pass",
-        "This does not pass the edge case",
-        "Cannot pass this without the missing test",
-        "The suite doesn't pass",
-        "The change does not currently pass review",
-    ] {
-        assert_eq!(
-            parse_verifier_response(line).map(|v| v.passed),
-            Some(false),
-            "{line:?} states a refusal and must parse as FAIL"
-        );
-    }
-    // A negated FAIL is skipped, never trusted as an affirmative PASS —
-    // "did not fail" is absence of failure, not the protocol's verdict —
-    // and with no other token the reply is unparseable (heuristic fallback).
-    assert_eq!(parse_verifier_response("The suite did not fail"), None);
-    // The negation window is bounded: a negator more than two tokens back
-    // does not reach the verdict word.
-    assert_eq!(
-        parse_verifier_response("Not a single problem here: PASS").map(|v| v.passed),
-        Some(true)
-    );
-    // ...and the bound is exactly two tokens: the first window that shipped
-    // reached one token further, inverting this approval lead-in into a FAIL.
-    assert_eq!(
-        parse_verifier_response("Not a problem. PASS").map(|v| v.passed),
-        Some(true),
-        "an approval lead-in two tokens past the negator is a genuine PASS"
-    );
-    // An affirmative token before the negator is untouched.
-    assert_eq!(
-        parse_verifier_response("PASS — this does not fail any case").map(|v| v.passed),
-        Some(true)
-    );
-}
-
-#[test]
-fn unparseable_verifier_response_is_none() {
-    assert_eq!(parse_verifier_response("hmm, hard to say"), None);
-    assert_eq!(parse_verifier_response(""), None);
-}
+// verifier fallback (the response-parsing half lives in `parse`)
 
 #[test]
 fn heuristic_fallback_passes_only_on_confirmed_green_tests() {

@@ -585,8 +585,9 @@ pub fn plan_cycle(
     } else if supply.load1 >= supply.cpu {
         tier = Tier::Light;
         parallel = 1;
+        bench = BenchArm::Off;
         reason = format!(
-            "load {} at or above {} cores — the box is already saturated",
+            "load {} at or above {} cores — the box is already saturated; a bench timed here is a number the loop cannot trust",
             supply.load1, supply.cpu
         );
     } else if supply.mem_total_gb >= 32

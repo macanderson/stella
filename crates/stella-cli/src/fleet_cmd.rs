@@ -1099,15 +1099,11 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
         if !handle.outcome.summary.is_empty() {
             println!("      {}", handle.outcome.summary.dimmed());
         }
-        if let Some(error) = &handle.ledger_error {
-            // The result above is authoritative; what was lost is the durable
-            // row. Silent here would mean the only witness to an open
-            // attempts row is a future `stella doctor`.
-            println!(
-                "      {} attempt not recorded in the fleet ledger ({error}) — the row stays \
-                 open; `stella doctor` will report it",
-                "!".yellow()
-            );
+        // Durable-failure notices (a ledger close that failed after the
+        // worker settled, a dispatch lease lost mid-run) are composed in
+        // stella-fleet — this file is at its size ceiling (#1677).
+        for notice in stella_fleet::handle_notices(handle) {
+            println!("      {} {notice}", "!".yellow());
         }
     }
     for (task_id, reason) in &report.dispatch_failures {
@@ -1408,6 +1404,7 @@ mod tests {
             worktree: None,
             budget: BudgetOutcome::Continue,
             ledger_error: None,
+            lease_loss: None,
         }
     }
 

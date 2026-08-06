@@ -3,8 +3,8 @@
 #
 # The deterministic half of the loop is `stella self-driving` (#1548): the
 # governor, the ledger, the aperture ladder, the dedup oracle, and the run
-# lifecycle are engine code with types and tests (stella-core::self-driving +
-# stella-cli's self-driving_cmd). This script keeps only what is genuinely shell
+# lifecycle are engine code with types and tests (stella-core::self_driving +
+# stella-cli's self_driving_cmd). This script keeps only what is genuinely shell
 # work — the benchmark arms, the Homebrew ship step, the daemon's process
 # supervision, and the Claude command install — and DELEGATES every ported
 # verb one-for-one, so exactly one copy of every decision exists.
@@ -66,7 +66,7 @@ readonly RIG_KEY="${SELF_DRIVING_RIG_KEY:-${STELLA_HOME:-$HOME/.stella}/keys/tb9
 readonly H2H_MATCH="${SELF_DRIVING_MATCH:-arenabench/matches/fable5-claude-code-vs-stella.toml}"
 
 # The controller ceilings, the floors, the aperture ladder, and the dry-streak
-# target all live in the binary now (stella-core::self-driving), still answering
+# target all live in the binary now (stella-core::self_driving), still answering
 # to the same SELF_DRIVING_* environment knobs they always did.
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -94,7 +94,7 @@ repo_slug() {
   esac
 }
 
-# State lives under the stella home, not a top-level ~/.self-driving, so it sits
+# State lives under the stella home, not a top-level ~/.fullauto, so it sits
 # beside every other durable per-user artifact and `STELLA_HOME` moves it with
 # the rest. The observatory resolves the same path through `stella-home` and
 # reads it read-only.
@@ -893,6 +893,40 @@ PY
 # repo (#448), so the commands cannot live at .claude/commands and survive.
 # This copies them into the user-scope command directory instead.
 
+# Remove the `/fullauto` command tree this project installed before #1757
+# renamed the loop.
+#
+# Left in place it is not merely redundant, it is BROKEN: those files tell the
+# agent to run `scripts/fullauto.sh` and `stella fullauto`, and neither exists
+# any more. Nothing warns the user — `/fullauto` still autocompletes, because
+# the file is still on disk.
+#
+# Deliberately surgical. $dst is the user's shared ~/.claude/commands and holds
+# commands from other tools and hand-written ones; an `rm -rf "$dst/fullauto"`
+# that met a user's own `fullauto/` would be data loss strictly worse than the
+# staleness it fixes. So: remove only the exact basenames this project ships,
+# and rmdir the directory only if that leaves it empty.
+prune_legacy_commands() {
+  local dst="$1" src="$2"
+  local removed=0 f verb
+  if [ -f "$dst/fullauto.md" ]; then
+    rm -f "$dst/fullauto.md" && removed=$((removed + 1))
+  fi
+  if [ -d "$dst/fullauto" ]; then
+    for f in "$src"/self-driving/*.md; do
+      verb="$(basename "$f")"
+      if [ -f "$dst/fullauto/$verb" ]; then
+        rm -f "$dst/fullauto/$verb" && removed=$((removed + 1))
+      fi
+    done
+    # Only when empty — never -r. A leftover here is a file we did not put
+    # there, and it is not ours to delete.
+    rmdir "$dst/fullauto" 2>/dev/null || true
+  fi
+  [ "$removed" -gt 0 ] && say "removed $removed stale /fullauto command file(s) — renamed to /self-driving"
+  return 0
+}
+
 cmd_install_commands() {
   local src="$REPO_ROOT/scripts/self-driving/commands"
   local dst="${SELF_DRIVING_COMMAND_DIR:-$HOME/.claude/commands}"
@@ -900,6 +934,7 @@ cmd_install_commands() {
   mkdir -p "$dst/self-driving" || die "cannot write $dst"
   cp "$src/self-driving.md" "$dst/self-driving.md" || die "copy failed"
   cp "$src"/self-driving/*.md "$dst/self-driving/" || die "copy failed"
+  prune_legacy_commands "$dst" "$src"
   say "installed into $dst"
   pass "/self-driving"
   local f

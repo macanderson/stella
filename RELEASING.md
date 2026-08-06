@@ -140,6 +140,50 @@ That push starts the `Release` workflow, which:
   version + per-target SHA-256 sums) and commits it to the Homebrew tap
   (skipped if `HOMEBREW_TAP_TOKEN` is not configured).
 
+## When a release fails
+
+A failed release used to be **silent**. `release.yml` failed on 31 consecutive
+tags (v0.6.75 → v0.6.108, about two days) and nothing said so: `ci` on main was
+green, `auto-tag` succeeded — it tags, dispatches, and exits without looking at
+the outcome — the version-sync PR opened and auto-merged, `CHANGELOG.md` rolled,
+and every manifest was stamped. Only the last two jobs of `release.yml` skipped.
+Every surface a maintainer glances at said "released" (#1464).
+
+Two things now catch it, and they catch different failures:
+
+- **`smoke`** (in `release.yml`) unpacks the artifact and runs it before
+  anything is published, so a release that *builds* but does not *work* cannot
+  reach the Homebrew tap (#1626).
+- **`release-reconcile.yml`** runs hourly and compares `git tag -l 'v*'` against
+  `gh release list`, failing when a tag older than 90 minutes has no release.
+  That window is deliberate: full-LTO plus the independent rebuild arm takes the
+  better part of an hour, so "not published yet" is the normal state for a long
+  time after every merge.
+
+Run it yourself at any time:
+
+```bash
+make releases-published
+```
+
+It compares state rather than watching the dispatched run, which catches
+strictly more — a dispatch that never started, a run killed by a runner outage,
+and a release deleted after the fact are all invisible to a watcher. It also
+deliberately does **not** read workflow conclusions: the `release`/`homebrew`
+jobs are gated on a tag ref, so "skipped" is the correct state for a
+`workflow_dispatch` on a branch and reading conclusions would report those as
+failures.
+
+`scripts/unpublished-tags-baseline.txt` grandfathers the tags that shipped
+nothing and are not going to be republished (#1463), so the check is an alarm
+about **new** silence rather than a daily recital of a backlog. Adding to it is
+a decision — that tag will never have a release — and lands as a reviewable
+diff:
+
+```bash
+make releases-baseline-update    # then read the diff
+```
+
 ## Verify a published binary yourself
 
 Release builds are reproducible: the same tag, built on the pinned toolchain,

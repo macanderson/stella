@@ -260,9 +260,14 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     let result = turn_outcome_result(&outcome);
     // Written here as well as by `record_outcome_if_supervised` (which only
     // covers the spawned child), so the hand-run `--foreground` case records
-    // a terminal status too. Same value on both paths; double-writing it is
-    // harmless, leaving it unwritten reads as a crash forever.
-    let _ = registry.set_status(&record.id, crate::daemon::outcome_status(result.is_ok()));
+    // a terminal status too. Same value on both paths — both now read the
+    // failure itself, so a resumed deliberate stop records `Stopped`, not
+    // `Error` (#1653); double-writing it is harmless, leaving it unwritten
+    // reads as a crash forever.
+    let _ = registry.set_status(
+        &record.id,
+        crate::daemon::outcome_status(result.as_ref().map(|_| ())),
+    );
     result
 }
 
