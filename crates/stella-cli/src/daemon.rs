@@ -392,8 +392,10 @@ enum Console {
     Fresh,
     /// A resumed run (#1586): append, keeping the killed attempt's output —
     /// that tail is the context a human reads to understand why there was
-    /// something to resume, and `attach --from-start` should show one
-    /// continuous story.
+    /// something to resume, so the console file reads as one continuous
+    /// story across the kill. Both readers see it: `stella daemon attach`
+    /// prints a finished run in full, and `stella daemon logs -n` reaches
+    /// back as far as it is asked to.
     Preserve,
 }
 
