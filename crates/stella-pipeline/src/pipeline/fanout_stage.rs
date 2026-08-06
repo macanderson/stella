@@ -141,26 +141,21 @@ impl<'a> Pipeline<'a> {
     /// `budget` and `total` are the turn's, and both are settled before this
     /// returns: `budget` gains every candidate's spend through
     /// [`FanOutBudget`], `total` gains the same money summed by index.
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn dispatch_isolated_candidates(
         &self,
-        goal: &str,
-        base_messages: &[CompletionMessage],
-        plan: Option<&[PlanStep]>,
-        assessment: TaskAssessment,
+        frame: TaskFrame<'_>,
         worker: &ResolvedRole<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
         workspaces: &[Result<Box<dyn CandidateWorkspace>, String>],
         width: u32,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Vec<CandidateResult> {
         // One mirror, one cursor per candidate — see `candidate_steering`.
         // Every candidate observes every steer exactly once whether they run
         // in sequence or together; the cursor is what makes that true, and it
         // was already there.
         let fan = self.steering.map(SteeringFanOut::new);
-        let budgets = FanOutBudget::new(*budget, width);
+        let budgets = FanOutBudget::new(*spend.budget, width);
         // Set for the whole fan-out rather than per candidate: the question a
         // preview has to answer is "is anyone else writing to this stream",
         // and while a wide fan-out is in flight the answer is yes for all of
@@ -179,7 +174,7 @@ impl<'a> Pipeline<'a> {
                             return FinishedCandidate {
                                 index,
                                 result: CandidateResult::setup_aborted(
-                                    base_messages.to_vec(),
+                                    frame.base_messages.to_vec(),
                                     reason.clone(),
                                 ),
                                 cost_usd: 0.0,
@@ -194,7 +189,7 @@ impl<'a> Pipeline<'a> {
                         return FinishedCandidate {
                             index,
                             result: CandidateResult::setup_aborted(
-                                base_messages.to_vec(),
+                                frame.base_messages.to_vec(),
                                 "candidate skipped: the turn's budget was already spent"
                                     .to_string(),
                             ),
@@ -204,16 +199,15 @@ impl<'a> Pipeline<'a> {
                     let mut cost_usd = 0.0;
                     let result = self
                         .run_isolated_candidate(
-                            goal,
-                            base_messages,
-                            plan,
-                            assessment,
+                            frame,
                             worker,
                             authoring,
                             ws,
                             fan,
-                            &mut allowance,
-                            &mut cost_usd,
+                            &mut Spend {
+                                budget: &mut allowance,
+                                total: &mut cost_usd,
+                            },
                         )
                         .await;
                     // Settled here, in completion order, so the next candidate
@@ -232,12 +226,12 @@ impl<'a> Pipeline<'a> {
 
         self.shared_event_lane.store(false, Ordering::Relaxed);
         finished.sort_by_key(|candidate| candidate.index);
-        *budget = budgets.into_parent();
+        *spend.budget = budgets.into_parent();
         // Summed in index order, not completion order: float addition is not
         // associative, and a run's reported cost must not depend on which
         // candidate happened to finish first.
         for candidate in &finished {
-            *total += candidate.cost_usd;
+            *spend.total += candidate.cost_usd;
         }
         finished
             .into_iter()
@@ -250,19 +244,14 @@ impl<'a> Pipeline<'a> {
     /// function now because every local in it — the engine, the steering view,
     /// the bound hook runner — has to live in the candidate's own frame rather
     /// than in a loop iteration shared with nobody.
-    #[allow(clippy::too_many_arguments)]
     async fn run_isolated_candidate(
         &self,
-        goal: &str,
-        base_messages: &[CompletionMessage],
-        plan: Option<&[PlanStep]>,
-        assessment: TaskAssessment,
+        frame: TaskFrame<'_>,
         worker: &ResolvedRole<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
         ws: &dyn CandidateWorkspace,
         fan: Option<&SteeringFanOut<'_>>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> CandidateResult {
         let bound_hook_runner = self.hooks.map(|(_, runner)| BoundHookRunner {
             inner: runner,
@@ -297,17 +286,7 @@ impl<'a> Pipeline<'a> {
         if let Some(view) = view.as_ref() {
             engine = engine.with_steering(view);
         }
-        self.run_candidate(
-            goal,
-            base_messages,
-            plan,
-            assessment,
-            authoring,
-            &engine,
-            surface,
-            budget,
-            total,
-        )
-        .await
+        self.run_candidate(frame, authoring, &engine, surface, spend)
+            .await
     }
 }
