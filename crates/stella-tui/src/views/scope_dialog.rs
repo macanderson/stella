@@ -40,7 +40,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use stella_protocol::ScopeProposal;
 
-use crate::deck::{DeckTab, WorkspaceModel};
+use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
 use crate::plan::PlanStepState;
 use crate::theme;
@@ -55,17 +55,21 @@ const DIALOG_MAX_W: u16 = 74;
 /// predicate for "the dialog is up". Shared by the renderer, the key handler's
 /// caller and the cursor-suppression check so they can never disagree.
 ///
-/// Scoped to the Session tab, like every other tab-owned modal in
-/// `deck_render`'s cursor-suppression list (`DeckTab::Issues`'s sub-modes,
-/// `DeckTab::Settings`'s config editors). The gate belongs to the focused
-/// agent's REPL surface — it was a band above that transcript before it became
-/// a dialog, and its reach did not widen when its shape changed. Without this
-/// the frame-sized overlay paints over AGENTS, TRACES, GRAPH, FILES and MCP,
-/// blanking tabs that answer questions the dialog cannot.
+/// Deliberately **not** scoped to a tab. Unlike `DeckTab::Issues`'s sub-modes
+/// or `DeckTab::Settings`'s config editors — modals a user opens on the tab
+/// that owns them — this one opens *unbidden*, when the lead proposes a plan.
+/// A reviewer browsing AGENTS is still browsing it at that moment, and the
+/// gate has halted the session, so the surface announcing that has to be the
+/// thing they see. `deck_ui::gates` swallows every other key for the same
+/// reason: the decision is answered where the user stands.
+///
+/// Scoping this to Session made the dialog invisible on every other tab while
+/// the session sat halted with no indication why — the failure #1633 exists to
+/// prevent. Tests that need an unobstructed tab body answer the gate instead
+/// (`answered_ui` in `deck_snapshot.rs`, `base_ui` in
+/// `deck_render_snapshots.rs`); narrowing the renderer to suit the harness is
+/// what put this backwards once already.
 pub(crate) fn pending<'m>(model: &'m WorkspaceModel, ui: &DeckUi) -> Option<&'m ScopeProposal> {
-    if ui.tab != DeckTab::Session {
-        return None;
-    }
     let entry = model.agents.get(ui.focused)?;
     if ui.scope_answered.contains(&entry.meta.id) {
         return None;

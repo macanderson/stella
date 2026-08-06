@@ -291,13 +291,25 @@ fn fixture_model() -> WorkspaceModel {
     model
 }
 
-/// A deck past the splash, on `tab`, with the code graph loaded — the state a
-/// user is in a few seconds after launch.
-fn base_ui(tab: DeckTab) -> DeckUi {
+/// A deck past the splash, on `tab`, with the code graph loaded and the
+/// scenario's plan review answered — the state a user is in a few seconds
+/// after launch.
+///
+/// Answering the gate is what makes these frames pin a *tab body*. The demo
+/// scenario reaches an unanswered scope review, and that dialog is modal by
+/// design (`views::scope_dialog::pending`), so a bare `DeckUi::default()`
+/// renders eleven rows of `plan review` over whichever tab is under test —
+/// pinning the overlay instead of the surface. The dialog's own appearance is
+/// covered where it belongs, by `deck_snapshot.rs`'s
+/// `a_pending_plan_review_is_modal_over_the_tab_body`.
+fn base_ui(model: &WorkspaceModel, tab: DeckTab) -> DeckUi {
     let mut ui = DeckUi::default();
     ui.splash.skip();
     ui.tab = tab;
     ui.graph = Some(demo_graph());
+    for entry in &model.agents {
+        ui.scope_answered.insert(entry.meta.id.clone());
+    }
     // The driver seeds this at session start, so every frame the real deck
     // draws has it — including the one `/models` renders from.
     ui.engine.pristine = Some(stella_tui::scenario::demo_engine_config());
@@ -472,8 +484,8 @@ fn fixture_mcp_servers() -> Vec<stella_tui::McpServerInfo> {
 /// The representative state for each tab: populated entries, a moved cursor,
 /// and whatever out-of-band snapshot that tab reads. A tab rendered from
 /// `DeckUi::default()` would pin its empty state and nothing else.
-fn ui_for(tab: DeckTab) -> DeckUi {
-    let mut ui = base_ui(tab);
+fn ui_for(model: &WorkspaceModel, tab: DeckTab) -> DeckUi {
+    let mut ui = base_ui(model, tab);
     match tab {
         // The transcript of the focused agent, scrolled to the live tail.
         DeckTab::Session => ui.focused = 0,
@@ -525,7 +537,7 @@ fn tab_snapshot_name(tab: DeckTab) -> &'static str {
 fn deck_render_snapshots_cover_every_tab() {
     let model = fixture_model();
     for tab in DeckTab::ALL {
-        let mut ui = ui_for(tab);
+        let mut ui = ui_for(&model, tab);
         let frame = render_frame(&model, &mut ui, W, H);
         assert_golden(
             tab_snapshot_name(tab),
@@ -547,7 +559,7 @@ fn deck_render_snapshots_cover_every_tab() {
 #[test]
 fn deck_render_snapshots_pin_the_compact_agents_dashboard() {
     let model = fixture_model();
-    let mut ui = ui_for(DeckTab::Agents);
+    let mut ui = ui_for(&model, DeckTab::Agents);
     let frame = render_frame(&model, &mut ui, 120, 24);
     assert_golden(
         "tab_agents_compact",
@@ -566,7 +578,7 @@ fn deck_render_snapshots_pin_the_compact_agents_dashboard() {
 #[test]
 fn deck_render_snapshots_pin_the_settings_tools_pane() {
     let model = fixture_model();
-    let mut ui = ui_for(DeckTab::Settings);
+    let mut ui = ui_for(&model, DeckTab::Settings);
     ui.settings_pane = SettingsPane::Tools;
     let frame = render_frame(&model, &mut ui, W, H);
     assert_golden(
@@ -585,7 +597,7 @@ fn deck_render_snapshots_pin_the_settings_tools_pane() {
 #[test]
 fn deck_render_snapshots_pin_the_help_overlay() {
     let model = fixture_model();
-    let mut ui = ui_for(DeckTab::Skills);
+    let mut ui = ui_for(&model, DeckTab::Skills);
     ui.help_open = true;
     let frame = render_frame(&model, &mut ui, W, H);
     assert_golden(
@@ -604,7 +616,7 @@ fn deck_render_snapshots_pin_the_help_overlay() {
 #[test]
 fn deck_render_snapshots_pin_the_skills_create_dialog() {
     let model = fixture_model();
-    let mut ui = ui_for(DeckTab::Skills);
+    let mut ui = ui_for(&model, DeckTab::Skills);
     ui.skills.prompt = Some(SkillPrompt::CreateDescription {
         buffer: "review a terraform plan for destructive changes".to_string(),
     });
@@ -622,7 +634,7 @@ fn deck_render_snapshots_pin_the_skills_create_dialog() {
 #[test]
 fn deck_render_snapshots_pin_the_skills_scope_picker() {
     let model = fixture_model();
-    let mut ui = ui_for(DeckTab::Skills);
+    let mut ui = ui_for(&model, DeckTab::Skills);
     ui.skills.prompt = Some(SkillPrompt::Scope {
         action: ScopeAction::Create {
             description: "review a terraform plan for destructive changes".to_string(),
@@ -658,7 +670,7 @@ fn deck_render_snapshots_pin_the_floating_cards() {
         (Card::Models, "card_models", "the /models routing card"),
         (Card::Budget, "card_budget", "the /budget editor"),
     ] {
-        let mut ui = ui_for(DeckTab::Session);
+        let mut ui = ui_for(&model, DeckTab::Session);
         ui.cards.raise(card);
         let frame = render_frame(&model, &mut ui, W, H);
         assert_golden(name, description, W, H, &frame);
@@ -677,8 +689,11 @@ fn deck_render_snapshots_pin_the_floating_cards() {
 #[test]
 fn deck_render_snapshots_are_reproducible() {
     for tab in DeckTab::ALL {
-        let first = render_frame(&fixture_model(), &mut ui_for(tab), W, H);
-        let second = render_frame(&fixture_model(), &mut ui_for(tab), W, H);
+        // A fresh model per render, deliberately: the point is that two
+        // independent builds of the same fixture produce the same frame.
+        let (m1, m2) = (fixture_model(), fixture_model());
+        let first = render_frame(&m1, &mut ui_for(&m1, tab), W, H);
+        let second = render_frame(&m2, &mut ui_for(&m2, tab), W, H);
         assert!(
             first == second,
             "the {} tab rendered differently on a second pass — something in \
