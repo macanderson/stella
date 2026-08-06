@@ -41,9 +41,29 @@ fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
         .join("\n")
 }
 
-fn render_tab(model: &WorkspaceModel, tab: DeckTab, w: u16, h: u16) -> String {
+/// A `DeckUi` past the splash with the scenario's plan-review gate answered —
+/// the state every assertion about a *tab's body* below is actually about.
+///
+/// The gate is a **modal** dialog (#1633): while the focused agent's scope
+/// review is pending it is drawn centered over whatever tab is up, because it
+/// is the surface that halts the session. The demo scenario reaches a pending
+/// plan, so a bare `DeckUi::default()` puts that dialog over the body these
+/// tests examine — and does it *quietly*, because the dialog is centered and a
+/// needle that happens to sit near an edge survives. Answering it here is what
+/// keeps each test about the tab it names instead of about where the dialog
+/// landed; [`a_pending_plan_review_is_modal_over_the_tab_body`] is where the
+/// modality itself is pinned.
+fn answered_ui(model: &WorkspaceModel) -> DeckUi {
     let mut ui = DeckUi::default();
     ui.splash.skip(); // past the splash so the tabs draw
+    for entry in &model.agents {
+        ui.scope_answered.insert(entry.meta.id.clone());
+    }
+    ui
+}
+
+fn render_tab(model: &WorkspaceModel, tab: DeckTab, w: u16, h: u16) -> String {
+    let mut ui = answered_ui(model);
     ui.tab = tab;
     ui.graph = Some(demo_graph());
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
@@ -134,8 +154,7 @@ fn deck_renders_every_tab_with_real_content() {
         ),
     ];
     for (card, needles) in card_cases {
-        let mut ui = DeckUi::default();
-        ui.splash.skip();
+        let mut ui = answered_ui(&model);
         ui.graph = Some(demo_graph());
         // `/models` renders the driver's resolved wiring, which the real deck
         // holds from session start — without it the card would honestly say it
@@ -167,6 +186,46 @@ fn deck_renders_every_tab_with_real_content() {
         Ok(()) => println!("deck snapshots written to {artifact}"),
         Err(err) => println!("deck snapshots not written to {artifact}: {err}"),
     }
+}
+
+/// #1633: a pending plan review is **modal**, so it is drawn over whatever tab
+/// happens to be up rather than only over SESSION.
+///
+/// Reachable exactly as rendered here: a reviewer browsing AGENTS is still
+/// browsing it when the lead proposes a plan, and the gate that halts the
+/// session has to be the thing they see. Every other test in this file answers
+/// the gate through [`answered_ui`] so it can assert on a tab body; this one
+/// leaves it pending, which is what keeps the modality a tested property
+/// rather than an accident of where the dialog lands.
+#[test]
+fn a_pending_plan_review_is_modal_over_the_tab_body() {
+    let model = folded_model();
+    assert!(
+        model
+            .agents
+            .iter()
+            .any(|entry| entry.model.pending_scope_review.is_some()),
+        "the demo scenario must reach a pending plan review, or this test \
+         asserts nothing and `answered_ui` guards nothing"
+    );
+
+    // Deliberately NOT `answered_ui`: the unanswered gate is the subject.
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.tab = DeckTab::Agents;
+    let mut terminal = Terminal::new(TestBackend::new(240, 20)).unwrap();
+    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let text = buffer_text(terminal.backend().buffer());
+
+    assert!(
+        text.contains("plan review"),
+        "the pending gate must draw its dialog over the AGENTS tab:\n{text}"
+    );
+    assert!(
+        text.contains("one keypress decides"),
+        "the dialog's own legend is what tells the reviewer it is answerable \
+         where they stand:\n{text}"
+    );
 }
 
 #[test]
@@ -228,8 +287,7 @@ fn settings_tab_hosts_the_agents_config_editor() {
 #[test]
 fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() {
     let model = folded_model();
-    let mut ui = DeckUi::default();
-    ui.splash.skip();
+    let mut ui = answered_ui(&model);
     ui.tab = DeckTab::Settings;
     // The tab shows one pane at a time behind its ←/→ nav — walk to TOOLS,
     // which is what a user pressing → from the default AGENTS pane sees.
@@ -310,8 +368,7 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
 fn help_overlay_shows_only_the_active_tabs_shortcuts() {
     let model = folded_model();
     let render_help = |tab: DeckTab| {
-        let mut ui = DeckUi::default();
-        ui.splash.skip();
+        let mut ui = answered_ui(&model);
         ui.tab = tab;
         ui.help_open = true;
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -364,8 +421,7 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
 
     // Mode 1: the call list. Both calls of step 3 must be distinguishable —
     // that is the whole point of keying receipts on call_seq.
-    let mut ui = DeckUi::default();
-    ui.splash.skip();
+    let mut ui = answered_ui(&model);
     ui.inspect_open = true;
     ui.inspect_calls = vec![
         call(0, 0, "worker"),
@@ -455,8 +511,7 @@ fn mcp_tab_renders_truncation_distinctly_from_an_unavailable_server() {
     }
 
     let model = folded_model();
-    let mut ui = DeckUi::default();
-    ui.splash.skip();
+    let mut ui = answered_ui(&model);
     ui.tab = DeckTab::Mcp;
     ui.mcp.servers = vec![server("greedy", true, 12), server("dead", false, 0)];
 
@@ -487,8 +542,7 @@ fn mcp_tab_renders_truncation_distinctly_from_an_unavailable_server() {
 #[test]
 fn mcp_tab_says_nothing_about_the_cap_when_no_server_truncated() {
     let model = folded_model();
-    let mut ui = DeckUi::default();
-    ui.splash.skip();
+    let mut ui = answered_ui(&model);
     ui.tab = DeckTab::Mcp;
     ui.mcp.servers = vec![stella_tui::McpServerInfo {
         name: "files".to_string(),
@@ -521,8 +575,7 @@ fn mcp_tab_says_nothing_about_the_cap_when_no_server_truncated() {
 #[test]
 fn mcp_tab_identifies_each_server_rather_than_showing_a_bare_alias() {
     let model = folded_model();
-    let mut ui = DeckUi::default();
-    ui.splash.skip();
+    let mut ui = answered_ui(&model);
     ui.tab = DeckTab::Mcp;
     ui.mcp.servers = vec![
         // Installed from the registry: the publisher's own words.
@@ -582,8 +635,7 @@ fn mcp_tab_identifies_each_server_rather_than_showing_a_bare_alias() {
 #[test]
 fn mcp_inspector_renders_over_the_list_and_answers_what_the_row_cannot() {
     let model = folded_model();
-    let mut ui = DeckUi::default();
-    ui.splash.skip();
+    let mut ui = answered_ui(&model);
     ui.tab = DeckTab::Mcp;
     ui.mcp.servers = vec![
         stella_tui::McpServerInfo {
