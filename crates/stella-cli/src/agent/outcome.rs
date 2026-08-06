@@ -1,9 +1,9 @@
 //! One reading of a finished pipeline run, shared by every surface.
 //!
-//! A [`PipelineStatus`] has to be projected four different ways — a store
-//! label, a JSON `reason`, an episodic-memory outcome, and the process exit
-//! `Result` — and each surface (one-shot, deck, fleet, arena) needs the same
-//! projections. Keeping them here, as total `match`es over the enum, is what
+//! A [`PipelineStatus`] has to be projected five different ways — a store
+//! label, a JSON `reason`, an episodic-memory outcome, the process exit
+//! `Result`, and the terminal SESSIONS-registry status — and each surface
+//! (one-shot, deck, fleet, arena) needs the same projections. Keeping them here, as total `match`es over the enum, is what
 //! stops `stella run --output-format json` and the audit row from disagreeing
 //! about whether the same run passed.
 //!
@@ -79,6 +79,27 @@ pub(super) fn pipeline_status_result(status: &PipelineStatus) -> Result<(), CliF
     }
 }
 
+/// The terminal SESSIONS-registry status a finished pipeline run records —
+/// the fifth projection, feeding `SessionPresence::finish` on the
+/// unsupervised paths (`stella run` in a pipe, CI, `--foreground`) that
+/// `crate::daemon::record_outcome_if_supervised` never reaches (#1826).
+///
+/// Routed through [`crate::daemon::outcome_status`] rather than re-matched
+/// here, so every registry writer — supervised or not — reads a deliberate
+/// stop (`Stopped`), a user interrupt (`Cancelled`), and a crash (`Error`)
+/// off the same decider (#1653).
+pub(super) fn pipeline_session_status(
+    result: &Result<PipelineOutcome, PipelineRunError>,
+) -> stella_store::SessionStatus {
+    let terminal = match result {
+        Ok(outcome) => pipeline_status_result(&outcome.status),
+        // A hard pipeline error carries no abort kind — a genuine failure,
+        // the same reading the process exit gives it.
+        Err(error) => Err(CliFailure::error(error.to_string())),
+    };
+    crate::daemon::outcome_status(terminal.as_ref().map(|_| ()))
+}
+
 /// The process-boundary answer a finished engine turn owes `main`.
 ///
 /// The one projection from [`TurnOutcome`] to an exit code, so every surface
@@ -126,6 +147,73 @@ mod tests {
     #[test]
     fn cancellation_before_spend_persists_zero() {
         assert_eq!(settled_cost_since(1.25, 1.25), 0.0);
+    }
+
+    /// A pipeline run terminal enough to project, with every field the
+    /// projection ignores held constant.
+    fn pipeline_outcome(status: PipelineStatus) -> PipelineOutcome {
+        PipelineOutcome {
+            status,
+            task_class: stella_pipeline::TaskClass::SingleTask,
+            final_text: String::new(),
+            total_cost_usd: 0.0,
+            verdict: None,
+            score: None,
+            revisions: 0,
+            candidates_run: 1,
+        }
+    }
+
+    /// #1826 witness — the presence half of #1653: the projection the
+    /// unsupervised registry writers feed `SessionPresence::finish`
+    /// distinguishes a deliberate stop from a crash. Before, `finish(ok:
+    /// bool, …)` collapsed both to [`stella_store::SessionStatus::Error`] —
+    /// this projection did not exist, and the widened `finish` call sites do
+    /// not compile against the old signature.
+    ///
+    /// Like `daemon::tests::a_deliberate_stop_records_a_status_distinct_from_a_crash`,
+    /// this relies on no test in this binary ever calling
+    /// `signals::note_interrupt`, so `interrupted_exit_code()` is reliably
+    /// `None` here.
+    #[test]
+    fn an_unsupervised_deliberate_stop_projects_stopped_not_error() {
+        let stopped = Ok(pipeline_outcome(PipelineStatus::Aborted {
+            reason: "stuck-loop detected (persisted after a steering warning)".into(),
+            kind: AbortKind::DeliberateStop,
+        }));
+        let crashed = Ok(pipeline_outcome(PipelineStatus::Aborted {
+            reason: "the model call would not commit after retries".into(),
+            kind: AbortKind::Failure,
+        }));
+
+        assert_eq!(
+            pipeline_session_status(&stopped),
+            stella_store::SessionStatus::Stopped,
+            "a run that ended itself by policy must not read as a crash"
+        );
+        assert_eq!(
+            pipeline_session_status(&crashed),
+            stella_store::SessionStatus::Error
+        );
+    }
+
+    /// The arms the widening must not disturb: a completed run stays
+    /// `Complete`, and a hard pipeline error — which carries no abort kind —
+    /// stays `Error`.
+    #[test]
+    fn the_remaining_terminal_arms_project_unchanged() {
+        assert_eq!(
+            pipeline_session_status(&Ok(pipeline_outcome(PipelineStatus::Completed))),
+            stella_store::SessionStatus::Complete
+        );
+        let hard = Err(PipelineRunError {
+            cause: PipelineError::ScopeReviewRequiredHeadless,
+            total_cost_usd: 0.0,
+        });
+        assert_eq!(
+            pipeline_session_status(&hard),
+            stella_store::SessionStatus::Error
+        );
     }
 
     #[test]
