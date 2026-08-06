@@ -166,4 +166,9 @@ if [ -n "$report" ]; then
 fi
 
 tracked=$(git ls-files "${RATCHET_PATHSPECS[@]}" | wc -l | tr -d ' ')
-echo "check-file-size: OK — $tracked Rust/Python/shell files, none over $LIMIT lines except $(grep -cv '^#' "$baseline") grandfathered (none grew)."
+# The verdict is already decided; the write is best-effort. SIGPIPE is ignored
+# and the write's failure discarded, so a reader that closed the pipe
+# (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
+grandfathered=$(grep -cv '^#' "$baseline")
+trap '' PIPE
+echo "check-file-size: OK — $tracked Rust/Python/shell files, none over $LIMIT lines except $grandfathered grandfathered (none grew)." || true
