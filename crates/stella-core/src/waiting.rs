@@ -159,10 +159,8 @@ pub fn decide(
     observed: Option<&str>,
     polls_used: u64,
 ) -> Option<WakeReason> {
-    if let Some(fingerprint) = observed {
-        if fingerprint != request.baseline {
-            return Some(WakeReason::Changed);
-        }
+    if observed.is_some_and(|fingerprint| fingerprint != request.baseline) {
+        return Some(WakeReason::Changed);
     }
     if polls_used >= request.max_polls() {
         return Some(WakeReason::DeadlineExpired);
