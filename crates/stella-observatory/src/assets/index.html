@@ -208,7 +208,7 @@ tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-vis
 .badge.warn{color:var(--warn);border-color:rgba(234,179,8,.42)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline-strong)}
 .badge.accent{color:var(--gold);border-color:var(--accent-edge)}
-/* fullauto: the run list is a control, so it says so on hover and keeps a
+/* self-driving: the run list is a control, so it says so on hover and keeps a
    visible selection — the detail panes beside it are meaningless without
    knowing which row produced them. */
 #fa-runs tbody tr{cursor:pointer}
@@ -363,7 +363,7 @@ footer b{color:var(--text-2);font-weight:600}
       <button role="tab" id="tab-mcp" aria-controls="panel-mcp" data-tab="mcp">MCP</button>
       <button role="tab" id="tab-memory" aria-controls="panel-memory" data-tab="memory">Memory &amp; rules</button>
       <button role="tab" id="tab-improve" aria-controls="panel-improve" data-tab="improve">Self-improve</button>
-      <button role="tab" id="tab-fullauto" aria-controls="panel-fullauto" data-tab="fullauto">Fullauto</button>
+      <button role="tab" id="tab-self-driving" aria-controls="panel-self-driving" data-tab="self-driving">Self-Driving</button>
       <button role="tab" id="tab-hub" aria-controls="panel-hub" data-tab="hub">Org / hub</button>
       <button role="tab" id="tab-config" aria-controls="panel-config" data-tab="config">Config</button>
     </div>
@@ -603,8 +603,8 @@ footer b{color:var(--text-2);font-weight:600}
   </section>
 
   <!-- ══ CONFIG ════════════════════════════════════════════════════════ -->
-  <!-- ══ FULLAUTO ══════════════════════════════════════════════════════ -->
-  <section data-tab="fullauto" id="panel-fullauto" role="tabpanel" aria-labelledby="tab-fullauto" tabindex="0">
+  <!-- ══ SELF_DRIVING ══════════════════════════════════════════════════════ -->
+  <section data-tab="self-driving" id="panel-self-driving" role="tabpanel" aria-labelledby="tab-self-driving" tabindex="0">
     <div class="grid kpis" id="fa-kpis"></div>
     <div class="grid cols-2">
       <div class="card">
@@ -736,10 +736,10 @@ function showTip(ev, html) {
 function hideTip() { tip.style.display = "none"; }
 
 /* ── state ───────────────────────────────────────────────────────────── */
-// `faRun` is the fullauto run currently drilled into; it survives the 5s
+// `sdRun` is the self-driving run currently drilled into; it survives the 5s
 // refresh so a live run's detail does not jump back to the top of the list
 // underneath the reader every five seconds.
-const state = { project: "", tf: "all", tab: "overview", faRun: null };
+const state = { project: "", tf: "all", tab: "overview", sdRun: null };
 // Hub drill scope: null = not selected. `(local)` selects the NULL/unregistered
 // bucket the backend understands. Deepest set field picks the drill level.
 const hub = { org: null, workspace: null, repo: null };
@@ -2236,7 +2236,7 @@ $("hubDrill").addEventListener("click", (ev) => {
   else if (level === "project") { state.project = r.key; renderProjects(D.projects); switchTab("overview"); }
 });
 
-/* ── fullauto: the perpetual delivery loop ───────────────────────────── */
+/* ── self-driving: the perpetual delivery loop ───────────────────────────── */
 /* A run has four states and they are not interchangeable. `crashed` is never
    written by the loop — it is resolved by the reader when a run that claims to
    be running has no live heartbeat, because the process that would have
@@ -2253,7 +2253,7 @@ const faBadge = (s) => {
 };
 const faDash = (v) => (v === "" || v == null ? "—" : esc(v));
 
-function renderFullauto(d) {
+function renderSelfDriving(d) {
   const runs = d?.runs ?? [], loops = d?.loops ?? [], t = d?.totals ?? {};
   const cycles = loops.reduce((a, l) => a + num(l.total_cycles), 0);
   const fixed = runs.reduce((a, r) => a + num(r.fixed), 0);
@@ -2281,8 +2281,8 @@ function renderFullauto(d) {
       <td class="num">${fmtInt(r.new_findings)}</td>
       <td>${agoUnix(r.started_unix)}</td></tr>`).join("")}
     </tbody></table>`
-    : `<div class="empty">No fullauto runs on this machine yet.<br>
-       Start one with <code>scripts/fullauto.sh daemon start</code>.</div>`;
+    : `<div class="empty">No self-driving runs on this machine yet.<br>
+       Start one with <code>scripts/self-driving.sh daemon start</code>.</div>`;
 
   $("fa-loops").innerHTML = loops.length ? `<table><thead><tr>
       <th>Loop</th><th>Aperture</th><th class="num">Cycles</th><th class="num">Seen</th>
@@ -2299,20 +2299,20 @@ function renderFullauto(d) {
 
   // Keep the selection across refreshes; a run that has since disappeared
   // clears it rather than leaving stale detail beside a list that lost it.
-  if (state.faRun && runs.some(r => r.run_id === state.faRun)) {
-    openFullautoRun(state.faRun, true);
+  if (state.sdRun && runs.some(r => r.run_id === state.sdRun)) {
+    openSelfDrivingRun(state.sdRun, true);
   } else if (runs.length) {
-    openFullautoRun(runs[0].run_id);
+    openSelfDrivingRun(runs[0].run_id);
   }
 }
 
-async function openFullautoRun(id, quiet) {
-  state.faRun = id;
+async function openSelfDrivingRun(id, quiet) {
+  state.sdRun = id;
   [...document.querySelectorAll("#fa-runs tbody tr")].forEach(tr =>
     tr.classList.toggle("sel", tr.dataset.run === id));
   let d;
   try {
-    d = await api("/api/fullauto-run?id=" + encodeURIComponent(id));
+    d = await api("/api/self-driving-run?id=" + encodeURIComponent(id));
   } catch (e) {
     if (!quiet) fail("Could not load that run.", e);
     return;
@@ -2379,12 +2379,12 @@ async function openFullautoRun(id, quiet) {
     ${sigs.length
       ? sigs.map(s => `<div class="fa-sig"><b>${esc(s.code)}</b> — ${esc(s.text)}</div>`).join("")
       : `<div class="fa-sig">No pathologies detected — nothing for
-         <code>/fullauto:evolve</code> to act on.</div>`}`;
+         <code>/self-driving:evolve</code> to act on.</div>`}`;
 }
 
 $("fa-runs").addEventListener("click", (ev) => {
   const tr = ev.target.closest("tr[data-run]");
-  if (tr) openFullautoRun(tr.dataset.run);
+  if (tr) openSelfDrivingRun(tr.dataset.run);
 });
 
 /* ── tabs, lazy loads, refresh loop ──────────────────────────────────── */
@@ -2416,11 +2416,11 @@ async function loadTab(tab, force) {
       lazyCache[`skills:${state.project}`] = data;
       lazyCache[key] = data;
       renderImprove(data ?? []);
-    } else if (tab === "fullauto") {
+    } else if (tab === "self-driving") {
       // Never cached: a running loop's phase and heartbeat are the point, and a
       // cached "● running, 3s ago" that is actually twenty minutes old would be
       // worse than no panel at all.
-      renderFullauto(await api("/api/fullauto") ?? {});
+      renderSelfDriving(await api("/api/self-driving") ?? {});
     } else if (tab === "config") {
       const data = cached ?? await api("/api/config");
       lazyCache[key] = data;
@@ -2546,9 +2546,9 @@ async function refresh() {
     renderFiles(files ?? []); renderMemory(memory ?? {}); renderFleetMcp(fleet ?? [], mcp ?? []);
     renderExecutions(); renderActivity();
     if (state.tab === "improve") renderImprove(lazyCache[`skills:${state.project}`] ?? []);
-    // A live cycle moves between phases in seconds; the fullauto tab is only
+    // A live cycle moves between phases in seconds; the self-driving tab is only
     // honest if it re-reads on the same cadence as everything else.
-    if (state.tab === "fullauto") loadTab("fullauto", true);
+    if (state.tab === "self-driving") loadTab("self-driving", true);
     if (state.tab === "mcp") loadTab("mcp", false);
     ok();
   } catch (e) {

@@ -1,15 +1,15 @@
-//! End-to-end witness for `stella fullauto` (#1548): drive the real binary
-//! against a throwaway `FULLAUTO_STATE_DIR` and pin the contracts the
-//! `/fullauto` slash commands and `scripts/fullauto.sh` depend on — the
+//! End-to-end witness for `stella self-driving` (#1548): drive the real binary
+//! against a throwaway `SELF_DRIVING_STATE_DIR` and pin the contracts the
+//! `/self-driving` slash commands and `scripts/self-driving.sh` depend on — the
 //! digest bytes, the shell-evalable output shapes, the aperture advance, and
 //! the run lifecycle.
 //!
-//! The decision logic itself is covered in `stella-core::fullauto`; what only
+//! The decision logic itself is covered in `stella-core::self_driving`; what only
 //! a process can prove is that the command is reachable without a provider or
 //! API key, that the state files land where the observatory reads them, and
 //! that exit codes carry the verdicts (`watch` SLEEP is exit 1, not an
 //! error). `PATH` is cleared so the child can find no `gh` and no `git`:
-//! hermetic by construction, the same posture as `scripts/test-fullauto.sh`.
+//! hermetic by construction, the same posture as `scripts/test-self-driving.sh`.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -18,9 +18,9 @@ fn stella(workspace: &Path, state: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_stella"))
         .current_dir(workspace)
         .env_clear()
-        .env("FULLAUTO_STATE_DIR", state)
+        .env("SELF_DRIVING_STATE_DIR", state)
         .env("PATH", "")
-        .arg("fullauto")
+        .arg("self-driving")
         .args(args)
         .output()
         .expect("spawn stella")
@@ -32,7 +32,7 @@ fn stdout(out: &Output) -> String {
 
 /// The digest is a cross-implementation contract: the same bytes the shell
 /// pipeline (`tr | sed | shasum -a 256 | cut -c1-16`) wrote into every
-/// existing `seen.txt`. See the goldens in `stella-core::fullauto::tests`.
+/// existing `seen.txt`. See the goldens in `stella-core::self_driving::tests`.
 #[test]
 fn seen_digest_prints_the_shell_pipelines_bytes() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -117,16 +117,16 @@ fn plan_emits_the_evalable_decision_for_a_pinned_machine() {
     let out = Command::new(env!("CARGO_BIN_EXE_stella"))
         .current_dir(tmp.path())
         .env_clear()
-        .env("FULLAUTO_STATE_DIR", tmp.path().join("state"))
+        .env("SELF_DRIVING_STATE_DIR", tmp.path().join("state"))
         .env("PATH", "")
-        .env("FULLAUTO_PROBE_CPU", "8")
-        .env("FULLAUTO_PROBE_LOAD1", "1")
-        .env("FULLAUTO_PROBE_MEM_TOTAL_GB", "16")
-        .env("FULLAUTO_PROBE_MEM_FREE_GB", "8")
-        .env("FULLAUTO_PROBE_DISK_FREE_GB", "50")
-        .env("FULLAUTO_PROBE_ON_BATTERY", "0")
-        .env("FULLAUTO_PROBE_CONTENTION", "0")
-        .args(["fullauto", "plan"])
+        .env("SELF_DRIVING_PROBE_CPU", "8")
+        .env("SELF_DRIVING_PROBE_LOAD1", "1")
+        .env("SELF_DRIVING_PROBE_MEM_TOTAL_GB", "16")
+        .env("SELF_DRIVING_PROBE_MEM_FREE_GB", "8")
+        .env("SELF_DRIVING_PROBE_DISK_FREE_GB", "50")
+        .env("SELF_DRIVING_PROBE_ON_BATTERY", "0")
+        .env("SELF_DRIVING_PROBE_CONTENTION", "0")
+        .args(["self-driving", "plan"])
         .output()
         .expect("spawn stella");
     assert!(
@@ -136,14 +136,14 @@ fn plan_emits_the_evalable_decision_for_a_pinned_machine() {
     );
     let text = stdout(&out);
     for expected in [
-        "FULLAUTO_TIER=normal",
-        "FULLAUTO_BATCH=20",
-        "FULLAUTO_PARALLEL=2",
-        "FULLAUTO_LOCAL_BUILD=1",
-        "FULLAUTO_SCOPE=impacted",
-        "FULLAUTO_AUDIT=deep",
-        "FULLAUTO_BENCH=loop",
-        "FULLAUTO_APERTURE=rubric",
+        "SELF_DRIVING_TIER=normal",
+        "SELF_DRIVING_BATCH=20",
+        "SELF_DRIVING_PARALLEL=2",
+        "SELF_DRIVING_LOCAL_BUILD=1",
+        "SELF_DRIVING_SCOPE=impacted",
+        "SELF_DRIVING_AUDIT=deep",
+        "SELF_DRIVING_BENCH=loop",
+        "SELF_DRIVING_APERTURE=rubric",
     ] {
         assert!(
             text.lines().any(|l| l == expected),
@@ -162,7 +162,7 @@ fn a_run_starts_running_and_ends_with_its_terminal_status() {
     let start = stella(tmp.path(), &state, &["run", "start"]);
     assert!(start.status.success());
     assert!(
-        stdout(&start).contains("FULLAUTO_RUN_ID=r-"),
+        stdout(&start).contains("SELF_DRIVING_RUN_ID=r-"),
         "the driver needs the run id on stdout:\n{}",
         stdout(&start)
     );

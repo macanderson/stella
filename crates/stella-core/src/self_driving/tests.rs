@@ -1,5 +1,5 @@
-//! Witness tests for the deterministic half of fullauto (#1548), ported from
-//! `scripts/test-fullauto.sh` so the Rust implementation answers to the same
+//! Witness tests for the deterministic half of self-driving (#1548), ported from
+//! `scripts/test-self-driving.sh` so the Rust implementation answers to the same
 //! contract the shell driver did — plus the properties only a generator can
 //! sweep. The failure modes here are SILENT and PERMANENT: a digest that
 //! over-normalizes merges two defects and the second is never filed; a
@@ -282,7 +282,7 @@ proptest! {
 // ---------------------------------------------------------------------------
 //
 // One assertion shape for the whole ladder, ported case-for-case from
-// scripts/test-fullauto.sh: pin a healthy 8-core / 16 GiB / 50 GiB baseline,
+// scripts/test-self-driving.sh: pin a healthy 8-core / 16 GiB / 50 GiB baseline,
 // apply one case's overrides, and compare the WHOLE decision tuple exactly —
 // "light with the build still on" and "light with the build forbidden" are
 // different decisions, and a single-field check lets one impersonate the

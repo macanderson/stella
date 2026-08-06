@@ -46,7 +46,7 @@
 //!
 //! # The three bugs this inherits rather than rediscovers
 //!
-//! `scripts/fullauto.sh` has supervised its own cycles for long enough to pay
+//! `scripts/self-driving.sh` has supervised its own cycles for long enough to pay
 //! for three, and each one is load-bearing here:
 //!
 //! 1. **The child must lead its own process group**, or stopping the
@@ -134,7 +134,7 @@ pub(crate) const SUPERVISED_ENV: &str = "STELLA_SUPERVISED";
 /// will wait: `SIGTERM` reaches the engine's own handler, which unwinds the
 /// turn's RAII guards — reaping tool process groups, releasing fleet claims,
 /// removing shadow worktrees — and only then writes the terminal status. The
-/// value comes from `scripts/fullauto.sh`, where a shorter one was measured
+/// value comes from `scripts/self-driving.sh`, where a shorter one was measured
 /// killing the handler mid-flight and recording hand-stopped runs as crashes.
 const STOP_GRACE: Duration = Duration::from_secs(8);
 

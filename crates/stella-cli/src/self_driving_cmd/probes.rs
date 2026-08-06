@@ -1,9 +1,9 @@
-//! Resource probes for the fullauto governor — cross-platform, best-effort,
+//! Resource probes for the self-driving governor — cross-platform, best-effort,
 //! never fatal. Every probe returns a NUMBER and degrades to a conservative
 //! value rather than failing: a governor that dies because `pmset` is missing
 //! is worse than one that assumes mains power.
 //!
-//! And every probe yields to a `FULLAUTO_PROBE_*` override before touching
+//! And every probe yields to a `SELF_DRIVING_PROBE_*` override before touching
 //! the machine, for two consumers. The hermetic test suites (Rust and shell)
 //! have to drive the tier ladder on whatever box CI hands them. And an
 //! operator on a box where a probe reads the wrong machine (a container
@@ -14,7 +14,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use stella_core::fullauto::Supply;
+use stella_core::self_driving::Supply;
 
 fn env_override(name: &str) -> Option<u64> {
     std::env::var(name).ok().and_then(|v| v.trim().parse().ok())
@@ -28,7 +28,7 @@ fn run(cmd: &str, args: &[&str]) -> Option<String> {
 }
 
 fn cpu_total() -> u32 {
-    if let Some(v) = env_override("FULLAUTO_PROBE_CPU") {
+    if let Some(v) = env_override("SELF_DRIVING_PROBE_CPU") {
         return v as u32;
     }
     std::thread::available_parallelism()
@@ -39,7 +39,7 @@ fn cpu_total() -> u32 {
 /// Integer part of the 1-minute load average; the governor compares
 /// magnitudes, not decimals.
 fn load1() -> u32 {
-    if let Some(v) = env_override("FULLAUTO_PROBE_LOAD1") {
+    if let Some(v) = env_override("SELF_DRIVING_PROBE_LOAD1") {
         return v as u32;
     }
     if let Ok(text) = std::fs::read_to_string("/proc/loadavg") {
@@ -68,7 +68,7 @@ fn parse_leading_int(text: &str) -> u32 {
 }
 
 fn mem_total_gb() -> u64 {
-    if let Some(v) = env_override("FULLAUTO_PROBE_MEM_TOTAL_GB") {
+    if let Some(v) = env_override("SELF_DRIVING_PROBE_MEM_TOTAL_GB") {
         return v;
     }
     if let Some(kb) = meminfo_kb("MemTotal:") {
@@ -81,7 +81,7 @@ fn mem_total_gb() -> u64 {
 }
 
 fn mem_free_gb() -> u64 {
-    if let Some(v) = env_override("FULLAUTO_PROBE_MEM_FREE_GB") {
+    if let Some(v) = env_override("SELF_DRIVING_PROBE_MEM_FREE_GB") {
         return v;
     }
     if let Some(kb) = meminfo_kb("MemAvailable:") {
@@ -123,7 +123,7 @@ fn meminfo_kb(key: &str) -> Option<u64> {
 }
 
 fn disk_free_gb(root: &Path) -> u64 {
-    if let Some(v) = env_override("FULLAUTO_PROBE_DISK_FREE_GB") {
+    if let Some(v) = env_override("SELF_DRIVING_PROBE_DISK_FREE_GB") {
         return v;
     }
     // -P forces POSIX single-line output; without it a long device name
@@ -138,7 +138,7 @@ fn disk_free_gb(root: &Path) -> u64 {
 }
 
 fn on_battery() -> bool {
-    if let Some(v) = env_override("FULLAUTO_PROBE_ON_BATTERY") {
+    if let Some(v) = env_override("SELF_DRIVING_PROBE_ON_BATTERY") {
         return v != 0;
     }
     run("pmset", &["-g", "batt"])
@@ -155,7 +155,7 @@ fn on_battery() -> bool {
 /// benchmark ends, a failure that is permanent, silent, and looks like
 /// caution.
 fn contention() -> bool {
-    if let Some(v) = env_override("FULLAUTO_PROBE_CONTENTION") {
+    if let Some(v) = env_override("SELF_DRIVING_PROBE_CONTENTION") {
         return v != 0;
     }
     let hits = run("pgrep", &["-fl", "arenabench|harbor|cargo|docker"])
