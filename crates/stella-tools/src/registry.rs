@@ -2169,13 +2169,13 @@ impl ToolExecutor for ToolRegistry {
             .filter(|(_, tool)| tool.parallel_safe())
             .map(|(name, _)| name.clone())
             .collect();
-        if let Ok(late) = self.late_tools.read() {
-            names.extend(
-                late.iter()
-                    .filter(|(_, tool)| tool.parallel_safe())
-                    .map(|(name, _)| name.clone()),
-            );
-        }
+        // Poison-tolerant like every sibling `late_tools` read path.
+        let late = self.late_tools.read().unwrap_or_else(|p| p.into_inner());
+        names.extend(
+            late.iter()
+                .filter(|(_, tool)| tool.parallel_safe())
+                .map(|(name, _)| name.clone()),
+        );
         names
     }
 }

@@ -88,7 +88,7 @@ use stella_pipeline::{
 };
 use stella_protocol::{
     AgentEvent, CiStatus, CompletionMessage, CompletionRequest, ModelRef, PrStatus, TaskItem,
-    ToolOutput, ToolSchema,
+    ToolOutput,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -118,6 +118,7 @@ mod scope_gate;
 mod session_clear;
 mod sessions_view;
 mod settle;
+mod task_tap;
 mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -126,6 +127,7 @@ use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::spawn_forwarder;
 use scope_gate::DeckApprovalGate;
 use sessions_view::sessions_inbound;
+use task_tap::TaskTap;
 
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
@@ -4631,52 +4633,6 @@ impl AskUserIo for DeckAskUserIo {
             Some(i) => Ok((i + 1).to_string()),
             None => Ok(answer),
         }
-    }
-}
-
-/// Mirrors the task board into the event stream: after any `task_*` tool
-/// call the FULL board snapshot rides the turn's channel as
-/// `AgentEvent::TaskUpdate` — persisted by the forwarder, so replay shows
-/// the checklist exactly as it moved — and `task_assign`'s spawn requests
-/// are handed to the driver's supervisor channel. `supervisor: None` is the
-/// worker configuration (v1 delegation runs from the lead only; a worker's
-/// stranded requests are reported on its lane by `crate::subsession`).
-pub(crate) struct TaskTap<'a> {
-    pub(crate) inner: &'a dyn ToolExecutor,
-    pub(crate) events: UnboundedSender<AgentEvent>,
-    pub(crate) registry: &'a ToolRegistry,
-    pub(crate) supervisor: Option<UnboundedSender<SupervisorMsg>>,
-}
-
-#[async_trait]
-impl ToolExecutor for TaskTap<'_> {
-    fn schemas(&self) -> Vec<ToolSchema> {
-        self.inner.schemas()
-    }
-
-    async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        let output = self.inner.execute(name, input).await;
-        if name.starts_with("task_") {
-            let tasks: Vec<TaskItem> = {
-                let board = self.registry.task_board();
-                let guard = board.lock().unwrap_or_else(|p| p.into_inner());
-                guard.items().to_vec()
-            };
-            let _ = self.events.send(AgentEvent::TaskUpdate { tasks });
-            if let Some(sup) = &self.supervisor {
-                for request in self.registry.take_spawn_requests() {
-                    let _ = sup.send(SupervisorMsg::SpawnTask(request));
-                }
-            }
-        }
-        output
-    }
-
-    /// Forwarded: this is a decorator, and a decorator that let the default
-    /// `0.0` stand would silently drop sub-agent spend out of the parent's
-    /// budget (see the port's contract).
-    fn drain_sub_agent_spend_usd(&self) -> f64 {
-        self.inner.drain_sub_agent_spend_usd()
     }
 }
 

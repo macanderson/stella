@@ -102,6 +102,16 @@ impl ToolExecutor for PolicyToolSet<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.get().drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded minus what the policy withholds. Letting the empty default
+    /// stand would silently serialize the inner executor's sibling spawns —
+    /// but blindly delegating would advertise names `execute` above refuses,
+    /// an empty promise. Same two-sided shape as `schemas`/`execute`.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        let mut names = self.inner.get().parallel_safe_names();
+        names.retain(|name| self.policy.allows(name));
+        names
+    }
 }
 
 /// Which `"tools"` key withheld `name` — the exact name, its group, or the
@@ -160,6 +170,9 @@ mod tests {
             ToolOutput::Ok {
                 content: format!("ran {name}"),
             }
+        }
+        fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+            std::collections::HashSet::from(["task".to_string()])
         }
     }
 
@@ -256,6 +269,32 @@ mod tests {
         assert_eq!(
             disabled_by(&policy, "start_process").as_deref(),
             Some("process")
+        );
+    }
+
+    /// The concurrency claim survives the decorator when the policy allows
+    /// the tool — a set that forgot to forward would silently serialize
+    /// sibling spawns in every real session (the default is empty).
+    #[test]
+    fn parallel_safe_names_are_forwarded_when_the_policy_allows() {
+        let fake = Fake;
+        let set = PolicyToolSet::new(&fake, ToolPolicy::allow_all());
+        assert!(
+            set.parallel_safe_names().contains("task"),
+            "the inner executor's claim must survive the policy layer"
+        );
+    }
+
+    /// The other half of the two-sided shape: a tool the policy withholds is
+    /// refused by `execute`, so advertising it as parallel-safe would claim
+    /// concurrency for a call this decorator will never run.
+    #[test]
+    fn a_disabled_tool_is_not_advertised_as_parallel_safe() {
+        let fake = Fake;
+        let set = PolicyToolSet::new(&fake, ToolPolicy::from_switches([("task".into(), false)]));
+        assert!(
+            set.parallel_safe_names().is_empty(),
+            "a withheld tool must not be advertised as parallel-safe"
         );
     }
 
