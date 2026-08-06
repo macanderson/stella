@@ -517,9 +517,8 @@ mod tests {
     /// The #1616 witness: with `approval_wait_secs` armed, a review nobody
     /// answers unparks itself as an abort instead of waiting forever — and it
     /// hands the record back rather than leaving it stuck on `Needs Input`.
-    /// On `main` a gate has no deadline to arm (`with_deadline` does not
-    /// exist),
-    /// so this is a type-level witness as well as a behavioural one.
+    /// Before #1616 a gate had no deadline to arm (`with_wait` did not
+    /// exist), so this is a type-level witness as well as a behavioural one.
     #[tokio::test]
     async fn an_expired_deadline_unparks_an_unanswered_review_as_an_abort() {
         let dir = tempfile::tempdir().unwrap();
