@@ -356,6 +356,14 @@ impl ToolExecutor for ClaimTap<'_> {
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.inner.drain_wait_request()
     }
+
+    /// Forwarded: letting the empty default stand would silently serialize the
+    /// inner executor's sibling spawns (see the port's contract). The spawn
+    /// tool names no mutating path and no transient lane, so concurrent
+    /// siblings pass through `execute` above without touching a claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
 }
 
 #[cfg(test)]
