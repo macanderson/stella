@@ -692,15 +692,12 @@ impl Tail {
         Ok(Self { file, offset: 0 })
     }
 
-    /// Skip whatever is already there — for a reader that only wants what
-    /// happens from now on.
-    fn seek_to_end(&mut self) -> Result<(), String> {
-        self.offset = self
-            .file
-            .seek(SeekFrom::End(0))
-            .map_err(|e| format!("cannot seek the console: {e}"))?;
-        Ok(())
-    }
+    // There is deliberately no `seek_to_end` here, for the same reason
+    // `console::Follower` carries no `skip_to_now`: that pair was the only
+    // caller, and #1632 removed it as a defect — seeking past everything
+    // already written threw away the run's shutdown output, which on the
+    // Ctrl-C path is precisely what the person who pressed the key is
+    // waiting to read.
 
     /// Start `lines` lines back from the end, or at the beginning if the file
     /// is shorter than that.
@@ -944,16 +941,8 @@ fn inherited_lock_fd(lock_path: &Path) -> Option<i32> {
         });
         let Ok(stat) = probe.metadata() else {
             continue;
-        }
-        // SAFETY: `fstat` returned success, so it initialized the struct.
-        let stat = unsafe { stat.assume_init() };
-        // `dev_t` is `u64` on Linux — where this cast is the identity the
-        // lint objects to — and `i32` on macOS, where `as` sign-extends
-        // exactly like std's own `MetadataExt::dev`, keeping both sides of
-        // the comparison in one convention on every platform.
-        #[allow(clippy::unnecessary_cast)]
-        let dev = stat.st_dev as u64;
-        if dev == lock.dev() && stat.st_ino == lock.ino() {
+        };
+        if stat.dev() == lock.dev() && stat.ino() == lock.ino() {
             return Some(fd);
         }
     }
