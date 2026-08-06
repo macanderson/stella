@@ -1524,38 +1524,19 @@ pub async fn run_deck_session(
         );
         if let Some((_, id)) = &execution {
             last_execution_id = Some(*id);
-            // Tell memory which execution it is reflecting on, before the turn
-            // runs. The post-turn self-review is stored 1:1 with an execution,
-            // so a loop that cannot name the row writes nothing — which is why
-            // `self_rating` was NULL on every reflection row this deck ever
-            // recorded, and the Observatory's self-improve panels sat empty.
-            if let Some(m) = &mut memory {
-                m.set_execution_id(*id);
-            }
         }
+        // The shared execution seam (#1872): stamp the execution onto memory
+        // (the post-turn self-review is stored 1:1 with it) and record this
+        // turn's skill-version usage — the same seam every headless path hits,
+        // so the deck no longer carries a private copy of the recorder.
+        agent::stamp_and_record_skill_usage(
+            &execution,
+            memory.as_mut(),
+            &prompt,
+            &cfg.workspace_root,
+        );
         let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
-
-        // Skill-version usage telemetry: record which skills recall selected for
-        // this turn, at their pinned version, keyed to this execution. Recorded
-        // at turn start (the skills are injected regardless of how the turn
-        // ends); best-effort, and only for the deck path for now — the other
-        // `record_execution_end` sites can adopt it later.
-        if let (Some((store, id)), Some(m)) = (&execution, &memory) {
-            let selected = m.selected_skills(&prompt);
-            if !selected.is_empty() {
-                let versions = crate::skill_manager::pinned_versions(&cfg.workspace_root);
-                let rows: Vec<stella_store::SkillUsageRow> = selected
-                    .into_iter()
-                    .map(|(skill, reason)| stella_store::SkillUsageRow {
-                        version: versions.get(&skill).copied().unwrap_or(1),
-                        skill,
-                        reason,
-                    })
-                    .collect();
-                let _ = store.record_skill_usage(*id, &rows);
-            }
-        }
 
         // Resolve the turn's tool executor from the MCP slot at dispatch:
         // connected servers join the session the moment the background

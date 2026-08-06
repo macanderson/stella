@@ -418,16 +418,15 @@ pub(crate) async fn run_goal_turn(
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall necessarily precedes the channel it would be emitted on.
     recall_event: Option<AgentEvent>,
-    // The caller's session memory, so this round's execution id is stamped
-    // before the turn runs — reflection stores the self-review 1:1 with an
-    // execution, and an unstamped round files an id-less row.
+    // The caller's session memory, so the execution seam can stamp this
+    // round's execution id and record its skill-version usage before the turn
+    // runs — reflection stores the self-review 1:1 with an execution, and an
+    // unstamped round files an id-less row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
-        m.set_execution_id(*id);
-    }
+    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
     let files_before = registry.files_touched().len();
 
     // Route the VERIFIER role. `Some` only when a distinct-family verifier was
@@ -585,18 +584,22 @@ async fn run_goal_pipeline_turn(
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller.
     recall_event: Option<AgentEvent>,
-    // Same contract as `run_goal_turn`: stamp the execution id into the
-    // caller's memory before the turn runs, so reflection can name its row.
+    // Same contract as `run_goal_turn`: the execution seam stamps the id into
+    // the caller's memory and records this round's skill-version usage before
+    // the turn runs, so reflection can name its row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
-    // Rebound mutable and NOT consumed by the id stamp, so the same memory
-    // can double as the pipeline's recall port below.
+    // Rebound mutable and NOT consumed by the seam, so the same memory can
+    // double as the pipeline's recall port below.
     let mut session_memory = session_memory;
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory.as_deref_mut()) {
-        m.set_execution_id(*id);
-    }
+    stamp_and_record_skill_usage(
+        &execution,
+        session_memory.as_deref_mut(),
+        goal,
+        &cfg.workspace_root,
+    );
     let files_before = registry.files_touched().len();
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 

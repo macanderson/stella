@@ -394,6 +394,34 @@ async fn ab_control_suppresses_skills_before_any_recall_section_is_built() {
     );
 }
 
+/// The usage report must mirror the injection channels it describes: a
+/// control turn injects no skills (the test above), so `selected_skills` —
+/// the source of every `skill_usage` telemetry row — must report none either,
+/// or the appraisal signal counts skills the model never saw.
+#[test]
+fn a_control_turn_reports_no_selected_skills() {
+    let dir = tempfile::tempdir().unwrap();
+    let skill_dir = dir.path().join(".stella/skills/reviewer");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: reviewer\ndescription: database review\n---\nALWAYS_REVIEW_DATABASES",
+    )
+    .unwrap();
+    let mut memory =
+        SessionMemory::open_with_workspace_skills(dir.path(), false, true).expect("session memory");
+    assert!(
+        !memory.selected_skills("review the database").is_empty(),
+        "the fixture skill is selected on an armed turn"
+    );
+
+    memory.ab_suppressed = true;
+    assert!(
+        memory.selected_skills("review the database").is_empty(),
+        "a control turn reports exactly what it injected: nothing"
+    );
+}
+
 /// The frames-free block for pipeline-driven turns: skills and the record
 /// channel ride, recalled frames do not — those are the pipeline recall
 /// port's job, and rendering them here too is the double-recall/double-bill
