@@ -183,10 +183,13 @@ pub struct RoleCallOverrides {
     pub params: Option<stella_protocol::GenerationParams>,
 }
 
-/// The pipeline's per-role override set. Worker (and plan/witness, which
-/// ride the worker's tier) is configured through
-/// [`PipelineConfig::engine`] directly; only the two roles with their own
-/// models get their own request shaping.
+/// The pipeline's per-role override set. Worker (and plan, which rides the
+/// worker's tier) is configured through [`PipelineConfig::engine`] directly;
+/// only the two roles with their own models get their own request shaping.
+/// The witness author/repair engines ride the verifier's model, so they take
+/// the `verifier` row's shaping too (#1785) — everything except `prompt`,
+/// which stays scoped to the raw verdict/guidance calls
+/// (`Pipeline::witness_engine_config` says why).
 #[derive(Debug, Clone, Default)]
 pub struct PipelineRoleOverrides {
     pub triage: RoleCallOverrides,

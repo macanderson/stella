@@ -543,6 +543,45 @@ mod tests {
         assert!(root.path().join("tests/real_witness.rs").exists());
     }
 
+    /// #1784's witness: the operator's tool policy governs the witness
+    /// author's reads exactly as it governs the worker's. The executor takes
+    /// whatever read surface it is handed — the candidate workspace hands it
+    /// the policy-wrapped one — so a `read_file: off` switch removes both
+    /// the schema and the dispatch here, not just on the worker path.
+    #[tokio::test]
+    async fn the_tool_policy_reaches_the_witness_authors_reads() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("tests")).unwrap();
+        std::fs::write(root.path().join("src.rs"), "source").unwrap();
+        let registry: Arc<dyn ToolExecutor> = Arc::new(
+            ToolRegistry::new_detected(root.path().to_path_buf(), RegistryOptions::default())
+                .await,
+        );
+        let policied: Arc<dyn ToolExecutor> = Arc::new(crate::agent::PolicyToolSet::new_owned(
+            registry,
+            stella_tools::policy::ToolPolicy::from_switches([("read_file".to_string(), false)]),
+        ));
+        let tools = WitnessToolExecutor::new(root.path().to_path_buf(), policied);
+
+        let names: Vec<_> = tools
+            .schemas()
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec!["create_witness_test"],
+            "a switched-off read_file must not be offered to the author"
+        );
+        assert!(
+            tools
+                .execute("read_file", &serde_json::json!({"path": "src.rs"}))
+                .await
+                .is_error(),
+            "and must not execute either"
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn refuses_a_terminal_symlink() {

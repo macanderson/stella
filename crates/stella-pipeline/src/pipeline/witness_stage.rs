@@ -33,6 +33,30 @@ async fn runner_availability(tests: &dyn TestRunner) -> Vec<String> {
         .collect()
 }
 
+/// Overlay one role's request shaping onto an engine config — the pure half
+/// of [`Pipeline::witness_engine_config`], so the field-by-field flow is
+/// testable without a pipeline. Only the knobs `EngineConfig` itself carries
+/// participate; `RoleCallOverrides::prompt` is a raw-call concern and is
+/// deliberately absent (see the caller's doc for why).
+fn apply_role_shaping(mut config: EngineConfig, overrides: &RoleCallOverrides) -> EngineConfig {
+    if let Some(effort) = overrides.effort {
+        config.effort = Some(effort);
+    }
+    if let Some(reasoning) = overrides.reasoning {
+        config.reasoning = Some(reasoning);
+    }
+    if let Some(temperature) = overrides.temperature {
+        config.temperature = Some(temperature);
+    }
+    if let Some(max_output_tokens) = overrides.max_output_tokens {
+        config.max_output_tokens = Some(max_output_tokens);
+    }
+    if let Some(params) = &overrides.params {
+        config.params = Some(params.clone());
+    }
+    config
+}
+
 /// Candidate-bound hook execution: both the hook process and the engine's
 /// payload use the isolated root, never the session root.
 pub(super) struct BoundHookRunner<'a> {
@@ -136,6 +160,27 @@ impl<'a> Pipeline<'a> {
         });
     }
 
+    /// The witness author/repair engine tuning (#1785): the worker's engine
+    /// config rebased into the authoring snapshot, with the VERIFIER's
+    /// request shaping applied on top. The witness author rides the
+    /// verifier's model (`Role::Verifier`, independence-filtered), so an
+    /// operator tuning `agents.verifier.effort` or `.temperature` reasonably
+    /// expects the witness author to honor it — before this, those knobs
+    /// reached the verdict and guidance calls while the author silently ran
+    /// on the worker's tuning.
+    ///
+    /// `RoleCallOverrides::prompt` is deliberately NOT applied here: it is
+    /// operator prose written against the reviewer instructions, and
+    /// injecting it into a test-authoring engine would steer the wrong role.
+    /// It stays scoped to the raw verdict/guidance calls
+    /// (`metered_raw_call`).
+    pub(super) fn witness_engine_config(&self, surface: CandidateSurface<'_>) -> EngineConfig {
+        apply_role_shaping(
+            self.engine_config_for(surface),
+            &self.config.role_overrides.verifier,
+        )
+    }
+
     pub(super) fn engine_config_for(&self, surface: CandidateSurface<'_>) -> EngineConfig {
         let mut config = self.config.engine.clone();
         if let Some(cwd) = surface.cwd {
@@ -227,7 +272,7 @@ impl<'a> Pipeline<'a> {
         let mut engine = Engine::with_sleeper(
             author.provider,
             witness_tools,
-            self.engine_config_for(baseline),
+            self.witness_engine_config(baseline),
             self.sleeper,
         )
         .with_call_role(stella_protocol::ModelCallRole::WitnessAuthor);
@@ -335,7 +380,7 @@ impl<'a> Pipeline<'a> {
             let mut repair_engine = Engine::with_sleeper(
                 author.provider,
                 witness_tools,
-                self.engine_config_for(baseline),
+                self.witness_engine_config(baseline),
                 self.sleeper,
             )
             .with_call_role(stella_protocol::ModelCallRole::WitnessRepair);
@@ -587,5 +632,42 @@ impl<'a> Pipeline<'a> {
         }
         state.witness_paths = witness.files.keys().cloned().collect();
         Ok(Some(witness))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #1785's witness: the verifier's request shaping reaches the witness
+    /// engines field by field, `None` overrides leave the worker's values
+    /// standing, and `prompt` has no channel here at all (it is not an
+    /// `EngineConfig` knob — the type system keeps it raw-call-scoped).
+    #[test]
+    fn verifier_shaping_overlays_the_worker_engine_config() {
+        let mut worker = EngineConfig::default();
+        worker.temperature = Some(0.7);
+        worker.max_output_tokens = Some(1000);
+        worker.effort = None;
+
+        let shaped = apply_role_shaping(
+            worker.clone(),
+            &RoleCallOverrides {
+                temperature: Some(0.1),
+                effort: Some(stella_protocol::ReasoningEffort::High),
+                ..RoleCallOverrides::default()
+            },
+        );
+        assert_eq!(shaped.temperature, Some(0.1));
+        assert_eq!(shaped.effort, Some(stella_protocol::ReasoningEffort::High));
+        assert_eq!(
+            shaped.max_output_tokens,
+            Some(1000),
+            "an absent override must leave the worker's value standing"
+        );
+
+        let untouched = apply_role_shaping(worker.clone(), &RoleCallOverrides::default());
+        assert_eq!(untouched.temperature, worker.temperature);
+        assert_eq!(untouched.max_output_tokens, worker.max_output_tokens);
     }
 }

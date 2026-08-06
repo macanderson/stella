@@ -385,7 +385,16 @@ impl GitCandidateWorkspaces {
                 // (the workspace outlives every borrow). Custom tools re-root
                 // to `ws_root`, so their subprocesses run in the shadow.
                 let registry: Arc<dyn stella_core::ToolExecutor> = Arc::new(registry);
-                let witness_tools = WitnessToolExecutor::new(ws_root.clone(), registry.clone());
+                // The witness author's reads honor the operator's tool policy
+                // exactly like the worker's do (#1784): before this wrap, a
+                // `"tools": {"read_file": "off"}` switch reached every worker
+                // surface while the witness author kept reading through the
+                // raw registry — an unstated exemption from a setting that
+                // claims to govern the session's whole tool stack.
+                let witness_reads: Arc<dyn stella_core::ToolExecutor> = Arc::new(
+                    crate::agent::PolicyToolSet::new_owned(registry.clone(), self.policy.clone()),
+                );
+                let witness_tools = WitnessToolExecutor::new(ws_root.clone(), witness_reads);
                 let native =
                     CustomToolSet::new_owned(registry, self.custom_tools.clone(), ws_root.clone());
                 // MCP: layer the candidate_safe-filtered session view on top
