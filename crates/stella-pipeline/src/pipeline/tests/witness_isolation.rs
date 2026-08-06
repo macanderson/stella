@@ -258,7 +258,7 @@ async fn authored_witness_degrades_when_verifier_is_worker() {
         events.iter().any(|event| matches!(
             event,
             AgentEvent::Error { message, retryable: true }
-                if message.contains("no author independent of the worker")
+                if message.contains("no model independent of the worker")
         )),
         "the degradation is announced once: {events:?}"
     );
@@ -1338,7 +1338,7 @@ async fn requiring_an_independent_witness_refuses_before_spending_anything() {
 
     match &error.cause {
         PipelineError::WitnessAuthorUnavailable(reason) => assert!(
-            reason.contains("no author independent of the worker"),
+            reason.contains("no model independent of the worker"),
             "the refusal must carry the reason, not just the verdict: {reason}"
         ),
         other => panic!("expected WitnessAuthorUnavailable, got {other:?}"),

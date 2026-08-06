@@ -26,13 +26,14 @@
 #   2. Every step is named in CONTRIBUTING.md's gate fence, via the alias table
 #      below (that fence lists raw commands, on purpose — its reader wants to
 #      run them without make).
-#   3. Both documents' spelled-out count matches the real number of steps.
-#   4. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
+#   3. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
 #      gate step — which is how a removed guard leaves a ghost behind. Only
 #      that fence is checked this way: it is a delimited list of commands,
 #      whereas AGENTS.md's block is prose with parenthetical glosses.
 #
-# What it deliberately does NOT check: the prose *around* the lists. Whether
+# What it deliberately does NOT check: the spelled-out step total — that check
+# existed and was removed; see "The count is deliberately NOT checked any
+# more" below (#1883) — and the prose *around* the lists. Whether
 # "ci.yml's required job runs everything except invariants and doc-links" is
 # still true is a claim about a workflow, not about this list, and pretending a
 # grep could settle it would be worse than leaving it to review.
@@ -84,25 +85,27 @@ if [ "$count" -eq 0 ]; then
   exit 1
 fi
 
-# ── The count is deliberately NOT checked any more ───────────────────────────
-#
-# Both documents used to spell the total in prose ("the fifteen of them in
-# order") and this guard held them to it. That check is gone, and its removal
-# is the fix for a failure it caused rather than caught (#1883).
-#
-# The step NAMES are checked one at a time, so two PRs that each add a
-# different guard produce diffs that merge cleanly. The TOTAL is a single
-# shared cell both branches must write — and each writes its own correct
-# answer. On 2026-08-06 `module-reachability` and `self-driving-test` landed
-# within an hour of each other, each having dutifully updated both documents
-# to "twenty-four". The second merge left GATE_STEPS at 25 with the prose
-# saying 24, `docs guards` went red on `main`, and every open PR inherited it.
-# Twice in one day.
-#
-# Nothing was lost by dropping it. The count told a reader no fact the checked
-# list does not already carry: if every step is named, the number of them is
-# not independently knowable-wrong. It was a derived value maintained by hand,
-# which is the same defect this guard exists to prevent one level up.
+# Spelled-out numbers, because both documents spell the count in prose ("the
+# fifteen of them in order") and a digit would read wrong there. Covers a range
+# no plausible gate will leave.
+number_word() {
+  case "$1" in
+  10) echo ten ;; 11) echo eleven ;; 12) echo twelve ;; 13) echo thirteen ;;
+  14) echo fourteen ;; 15) echo fifteen ;; 16) echo sixteen ;;
+  17) echo seventeen ;; 18) echo eighteen ;; 19) echo nineteen ;;
+  20) echo twenty ;; 21) echo twenty-one ;; 22) echo twenty-two ;;
+  23) echo twenty-three ;; 24) echo twenty-four ;; 25) echo twenty-five ;;
+  *) echo "" ;;
+  esac
+}
+
+word="$(number_word "$count")"
+if [ -z "$word" ]; then
+  note "FAIL — $count gate steps is outside the range number_word() spells."
+  note "     Extend the table in this script; the documents spell the count."
+  emit
+  exit 1
+fi
 
 # CONTRIBUTING.md lists raw commands rather than make targets. Every guard is
 # `scripts/check-<target>.sh` except the ones named here, and the four compile
@@ -190,5 +193,5 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 emit
-printf 'check-gate-parity: OK — %s gate steps, named in %s and %s.\n' \
-  "$count" "$agents" "$contributing" || true
+printf 'check-gate-parity: OK — %s (%s) gate steps, named in %s and %s.\n' \
+  "$count" "$word" "$agents" "$contributing" || true

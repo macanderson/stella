@@ -444,6 +444,14 @@ impl ToolExecutor for DelegatingTools<'_> {
     fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
         self.inner.drain_wait_request()
     }
+
+    /// Forwarded: letting the empty default stand would silently serialize
+    /// the host executor's sibling spawns (see the port's contract). The
+    /// `task` this wrapper itself implements is deliberately not added here —
+    /// claiming it needs a witness on the remoted dispatch path first.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
 }
 
 /// Turn a child's outcome into a model-visible result.

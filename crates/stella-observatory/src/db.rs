@@ -454,6 +454,49 @@ impl Observatory {
         }
     }
 
+    /// What changed between two model calls (#1511) — the diff between the
+    /// addressed call's reconstruction and its resolved baseline, in the JSON
+    /// shape `stella inspect --diff --format json` emits. The fold lives in
+    /// `context_diff`, which documents the baseline semantics it mirrors.
+    pub fn execution_context_diff(
+        &self,
+        id: i64,
+        turn: i64,
+        step: i64,
+        call_seq: i64,
+        base: &str,
+        only: &str,
+    ) -> Result<Value, DbError> {
+        match self.store() {
+            Some(conn) => crate::context_diff::payload(&conn, id, turn, step, call_seq, base, only),
+            None => Ok(crate::sent_context::no_receipts(id)),
+        }
+    }
+
+    /// Every session of this workspace: the registry's live/crashed view
+    /// joined with the store's per-session rollups. The fold lives in
+    /// `sessions`, which documents the two-source merge.
+    pub fn sessions(&self) -> Result<Value, DbError> {
+        crate::sessions::sessions(self.store().as_ref(), &self.workspace_root)
+    }
+
+    /// One session drilled to its turns, plus the session-scoped surfaces the
+    /// per-turn view can't show (skills, MCP traffic, task board, PRs,
+    /// lessons, memory writes).
+    pub fn session(&self, id: &str) -> Result<Value, DbError> {
+        crate::sessions::session_detail(self.store().as_ref(), &self.workspace_root, id)
+    }
+
+    /// One execution's behavioural tendencies (retries, loop detections,
+    /// compactions, policy verdicts), folded from its journal slice — the
+    /// fourth sanctioned `events` read; see `sessions::execution_tendencies`.
+    pub fn execution_tendencies(&self, id: i64) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(Value::Null);
+        };
+        crate::sessions::execution_tendencies(&conn, id)
+    }
+
     /// Per-(provider, model) usage — the same rows `stella stats` prints,
     /// same semantics (`resolved` = outcome `completed`, `off-grid` = local).
     pub fn models(&self) -> Result<Value, DbError> {
@@ -557,17 +600,33 @@ impl Observatory {
             .into_iter()
             .map(|(name, mut agg)| {
                 agg.durations.sort_unstable();
+                // Nearest-rank over the already-sorted window — the vector is
+                // materialized for the p50 anyway, so the tail percentiles
+                // cost two more indexed reads, not another scan.
+                let rank = |num: usize, den: usize| {
+                    agg.durations
+                        .get((agg.durations.len() * num / den).min(agg.durations.len() - 1))
+                        .copied()
+                        .unwrap_or(0)
+                };
                 let p50 = agg
                     .durations
                     .get(agg.durations.len() / 2)
                     .copied()
                     .unwrap_or(0);
+                let (p90, p99) = if agg.durations.is_empty() {
+                    (0, 0)
+                } else {
+                    (rank(9, 10), rank(99, 100))
+                };
                 let max = agg.durations.last().copied().unwrap_or(0);
                 json!({
                     "name": name,
                     "calls": agg.calls,
                     "errors": agg.errors,
                     "p50_ms": p50,
+                    "p90_ms": p90,
+                    "p99_ms": p99,
                     "max_ms": max,
                     "bytes_out": agg.bytes_out,
                 })

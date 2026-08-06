@@ -47,7 +47,9 @@ want() {
   local guard="$1"
   shift
   local name="$guard | $*"
-  "scripts/$guard" 2>"$errlog" | "$@" >/dev/null 2>&1
+  # shellcheck disable=SC2086 # word-split on purpose: a case may carry the
+  # guard's own arguments ("check-empty-diff.sh HEAD~1 HEAD").
+  scripts/$guard 2>"$errlog" | "$@" >/dev/null 2>&1
   local rc="${PIPESTATUS[0]}"
   if [ "$rc" -eq 0 ]; then
     pass=$((pass + 1))
@@ -60,6 +62,9 @@ want() {
 }
 
 # ── Every swept guard, against both early-exiting readers ────────────────────
+# The first eight are #1815's sweep; from check-action-pins.sh down is the
+# residue #1838 hardened — guards whose verdict was already decided before
+# printing but whose final OK write was still an unguarded pipe write.
 for guard in \
   check-god-files.sh \
   check-invariants.sh \
@@ -68,10 +73,34 @@ for guard in \
   check-gate-parity.sh \
   check-role-names.sh \
   check-cargo-install-pins.sh \
-  check-repro-wiring.sh; do
+  check-repro-wiring.sh \
+  check-action-pins.sh \
+  check-brand-case.sh \
+  check-design-refs.sh \
+  check-license-allowlist-parity.sh \
+  check-no-scratch.sh \
+  check-no-secrets.sh \
+  check-stat-portability.sh; do
   want "$guard" true
   want "$guard" head -1
 done
+
+# ── The parameterised one ────────────────────────────────────────────────────
+# check-empty-diff.sh judges a <base-ref> <head-ref> pair rather than scanning
+# the tree; HEAD~1 HEAD is a real, non-empty pair on any checked-out branch.
+want "check-empty-diff.sh HEAD~1 HEAD" true
+want "check-empty-diff.sh HEAD~1 HEAD" head -1
+
+# ── The compiled one ─────────────────────────────────────────────────────────
+# check-wire-schema.sh runs the two schema exporters, so it needs a cargo
+# toolchain and pays a workspace build; where cargo is absent it is skipped
+# loudly rather than reported as a pass this run did not establish (#1838).
+if command -v cargo >/dev/null 2>&1; then
+  want check-wire-schema.sh true
+  want check-wire-schema.sh head -1
+else
+  echo "skip check-wire-schema.sh — no cargo toolchain on PATH"
+fi
 
 # ── The original repro (#1815) ───────────────────────────────────────────────
 # The `printf | grep -qx` membership race fired only intermittently — a

@@ -45,6 +45,9 @@ stella-core = { path = "../stella-core" }
 # `stella-serve` can assemble the same stack without linking a binary (#971).
 stella-runtime = { path = "../stella-runtime" }
 stella-model = { path = "../stella-model" }
+# The pure unified differ behind `stella inspect --diff`, extracted to a leaf
+# crate (#1511) so the Observatory's prompt-diff route shares it.
+stella-diff = { path = "../stella-diff" }
 stella-tools = { path = "../stella-tools" }
 stella-store = { path = "../stella-store" }
 stella-observatory = { path = "../stella-observatory" }

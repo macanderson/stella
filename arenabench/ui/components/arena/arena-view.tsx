@@ -12,7 +12,6 @@ import { Race } from "@/components/arena/race";
 import { StatStrip } from "@/components/arena/stat-strip";
 import { SeatNotices } from "@/components/arena/seat-notices";
 import { TaskTable } from "@/components/arena/task-table";
-import { TranscriptDrawer } from "@/components/arena/transcript-drawer";
 
 export function ArenaView({
   matchId,
@@ -26,7 +25,6 @@ export function ArenaView({
   onMatchEnded: () => void;
 }) {
   const [snapshot, setSnapshot] = React.useState<Snapshot | null>(seedSnapshot);
-  const [activeTask, setActiveTask] = React.useState<string | null>(null);
   const [confirmStop, setConfirmStop] = React.useState(false);
   const [cancelError, setCancelError] = React.useState<string | null>(null);
 
@@ -64,11 +62,6 @@ export function ArenaView({
   if (!snapshot) {
     return <div className="p-8 text-[13px] text-dim">connecting to the match…</div>;
   }
-
-  const activeRow = activeTask ? snapshot.rows.find((r) => r.task === activeTask) : null;
-  // "Live" is a property of the match, not of one trial: it decides whether
-  // the drawer offers speed control or only pause/resume.
-  const live = snapshot.status === "running";
 
   return (
     /* The page gets real margins and a max width. Before this the arena ran
@@ -130,11 +123,7 @@ export function ArenaView({
           glanceable summary and gets one. They stack on a narrow window
           rather than squeezing the table into an unreadable column. */}
       <section className="grid items-start gap-4 lg:[grid-template-columns:3fr_1fr]">
-        <TaskTable
-          snapshot={snapshot}
-          activeTask={activeTask}
-          onOpenTranscript={setActiveTask}
-        />
+        <TaskTable snapshot={snapshot} />
         <aside className="min-w-0">
           <div className="mb-1.5 px-1 text-[10px] lowercase tracking-[0.1em] text-dim">
             head to head
@@ -143,16 +132,6 @@ export function ArenaView({
         </aside>
       </section>
 
-      {activeTask !== null && (
-        <TranscriptDrawer
-          matchId={matchId}
-          task={activeTask}
-          seats={snapshot.contestants}
-          cells={activeRow?.cells ?? {}}
-          live={live}
-          onClose={() => setActiveTask(null)}
-        />
-      )}
     </div>
   );
 }

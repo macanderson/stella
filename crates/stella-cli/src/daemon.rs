@@ -989,12 +989,13 @@ const LOCK_FD_SCAN_LIMIT: i32 = 64;
 /// be indistinguishable from one that died the moment its window closed.
 ///
 /// A no-op in an unsupervised process, and harmless where a surface already
-/// wrote its own answer: `SessionPresence::finish` runs first on the two paths
-/// that have one, and this write lands after it (agreeing on every outcome
-/// except a deliberate stop, where this one knows better — the presence sees
-/// only a bool, #1653). This is what covers the paths that do not —
-/// `stella fleet`, and any future long-running verb that is handed to the
-/// supervisor before it grows a session presence.
+/// wrote its own answer: `SessionPresence::finish` runs first on the paths
+/// that have one, and this write lands after it — both now project the
+/// terminal answer through [`outcome_status`] (#1653, #1826), so the two
+/// writes agree on every outcome, deliberate stops included. This is what
+/// covers the paths that do not — `stella fleet`, and any future
+/// long-running verb that is handed to the supervisor before it grows a
+/// session presence.
 pub(crate) fn record_outcome_if_supervised(outcome: Result<(), &crate::failure::CliFailure>) {
     let Some(id) = supervised_id() else {
         return;

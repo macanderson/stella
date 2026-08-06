@@ -800,6 +800,15 @@ pub struct Verdict {
     /// extraction discards the first and keeps the second, so the distinction
     /// has to survive as a field rather than as the wording of `reasoning`.
     pub heuristic: bool,
+    /// Whether the model that answered was independent of the worker (#1795):
+    /// `Some(false)` = the verdict call resolved to the worker's own model,
+    /// so this "independent code review" graded its own work. Stamped by the
+    /// call seam (`Pipeline::verifier`), which is the one place the actual
+    /// resolution is known — the parser and the heuristic fallback leave it
+    /// `None` (no model answered, or nobody compared). Carried onto the
+    /// verdict's `LadderSnapshot` so a stored verdict states the fact without
+    /// the transcript.
+    pub verifier_independent: Option<bool>,
 }
 
 impl Verdict {
@@ -873,6 +882,7 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
                         passed: !negated,
                         reasoning: text.trim().to_string(),
                         heuristic: false,
+                        verifier_independent: None,
                     });
                 }
                 "fail" | "failed" | "reject" | "rejected" if !negated => {
@@ -880,6 +890,7 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
                         passed: false,
                         reasoning: text.trim().to_string(),
                         heuristic: false,
+                        verifier_independent: None,
                     });
                 }
                 _ => {}
@@ -950,6 +961,9 @@ pub fn heuristic_fallback(inputs: &LadderInputs) -> Verdict {
         passed,
         reasoning,
         heuristic: true,
+        // No model answered, so grader independence is not a fact about this
+        // verdict — absent, never false.
+        verifier_independent: None,
     }
 }
 

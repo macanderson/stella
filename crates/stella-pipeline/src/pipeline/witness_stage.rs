@@ -250,8 +250,7 @@ impl<'a> Pipeline<'a> {
         authoring: WitnessAuthoring<'_>,
         baseline: CandidateSurface<'_>,
         candidate: CandidateSurface<'_>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<Option<Witness>, WitnessAbort> {
         // `port` is deliberately not used here: the caller has already spent it
         // to make `baseline`, and a second snapshot from inside this stage would
@@ -316,17 +315,13 @@ impl<'a> Pipeline<'a> {
         // what the worker did toward the goal. A test file written here is not
         // the change under verification, and counting it as a mutating action
         // would let an authored witness disguise a worker that never acted.
-        let mut file_changes = 0u32;
-        let mut mutating_actions = 0u32;
-        let mut opaque_actions = 0u32;
+        let mut discarded_signals = ChangeSignals::default();
         let text = match self
             .run_engine_turn(
                 &engine,
                 &mut messages,
-                budget,
-                &mut file_changes,
-                &mut mutating_actions,
-                &mut opaque_actions,
+                spend.budget,
+                &mut discarded_signals,
                 // No flip halt: this turn is the witness AUTHOR writing the
                 // test, not the worker fixing the code. Stopping it because
                 // the tracked command went green would abandon the artifact
@@ -336,7 +331,7 @@ impl<'a> Pipeline<'a> {
             .await
         {
             TurnOutcome::Completed { text, cost_usd } => {
-                *total += cost_usd;
+                *spend.total += cost_usd;
                 text
             }
             TurnOutcome::Aborted {
@@ -424,17 +419,15 @@ impl<'a> Pipeline<'a> {
                 .run_engine_turn(
                     &repair_engine,
                     &mut messages,
-                    budget,
-                    &mut file_changes,
-                    &mut mutating_actions,
-                    &mut opaque_actions,
+                    spend.budget,
+                    &mut discarded_signals,
                     // Witness repair, same reasoning as the author turn.
                     None,
                 )
                 .await
             {
                 TurnOutcome::Completed { text, cost_usd } => {
-                    *total += cost_usd;
+                    *spend.total += cost_usd;
                     text
                 }
                 TurnOutcome::Aborted {
@@ -598,13 +591,12 @@ impl<'a> Pipeline<'a> {
         authoring: Option<WitnessAuthoring<'_>>,
         surface: CandidateSurface<'_>,
         state: &mut CandidateState,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<Option<Witness>, String> {
         let Some(authoring) = authoring else {
             return Ok(None);
         };
-        if !warrant(&state.diff_text, state.change_signals()).is_required() {
+        if !warrant(&state.diff_text, state.signals).is_required() {
             // No Witness stage is emitted, because none runs. The reason is
             // not lost: `warranted_completion` reads the same warrant during
             // verification and records the sentence on the verdict, which is
@@ -639,7 +631,7 @@ impl<'a> Pipeline<'a> {
             workspace: Some(baseline.as_ref()),
         };
         let authored = self
-            .witness_stage(goal, authoring, baseline_surface, surface, budget, total)
+            .witness_stage(goal, authoring, baseline_surface, surface, spend)
             .await;
         baseline.remove().await;
 
