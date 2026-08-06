@@ -5,6 +5,8 @@
 use super::*;
 use proptest::prelude::*;
 
+mod uncollected;
+
 // FlipOracle transitions
 
 #[test]
@@ -299,9 +301,19 @@ fn a_red_test_outranks_blindness() {
     assert_eq!(ladder_decision(&inputs), LadderDecision::Revise);
 }
 
-/// The distinction the whole rung exists for: "I looked and saw nothing"
-/// (an available probe reporting a zero-line diff) is inconclusive and
-/// worth a verifier; "I could not look" is not.
+/// The distinction the whole blind rung exists for: "I looked and saw nothing"
+/// is not "I could not look", and a readable probe is never blindness however
+/// empty its answer.
+///
+/// The *decision* moved in #1701 while that property did not. A readable
+/// zero-line diff over dispatched mutating calls used to escalate, on the
+/// reading that an empty diff is merely inconclusive. It is not merely
+/// inconclusive: the verifier reached from here has no flip and no green test
+/// behind it, so a PASS it returns is restamped `Unverifiable` anyway
+/// (`verifier_pass_stands_alone`, #1295/#1540), and a FAIL is a model guessing
+/// from an empty record about a workspace this run never collected — the #973
+/// shape, which produced a confident false negative in the wild. So the ladder
+/// abstains here directly and spends nothing to do it.
 #[test]
 fn a_readable_empty_diff_is_not_blindness() {
     let inputs = LadderInputs {
@@ -314,8 +326,20 @@ fn a_readable_empty_diff_is_not_blindness() {
         mutating_actions: 1,
         ..Default::default()
     };
-    assert!(!inputs.evidence_is_blind());
-    assert_eq!(ladder_decision(&inputs), LadderDecision::ModelVerdict);
+    assert!(
+        !inputs.evidence_is_blind(),
+        "a probe that read the tree is not a probe that could not"
+    );
+    assert_eq!(ladder_decision(&inputs), LadderDecision::Unverifiable);
+    // The property the rung above still owns: a readable diff with content in
+    // it is genuinely inconclusive, and that is what a verifier is for.
+    assert_eq!(
+        ladder_decision(&LadderInputs {
+            diff_lines: 12,
+            ..inputs
+        }),
+        LadderDecision::ModelVerdict,
+    );
 }
 
 /// The `regex-log` Terminal-Bench 2.1 trial, reconstructed as ladder

@@ -56,10 +56,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Thread-name prefix for the pump threads (`console-pump-1`/`console-pump-2`,
-/// set at spawn in [`pump_fd`]). Shared with [`ConsoleGuard::drain_shared`],
-/// which must never try to join a pump thread from inside that very thread —
-/// a self-join deadlocks forever, the one failure mode worse than losing the
-/// panic message the drain exists to save (#1616).
+/// set at spawn in [`pump_fd`]). Diagnostic only: the drain's self-join guard
+/// compares [`std::thread::ThreadId`]s, which a name cannot be confused with
+/// (names are optional and need not be unique).
 const PUMP_THREAD_PREFIX: &str = "console-pump-";
 
 use stella_store::supervised;
