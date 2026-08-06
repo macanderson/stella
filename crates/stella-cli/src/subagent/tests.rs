@@ -733,3 +733,103 @@ async fn an_uncancelled_child_is_charged_exactly_once() {
         "six steps at a cent each, counted once; got {charged}"
     );
 }
+
+/// Bills on its first call, panics on its second — the shape that loses money.
+///
+/// The first completion carries a cost AND a tool call, so the turn continues
+/// and the child's carve really has spend in it by the time the panic lands.
+/// A provider that panicked immediately would prove nothing: there would be
+/// nothing to settle.
+struct PanicAfterBillingProvider {
+    calls: std::sync::atomic::AtomicUsize,
+    cost_usd: f64,
+}
+
+#[async_trait]
+impl Provider for PanicAfterBillingProvider {
+    fn id(&self) -> &str {
+        "panic-after-billing"
+    }
+    async fn complete_ref(
+        &self,
+        _request: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(n < 2, "the child should not get past the panic");
+        if n == 1 {
+            panic!("scripted child panic (#1850)");
+        }
+        Ok(stella_protocol::CompletionResult {
+            text: String::new(),
+            tool_calls: vec![stella_protocol::ToolCall {
+                call_id: "c0".into(),
+                name: "read_file".into(),
+                input: json!({ "path": "no-such-file.txt" }),
+            }],
+            usage: stella_protocol::CompletionUsage {
+                reported: true,
+                ..stella_protocol::CompletionUsage::default()
+            },
+            model: "panic-after-billing".into(),
+            cost_usd: self.cost_usd,
+            finish_reason: None,
+        })
+    }
+}
+
+/// **Witness (#1850).** A child that panics mid-turn must still have its
+/// spend folded into both ledgers.
+///
+/// The settle block ran AFTER `runtime.block_on`, so a panic inside the turn
+/// unwound straight past it: dollars the child had genuinely spent landed in
+/// neither the pool nor the parent's spend ledger. The comment at the
+/// `wait.await` claimed settling happened "on every path" — a panic was the
+/// path it did not.
+///
+/// Debug profile only by nature: `panic = "abort"` in release means there is
+/// no unwind to catch, and the module header now says so instead of implying
+/// otherwise. Tests build with unwind, which is exactly where the fix is
+/// observable.
+#[tokio::test]
+async fn a_panicking_child_still_settles_the_spend_it_incurred() {
+    let registry = registry();
+    let provider = Arc::new(PanicAfterBillingProvider {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        cost_usd: 0.25,
+    });
+    let dispatcher = SessionSubAgents::new(
+        provider,
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_pool_limit(Some(10.0));
+
+    // The panic is scripted, so the child's thread will print a panic
+    // message. Silence it: a passing test that looks like a crash teaches
+    // readers to ignore real ones.
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let outcome = dispatcher
+        .dispatch(SubAgentSpec::read_only("panicker", "investigate"))
+        .await;
+    std::panic::set_hook(previous);
+
+    assert!(
+        matches!(outcome, SubAgentOutcome::Refused { .. }),
+        "a panicking child reports a refusal, never a completion: {outcome:?}"
+    );
+
+    let pool = *dispatcher.pool.lock().unwrap();
+    assert!(
+        pool.session_spent_usd() >= 0.25,
+        "the pool must carry what the child spent before it panicked, not 0 \
+         (got {})",
+        pool.session_spent_usd()
+    );
+    assert!(
+        stella_core::subagent::drain_sub_agent_spend(&registry.sub_agent_spend_ledger()) >= 0.25,
+        "and so must the parent's ledger — that is what the engine folds into \
+         the budget at the next step boundary"
+    );
+}

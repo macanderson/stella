@@ -676,13 +676,31 @@ impl Engine<'_> {
 
         let steps = Arc::new(AtomicUsize::new(0));
         let child_events = child_sender(events.clone(), steps.clone());
-        let turn = child
-            .run_turn_with_sender(&mut messages, &mut carve, &child_events)
-            .await;
-
-        // Settle before building the report: the child's money is the
-        // parent's the moment the child stops, whatever it stopped for.
-        budget.settle_child(&carve);
+        // The carve is handed to the turn through a guard that settles it on
+        // DROP, not on return (#1850). `settle_child` used to be a statement
+        // after the await, so any exit that was not a return skipped it: a
+        // panic inside the child's turn unwound straight past, and dollars the
+        // child had genuinely spent reached neither the parent's guard nor —
+        // downstream of it — the session pool and the spend ledger.
+        //
+        // A drop guard is the only shape that covers every exit a future has.
+        // The turn borrows the carve through it; whether it returns, unwinds,
+        // or is dropped mid-flight by a cancelled parent, the fold-back has
+        // already happened by the time anything below can observe the parent's
+        // budget — the guard goes out of scope with this block.
+        //
+        // Settling before the report is unchanged and still deliberate: the
+        // child's money is the parent's the moment the child stops, whatever
+        // it stopped for.
+        let turn = {
+            let settle = SettleChildOnDrop {
+                budget: &mut *budget,
+                carve: &mut carve,
+            };
+            child
+                .run_turn_with_sender(&mut messages, &mut *settle.carve, &child_events)
+                .await
+        };
         // The parent's own post-settlement numbers, since the child's ticks
         // were dropped at the boundary and a HUD would otherwise sit stale
         // for the whole child run.
@@ -717,6 +735,30 @@ impl Engine<'_> {
                 reason,
             },
         }
+    }
+}
+
+/// Folds a child's carve back into its parent's guard on **every** exit from
+/// the child's turn — return, unwind, or the future being dropped.
+///
+/// `settle_child` used to be a statement after the `await`, which covers
+/// exactly one of those three. A panic inside the child's turn unwound past
+/// it, and dollars the child had genuinely spent reached neither the parent's
+/// guard nor, downstream of it, the session pool and the spend ledger — while
+/// the CLI dispatcher's own comment claimed settling happened "on every path"
+/// (#1850).
+///
+/// A guard rather than a `catch_unwind` at the call site because the money is
+/// this function's to account for: a caller that forgot to catch would lose it
+/// again, and there are three callers.
+struct SettleChildOnDrop<'a, 'c> {
+    budget: &'a mut BudgetGuard,
+    carve: &'c mut BudgetGuard,
+}
+
+impl Drop for SettleChildOnDrop<'_, '_> {
+    fn drop(&mut self) {
+        self.budget.settle_child(self.carve);
     }
 }
 
