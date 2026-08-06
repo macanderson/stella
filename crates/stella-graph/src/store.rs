@@ -266,10 +266,17 @@ pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
                         )),
                     ))
                 })?;
-            eprintln!(
-                "code-graph store was corrupt; moved it aside to {} — rebuilding from scratch",
-                quarantine.moved[0].1.display()
-            );
+            // `moved` always leads with the database itself, but the shape of
+            // another crate's return value is not something to `unwrap` on:
+            // a quarantine that moved nothing still leaves the rebuild valid,
+            // so the notice degrades rather than the open panicking.
+            match quarantine.moved.first() {
+                Some((_, quarantined)) => eprintln!(
+                    "code-graph store was corrupt; moved it aside to {} — rebuilding from scratch",
+                    quarantined.display()
+                ),
+                None => eprintln!("code-graph store was corrupt — rebuilding from scratch"),
+            }
             open_migrated(db_path)
         }
         Err(error) => Err(error),
@@ -331,7 +338,7 @@ pub(crate) fn index_tree(
     let mut current: HashSet<String> = HashSet::with_capacity(files.len());
     for abs in &files {
         current.insert(rel_path(root, abs));
-        if let Err(e) = index_one(
+        index_one(
             &tx,
             root,
             grammars,
@@ -340,20 +347,11 @@ pub(crate) fn index_tree(
             &rust_layout,
             abs,
             &mut stats,
-        ) {
-            eprintln!("TRACE index_one failed on {}: {e:?}", abs.display());
-            return Err(e);
-        }
+        )?;
     }
-    stats.files_pruned += prune_missing(&tx, &current).map_err(|e| {
-        eprintln!("TRACE prune_missing failed: {e:?}");
-        e
-    })?;
+    stats.files_pruned += prune_missing(&tx, &current)?;
 
-    tx.commit().map_err(|e| {
-        eprintln!("TRACE commit failed: {e:?}");
-        e
-    })?;
+    tx.commit()?;
     Ok(stats)
 }
 
@@ -1113,3 +1111,6 @@ fn mtime_ns(abs: &Path) -> i64 {
         .map(|d| d.as_nanos() as i64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests;

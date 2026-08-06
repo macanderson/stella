@@ -23,7 +23,8 @@ import { Button } from "@/components/ui/button";
  * makes historical playback a client concern and needs nothing from the
  * server, which is why speed control exists only here.
  *
- * - **Historical**: play/pause, and 1×/2×/3×/6×. Seeking is the scrollbar.
+ * - **Historical**: play/pause, replay once it has run out, and 1×/2×/3×/6×.
+ *   Seeking is the scrollbar.
  * - **Live**: pause and resume only. There is no speed for a stream that has
  *   not happened yet, and resuming jumps to the tail — a live reader who
  *   pauses wants to stop the scroll, and on resume wants *now*, not the
@@ -189,6 +190,16 @@ export function TranscriptDrawer({
   const cell = cells[seatId];
   const done = historical && revealed >= filtered.length && filtered.length > 0;
 
+  // Three states share one button, and `done` has to be read *before*
+  // `playing`: playback stops by running out of entries, not by clearing the
+  // flag, so a finished replay is still `playing` and would otherwise offer
+  // "pause" — and toggling the flag on a fully-revealed transcript is a no-op,
+  // which is what made the old "replay" do nothing. Replay rewinds instead.
+  const replay = React.useCallback(() => {
+    setRevealed(0);
+    setPlaying(true);
+  }, []);
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
       {/* Scrim: clicking outside closes, which is the gesture people try
@@ -243,8 +254,12 @@ export function TranscriptDrawer({
 
         {/* Playback. Historical gets speed; live gets pause/resume only. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
-          <Button variant="ghost" size="sm" onClick={() => setPlaying((p) => !p)}>
-            {playing ? "❙❙ pause" : done ? "▶ replay" : "▶ play"}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={done ? replay : () => setPlaying((p) => !p)}
+          >
+            {done ? "▶ replay" : playing ? "❙❙ pause" : "▶ play"}
           </Button>
           {historical ? (
             <div className="flex items-center gap-1">
