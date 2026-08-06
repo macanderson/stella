@@ -50,7 +50,7 @@ mod coverage;
 mod engine;
 mod goal;
 mod graph;
-mod outcome;
+pub(crate) mod outcome;
 mod output;
 mod persistence;
 mod presence;
