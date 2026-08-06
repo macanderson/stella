@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "crates/stella-diag",
+  "crates/stella-diff",
   "crates/stella-home",
   "crates/stella-protocol",
   "crates/stella-core",
