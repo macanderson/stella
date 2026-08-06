@@ -819,7 +819,7 @@ pub(crate) enum Command {
         cmd: tune_cmd::TuneCmd,
     },
 
-    /// Curate a redacted training dataset from this workspace's receipts
+    /// Curate a redacted training dataset from workspace receipts
     ///
     /// Curate a redacted training dataset from this workspace's receipts
     /// (#872): one JSONL record per accepted turn — prompt, tool calls with

@@ -91,11 +91,19 @@ export PATH
 # $GH_FIX_QUEUE. The `:?` on the queue fixture is a tripwire: a case that
 # reaches it without declaring a fixture is a case that thought it was not
 # touching gh at all.
+#
+# The `--version` arm answers a PROBE, not a query: `demand()` gates every
+# count behind `gh_available()`, which shells out to `gh --version` and reads
+# the exit status. Without this arm the stub fell through to its catch-all and
+# exited 1, so `plan` saw an empty queue and skipped the clamp entirely — the
+# three demand-rung cases below were red for that reason alone, and neither
+# the clamp nor the P0 rescue they name was ever actually exercised.
 STUB_BIN="$ROOT/bin"
 mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/gh" <<'SH'
 #!/bin/sh
 case "$*" in
+  *"--version"*)              echo "gh version 2.0.0 (stub)" ;;
   *"--label bug --label P0"*) printf '%s\n' "${GH_FIX_P0:-0}" ;;
   *"--label bug"*)            printf '%s\n' "${GH_FIX_BUGS:-0}" ;;
   *"issue list"*)             cat "${GH_FIX_QUEUE:?stub gh: no queue fixture declared}" ;;
