@@ -2,10 +2,16 @@
 # Hermetic tests for the self-driving control logic.
 #
 # Everything here runs against a throwaway $SELF_DRIVING_STATE_DIR: no network, no
-# `gh`, no writes outside the temp tree. Deliberately NOT part of `make gate` —
-# same posture as `impacted-test` and `dev-env-test`.
+# `gh`, no writes outside the temp tree.
 #
-#   make self-driving-test        # or: scripts/test-self-driving.sh
+# A `make gate` step since #1753. It was deliberately excluded before that, on
+# the same reasoning as `impacted-test` and `dev-env-test` — and the cost of
+# the exclusion was three cases sitting red on `main` with nobody watching,
+# testing a `plan` that silently skipped the batch clamp. Hermetic and under a
+# minute, so the usual reason to leave a suite out of the gate never applied.
+#
+#   make self-driving-test        # builds and PINS the binary — prefer this
+#   ./scripts/test-self-driving.sh   # uses whatever locate_stella finds
 #
 # The cases here are the ones whose failure modes are SILENT and PERMANENT: a
 # digest that over-normalizes merges two defects and the second is never filed;
@@ -75,6 +81,12 @@ locate_stella() {
   printf '%s' "$root/target/debug/stella"
 }
 STELLA="$(locate_stella)" || { echo "self-driving-test: cannot obtain a stella binary" >&2; exit 1; }
+# Say which binary is under test, always. `locate_stella` prefers
+# target/release over target/debug, so a stale release build silently wins over
+# the code you just changed — three cases once went red against a months-old
+# binary that predated the subcommand they exercise, and nothing on screen said
+# so (#1753). One line turns an hour of misattribution into a glance.
+printf 'self-driving-test: binary under test: %s\n' "$STELLA" >&2
 mkdir -p "$ROOT/stella-bin"
 ln -sf "$STELLA" "$ROOT/stella-bin/stella"
 # In front of the system PATH so the wrapper's `stella` resolves to the build
