@@ -214,31 +214,16 @@ fn the_console_is_replayable_and_the_two_streams_stay_apart() {
 /// signals only the leader leaves the tools it spawned running, and a stop
 /// that never writes a terminal status leaves a run the operator ended by hand
 /// to be presented, forever, as a crash.
-/// # Why the liveness lock is the probe, and `kill(-pgid, 0)` is not (#1609)
-///
-/// This asserted an empty process group, and failed deterministically on
-/// Actions while passing on every developer's machine. `kill(-pgid, 0)`
-/// answers "does this group have members", and a **zombie is a member**: it
-/// stays in its group until it is reaped. The group here is `sh` plus the
-/// `sleep` it spawned, and `sleep` is our *grand*child — when `sh` dies it is
-/// reparented to PID 1, so nothing in this test can reap it. A PID 1 that
-/// reaps promptly (a normal desktop init) hides the flaw; the Actions runner's
-/// does not, and the probe reports a group of one dead process as alive.
-///
-/// Reaping harder cannot fix it — the unreapable process is the one we do not
-/// own. The lock can: a zombie holds no file descriptors, because the kernel
-/// closes them at exit, so a free lock proves every holder genuinely *exited*.
-/// That is both the property this test wants and a strictly stronger one than
-/// the probe it replaces.
 #[test]
 fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     let (dir, registry) = temp_registry("stop");
     // A child with a child: `sh` waits on `sleep`, so a signal that reaches
-    // only `sh` leaves `sleep` behind. `sleep` inherits the liveness lock,
-    // which is what makes the assertion below a statement about the whole
-    // group rather than only its leader.
+    // only `sh` leaves `sleep` behind. `sleep` also inherits the liveness
+    // lock, which is what makes the lock assertion below a statement about
+    // the whole group rather than only its leader.
     let mut run = spawn_sh(&registry, "stop", "sleep 120 & wait");
     let sidecar = registry.sidecar_dir(&run.id);
+    let group = run.pgid;
 
     let id = run.id.clone();
     stop(&registry, &id).expect("stop");
@@ -246,15 +231,28 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     assert_eq!(
         lock_is_held(&sidecar),
         Some(false),
-        "the run must actually be over"
+        "every holder of the lock — `sh` AND the `sleep` it spawned — must be gone"
     );
-    // No `kill(-pgid, 0)` probe beside it: the doc comment above explains why
-    // the lock is the assertion and the group probe was retired (#1609). A
-    // zombie is still a group member, so the probe reports a group of one dead
-    // process as alive — deterministically, on Actions.
 
-    // Reap our own child so the test leaves no zombie of its own behind.
+    // Reap the leader before probing the group: an exited-but-unreaped child
+    // is a zombie, and a zombie stays IN its process group until it is reaped
+    // — on Linux `kill(-pgid, 0)` on a group containing only a zombie returns
+    // success, so this assertion would fail there while passing on macOS,
+    // whose `killpg` skips zombies.
     let _ = run.child.wait();
+    // The orphaned `sleep` is init's to reap, not ours, so "gone" is
+    // eventually-true rather than instantly-true: launchd reaps before the
+    // next statement on a laptop; a CI container's init can lose that race,
+    // which is a fact about reap latency, not about `stop`.
+    assert!(
+        eventually(Duration::from_secs(10), || {
+            // SAFETY: probing a group with signal 0 sends nothing. The
+            // parentheses are load-bearing: a bare `unsafe { … }` opening a
+            // statement ends the statement at the block, orphaning the `!=`.
+            (unsafe { libc::kill(-group, 0) }) != 0
+        }),
+        "the whole process group must be gone"
+    );
 
     assert_eq!(
         registry.get(&id).map(|r| r.status),
@@ -561,10 +559,7 @@ fn a_resumed_launch_keeps_the_record_and_the_crashed_console() {
         &registry,
         record,
         Path::new("/bin/sh"),
-        &[
-            std::ffi::OsString::from("-c"),
-            std::ffi::OsString::from("echo the resumed attempt"),
-        ],
+        &["-c".into(), "echo the resumed attempt".into()],
         b"",
         Console::Preserve,
         None,
