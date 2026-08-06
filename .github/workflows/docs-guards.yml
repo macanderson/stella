@@ -1,8 +1,9 @@
 name: docs-guards
 
 # Six guards over prose. None needs a Rust toolchain, which is why they live
-# here rather than in ci.yml -- that workflow deliberately ignores `docs/**`,
-# `website/**` and `*.md`, and this one triggers on exactly those paths.
+# here rather than in ci.yml -- that workflow deliberately skips its Rust jobs
+# for a diff confined to `docs/**`, `website/**` and `*.md` (a job-level prose
+# filter since #1892), and this one triggers on exactly those paths.
 #
 #  1. doc-links (scripts/check-doc-links.py): every citation resolves to a
 #     document that has declared an identity. Documents are addressed by a
@@ -105,8 +106,8 @@ jobs:
       # Also runs in ci.yml, which is where the important half is caught: a new
       # `Command` variant is a .rs change, so the required check sees it. This
       # copy covers the other direction, which ci.yml structurally cannot —
-      # `paths-ignore: website/**` means a PR that only deletes a reference
-      # page or drops it from meta.json never starts that workflow.
+      # its prose filter means a PR that only deletes a reference page or
+      # drops it from meta.json skips that workflow's Rust jobs.
       - name: every subcommand has a reference page
         if: ${{ !cancelled() }}
         run: bash scripts/check-command-docs.sh
@@ -120,8 +121,8 @@ jobs:
 
       # Both directions matter here, which is why it runs in ci.yml too. A new
       # guard is a Makefile change (ci.yml sees it); an edit that quietly drops
-      # a step from AGENTS.md or CONTRIBUTING.md is an md change, and
-      # `paths-ignore: *.md` means ci.yml structurally cannot (#1437).
+      # a step from AGENTS.md or CONTRIBUTING.md is an md change, and ci.yml's
+      # prose filter means it structurally cannot see one (#1437).
       - name: the documented gate is the real gate
         if: ${{ !cancelled() }}
         run: bash scripts/check-gate-parity.sh
