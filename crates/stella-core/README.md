@@ -77,7 +77,7 @@ bar, the same PR must update AGENTS.md's workspace table and the root
 
 The gate's `file-size` guard (`scripts/check-file-size.sh`) enforces a
 1500-line ratchet: a NEW file over the limit is a hard failure with no baseline
-escape, and the four files below are grandfathered at a recorded ceiling in
+escape, and the three files below are grandfathered at a recorded ceiling in
 `scripts/file-size-baseline.txt`. They are god files — already too big, closed
 to growth. Plan changes so no new line lands in them: new logic goes in a new
 submodule, the way [`src/driver/settlement.rs`](src/driver/settlement.rs) and
@@ -88,7 +88,6 @@ a god file is a candidate to extract the same way.
 - [`src/bus.rs`](src/bus.rs)
 - [`src/driver.rs`](src/driver.rs)
 - [`src/driver/tests.rs`](src/driver/tests.rs)
-- [`src/loop_detect.rs`](src/loop_detect.rs)
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an

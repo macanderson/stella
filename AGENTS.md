@@ -414,7 +414,7 @@ a plan needs and the part that rarely changes:
 | Crate | God files |
 |---|---|
 | `stella-cli` | `src/command_deck.rs`, `src/agent.rs`, `src/agent/tests.rs`, `src/fleet_cmd.rs` |
-| `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs`, `src/loop_detect.rs` |
+| `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs`, `src/zai.rs` |
 | `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
 | `stella-protocol` | `src/event.rs` |
