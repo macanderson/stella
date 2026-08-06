@@ -168,6 +168,39 @@ async fn the_production_tool_stack_forwards_wait_requests() {
     );
 }
 
+/// **The parallel-dispatch counterpart of the spend witness above.**
+///
+/// `parallel_safe_names` has an empty default, so any decorator that forgets
+/// to forward it silently serializes sibling `task` calls in every real
+/// session — the registry's claim never reaches the engine, and the feature
+/// (#1776) is dead exactly where it shipped. Asserted through the shipped
+/// composition for the same reason as the spend test: a future decorator
+/// inserted into the real stack fails here, and nowhere else.
+#[tokio::test]
+async fn the_production_tool_stack_forwards_parallel_safe_names() {
+    let ledger: SubAgentSpendLedger = Arc::default();
+    let base = LedgerBase(ledger);
+
+    let customs =
+        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
+    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &customs,
+        stub_tx,
+        crate::interactive::default_ask_io(false),
+    );
+    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
+    let discovery =
+        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+
+    assert!(
+        discovery.parallel_safe_names().contains("task"),
+        "the registry's concurrency claim must survive every decorator \
+         between the engine and the registry — one that swallows it silently \
+         serializes sibling spawns"
+    );
+}
+
 /// A dispatcher whose registry has been dropped reports a refusal rather
 /// than panicking a torn-down session.
 #[tokio::test]

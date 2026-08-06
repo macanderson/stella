@@ -209,6 +209,10 @@ impl<'a> Pipeline<'a> {
             // and the absence of the field would be a third, unintended
             // meaning.
             diff_coverage: Some(inputs.diff_coverage.as_str().to_string()),
+            // Stamped by the model-verdict arm alone
+            // (`LadderSnapshot::with_verifier_independence`): on every other
+            // rung nothing graded, so independence is not a fact about them.
+            verifier_independent: None,
         }
     }
 
