@@ -1,0 +1,139 @@
+# arenabench match — 10-task healthy-mix panel
+#
+#   arenabench run matches/fable5-cc-vs-stella-10task.toml --progress
+#
+# Claude Code vs Stella, both on Fable 5. The variable under test is the agent
+# architecture, not the model — so effort is pinned to `medium` on both seats
+# and neither seat may drift to a different model family.
+#
+# The seats authenticate differently on purpose:
+#
+#   Claude Code  Anthropic first-party, on a Claude subscription
+#                (CLAUDE_CODE_OAUTH_TOKEN — no metered spend)
+#   Stella       OpenRouter, metered (OPENROUTER_API_KEY), because Stella's
+#                pipeline makes ~3 calls per step and a subscription's shared
+#                requests-per-minute cap would measure the quota, not the agent.
+#
+# This file carries no secrets. Export CLAUDE_CODE_OAUTH_TOKEN and
+# OPENROUTER_API_KEY before running.
+
+[match]
+name = "fable 5: claude code vs stella (10-task mix)"
+dataset = "terminal-bench-2.1"
+
+# --- Panel design -----------------------------------------------------------
+#
+# Terminal-Bench 2.1 is 89 tasks: 4 easy / 54 medium / 30 hard. Scaled to ten
+# that is 0.4 / 6.1 / 3.4, so this panel is 1 easy / 6 medium / 3 hard — the
+# sample mirrors the dataset rather than over-weighting the tasks both agents
+# can already do, which would compress the delta under test.
+#
+# Six tasks carry over from matches/fable5-claude-code-vs-stella.toml so this
+# run is comparable against the previous cycle rather than only against itself.
+# Four are new, chosen to add the three hard rungs and a seventh category.
+#
+# No task here is tagged [heavy]: heavy tasks force concurrency to 1 and would
+# serialise the whole panel behind one container.
+#
+#   task                       difficulty  category               origin
+#   fix-git                    easy        software-engineering   carry-over
+#   regex-log                  medium      data-processing        carry-over
+#   sqlite-with-gcov           medium      system-administration  carry-over
+#   large-scale-text-editing   medium      file-operations        carry-over
+#   openssl-selfsigned-cert    medium      security               carry-over
+#   nginx-request-logging      medium      system-administration  carry-over
+#   query-optimize             medium      data-science           new
+#   cancel-async-tasks         hard        software-engineering   new
+#   dna-assembly               hard        scientific-computing   new
+#   write-compressor           hard        software-engineering   new
+#
+# Category spread is 7 of the dataset's 16. software-engineering gets 3 seats
+# because it is 26 of the 89 tasks; system-administration is deliberately one
+# seat over its proportional share, because both of its tasks are carry-overs
+# with prior evidence behind them and comparability won the tie.
+tasks = [
+  "fix-git",
+  "regex-log",
+  "sqlite-with-gcov",
+  "large-scale-text-editing",
+  "openssl-selfsigned-cert",
+  "nginx-request-logging",
+  "query-optimize",
+  "cancel-async-tasks",
+  "dna-assembly",
+  "write-compressor",
+]
+attempts = 1
+
+# The rig is 32 vCPU / 123 GB. One task slot is 2 contestant containers racing,
+# and the largest task asks for 4 CPU, so a slot can want 8 CPU. Three slots is
+# 24 CPU with 8 left for the recorders and the host. Raising this further would
+# start trading CPU against the timeout-bound tasks, and several tasks on this
+# panel are timeout-bound — contention there corrupts the measurement rather
+# than merely slowing it.
+concurrency = 3
+record_video = true
+
+# Claude Code installs itself per trial: apt-get plus the claude.ai installer
+# measured at 229s against a 360s default.
+setup_timeout_multiplier = 4.0
+
+[[contestant]]
+id = "claude-code"
+name = "Claude Code (Fable 5)"
+agent = "claude-code"
+color = "#FF6B9D"
+
+  [contestant.engine]
+  api = "anthropic"
+  model = "claude-fable-5"
+  reasoning = true
+  # `medium` on both arms so effort is not a confound. Measured 2026-08-03:
+  # xhigh timed out on every step budget it was given; medium finished.
+  effort = "medium"
+  # No base_url: this seat runs at Anthropic, authenticated by the subscription
+  # token. No budget_usd either — Claude Code does not honour a spend cap, and
+  # on the plan the marginal spend is zero; the plan's quota is the ceiling.
+
+  [contestant.env]
+  # Names only — never values.
+  required = ["CLAUDE_CODE_OAUTH_TOKEN"]
+
+[[contestant]]
+id = "stella"
+name = "Stella (Fable 5 pipeline)"
+agent = "stella"
+color = "#FFB000"
+
+  [contestant.engine]
+  api = "openrouter"
+  model = "anthropic/claude-fable-5"
+  reasoning = true
+  effort = "medium"
+  # Fable's real output ceiling, same number on both routes (#1211 §6.2).
+  max_tokens = 128000
+  # Per-trial cap (becomes STELLA_BUDGET). Ten trials x $12 = $120 worst case,
+  # with per-trial isolation: one runaway trial cannot eat the other nine
+  # tasks' budget. In practice only the three hard trials approach the cap.
+  budget_usd = 12.0
+
+  # Per-role overrides — the "full pipeline" arm. Every model named here is in
+  # Stella's OFFLINE seed catalog under `openrouter`: the adapter pins
+  # STELLA_CATALOG_AUTO_REFRESH=0, and a role pinned to an unlisted slug
+  # refuses the run rather than silently falling back.
+    [contestant.engine.roles.verifier]
+    # Cross-lab on purpose: verification independent of the model family being
+    # verified, and of the worker in particular.
+    model = "moonshotai/kimi-k3"
+    effort = "high"
+    reasoning = "on"
+
+    [contestant.engine.roles.triage]
+    # Cheapest fast family member, classification only, never touches the
+    # workspace.
+    model = "anthropic/claude-haiku-4.5"
+    effort = "low"
+    reasoning = "off"
+
+  [contestant.env]
+  required = ["OPENROUTER_API_KEY"]

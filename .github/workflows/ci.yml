@@ -190,6 +190,17 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-role-names.sh
 
+      # Also toolchain-free, and the reason it must be: `dev_t` is signed on
+      # macOS and unsigned on Linux, so a raw `libc::stat` identity comparison
+      # compiles on the author's machine and fails on this runner — or the
+      # reverse. #1737 shipped that rewrite half-finished and `main` went red
+      # behind it for every open PR (#1752). Catching it in a guard costs
+      # milliseconds and runs on the author's own pre-push hook, which is an
+      # hour earlier than here (#1758).
+      - name: file identity goes through MetadataExt, not a raw libc::stat
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-stat-portability.sh
+
       # Also toolchain-free. AGENTS.md requires that anything noticed and not
       # fixed becomes an issue written as a handoff; nothing checked it, and an
       # unenforced standard reads as one the codebase is meeting. The decidable

@@ -446,7 +446,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     """Tail a match's artifacts and emit one line per detection.
 
     The supervising process is the customer: CI greps text lines and acts on
-    the exit code; a subscriber (the fullauto loop, a ``Monitor``) reads
+    the exit code; a subscriber (the self-driving loop, a ``Monitor``) reads
     ``--format jsonl`` — agent monitor protocol events, one per line — and
     reacts while the match is still running. Read-only with respect to the
     run, like everything else in the arena: a watched contestant's number
