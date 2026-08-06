@@ -42,17 +42,21 @@ fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
 }
 
 /// A `DeckUi` past the splash with the scenario's plan-review gate answered —
-/// the state every assertion about a *tab's body* below is actually about.
+/// the state every assertion about the *Session tab's body* below is about.
 ///
-/// The gate is a **modal** dialog (#1633): while the focused agent's scope
-/// review is pending it is drawn centered over whatever tab is up, because it
-/// is the surface that halts the session. The demo scenario reaches a pending
-/// plan, so a bare `DeckUi::default()` puts that dialog over the body these
-/// tests examine — and does it *quietly*, because the dialog is centered and a
-/// needle that happens to sit near an edge survives. Answering it here is what
-/// keeps each test about the tab it names instead of about where the dialog
-/// landed; [`a_pending_plan_review_is_modal_over_the_tab_body`] is where the
-/// modality itself is pinned.
+/// The gate is a modal dialog (#1633) drawn centered over its tab, and since
+/// `5470d3da` its tab is only `DeckTab::Session` — it belongs to the focused
+/// agent's REPL surface, and blanking TRACES or FILES hid the very panels a
+/// reviewer opens to decide. The demo scenario this suite folds reaches a
+/// pending plan, so on SESSION a bare `DeckUi::default()` still puts the dialog
+/// over the body under test. Answering it here keeps those assertions about the
+/// tab they name; [`a_pending_plan_review_is_modal_over_the_session_tab_only`]
+/// pins both halves of the scoping.
+///
+/// Applied on every tab, not just SESSION: which tabs the dialog reaches is a
+/// decision that has changed once already, and a harness that only defends the
+/// tab it currently reaches would quietly rot into the same failure the next
+/// time it widens.
 fn answered_ui(model: &WorkspaceModel) -> DeckUi {
     let mut ui = DeckUi::default();
     ui.splash.skip(); // past the splash so the tabs draw
@@ -188,17 +192,22 @@ fn deck_renders_every_tab_with_real_content() {
     }
 }
 
-/// #1633: a pending plan review is **modal**, so it is drawn over whatever tab
-/// happens to be up rather than only over SESSION.
+/// An unanswered plan review is modal over SESSION and **invisible
+/// everywhere else** — both halves, because each one alone is a bug that
+/// already shipped.
 ///
-/// Reachable exactly as rendered here: a reviewer browsing AGENTS is still
-/// browsing it when the lead proposes a plan, and the gate that halts the
-/// session has to be the thing they see. Every other test in this file answers
-/// the gate through [`answered_ui`] so it can assert on a tab body; this one
-/// leaves it pending, which is what keeps the modality a tested property
-/// rather than an accident of where the dialog lands.
+/// #1633 made the gate a frame-sized dialog and drew it whenever it was
+/// pending, which blanked AGENTS, TRACES, GRAPH, FILES and MCP — the panels a
+/// reviewer opens *in order to* decide. `5470d3da` scoped it to
+/// `DeckTab::Session`, the focused agent's REPL surface, where the gate lived
+/// as a band before it became a dialog. Neither change brought a test with it,
+/// so this is the witness for the scoping rather than for either shape.
+///
+/// Asserting only the SESSION half would let the overlay silently widen again;
+/// asserting only the AGENTS half would let it vanish from the one tab that
+/// must show it. The pair is the property.
 #[test]
-fn a_pending_plan_review_is_modal_over_the_tab_body() {
+fn a_pending_plan_review_is_modal_over_the_session_tab_only() {
     let model = folded_model();
     assert!(
         model
@@ -210,21 +219,38 @@ fn a_pending_plan_review_is_modal_over_the_tab_body() {
     );
 
     // Deliberately NOT `answered_ui`: the unanswered gate is the subject.
-    let mut ui = DeckUi::default();
-    ui.splash.skip();
-    ui.tab = DeckTab::Agents;
-    let mut terminal = Terminal::new(TestBackend::new(240, 20)).unwrap();
-    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
-    let text = buffer_text(terminal.backend().buffer());
+    let render_pending = |tab: DeckTab| {
+        let mut ui = DeckUi::default();
+        ui.splash.skip();
+        ui.tab = tab;
+        let mut terminal = Terminal::new(TestBackend::new(240, 20)).unwrap();
+        terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+        buffer_text(terminal.backend().buffer())
+    };
 
+    let session = render_pending(DeckTab::Session);
     assert!(
-        text.contains("plan review"),
-        "the pending gate must draw its dialog over the AGENTS tab:\n{text}"
+        session.contains("plan review"),
+        "the pending gate must draw its dialog over the SESSION tab:\n{session}"
     );
     assert!(
-        text.contains("one keypress decides"),
+        session.contains("one keypress decides"),
         "the dialog's own legend is what tells the reviewer it is answerable \
-         where they stand:\n{text}"
+         where they stand:\n{session}"
+    );
+
+    // The same pending gate, one tab over: the dialog must be gone AND the tab
+    // must be showing its own body rather than an empty frame.
+    let agents = render_pending(DeckTab::Agents);
+    assert!(
+        !agents.contains("plan review"),
+        "a pending gate must not paint over AGENTS — that is the regression \
+         5470d3da fixed:\n{agents}"
+    );
+    assert!(
+        agents.contains("needs input"),
+        "with the dialog scoped away, the AGENTS dashboard must render its own \
+         status column:\n{agents}"
     );
 }
 
