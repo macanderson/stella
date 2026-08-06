@@ -3,7 +3,7 @@ description: File everything this cycle could not fix as GitHub issues written a
 argument-hint: "[--dry-run]"
 ---
 
-# fullauto:tickets — nothing left behind
+# self-driving:tickets — nothing left behind
 
 The rule from AGENTS.md, and the one phase of the cycle that has no skip
 condition:
@@ -107,7 +107,7 @@ You know what you found; classify it.
 ## Then close the loop on the loop
 
 ```bash
-scripts/fullauto.sh seen --add <digest>…
+scripts/self-driving.sh seen --add <digest>…
 ```
 
 An issue filed but not recorded as seen will be filed again next cycle. Record it

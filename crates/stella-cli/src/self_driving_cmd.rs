@@ -1,16 +1,16 @@
-//! `stella fullauto` — the deterministic half of the perpetual delivery loop
+//! `stella self-driving` — the deterministic half of the perpetual delivery loop
 //! as a first-class subcommand (#1548).
 //!
 //! The decision logic (AIMD, the aperture ladder, the dry-streak oracle, the
-//! digest, the governor, the folds) lives in `stella_core::fullauto`, pure
+//! digest, the governor, the folds) lives in `stella_core::self_driving`, pure
 //! and property-tested. This module owns everything invariant 2 keeps out of
 //! the engine: the probes that read this machine, the state directory under
-//! `~/.stella/fullauto/<slug>/`, the `gh` calls that read the defect queue,
-//! and the exact output shapes the `/fullauto` slash commands eval.
+//! `~/.stella/self-driving/<slug>/`, the `gh` calls that read the defect queue,
+//! and the exact output shapes the `/self-driving` slash commands eval.
 //!
-//! Flag spellings deliberately match `scripts/fullauto.sh`, whose ported
-//! verbs are now one-line `exec stella fullauto …` delegations — the shell
-//! harness (`make fullauto-test`) drives those delegations end-to-end, so the
+//! Flag spellings deliberately match `scripts/self-driving.sh`, whose ported
+//! verbs are now one-line `exec stella self-driving …` delegations — the shell
+//! harness (`make self-driving-test`) drives those delegations end-to-end, so the
 //! two surfaces cannot drift.
 
 pub(crate) mod probes;
@@ -21,7 +21,7 @@ use std::process::Command;
 
 use clap::Subcommand;
 use serde_json::Value;
-use stella_core::fullauto::{self, CycleOutcome, CycleRecord, Demand, Tooling};
+use stella_core::self_driving::{self, CycleOutcome, CycleRecord, Demand, Tooling};
 
 use crate::query_format::{QueryFormat, Rows};
 use crate::timefmt::{now_unix, rfc3339_utc_now};
@@ -32,7 +32,7 @@ use state::LoopState;
 // ---------------------------------------------------------------------------
 
 #[derive(Subcommand)]
-pub(crate) enum FullautoCmd {
+pub(crate) enum SelfDrivingCmd {
     /// Size this cycle to the machine it is actually running on: supply x
     /// demand x calibration -> a tier and concrete knobs, emitted as shell
     /// assignments so the caller cannot mis-transcribe them.
@@ -223,7 +223,7 @@ impl OutcomeArg {
 
 #[derive(Subcommand)]
 pub(crate) enum RunCmd {
-    /// Start a run and print FULLAUTO_RUN_ID for the driver to keep.
+    /// Start a run and print SELF_DRIVING_RUN_ID for the driver to keep.
     Start,
 
     /// End the current run.
@@ -254,12 +254,12 @@ pub(crate) enum RunCmd {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-pub(crate) fn run(cmd: &FullautoCmd) -> Result<(), String> {
+pub(crate) fn run(cmd: &SelfDrivingCmd) -> Result<(), String> {
     let st = LoopState::open()?;
     match cmd {
-        FullautoCmd::Plan { explain } => plan(&st, *explain),
-        FullautoCmd::State { dry_streak, format } => cmd_state(&st, *dry_streak, *format),
-        FullautoCmd::Cycle { cmd } => match cmd {
+        SelfDrivingCmd::Plan { explain } => plan(&st, *explain),
+        SelfDrivingCmd::State { dry_streak, format } => cmd_state(&st, *dry_streak, *format),
+        SelfDrivingCmd::Cycle { cmd } => match cmd {
             CycleCmd::Begin => cycle_begin(&st),
             CycleCmd::End {
                 cycle,
@@ -288,27 +288,27 @@ pub(crate) fn run(cmd: &FullautoCmd) -> Result<(), String> {
                 lens_tool.as_deref(),
             ),
         },
-        FullautoCmd::Watch => watch(&st),
-        FullautoCmd::Metrics => metrics(&st),
-        FullautoCmd::Aperture {
+        SelfDrivingCmd::Watch => watch(&st),
+        SelfDrivingCmd::Metrics => metrics(&st),
+        SelfDrivingCmd::Aperture {
             current,
             advance,
             reset,
             list,
         } => aperture(&st, *current, *advance, *reset, *list),
-        FullautoCmd::Seen {
+        SelfDrivingCmd::Seen {
             digest,
             new,
             add,
             count,
         } => seen(&st, digest, new, add, *count),
-        FullautoCmd::Calibrate {
+        SelfDrivingCmd::Calibrate {
             ok,
             resource_fail,
             show,
         } => calibrate_cmd(&st, *ok, *resource_fail, *show),
-        FullautoCmd::Queue { limit, format } => queue(&st, *limit, *format),
-        FullautoCmd::Run { cmd } => match cmd {
+        SelfDrivingCmd::Queue { limit, format } => queue(&st, *limit, *format),
+        SelfDrivingCmd::Run { cmd } => match cmd {
             RunCmd::Start => run_start(&st),
             RunCmd::End { status, reason } => run_end(&st, status, reason),
             RunCmd::Cancel { reason } => run_end_as(
@@ -329,8 +329,8 @@ pub(crate) fn run(cmd: &FullautoCmd) -> Result<(), String> {
                 Ok(())
             }
         },
-        FullautoCmd::Runs => runs_report(&st),
-        FullautoCmd::Phase { name } => {
+        SelfDrivingCmd::Runs => runs_report(&st),
+        SelfDrivingCmd::Phase { name } => {
             st.run_write(name, None, None);
             println!("phase: {name}");
             Ok(())
@@ -393,11 +393,11 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
     let supply = probes::supply(&st.repo_root);
     let demand = demand();
     let cal = st.calibration();
-    let plan = fullauto::plan_cycle(supply, demand, &cal, state::floors());
+    let plan = self_driving::plan_cycle(supply, demand, &cal, state::floors());
     let aperture = st.aperture();
 
     if explain {
-        say(&format!("fullauto plan — tier {}", plan.tier.as_str()));
+        say(&format!("self-driving plan — tier {}", plan.tier.as_str()));
         println!("  {}\n", plan.reason);
         println!(
             "  supply    {} cores (load {}) · {}GB RAM ({}GB free) · {}GB disk · battery={} · busy={}",
@@ -432,20 +432,20 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
         return Ok(());
     }
 
-    println!("FULLAUTO_TIER={}", plan.tier.as_str());
-    println!("FULLAUTO_BATCH={}", plan.batch);
-    println!("FULLAUTO_PARALLEL={}", plan.parallel);
-    println!("FULLAUTO_LOCAL_BUILD={}", u8::from(plan.local_build));
-    println!("FULLAUTO_SCOPE={}", plan.scope.as_str());
-    println!("FULLAUTO_AUDIT={}", plan.audit.as_str());
-    println!("FULLAUTO_BENCH={}", plan.bench.as_str());
-    println!("FULLAUTO_APERTURE={aperture}");
-    println!("FULLAUTO_CPU={}", supply.cpu);
-    println!("FULLAUTO_MEM_FREE_GB={}", supply.mem_free_gb);
-    println!("FULLAUTO_DISK_FREE_GB={}", supply.disk_free_gb);
-    println!("FULLAUTO_QUEUE={}", demand.open_defects);
-    println!("FULLAUTO_QUEUE_P0={}", demand.p0);
-    println!("FULLAUTO_PLAN_REASON=\"{}\"", plan.reason);
+    println!("SELF_DRIVING_TIER={}", plan.tier.as_str());
+    println!("SELF_DRIVING_BATCH={}", plan.batch);
+    println!("SELF_DRIVING_PARALLEL={}", plan.parallel);
+    println!("SELF_DRIVING_LOCAL_BUILD={}", u8::from(plan.local_build));
+    println!("SELF_DRIVING_SCOPE={}", plan.scope.as_str());
+    println!("SELF_DRIVING_AUDIT={}", plan.audit.as_str());
+    println!("SELF_DRIVING_BENCH={}", plan.bench.as_str());
+    println!("SELF_DRIVING_APERTURE={aperture}");
+    println!("SELF_DRIVING_CPU={}", supply.cpu);
+    println!("SELF_DRIVING_MEM_FREE_GB={}", supply.mem_free_gb);
+    println!("SELF_DRIVING_DISK_FREE_GB={}", supply.disk_free_gb);
+    println!("SELF_DRIVING_QUEUE={}", demand.open_defects);
+    println!("SELF_DRIVING_QUEUE_P0={}", demand.p0);
+    println!("SELF_DRIVING_PLAN_REASON=\"{}\"", plan.reason);
     Ok(())
 }
 
@@ -455,7 +455,7 @@ fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
 
 fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<(), String> {
     if dry_streak {
-        let streak = fullauto::dry_streak(&st.cycles(), &st.aperture());
+        let streak = self_driving::dry_streak(&st.cycles(), &st.aperture());
         println!("{streak}");
         return Ok(());
     }
@@ -468,11 +468,11 @@ fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<()
         return Ok(());
     }
 
-    say(&format!("fullauto state — {}", st.dir.display()));
+    say(&format!("self-driving state — {}", st.dir.display()));
     println!("  cycle           {}", st.cycle_counter());
     println!(
         "  dry streak      {} / {}",
-        fullauto::dry_streak(&cycles, &st.aperture()),
+        self_driving::dry_streak(&cycles, &st.aperture()),
         state::dry_streak_target()
     );
     println!("  findings seen   {}", st.seen_count());
@@ -494,7 +494,7 @@ fn cmd_state(st: &LoopState, dry_streak: bool, format: QueryFormat) -> Result<()
 /// The declared tool backing for a lens name (#1549): what the cycle should
 /// run, or an explicit statement that it works unaided.
 fn declared_tool(lens_name: &str) -> String {
-    match fullauto::lens(lens_name).map(|l| l.tooling) {
+    match self_driving::lens(lens_name).map(|l| l.tooling) {
         Some(Tooling::Command { run, .. }) => collapse_ws(run),
         Some(Tooling::ModelOnly { .. }) => "model-only".to_string(),
         None => "none".to_string(),
@@ -517,19 +517,25 @@ fn cycle_begin(st: &LoopState) -> Result<(), String> {
     st.run_write("starting", Some(n), None);
 
     let aperture = st.aperture();
-    let streak = fullauto::dry_streak(&st.cycles(), &aperture);
-    println!("FULLAUTO_CYCLE={n}");
-    println!("FULLAUTO_DRY_STREAK_SO_FAR={streak}");
-    println!("FULLAUTO_DRY_STREAK_TARGET={}", state::dry_streak_target());
-    println!("FULLAUTO_STATE_DIR={}", st.dir.display());
-    println!("FULLAUTO_SEEN_COUNT={}", st.seen_count());
-    println!("FULLAUTO_STARTED_AT={}", rfc3339_utc_now());
+    let streak = self_driving::dry_streak(&st.cycles(), &aperture);
+    println!("SELF_DRIVING_CYCLE={n}");
+    println!("SELF_DRIVING_DRY_STREAK_SO_FAR={streak}");
     println!(
-        "FULLAUTO_BASE_SHA={}",
+        "SELF_DRIVING_DRY_STREAK_TARGET={}",
+        state::dry_streak_target()
+    );
+    println!("SELF_DRIVING_STATE_DIR={}", st.dir.display());
+    println!("SELF_DRIVING_SEEN_COUNT={}", st.seen_count());
+    println!("SELF_DRIVING_STARTED_AT={}", rfc3339_utc_now());
+    println!(
+        "SELF_DRIVING_BASE_SHA={}",
         state::git(&st.repo_root, &["rev-parse", "HEAD"]).unwrap_or_else(|| "none".to_string())
     );
-    println!("FULLAUTO_APERTURE={aperture}");
-    println!("FULLAUTO_APERTURE_TOOL=\"{}\"", declared_tool(&aperture));
+    println!("SELF_DRIVING_APERTURE={aperture}");
+    println!(
+        "SELF_DRIVING_APERTURE_TOOL=\"{}\"",
+        declared_tool(&aperture)
+    );
     Ok(())
 }
 
@@ -585,13 +591,13 @@ fn cycle_end(
     // Close the control loop: the controller learns what this box survives,
     // and the aperture widens the moment a lens stops producing.
     let mut cal = st.calibration();
-    fullauto::calibrate(&mut cal, outcome.to_core(), &state::aimd_limits());
+    self_driving::calibrate(&mut cal, outcome.to_core(), &state::aimd_limits());
     st.write_calibration(&cal)?;
 
     // The CYCLE ended, not the run — only `run end`/`run cancel` closes one.
     st.run_write("idle", None, Some(tier));
 
-    let streak = fullauto::dry_streak(&st.cycles(), &aperture);
+    let streak = self_driving::dry_streak(&st.cycles(), &aperture);
     if streak >= state::dry_streak_target() {
         say(&format!("aperture {aperture} is dry after {streak} cycles"));
         advance_aperture(st, &aperture)?;
@@ -608,9 +614,9 @@ fn cycle_end(
 }
 
 fn advance_aperture(st: &LoopState, current: &str) -> Result<(), String> {
-    let next = fullauto::advance(current);
+    let next = self_driving::advance(current);
     st.set_aperture(next)?;
-    if next == fullauto::WATCH {
+    if next == self_driving::WATCH {
         println!("aperture {current} -> watch (every lens dry; the loop sleeps, it does not stop)");
     } else {
         println!("aperture {current} -> {next}");
@@ -694,7 +700,7 @@ fn metrics(st: &LoopState) -> Result<(), String> {
         return Ok(());
     }
     let cal = st.calibration();
-    let m = fullauto::metrics(&rows);
+    let m = self_driving::metrics(&rows);
     let n = m.cycles;
 
     println!("cycles            {n}");
@@ -728,13 +734,13 @@ fn metrics(st: &LoopState) -> Result<(), String> {
     );
 
     let mut signals = m.signals;
-    if let Some(s) = fullauto::starved(&cal) {
+    if let Some(s) = self_driving::starved(&cal) {
         // Keep the shell driver's order: STARVED reported right after STUCK.
         let at = usize::from(signals.first().is_some_and(|s| s.code == "STUCK"));
         signals.insert(at, s);
     }
     if !signals.is_empty() {
-        println!("\nsignals for /fullauto:evolve");
+        println!("\nsignals for /self-driving:evolve");
         for s in signals {
             println!("  ! {}: {}", s.code, s.text);
         }
@@ -762,7 +768,7 @@ fn aperture(
         st.set_aperture("rubric")?;
         println!("aperture reset to rubric");
     } else if list {
-        for l in fullauto::LENSES {
+        for l in self_driving::LENSES {
             let marker = if l.name == open { "*" } else { " " };
             let heavy = if l.heavy_only { " [heavy tier]" } else { "" };
             let backing = match l.tooling {
@@ -771,10 +777,14 @@ fn aperture(
             };
             println!("  {marker} {:<13} {backing}{heavy}", l.name);
         }
-        let marker = if open == fullauto::WATCH { "*" } else { " " };
+        let marker = if open == self_driving::WATCH {
+            "*"
+        } else {
+            " "
+        };
         println!(
             "  {marker} {:<13} cheap sentinels; any trigger reopens rubric",
-            fullauto::WATCH
+            self_driving::WATCH
         );
     }
     Ok(())
@@ -788,7 +798,7 @@ fn seen(
     count: bool,
 ) -> Result<(), String> {
     if !digest.is_empty() {
-        println!("{}", fullauto::finding_digest(&digest.join(" ")));
+        println!("{}", self_driving::finding_digest(&digest.join(" ")));
     } else if !new.is_empty() {
         let known = st.seen();
         for d in new {
@@ -830,7 +840,7 @@ fn calibrate_cmd(st: &LoopState, ok: bool, resource_fail: bool, show: bool) -> R
         _ => CycleOutcome::Ok,
     };
     let mut cal = st.calibration();
-    fullauto::calibrate(&mut cal, outcome, &state::aimd_limits());
+    self_driving::calibrate(&mut cal, outcome, &state::aimd_limits());
     st.write_calibration(&cal)?;
     println!(
         "{}",
@@ -851,11 +861,11 @@ fn queue(_st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), Strin
         "number,title,labels,createdAt,url",
     ])
     .ok_or_else(|| "gh issue list failed (is gh installed and authenticated?)".to_string())?;
-    let issues: Vec<fullauto::QueueIssue> =
+    let issues: Vec<self_driving::QueueIssue> =
         serde_json::from_str(&raw).map_err(|e| format!("gh issue list payload: {e}"))?;
     let total_issues = issues.len();
 
-    let defects = fullauto::rank_defects(issues);
+    let defects = self_driving::rank_defects(issues);
     let picked = &defects[..limit.min(defects.len())];
 
     if format == QueryFormat::Json {
@@ -893,7 +903,7 @@ fn queue(_st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), Strin
 
 fn run_start(st: &LoopState) -> Result<(), String> {
     let rid = state::new_run_id();
-    let driver = std::env::var("FULLAUTO_DRIVER").unwrap_or_else(|_| "interactive".to_string());
+    let driver = std::env::var("SELF_DRIVING_DRIVER").unwrap_or_else(|_| "interactive".to_string());
     let mut fields = BTreeMap::new();
     fields.insert("run_id".to_string(), Value::String(rid.clone()));
     fields.insert("status".to_string(), Value::String("running".to_string()));
@@ -921,7 +931,7 @@ fn run_start(st: &LoopState) -> Result<(), String> {
     st.run_write("idle", None, None);
 
     say(&format!("run {rid} started"));
-    println!("FULLAUTO_RUN_ID={rid}");
+    println!("SELF_DRIVING_RUN_ID={rid}");
     Ok(())
 }
 
@@ -944,7 +954,7 @@ fn run_end_as(st: &LoopState, status: &str, reason: &str) -> Result<(), String> 
 }
 
 fn runs_report(st: &LoopState) -> Result<(), String> {
-    let rows = fullauto::fold_runs(
+    let rows = self_driving::fold_runs(
         &st.run_records(),
         &st.cycles(),
         st.run_doc().as_ref(),
@@ -952,7 +962,7 @@ fn runs_report(st: &LoopState) -> Result<(), String> {
         state::stale_after_secs(),
     );
     if rows.is_empty() {
-        println!("no fullauto runs recorded yet");
+        println!("no self-driving runs recorded yet");
         return Ok(());
     }
     println!(

@@ -19,7 +19,7 @@ agent, or a provider, and watching a contestant can never change its number.
 What a detection looks like on the wire is deliberately **not** ArenaBench's
 own: it is the *agent monitor protocol* (``doc:agent-monitor-protocol``), a
 line-delimited JSON envelope any run-watching tool can emit and any supervisor
-(CI, a ``Monitor``, the fullauto loop, a shell pipe) can consume without
+(CI, a ``Monitor``, the self-driving loop, a shell pipe) can consume without
 knowing what kind of run it is watching. ArenaBench is one emitter; the
 protocol is the contract. This module owns the rules and the envelope;
 ``arenabench watch`` (:mod:`arenabench.cli`) owns the process and its exit

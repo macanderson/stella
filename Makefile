@@ -292,9 +292,9 @@ impacted: ## Print the cargo scope for a diff (RANGE=origin/main..HEAD)
 impacted-test: ## Test the gate-scoping script (hermetic; not part of `gate`)
 	./scripts/test-impacted-crates.sh
 
-.PHONY: fullauto-test
-fullauto-test: ## Test the fullauto control logic — digest, AIMD, aperture, run lifecycle (hermetic; not part of `gate`)
-	./scripts/test-fullauto.sh
+.PHONY: self-driving-test
+self-driving-test: ## Test the self-driving control logic — digest, AIMD, aperture, run lifecycle (hermetic; not part of `gate`)
+	./scripts/test-self-driving.sh
 
 .PHONY: smoke-artifact-test
 smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic broken artifacts (hermetic; not part of `gate`)
