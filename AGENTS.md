@@ -426,7 +426,7 @@ a plan needs and the part that rarely changes:
 | `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
 | `stella-protocol` | `src/event.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
-| `stella-tools` | `src/registry.rs`, `src/scripts.rs`, `src/media.rs` |
+| `stella-tools` | `src/registry.rs`, `src/scripts.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
 The other thirteen crates carry no god files — keep it that way. Each crate's

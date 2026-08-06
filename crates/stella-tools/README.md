@@ -66,12 +66,12 @@ grandfathered at a recorded ceiling in `scripts/file-size-baseline.txt`. They ar
 already too big, closed to growth. Plan work so no new line lands in them: new logic goes in a
 new submodule, following this crate's own precedent —
 [`src/registry/process_tools.rs`](src/registry/process_tools.rs) split out of `registry.rs`, and
-the [`src/media/`](src/media) modules split out of `media.rs`. Cross-cutting behaviour still
-belongs on the one dispatch path (see Key concepts), but as a helper module `execute` calls,
-with only the call site landing in `registry.rs` — and code you touch in any of the three is a
-candidate to extract.
+the [`src/media/`](src/media) modules split out of `media.rs` — including its whole test module
+([`src/media/tests.rs`](src/media/tests.rs)), which is what took `media.rs` off this list
+(#1596). Cross-cutting behaviour still belongs on the one dispatch path (see Key concepts), but
+as a helper module `execute` calls, with only the call site landing in `registry.rs` — and code
+you touch in either is a candidate to extract.
 
-- [`src/media.rs`](src/media.rs)
 - [`src/registry.rs`](src/registry.rs)
 - [`src/scripts.rs`](src/scripts.rs)
 

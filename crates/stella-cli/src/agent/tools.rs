@@ -827,6 +827,8 @@ pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
     let process_free = crate::enterprise_telemetry::process_free_authority_active();
     let media_operation_journal = host_media_operation_journal(&cfg.workspace_root);
     stella_tools::RegistryOptions {
+        // The one place the CLI opts into probing this host (#1596).
+        issue_backend: stella_tools::IssueBackendSource::ambient(),
         media_requires_host_approval: cfg.authority.media_requires_host_approval,
         media_operation_journal,
         media_host_data_isolation: process_free
