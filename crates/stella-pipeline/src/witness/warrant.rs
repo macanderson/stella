@@ -188,7 +188,7 @@ pub struct ChangeSignals {
     /// unrecognized name can never be the reason a turn is written off.
     pub mutating_actions: u32,
     /// The subset of `mutating_actions` whose effects the diff CANNOT be
-    /// trusted to account for ([`diff_accountable_mutator`]): shell calls,
+    /// trusted to account for (per the crate-private `diff_accountable_mutator`): shell calls,
     /// process spawns, repo pushes, MCP and custom tools — anything able to
     /// act outside the file-CRUD surface the diff probes observe.
     ///
