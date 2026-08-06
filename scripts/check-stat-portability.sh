@@ -136,5 +136,9 @@ if [ -n "$offenders" ]; then
 fi
 
 scanned="$(find crates bench -name '*.rs' -type f 2>/dev/null | wc -l | tr -d ' ')"
+# The verdict is already decided; the write is best-effort. SIGPIPE is ignored
+# and the write's failure discarded, so a reader that closed the pipe
+# (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
+trap '' PIPE
 printf 'check-stat-portability: OK — %s Rust file(s), no raw stat identity reads.\n' \
-  "$scanned"
+  "$scanned" || true
