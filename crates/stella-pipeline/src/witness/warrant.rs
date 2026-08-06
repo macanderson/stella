@@ -187,6 +187,55 @@ pub struct ChangeSignals {
     /// as `read_only`. A call whose tool is unknown counts as mutating, so an
     /// unrecognized name can never be the reason a turn is written off.
     pub mutating_actions: u32,
+    /// The subset of `mutating_actions` whose effects the diff CANNOT be
+    /// trusted to account for ([`diff_accountable_mutator`]): shell calls,
+    /// process spawns, repo pushes, MCP and custom tools — anything able to
+    /// act outside the file-CRUD surface the diff probes observe.
+    ///
+    /// This is what closes the #1701 shape the empty-paths guard alone left
+    /// open: a system-configuration turn that ALSO edited one README parses
+    /// as a docs-only diff, and with only the two signals above the module
+    /// waived both the witness and the reviewer over ten dispatched shell
+    /// calls whose effects landed in `/etc`. A path rule may only waive what
+    /// the diff fully explains, and an opaque call is by definition something
+    /// it does not.
+    pub opaque_actions: u32,
+}
+
+/// Whether a *mutating* tool call's effects are fully accountable to the
+/// diff and untracked-file probes — file CRUD inside the workspace tree,
+/// plus the session-local bookkeeping tools that touch no workspace at all
+/// (the task board, memory and exploration writes under `.stella/`).
+///
+/// Everything else — the shell, process control, project-command verbs
+/// (which run arbitrary configured commands), repo mutations, media and
+/// issue tools, MCP servers, custom scripts, and any name this list has
+/// never heard of — is opaque: it can act where no diff probe looks, so a
+/// dispatched call fails closed as [`ChangeSignals::opaque_actions`] and the
+/// warrant buys the test.
+///
+/// Name-based on purpose, mirroring the built-in catalog
+/// (`stella-tools/src/catalog.rs`): the pipeline sees tools as schemas, and
+/// a capability flag on the wire would let a third-party tool declare its
+/// own effects collectable. Only names this pipeline can vouch for are
+/// listed, and the cost of a missing entry is an unnecessary witness — one
+/// model call — never an unverified change.
+pub(crate) fn diff_accountable_mutator(name: &str) -> bool {
+    matches!(
+        name,
+        "write_file"
+            | "edit_file"
+            | "apply_edits"
+            | "delete_file"
+            | "save_exploration"
+            | "save_memory"
+            | "cite_memory"
+            | "task_create"
+            | "task_start"
+            | "task_complete"
+            | "task_cancel"
+            | "task_assign"
+    )
 }
 
 /// Decide from the change what the prompt could never tell us.
@@ -233,6 +282,16 @@ pub fn warrant(diff: &str, signals: ChangeSignals) -> WitnessWarrant {
         if !paths.contains(&path) {
             paths.push(path);
         }
+    }
+
+    // Every path rule below waives on the premise that the diff IS the
+    // change. An opaque dispatched call — a shell command, a spawned
+    // process — breaks that premise: its effects can land where no diff
+    // probe looks (#1701's trace put them in `/etc`), and one README edit
+    // beside them must not turn "ten shell calls" into "documentation
+    // only". With the premise gone, the waivers are gone with it.
+    if signals.opaque_actions > 0 {
+        return WitnessWarrant::Required;
     }
 
     // Every path must agree. A change that touches docs *and* source is a
