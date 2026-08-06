@@ -1,19 +1,19 @@
 ---
-description: The meta-cycle — audit the loop itself from its own ledger and land an improvement to fullauto as a PR.
+description: The meta-cycle — audit the loop itself from its own ledger and land an improvement to self-driving as a PR.
 argument-hint: "[--dry-run]"
 ---
 
-# fullauto:evolve — the loop improves the loop
+# self-driving:evolve — the loop improves the loop
 
-Run this every fifth cycle, or whenever `scripts/fullauto.sh metrics` prints a
-signal. This is what makes `fullauto` part of the self-improvement loop rather
+Run this every fifth cycle, or whenever `scripts/self-driving.sh metrics` prints a
+signal. This is what makes `self-driving` part of the self-improvement loop rather
 than a script that merely runs inside it: **the ledger is evidence about the
 loop's own performance, and a pathology it can name it can fix.**
 
 ```bash
-scripts/fullauto.sh metrics
-scripts/fullauto.sh calibrate --show
-scripts/fullauto.sh aperture --list
+scripts/self-driving.sh metrics
+scripts/self-driving.sh calibrate --show
+scripts/self-driving.sh aperture --list
 ```
 
 ---
@@ -66,21 +66,21 @@ subsystem — not a smaller number.
 
 ## How to land the change
 
-`fullauto` is code in this repository and gets the same contract as any other
+`self-driving` is code in this repository and gets the same contract as any other
 change:
 
-- **A witness.** For `scripts/fullauto.sh`, the witness is a ledger metric: state
+- **A witness.** For `scripts/self-driving.sh`, the witness is a ledger metric: state
   the number you are moving and what it reads today. "Zero-fix cycles were 40%
   over the last ten cycles" is a witness. "This feels better" is not.
 - **`make shellcheck` must pass.** It is a gate step, and `scripts/*.sh` is in
   scope.
-- **Keep the file under the size gate.** If `fullauto.sh` approaches the ceiling,
-  split a subcommand into `scripts/fullauto/` rather than growing it — the same
+- **Keep the file under the size gate.** If `self-driving.sh` approaches the ceiling,
+  split a subcommand into `scripts/self-driving/` rather than growing it — the same
   rule the workspace's god files live under.
 - **A PR, labelled `self-improvement`**, with the metrics output quoted in the
   description as the before-state.
-- **Prose changes go in the command files** under `scripts/fullauto/commands/`,
-  then `scripts/fullauto.sh install-commands` to pick them up. Editing
+- **Prose changes go in the command files** under `scripts/self-driving/commands/`,
+  then `scripts/self-driving.sh install-commands` to pick them up. Editing
   `~/.claude/commands/` directly loses the change on the next install.
 
 ## What NOT to change
@@ -101,5 +101,5 @@ Three things look like tuning opportunities and are load-bearing:
 
 If the pathology needs a change bigger than this cycle can carry, file it like
 any other finding — `self-improvement` plus the area label — and quote the
-metrics output in the issue body. The next `/fullauto:evolve` reads the ledger,
+metrics output in the issue body. The next `/self-driving:evolve` reads the ledger,
 not your session, so the numbers have to be *in* the issue.

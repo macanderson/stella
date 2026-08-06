@@ -140,7 +140,7 @@ impl ServiceManager {
     fn file_name(self, label: &str) -> String {
         match self {
             // The `sh.oxagen.*` reverse-domain prefix matches the launchd
-            // agents this project already ships (scripts/fullauto.sh).
+            // agents this project already ships (scripts/self-driving.sh).
             Self::Launchd => format!("sh.oxagen.stella.{label}.plist"),
             Self::SystemdUser => format!("stella-{label}.service"),
         }
@@ -405,7 +405,7 @@ pub(super) fn ensure_service_log_dir() -> Result<PathBuf, String> {
 }
 
 /// Hand the written definition to the service manager, falling back to
-/// printing the exact command when the call fails — the fullauto pattern: a
+/// printing the exact command when the call fails — the self-driving pattern: a
 /// failed `launchctl` must not strand the operator with a file and no next
 /// step.
 fn load(plan: &ServicePlan) {

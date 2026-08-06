@@ -126,7 +126,7 @@ fn a_supervised_child_leaves_this_process_session_and_group() {
 }
 
 /// The registry must name the process doing the work, not the one watching it
-/// — the third bug `scripts/fullauto.sh` paid for. Everything downstream reads
+/// — the third bug `scripts/self-driving.sh` paid for. Everything downstream reads
 /// this pid: the SESSIONS view's liveness, `daemon list`, and the signal
 /// `daemon stop` sends.
 #[test]
@@ -210,7 +210,7 @@ fn the_console_is_replayable_and_the_two_streams_stay_apart() {
 
 /// A stop must reach the whole tree, and must record what it did.
 ///
-/// Both halves are the bugs `scripts/fullauto.sh` paid for: a stop that
+/// Both halves are the bugs `scripts/self-driving.sh` paid for: a stop that
 /// signals only the leader leaves the tools it spawned running, and a stop
 /// that never writes a terminal status leaves a run the operator ended by hand
 /// to be presented, forever, as a crash.

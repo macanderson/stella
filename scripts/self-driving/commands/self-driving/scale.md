@@ -3,14 +3,14 @@ description: The resource governor — how a cycle sizes itself to the disk, mem
 argument-hint: "[--explain]"
 ---
 
-# fullauto:scale — sizing the cycle to the machine
+# self-driving:scale — sizing the cycle to the machine
 
 ```bash
-scripts/fullauto.sh plan --explain     # what this cycle would do, and why
-scripts/fullauto.sh calibrate --show   # what the controller has learned
+scripts/self-driving.sh plan --explain     # what this cycle would do, and why
+scripts/self-driving.sh calibrate --show   # what the controller has learned
 ```
 
-The same `/fullauto` command has to be correct on a 16 GiB laptop on battery
+The same `/self-driving` command has to be correct on a 16 GiB laptop on battery
 with a benchmark match running, and on a 123 GiB / 32-core rig doing nothing.
 Nobody is going to keep a threshold file current across both. So the loop
 measures instead.
@@ -95,7 +95,7 @@ smaller batches keep going red for the same unrelated reason.
 ## Reading a plan
 
 ```
-fullauto plan — tier light
+self-driving plan — tier light
   only 3GB free of 16GB — a workspace build here swap-thrashes
 
   supply    10 cores (load 2) · 16GB RAM (3GB free) · 346GB disk · battery=1 · busy=1
@@ -132,10 +132,10 @@ explained in the cycle report:
 
 | Variable | Default |
 |---|---|
-| `FULLAUTO_BATCH_MAX` | `20` |
-| `FULLAUTO_PARALLEL_MAX` | `4` |
-| `FULLAUTO_DISK_FLOOR_GB` | `15` |
-| `FULLAUTO_MEM_FLOOR_GB` | `4` |
+| `SELF_DRIVING_BATCH_MAX` | `20` |
+| `SELF_DRIVING_PARALLEL_MAX` | `4` |
+| `SELF_DRIVING_DISK_FLOOR_GB` | `15` |
+| `SELF_DRIVING_MEM_FLOOR_GB` | `4` |
 
 To reset a controller that has learned the wrong thing — after fixing whatever
 was actually starving the box — delete `calibration.json` from the state dir. It
