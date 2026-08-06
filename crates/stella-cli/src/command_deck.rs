@@ -88,7 +88,7 @@ use stella_pipeline::{
 };
 use stella_protocol::{
     AgentEvent, CiStatus, CompletionMessage, CompletionRequest, ModelRef, PrStatus, TaskItem,
-    ToolOutput, ToolSchema,
+    ToolOutput,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
