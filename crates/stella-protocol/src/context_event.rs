@@ -1,5 +1,17 @@
 //! Internal, replay-safe adaptive-context events (Phase 1 installment 5).
 //!
+//! `CompiledContextFrameBuilt` below carries a decision worth reading before
+//! changing it: the compiled frame is *stella's own artifact*, distinct from the
+//! provider-emitted `ContextFrame` it is named after, and the 2026-07-26
+//! amendment folded it into the step manifest rather than a parallel aggregate.
+//! Both are `doc:adr/0006-contextframe-vs-compiledcontextframe`.
+//!
+//! (That citation lives here rather than on the struct on purpose. The schema
+//! exporters carry *type* doc comments into `docs/wire/` verbatim, so a
+//! documentation-only edit up there would restate the wire contract and redden
+//! `wire-schema` until the generated artifacts were regenerated and committed.
+//! Module docs are not exported, so this is the free place to say it.)
+//!
 //! These are stella-internal lifecycle events — they do **not** change the
 //! Context Graph Protocol wire semantics. They carry only stable IDs
 //! (as strings), never the `stella-core` record structs: `stella-core` depends on
@@ -281,12 +293,6 @@ pub struct OutcomeAssessed {
 }
 
 /// Stable-ID payload of `compiled_context_frame_built`.
-///
-/// The compiled frame is *stella's own artifact*, distinct from the
-/// provider-emitted `ContextFrame` it is named after — the distinction, and the
-/// 2026-07-26 amendment folding the compiled frame into the step manifest
-/// rather than a parallel aggregate, are
-/// `doc:adr/0006-contextframe-vs-compiledcontextframe`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CompiledContextFrameBuilt {
