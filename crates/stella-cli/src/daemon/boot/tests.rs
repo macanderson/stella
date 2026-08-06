@@ -173,7 +173,10 @@ fn the_ledger_round_trips_and_forgets_runs_the_registry_has_pruned() {
     ledger.store(&path).unwrap();
 
     let mut reloaded = AttemptLedger::load(&path);
-    assert_eq!(reloaded, ledger, "the bound must survive the reboot it bounds");
+    assert_eq!(
+        reloaded, ledger,
+        "the bound must survive the reboot it bounds"
+    );
     assert_eq!(reloaded.attempts("ses-kept"), 2);
 
     reloaded.retain_known(&["ses-kept".to_string()]);

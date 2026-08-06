@@ -296,9 +296,11 @@ fn resolve_command(
 ) -> Result<Vec<String>, String> {
     if !resume_all {
         if command.is_empty() {
-            return Err("nothing to register — give the stella invocation after `--`, or pass \
+            return Err(
+                "nothing to register — give the stella invocation after `--`, or pass \
                         --resume-all to register the boot-time resume sweep"
-                .to_string());
+                    .to_string(),
+            );
         }
         return Ok(command.to_vec());
     }
