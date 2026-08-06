@@ -88,7 +88,7 @@ fn a_detached_run_outlives_its_launcher_and_stays_discoverable_and_stoppable() {
         .expect("supervised spawn");
         let id = run.id.clone();
         // The launcher returns here. Everything below runs with no handle.
-        release(run).expect("release");
+        release(run, crate::OutputFormat::Text).expect("release");
         id
     };
 
@@ -177,4 +177,56 @@ fn only_the_foreground_posture_keeps_the_work_in_this_process() {
     assert!(!Posture::Foreground.supervises());
     assert!(Posture::Attached.supervises());
     assert!(Posture::Detached.supervises());
+}
+
+/// **Witness (#1688).** A detached launch under a machine-readable format
+/// names its session on stdout.
+///
+/// `stella run "…" --detach --output-format json` wrote **nothing at all** to
+/// stdout, so a script piping it into `jq` got an empty stream and could not
+/// learn the id it needs to poll — for the flag whose main use is exactly that
+/// script. The id was recoverable only by scraping the stderr banner or racing
+/// `stella daemon list`.
+#[test]
+fn a_detached_launch_names_its_session_on_stdout_under_json() {
+    let summary = super::summary_json(crate::OutputFormat::Json, "sess-1688")
+        .expect("json asks for a machine-readable answer");
+    let value: serde_json::Value = serde_json::from_str(&summary).expect("parseable by a consumer");
+
+    assert_eq!(
+        value["session_id"], "sess-1688",
+        "the one value a script cannot proceed without: {summary}"
+    );
+    assert_eq!(value["schema_version"], crate::SUMMARY_SCHEMA_VERSION);
+    assert_eq!(value["status"], "detached");
+    assert_eq!(value["attach"], "stella daemon attach sess-1688");
+    assert_eq!(value["stop"], "stella daemon stop sess-1688");
+}
+
+/// `stream-json` gets the object compact, so the line-delimited contract holds.
+///
+/// A pretty-printed object here would be a multi-line document on a stream
+/// whose consumers split on newlines — the failure would land in the consumer,
+/// not in Stella, which is why it is pinned rather than left to the formatter.
+#[test]
+fn the_stream_json_launch_summary_occupies_exactly_one_line() {
+    let summary = super::summary_json(crate::OutputFormat::StreamJson, "sess-1688")
+        .expect("stream-json asks for a machine-readable answer");
+
+    assert!(
+        !summary.contains('\n'),
+        "one JSON document per line: {summary:?}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&summary).expect("parseable");
+    assert_eq!(value["session_id"], "sess-1688");
+}
+
+/// A human run keeps stdout clean — the banner is the answer, on stderr.
+///
+/// The inverse of the witness above, and the reason the fix is gated on the
+/// format rather than always printing: a text-mode `stella run --detach` that
+/// started emitting JSON would be a regression for every interactive user.
+#[test]
+fn a_text_launch_writes_nothing_to_stdout() {
+    assert!(super::summary_json(crate::OutputFormat::Text, "sess-1688").is_none());
 }

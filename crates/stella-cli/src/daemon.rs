@@ -256,6 +256,7 @@ pub(crate) fn supervise_this_invocation(
     title: &str,
     stdin: &[u8],
     posture: detach::Posture,
+    format: crate::OutputFormat,
 ) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to supervise: {e}"))?;
@@ -286,7 +287,7 @@ pub(crate) fn supervise_this_invocation(
         stdin,
     )?;
     if posture == detach::Posture::Detached {
-        return detach::release(run);
+        return detach::release(run, format);
     }
     run.announce();
     watch(rt, &registry, run)
