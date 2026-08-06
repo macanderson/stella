@@ -266,14 +266,16 @@ fn a_session_without_an_index_falls_back_to_raw_tails() {
 /// panic hook and the normal end-of-`main` cleanup reaches a shared guard
 /// first performs the one real drain, and — the specific hazard a panicking
 /// pump thread would create — a pump thread must never try to join itself.
-/// `ConsoleGuard { streams: Vec::new() }` needs no real fds (this module's own
-/// doc comment: hijacking the test runner's stdout to exercise the fd
-/// plumbing would be the tail wagging the dog), so this is fd-free logic, not
-/// glue. On `main`, `drain_shared` does not exist at all.
+/// A guard over no streams needs no real fds (this module's own doc comment:
+/// hijacking the test runner's stdout to exercise the fd plumbing would be
+/// the tail wagging the dog), so this is fd-free logic, not glue. On `main`,
+/// `drain_shared` does not exist at all.
 #[test]
 fn drain_shared_skips_a_pump_thread_draining_itself_but_runs_from_anywhere_else() {
     let cell = Arc::new(Mutex::new(Some(ConsoleGuard {
-        streams: Vec::new(),
+        pumps: Arc::new(Drainable {
+            streams: Mutex::new(Vec::new()),
+        }),
     })));
 
     // Called as if FROM a pump thread: a no-op, or a real pump trying to
