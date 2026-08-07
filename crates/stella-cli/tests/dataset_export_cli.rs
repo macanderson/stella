@@ -551,7 +551,7 @@ fn the_date_window_and_require_verdict_are_reported_as_applied() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&read(dir.path(), "future", "manifest.json")).expect("json");
     assert_eq!(manifest["records"], 0);
-    assert_eq!(manifest["filter"]["executions_scanned"], 2);
+    assert_eq!(manifest["filter"]["executions_scanned"], 4);
     assert_eq!(manifest["filter"]["executions_in_window"], 0);
     assert_eq!(manifest["filter"]["since"], "2099-01-01");
     assert_eq!(manifest["execution_id_range"], serde_json::Value::Null);
@@ -563,7 +563,10 @@ fn the_date_window_and_require_verdict_are_reported_as_applied() {
     export(&dir, "judged", &["--require-verdict"]);
     let manifest: serde_json::Value =
         serde_json::from_slice(&read(dir.path(), "judged", "manifest.json")).expect("json");
-    assert_eq!(manifest["records"], 1, "the fixture's verdict passed");
+    assert_eq!(
+        manifest["records"], 1,
+        "only the flip's PASSING verdict qualifies — the tampered turn's failed one does not"
+    );
     assert!(
         manifest["filter"]["acceptance_predicate"]
             .as_str()
