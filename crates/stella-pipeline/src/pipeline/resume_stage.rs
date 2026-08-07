@@ -58,6 +58,14 @@ pub struct FrameProgress {
     /// it cannot know whether the run verifies, so it declines.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_class: Option<TaskClass>,
+    /// The goal, verbatim. The frame's configuration half deliberately
+    /// carries decisions only, but restoration needs this one piece of
+    /// content: the verifier judges the work *against the goal*, and the
+    /// transcript holds it only embedded in the assembled recall message.
+    /// It lives where the full transcript already does (`.stella/private/`),
+    /// so nothing new is exposed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
     /// The full plan. The transcript cannot substitute: step prompts are
     /// pushed one turn at a time, so at a mid-plan kill the unreached steps
     /// exist nowhere else.
@@ -112,6 +120,8 @@ pub struct RecordedBaseline {
 pub struct PipelineResume {
     /// The interrupted turn, as the engine checkpointed it.
     pub checkpoint: Checkpoint,
+    /// The goal the verifier judges against, restored verbatim.
+    pub goal: String,
     /// Triage's class, restored — gates verification exactly as it did live.
     pub task_class: TaskClass,
     /// The plan and the cursor into it, when the run had one.
@@ -135,11 +145,13 @@ impl PipelineResume {
     /// was isolated in a candidate worktree that died with the process.
     pub fn from_progress(checkpoint: Checkpoint, progress: FrameProgress) -> Option<Self> {
         let task_class = progress.task_class?;
+        let goal = progress.goal?;
         if !progress.executing || progress.isolated {
             return None;
         }
         Some(Self {
             checkpoint,
+            goal,
             task_class,
             plan: progress.plan,
             next_step: progress.next_step,
@@ -183,11 +195,7 @@ impl<'a> Pipeline<'a> {
     /// turn's pre-crash spend (the checkpoint carries it, and the resumed
     /// turn's meter continues from it) plus everything this call spends —
     /// the same accounting the bare resume path reports today.
-    pub async fn resume(
-        &self,
-        goal: &str,
-        resume: PipelineResume,
-    ) -> Result<PipelineOutcome, PipelineRunError> {
+    pub async fn resume(&self, resume: PipelineResume) -> Result<PipelineOutcome, PipelineRunError> {
         let mut total_cost = 0.0f64;
         if let Err(error) = &self.configured_test {
             return Err(PipelineRunError::new(
@@ -196,10 +204,13 @@ impl<'a> Pipeline<'a> {
             ));
         }
         let task_class = resume.task_class;
+        let goal = resume.goal.clone();
+        let goal = goal.as_str();
         // Progress re-recorded on the resumed run's own frame, so a second
         // kill — mid-resume — restores exactly like the first one did.
         self.record_progress(|p| {
             p.task_class = Some(task_class);
+            p.goal = Some(goal.to_string());
             p.plan = resume.plan.clone();
             p.next_step = resume.next_step;
             p.executing = true;

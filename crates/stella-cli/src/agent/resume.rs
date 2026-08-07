@@ -31,19 +31,23 @@
 //!   turn-boundary resume regenerates it (rules may have changed); mid-turn,
 //!   fidelity wins — the transcript the provider priced and cached is the
 //!   transcript it gets back.
-//! - **A turn interrupted mid-pipeline resumes as a plain engine turn** — but
-//!   never *silently*. The checkpoint captures the worker's turn, not the
-//!   pipeline's staging, so the verify/verdict stages that would have followed
-//!   do not re-run. The pipeline leaves a frame beside its checkpoint saying
-//!   so ([`crate::resume_frame`]), and this driver reads it before the first
-//!   step: the run names every stage it is not restoring, drops the green
-//!   tick, and files its audit row as `resumed_complete_unverified` (#1615).
-//!   Re-verifying it is `stella run` with the verifier of your choice.
+//! - **A turn interrupted mid-pipeline re-enters the pipeline only when its
+//!   frame says it can** (#1671). A frame carrying the pipeline's progress
+//!   record — class, goal, plan cursor, test baseline — restores through
+//!   [`stella_pipeline::Pipeline::resume`]: the turn finishes, the unreached
+//!   plan steps run, and the witness/verify/verdict stages run on the
+//!   completed work, with the residual losses (lint baseline, authored
+//!   witness) named up front. A frame without that record — an older writer,
+//!   a kill before execution — falls back to the plain engine turn, and
+//!   never *silently*: the run names every stage it is not restoring, drops
+//!   the green tick, and files its audit row as
+//!   `resumed_complete_unverified` (#1615).
 //! - **A turn that executed in a candidate worktree resumes in the
-//!   workspace.** The candidate died with the process; the restored staleness
-//!   map is what keeps the resumed writes honest. The frame reports this too.
+//!   workspace, as a plain turn.** The candidate died with the process;
+//!   restoration declines (`PipelineResume::from_progress`), and the
+//!   restored staleness map is what keeps the resumed writes honest.
 
-use super::outcome::turn_outcome_result;
+use super::outcome::{pipeline_status_result, turn_outcome_result};
 use super::*;
 use crate::failure::CliFailure;
 
@@ -84,7 +88,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         std::sync::Arc::new(new_tool_registry(cfg.workspace_root.clone(), registry_options).await);
     populate_schema_index(&tools_registry, &cfg.workspace_root)?;
     crate::subagent::install_for_session(cfg, &tools_registry)?;
-    let _active_rules =
+    let active_rules =
         crate::rules::enforce_workspace_rules(&tools_registry, &cfg.workspace_root, &cfg.authority);
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
@@ -144,13 +148,34 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // they can still stop it, not from an audit row afterwards (#1615).
     let frame = crate::resume_frame::ResumeFrame::read(&cfg.durability);
 
+    // Restoration (#1671): when the frame carries the pipeline's progress
+    // record and the killed run was executing un-isolated, this resume
+    // re-enters the staged pipeline — the interrupted turn continues and the
+    // witness/verify/verdict stages run on the completed work. `None` keeps
+    // the honest bare-turn path with its full advisory, and validation lives
+    // in `PipelineResume::from_progress` so "restore approximately" is not a
+    // state this driver can reach.
+    let restored = match &frame {
+        crate::resume_frame::ResumeFrame::Pipeline(f) => f
+            .progress
+            .clone()
+            .and_then(|p| stella_pipeline::PipelineResume::from_progress(checkpoint.clone(), p))
+            .map(|spec| (spec, (**f).clone())),
+        _ => None,
+    };
+
     let turn_start = Instant::now();
     let step = checkpoint.step;
     eprintln!(
         "  resuming {} at step {step} — completed steps stay done, nothing re-runs",
         record.id
     );
-    if let Some(advisory) = frame.advisory() {
+    let advisory = if restored.is_some() {
+        Some(crate::resume_frame::restored_advisory())
+    } else {
+        frame.advisory()
+    };
+    if let Some(advisory) = advisory {
         for (i, line) in advisory.iter().enumerate() {
             // The marker leads the summary line only; the rest are already
             // indented continuations of it.
@@ -176,7 +201,14 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         false,
     );
 
-    let outcome = {
+    // The two ways a resumed run can end: a bare turn's outcome, or — when
+    // the frame restored the pipeline — the pipeline's own settled outcome,
+    // verdict included. One enum so the teardown below stays single-copy.
+    enum ResumedEnd {
+        Turn(TurnOutcome),
+        Pipeline(Result<stella_pipeline::PipelineOutcome, stella_pipeline::PipelineRunError>),
+    }
+    let end = {
         let customs = CustomToolSet::new(
             base_tools,
             custom_tools.to_vec(),
@@ -188,14 +220,171 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
             .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
         let hook_runner = ShellHookRunner;
-        let engine_config = engine_config_for(cfg);
-        let state = stella_core::step::TurnState::from_checkpoint(checkpoint, &engine_config);
-        let mut engine = Engine::with_sleeper(&*provider, &tools, engine_config, &TokioSleeper)
-            .with_calibration(&calibration);
-        if let Some(hooks) = &cfg.hooks {
-            engine = engine.with_hooks(hooks, &hook_runner);
+        match restored {
+            Some((spec, frame_config)) => {
+                // The same assembly as `stella run`'s pipeline path, minus
+                // recall (the resumed turn's transcript already carries its
+                // recall message; re-querying would bill a second copy) and
+                // minus interactive approvals (a resume is headless by
+                // construction — its session died).
+                let configured = crate::config::discover_configured_providers();
+                let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+                let wiring = resolve_engine_wiring(cfg, &model_ref, &configured);
+                for notice in &wiring.notices {
+                    eprintln!("  ! {notice}");
+                }
+                let resolver = RoleProviderResolver::new(
+                    &*provider,
+                    model_ref.clone(),
+                    &wiring.extra_providers,
+                );
+                let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+                let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
+                let ws_ports = workspace_ports(
+                    cfg.workspace_root.clone(),
+                    cfg,
+                    registry_options(cfg),
+                    active_rules.clone(),
+                    mcp.clone(),
+                    Some(tx.clone()),
+                )?;
+                // The run's ORIGINAL decisions, restored from the frame — a
+                // flag environment that changed across the crash must not
+                // quietly re-arm the run differently than it was launched.
+                let mut pipeline_config = pipeline_config_for_approval_capability(
+                    cfg,
+                    approval_capability_for(true, true, false, false),
+                    frame_config.test_command.as_deref(),
+                    &wiring.worker_model,
+                );
+                pipeline_config.role_overrides = wiring.role_overrides.clone();
+                pipeline_config.witness_writer = frame_config.witness_writer;
+                pipeline_config.max_revisions = frame_config.max_revisions;
+                let no_recall = NoContextRecall;
+                let approval_gate = approval_gate_for(cfg, approval_capability_for(true, true, false, false));
+                let ports = PipelinePorts {
+                    router: &router,
+                    providers: &resolver,
+                    tools: &tools,
+                    recall: &no_recall,
+                    repo: &ws_ports.repo_structure,
+                    repo_status: &ws_ports.repo_status,
+                    touches: &crate::agent::RegistryTouches(&tools_registry),
+                    diagnostics: &ws_ports.diagnostic_runner,
+                    tests: &ws_ports.test_runner,
+                    lint: Some(&ws_ports.lint_probe),
+                    mutation: Some(&ws_ports.mutation_probe),
+                    coverage: Some(&ws_ports.coverage_probe),
+                    approvals: &approval_gate,
+                    sleeper: &TokioSleeper,
+                    hooks: cfg
+                        .hooks
+                        .as_ref()
+                        .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
+                    candidate_workspaces: Some(&ws_ports.candidate_workspaces),
+                    mcp_prefetch: ws_ports
+                        .mcp_prefetch
+                        .as_ref()
+                        .map(|p| p as &dyn McpPrefetchPort),
+                    // A resume has no live input channel to steer from.
+                    steering: None,
+                };
+                let pipeline = crate::resume_frame::pipeline(
+                    &cfg.durability,
+                    ports,
+                    pipeline_event_sender(&tx, OutputFormat::Text),
+                    pipeline_config,
+                );
+                ResumedEnd::Pipeline(pipeline.resume(spec).await)
+            }
+            None => {
+                let engine_config = engine_config_for(cfg);
+                let state = stella_core::step::TurnState::from_checkpoint(checkpoint, &engine_config);
+                let mut engine =
+                    Engine::with_sleeper(&*provider, &tools, engine_config, &TokioSleeper)
+                        .with_calibration(&calibration);
+                if let Some(hooks) = &cfg.hooks {
+                    engine = engine.with_hooks(hooks, &hook_runner);
+                }
+                ResumedEnd::Turn(drive_resumed_turn(&engine, state, &events).await)
+            }
         }
-        drive_resumed_turn(&engine, state, &events).await
+    };
+
+    // Project both endings onto the one reporting surface: the audit label,
+    // the money, the banner (mark + line, `None` for no banner), and the
+    // process result. A restored pipeline's labels carry its verdict state —
+    // `resumed_complete_verified` is the row #1615's honesty work existed to
+    // make possible, and `resumed_complete_unverified` keeps meaning exactly
+    // what it always did.
+    let (label, cost_usd, banner, result): (
+        &'static str,
+        f64,
+        Option<(bool, String)>,
+        Result<(), CliFailure>,
+    ) = match &end {
+        ResumedEnd::Turn(outcome) => {
+            let label = match outcome {
+                // A degraded resume gets its own label: the scrollback
+                // warning is gone by the next command, and a stats query that
+                // cannot separate a verified resume from an unverified one
+                // reports the wrong number forever.
+                TurnOutcome::Completed { .. } => frame.completed_label(),
+                TurnOutcome::Aborted { .. } => "resumed_aborted",
+            };
+            let cost = match outcome {
+                TurnOutcome::Completed { cost_usd, .. }
+                | TurnOutcome::Aborted { cost_usd, .. } => *cost_usd,
+            };
+            // A degraded resume does not get a green tick. The tick is this
+            // surface's claim that the run finished as it was meant to, and a
+            // turn whose verify and verdict stages never ran did not.
+            let banner = matches!(outcome, TurnOutcome::Completed { .. })
+                .then(|| (!frame.degrades(), frame.completed_banner(step)));
+            // The abort's typed `kind` decides the exit code here exactly as
+            // it does for a fresh turn — a resumed stuck-loop stop exits `3`,
+            // not `1` (#1637).
+            (label, cost, banner, turn_outcome_result(outcome))
+        }
+        ResumedEnd::Pipeline(Ok(outcome)) => {
+            use stella_pipeline::PipelineStatus;
+            let label = match &outcome.status {
+                PipelineStatus::Completed if outcome.verdict.is_some() => {
+                    "resumed_complete_verified"
+                }
+                PipelineStatus::Completed => "resumed_complete_unverified",
+                PipelineStatus::VerificationFailed { .. } => "resumed_verification_failed",
+                PipelineStatus::Aborted { .. } => "resumed_aborted",
+            };
+            let banner = match &outcome.status {
+                PipelineStatus::Completed if outcome.verdict.is_some() => Some((
+                    true,
+                    format!(
+                        "resumed turn completed and its pipeline verified it (from step {step})"
+                    ),
+                )),
+                PipelineStatus::Completed => Some((
+                    false,
+                    format!(
+                        "resumed turn completed (from step {step}) — pipeline re-entered, \
+                         nothing warranted a verdict"
+                    ),
+                )),
+                _ => None,
+            };
+            (
+                label,
+                outcome.total_cost_usd,
+                banner,
+                pipeline_status_result(&outcome.status),
+            )
+        }
+        ResumedEnd::Pipeline(Err(error)) => (
+            "resumed_error",
+            error.total_cost_usd,
+            None,
+            Err(CliFailure::error(error.to_string())),
+        ),
     };
 
     // The canonical teardown (#960): detach the registry's sender clones,
@@ -207,21 +396,13 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         .persistence_complete;
     let files = tools_registry.files_touched();
     if let Some((store, id)) = &execution {
-        // A degraded resume gets its own label: the scrollback warning is gone
-        // by the next command, and a stats query that cannot separate a
-        // verified resume from an unverified one reports the wrong number
-        // forever.
-        let (label, cost) = match &outcome {
-            TurnOutcome::Completed { cost_usd, .. } => (frame.completed_label(), *cost_usd),
-            TurnOutcome::Aborted { cost_usd, .. } => ("resumed_aborted", *cost_usd),
-        };
         if !record_execution_end(
             store,
             *id,
             &tools_registry,
             files_before,
             label,
-            cost,
+            cost_usd,
             persistence_complete,
         ) {
             warn_store_write_failed(
@@ -234,30 +415,19 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         set.close_all().await;
     }
 
-    let cost_usd = match &outcome {
-        TurnOutcome::Completed { cost_usd, .. } | TurnOutcome::Aborted { cost_usd, .. } => {
-            *cost_usd
-        }
-    };
-    if matches!(outcome, TurnOutcome::Completed { .. }) {
-        // A degraded resume does not get a green tick. The tick is this
-        // surface's claim that the run finished as it was meant to, and a turn
-        // whose verify and verdict stages never ran did not.
-        let (mark, banner) = if frame.degrades() {
-            ("!".yellow().bold(), frame.completed_banner(step))
+    if let Some((verified, line)) = banner {
+        let mark = if verified {
+            "✓".green().bold()
         } else {
-            ("✓".green().bold(), frame.completed_banner(step))
+            "!".yellow().bold()
         };
-        println!("\n  {mark} {banner}");
+        println!("\n  {mark} {line}");
     }
     tui::cost_summary(
         cost_usd,
         &format!("{}/{}", cfg.provider.id, cfg.model_id),
         turn_start.elapsed(),
     );
-    // The abort's typed `kind` decides the exit code here exactly as it does
-    // for a fresh turn — a resumed stuck-loop stop exits `3`, not `1` (#1637).
-    let result = turn_outcome_result(&outcome);
     // Written here as well as by `record_outcome_if_supervised` (which only
     // covers the spawned child), so the hand-run `--foreground` case records
     // a terminal status too. Same value on both paths — both now read the

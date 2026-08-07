@@ -1061,9 +1061,13 @@ impl<'a> Pipeline<'a> {
             }
         };
         let task_class = assessment.class;
-        // The resume frame's first fact (#1671): a kill after this point can
-        // restore the class without re-triaging.
-        self.record_progress(|p| p.task_class = Some(task_class));
+        // The resume frame's first facts (#1671): a kill after this point can
+        // restore the class — and the goal the verifier judges against —
+        // without re-triaging.
+        self.record_progress(|p| {
+            p.task_class = Some(task_class);
+            p.goal = Some(goal.to_string());
+        });
         // The volatile recall+goal message rides AFTER the stable system
         // prefix (L-E8) — see assemble_user_message. The verification
         // contract rides only on turns that will actually be verified: a
