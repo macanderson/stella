@@ -9,12 +9,13 @@
 //! What is NOT covered here, so the list is not mistaken for the whole
 //! surface: `Supervised::follow` and `interrupt_and_drain` write to this
 //! process's real stdout and stderr, which an in-process test cannot capture,
-//! so their streaming is exercised through [`Tail`] — which is where the
-//! truncation and lost-tail bugs actually live — rather than end to end. The
+//! so their streaming is exercised through [`console::Tail`] — which is where
+//! the truncation and lost-tail bugs actually live — rather than end to end. The
 //! end-to-end property (a `stella run` in a terminal survives that terminal's
 //! hangup) needs a pty and a live run; it is verified by hand, and the
 //! procedure is in the PR that added this module.
 
+use super::console::{PUMP_CHUNK, Tail};
 use super::*;
 
 /// An isolated registry per test. Not a shared temp dir: these tests spawn
@@ -454,6 +455,73 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     );
 
     let _ = run.child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #1921's witness: a run that outlives a watch's wall-clock ceiling is
+/// stopped and the watch RETURNS — the property the boot sweep rests on,
+/// because its sequential loop reaches the runs behind a wedged one only if
+/// this call comes back — and the stop is the graceful rung, `SIGTERM`
+/// first. A ceiling that reached straight for `SIGKILL` would land mid-tool,
+/// which invariant 6 exists to forbid.
+#[test]
+fn a_run_that_outlives_the_ceiling_is_stopped_gracefully_and_the_watch_returns() {
+    let (dir, registry) = temp_registry("ceiling");
+    let trap_ready = dir.join("trap-ready");
+    let saw_term = dir.join("saw-term");
+    // The group signal reaches `sleep`, which dies on it; `sh` then runs the
+    // trap and exits. The marker is proof the stop began as a request.
+    let run = spawn_sh(
+        &registry,
+        "ceiling",
+        // Quoted, because the registry dir's name embeds a `ThreadId(…)`
+        // whose parentheses are sh syntax bare.
+        &format!(
+            "trap 'touch \"{}\"' TERM; touch \"{}\"; sleep 120",
+            saw_term.display(),
+            trap_ready.display()
+        ),
+    );
+    let id = run.id.clone();
+    // Waited for BEFORE the bounded watch, or a loaded machine can fire the
+    // ceiling at a child that has not installed its trap yet — which dies on
+    // the default TERM disposition and reads as a kill (#1721's window, one
+    // rung up).
+    assert!(
+        eventually(Duration::from_secs(10), || trap_ready.is_file()),
+        "precondition: the child must be trapping TERM before the ceiling may fire"
+    );
+
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let watched = watch(rt, &registry, run, Some(Duration::from_millis(250))).expect("watch");
+
+    assert_eq!(
+        watched,
+        Watched::CeilingReached,
+        "a watch that outlives its ceiling must say so, or the sweep cannot report it"
+    );
+    assert!(
+        eventually(Duration::from_secs(10), || saw_term.is_file()),
+        "the ceiling must ask the run to stop before anything harder"
+    );
+    // Recorded as deliberate, exactly as a Ctrl-C or `daemon stop` is: a
+    // ceiling stop nobody watched must not age into the registry as a crash.
+    assert_eq!(
+        registry.get(&id).map(|r| r.status),
+        Some(SessionStatus::Cancelled)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The ceiling must not misfire: a run that ends on its own beats a ceiling
+/// it never reaches, and the watch reports it finished rather than stopped.
+#[test]
+fn a_run_that_finishes_under_the_ceiling_is_left_to_finish() {
+    let (dir, registry) = temp_registry("under-ceiling");
+    let run = spawn_sh(&registry, "quick", "true");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let watched = watch(rt, &registry, run, Some(Duration::from_secs(120))).expect("watch");
+    assert_eq!(watched, Watched::Finished);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

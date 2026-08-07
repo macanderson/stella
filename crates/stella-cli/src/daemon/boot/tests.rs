@@ -267,6 +267,44 @@ fn every_candidate_appears_in_the_plan_exactly_once_and_in_order() {
     assert!(matches!(planned[2].1, BootDecision::Skip(_)));
 }
 
+/// #1921: the console line for a run the per-run ceiling stopped — the
+/// reporting half of the contract, witnessed pure the way
+/// [`SkipReason::explain`] is. #1627 holds that a run silently resumed at
+/// boot is as bad as one silently lost; a run silently *stopped* at boot
+/// would be worse than either.
+#[test]
+fn a_ceiling_stop_names_the_ceiling_the_safe_stop_and_the_next_step() {
+    let line = ceiling_report(std::time::Duration::from_secs(30 * 60));
+    assert!(line.contains("30-minute ceiling"), "{line}");
+    assert!(
+        line.contains("safe boundary"),
+        "the line must say the stop was the graceful one: {line}"
+    );
+    assert!(
+        line.contains("the sweep continues"),
+        "the whole point of the ceiling is the runs behind this one: {line}"
+    );
+    assert!(
+        line.contains("stella daemon list"),
+        "an operator must be handed the command that answers what happened: {line}"
+    );
+    // The console speaks the flag's unit for whole minutes and falls back to
+    // seconds — or milliseconds — so a test ceiling is never rounded into a
+    // fiction like "0-second".
+    assert_eq!(
+        describe_ceiling(std::time::Duration::from_secs(90)),
+        "90-second"
+    );
+    assert_eq!(
+        describe_ceiling(std::time::Duration::from_secs(120)),
+        "2-minute"
+    );
+    assert_eq!(
+        describe_ceiling(std::time::Duration::from_millis(250)),
+        "250-millisecond"
+    );
+}
+
 /// Every skip reason is something an operator can act on — an empty or
 /// duplicated explanation would be a row in the boot console that says
 /// nothing.

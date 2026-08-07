@@ -83,7 +83,7 @@ use stella_core::router::CircuitBreaker;
 use stella_core::{BudgetGuard, CalibrationMap, Engine, Router, TurnOutcome};
 use stella_model::provider::Provider;
 use stella_pipeline::{
-    ContextRecallPort, McpPrefetchPort, NoContextRecall, Pipeline, PipelineConfig, PipelinePorts,
+    ContextRecallPort, McpPrefetchPort, NoContextRecall, PipelineConfig, PipelinePorts,
     PipelineStatus,
 };
 use stella_protocol::{
@@ -4497,9 +4497,9 @@ async fn run_lead_pipeline_turn(
             headless_bypass_scope_review: false,
             ..agent::apply_pipeline_tuning(cfg, PipelineConfig::default())
         };
-        // #1214's seam, now driven from the deck: the pipeline attaches the gate
-        // to every engine it builds and parks its management calls behind it.
-        let pipeline = Pipeline::new(ports, tx.clone(), config).with_turn_gate(pause.turn_gate());
+        // #1214's seam, driven from the deck — see `resume_frame::pipeline`.
+        let pipeline = crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), config)
+            .with_turn_gate(pause.turn_gate());
         pipeline.run(prompt, messages, budget).await
     };
     // Same settle window as `run_lead_turn` — see `SteeringTap::mark_settling`.

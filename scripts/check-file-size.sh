@@ -158,7 +158,7 @@ if [ -n "$report" ]; then
   echo "$report" | awk '
     /^NEWOVER$/  { print ""; print "These files crossed the limit and are NOT grandfathered — split them into"; print "submodules. Do not add a baseline entry: the baseline only covers files"; print "that predate the guard, and this is the rule that stops the tree getting"; print "worse."; next }
     /^GREW$/     { print ""; print "These grandfathered files grew past their recorded ceiling. If the growth is"; print "irreducible (a subcommand or module declaration in an already-oversized"; print "lib.rs/main.rs), run \"make file-size-update\" and commit the baseline diff so"; print "the increase is visible in review. If it is not irreducible, put the new code"; print "in its own module instead."; next }
-    /^OBSOLETE$/ { print ""; print "Obsolete baseline entries (the file is now under the limit). Run"; print "\"make file-size-update\" to retire them — an exemption must not outlive"; print "the problem it covered."; next }
+    /^OBSOLETE$/ { print ""; print "Obsolete baseline entries (the file is now under the limit). Run"; print "\"make file-size-update\" to retire them — an exemption must not outlive"; print "the problem it covered."; print ""; print "A file leaving the baseline also leaves the god-file list, so the same"; print "commit must drop it from the per-crate table in AGENTS.md AND from the"; print "\"God files\" section of that crate README, or \"make god-files\" fails"; print "next. All three copies are cross-checked, and the baseline wins."; next }
     /^STALE$/    { print ""; print "Stale baseline entries. Run \"make file-size-update\"."; next }
     { print }
   ' >&2
@@ -169,6 +169,13 @@ tracked=$(git ls-files "${RATCHET_PATHSPECS[@]}" | wc -l | tr -d ' ')
 # The verdict is already decided; the write is best-effort. SIGPIPE is ignored
 # and the write's failure discarded, so a reader that closed the pipe
 # (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
-grandfathered=$(grep -cv '^#' "$baseline")
+# `|| true`: `grep -c` exits 1 when the count is ZERO, and this runs under
+# `set -e`. An empty baseline — every god file split, which is the goal — would
+# otherwise abort the guard here, AFTER the verdict was decided, printing
+# nothing and exiting non-zero. A clean tree reported as a failure with no
+# message is the worst reading of a green result, and it is why every case in
+# `scripts/test-file-size.sh` (which plants an empty baseline by design) was
+# red (#1800).
+grandfathered=$(grep -cv '^#' "$baseline" || true)
 trap '' PIPE
 echo "check-file-size: OK — $tracked Rust/Python/shell files, none over $LIMIT lines except $grandfathered grandfathered (none grew)." || true

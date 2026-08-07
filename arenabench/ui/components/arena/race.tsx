@@ -73,7 +73,13 @@ export function Race({ snapshot }: { snapshot: Snapshot }) {
                         isBest ? "text-(--seat-fg)" : "text-muted",
                       )}
                     >
-                      {fmtDim(dim.key, value)}
+                      {/* The RAW value, not the coerced one (#1599): `values`
+                          exists for the bar arithmetic, where an absence
+                          legitimately draws as zero. Formatting from it
+                          renders a seat nobody priced as `$0.0000` — a
+                          fabricated number in the one column the pricing path
+                          exists to keep honest. Missing beats wrong. */}
+                      {fmtDim(dim.key, raw[index])}
                     </div>
                   </div>
                 );

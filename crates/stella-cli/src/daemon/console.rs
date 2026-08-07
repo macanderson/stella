@@ -675,10 +675,107 @@ fn pump_fd(
 
 // ── the read side ─────────────────────────────────────────────────────────
 
+/// A file being read forward as something else appends to it.
+///
+/// The raw rung of the read side — what every reader used before the index
+/// existed and still falls back to without one. Lived in the parent module
+/// until #1921; `pub(super)` because `daemon::logs` still tails a console
+/// directly.
+pub(super) struct Tail {
+    file: std::fs::File,
+    offset: u64,
+}
+
+impl Tail {
+    pub(super) fn open(path: &Path) -> Result<Self, String> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        Ok(Self { file, offset: 0 })
+    }
+
+    // There is deliberately no `seek_to_end` here, for the same reason
+    // [`Follower`] carries no `skip_to_now`: that pair was the only
+    // caller, and #1632 removed it as a defect — seeking past everything
+    // already written threw away the run's shutdown output, which on the
+    // Ctrl-C path is precisely what the person who pressed the key is
+    // waiting to read.
+
+    /// Start `lines` lines back from the end, or at the beginning if the file
+    /// is shorter than that.
+    ///
+    /// Reads the whole file rather than scanning backwards in blocks: a
+    /// console is bounded by one run's output, and a block-wise reverse scan
+    /// is three times the code for a saving nobody can perceive.
+    pub(super) fn seek_back_lines(&mut self, lines: usize) -> Result<(), String> {
+        let mut all = Vec::new();
+        self.file
+            .read_to_end(&mut all)
+            .map_err(|e| format!("cannot read the console: {e}"))?;
+        let start = all
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, byte)| **byte == b'\n')
+            // The trailing newline ends the last line rather than starting
+            // one, so it is not a boundary this may stop at.
+            .skip(usize::from(all.last() == Some(&b'\n')))
+            .nth(lines.saturating_sub(1))
+            .map(|(at, _)| at + 1)
+            .unwrap_or(0);
+        self.offset = start as u64;
+        Ok(())
+    }
+
+    /// Copy up to [`PUMP_CHUNK`] bytes appended since the last call to `out`,
+    /// and answer how many that was.
+    ///
+    /// Bounded rather than "everything to EOF": attaching to a run that has
+    /// been writing `stream-json` for a day would otherwise read a console of
+    /// arbitrary size into one allocation before printing a byte of it. The
+    /// callers all loop until a terminal condition, so a partial pump is a
+    /// smaller step, never a lost one — and a nonzero return already means
+    /// "come straight back", so a backlog drains at memory speed.
+    pub(super) fn pump(&mut self, out: &mut impl Write) -> Result<usize, String> {
+        self.file
+            .seek(SeekFrom::Start(self.offset))
+            .map_err(|e| format!("cannot seek the console: {e}"))?;
+        let mut buf = vec![0u8; PUMP_CHUNK];
+        let read = self
+            .file
+            .read(&mut buf)
+            .map_err(|e| format!("cannot read the console: {e}"))?;
+        if read > 0 {
+            // A closed pipe on the reading side is a routine way to stop
+            // watching (`stella daemon attach … | head`), not an error worth
+            // failing a run over.
+            let _ = out.write_all(&buf[..read]);
+            let _ = out.flush();
+            self.offset += read as u64;
+        }
+        Ok(read)
+    }
+
+    /// Copy everything appended so far, however many [`PUMP_CHUNK`]s that
+    /// takes.
+    ///
+    /// This is what every *terminal* read must use. A single bounded `pump`
+    /// where the run has just ended shows the first 64KiB of what is left and
+    /// silently drops the rest — and the rest, at that moment, is the run's
+    /// answer.
+    pub(super) fn drain(&mut self, out: &mut impl Write) -> Result<(), String> {
+        while self.pump(out)? > 0 {}
+        Ok(())
+    }
+}
+
+/// The most one [`Tail::pump`] moves. Large enough that a normal run is one
+/// read, small enough that a huge console cannot be a huge allocation.
+pub(super) const PUMP_CHUNK: usize = 64 * 1024;
+
 /// A reader's view of one stream: its geometry, how much of it it has
 /// relayed, and the raw fallback it uses until (and after) the index speaks.
 struct FollowedStream {
-    tail: super::Tail,
+    tail: Tail,
     geometry: Option<Geometry>,
     /// Cumulative bytes relayed. While raw, this equals the tail's offset —
     /// the head region is append-pure, so the two coordinate systems agree
@@ -712,7 +809,7 @@ impl Follower {
 
     /// Relay what is new, in write order, and answer how many bytes moved.
     ///
-    /// One call is bounded — the raw path moves at most one [`super::Tail`]
+    /// One call is bounded — the raw path moves at most one [`Tail`]
     /// chunk per stream — so a caller that must see everything loops until
     /// this answers zero, and a live loop treats nonzero as "come straight
     /// back".
@@ -770,7 +867,7 @@ impl Follower {
     /// Relay everything currently written, however many pumps that takes.
     ///
     /// This is what every *terminal* read must use — the raw-sweep half of
-    /// [`Self::pump`] is bounded by [`super::Tail::pump`]'s chunk, so a single
+    /// [`Self::pump`] is bounded by [`Tail::pump`]'s chunk, so a single
     /// pump where the run has just ended can show the first chunk of what is
     /// left and silently drop the rest. And the rest, at that moment, is the
     /// run's answer.
@@ -831,7 +928,7 @@ impl Follower {
 impl FollowedStream {
     fn open(path: PathBuf) -> Result<Self, String> {
         Ok(Self {
-            tail: super::Tail::open(&path)?,
+            tail: Tail::open(&path)?,
             geometry: None,
             consumed: 0,
             closed_at: None,
