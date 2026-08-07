@@ -85,14 +85,15 @@ This crate has no god files: no file exceeds the gate's 1500-line ratchet
 accepts no new entries. When a file here approaches the limit, split it before
 it crosses.
 
-[`src/event.rs`](src/event.rs) was the crate's one god file until its inline
-round-trip tests moved to `src/event/tests.rs`; it sits just under the limit,
-so plan event work the way its era as a god file demanded: new supporting
-vocabulary goes in a new module re-exported from [`src/lib.rs`](src/lib.rs) —
-the crate's own precedent is [`src/ladder.rs`](src/ladder.rs), split out of
-`event.rs` when the ladder rung joined it (#1043), with the re-export keeping
-`stella_protocol::LadderSnapshot` at its old path — never as more lines in
-`event.rs` itself.
+[`src/event.rs`](src/event.rs) was grandfathered here for a long time and now
+sits just under the limit, so its split discipline still applies: new
+supporting vocabulary goes in a new module re-exported from
+[`src/lib.rs`](src/lib.rs) — the crate's precedent is
+[`src/ladder.rs`](src/ladder.rs), split out of `event.rs` when the ladder rung
+joined it (#1043), with the re-export keeping `stella_protocol::LadderSnapshot`
+at its old path — and a genuinely new `AgentEvent` variant offsets its lines
+by extracting the variant's supporting types, taking their inline round-trip
+tests with them.
 
 ## Layout
 
