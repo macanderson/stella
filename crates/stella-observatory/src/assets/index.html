@@ -1493,9 +1493,19 @@ function sentContextSectionHtml(cx) {
     <div id="ctx-body"></div></div>`;
 }
 /* The two failure modes stay separate, as they do on the CLI: an unresolved
-   block is a documented coverage gap, a digest mismatch is a torn-journal or
-   tampering signal. Collapsing them into one "unverified" word would hide
-   which one happened. */
+   block is a documented coverage gap, a digest mismatch is a statement about
+   bytes. Collapsing them into one "unverified" word would hide which one
+   happened.
+
+   A mismatch means one of two things, and the payload's
+   `digest_mismatch_severity` says which (#1981). On a journal written before
+   compaction recorded its rewrites (#1667) a compacted block mismatches as a
+   matter of course — this panel used to call that a torn or altered journal,
+   which is a tampering accusation levelled at routine housekeeping, and an
+   alarm that fires on housekeeping is one nobody reads. On a journal that
+   records every rewrite there is no such explanation left, and the alarm is
+   the honest reading. Never decided here: the server sends the verdict every
+   surface styles from. */
 function sentContextVerdictHtml(c) {
   if (c.verified) {
     return `<div class="kick" style="color:var(--ok)">✓ verified · every
@@ -1503,14 +1513,25 @@ function sentContextVerdictHtml(c) {
   }
   const bad = (c.digest_mismatches ?? []).length;
   const gaps = (c.unresolved ?? []).length;
-  return `${bad ? `<div class="kick" style="color:var(--bad)">✕ ${fmtInt(bad)} block(s)
-      did NOT re-hash to their recorded digest — the journal is torn or was altered</div>` : ""}
+  const integrity = c.digest_mismatch_severity === "integrity";
+  const mismatch = integrity
+    ? `<div class="kick" style="color:var(--bad)">✕ ${fmtInt(bad)} block(s) did NOT re-hash to
+       their recorded digest — this journal records every compaction rewrite, so these bytes
+       are unaccounted for</div>`
+    : `<div class="kick" style="color:var(--warn)">! ${fmtInt(bad)} block(s) did not re-hash —
+       shown from the closest preimage. This journal predates compaction recording its
+       rewrites, so a compacted block reads this way as a matter of course</div>`;
+  return `${bad ? mismatch : ""}
     ${gaps ? `<div class="kick" style="color:var(--warn)">◌ ${fmtInt(gaps)} block(s) could not
       be resolved (synthetic results, discarded speculation, or attachments)</div>` : ""}`;
 }
-function sentContextMessageHtml(m) {
+/* `integrity` comes from the verdict above rather than from the blocks alone:
+   a mismatched block on a pre-#1667 journal is compaction's doing, and putting
+   the danger rail on its message would be the same false alarm the verdict
+   line no longer raises. */
+function sentContextMessageHtml(m, integrity) {
   const blocks = m.blocks ?? [];
-  const torn = blocks.some(b => b.digest_verified === false);
+  const torn = integrity && blocks.some(b => b.digest_verified === false);
   return `<div class="jrnl${torn ? " err" : ""}">
     <div class="kick">[${fmtInt(m.index)}] ${esc(m.role)} · ${fmtInt(blocks.length)} block${
       blocks.length === 1 ? "" : "s"}${
@@ -1536,7 +1557,9 @@ async function loadSentContext(id, turn, step, callSeq, full = false) {
     return;
   }
   const messages = c.messages ?? [];
-  body.innerHTML = `${sentContextVerdictHtml(c)}${messages.map(sentContextMessageHtml).join("")}${
+  const integrity = c.digest_mismatch_severity === "integrity";
+  body.innerHTML = `${sentContextVerdictHtml(c)}${
+    messages.map(m => sentContextMessageHtml(m, integrity)).join("")}${
     messages.some(m => m.truncated)
       ? `<button type="button" class="jrnl-full" id="ctx-full">show full bodies</button>` : ""}`;
   const btn = $("ctx-full");

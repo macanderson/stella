@@ -31,7 +31,9 @@ use rusqlite::Connection;
 use serde_json::{Value, json};
 
 use crate::db::{DbError, is_missing_schema};
-use crate::sent_context::{Preimages, journal_payloads, manifest_entries, reconstruct};
+use crate::sent_context::{
+    Preimages, journal_era, journal_payloads, manifest_entries, reconstruct,
+};
 
 /// Context lines framing each hunk — the same default `stella inspect --diff`
 /// and `git diff` use.
@@ -99,7 +101,13 @@ pub(crate) fn payload(
         role,
     };
     let preimages = Preimages::index(&journal_payloads(conn, id)?);
-    let target_doc = render_document(&reconstruct(&entries, &preimages, true), only);
+    // The diff renders only the document, never the verdict — but the era is
+    // read for real rather than assumed, so no call site of `reconstruct`
+    // passes a value it has not actually looked up.
+    let target_doc = render_document(
+        &reconstruct(&entries, &preimages, journal_era(conn, id), true),
+        only,
+    );
 
     let baseline = resolve_baseline(conn, &target, base, only)?;
     let diff = stella_diff::unified_diff(&baseline.document, &target_doc, DEFAULT_CONTEXT);
@@ -192,7 +200,15 @@ fn resolve_baseline(
     Ok(Baseline {
         label: previous.label(target.execution_id),
         kind: if base == "first" { "first" } else { "prev" },
-        document: render_document(&reconstruct(&entries, &preimages, true), only),
+        document: render_document(
+            &reconstruct(
+                &entries,
+                &preimages,
+                journal_era(conn, previous.execution_id),
+                true,
+            ),
+            only,
+        ),
     })
 }
 

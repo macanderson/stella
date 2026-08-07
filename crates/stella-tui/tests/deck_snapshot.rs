@@ -492,7 +492,7 @@ fn help_overlay_shows_only_the_active_tabs_shortcuts() {
 /// if the prompt bytes are not on the screen, the feature does not work.
 #[test]
 fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
-    use stella_tui::{InspectMessage, InspectView, RecordedCallInfo};
+    use stella_tui::{InspectMessage, InspectView, JournalEra, RecordedCallInfo};
 
     let model = folded_model();
     let call = |step: u64, call_seq: u64, role: &str| RecordedCallInfo {
@@ -549,6 +549,7 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
         verified: true,
         unresolved: 0,
         digest_mismatches: 0,
+        journal_era: JournalEra::CompactionJournaled,
     }));
     let detail = render(&mut ui);
     assert!(detail.contains("context sent"), "titled:\n{detail}");
@@ -565,30 +566,57 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
         "the verdict is shown:\n{detail}"
     );
 
-    // A digest mismatch must read differently from a coverage gap.
+    // A digest mismatch must read differently from a coverage gap — and,
+    // since #1981, differently again depending on which era wrote the journal.
+    // Two renders of the SAME mismatch follow; everything but the era is held
+    // equal, so any difference between them is the era's doing.
     if let Some(view) = ui.inspect_view.as_mut() {
         view.verified = false;
         view.digest_mismatches = 2;
+        view.journal_era = JournalEra::CompactionUnjournaled;
     }
-    let mismatched = render(&mut ui);
+    let legacy = render(&mut ui);
     assert!(
-        mismatched.contains("did not re-hash"),
-        "a digest mismatch is called out, not folded into 'unverified':\n{mismatched}"
+        legacy.contains("did not re-hash"),
+        "a digest mismatch is called out, not folded into 'unverified':\n{legacy}"
     );
-    // ...and it must NOT read as tampering. The common cause is a compaction
-    // rewrite the journal never learned about, so the line names that instead
-    // of accusing the journal of being torn or altered. Pinned because the
-    // wording IS the feature here: an integrity alarm that fires on ordinary
-    // housekeeping is one the reader learns to skip.
+    // On a journal written before compaction recorded its rewrites (#1667),
+    // this mismatch is what ordinary housekeeping looks like, so the line must
+    // NOT read as tampering. Pinned because the wording IS the feature here:
+    // an integrity alarm that fires on routine work is one the reader learns
+    // to skip — the false alarm #1668 removed.
     for accusation in ["torn", "altered", "tamper"] {
         assert!(
-            !mismatched.contains(accusation),
-            "the mismatch line must not imply tampering, found {accusation:?}:\n{mismatched}"
+            !legacy.contains(accusation),
+            "the legacy mismatch line must not imply tampering, found {accusation:?}:\n{legacy}"
         );
     }
     assert!(
-        mismatched.contains("compaction rewrite"),
-        "the likely benign cause is named:\n{mismatched}"
+        legacy.contains("compaction rewrite"),
+        "the benign cause is named:\n{legacy}"
+    );
+
+    // The same mismatch on a journal that records every compaction rewrite has
+    // no housekeeping explanation left, so it must stop reading as one. This
+    // half is the #1981 witness at the render surface: before it, both eras
+    // produced the line asserted above.
+    if let Some(view) = ui.inspect_view.as_mut() {
+        view.journal_era = JournalEra::CompactionJournaled;
+    }
+    let current = render(&mut ui);
+    assert_ne!(
+        legacy, current,
+        "the same mismatch must not render identically in both eras — that is \
+         the whole of #1981:\n{current}"
+    );
+    assert!(
+        current.contains("unaccounted for"),
+        "a mismatch on a rewrite-journaling journal reads as an integrity \
+         signal:\n{current}"
+    );
+    assert!(
+        !current.contains("a compaction rewrite this journal predates"),
+        "…and must not offer the excuse this journal does not have:\n{current}"
     );
 }
 

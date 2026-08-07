@@ -590,6 +590,7 @@ fn inspect_overlay_scroll_saturates_past_u16_instead_of_wrapping() {
         verified: false,
         unresolved: 0,
         digest_mismatches: 0,
+        journal_era: crate::envelope::JournalEra::CompactionJournaled,
     }));
     ui.inspect_scroll = 66_000;
 

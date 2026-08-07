@@ -116,8 +116,8 @@ pub use deck_ui::{
 pub use envelope::{
     AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, EngineAgentState,
     EngineConfigState, EngineRole, EntityField, EntityHit, Inbound, InspectMessage, InspectView,
-    InstalledAgentEntry, IssueAction, IssueRow, McpLiveIdentity, McpLookupState, McpSearchItem,
-    McpSearchOutcome, McpServerDetail, McpServerInfo, McpToolRow, NotificationInfo,
+    InstalledAgentEntry, IssueAction, IssueRow, JournalEra, McpLiveIdentity, McpLookupState,
+    McpSearchItem, McpSearchOutcome, McpServerDetail, McpServerInfo, McpToolRow, NotificationInfo,
     RecordedCallInfo, Secret, SessionInfo, SessionPhase, SkillOp, SkillRow, SkillScope,
     SkillSearchHit, SkillsView, SplashCue, ToolDenial, ToolPolicyState, ToolRow, ToolScope,
     WorkspaceInput,
