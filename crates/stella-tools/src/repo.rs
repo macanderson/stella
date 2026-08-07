@@ -216,8 +216,18 @@ impl GitCli {
     /// exit because `--get` of an unset key exits 1 — that is the answer,
     /// not a failure.
     async fn commit_identity(root: &Path) -> Vec<&'static str> {
-        match Self::git(root, "repo_commit", &["config", "--get", "user.email"]).await {
-            Ok((0, email)) if !email.trim().is_empty() => Vec::new(),
+        // `git commit` needs BOTH a name and an email; a config with only one
+        // set (or a name git cannot derive from the container's passwd entry)
+        // still exits 128 with "empty ident name ... not allowed", so probe
+        // both keys and inject the overrides unless both already resolve.
+        let name = Self::git(root, "repo_commit", &["config", "--get", "user.name"]).await;
+        let email = Self::git(root, "repo_commit", &["config", "--get", "user.email"]).await;
+        match (name, email) {
+            (Ok((0, name)), Ok((0, email)))
+                if !name.trim().is_empty() && !email.trim().is_empty() =>
+            {
+                Vec::new()
+            }
             _ => vec!["-c", "user.name=Stella", "-c", "user.email=stella@localhost"],
         }
     }
