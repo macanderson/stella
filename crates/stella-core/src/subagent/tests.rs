@@ -1039,31 +1039,34 @@ fn empty_turn_controls_leave_an_engine_exactly_as_it_was() {
 }
 
 #[test]
-fn attribution_restores_what_it_displaced_including_on_an_unwind() {
+fn attribution_leaves_its_own_scope_including_on_an_unwind() {
     let bus = HookBus::new("session-1");
-    bus.set_agent(Some("parent".into()));
+    let parent = bus.push_agent("parent".into());
 
     {
         let _child = AgentAttribution::enter(Some(&bus), "child");
-        // Nested one deeper, then unwound by panic — the restore must still
-        // run, and must restore "child", not clear to None.
+        // Nested one deeper, then unwound by panic — the guard must still run
+        // on the way out, and must leave "child" attributed rather than
+        // clearing to None.
         let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _grandchild = AgentAttribution::enter(Some(&bus), "grandchild");
             panic!("a tool blew up");
         }));
         assert!(unwound.is_err());
         assert_eq!(
-            bus.set_agent(Some("child".into())),
+            bus.current_agent(),
             Some("child".to_string()),
-            "the grandchild restored the child, not None"
+            "the grandchild's guard ran during the unwind and left the child attributed"
         );
     }
 
     assert_eq!(
-        bus.set_agent(None),
+        bus.current_agent(),
         Some("parent".to_string()),
-        "the child restored the parent on the way out"
+        "the child's exit leaves its parent attributed"
     );
+    bus.drop_agent(&parent);
+    assert_eq!(bus.current_agent(), None);
 }
 
 #[test]

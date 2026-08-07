@@ -243,6 +243,31 @@ pub fn declare(
     }
 }
 
+/// Build a [`stella_pipeline::Pipeline`] that has already declared its frame.
+///
+/// **The one construction path**, so a surface cannot come to hold a pipeline
+/// whose checkpoints do not say what they are. The frame was previously
+/// declared beside `Pipeline::new` at one of four call sites, and the three
+/// that forgot left checkpoints that resume as plain engine turns with no
+/// notice that their stages are gone (#1672).
+///
+/// Pairing the two here rather than asking each surface to remember is the
+/// difference between a convention and a mechanism.
+///
+/// Callers still chain what is theirs. The deck and fleet workers add
+/// `with_turn_gate` — #1214's seam, where the pipeline attaches the gate to
+/// every engine it builds and parks its management calls behind it — because
+/// the gate is per-surface while the frame is not.
+pub fn pipeline<'a>(
+    durability: &crate::durability::SessionDurability,
+    ports: stella_pipeline::PipelinePorts<'a>,
+    events: impl Into<stella_core::EventSender>,
+    config: stella_pipeline::PipelineConfig,
+) -> stella_pipeline::Pipeline<'a> {
+    declare(durability, &config);
+    stella_pipeline::Pipeline::new(ports, events, config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,5 +363,69 @@ mod tests {
         assert_eq!(frame.test_command, None);
         assert!(!frame.witness_writer);
         assert_eq!(frame.candidates, 0);
+    }
+
+    /// **Witness (#1672).** Every surface that builds a `Pipeline` declares
+    /// its frame first.
+    ///
+    /// The frame was declared at exactly one of four call sites, so a
+    /// checkpoint left by the deck, the goal loop or a fleet worker read as a
+    /// plain engine turn and any resume from it degraded in silence — the
+    /// failure #1615 closed for `stella run` alone.
+    ///
+    /// This greps the source rather than driving a turn, deliberately. What
+    /// went wrong was **wiring**, not logic: every unit here already passed
+    /// while three surfaces never called it. A behavioural test would need one
+    /// scripted run per surface and would still only cover the surfaces
+    /// somebody remembered to write a test for, which is the same gap one
+    /// level up. The repo uses source-grep guards for exactly this shape (the
+    /// `stella fullauto` wrapper guards from #1619).
+    #[test]
+    fn every_pipeline_construction_declares_its_resume_frame() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut sites = Vec::new();
+        let mut undeclared = Vec::new();
+
+        let mut stack = vec![src];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                // This guard's own source carries the needle in a string
+                // literal, so it would report itself forever.
+                if path.file_name().and_then(|n| n.to_str()) == Some("resume_frame.rs") {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let lines: Vec<&str> = text.lines().collect();
+                for (i, line) in lines.iter().enumerate() {
+                    if !line.contains("Pipeline::new(") {
+                        continue;
+                    }
+                    sites.push(format!("{}:{}", path.display(), i + 1));
+                    undeclared.push(format!("{}:{}", path.display(), i + 1));
+                }
+            }
+        }
+
+        let _ = sites;
+        assert!(
+            undeclared.is_empty(),
+            "these sites call `Pipeline::new` directly and so declare no resume frame — \
+             a checkpoint they leave resumes as a plain engine turn with no notice that \
+             its stages are gone. Build through `resume_frame::pipeline` instead: \
+             {undeclared:?}"
+        );
     }
 }
