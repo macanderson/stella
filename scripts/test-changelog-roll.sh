@@ -136,5 +136,21 @@ check "the hand-written note rolled under 0.9.0" \
 check "the fallback pointer was NOT written" \
   "$(grep -c 'could not be generated' "$f")" "0"
 
+# ── C6: idempotent — an existing section for this version is never duplicated ─
+printf '\nC6  a version that already has a section is left alone\n'
+f="$(changelog_with c6)"
+# Plant the section the roll is about to write, as a release PR or a first
+# invocation at the other call site would have.
+perl -0777 -pi -e 's/^## \[Unreleased\]\n/## [Unreleased]\n\n## [1.0.0] — 2026-08-07\n\n### Added\n\n- hand-written\n/ms' "$f"
+printf '### Added\n\n- **CI draft.** Would have replaced it.\n' >"$TMP/c6-entries.md"
+out="$(roll "$f" 1.0.0 "$TMP/c6-entries.md")"
+check "exactly one 1.0.0 heading exists" "$(grep -c '^## \[1.0.0\]' "$f")" "1"
+check "the existing body survives" "$(grep -c '^- hand-written$' "$f")" "1"
+check "the CI draft was not written" "$(grep -c 'CI draft' "$f")" "0"
+case "$out" in
+  *"already has a"*) ok "the skip is logged" ;;
+  *) no "the skip is logged" "$out" "an 'already has a [1.0.0] section' notice" ;;
+esac
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

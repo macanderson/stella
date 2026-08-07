@@ -65,6 +65,21 @@ if [ ! -f "${changelog}" ] || ! grep -q '^## \[Unreleased\]' "${changelog}"; the
   exit 0
 fi
 
+# Idempotent: if this version already has a section, leave the file alone.
+#
+# Two cases reach here, and neither wants a second heading. The roll runs at
+# TWO call sites per release (the tagged release commit and the bot/version-sync
+# PR), so a re-run or a retry must not stack headings. And a maintainer may have
+# written the section deliberately in the release PR itself — a minor release is
+# a considered event, and the "CI writes this file" rule exists to stop
+# per-PR bullets accumulating in inconsistent voices, not to overwrite a section
+# someone sat down and wrote. Whoever got there first wins; the roll never
+# duplicates.
+if grep -q "^## \[${version}\]" "${changelog}"; then
+  echo "changelog-roll: ${changelog} already has a [${version}] section; leaving it alone."
+  exit 0
+fi
+
 # Replace whatever sits under [Unreleased] with $1's contents.
 inject_entries() {
   ENTRIES_FILE="$1" perl -0777 -pi -e '

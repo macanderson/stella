@@ -9,18 +9,25 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 **One section per minor line — not per release.** Every merge to main cuts a
 patch release (see [`RELEASING.md`](RELEASING.md)), which is a fine way to ship
 and a terrible way to keep a record: the 0.6 line alone was 127 releases in
-eight days. Those releases are not undocumented — [the releases
+nine days. Those releases are not undocumented — [the releases
 page](https://github.com/macanderson/stella/releases) carries notes for every
 single tag, generated from that tag's own diff. This file is the other half of
-the pair: the durable, curated record of what a line delivered, written for
-someone deciding whether to upgrade rather than someone bisecting a regression.
+the pair: the durable, curated record, written for someone deciding whether to
+upgrade rather than someone bisecting a regression.
 
-**CI writes this file, not contributors or coding agents.** Don't add a bullet
-under `## [Unreleased]` in your PR — leave the section alone.
+**A section covers everything since the previous section's version.** Because
+only minor and major lines are listed, `[0.7.0]` means "what you get moving
+from 0.6.0 to 0.7.0" — the whole 0.6 line, not the single release that opened
+it. That is also exactly the range CI drafts it from.
+
+**CI writes this file, not contributors or coding agents.** Leave the
+`[Unreleased]` section alone in your PR rather than adding a bullet to it. (The
+exception is a release PR that deliberately writes its own section: the roll is
+idempotent and never overwrites or duplicates a version that already has one.)
 [`scripts/changelog-ai.sh`](scripts/changelog-ai.sh) drafts the section from the
-whole series range when a minor or major release is cut, and
+series range when a minor or major release is cut, and
 [`scripts/changelog-roll.sh`](scripts/changelog-roll.sh) rolls it into place. If
-your change needs context the diff alone won't convey, put it in the PR
+your change needs context the diff alone will not convey, put it in the PR
 description — the drafter reads commit bodies (squash-merge PR descriptions),
 not just code.
 
@@ -34,19 +41,10 @@ are not user-facing and do not appear here.
 
 ## [0.7.0] — 2026-08-07
 
-### Changed
-
-- **The changelog is now one section per minor line, and reads like something a
-  person wrote.** This file had grown to 180 sections of which **77 were
-  completely empty** — a bare `## [0.6.x] — <date>` heading with nothing under
-  it. Nothing was wrong with the drafter; the composition was. A patch release
-  was cut on every merge to main and the roll fired on every one of them, while
-  the drafter degrades open by contract (no API key, no non-bot commits, or an
-  unparseable response all print nothing and succeed). When the second happened
-  the first still stamped the heading. Patch releases no longer touch this file
-  at all, and a minor release can no longer emit a heading with an empty body
-  under any failure. Per-release detail did not disappear — it ships as GitHub
-  Release notes, the surface built for "what changed in this exact build".
+Everything since 0.6.0 — 127 patch releases over nine days, plus the release-
+notes overhaul below. The verification line: a model's opinion stopped being
+enough to end a run, the verifier stopped being allowed to grade its own work,
+and the pipeline learned to research before it plans.
 
 ### Added
 
@@ -56,15 +54,6 @@ are not user-facing and do not appear here.
   security), search the full text of every entry, and expand a line to read it
   in full. Built from this file at build time, so the site and the repository
   cannot drift.
-
-## [0.6.0] — 2026-07-29 → 2026-08-06
-
-The verification line. A model's opinion stopped being enough to end a run,
-the verifier stopped being allowed to grade its own work, and the pipeline
-learned to research before it plans.
-
-### Added
-
 - **The verdict is decided by a model that did not do the work.** Verifier
   independence is enforced before the spend, not audited afterwards, and each
   candidate records a `verifier_independent` fact so a run that could not get
@@ -108,6 +97,17 @@ learned to research before it plans.
 
 ### Changed
 
+- **The changelog is now one section per minor line, and reads like something a
+  person wrote.** This file had grown to 180 sections of which **77 were
+  completely empty** — a bare `## [0.6.x] — <date>` heading with nothing under
+  it. Nothing was wrong with the drafter; the composition was. A patch release
+  was cut on every merge to main and the roll fired on every one of them, while
+  the drafter degrades open by contract (no API key, no non-bot commits, or an
+  unparseable response all print nothing and succeed). When the second happened
+  the first still stamped the heading. Patch releases no longer touch this file
+  at all, and a minor release can no longer emit a heading with an empty body
+  under any failure. Per-release detail did not disappear — it ships as GitHub
+  Release notes, the surface built for "what changed in this exact build".
 - **A green test run only counts if it fixes the failure that was actually
   reported**, and a model judge's "done" needs corroboration that is not
   another model's opinion — a fail→pass flip or a test that ran green. Without
@@ -173,10 +173,11 @@ learned to research before it plans.
   container and mount only the repository it should touch; add `--network none`
   for the equivalent of the old `restricted`.
 
-## [0.5.0] — 2026-07-23 → 2026-07-29
+## [0.6.0] — 2026-07-29
 
-The context and memory line. Recall became accountable, memories learned what
-they were about, and verification stopped paying for work it did not need.
+Everything since 0.5.0 — the context and memory line. Recall became
+accountable, memories learned what they were about, and verification stopped
+paying for work it did not need.
 
 ### Added
 
@@ -230,6 +231,6 @@ they were about, and verification stopped paying for work it did not need.
 
 ## Earlier releases
 
-0.4.0 and earlier predate this file. Their notes are on
+0.5.0 and earlier predate this file. Their notes are on
 [the releases page](https://github.com/macanderson/stella/releases), generated
 per tag from each release's own diff.

@@ -71,7 +71,8 @@ was structurally guaranteed to fill with noise no matter how good the drafter
 got, so the roll stopped firing on patches — where the per-tag detail already
 had a home in the GitHub Release notes above.
 
-The roll is deliberately non-fatal, and can no longer produce an empty section:
+The roll is deliberately non-fatal, and can no longer produce an empty or a
+duplicate section:
 
 - A missing `CHANGELOG.md`, or one with no `## [Unreleased]` heading, logs a
   warning and continues. A bookkeeping slip must never be the reason a release
@@ -80,6 +81,12 @@ The roll is deliberately non-fatal, and can no longer produce an empty section:
   roll writes a pointer to the releases page rather than a heading with an
   empty body — the failure mode above, which would otherwise recur once per
   line.
+- **It is idempotent.** If the version already has a section, the roll leaves
+  the file alone. That matters because it runs at two call sites per release,
+  and because a maintainer may have written the section by hand in the release
+  PR — a minor release is a considered event, and "CI writes this file" exists
+  to stop per-PR bullets accumulating in inconsistent voices, not to overwrite
+  a section someone sat down and wrote. Whoever got there first wins.
 
 `make changelog-roll-test` (hermetic, not part of `make gate`) pins both rules.
 
