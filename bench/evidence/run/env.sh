@@ -97,6 +97,8 @@ assert_portable_binary() {
 # copy cannot drift from the other. Pass --max-behind to measure older code on
 # purpose, which puts the distance in the launch command rather than in a
 # default nobody reads.
+# shellcheck disable=SC2120  # build_sut.sh calls this with arguments; shellcheck
+# cannot see across the `source` boundary and so reads it as never-parameterised.
 assert_fresh_sut() {
   local binary="${1:-$STELLA_BINARY}"
   [ "$#" -gt 0 ] && shift
