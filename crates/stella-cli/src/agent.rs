@@ -272,6 +272,8 @@ async fn run_pipeline_one_shot(
     };
     let custom_tools = discover_custom_tools(cfg, format == OutputFormat::Text).await;
     let store = open_store(&cfg.workspace_root);
+    // Owned here so it outlives every engine the pipeline builds below (#1595).
+    let calibration = seed_calibration(&store, cfg);
 
     if format == OutputFormat::Text {
         tui::section_header("Stella (pipeline)");
@@ -453,7 +455,8 @@ async fn run_pipeline_one_shot(
         };
 
         let events = pipeline_event_sender(&tx, format);
-        let pipeline = resume_frame::pipeline(&cfg.durability, ports, events, pipeline_config);
+        let pipeline = resume_frame::pipeline(&cfg.durability, ports, events, pipeline_config)
+            .with_calibration(&calibration);
         pipeline.run(prompt, &mut messages, &mut budget).await
     };
 

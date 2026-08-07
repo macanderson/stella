@@ -76,6 +76,7 @@ impl Pipeline<'_> {
         if let Some((hooks, runner)) = self.hooks {
             engine = engine.with_hooks(hooks, runner);
         }
+        engine = self.attach(engine);
 
         let width = u32::try_from(questions.len()).unwrap_or(u32::MAX);
         let fan = FanOutBudget::new(*budget, width);

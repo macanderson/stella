@@ -56,9 +56,8 @@
 //!   the checkpoint on every terminal path, abort included, so a policy stop
 //!   retracts its resume point on the way out. A row written by a build that
 //!   predates #1653 — where a policy stop really did store `Error` — is
-//!   therefore filtered by `SkipReason::NoResumePoint` anyway (named, not
-//!   linked: this module is private, so rustdoc cannot resolve it), without
-//!   this module having to trust its status.
+//!   therefore filtered by `SkipReason::NoResumePoint` anyway, without this
+//!   module having to trust its status.
 //! - **The attempt bound still applies.** An `Error` that resumes into
 //!   another `Error` is counted like any other continuation and retired
 //!   after `MAX_BOOT_ATTEMPTS`.

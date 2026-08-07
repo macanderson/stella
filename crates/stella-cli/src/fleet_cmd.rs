@@ -707,6 +707,8 @@ async fn run_task(
     // a one-shot or deck turn. The store is rooted in the task worktree so
     // parallel workers never contend on a single SQLite writer.
     let store = agent::open_store(root);
+    // Owned above the pipeline so it outlives every engine it builds (#1595).
+    let calibration = agent::seed_calibration(&store, &cfg);
     let execution = agent::begin_execution(&store, "fleet", &task.prompt, &cfg, None);
     // From here on this attempt's spend is durable in the store even if this
     // thread never lives to report it — publish the handle that makes it
@@ -879,7 +881,8 @@ async fn run_task(
             );
             let pipeline =
                 crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), config)
-                    .with_turn_gate(gate.as_ref());
+                    .with_turn_gate(gate.as_ref())
+                    .with_calibration(&calibration);
             // The system prompt + task prompt are already in `messages`; the
             // pipeline appends its own volatile recall+goal message, so pass the
             // raw task prompt as the goal (the pipeline never re-reads `messages`
