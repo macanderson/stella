@@ -156,6 +156,14 @@ is not, because retrying re-truncates identically.
   must run before any adapter is built, or every cost lands on seed pricing.
 - **Anthropic's `cache_control` goes on content blocks only** — the system block
   and the last block of the final message. Never a top-level request field.
+- **The cache window is a per-session choice, and both halves must ship together.**
+  `CacheTtl::OneHour` stamps `ttl: "1h"` on every marker *and* sends the
+  `extended-cache-ttl-2025-04-11` beta header; the field without the header is
+  rejected, the header without the field changes nothing. The 5-minute default
+  sends neither, so an unconfigured session is byte-identical to pre-#1839.
+  `provider_honors_cache_ttl` is the predicate every consumer branches on — only
+  the Anthropic adapter forwards the choice today, so Bedrock and OpenRouter keep
+  the static 5-minute reading rather than counting down a window nobody granted.
 - **Gemini has no wire call ids.** Calls correlate by function *name*, so the
   adapter mints `call_0`, `call_1`, … and rides Gemini 3's `thoughtSignature`
   inside the id after a `#` — `ToolCall` has no slot for a provider-private blob,

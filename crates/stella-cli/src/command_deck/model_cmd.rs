@@ -242,6 +242,7 @@ mod tests {
             credential_source: None,
             credential_advisories: Vec::new(),
             aux_credentials: Default::default(),
+            cache_ttl: None,
         }
     }
 
