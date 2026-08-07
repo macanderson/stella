@@ -3291,11 +3291,15 @@ function routeTo(hash) {
   switchTab(tab, arg);
   return true;
 }
-/* A rejected route puts the address back to the section actually on screen.
-   Leaving `#transcript/notanumber` in the bar while Sessions is rendered is a
+/* A rejected route puts the address back to the section actually on screen —
+   and, on the transcript, back to the *whole* route including the execution,
+   since a bare `#transcript` is itself not a route. Leaving
+   `#transcript/notanumber` in the bar while something else is rendered is a
    URL that lies, and this page's whole premise is that the URL is the truth. */
+const currentRoute = () =>
+  state.tab === "transcript" && tx ? `transcript/${tx.id}` : state.tab;
 addEventListener("hashchange", () => {
-  if (!routeTo(location.hash)) history.replaceState(null, "", "#" + state.tab);
+  if (!routeTo(location.hash)) history.replaceState(null, "", "#" + currentRoute());
 });
 
 /* ── time window: a real radiogroup, arrow-key operable ──────────────── */
