@@ -787,7 +787,9 @@ mod tests {
     #[tokio::test]
     async fn a_pinned_baseline_ref_beats_a_head_that_contains_the_fix() {
         let root = scaffold("pinref").await;
-        let base = scratch_git(&root, &["rev-parse", "HEAD"]).trim().to_string();
+        let base = scratch_git(&root, &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
         scratch_git(&root, &["update-ref", WITNESS_BASELINE_WORKTREE_REF, &base]);
         // The auto-snapshot: the fix, already committed past the baseline.
         std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
@@ -820,7 +822,9 @@ mod tests {
     #[tokio::test]
     async fn a_task_baseline_ref_is_honored_when_no_worktree_pin_exists() {
         let root = scaffold("taskref").await;
-        let base = scratch_git(&root, &["rev-parse", "HEAD"]).trim().to_string();
+        let base = scratch_git(&root, &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
         scratch_git(&root, &["update-ref", WITNESS_BASELINE_TASK_REF, &base]);
         std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
         scratch_git(&root, &["add", "."]);
@@ -1003,8 +1007,7 @@ mod tests {
                 .is_none()
         );
         assert!(
-            import_failure_signature("error[E0425]: cannot find function `retry_delays`")
-                .is_none()
+            import_failure_signature("error[E0425]: cannot find function `retry_delays`").is_none()
         );
     }
 
