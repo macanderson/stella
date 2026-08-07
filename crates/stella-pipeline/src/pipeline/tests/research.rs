@@ -227,6 +227,183 @@ async fn no_questions_means_no_stage_no_sub_agents_no_section() {
     assert!(!planner_prompt(&shapes).contains("## Research findings"));
 }
 
+/// One scripted entry of [`HangTailProvider`]: serve a result, or hang.
+enum HangScript {
+    Serve(CompletionResult),
+    Hang,
+}
+
+/// Serves its script in order; a [`HangScript::Hang`] entry parks that call
+/// forever (the research latency ceiling is what ends it), and later calls
+/// keep serving the rest of the script — so the run can continue past the
+/// cancelled child.
+struct HangTailProvider {
+    script: TokioMutex<VecDeque<HangScript>>,
+}
+
+#[async_trait]
+impl Provider for HangTailProvider {
+    fn id(&self) -> &str {
+        "hang-tail"
+    }
+
+    async fn complete_ref(
+        &self,
+        _req: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        let next = self.script.lock().await.pop_front();
+        match next {
+            Some(HangScript::Serve(result)) => Ok(result),
+            Some(HangScript::Hang) => std::future::pending().await,
+            None => Err(ProviderError::Terminal("script exhausted".into())),
+        }
+    }
+}
+
+/// #1954's witness, verbatim: a research child that never answers within the
+/// ceiling produces a **balanced** Started/Finished bracket, a
+/// `UsageIncomplete` with reason `cancelled`, and `Finished.steps` equal to
+/// the child's committed `StepUsage` count — while the turn itself degrades
+/// to a missing finding and completes. Before the primitive owned the
+/// cancel bracket, the stage forged `Finished { steps: 0 }` and this failed.
+#[tokio::test]
+async fn a_child_past_the_ceiling_closes_its_bracket_with_committed_steps() {
+    // Sequence: triage (one question) → child call 1 commits a tool step →
+    // child call 2 hangs until the ceiling cancels it → plan → close-out.
+    let mut committed_step = text_result("");
+    committed_step.tool_calls = vec![ToolCall {
+        call_id: "r1".into(),
+        name: "read_file".into(),
+        input: serde_json::json!({ "path": "src/lib.rs" }),
+    }];
+    committed_step.cost_usd = 0.002;
+    let provider = HangTailProvider {
+        script: TokioMutex::new(VecDeque::from([
+            HangScript::Serve(text_result(
+                "CLASS: multi\nWITNESS: yes\nVERIFIER: yes\nRESEARCH: Which module owns retries?",
+            )),
+            HangScript::Serve(committed_step),
+            HangScript::Hang,
+            HangScript::Serve(text_result(r#"["update retry.rs"]"#)),
+            HangScript::Serve(text_result("PLAN COMPLETE: done.")),
+        ])),
+    };
+    let resolver = OneHangProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false, true, true], "@@ -1 +1 @@\n-old\n+new");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            test_command: Some("cargo test -p x".into()),
+            diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+            research_latency_ceiling: std::time::Duration::from_millis(200),
+            ..PipelineConfig::default()
+        },
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run(
+            "Refactor the retry layer end to end",
+            &mut messages,
+            &mut budget,
+        )
+        .await
+        .expect("run succeeds");
+    let events = drain(&mut rx);
+
+    assert_eq!(
+        outcome.status,
+        PipelineStatus::Completed,
+        "a cancelled child degrades to a missing finding, never a wedged turn"
+    );
+    let started = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AgentEvent::SubAgent {
+                    phase: stella_protocol::SubAgentPhase::Started { .. }
+                }
+            )
+        })
+        .count();
+    let finished: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::SubAgent {
+                phase:
+                    stella_protocol::SubAgentPhase::Finished {
+                        steps,
+                        status,
+                        reason,
+                        ..
+                    },
+            } => Some((*steps, *status, reason.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(started, 1);
+    assert_eq!(finished.len(), 1, "a balanced bracket: {events:?}");
+    let (steps, status, reason) = &finished[0];
+    assert_eq!(
+        *steps, 1,
+        "Finished.steps is the committed StepUsage count, not a forged zero"
+    );
+    assert_eq!(*status, stella_protocol::SubAgentStatus::Incomplete);
+    assert!(
+        reason.as_deref().unwrap_or_default().contains("cancelled"),
+        "the close says why: {reason:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::UsageIncomplete {
+                reason: stella_protocol::UsageIncompleteReason::Cancelled,
+                ..
+            }
+        )),
+        "the abandoned in-flight call owes its envelope: {events:?}"
+    );
+}
+
+/// A resolver over the hanging double — [`OneProvider`] is typed to the
+/// scripted one, and the harness needs exactly the same everything-is-this
+/// behavior here.
+struct OneHangProvider<'p>(&'p HangTailProvider);
+impl ProviderResolver for OneHangProvider<'_> {
+    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
+        Some(self.0)
+    }
+}
+
 /// A research round that produces nothing usable — children answering empty —
 /// degrades to exactly the no-research planner prompt: the stage may not
 /// leave a half-empty section behind, and the turn still completes.
