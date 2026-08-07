@@ -29,7 +29,12 @@ use crate::management_prompt::ManagementPrompt;
 /// derived `Ord` is load-bearing (`deterministic_floor` takes the `max` of
 /// the model's class and the pattern floor, so the floor can only ever add
 /// planning, never remove it — L-E2 "errs toward planning").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// Serde joined for the resume frame (#1671): the class crosses to the host's
+// durable record and back. Variant names are the wire form — renaming one is
+// a frame-format change and needs the same care as a checkpoint field.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum TaskClass {
     /// A lookup/read/explain prompt: no plan, no verifier. Self-revoking on
     /// unexpected file mutations (zero-diff guard).

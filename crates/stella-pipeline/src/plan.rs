@@ -29,7 +29,10 @@ use crate::ports::RecalledFrame;
 /// natural-language instruction the execute stage turns into one engine turn.
 /// Richer per-step metadata (target files, tool hints) is a documented
 /// follow-up, not faked here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// Serde joined for the resume frame (#1671): at a mid-plan kill the
+// unreached steps exist nowhere but the durable frame, so the step must
+// round-trip to the host's record and back.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlanStep {
     pub description: String,
 }
