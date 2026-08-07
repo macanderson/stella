@@ -99,7 +99,6 @@ use colored::{ColoredString, Colorize};
 use stella_store::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo, supervised};
 
 use crate::DaemonCmd;
-use crate::failure::CliFailure;
 
 /// `install` / `uninstall`: the service-manager half (#1587) — what makes a
 /// registered invocation come back after the logout and reboot that

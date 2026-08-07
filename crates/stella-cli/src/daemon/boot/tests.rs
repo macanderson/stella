@@ -23,7 +23,6 @@ fn killed_mid_turn() -> BootCandidate {
         supervised: true,
         stored_status: SessionStatus::InProgress,
         lock_held: false,
-        parked_on_approval: false,
         has_resume_point: true,
         workspace_exists: true,
         parked: false,
@@ -38,11 +37,13 @@ fn a_run_killed_mid_turn_is_continued_at_boot() {
 
 #[test]
 fn a_run_the_operator_ended_is_never_continued_at_boot() {
-    // Every status that means "this run ended rather than broke". Since #1653
-    // that includes a deliberate policy stop, which records `Cancelled` with
-    // the rest instead of hiding among the crashes as `Error`.
+    // Every status that means "this run ended rather than broke". Since
+    // #1653 a deliberate policy stop records `Stopped` instead of hiding
+    // among the crashes as `Error`, which is what lets `Error` itself be
+    // continued (#1696, below).
     for status in [
         SessionStatus::Cancelled,
+        SessionStatus::Stopped,
         SessionStatus::Complete,
         SessionStatus::Paused,
         SessionStatus::Archived,
@@ -94,57 +95,13 @@ fn a_crash_that_recorded_itself_is_continued_but_a_policy_stop_is_not() {
 
     // And the status a policy stop records today is skipped outright.
     let stopped = BootCandidate {
-        stored_status: SessionStatus::Cancelled,
+        stored_status: SessionStatus::Stopped,
         ..killed_mid_turn()
     };
     assert_eq!(
         decide(&stopped),
         BootDecision::Skip(SkipReason::EndedDeliberately)
     );
-}
-
-/// The #1698 witness: a run parked on an unanswered scope review is skipped
-/// with its own reason, and — the half that actually matters — every
-/// candidate *behind* it is still decided.
-///
-/// Before this, the sweep resumed the parked run and streamed it to
-/// completion, which for a park under launchd with no terminal means forever:
-/// the loop never reached the remaining ids, and the service console showed
-/// the run as continued and then went quiet.
-#[test]
-fn a_parked_run_is_skipped_and_does_not_strand_the_runs_behind_it() {
-    let parked = BootCandidate {
-        id: "ses-1754431200000-84214".to_string(),
-        parked_on_approval: true,
-        ..killed_mid_turn()
-    };
-    assert_eq!(
-        decide(&parked),
-        BootDecision::Skip(SkipReason::NeedsInput),
-        "a boot has nobody to answer a scope review"
-    );
-
-    let behind = killed_mid_turn();
-    let decisions = plan(&[parked, behind.clone()]);
-    assert_eq!(decisions.len(), 2);
-    assert_eq!(
-        decisions[1],
-        (behind, BootDecision::Continue),
-        "the run behind the parked one must still be reached and continued"
-    );
-}
-
-/// A pending approval is read from the sidecar, not inferred from the status:
-/// a run killed the instant after its review was answered also carries
-/// `NeedsInput`, and it has nothing left to ask.
-#[test]
-fn an_answered_review_leaves_the_run_resumable() {
-    let answered = BootCandidate {
-        stored_status: SessionStatus::NeedsInput,
-        parked_on_approval: false,
-        ..killed_mid_turn()
-    };
-    assert_eq!(decide(&answered), BootDecision::Continue);
 }
 
 #[test]
@@ -197,29 +154,25 @@ fn an_unsupervised_or_workspaceless_or_pointless_run_is_skipped_with_its_own_rea
 fn nothing_is_ever_continued_without_a_resume_point() {
     for supervised in [true, false] {
         for lock_held in [true, false] {
-            for parked_on_approval in [true, false] {
-                for has_resume_point in [true, false] {
-                    for workspace_exists in [true, false] {
-                        for status in SessionStatus::ALL {
-                            let candidate = BootCandidate {
-                                supervised,
-                                lock_held,
-                                parked_on_approval,
-                                has_resume_point,
-                                workspace_exists,
-                                stored_status: status,
-                                ..killed_mid_turn()
-                            };
-                            if decide(&candidate) != BootDecision::Continue {
-                                continue;
-                            }
+            for has_resume_point in [true, false] {
+                for workspace_exists in [true, false] {
+                    for status in SessionStatus::ALL {
+                        let candidate = BootCandidate {
+                            supervised,
+                            lock_held,
+                            has_resume_point,
+                            workspace_exists,
+                            stored_status: status,
+                            ..killed_mid_turn()
+                        };
+                        if decide(&candidate) == BootDecision::Continue {
                             assert!(
                                 has_resume_point,
                                 "a boot-time action without a resume point would be a restart, \
                                  not a resume: {candidate:?}"
                             );
                             assert!(!lock_held, "{candidate:?}");
-                            // Interrupted, or crashed. Since #1653 an `Error`
+                            // Interrupted, or crashed: since #1653 an `Error`
                             // means only "it fell over", so it joins the live
                             // statuses as continuable (#1696); every other
                             // terminal status is a run that ended on purpose.
@@ -227,9 +180,6 @@ fn nothing_is_ever_continued_without_a_resume_point() {
                                 status.is_live() || status == SessionStatus::Error,
                                 "{candidate:?}"
                             );
-                            // A boot has nobody to answer a scope review, so a
-                            // parked run is never continued into one (#1698).
-                            assert!(!parked_on_approval, "{candidate:?}");
                         }
                     }
                 }

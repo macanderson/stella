@@ -193,8 +193,6 @@ It prints one line per supervised run, continued or skipped, with the reason:
 
 A run that finished, was stopped, was set aside, or **stopped itself by policy** — a stuck loop escalated past its warning, the step cap, an enforced budget, a scope review you ended — is never resumed. Every one of those writes a status on the way out saying the work was *ended* rather than broken, and every one of them retracts its resume point as it goes, so the rule holds twice over. Work you ended on purpose is never resumed behind your back.
 
-**A run parked on a scope review is skipped**, and the sweep says so and moves to the next one. A boot has no terminal and nobody to answer the review, so resuming it would park it again forever — and because the sweep is sequential, that would strand every run behind it with no indication why. Answer it with `stella daemon attach <id>` and the run continues from there.
-
 **What it skips because nobody is there.** A run that was waiting on a plan review when the machine went down is *not* resumed at boot. Resuming it would not fail — it would park again, waiting for an answer, and because the sweep streams one run at a time to completion it would sit there forever with every later run behind it unresumed. So the sweep names it and moves on:
 
 ```text

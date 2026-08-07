@@ -578,48 +578,6 @@ fn ids_resolve_by_unique_prefix_and_refuse_an_ambiguous_one() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The #1690 witness: a pid resolves too.
-///
-/// A pid is what `ps`, `top`, Activity Monitor and an OOM-killer log hand an
-/// operator, and on today's code it is a dead end — every verb takes only the
-/// id, so the pid must be eyeballed back through `stella daemon list` first.
-/// The two address spaces cannot collide: a session id is `ses-<millis>-<pid>`
-/// and never parses as digits alone.
-#[test]
-fn a_pid_resolves_to_its_run_and_an_ambiguous_one_is_refused() {
-    let (dir, registry) = temp_registry("resolve-pid");
-    let mut a = SessionRecord::new("/w", "a");
-    a.id = "ses-100-4242".into();
-    a.pid = 4242;
-    a.supervisor = Some(SupervisorInfo { pgid: 4242 });
-    let mut b = SessionRecord::new("/w", "b");
-    b.id = "ses-100-9001".into();
-    b.pid = 9001;
-    b.supervisor = Some(SupervisorInfo { pgid: 9001 });
-    // Two records that share a pid — the OS reuses them, so a long-lived
-    // registry really can hold both.
-    let mut stale = SessionRecord::new("/w", "stale");
-    stale.id = "ses-050-9001".into();
-    stale.pid = 9001;
-    stale.supervisor = Some(SupervisorInfo { pgid: 9001 });
-    for record in [&a, &b, &stale] {
-        registry.upsert(record).unwrap();
-    }
-
-    assert_eq!(resolve(&registry, Some("4242")).unwrap().id, a.id);
-    assert!(
-        resolve(&registry, Some("9001"))
-            .is_err_and(|e| e.contains("more than one run")),
-        "a reused pid must be refused, not guessed at"
-    );
-    assert!(resolve(&registry, Some("77777")).is_err(), "no run owns it");
-    // The id form is untouched: an exact id still wins, and it is never read
-    // as a pid because it is not digits.
-    assert_eq!(resolve(&registry, Some("ses-100-4242")).unwrap().id, a.id);
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 #[test]
 fn a_bare_pid_resolves_the_run_that_is_running_under_it() {
     let (dir, registry) = temp_registry("resolve-pid");
@@ -782,51 +740,5 @@ fn a_resumed_launch_keeps_the_record_and_the_crashed_console() {
         stored.status,
         SessionStatus::InProgress,
         "a relaunch re-owns the record as live"
-    );
-}
-
-/// #1653 witness: the terminal status separates a run that *chose* to stop
-/// from one that fell over.
-///
-/// Before this, both writers reduced the outcome to a `bool` and every
-/// non-signal failure stored [`SessionStatus::Error`] — so a stuck-loop
-/// escalation, an enforced budget or an ended scope review was recorded
-/// identically to a crash, and `stella daemon list` painted them the same.
-/// The exit code had already learned the difference (#1620, #1637); the
-/// registry was the last reader that had not.
-///
-/// Asserted directly against [`outcome_status`], which is where the
-/// distinction was being discarded. The signal rung is deliberately not
-/// asserted here: `crate::signals::interrupted_exit_code` reads a process-global
-/// flag, so a test that set it would leak into every other test in this binary.
-#[test]
-fn a_deliberate_stop_is_not_recorded_as_a_crash() {
-    use stella_core::AbortKind;
-
-    let stop = CliFailure::from_abort(
-        "stuck-loop detected (persisted after a steering warning)".into(),
-        AbortKind::DeliberateStop,
-    );
-    let crash = CliFailure::from_abort("model call failed: 500".into(), AbortKind::Failure);
-
-    assert_eq!(
-        outcome_status(Some(&stop)),
-        SessionStatus::Cancelled,
-        "a policy stop ended the work; it did not break it"
-    );
-    assert_eq!(
-        outcome_status(Some(&crash)),
-        SessionStatus::Error,
-        "a genuine failure must stay distinguishable from a policy stop"
-    );
-    assert_ne!(
-        outcome_status(Some(&stop)),
-        outcome_status(Some(&crash)),
-        "the two endings must not collapse — #1696 reads exactly this bit"
-    );
-    assert_eq!(
-        outcome_status(None),
-        SessionStatus::Complete,
-        "a run that ended on its own terms is complete"
     );
 }

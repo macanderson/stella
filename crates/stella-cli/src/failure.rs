@@ -83,16 +83,6 @@ impl CliFailure {
     pub(crate) fn message(&self) -> &str {
         &self.message
     }
-
-    /// Whether the run *chose* to end rather than fell over — the same bit
-    /// [`Self::exit_code`] turns into `3`, asked directly.
-    ///
-    /// The terminal-status writers need it too (#1653): a policy stop and a
-    /// crash are one `SessionStatus` apart, and without this accessor the
-    /// distinction is thrown away one line before the registry write.
-    pub(crate) fn is_deliberate_stop(&self) -> bool {
-        self.deliberate_stop
-    }
 }
 
 impl From<String> for CliFailure {
