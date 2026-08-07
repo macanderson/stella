@@ -130,3 +130,184 @@ impl<'a> Engine<'a> {
         outcome
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use async_trait::async_trait;
+    use serde_json::Value;
+    use tokio::sync::mpsc;
+
+    use super::super::TurnHalt;
+    use crate::event_sender::EventSender;
+    use crate::retry::Sleeper;
+    use crate::step::{BudgetSnapshot, CHECKPOINT_VERSION, Checkpoint, TurnState};
+    use crate::{Engine, EngineConfig, TurnOutcome};
+    use stella_protocol::{
+        BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage,
+        Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
+    };
+
+    /// Answers a tool call first, then plain text — so the first step is a
+    /// committed `Continue` boundary and the second would finish the turn.
+    struct ToolThenText {
+        calls: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl Provider for ToolThenText {
+        fn id(&self) -> &str {
+            "scripted"
+        }
+        async fn complete_ref(
+            &self,
+            _req: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let mut result = CompletionResult {
+                text: String::new(),
+                tool_calls: vec![],
+                usage: CompletionUsage {
+                    reported: true,
+                    input_tokens: 1,
+                    ..CompletionUsage::default()
+                },
+                model: "scripted".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            };
+            if call == 0 {
+                result.tool_calls = vec![ToolCall {
+                    call_id: "call_0".into(),
+                    name: "touch".into(),
+                    input: serde_json::json!({}),
+                }];
+            } else {
+                result.text = "finished after the halt should have fired".into();
+            }
+            Ok(result)
+        }
+    }
+
+    struct OkTool;
+
+    #[async_trait]
+    impl crate::ToolExecutor for OkTool {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            vec![ToolSchema {
+                name: "touch".into(),
+                description: "touch a file".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                speculation_safe: false,
+            }]
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: "ok".into(),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct NoopSleeper;
+    #[async_trait]
+    impl Sleeper for NoopSleeper {
+        async fn sleep(&self, _duration_ms: u64) {}
+    }
+
+    /// Armed from the start, so the first committed boundary ends the turn.
+    #[derive(Debug)]
+    struct AlwaysHalt;
+    impl TurnHalt for AlwaysHalt {
+        fn halt_reason(&self) -> Option<String> {
+            Some("the tracked test flipped".into())
+        }
+    }
+
+    fn restored_at_step_one() -> Checkpoint {
+        Checkpoint {
+            version: CHECKPOINT_VERSION,
+            step: 1,
+            messages: vec![
+                CompletionMessage::system("sys"),
+                CompletionMessage::user("keep going"),
+            ],
+            budget: BudgetSnapshot {
+                mode: BudgetMode::Off,
+                turn_limit_usd: None,
+                session_limit_usd: None,
+                turn_spent_usd: 0.0,
+                session_spent_usd: 0.0,
+            },
+            total_cost_usd: 0.0,
+            calibration_model: None,
+            loop_steered: false,
+            loop_steered_pattern: Vec::new(),
+            loop_steered_inputs: None,
+            transcript_rewrites: 0,
+        }
+    }
+
+    /// **The obligation the CLI's hand-rolled resume loop never had.** A
+    /// restored turn whose halt predicate fires ends `Completed` at the next
+    /// committed boundary instead of running on — one provider call, not two.
+    /// Fails on the old shape (two drivers, only the fresh one consulting
+    /// `turn_halt`) because this method did not exist and the copy that did
+    /// never asked.
+    #[tokio::test]
+    async fn a_restored_turn_honors_the_turn_halt() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let provider = ToolThenText {
+            calls: calls.clone(),
+        };
+        let tools = OkTool;
+        let config = EngineConfig {
+            turn_halt: Some(Arc::new(AlwaysHalt)),
+            ..EngineConfig::default()
+        };
+        let mut state = TurnState::from_checkpoint(restored_at_step_one(), &config);
+        let engine = Engine::with_sleeper(&provider, &tools, config, &NoopSleeper);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+
+        let outcome = engine.drive_restored_turn(&mut state, &events).await;
+
+        let TurnOutcome::Completed { text, .. } = outcome else {
+            panic!("a fired halt ends the turn as a success: {outcome:?}");
+        };
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the halt fires at the first committed boundary — a second call \
+             means the restored driver never consulted it"
+        );
+        assert!(!text.is_empty());
+    }
+
+    /// The control: no halt, and the restored turn runs to its ordinary end —
+    /// the second call happens and its text is the outcome.
+    #[tokio::test]
+    async fn an_unhalted_restored_turn_runs_to_its_ordinary_end() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let provider = ToolThenText {
+            calls: calls.clone(),
+        };
+        let tools = OkTool;
+        let config = EngineConfig::default();
+        let mut state = TurnState::from_checkpoint(restored_at_step_one(), &config);
+        let engine = Engine::with_sleeper(&provider, &tools, config, &NoopSleeper);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+
+        let outcome = engine.drive_restored_turn(&mut state, &events).await;
+
+        let TurnOutcome::Completed { text, .. } = outcome else {
+            panic!("an unhalted restored turn completes: {outcome:?}");
+        };
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(text, "finished after the halt should have fired");
+    }
+}

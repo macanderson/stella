@@ -52,7 +52,7 @@ use super::*;
 /// Additive by construction: every field defaults, so a frame written by an
 /// older build simply reads as "progress unknown" and the resume declines to
 /// restore rather than guessing ([`PipelineResume::from_progress`]).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FrameProgress {
     /// Triage's settled class, or `None` before triage ran. A resume without
     /// it cannot know whether the run verifies, so it declines.
@@ -101,7 +101,7 @@ pub struct FrameProgress {
 /// Carrying it forward is faithful, not lenient: the observation really was
 /// made, by the same run, on the genuinely pristine tree. Re-running the
 /// command *now* and calling it a baseline would be the dishonest version.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedBaseline {
     /// The normalized command the oracle tracks.
     pub command: String,
@@ -195,7 +195,10 @@ impl<'a> Pipeline<'a> {
     /// turn's pre-crash spend (the checkpoint carries it, and the resumed
     /// turn's meter continues from it) plus everything this call spends —
     /// the same accounting the bare resume path reports today.
-    pub async fn resume(&self, resume: PipelineResume) -> Result<PipelineOutcome, PipelineRunError> {
+    pub async fn resume(
+        &self,
+        resume: PipelineResume,
+    ) -> Result<PipelineOutcome, PipelineRunError> {
         let mut total_cost = 0.0f64;
         if let Err(error) = &self.configured_test {
             return Err(PipelineRunError::new(
@@ -329,7 +332,8 @@ impl<'a> Pipeline<'a> {
                 cost_usd,
             } => {
                 total_cost += cost_usd;
-                let best = CandidateResult::turn_aborted(state.messages, TurnAbort { reason, kind });
+                let best =
+                    CandidateResult::turn_aborted(state.messages, TurnAbort { reason, kind });
                 return Ok(self.settle_outcome(
                     best,
                     task_class,
@@ -351,7 +355,14 @@ impl<'a> Pipeline<'a> {
                     total: &mut total_cost,
                 };
                 if let Err(abort) = self
-                    .run_plan_steps(remaining, next + 1, plan.len(), &engine, &mut spend, &mut state)
+                    .run_plan_steps(
+                        remaining,
+                        next + 1,
+                        plan.len(),
+                        &engine,
+                        &mut spend,
+                        &mut state,
+                    )
                     .await
                 {
                     let best = CandidateResult::turn_aborted(state.messages, abort);
@@ -423,11 +434,8 @@ impl<'a> Pipeline<'a> {
             {
                 Ok(witness) => witness,
                 Err(reason) => {
-                    let best = CandidateResult::aborted(
-                        state.messages,
-                        reason,
-                        AbortKind::DeliberateStop,
-                    );
+                    let best =
+                        CandidateResult::aborted(state.messages, reason, AbortKind::DeliberateStop);
                     return Ok(self.settle_outcome(
                         best,
                         task_class,

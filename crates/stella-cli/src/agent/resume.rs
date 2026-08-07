@@ -155,14 +155,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // the honest bare-turn path with its full advisory, and validation lives
     // in `PipelineResume::from_progress` so "restore approximately" is not a
     // state this driver can reach.
-    let restored = match &frame {
-        crate::resume_frame::ResumeFrame::Pipeline(f) => f
-            .progress
-            .clone()
-            .and_then(|p| stella_pipeline::PipelineResume::from_progress(checkpoint.clone(), p))
-            .map(|spec| (spec, (**f).clone())),
-        _ => None,
-    };
+    let restored = crate::resume_frame::restoration(&frame, &checkpoint);
 
     let turn_start = Instant::now();
     let step = checkpoint.step;
@@ -243,10 +236,10 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 let ws_ports = workspace_ports(
                     cfg.workspace_root.clone(),
                     cfg,
-                    registry_options(cfg),
+                    crate::agent::tools::registry_options(cfg),
                     active_rules.clone(),
                     mcp.clone(),
-                    Some(tx.clone()),
+                    Some(events.clone()),
                 )?;
                 // The run's ORIGINAL decisions, restored from the frame — a
                 // flag environment that changed across the crash must not
@@ -261,7 +254,8 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 pipeline_config.witness_writer = frame_config.witness_writer;
                 pipeline_config.max_revisions = frame_config.max_revisions;
                 let no_recall = NoContextRecall;
-                let approval_gate = approval_gate_for(cfg, approval_capability_for(true, true, false, false));
+                let approval_gate =
+                    approval_gate_for(cfg, approval_capability_for(true, true, false, false));
                 let ports = PipelinePorts {
                     router: &router,
                     providers: &resolver,
@@ -292,14 +286,15 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 let pipeline = crate::resume_frame::pipeline(
                     &cfg.durability,
                     ports,
-                    pipeline_event_sender(&tx, OutputFormat::Text),
+                    pipeline_event_sender(&events, OutputFormat::Text),
                     pipeline_config,
                 );
                 ResumedEnd::Pipeline(pipeline.resume(spec).await)
             }
             None => {
                 let engine_config = engine_config_for(cfg);
-                let state = stella_core::step::TurnState::from_checkpoint(checkpoint, &engine_config);
+                let state =
+                    stella_core::step::TurnState::from_checkpoint(checkpoint, &engine_config);
                 let mut engine =
                     Engine::with_sleeper(&*provider, &tools, engine_config, &TokioSleeper)
                         .with_calibration(&calibration);
@@ -311,18 +306,20 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         }
     };
 
-    // Project both endings onto the one reporting surface: the audit label,
-    // the money, the banner (mark + line, `None` for no banner), and the
-    // process result. A restored pipeline's labels carry its verdict state —
-    // `resumed_complete_verified` is the row #1615's honesty work existed to
-    // make possible, and `resumed_complete_unverified` keeps meaning exactly
-    // what it always did.
-    let (label, cost_usd, banner, result): (
-        &'static str,
-        f64,
-        Option<(bool, String)>,
-        Result<(), CliFailure>,
-    ) = match &end {
+    // Project both endings onto the one reporting surface. A restored
+    // pipeline's labels carry its verdict state — `resumed_complete_verified`
+    // is the row #1615's honesty work existed to make possible, and
+    // `resumed_complete_unverified` keeps meaning exactly what it always did.
+    struct Reported {
+        /// The `executions` row's outcome label.
+        label: &'static str,
+        cost_usd: f64,
+        /// The terminal banner: `(got the green tick, the line)`, or `None`
+        /// for an ending that prints its failure through the event stream.
+        banner: Option<(bool, String)>,
+        result: Result<(), CliFailure>,
+    }
+    let reported = match &end {
         ResumedEnd::Turn(outcome) => {
             let label = match outcome {
                 // A degraded resume gets its own label: the scrollback
@@ -333,8 +330,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 TurnOutcome::Aborted { .. } => "resumed_aborted",
             };
             let cost = match outcome {
-                TurnOutcome::Completed { cost_usd, .. }
-                | TurnOutcome::Aborted { cost_usd, .. } => *cost_usd,
+                TurnOutcome::Completed { cost_usd, .. } | TurnOutcome::Aborted { cost_usd, .. } => {
+                    *cost_usd
+                }
             };
             // A degraded resume does not get a green tick. The tick is this
             // surface's claim that the run finished as it was meant to, and a
@@ -344,7 +342,12 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             // The abort's typed `kind` decides the exit code here exactly as
             // it does for a fresh turn — a resumed stuck-loop stop exits `3`,
             // not `1` (#1637).
-            (label, cost, banner, turn_outcome_result(outcome))
+            Reported {
+                label,
+                cost_usd: cost,
+                banner,
+                result: turn_outcome_result(outcome),
+            }
         }
         ResumedEnd::Pipeline(Ok(outcome)) => {
             use stella_pipeline::PipelineStatus;
@@ -372,20 +375,26 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
                 )),
                 _ => None,
             };
-            (
+            Reported {
                 label,
-                outcome.total_cost_usd,
+                cost_usd: outcome.total_cost_usd,
                 banner,
-                pipeline_status_result(&outcome.status),
-            )
+                result: pipeline_status_result(&outcome.status),
+            }
         }
-        ResumedEnd::Pipeline(Err(error)) => (
-            "resumed_error",
-            error.total_cost_usd,
-            None,
-            Err(CliFailure::error(error.to_string())),
-        ),
+        ResumedEnd::Pipeline(Err(error)) => Reported {
+            label: "resumed_error",
+            cost_usd: error.total_cost_usd,
+            banner: None,
+            result: Err(CliFailure::error(error.to_string())),
+        },
     };
+    let Reported {
+        label,
+        cost_usd,
+        banner,
+        result,
+    } = reported;
 
     // The canonical teardown (#960): detach the registry's sender clones,
     // drop ours, and only then await the renderer — otherwise the channel
@@ -395,8 +404,8 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         .await
         .persistence_complete;
     let files = tools_registry.files_touched();
-    if let Some((store, id)) = &execution {
-        if !record_execution_end(
+    if let Some((store, id)) = &execution
+        && !record_execution_end(
             store,
             *id,
             &tools_registry,
@@ -404,11 +413,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             label,
             cost_usd,
             persistence_complete,
-        ) {
-            warn_store_write_failed(
-                "the audit record (files touched / memory citations / outcome)",
-            );
-        }
+        )
+    {
+        warn_store_write_failed("the audit record (files touched / memory citations / outcome)");
     }
     tui::files_touched_panel(&files);
     if let Some(set) = &mcp {
@@ -441,16 +448,13 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     result
 }
 
-/// Drive a checkpoint-restored turn to an ordinary end — the host loop
-/// `Engine::run_turn_with_sender` runs for a fresh turn, replayed over a
-/// [`TurnState`] that begins where the killed process's last committed step
-/// left off.
+/// Drive a checkpoint-restored turn to an ordinary end.
 ///
-/// The same three obligations as the engine's own loop, in the same places:
-/// persist on every `Continue` (a resumed run must stay resumable), discard
-/// on every terminal path (a checkpoint that outlives its turn invites
-/// resuming finished work), and gate on the step cap the state carried
-/// across the crash — a turn killed at step 37 of 40 gets 3 more, not 40.
+/// A thin adapter over [`stella_core::Engine::drive_restored_turn`], which
+/// owns the loop and its obligations (persist on `Continue`, discard on
+/// every terminal path, the carried step cap, the turn-halt check). This
+/// crate used to carry its own copy of that loop — and, exactly as two
+/// copies predict, the copy here had silently dropped the halt obligation.
 ///
 /// [`TurnState`]: stella_core::step::TurnState
 pub(crate) async fn drive_resumed_turn(
@@ -458,46 +462,7 @@ pub(crate) async fn drive_resumed_turn(
     mut state: stella_core::step::TurnState,
     events: &stella_core::EventSender,
 ) -> TurnOutcome {
-    use stella_core::step::StepOutcome;
-    let _ = events.send(AgentEvent::Stage {
-        name: stella_protocol::StageKind::Execute,
-    });
-    loop {
-        if state.step() >= engine.max_steps() {
-            let reason = stella_core::driver::step_cap_reason(engine.max_steps());
-            let _ = events.send(AgentEvent::Error {
-                message: reason.clone(),
-                retryable: false,
-            });
-            engine.discard_checkpoint();
-            return TurnOutcome::Aborted {
-                reason,
-                // The engine's own escalation, same as the in-turn cap: the
-                // run stopped by policy, it did not fall over (#1524).
-                kind: stella_core::AbortKind::DeliberateStop,
-                cost_usd: state.total_cost_usd(),
-            };
-        }
-        match engine.run_step(&mut state, events).await {
-            StepOutcome::Continue => engine.persist_checkpoint(&state),
-            StepOutcome::Done { text, cost_usd } => {
-                engine.discard_checkpoint();
-                return TurnOutcome::Completed { text, cost_usd };
-            }
-            StepOutcome::Aborted {
-                reason,
-                kind,
-                cost_usd,
-            } => {
-                engine.discard_checkpoint();
-                return TurnOutcome::Aborted {
-                    reason,
-                    kind,
-                    cost_usd,
-                };
-            }
-        }
-    }
+    engine.drive_restored_turn(&mut state, events).await
 }
 
 #[cfg(test)]

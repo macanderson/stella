@@ -87,7 +87,6 @@ use stella_core::driver::TurnHalt;
 use stella_protocol::ToolOutput;
 
 use crate::flip_halt::{FlipHalt, command_of};
-pub use resume_stage::{FrameProgress, PipelineResume, RecordedBaseline};
 use crate::management_prompt::ManagementPrompt;
 use crate::verify::coverage::DiffCoverage;
 use crate::verify::diff_render::DiffContext;
@@ -107,6 +106,7 @@ use crate::witness::{
     validate_witness_identity, validate_witness_invocation, witness_identity_matches,
     witness_prompt, witness_repair_prompt,
 };
+pub use resume_stage::{FrameProgress, PipelineResume, RecordedBaseline};
 mod authored;
 mod candidate_result;
 mod disclosure;
@@ -1275,7 +1275,13 @@ impl<'a> Pipeline<'a> {
         // (`resume_stage`), so the two cannot drift.
         let mut best = best;
         *messages = std::mem::take(&mut best.messages);
-        Ok(self.settle_outcome(best, task_class, total_cost, worker_model_label, candidates_run))
+        Ok(self.settle_outcome(
+            best,
+            task_class,
+            total_cost,
+            worker_model_label,
+            candidates_run,
+        ))
     }
 
     // Stage: triage

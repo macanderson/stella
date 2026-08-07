@@ -204,7 +204,8 @@ impl<'a> Pipeline<'a> {
             }
             None => engine,
         };
-        let mut state = stella_core::step::TurnState::from_checkpoint(checkpoint, &self.config.engine);
+        let mut state =
+            stella_core::step::TurnState::from_checkpoint(checkpoint, &self.config.engine);
         let outcome = engine.drive_restored_turn(&mut state, &filtered).await;
         tallies.fold_into(signals);
         let budget = stella_core::step::BudgetSnapshot::of(state.budget()).restore();
@@ -216,10 +217,7 @@ impl<'a> Pipeline<'a> {
     /// tallies. Split out so the fresh and resumed drivers cannot drift: a
     /// filter the resumed path lacked would un-count its file changes and
     /// blind its flip halt.
-    fn filtered_turn_events(
-        &self,
-        flip_halt: Option<Arc<FlipHalt>>,
-    ) -> (EventSender, TurnTallies) {
+    fn filtered_turn_events(&self, flip_halt: Option<Arc<FlipHalt>>) -> (EventSender, TurnTallies) {
         // The filtered sender is SYNCHRONOUS on purpose: when the outer
         // sender carries a durability boundary, a paid StepUsage cannot
         // return to the engine before append+flush completes. Draining a

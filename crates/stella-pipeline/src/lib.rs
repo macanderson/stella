@@ -114,9 +114,9 @@ pub mod witness;
 
 pub use oom::{ExitFacts, killed_by_oom};
 pub use pipeline::{
-    FrameProgress, Pipeline, PipelineConfig, PipelineError, PipelineOutcome,
-    PipelineResume, PipelineRoleOverrides, PipelineRunError, PipelineStatus, RecordedBaseline,
-    RoleCallOverrides, Verdict,
+    FrameProgress, Pipeline, PipelineConfig, PipelineError, PipelineOutcome, PipelineResume,
+    PipelineRoleOverrides, PipelineRunError, PipelineStatus, RecordedBaseline, RoleCallOverrides,
+    Verdict,
 };
 pub use ports::{
     AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind, AuthoredChange,
