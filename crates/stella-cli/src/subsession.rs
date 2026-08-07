@@ -22,12 +22,14 @@
 //! skipped in favor of latency, and delegation is not recursive — a worker's
 //! own `task_assign` requests are reported on its lane instead of spawning.
 
+mod closeout;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use stella_core::Engine;
 use stella_core::tasks::SpawnRequest;
-use stella_protocol::{AgentEvent, CompletionMessage, TaskItem};
+use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_tools::RegistryOptions;
 use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -797,28 +799,18 @@ async fn run_worker(
             WorkerEnd::Stopped,
         ),
     };
-    if let Some((store, id)) = &execution {
-        let _ = agent::record_execution_end(
-            store,
-            *id,
-            &registry,
-            files_before,
-            label,
-            cost,
-            persistence_complete,
-        );
-        // Mirror the worker's final board (its own, session-scoped view) so
-        // `tasks` queries see sub-agent boards too.
-        let board = registry.task_board();
-        let items: Vec<TaskItem> = board
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .items()
-            .to_vec();
-        if !items.is_empty() {
-            let _ = store.record_task_board(*id, Some(session_id), &items, now_ms());
-        }
-    }
+    // Audit record only — deliberately NO task-board mirror. The worker's
+    // private board is scaffolding for this one run, and the session's
+    // `tasks` rows have exactly one writer: the driver, whose `/clear` seal
+    // this thread cannot consult (#1708 — see `closeout`'s module docs).
+    closeout::close_worker_execution(
+        execution.as_ref(),
+        &registry,
+        files_before,
+        label,
+        cost,
+        persistence_complete,
+    );
     (execution_id, cost, end)
 }
 

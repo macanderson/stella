@@ -48,7 +48,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use stella_core::driver::TurnHalt;
 
-use crate::verify::normalize_command;
+use crate::verify::{FlipState, normalize_command};
 
 /// The marker the bash tool appends to a command's output.
 ///
@@ -160,6 +160,40 @@ impl FlipHalt {
     }
 }
 
+/// The halt to hand a *revision* turn: [`FlipHalt::unfired`], narrowed by what
+/// the candidate's oracle currently believes about the tracked command.
+///
+/// [`FlipHalt::unfired`] refuses a latch that already fired, which covers the
+/// halt the *execute* turn stopped on. It cannot cover the other way a
+/// revision opens on an already-green command, because that halt has never
+/// fired: `witness_on_demand` arms a **fresh** `FlipHalt` after execution, and
+/// by then the witness it names may have already flipped — that is the ordinary
+/// case, since the witness is written to pass once the work is done. A verifier
+/// can still reject such a candidate (a lint regression, a refuted verdict),
+/// and the revision would then inherit an unfired halt on a command that is
+/// green before it starts. The first time the model re-ran that test the
+/// revision would end, before it addressed a single thing the verifier
+/// objected to.
+///
+/// So the oracle decides: only [`FlipState::Failing`] means the flip this halt
+/// watches for is still *ahead* of the turn. It is the same precondition
+/// `run_candidate` arms from, and the same rule stated there — a command that
+/// is passing as the turn opens cannot flip during it, so a halt on it can
+/// only end work early.
+///
+/// [`FlipState::Flipped`] and [`FlipState::Unstable`] are both excluded for one
+/// reason: a pass has been seen. `Unstable` is the weaker case — the pass did
+/// not reproduce — but a halt cannot tell a reproducible pass from a flaky one,
+/// and stopping a revision on a flake is what the confirmation re-run (#859)
+/// exists to catch downstream.
+#[must_use]
+pub fn for_revision(armed: &Option<Arc<FlipHalt>>, tracked: FlipState) -> Option<Arc<FlipHalt>> {
+    if tracked != FlipState::Failing {
+        return None;
+    }
+    armed.as_ref().and_then(FlipHalt::unfired)
+}
+
 impl TurnHalt for FlipHalt {
     fn halt_reason(&self) -> Option<String> {
         self.is_flipped().then(|| {
@@ -259,5 +293,55 @@ mod tests {
         assert_eq!(command_of(&alt), Some("make test"));
         let unrelated = serde_json::json!({"path": "src/lib.rs"});
         assert_eq!(command_of(&unrelated), None);
+    }
+
+    /// **Witness (#1793).** A revise turn carries the halt while the tracked
+    /// command is still red.
+    ///
+    /// Revise turns passed `None` unconditionally, so the measured early stop
+    /// never applied to a revision — free wall clock and tokens after the work
+    /// was done.
+    #[test]
+    fn a_revision_inherits_the_halt_while_the_tracked_command_is_still_red() {
+        assert!(
+            for_revision(&None, FlipState::Failing).is_none(),
+            "nothing to watch stays nothing to watch"
+        );
+
+        let armed = Some(Arc::new(FlipHalt::new("pytest -q")));
+        let inherited = for_revision(&armed, FlipState::Failing)
+            .expect("a red command's halt carries into the revision");
+        assert_eq!(inherited.tracked(), "pytest -q");
+        assert!(Arc::ptr_eq(&inherited, armed.as_ref().unwrap()));
+    }
+
+    /// The half that would silently break revision if it were wrong: a
+    /// revision entered on an ALREADY-GREEN command gets no halt.
+    ///
+    /// A verifier can reject a candidate whose witness flipped — the test went
+    /// green but the review found the change wanting. Arming there would end
+    /// the revision the first time the model re-ran that passing test, before
+    /// it addressed anything the verifier objected to. `Unstable` is excluded
+    /// for the same reason with less margin: a pass was seen, and a halt
+    /// cannot tell a reproducible one from a flake.
+    #[test]
+    fn a_revision_on_a_green_or_flaky_command_is_never_halted() {
+        let armed = Some(Arc::new(FlipHalt::new("pytest -q")));
+        for state in [FlipState::Flipped, FlipState::Unstable, FlipState::None] {
+            assert!(
+                for_revision(&armed, state).is_none(),
+                "{state:?} means the flip is behind the turn, not ahead of it"
+            );
+        }
+
+        // The sticky latch is refused even when the oracle still reads red: it
+        // survives the turn that fired it.
+        assert!(
+            armed
+                .as_ref()
+                .unwrap()
+                .observe("pytest -q", "ok\n[exit code: 0]")
+        );
+        assert!(for_revision(&armed, FlipState::Failing).is_none());
     }
 }

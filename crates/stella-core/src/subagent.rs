@@ -84,6 +84,12 @@
 //! it is the metering record, and dropping it is exactly how child cost
 //! would vanish from `stella stats` and quietly falsify `$/resolved task`.
 //!
+//! The bracket survives cancellation (#1954): a caller that drops the
+//! future mid-flight — a latency ceiling, a hard cancel — still gets a
+//! `Finished` carrying the committed step count and cost (`CancelBracket`),
+//! after the engine's own drop guards have emitted the abandoned call's
+//! `UsageIncomplete { Cancelled }` envelope and settled the money.
+//!
 //! # Nesting
 //!
 //! [`SubAgentSpec::depth`] is checked against [`MAX_SUB_AGENT_DEPTH`] before
@@ -564,11 +570,30 @@ impl Engine<'_> {
                 depth: spec.depth,
             },
         });
+        // The committed tally, owned HERE rather than inside the child turn
+        // so the cancel bracket below can report it after the turn future is
+        // gone (#1954). Written by `child_sender` as each `StepUsage` passes
+        // the boundary.
+        let tally = Arc::new(CommittedTally::default());
+        // Armed between `Started` and the normal `Finished`: a caller that
+        // drops this future mid-flight (a latency ceiling, a hard cancel)
+        // still owes the stream a balanced bracket, and only this frame can
+        // pay it — the dropped turn future cannot. See `CancelBracket`.
+        let mut bracket = CancelBracket {
+            events: events.clone(),
+            agent_id: spec.agent_id.clone(),
+            tally: tally.clone(),
+            armed: true,
+        };
 
         let outcome = match refusal(spec, &carve) {
             Some(reason) => SubAgentOutcome::Refused { reason },
-            None => self.run_child_turn(host, spec, carve, budget, events).await,
+            None => {
+                self.run_child_turn(host, spec, carve, budget, events, &tally)
+                    .await
+            }
         };
+        bracket.armed = false;
 
         let _ = events.send(AgentEvent::SubAgent {
             phase: SubAgentPhase::Finished {
@@ -597,6 +622,7 @@ impl Engine<'_> {
         mut carve: BudgetGuard,
         budget: &mut BudgetGuard,
         events: &EventSender,
+        tally: &Arc<CommittedTally>,
     ) -> SubAgentOutcome {
         // Attribution is entered before anything the child could emit and
         // released by drop, so an unwind cannot leave the parent's later
@@ -680,8 +706,7 @@ impl Engine<'_> {
         messages.push(CompletionMessage::user(spec.instruction.clone()));
         let seeded = messages.len();
 
-        let steps = Arc::new(AtomicUsize::new(0));
-        let child_events = child_sender(events.clone(), steps.clone());
+        let child_events = child_sender(events.clone(), tally.clone());
         // The carve is handed to the turn through a guard that settles it on
         // DROP, not on return (#1850). `settle_child` used to be a statement
         // after the await, so any exit that was not a return skipped it: a
@@ -719,7 +744,7 @@ impl Engine<'_> {
         });
 
         let absorbed_messages = messages.len().saturating_sub(seeded);
-        let steps = steps.load(Ordering::Relaxed);
+        let steps = tally.steps();
         let build = |text: &str| {
             let (summary, truncated) = truncate_marked(text.trim(), spec.max_report_chars);
             SubAgentReport {
@@ -786,16 +811,48 @@ fn refusal(spec: &SubAgentSpec, carve: &BudgetGuard) -> Option<String> {
     None
 }
 
-/// The child's event sender: drops what must not cross ([`forwards_to_parent`])
-/// and counts committed model calls on the way past.
+/// What a child has actually *committed*: one model call counted, and its
+/// cost added, as each `StepUsage` crosses the boundary.
 ///
-/// Counting here rather than from the turn outcome is what makes `steps`
-/// truthful on an abort too — `StepUsage` is emitted per committed call, so
-/// a child that died on step 5 of 16 reports 5.
-fn child_sender(parent: EventSender, steps: Arc<AtomicUsize>) -> EventSender {
+/// It lives outside the child turn because that is the only place it survives
+/// a cancel (#1954). When a caller drops the turn future the outcome never
+/// exists, and this is the sole committed record [`CancelBracket`] can close
+/// the bracket with — which is also why the two numbers travel as one type:
+/// a bracket that reported a step count without the cost that produced it
+/// would be half an answer.
+#[derive(Default)]
+struct CommittedTally {
+    steps: AtomicUsize,
+    cost_usd: Mutex<f64>,
+}
+
+impl CommittedTally {
+    /// Record one committed model call.
+    fn observe(&self, cost_usd: f64) {
+        self.steps.fetch_add(1, Ordering::Relaxed);
+        *self.cost_usd.lock().unwrap_or_else(|p| p.into_inner()) += cost_usd;
+    }
+
+    fn steps(&self) -> usize {
+        self.steps.load(Ordering::Relaxed)
+    }
+
+    fn cost_usd(&self) -> f64 {
+        *self.cost_usd.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
+/// The child's event sender: drops what must not cross ([`forwards_to_parent`])
+/// and tallies committed model calls — count and cost — on the way past.
+///
+/// Tallying here rather than from the turn outcome is what makes the numbers
+/// truthful on an abort too — `StepUsage` is emitted per committed call, so a
+/// child that died on step 5 of 16 reports 5. See [`CommittedTally`] for why
+/// it is also the only record that survives a cancel.
+fn child_sender(parent: EventSender, tally: Arc<CommittedTally>) -> EventSender {
     EventSender::from_fn(move |event| {
-        if matches!(event, AgentEvent::StepUsage { .. }) {
-            steps.fetch_add(1, Ordering::Relaxed);
+        if let AgentEvent::StepUsage { cost_usd, .. } = &event {
+            tally.observe(*cost_usd);
         }
         if forwards_to_parent(&event) {
             parent.send(event)
@@ -803,6 +860,61 @@ fn child_sender(parent: EventSender, steps: Arc<AtomicUsize>) -> EventSender {
             Ok(())
         }
     })
+}
+
+/// Balances the `Started`/`Finished` bracket when a caller drops the
+/// sub-agent future mid-flight — a latency ceiling, a hard cancel (#1954).
+///
+/// The bracket contract ("delivered exactly once, on `Finished`") used to
+/// hold only on paths that returned: a dropped future left `Started` open
+/// forever, so every ceiling-bearing caller had to forge its own `Finished` —
+/// and could only guess `steps: 0`, because the committed-call count lived
+/// inside the dropped turn. Owning the close here, in the primitive, is the
+/// same argument that moved the goal verifier onto [`Engine::run_sub_agent`]:
+/// the next caller with a ceiling inherits the fix instead of repeating the
+/// bug.
+///
+/// Drop order does the sequencing: the in-flight turn future — declared
+/// after this guard — drops first, so the engine's own `CancelUsageGuard`
+/// has already emitted the `UsageIncomplete { Cancelled }` envelope for the
+/// abandoned call and `SettleChildOnDrop` has already folded the money back
+/// by the time this closes the bracket. This guard therefore reports only
+/// what was **committed** ([`CommittedTally`], as `child_sender` recorded it);
+/// the in-flight call's usage rides its own envelope, never a guess here.
+struct CancelBracket {
+    events: EventSender,
+    agent_id: String,
+    tally: Arc<CommittedTally>,
+    /// True between `Started` and the normal `Finished`; the completion path
+    /// disarms before emitting its own bracket, so this never double-closes.
+    armed: bool,
+}
+
+impl Drop for CancelBracket {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let _ = self.events.send(AgentEvent::SubAgent {
+            phase: SubAgentPhase::Finished {
+                agent_id: self.agent_id.clone(),
+                status: SubAgentStatus::Incomplete,
+                summary: String::new(),
+                truncated: false,
+                cost_usd: self.tally.cost_usd(),
+                steps: self.tally.steps(),
+                // The transcript died with the future; 0 is the honest floor,
+                // not a claim that the child absorbed nothing.
+                absorbed_messages: 0,
+                reason: Some(
+                    "cancelled: the caller dropped this sub-agent mid-flight; \
+                     committed steps and cost only — the abandoned call's usage \
+                     rides its own incomplete-usage envelope"
+                        .to_string(),
+                ),
+            },
+        });
+    }
 }
 
 /// The last assistant text in a transcript, for salvaging an aborted child's
