@@ -200,7 +200,7 @@ fn conversational_window(messages: &[CompletionMessage]) -> Vec<CompletionMessag
     head.iter().chain(&rest[tail..]).cloned().collect()
 }
 
-const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software engineering agent. The user's latest \
+pub(crate) const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software engineering agent. The user's latest \
      message is a greeting, small talk, or a question about you — not a coding \
      task. Reply briefly and warmly in plain prose: no tools, no code, no plan, \
      no test. Do not invent a task. If it fits, add one short line inviting \
