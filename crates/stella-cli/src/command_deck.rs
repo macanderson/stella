@@ -128,7 +128,7 @@ use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::spawn_forwarder;
 use scope_gate::DeckApprovalGate;
 use sessions_view::sessions_inbound;
-use settings_io::{handle_engine_config_input, handle_tools_input};
+use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
 use task_tap::TaskTap;
 
 /// The lead agent's id — the one conversation this driver runs.
@@ -866,6 +866,10 @@ pub async fn run_deck_session(
     // the guard, so the retarget waits for the settle boundary (invariant
     // #6 — budget changes act between steps/turns, never mid-flight).
     let mut pending_budget: Option<Option<f64>> = None;
+    // A SETTINGS save landed mid-turn: the files changed, but the running
+    // turn holds `&Config` and is reading the fields a reload rewrites, so
+    // the re-derive waits for the same safe boundary `pending_budget` uses.
+    let mut pending_settings_reload = false;
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
     let mut subs = SubSessions::with_registry_options(registry_options.clone());
@@ -1331,6 +1335,10 @@ pub async fn run_deck_session(
                     // A stray answer/decision/control with no turn in flight
                     // falls through all four no-ops.
                     Some(other) => {
+                        // Set by a SETTINGS save below; applied before the
+                        // loop turns over, so the next turn reads the files
+                        // as they are now.
+                        let mut settings_stale = false;
                         if !crate::deck_mcp::service_mcp_action(
                             &other,
                             cfg,
@@ -1349,7 +1357,7 @@ pub async fn run_deck_session(
                             && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
                             && !handle_agents_input(&other, cfg, &in_tx)
                             && !handle_issues_input(&other, cfg, &issue_backend_cache, &in_tx)
-                            && !handle_engine_config_input(&other, cfg, &in_tx)
+                            && !handle_engine_config_input(&other, cfg, &mut settings_stale, &in_tx)
                         {
                             // The tool list is enumerated here rather than
                             // cached: MCP servers join the session
@@ -1362,7 +1370,12 @@ pub async fn run_deck_session(
                             };
                             let names =
                                 crate::tool_switches::session_tool_names(base, &custom_tools);
-                            handle_tools_input(&other, cfg, &names, &in_tx);
+                            handle_tools_input(&other, cfg, &names, &mut settings_stale, &in_tx);
+                        }
+                        // No turn is in flight here, so "applies from now on"
+                        // means the very next prompt.
+                        if settings_stale {
+                            apply_pending_reload(cfg, &in_tx);
                         }
                         continue 'session;
                     }
@@ -1978,7 +1991,12 @@ pub async fn run_deck_session(
                             input @ (WorkspaceInput::EngineConfigSave { .. }
                             | WorkspaceInput::EngineConfigRefresh),
                         ) => {
-                            handle_engine_config_input(&input, cfg, &in_tx);
+                            handle_engine_config_input(
+                                &input,
+                                cfg,
+                                &mut pending_settings_reload,
+                                &in_tx,
+                            );
                         }
                         // The TOOLS panel likewise. `base_tools` is the very
                         // stack the running turn is using, so the list the
@@ -1991,7 +2009,13 @@ pub async fn run_deck_session(
                                 base_tools,
                                 &custom_tools,
                             );
-                            handle_tools_input(&input, cfg, &names, &in_tx);
+                            handle_tools_input(
+                                &input,
+                                cfg,
+                                &names,
+                                &mut pending_settings_reload,
+                                &in_tx,
+                            );
                         }
                         // The ISSUES tab stays live while a turn runs too —
                         // every op spawns its own task and answers from it,
@@ -2031,6 +2055,14 @@ pub async fn run_deck_session(
         // BudgetTick folds `session_limit_usd` back.
         if let Some(cap) = pending_budget.take() {
             budget.set_session_limit_usd(cap);
+        }
+
+        // Likewise a SETTINGS save parked during the turn: the turn that was
+        // reading `cfg` has ended, so re-deriving it here is both sound and
+        // the earliest honest moment for "applies to runs started from now
+        // on" to become true.
+        if std::mem::take(&mut pending_settings_reload) {
+            apply_pending_reload(cfg, &in_tx);
         }
 
         match end {
@@ -3988,9 +4020,13 @@ async fn run_deck_command(
                          re-read from disk."
                             .to_string(),
                     );
-                    // The SETTINGS tab's overlays cache what they last
-                    // rendered; push fresh snapshots so a `/reload` while
-                    // either is open reflects the new values immediately.
+                    // Refresh an open SETTINGS tab with the merged view, the
+                    // same courtesy `/model` pays. The deck renders the last
+                    // snapshot it was sent, so a hand edit picked up by
+                    // `/reload` is invisible in an open overlay until one
+                    // arrives. The TOOLS panel is deliberately not refreshed
+                    // here: an accurate row list needs the MCP-inclusive live
+                    // stack, which this function does not hold (#1966).
                     let _ = in_tx.send(engine_config_inbound(cfg, None));
                 }
                 Err(e) => say(format!("reload failed: {e}")),

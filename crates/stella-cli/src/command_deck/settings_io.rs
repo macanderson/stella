@@ -5,6 +5,19 @@
 //! Both handlers answer with a fresh snapshot built by the parent module's
 //! `engine_config_inbound` / `tool_policy_inbound`, which stay there because
 //! the deck's other arms (boot seeding, `/reload`) share them.
+//!
+//! **Neither handler reloads the live [`Config`] itself.** A save makes the
+//! session's `Config` stale, and re-deriving it is the caller's job at a safe
+//! boundary — the same discipline `/budget` already follows with
+//! `pending_budget`. Both call sites run this code, and one of them runs it
+//! *while a turn is in flight*, holding `&Config` and reading the very fields
+//! a reload overwrites (tool policy, authority, engine posture). Mutating
+//! there would tear config out from under a running turn, so the handlers
+//! report `stale` and let the caller pick the moment.
+//!
+//! The panels are unaffected by the delay: both snapshot builders re-read the
+//! scope chain from disk, so what the overlay shows is what the files say,
+//! reloaded or not. Only *subsequent turns* depend on the live `Config`.
 
 use stella_tui::{AgentScope, Inbound, WorkspaceInput};
 use tokio::sync::mpsc::UnboundedSender;
@@ -16,9 +29,14 @@ use crate::config::Config;
 /// I/O, answered with a fresh [`Inbound::EngineConfig`]. Called from BOTH
 /// recv sites so the overlay works mid-turn too. Returns `true` when the
 /// input was one of the overlay's.
+///
+/// `stale` is set when a write lands, meaning the live [`Config`] no longer
+/// matches the files — see the module docs for why the reload is the
+/// caller's to perform.
 pub(super) fn handle_engine_config_input(
     input: &WorkspaceInput,
-    cfg: &mut Config,
+    cfg: &Config,
+    stale: &mut bool,
     in_tx: &UnboundedSender<Inbound>,
 ) -> bool {
     match input {
@@ -37,21 +55,13 @@ pub(super) fn handle_engine_config_input(
             let status = match path {
                 None => "save failed: cannot determine $HOME for user settings".to_string(),
                 Some(path) => match engine.save_to(&path) {
-                    // A save is immediately live: reload this session's
-                    // `Config` from the same scope chain the write just
-                    // landed in, the same effect `/reload` has. Saving and
-                    // then needing a second manual step to make it count
-                    // was exactly the surprise this closes.
-                    Ok(()) => match cfg.reload_from_disk() {
-                        Ok(()) => format!(
-                            "saved to {} and reloaded — applies to runs started from now on",
+                    Ok(()) => {
+                        *stale = true;
+                        format!(
+                            "saved to {} — applies to runs started from now on",
                             path.display()
-                        ),
-                        Err(e) => format!(
-                            "saved to {} but reload failed: {e} (restart to pick it up)",
-                            path.display()
-                        ),
-                    },
+                        )
+                    }
                     Err(e) => format!("save failed: {e}"),
                 },
             };
@@ -72,11 +82,13 @@ pub(super) fn handle_engine_config_input(
 ///
 /// A save applies to turns started afterwards: the in-flight turn already
 /// resolved its tool stack, and rebuilding it under a running engine is a
-/// different (and much larger) change than editing settings.
+/// different (and much larger) change than editing settings. `stale` carries
+/// the reload the caller owes — see the module docs.
 pub(super) fn handle_tools_input(
     input: &WorkspaceInput,
-    cfg: &mut Config,
+    cfg: &Config,
     names: &[String],
+    stale: &mut bool,
     in_tx: &UnboundedSender<Inbound>,
 ) -> bool {
     match input {
@@ -101,12 +113,10 @@ pub(super) fn handle_tools_input(
                 None => "save failed: cannot determine $HOME for user settings".to_string(),
                 Some(path) => {
                     match crate::tool_switches::save_switches(&path, switches, &ceiling) {
-                        // Live the moment it lands, same as `/reload` — see
-                        // the identical seam in `handle_engine_config_input`.
-                        Ok(status) => match cfg.reload_from_disk() {
-                            Ok(()) => format!("{status} (reloaded)"),
-                            Err(e) => format!("{status} (reload failed: {e})"),
-                        },
+                        Ok(status) => {
+                            *stale = true;
+                            status
+                        }
                         Err(e) => format!("save failed: {e}"),
                     }
                 }
@@ -115,5 +125,20 @@ pub(super) fn handle_tools_input(
             true
         }
         _ => false,
+    }
+}
+
+/// Re-derive the live [`Config`] from disk after a save, reporting a failure
+/// to the deck rather than swallowing it.
+///
+/// The one place both call sites converge, so "a save is live" is stated once.
+/// A failed reload leaves the session on its previous (still coherent) values
+/// — the files are already written, so a restart picks them up regardless,
+/// which is what the note says.
+pub(super) fn apply_pending_reload(cfg: &mut Config, in_tx: &UnboundedSender<Inbound>) {
+    if let Err(e) = cfg.reload_from_disk() {
+        let _ = in_tx.send(super::chrome_note(format!(
+            "settings saved, but reloading them failed: {e} — restart to pick them up."
+        )));
     }
 }

@@ -271,21 +271,25 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
 /// `reload_from_disk`.
 #[test]
 fn reload_from_disk_reapplies_the_settings_scope_chain() {
-    // The scope chain reads `STELLA_CONFIG_DIR` and `reload_from_disk` reads
-    // the trusted-engine env var; hold the binary-wide env lock and pin the
-    // chain to a scratch dir so ambient developer state cannot leak in
-    // (setenv racing any concurrent getenv is UB on POSIX).
+    // `reload_from_disk` reads the process-wide trusted-engine-config env
+    // var, so hold the binary env lock — read-only, exactly as
+    // `resolved_config_carries_the_authority_computed_during_settings_load`
+    // does: a concurrent test setting that var malformed would otherwise make
+    // this load fail.
     let _env = crate::test_env::lock();
-    let user_dir =
-        std::env::temp_dir().join(format!("stella-test-reload-user-{}", std::process::id()));
-    let workspace = user_dir.join("ws");
+    // The user scope is redirected with the thread-local paths seam (#1139),
+    // NOT by setting `$HOME`: no environment mutation, no `unsafe`, and no
+    // race with a test on another thread. Without it `UserPaths::test_default`
+    // keeps the developer's real home and this test reads their actual
+    // `~/.stella/settings.json`.
+    let home = std::env::temp_dir().join(format!(
+        "stella-test-reload-from-disk-{}",
+        std::process::id()
+    ));
+    let workspace = home.join("ws");
+    std::fs::create_dir_all(home.join(".stella")).unwrap();
     std::fs::create_dir_all(&workspace).unwrap();
-    // SAFETY: test-only env mutation behind the env lock (see above).
-    unsafe {
-        std::env::set_var("STELLA_CONFIG_DIR", &user_dir);
-        std::env::remove_var("STELLA_MANAGED_SETTINGS");
-        std::env::remove_var(TRUSTED_ENGINE_CONFIG_ENV);
-    }
+    let _paths = crate::paths::test_user_home(home.clone());
 
     let mut cfg = Config {
         provider: PROVIDERS[0].clone(),
@@ -318,7 +322,7 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
 
     // The edit a running session would previously only see after a restart.
     std::fs::write(
-        user_dir.join("settings.json"),
+        home.join(".stella").join("settings.json"),
         r#"{"enable_recap": "on", "tools": {"bash": "off"}}"#,
     )
     .unwrap();
@@ -334,10 +338,7 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
         "reload must re-derive the tool switches from the scope chain on disk"
     );
 
-    unsafe {
-        std::env::remove_var("STELLA_CONFIG_DIR");
-    }
-    let _ = std::fs::remove_dir_all(&user_dir);
+    let _ = std::fs::remove_dir_all(&home);
 }
 
 /// Helper: a Settings value parsed from JSON, as the scope-merge would
