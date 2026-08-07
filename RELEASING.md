@@ -33,9 +33,10 @@ main and does everything — no manual steps:
    pass. Its commit carries `[skip release]`, so the sync itself never cuts a
    release. If a sync PR is ever left open (red check, race with another
    merge), the next release supersedes it automatically — no cleanup needed.
-   The same PR **rolls [`CHANGELOG.md`](CHANGELOG.md)**: whatever sits under
-   `## [Unreleased]` moves beneath a new version heading, and `[Unreleased]`
-   is left empty for the next change.
+   On a **minor or major** release the same PR also **rolls
+   [`CHANGELOG.md`](CHANGELOG.md)**: whatever sits under `## [Unreleased]`
+   moves beneath a new version heading, and `[Unreleased]` is left empty for
+   the next line. A patch release does not touch that file — see below.
 
 Manual version bumps are therefore only needed for the hand-cut flows below.
 
@@ -43,27 +44,44 @@ Manual version bumps are therefore only needed for the hand-cut flows below.
 
 Two things, and they are not the same thing:
 
-- **[`CHANGELOG.md`](CHANGELOG.md)** — the durable record, one section per
-  version, and **CI writes it, not PRs.** `auto-tag.yml` drafts the section
-  for every release from the **released diff**
-  ([`scripts/changelog-ai.sh`](scripts/changelog-ai.sh), the same AI Gateway
-  key and model as the release notes) and injects it before the roll, at both
-  roll sites (the tagged release commit and the version-sync PR), so the tag
-  and main record identical text. The draft **replaces** whatever sits under
-  `[Unreleased]` — contributors and coding agents should leave that section
-  alone rather than hand-write entries in a PR; a split between hand-written
-  and drafted entries is what used to make this file inconsistent. A release
-  whose diff has nothing user-facing gets a one-line `_Internal: …_` note. If
-  the AI Gateway key is unset or the call fails, the roll proceeds with
-  whatever was already under `[Unreleased]` (normally nothing) exactly as
-  before — drafting is best-effort, never release-blocking.
+- **[`CHANGELOG.md`](CHANGELOG.md)** — the durable curated record, **one
+  section per minor line**, and **CI writes it, not PRs.** When a minor or
+  major release is cut, `auto-tag.yml` drafts the section from the whole
+  **series** diff — the previous `X.Y.0` tag to this one
+  ([`scripts/changelog-ai.sh`](scripts/changelog-ai.sh), the same AI Gateway key
+  and model as the release notes) — and
+  [`scripts/changelog-roll.sh`](scripts/changelog-roll.sh) injects it at both
+  roll sites (the tagged release commit and the version-sync PR), so the tag and
+  main record identical text. The draft **replaces** whatever sits under
+  `[Unreleased]`: contributors and coding agents should leave that section alone
+  rather than hand-write entries in a PR, because a split between hand-written
+  and drafted entries is what used to make this file inconsistent.
 - **GitHub Release notes** — generated at publish time by `release.yml` from
-  the commit range. Release-note prose, not a curated record, and not
-  something to edit by hand.
+  the commit range, **for every tag including patches**. Release-note prose, not
+  a curated record, and not something to edit by hand.
 
-The changelog roll is deliberately non-fatal. If `CHANGELOG.md` is missing or
-has no `## [Unreleased]` heading, `auto-tag.yml` logs a warning and continues —
-a bookkeeping slip must never be the reason a release fails to ship.
+**A patch release records nothing in `CHANGELOG.md`.** This is the important
+half of the split, and it is enforced in `changelog-roll.sh` rather than trusted
+to a caller. Every merge to main cuts a patch, so the roll used to fire ~130
+times per minor line; `changelog-ai.sh` degrades open by contract (no API key,
+no non-bot commits, or an unparseable response all print nothing and exit 0),
+but the roll ran regardless and stamped a bare `## [0.6.x] — <date>` heading
+with nothing under it. The file reached 180 sections of which 77 were empty. It
+was structurally guaranteed to fill with noise no matter how good the drafter
+got, so the roll stopped firing on patches — where the per-tag detail already
+had a home in the GitHub Release notes above.
+
+The roll is deliberately non-fatal, and can no longer produce an empty section:
+
+- A missing `CHANGELOG.md`, or one with no `## [Unreleased]` heading, logs a
+  warning and continues. A bookkeeping slip must never be the reason a release
+  fails to ship.
+- If the draft fails on a minor release **and** `[Unreleased]` is empty, the
+  roll writes a pointer to the releases page rather than a heading with an
+  empty body — the failure mode above, which would otherwise recur once per
+  line.
+
+`make changelog-roll-test` (hermetic, not part of `make gate`) pins both rules.
 
 ## One-time setup
 

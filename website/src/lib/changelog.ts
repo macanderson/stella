@@ -93,7 +93,15 @@ const RELEASE_HEADING = /^## \[(\d+\.\d+\.\d+)\](?:\s*[—-]\s*(.+))?$/;
 const KIND_HEADING = /^### (\w+)\s*$/;
 const BULLET = /^- (.*)$/;
 const LEAD = /^\*\*(.+?)\*\*\s*/;
-const PR_REF = /\(#(\d+)\)/g;
+
+/**
+ * A PR or issue citation, matched anywhere in the bullet rather than only as a
+ * trailing `(#1234)`. Entries routinely cite several at once — `(#1285, #1842)`,
+ * `(#1870, #1871, #1876)`, `(#335, B1)` — and an anchored `\(#(\d+)\)` silently
+ * matched NONE of those, which is exactly the kind of quiet under-reporting a
+ * page like this must not do.
+ */
+const PR_REF = /#(\d+)\b/g;
 
 /**
  * Collapse a bullet's continuation lines into one paragraph.
