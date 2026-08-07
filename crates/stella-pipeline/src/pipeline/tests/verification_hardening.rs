@@ -7,14 +7,14 @@
 use super::*;
 use crate::LineMutation;
 
-/// Both arming witnesses for the mid-turn flip halt (#1793), and the shell
-/// doubles they share.
+/// Both arming paths of the mid-turn flip halt (#1793), and the two doubles
+/// they share. A child rather than a sibling module so it still reaches this
+/// file's scripted ports through `use super::*`, and so the already-oversized
+/// `tests.rs` does not grow another module declaration.
 ///
-/// A child rather than a sibling module so the already-oversized `tests.rs`
-/// does not grow another module declaration. The doubles deliberately live
-/// *inside* it rather than here: see that file's own module doc for why
-/// colocating them with the two witnesses is what turns a wholesale rewrite
-/// of this parent into a merge conflict instead of a silent deletion.
+/// The doubles live in the child with their only users, not here: when they
+/// sat in this file, a wholesale rewrite of it took them and the
+/// configured-command witness with them, and no gate objected (#1997).
 mod flip_halt_arming;
 
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
