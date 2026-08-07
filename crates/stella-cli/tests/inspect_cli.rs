@@ -286,6 +286,12 @@ fn inspect_json_is_machine_readable_and_reports_verification() {
     let out = inspect(&dir, &[&id.to_string(), "--step", "0", "--format", "json"]);
     let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid json");
     assert_eq!(parsed["verified"], true, "clean path verifies: {out}");
+    // The era a script needs to read `digest_mismatches` honestly, straight
+    // out of the shipped binary: this execution was begun by this build, so it
+    // journals its compaction rewrites and a mismatch here would mean
+    // something (#1981). Nothing mismatched, so the severity is `none`.
+    assert_eq!(parsed["journal_era"], "compaction_journaled", "{out}");
+    assert_eq!(parsed["digest_mismatch_severity"], "none", "{out}");
     let messages = parsed["messages"].as_array().expect("messages array");
     assert_eq!(messages.len(), 2, "system + user: {out}");
     assert_eq!(messages[0]["role"], "system");
