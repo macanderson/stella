@@ -584,6 +584,29 @@ impl DomainBridge {
             AgentEvent::Steered { .. } => {
                 self.emit(Level::Info, "agent.steered", self.at_seq());
             }
+            // The timing envelope is numbers; the description is tool-authored
+            // free text and stays off the record (stella-diag's content-free
+            // contract).
+            AgentEvent::TurnParked {
+                poll_interval_secs,
+                deadline_secs,
+                ..
+            } => {
+                self.emit(
+                    Level::Info,
+                    "agent.turn.parked",
+                    self.at_seq()
+                        .with("poll_interval_secs", *poll_interval_secs)
+                        .with("deadline_secs", *deadline_secs),
+                );
+            }
+            AgentEvent::TurnWoken { polls_used, .. } => {
+                self.emit(
+                    Level::Info,
+                    "agent.turn.woken",
+                    self.at_seq().with("polls_used", *polls_used),
+                );
+            }
             AgentEvent::Proof { .. } => {
                 self.emit(Level::Debug, "agent.proof", self.at_seq());
             }

@@ -101,6 +101,10 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
             ..
         } => vec![name, summary, full],
         E::Retry { reason, .. } => vec![reason],
+        // The wait's description is what a reader searches for ("where did it
+        // park on CI?"); the timing envelope and the wake's closed reason
+        // token are numbers-adjacent chrome.
+        E::Parked { description, .. } => vec![description],
         E::ProviderFallback { from, to, reason } => vec![from, to, reason],
         E::ContextRecall { labels, .. } => labels.iter().map(String::as_str).collect(),
         E::ContextWrite { provider, .. } => vec![provider],
@@ -127,7 +131,8 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
         | E::Stage(_)
         | E::Compaction { .. }
         | E::BudgetTick { .. }
-        | E::MediaProgress { .. } => Vec::new(),
+        | E::MediaProgress { .. }
+        | E::Woken { .. } => Vec::new(),
     }
 }
 
