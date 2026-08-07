@@ -37,17 +37,16 @@ fn a_run_killed_mid_turn_is_continued_at_boot() {
 
 #[test]
 fn a_run_the_operator_ended_is_never_continued_at_boot() {
-    // Every terminal status, including the two #1653 cannot tell apart. The
-    // whole point of the rule is that the ambiguity does not matter here:
-    // `Error` is skipped whether it means "crashed after saying so" or
-    // "stopped by policy", and the operator's deliberate stop is safe either
-    // way.
+    // Every status that means "this run ended rather than broke". Since
+    // #1653 a deliberate policy stop records `Stopped` instead of hiding
+    // among the crashes as `Error`, which is what lets `Error` itself be
+    // continued (#1696, below).
     for status in [
         SessionStatus::Cancelled,
+        SessionStatus::Stopped,
         SessionStatus::Complete,
         SessionStatus::Paused,
         SessionStatus::Archived,
-        SessionStatus::Error,
     ] {
         let candidate = BootCandidate {
             stored_status: status,
@@ -59,6 +58,50 @@ fn a_run_the_operator_ended_is_never_continued_at_boot() {
             "a boot must not resume a run recorded as {status:?} — even holding a resume point"
         );
     }
+}
+
+/// The #1696 witness: a crash that lived long enough to record `Error` is
+/// continued, where every terminal status used to be skipped wholesale.
+///
+/// That blanket skip was the price of #1653's ambiguity — a policy stop and a
+/// crash both stored `Error`, so continuing one risked restarting work the
+/// operator ended on purpose. With #1653 landed, `Error` means only "it fell
+/// over", and stranding those was the honest cost this pays back.
+#[test]
+fn a_crash_that_recorded_itself_is_continued_but_a_policy_stop_is_not() {
+    let crashed = BootCandidate {
+        stored_status: SessionStatus::Error,
+        ..killed_mid_turn()
+    };
+    assert_eq!(
+        decide(&crashed),
+        BootDecision::Continue,
+        "an Error holding a resume point is a crash, and a crash is what this sweep continues"
+    );
+
+    // The same row without a resume point — which is what a pre-#1653 build's
+    // policy stop actually looks like, because every deliberate ending
+    // retracts its checkpoint on the way out — is still skipped, and says the
+    // most specific true thing about itself.
+    let stopped_by_policy = BootCandidate {
+        stored_status: SessionStatus::Error,
+        has_resume_point: false,
+        ..killed_mid_turn()
+    };
+    assert_eq!(
+        decide(&stopped_by_policy),
+        BootDecision::Skip(SkipReason::NoResumePoint)
+    );
+
+    // And the status a policy stop records today is skipped outright.
+    let stopped = BootCandidate {
+        stored_status: SessionStatus::Stopped,
+        ..killed_mid_turn()
+    };
+    assert_eq!(
+        decide(&stopped),
+        BootDecision::Skip(SkipReason::EndedDeliberately)
+    );
 }
 
 #[test]
@@ -128,7 +171,15 @@ fn nothing_is_ever_continued_without_a_resume_point() {
                                 "a boot-time action without a resume point would be a restart, \
                                  not a resume: {candidate:?}"
                             );
-                            assert!(status.is_live() && !lock_held, "{candidate:?}");
+                            assert!(!lock_held, "{candidate:?}");
+                            // Interrupted, or crashed: since #1653 an `Error`
+                            // means only "it fell over", so it joins the live
+                            // statuses as continuable (#1696); every other
+                            // terminal status is a run that ended on purpose.
+                            assert!(
+                                status.is_live() || status == SessionStatus::Error,
+                                "{candidate:?}"
+                            );
                         }
                     }
                 }
