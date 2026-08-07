@@ -642,6 +642,30 @@ footer b{color:var(--text-2);font-weight:600}
         <div class="scroll-y-tall" id="imp-learned" tabindex="0"></div>
       </div>
     </div>
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Promotion audit trail · context.db</div>
+        <h2>Proposals &amp; their standing</h2>
+        <div class="scroll-y-tall" id="imp-proposals" tabindex="0"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Governance decisions · newest first</div>
+        <h2>Promotion events</h2>
+        <div class="scroll-y-tall" id="imp-events" tabindex="0"></div>
+      </div>
+    </div>
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Episodic memory · current revisions</div>
+        <h2>Episodes</h2>
+        <div class="scroll-y-tall" id="imp-episodes" tabindex="0"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Is injected context earning its tokens?</div>
+        <h2>Selection health</h2>
+        <div class="scroll-y-tall" id="imp-health" tabindex="0"></div>
+      </div>
+    </div>
   </section>
 
   <!-- ══ CONFIG ════════════════════════════════════════════════════════ -->
@@ -1793,6 +1817,98 @@ function renderImprove(skills) {
     : `<div class="empty">none yet — when a lesson recurs across turns, stella writes it into
        <code>.stella/skills/</code> and starts using it in future runs</div>`;
 }
+/* The self-improvement lifecycle read out of context.db (#1871): the
+   promotion audit trail (observation → proposal → promotion event), episodic
+   memory, and selection health. Lazily fetched with the tab rather than on
+   the 5 s poll — the ledger is append-only and slow-moving. */
+const LIFECYCLE_BADGE = {
+  eligible:       ["◆", "accent"], collecting: ["○", "dim"],
+  ignored:        ["✕", "dim"],    proposed:   ["◆", "accent"],
+  auto_activated: ["✓", "ok"],     confirmed:  ["✓", "ok"],
+  published:      ["✓", "ok"],     rejected:   ["✕", "bad"],
+  retired:        ["⊘", "warn"],   reverted:   ["↩", "warn"],
+};
+function lifecycleBadge(status) {
+  const [glyph, cls] = pick(LIFECYCLE_BADGE, status, ["·", "dim"]);
+  return `<span class="badge ${cls}">${glyph} ${esc(String(status ?? ""))}</span>`;
+}
+const EPISODE_OUTCOME = {
+  success: ["ok", "✓ success"], failure: ["bad", "✕ failure"],
+  partial: ["warn", "◌ partial"], aborted: ["bad", "✕ aborted"],
+};
+function renderLifecycle(d) {
+  if (!changed("lifecycle", d)) return;
+  const proposals = d.proposals ?? [];
+  $("imp-proposals").innerHTML = proposals.length
+    ? proposals.map(p => `<div class="feed-item">
+        <b>${esc(p.candidate_id)}</b> ${lifecycleBadge(p.status)}
+        <span class="chip">${esc(p.kind)}</span>
+        <span class="when">${ago(p.observed_at)}</span>
+        <div>${esc(p.body || p.title || "")}</div>
+        <div class="when">${fmtInt(p.distinct_tasks)} distinct task(s) ·
+          ${fmtInt(p.occurrences)} observation(s) · confidence ${fmtInt(p.confidence)}</div>
+      </div>`).join("")
+    : `<div class="empty">No proposals in the ledger.<br>
+       When a lesson recurs across distinct tasks, the loop files a durable
+       proposal into <code>.stella/private/context.db</code> — the audit trail
+       behind every learned skill and promoted rule.</div>`;
+
+  const events = d.events ?? [];
+  $("imp-events").innerHTML = events.length
+    ? events.map(e => `<div class="feed-item">
+        ${lifecycleBadge(e.action)} <b>${esc(e.candidate_id ?? e.proposal_lineage_id)}</b>
+        <span class="chip">${esc(e.actor)}</span>${e.enforcement
+          ? ` <span class="chip">${esc(e.enforcement)}</span>` : ""}
+        <span class="when">${ago(e.occurred_at)}</span>
+        <div>${esc(e.reason || "")}</div></div>`).join("")
+    : `<div class="empty">No governance decisions recorded.<br>
+       Keep, Edit and Ignore from <code>stella proposals</code> — and the
+       loop's own auto-activations and retirements — replay from here.</div>`;
+
+  const episodes = d.episodes ?? [];
+  $("imp-episodes").innerHTML = episodes.length
+    ? `<table><thead><tr><th scope="col">episode</th><th scope="col">outcome</th>
+        <th scope="col" class="num">files</th><th scope="col" class="num">salience</th>
+        <th scope="col" class="num">ended</th></tr></thead><tbody>` +
+      episodes.map(ep => {
+        const files = Array.isArray(ep.files_touched) ? ep.files_touched : [];
+        const [cls, label] = pick(EPISODE_OUTCOME, ep.outcome, ["dim", String(ep.outcome ?? "")]);
+        return `<tr>
+        <td class="main">${esc(ep.summary)}</td>
+        <td><span class="badge ${cls}">${esc(label)}</span></td>
+        <td class="num" title="${esc(files.join("\n"))}">${fmtInt(files.length)}</td>
+        <td class="num">${num(ep.salience).toFixed(2)}</td>
+        <td class="num">${ago(ep.ended_at)}</td></tr>`;
+      }).join("") + `</tbody></table>`
+    : `<div class="empty">No episodes recorded.<br>
+       Each turn's story — what was asked, what was touched, how it ended —
+       lands in episodic memory for future recall.</div>`;
+
+  const health = d.selection_health ?? [];
+  const pol = d.health_policy ?? {};
+  $("imp-health").innerHTML = health.length
+    ? `<table><thead><tr><th scope="col">record</th><th scope="col" class="num">uses</th>
+        <th scope="col" class="num">tasks</th><th scope="col" class="num">assessed</th>
+        <th scope="col" class="num">helpful</th><th scope="col" class="num">not helpful</th>
+        <th scope="col">standing</th></tr></thead><tbody>` +
+      health.map(h => `<tr>
+        <td class="main" title="${esc(h.context_record_id)}">${esc(h.context_record_id)}</td>
+        <td class="num">${fmtInt(h.uses)}</td>
+        <td class="num">${fmtInt(h.distinct_tasks)}</td>
+        <td class="num">${fmtInt(h.assessed_uses)}</td>
+        <td class="num">${fmtInt(h.helpful)}</td>
+        <td class="num">${fmtInt(h.not_helpful)}</td>
+        <td>${h.failing ? `<span class="badge bad">✕ failing</span>`
+            : h.attributable ? `<span class="badge ok">✓ earning</span>`
+            : `<span class="badge dim">○ unassessed</span>`}</td></tr>`).join("") +
+      `</tbody></table>
+      <div class="when" style="margin-top:6px">shipped defaults: failing =
+        ≥${fmtInt(pol.min_attributable_uses ?? 5)} assessed uses with
+        ≥${pct(pol.not_helpful_ratio_threshold ?? 0.8)} judged not helpful</div>`
+    : `<div class="empty">Nothing assessed yet.<br>
+       Every time recalled context is judged for whether it helped, the verdict
+       lands here — which injected records are earning their tokens.</div>`;
+}
 function renderRatingsChart(ratings) {
   const el = $("ch-ratings");
   const pts = ratings.filter(r => r.self_rating != null);
@@ -2725,10 +2841,13 @@ async function loadTab(tab, force) {
       lazyCache[key] = data;
       renderMemoryTab(data[0], data[1], data[2]);
     } else if (tab === "improve") {
-      const data = cached ?? await api("/api/skills");
-      lazyCache[`skills:${state.project}`] = data;
+      const data = cached ?? await Promise.all([
+        api("/api/skills"), api("/api/context-lifecycle"),
+      ]);
+      lazyCache[`skills:${state.project}`] = data[0];
       lazyCache[key] = data;
-      renderImprove(data ?? []);
+      renderImprove(data[0] ?? []);
+      renderLifecycle(data[1] ?? {});
     } else if (tab === "sessions") {
       // Never cached, same reasoning as self-driving: a session's liveness
       // (live / needs-input / crashed) is the point of the list, and the

@@ -36,6 +36,12 @@
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
+use stella_context::{ContextDelta, ContextStore, EpisodeInput, LedgerAppend};
+use stella_core::context_record::{
+    Confidence, ObservationRecord, PromotionAction, PromotionActor, PromotionEventRecord,
+    ProposalRecord, ProposalScore, RecordProposalKind, RecordProposalStatus,
+    lifecycle::ObservationSource,
+};
 use stella_observatory::respond;
 use stella_protocol::{
     AgentEvent, ContextFrameRef, ProviderShare, TaskItem, TaskStatus, ToolCall, ToolOutput,
@@ -108,6 +114,10 @@ const ROUTES: &[(&str, Option<&str>)] = &[
     ("/api/explorations", None),
     ("/api/rules", Some("/db/0/rule_id")),
     ("/api/reflections", Some("/ratings/0/execution_id")),
+    // Empty in a store-only fixture: the lifecycle reads context.db, which
+    // this workspace deliberately does not build. Its own real-schema gate is
+    // `context_lifecycle_returns_the_promotion_lineage` below (#1871).
+    ("/api/context-lifecycle", None),
 ];
 
 /// One tool call's full event round-trip — the announcement and its result.
@@ -935,4 +945,250 @@ fn context_diff_names_the_moved_line_and_reports_identity_honestly() {
         "prev on a first call resolves: {first}"
     );
     assert_eq!(first["base_label"], "prompt as submitted", "{first}");
+}
+
+/// One ledger append through the real write API, with the record's own
+/// identity, hash and timestamps — the shape every production writer uses
+/// (`crates/stella-cli/src/memory/observations.rs::append_observation` et al).
+fn append_lifecycle<T: serde::Serialize>(
+    store: &ContextStore,
+    kind: &str,
+    record_id: &str,
+    lineage_id: &str,
+    record_hash: &str,
+    schema_version: &str,
+    record: &T,
+    observed_at: &str,
+) {
+    let body = serde_json::to_string(record).expect("record json");
+    store
+        .append_record(LedgerAppend {
+            record_id,
+            lineage_id,
+            record_kind: kind,
+            record_hash,
+            schema_version,
+            body: &body,
+            observed_at,
+            supersedes: None,
+        })
+        .expect("ledger append");
+}
+
+/// The candidate the seeded proposal names — what the promotions timeline
+/// must echo back.
+const CANDIDATE_ID: &str = "grep-first-abc12345";
+
+/// Build a workspace whose `context.db` came from the **real** migration path
+/// (`ContextStore::open`), seeded through the real write APIs (#1871): a full
+/// observation → proposal → promotion-event lineage, plus one episode through
+/// the writeback path.
+///
+/// The second half of the bargain `real_store_workspace` documents for
+/// `store.db`: production reads this file with hand-written SQL over a
+/// read-only handle, so only a database built by `stella-context`'s own
+/// migrations can prove those queries still resolve.
+fn real_context_workspace() -> (tempfile::TempDir, String, String) {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let private = dir.path().join(".stella").join("private");
+    std::fs::create_dir_all(&private).expect("private dir");
+    let store = ContextStore::open(private.join("context.db"))
+        .expect("ContextStore::open runs the real migrations");
+
+    let observation = ObservationRecord::new(
+        ObservationSource::ReflectionLesson,
+        "reflection:1700000000",
+        "task-1",
+        "grep before you guess",
+        Vec::new(),
+        false,
+        "2026-08-01T12:00:00Z",
+    )
+    .expect("observation");
+    append_lifecycle(
+        &store,
+        "observation",
+        &observation.record_id,
+        &observation.lineage_id,
+        &observation.record_hash,
+        &observation.schema_version,
+        &observation,
+        &observation.observed_at,
+    );
+
+    let proposal = ProposalRecord::new(
+        RecordProposalKind::Knowledge,
+        RecordProposalStatus::Eligible,
+        CANDIDATE_ID,
+        "Grep before you guess",
+        "Search the tree before assuming a symbol's location.",
+        Vec::new(),
+        vec![observation.record_id.clone()],
+        ProposalScore {
+            occurrences: 4,
+            distinct_tasks: 3,
+            salient: true,
+            rank: 0.9,
+        },
+        Confidence::new(90).expect("confidence"),
+        "2026-08-01T12:05:00Z",
+    )
+    .expect("proposal");
+    append_lifecycle(
+        &store,
+        "record_proposal",
+        &proposal.record_id,
+        &proposal.lineage_id,
+        &proposal.record_hash,
+        &proposal.schema_version,
+        &proposal,
+        &proposal.observed_at,
+    );
+
+    let event = PromotionEventRecord::new(
+        proposal.lineage_id.clone(),
+        PromotionAction::Confirmed,
+        PromotionActor::User,
+        None,
+        None,
+        "kept from review",
+        "2026-08-01T12:10:00Z",
+    )
+    .expect("promotion event");
+    append_lifecycle(
+        &store,
+        "promotion_event",
+        &event.record_id,
+        &event.lineage_id,
+        &event.record_hash,
+        &event.schema_version,
+        &event,
+        &event.occurred_at,
+    );
+
+    // One episode through the real writeback path. The embed decision runs on
+    // the store's built-in hash embedder — nothing leaves the process.
+    tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(async {
+            store
+                .upsert(ContextDelta::new().with_episode(EpisodeInput::new(
+                    "added the parser fix",
+                    "2026-08-01T12:00:00Z",
+                    "2026-08-01T12:20:00Z",
+                )))
+                .await
+                .expect("episode upsert");
+        });
+
+    (dir, proposal.lineage_id.clone(), observation.record_id.clone())
+}
+
+/// The #1871 witness: the route folds the seeded observation → proposal →
+/// promotion-event lineage back out of a real-migration `context.db`. Fails
+/// on main (the route is absent), and fails if any ledger or episode column
+/// this crate reads is renamed in `stella-context`.
+#[test]
+fn context_lifecycle_returns_the_promotion_lineage() {
+    let (workspace, proposal_lineage, observation_id) = real_context_workspace();
+
+    let body = respond(workspace.path(), "/api/context-lifecycle").body;
+    let v: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert!(v.get("error").is_none(), "{v}");
+    assert_eq!(v["present"], true, "{v}");
+
+    let proposal = &v["proposals"][0];
+    assert_eq!(proposal["lineage_id"], proposal_lineage.as_str(), "{v}");
+    assert_eq!(proposal["candidate_id"], CANDIDATE_ID, "{v}");
+    assert_eq!(
+        proposal["status"], "confirmed",
+        "the decision standing is replayed from the event log, not stored: {v}"
+    );
+    assert_eq!(
+        proposal["supporting_observations"][0],
+        observation_id.as_str(),
+        "the lineage reaches back to its evidence: {v}"
+    );
+    assert_eq!(
+        proposal["events"][0]["action"], "confirmed",
+        "the proposal carries its own slice of the audit trail: {v}"
+    );
+
+    assert_eq!(v["events"][0]["action"], "confirmed", "{v}");
+    assert_eq!(
+        v["events"][0]["candidate_id"], CANDIDATE_ID,
+        "the timeline names the candidate its lineage points at: {v}"
+    );
+
+    assert_eq!(v["episodes"][0]["outcome"], "success", "{v}");
+    assert_eq!(v["episodes"][0]["summary"], "added the parser fix", "{v}");
+
+    let kinds: Vec<&str> = v["counts"]
+        .as_array()
+        .expect("counts")
+        .iter()
+        .filter_map(|c| c["kind"].as_str())
+        .collect();
+    for kind in ["observation", "record_proposal", "promotion_event"] {
+        assert!(kinds.contains(&kind), "counts missing {kind}: {v}");
+    }
+}
+
+/// Missing is a state: a workspace that has never built a context plane
+/// answers with the full (empty) payload shape, never a 500 and never a
+/// missing key.
+#[test]
+fn a_workspace_with_no_context_db_degrades_to_an_empty_lifecycle() {
+    let workspace = real_store_workspace();
+    let response = respond(workspace.path(), "/api/context-lifecycle");
+    assert_eq!(
+        response.status,
+        "200 OK",
+        "body: {}",
+        String::from_utf8_lossy(&response.body)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
+    assert_eq!(v["present"], false, "{v}");
+    for key in ["counts", "proposals", "events", "episodes", "selection_health"] {
+        assert_eq!(v[key], serde_json::json!([]), "{key} must be empty: {v}");
+    }
+}
+
+/// The read-only observer never migrates, so it can be pointed at a
+/// `context.db` older than the v8 lifecycle ledger — same hazard the pre-v18
+/// store test above covers. The ledger sections degrade to empty and the
+/// episode list (whose v8 columns are also gone) degrades with them; nothing
+/// 500s, and everything fills in after the next session migrates the file.
+#[test]
+fn a_context_db_older_than_v8_degrades_to_empty_ledger_sections() {
+    let (workspace, _, _) = real_context_workspace();
+    {
+        let raw =
+            rusqlite::Connection::open(workspace.path().join(".stella/private/context.db"))
+                .expect("open");
+        // Rebuild the pre-v8 shape honestly: no ledger table, no lineage
+        // columns on `episode`. Dropping the whole table also drops its
+        // append-only triggers, exactly as a pre-v8 file never had them.
+        raw.execute_batch(
+            "DROP TABLE context_records;
+             DROP INDEX IF EXISTS idx_episode_lineage;
+             ALTER TABLE episode DROP COLUMN lineage_id;
+             ALTER TABLE episode DROP COLUMN superseded_at;
+             PRAGMA user_version = 7;",
+        )
+        .expect("roll the schema back");
+    }
+
+    let response = respond(workspace.path(), "/api/context-lifecycle");
+    assert_eq!(
+        response.status,
+        "200 OK",
+        "a pre-v8 context.db must degrade, not 500 — body: {}",
+        String::from_utf8_lossy(&response.body)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
+    assert_eq!(v["present"], true, "the file exists and is reported: {v}");
+    for key in ["counts", "proposals", "events", "episodes", "selection_health"] {
+        assert_eq!(v[key], serde_json::json!([]), "{key} must be empty: {v}");
+    }
 }

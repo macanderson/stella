@@ -43,6 +43,7 @@
 
 mod accept;
 mod codegraph;
+mod context_db;
 mod context_diff;
 mod db;
 mod fsview;
@@ -364,6 +365,11 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 "ratings": ratings,
             })
         }),
+        // The self-improvement lifecycle behind those skills (#1871): the
+        // promotion audit trail, episodic memory, and selection health, read
+        // straight out of `.stella/private/context.db` — the one store the
+        // dashboard never looked at.
+        "/api/context-lifecycle" => context_db::self_improvement(root),
         // self-driving is machine-scoped, not workspace-scoped: the list answers
         // "what is my agent doing anywhere", and the workspace root only marks
         // which loop belongs to the project this tab is pointed at.
