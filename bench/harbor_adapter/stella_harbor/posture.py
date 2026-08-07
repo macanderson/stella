@@ -222,6 +222,49 @@ _SUB_CEILING_RATIONALE: dict[str, str] = {
 # 16384 -> 32000 -> 64000 each moved one ceiling while the others held.
 _MODEL_TIMEOUT_BY_SLUG = {"claude-fable-5": 1_572}
 
+#: What "no row above" actually runs under: the engine seeds
+#: ``model_timeout: Some(Duration::from_secs(816))`` in
+#: ``crates/stella-core/src/driver.rs``, and it bounds IDLE SILENCE between
+#: stream fragments, never elapsed time — a generation that keeps streaming
+#: is never cut by it. Named here because #2021 was filed, implemented, and
+#: reverted on the belief that an absent row meant "no ceiling"; the number
+#: a reader needs was findable only in the Rust tree. A parity test pins
+#: this against the driver's literal.
+_ENGINE_DEFAULT_MODEL_TIMEOUT_SECS = 816
+
+# A benchmarked slug with NO `_MODEL_TIMEOUT_BY_SLUG` row inherits the 816s
+# engine default — and that inherit must read as a decision, not an omission
+# (#2070). Same pattern as `_SUB_CEILING_RATIONALE` above: every silence is
+# written down with its reason, so the next slug added to
+# `_BENCHMARKED_SLUGS` fails the suite until someone decides. Deliberately
+# NOT a posture row: writing `model_timeout_secs: 816` explicitly was
+# implemented, measured as a behavioural no-op, and reverted (#2021's
+# refutation), because it changes the registered posture digest in exchange
+# for nothing. These sentences cost no digest.
+_INHERITED_TIMEOUT_RATIONALE: dict[str, str] = {
+    "claude-sonnet-5": (
+        "Inherits the 816s idle-silence default. As the head-to-head worker "
+        "its 64,000-token cap takes ~756s to fill at the registered "
+        "84.66 tok/s, and the silence ceiling only cuts a stream that has "
+        "STOPPED producing — no measured Sonnet call has stalled anywhere "
+        "near 816s of silence. Writing 816 as a posture row would invalidate "
+        "the registered digest (c8536200…) for zero behaviour change."
+    ),
+    "kimi-k3": (
+        "Inherits the 816s idle-silence default. Booked as arm B's VERIFIER: "
+        "it emits a verdict, not a solution, so neither the cap nor the "
+        "timeout has ever bound — and this model has no observed token rate "
+        "to derive a bespoke ceiling from. A manufactured row is exactly the "
+        "cap-without-timeout mismatch the table above exists to prevent."
+    ),
+    "claude-haiku-4.5": (
+        "Inherits the 816s idle-silence default. Booked as the TRIAGE "
+        "author: a short classification at effort low / reasoning off, "
+        "finished in seconds — the ceiling is three orders of magnitude "
+        "above anything this role produces."
+    ),
+}
+
 
 def _model_slug(model: str) -> str:
     """The bare model name, with any provider or gateway prefix stripped."""
