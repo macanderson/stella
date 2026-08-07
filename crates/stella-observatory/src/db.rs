@@ -395,7 +395,8 @@ impl Observatory {
              WHERE execution_id = ?1
                AND seq > ?2
                AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
-                                  'tool_result', 'speculation_discarded')
+                                  'tool_result', 'speculation_discarded',
+                                  'turn_parked', 'turn_woken')
              ORDER BY seq ASC";
         let mut stmt = match conn.prepare(sql) {
             Ok(stmt) => stmt,
@@ -1165,6 +1166,19 @@ fn journal_entry(row: Value, full: bool) -> Value {
             out["call_id"] = payload["call_id"].clone();
             out["name"] = payload["name"].clone();
             out["reason"] = payload["reason"].clone();
+        }
+        // A parked span is the one thing that explains a wall-clock gap with
+        // no events in it (#1857). Without its payload the row would say a
+        // park happened but not what was waited on or for how long — which
+        // is the entire question an operator opens this transcript to ask.
+        "turn_parked" => {
+            out["description"] = payload["description"].clone();
+            out["poll_interval_secs"] = payload["poll_interval_secs"].clone();
+            out["deadline_secs"] = payload["deadline_secs"].clone();
+        }
+        "turn_woken" => {
+            out["reason"] = payload["reason"].clone();
+            out["polls_used"] = payload["polls_used"].clone();
         }
         _ => {}
     }

@@ -1264,6 +1264,13 @@ function journalEntryHtml(e) {
   if (e.type === "stage") return `<div class="jrnl-stage">stage · ${esc(e.label ?? "")}</div>`;
   if (e.type === "speculation_discarded")
     return `<div class="jrnl"><div class="kick">◌ speculative ${esc(e.name ?? "")} discarded · ${esc(e.reason ?? "")}</div></div>`;
+  /* A parked span explains a wall-clock gap that contains no other events
+     (#1857) — without its own arm it would fall through to "answer" and draw
+     a blank row exactly where the transcript most needs to say something. */
+  if (e.type === "turn_parked")
+    return `<div class="jrnl"><div class="kick">⏳ parked · ${esc(e.description ?? "")} · every ${esc(String(e.poll_interval_secs ?? "?"))}s, up to ${esc(String(e.deadline_secs ?? "?"))}s</div></div>`;
+  if (e.type === "turn_woken")
+    return `<div class="jrnl"><div class="kick">▶ woke · ${e.reason === "changed" ? "the watched state changed" : e.reason === "deadline_expired" ? "the deadline expired with no change" : esc(e.reason ?? "")} · ${esc(String(e.polls_used ?? 0))} probe(s)</div></div>`;
   const head =
     e.type === "tool_start" ? `▸ ${esc(e.name ?? "")}` :
     e.type === "tool_result" ? `${e.ok ? "✓" : "✕"} result${e.duration_ms != null ? ` · ${fmtMs(e.duration_ms)}` : ""}${e.speculated ? " · speculated" : ""}` :
