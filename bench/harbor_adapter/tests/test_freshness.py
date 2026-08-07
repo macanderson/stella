@@ -109,10 +109,10 @@ def _seed(root: Path, commits: int) -> Path:
     _git(origin, "init", "-q", "--initial-branch=main")
     _git(origin, "config", "user.email", "t@example.com")
     _git(origin, "config", "user.name", "t")
-    # Both `commit` and `fetch` may spawn a *detached* `git maintenance run
-    # --auto` behind the porcelain — the one thing in this fixture that runs
-    # concurrently with it and varies run to run. A test repo does its own
-    # housekeeping never, so switch it off rather than race it (#2080).
+    # `commit` may spawn a *detached* `git maintenance run --auto` behind the
+    # porcelain — the one thing in this fixture that runs concurrently with it
+    # and varies run to run. A test repo does its own housekeeping never, so
+    # switch it off rather than race it (#2080).
     _git(origin, "config", "maintenance.auto", "false")
     _git(origin, "config", "gc.auto", "0")
     _git(origin, "commit", "-q", "--allow-empty", "-m", "base")
@@ -125,9 +125,6 @@ def _seed(root: Path, commits: int) -> Path:
     _git(work, "config", "user.name", "t")
     _git(work, "config", "maintenance.auto", "false")
     _git(work, "config", "gc.auto", "0")
-    for index in range(1, commits + 1):
-        _git(origin, "commit", "-q", "--allow-empty", "-m", f"c{index}")
-    _git(work, "fetch", "-q", "origin")
     return work
 
 
