@@ -228,6 +228,11 @@ impl ProofState {
                     }
                 }
             }
+            // Per-candidate provenance for the traces view and replay (#1787);
+            // the rail's verdict row already states the *winning* verdict's
+            // heuristic degradation via its evidence summary, so no row folds
+            // from it here.
+            ProofStep::VerdictDegraded { .. } => {}
         }
     }
 
@@ -639,6 +644,9 @@ pub(crate) fn proof_trace(step: &stella_protocol::ProofStep) -> String {
                 ProofTree::Candidate => "new",
             }
         ),
+        ProofStep::VerdictDegraded { candidate, reason } => {
+            format!("verdict degraded (candidate {candidate}): {reason}")
+        }
     }
 }
 

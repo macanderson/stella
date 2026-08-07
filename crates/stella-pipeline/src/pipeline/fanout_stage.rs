@@ -199,6 +199,11 @@ impl<'a> Pipeline<'a> {
                     let mut cost_usd = 0.0;
                     let result = self
                         .run_isolated_candidate(
+                            // 1-based, the ordinal every candidate-facing
+                            // surface speaks (`candidate_start_notice`,
+                            // `ProofStep::VerdictDegraded`). `n` is a `u32`
+                            // config knob, so the index always fits.
+                            index as u32 + 1,
                             frame,
                             worker,
                             authoring,
@@ -246,6 +251,7 @@ impl<'a> Pipeline<'a> {
     /// than in a loop iteration shared with nobody.
     async fn run_isolated_candidate(
         &self,
+        candidate: u32,
         frame: TaskFrame<'_>,
         worker: &ResolvedRole<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
@@ -286,7 +292,7 @@ impl<'a> Pipeline<'a> {
         if let Some(view) = view.as_ref() {
             engine = engine.with_steering(view);
         }
-        self.run_candidate(frame, authoring, &engine, surface, spend)
+        self.run_candidate(candidate, frame, authoring, &engine, surface, spend)
             .await
     }
 }

@@ -659,6 +659,11 @@ pub fn event_signature(event: &AgentEvent) -> String {
                 ProofStep::Oracle { passed, tree, .. } => {
                     format!("proof:oracle:{tree:?}:{passed}")
                 }
+                // The reason is prose about the outage, not the shape of the
+                // proof; which candidate degraded is structural.
+                ProofStep::VerdictDegraded { candidate, .. } => {
+                    format!("proof:verdict_degraded:{candidate}")
+                }
             }
         }
         AgentEvent::ToolStart { call } => format!("tool_start:{}", call.name),

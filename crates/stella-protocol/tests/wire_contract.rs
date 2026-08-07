@@ -437,6 +437,10 @@ fn all_proof_steps() -> Vec<ProofStep> {
             runs_required: Some(3),
             seed: Some(7741),
         },
+        ProofStep::VerdictDegraded {
+            candidate: 2,
+            reason: "the verifier call failed or timed out".into(),
+        },
     ]
 }
 
