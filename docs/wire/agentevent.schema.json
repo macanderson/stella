@@ -2152,7 +2152,7 @@
           "type": "array"
         },
         "rewrites": {
-          "description": "The replacement bytes each in-place rewrite left behind, one entry\nper digest — what lets reconstruction resolve a compacted block to\nthe bytes the model received rather than the pre-compaction output\nunder the same `call_id` (#1667); see [`CompactionRewrite`].\n`serde(default)` — absent on journals written before rewrites were\njournaled, whose compacted blocks surface as digest mismatches.",
+          "description": "The replacement bytes each in-place rewrite left behind, one entry\nper digest — what lets reconstruction resolve a compacted block to\nthe bytes the model received rather than the pre-compaction output\nunder the same `call_id` (#1667); see `CompactionRewrite`.\n`serde(default)` — absent on journals written before rewrites were\njournaled, whose compacted blocks surface as digest mismatches.",
           "items": {
             "$ref": "#/$defs/CompactionRewrite"
           },
