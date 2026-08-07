@@ -322,6 +322,30 @@ class TestPerDatasetHarbor:
         assert dataset.min_harbor == "0.20.0"
 
 
+class TestBothLaunchPathsAgree:
+    """`arenabench run` and the UI must resolve a seat the same way.
+
+    A template's whole promise is "commit it and this match reproduces
+    exactly". Two credential resolutions behind one file is that promise being
+    false in the one place nobody checks, because each path looks correct read
+    on its own.
+    """
+
+    SOURCE = Path(__file__).resolve().parent.parent / "arenabench" / "cli.py"
+
+    def test_the_cli_run_path_fills_from_the_local_claude_login(self):
+        assert "apply_local_claude_login" in self.SOURCE.read_text(encoding="utf-8"), (
+            "a template declaring CLAUDE_CODE_OAUTH_TOKEN must resolve it the "
+            "same way from the CLI as from the UI"
+        )
+
+    def test_the_cli_run_path_refuses_a_dead_seat(self):
+        assert "dead_seat_reason" in self.SOURCE.read_text(encoding="utf-8"), (
+            "a seat whose CLI cannot read its credential dies at turn one on "
+            "either path; only one of them was refusing it"
+        )
+
+
 class TestExportedDatasetIsVisibleAndRunnable:
     """The picker and the launcher must agree about where an export lives.
 
