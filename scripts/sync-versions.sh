@@ -16,9 +16,9 @@
 #   - the workspace-member entries in Cargo.lock (`cargo update --workspace`;
 #     registry and git pins are untouched)
 #   - packaging/homebrew/stella.rb (build-from-source formula tag + version)
-#   - CHANGELOG.md: the `[Unreleased]` section rolls under the new version.
-#     Deliberately tolerant — a missing file or heading is a warning, not a
-#     failure, because a changelog bookkeeping slip must never stop a release.
+#   - CHANGELOG.md, via scripts/changelog-roll.sh — on a MINOR or MAJOR
+#     release only. A patch release does not touch that file; see the rationale
+#     in changelog-roll.sh's header and RELEASING.md § "What records a change".
 #
 # perl, not `sed -i "0,/re/"`: that address form is GNU-only and SILENTLY
 # no-ops on BSD sed (macOS).
@@ -37,40 +37,9 @@ cargo update --workspace
 perl -pi -e 's/tag: "v[^"]*"/tag: "v$ENV{NEW_VERSION}"/; s/^  version "[^"]*"/  version "$ENV{NEW_VERSION}"/' \
   packaging/homebrew/stella.rb
 
-if [ -f CHANGELOG.md ] && grep -q '^## \[Unreleased\]' CHANGELOG.md; then
-  # CI drafts every release's changelog section from the release diff
-  # (scripts/changelog-ai.sh, invoked once by auto-tag.yml and handed to both
-  # sync-versions.sh call sites via CHANGELOG_ENTRIES_FILE, so the tag and
-  # main roll identical text). The draft is authoritative: it REPLACES
-  # whatever already sits under [Unreleased], hand-written or not — changelog
-  # authorship lives in the release job, not in feature PRs, so entries stay
-  # in one consistent voice instead of whatever a contributor or coding agent
-  # happened to type. Injection lives here, not in the workflow, because this
-  # script runs at two call sites (the tagged release commit and the
-  # bot/version-sync PR) and the tag and main must roll identical text — one
-  # script, two call sites, no drift (#786).
-  if [ -n "${CHANGELOG_ENTRIES_FILE:-}" ] && [ -s "${CHANGELOG_ENTRIES_FILE}" ]; then
-    # An explicit lexical filehandle, not `local @ARGV; <>`: -pi's own
-    # in-place magic already drives @ARGV/<> to iterate CHANGELOG.md, and
-    # reassigning @ARGV mid-script (even locally) to slurp a second file
-    # collides with that and corrupts the edit.
-    ENTRIES_FILE="${CHANGELOG_ENTRIES_FILE}" perl -0777 -pi -e '
-      open my $fh, "<", $ENV{ENTRIES_FILE} or die "cannot open $ENV{ENTRIES_FILE}: $!";
-      my $entries = do { local $/; <$fh> };
-      close $fh;
-      $entries =~ s/\s+\z//;
-      s/^## \[Unreleased\]\n.*?(?=^## \[|\z)/"## [Unreleased]\n\n" . $entries . "\n\n"/mse;
-    ' CHANGELOG.md
-    echo "sync-versions: CI-drafted changelog entries written for ${version}."
-  else
-    echo "::warning::no changelog entries drafted (AI Gateway unset or the call failed); rolling [Unreleased] as-is."
-  fi
-  # Inserting *after* the heading (rather than renaming it) is what carries
-  # the section's content down into the new version's section.
-  RELEASE_DATE="${RELEASE_DATE:-$(date -u +%F)}" \
-    perl -pi -e 's/^## \[Unreleased\]$/## [Unreleased]\n\n## [$ENV{NEW_VERSION}] — $ENV{RELEASE_DATE}/' CHANGELOG.md
-  grep -q "^## \[${version}\] " CHANGELOG.md \
-    || echo "::warning::CHANGELOG.md roll did not take for ${version}"
-else
-  echo "::warning::CHANGELOG.md missing or has no [Unreleased] heading; skipping the roll."
-fi
+# CHANGELOG.md is rolled by a sibling script, not inlined here: the roll has
+# rules of its own (minor/major only, never a heading with an empty body) that
+# deserve a direct test, and testing them through this script would mean
+# standing up a throwaway Cargo workspace for `cargo update` above.
+# scripts/test-changelog-roll.sh covers it; `make changelog-roll-test` runs it.
+"$(dirname "$0")/changelog-roll.sh" CHANGELOG.md

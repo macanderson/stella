@@ -14,9 +14,27 @@
  */
 import type { MetadataRoute } from "next";
 import { source } from "@/lib/source";
+import { getReleases } from "@/lib/changelog.server";
 import { SITE_URL } from "@/lib/site";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The date of the newest release section, for /releases' `lastModified`.
+ *
+ * A changelog date is either `YYYY-MM-DD` or a `start → end` span; the last
+ * 10-character date in the string is the one that says when the line stopped
+ * moving. Returns undefined if the heading carries no parseable date, so the
+ * field is omitted rather than guessed — the same "no claim beats a false
+ * claim" rule the docs rows follow.
+ */
+function releasesLastModified(): Date | undefined {
+  const [latest] = getReleases();
+  const dates = latest?.date.match(/\d{4}-\d{2}-\d{2}/g);
+  if (!dates?.length) return undefined;
+  const parsed = new Date(`${dates[dates.length - 1]}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
 
 /**
  * The `last-modified` plugin is registered in source.config.ts only when the
@@ -75,6 +93,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: homeLastModified,
       changeFrequency: changeFrequency(homeLastModified),
       priority: 1,
+    },
+    {
+      // /releases is a React route rendered from CHANGELOG.md, so no per-file
+      // MDX date reaches this map. Its content changes on exactly the cadence
+      // the newest release does, and the newest release's date is parsed
+      // rather than guessed — a real date, like every other row here.
+      url: `${SITE_URL}/releases`,
+      lastModified: releasesLastModified(),
+      changeFrequency: "weekly" as const,
+      priority: 0.8,
     },
     ...docs,
   ];

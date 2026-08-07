@@ -166,33 +166,47 @@ jobs:
           fi
 
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "kind=${kind}" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-      # Draft CHANGELOG entries from the diff this tag is about to release,
-      # once, into a file both sync-versions.sh call sites read (the tagged
-      # release commit below and the bot/version-sync PR after it), so the tag
-      # and main roll identical text. This is the sole author of CHANGELOG.md
-      # entries — sync-versions.sh overwrites [Unreleased] with this draft
-      # regardless of what (if anything) a PR put there, so changelog
-      # authorship lives entirely in this CI job and never in a coding agent
-      # or contributor hand-editing the file. The script prints nothing when
-      # it can't draft (no key, API failure), and sync-versions.sh then rolls
-      # [Unreleased] as-is rather than blocking the release on it.
-      - name: Draft changelog entries from the release diff
-        if: steps.ver.outputs.skip != 'true'
+      # Draft the CHANGELOG section, once, into a file both sync-versions.sh
+      # call sites read (the tagged release commit below and the
+      # bot/version-sync PR after it), so the tag and main roll identical text.
+      # This is the sole author of CHANGELOG.md entries — the roll overwrites
+      # [Unreleased] with this draft regardless of what (if anything) a PR put
+      # there, so changelog authorship lives entirely in this CI job and never
+      # in a coding agent or contributor hand-editing the file.
+      #
+      # MINOR AND MAJOR ONLY, and the range is the whole SERIES — the previous
+      # X.Y.0 tag to HEAD, not the previous tag. CHANGELOG.md records one
+      # section per minor line (scripts/changelog-roll.sh explains why: a roll
+      # per patch left 77 of 180 sections empty), so a patch release has no
+      # section to draft and does not pay for the call. Per-tag detail still
+      # ships as GitHub Release notes, which release.yml generates separately.
+      #
+      # The script prints nothing when it can't draft (no key, API failure);
+      # changelog-roll.sh then writes a releases-page pointer rather than an
+      # empty section, and the release proceeds either way.
+      - name: Draft the changelog section from the series diff
+        if: steps.ver.outputs.skip != 'true' && steps.ver.outputs.kind != 'patch'
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           CHANGELOG_AI_MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'anthropic/claude-sonnet-5' }}
         run: |
           set -euo pipefail
-          last="$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)"
+          # The newest X.Y.0 tag opens the series this release closes. Falling
+          # back to the newest tag of any shape keeps the very first minor
+          # release (no X.Y.0 predecessor yet) from drafting the entire history.
+          last_minor="$(git tag -l 'v*.0' --sort=-v:refname | head -n1 || true)"
+          last="${last_minor:-$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)}"
+          echo "Drafting the ${{ steps.ver.outputs.tag }} section from ${last:-<no tag>}..HEAD"
           entries="${RUNNER_TEMP}/changelog-entries.md"
           ./scripts/changelog-ai.sh ${last:+"${last}..HEAD"} > "${entries}" || true
           if [ -s "${entries}" ]; then
             echo "CHANGELOG_ENTRIES_FILE=${entries}" >> "$GITHUB_ENV"
             echo "----- drafted entries -----"; cat "${entries}"
           else
-            echo "::warning::no changelog entries drafted; the roll will proceed without them."
+            echo "::warning::no changelog entries drafted; the roll will write a releases-page pointer."
           fi
 
       # Needed before the tag now: the release commit syncs Cargo.lock.

@@ -1,0 +1,457 @@
+/**
+ * Releases microsite (`rl-`) — styles for src/app/releases/.
+ *
+ * Imported once from this route's layout, so the whole page ships one
+ * stylesheet no matter how many entries it draws — the same reason the docs
+ * card primitives keep their styles out of the component. It lives beside the
+ * route instead of inside `global.css` because it is used by exactly one route
+ * and `global.css` is already sitewide chrome plus the docs card system;
+ * a fourth unrelated concern in there earns its own file.
+ *
+ * Colour discipline, from the brand kit: **gold is the signal, never the
+ * surface.** The page ground and the entry rows are the plain theme ground;
+ * gold appears on the version numeral, the timeline marker, the focus ring and
+ * the search hit — the things a reader is actually hunting for. Per-kind hue
+ * arrives through one `--rl-kind` custom property set inline by the component,
+ * so adding a kind needs no rule here. Hue is never the only cue: every chip
+ * and every entry also carries the kind's word.
+ *
+ * Every value is a token from tokens.css or a fumadocs `--color-fd-*` alias —
+ * no hex literals — so the page inverts with the theme.
+ */
+
+.rl-page {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 3.5rem 1.25rem 6rem;
+}
+
+/* ── hero ─────────────────────────────────────────────────────────────────── */
+
+.rl-eyebrow {
+  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--stella-muted-fg);
+  margin: 0 0 0.5rem;
+}
+
+/* lowercase always — the brand kit's rule. There is no text-transform here
+ * because the string is already lowercase in the markup, which keeps it
+ * lowercase when it is copied, read aloud, or indexed. */
+.rl-title {
+  font-size: clamp(2.5rem, 8vw, 4.5rem);
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+  font-weight: 800;
+  margin: 0;
+}
+
+.rl-lede {
+  max-width: 46rem;
+  margin: 1.25rem 0 0;
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  color: var(--stella-muted-fg);
+}
+.rl-lede strong {
+  color: var(--color-fd-foreground);
+  font-weight: 600;
+}
+.rl-lede code,
+.rl-foot code {
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background: var(--color-fd-muted);
+}
+.rl-lede a,
+.rl-foot a {
+  color: var(--stella-accent-text);
+}
+
+.rl-latest {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 1.5rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--stella-muted-fg);
+}
+.rl-latest strong {
+  color: var(--stella-accent-text);
+  font-weight: 700;
+}
+.rl-latest-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--stella-gold);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--stella-gold) 22%, transparent);
+}
+
+/* ── controls ─────────────────────────────────────────────────────────────── */
+
+.rl-controls {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 2.75rem 0 0;
+  padding: 0.875rem 0;
+  /* An opaque ground by default: the timeline must not scroll visibly through
+   * the bar. The translucent treatment is an enhancement, not the base. */
+  background: var(--color-fd-background);
+  border-bottom: 1px solid var(--color-fd-border);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .rl-controls {
+    background: color-mix(in srgb, var(--color-fd-background) 88%, transparent);
+    backdrop-filter: blur(8px);
+  }
+}
+
+.rl-search {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+/* Visually hidden, not removed: the input needs a programmatic label, and a
+ * placeholder is not one — it disappears the moment you type. */
+.rl-search-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.rl-search-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--color-fd-foreground);
+  background: var(--color-fd-card);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+}
+.rl-search-input::placeholder {
+  color: var(--stella-muted-fg);
+}
+.rl-search-input:focus-visible {
+  outline: 2px solid var(--stella-accent-text);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.rl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.rl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--stella-muted-fg);
+  background: transparent;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    color var(--stella-duration-fast) var(--stella-ease-arrive),
+    border-color var(--stella-duration-fast) var(--stella-ease-arrive),
+    background-color var(--stella-duration-fast) var(--stella-ease-arrive);
+}
+.rl-chip:hover {
+  color: var(--color-fd-foreground);
+  border-color: var(--stella-muted-fg);
+}
+.rl-chip[data-active="true"] {
+  color: var(--color-fd-foreground);
+  border-color: var(--rl-kind);
+  background: color-mix(in srgb, var(--rl-kind) 12%, transparent);
+}
+.rl-chip:focus-visible {
+  outline: 2px solid var(--stella-accent-text);
+  outline-offset: 2px;
+}
+.rl-chip-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--rl-kind);
+}
+.rl-chip-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--stella-muted-fg);
+}
+
+.rl-count {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--stella-muted-fg);
+  font-variant-numeric: tabular-nums;
+}
+.rl-reset {
+  margin-left: 0.5rem;
+  padding: 0;
+  font: inherit;
+  color: var(--stella-accent-text);
+  background: none;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  cursor: pointer;
+}
+
+/* ── timeline ─────────────────────────────────────────────────────────────── */
+
+.rl-empty {
+  margin: 3rem 0;
+  color: var(--stella-muted-fg);
+}
+.rl-empty a {
+  color: var(--stella-accent-text);
+}
+
+.rl-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The rail: one hairline down the left of every release, with the marker
+ * sitting on it. Drawn as a border on each list item rather than a
+ * pseudo-element on the container so it breaks correctly when a release is
+ * filtered out of the middle of the list. `position: relative` anchors the
+ * marker, which is absolutely positioned onto the rail. */
+.rl-release {
+  position: relative;
+  border-left: 1px solid var(--color-fd-border);
+  padding: 2.25rem 0 0 1.75rem;
+  margin-left: 0.5rem;
+}
+.rl-release:last-child {
+  padding-bottom: 1rem;
+}
+
+.rl-release-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+.rl-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  flex: 1 1 auto;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.rl-disclosure:focus-visible {
+  outline: 2px solid var(--stella-accent-text);
+  outline-offset: 4px;
+  border-radius: 0.25rem;
+}
+
+/* Sits ON the rail: half the marker's width, plus the rail's own, back from
+ * the content edge. The ring is the page ground, so the rail appears to pass
+ * behind the dot rather than through it. */
+.rl-marker {
+  position: absolute;
+  left: calc(-0.3125rem - 1px);
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  background: var(--stella-gold);
+  box-shadow: 0 0 0 4px var(--color-fd-background);
+}
+
+.rl-version {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--stella-accent-text);
+}
+.rl-date {
+  font-size: 0.8125rem;
+  color: var(--stella-muted-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A proportional bar of the release's kinds — shape for "this line was mostly
+ * fixes", taken in before a word is read. Decorative: every count it encodes
+ * is also stated by the entries below, so it is aria-hidden in the markup. */
+.rl-meter {
+  display: flex;
+  flex: 0 1 8rem;
+  gap: 2px;
+  height: 3px;
+  margin-left: auto;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.rl-meter-seg {
+  background: var(--rl-kind);
+  border-radius: 2px;
+}
+
+.rl-toggle {
+  width: 1rem;
+  text-align: center;
+  font-size: 1.125rem;
+  color: var(--stella-muted-fg);
+}
+.rl-tag {
+  font-size: 0.75rem;
+  color: var(--stella-muted-fg);
+  text-decoration: none;
+  border-bottom: 1px solid var(--color-fd-border);
+}
+.rl-tag:hover {
+  color: var(--stella-accent-text);
+  border-bottom-color: currentColor;
+}
+
+.rl-release-body {
+  margin-top: 1.25rem;
+}
+.rl-summary {
+  max-width: 44rem;
+  margin: 0 0 1.5rem;
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--stella-muted-fg);
+}
+
+/* ── entries ──────────────────────────────────────────────────────────────── */
+
+.rl-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1.125rem;
+}
+.rl-entry {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.875rem;
+  align-items: baseline;
+  padding-left: 0.875rem;
+  border-left: 2px solid var(--rl-kind);
+}
+
+/* The colour is the supporting cue; this word is the actual label, which is
+ * what keeps an entry classified with hue removed entirely. */
+.rl-kind {
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rl-kind);
+}
+
+.rl-entry-text {
+  max-width: 44rem;
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--stella-muted-fg);
+}
+.rl-lead {
+  color: var(--color-fd-foreground);
+  font-weight: 600;
+}
+.rl-code {
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background: var(--color-fd-muted);
+  color: var(--color-fd-foreground);
+}
+.rl-link {
+  color: var(--stella-accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rl-refs {
+  display: inline-flex;
+  gap: 0.375rem;
+  margin-left: 0.375rem;
+}
+.rl-ref {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--stella-muted-fg);
+  text-decoration: none;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.25rem;
+}
+.rl-ref:hover {
+  color: var(--stella-accent-text);
+  border-color: currentColor;
+}
+
+/* The search hit. Gold at low alpha rather than the browser's default yellow,
+ * which is the one colour on the page belonging to no theme. */
+.rl-hit {
+  background: color-mix(in srgb, var(--stella-gold) 30%, transparent);
+  color: inherit;
+  border-radius: 0.15rem;
+  padding: 0 0.1em;
+}
+
+/* ── footer ───────────────────────────────────────────────────────────────── */
+
+.rl-foot {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--color-fd-border);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--stella-muted-fg);
+}
+
+/* ── narrow screens ───────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .rl-page {
+    padding-top: 2.25rem;
+  }
+  /* The kind label moves above the prose: at 380px a 5.5rem gutter leaves the
+   * text column too narrow to read, and the label is short enough that a line
+   * of its own costs less than the column it was taking. */
+  .rl-entry {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+  .rl-meter {
+    flex-basis: 4rem;
+  }
+  .rl-controls {
+    gap: 0.5rem;
+  }
+}
+
+/* The chip transitions are the only animation on this page, and they are pure
+ * affordance — nothing is lost by dropping them. */
+@media (prefers-reduced-motion: reduce) {
+  .rl-chip {
+    transition: none;
+  }
+}
