@@ -258,6 +258,20 @@ class TestDistance:
         with pytest.raises(SutFreshnessError):
             measure_distance("a" * 40, repo, "--upload-pack=touch /tmp/pwned")
 
+    def test_an_option_shaped_commit_never_reaches_git(self, repo: Path) -> None:
+        """Both halves of the `A...B` range are validated, not just the ref.
+
+        In practice `commit` only ever arrives from `read_identity`, which can
+        produce nothing but a full hex SHA — but this is public API, and a
+        value starting with `-` lands in an argument git reads as an option.
+        """
+        with pytest.raises(SutFreshnessError):
+            measure_distance("--upload-pack=touch /tmp/pwned", repo)
+
+    def test_a_short_commit_is_refused(self, repo: Path) -> None:
+        with pytest.raises(SutFreshnessError):
+            measure_distance(_git(repo, "rev-parse", "--short", "origin/main"), repo)
+
 
 class TestVerdict:
     """What is refused, and what the refusal says."""

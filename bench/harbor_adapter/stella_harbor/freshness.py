@@ -357,6 +357,15 @@ def measure_distance(
     from the reference *as this checkout knows it*, which is stated in the
     verdict so a stale checkout cannot masquerade as a fresh binary.
     """
+    # Both halves of the rev-range are validated before either reaches git.
+    # `commit` always arrives from `read_identity` in practice, which can only
+    # produce a full hex SHA — but this is public API interpolated into a
+    # `A...B` argument, and a value beginning with `-` would be read by git as
+    # an option rather than as a revision.
+    if not _FULL_SHA.match((commit or "").lower()):
+        raise ReferenceUnavailableError(
+            f"refusing to measure from {commit!r}: not a full 40-hex commit"
+        )
     checkout = Path(repo)
     if not (checkout / ".git").exists():
         raise ReferenceUnavailableError(f"{checkout} is not a git checkout")
