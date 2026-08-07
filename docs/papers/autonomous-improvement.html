@@ -168,7 +168,7 @@
       <a href="#traces"><b>§05</b> The trace pipeline</a>
       <a href="#refinery"><b>§06</b> The Refinery — training design</a>
       <a href="#proving"><b>§07</b> The Proving Ground</a>
-      <a href="#shipping"><b>§08</b> Shipping weights</a>
+      <a href="#shipping"><b>§08</b> Shipping — drift guards &amp; graceful degradation</a>
       <a href="#golden"><b>§09</b> The golden path</a>
       <a href="#governance"><b>§10</b> Governance &amp; the zero-egress contract</a>
       <a href="#felt"><b>§11</b> Felt improvement</a>
@@ -755,6 +755,23 @@
   retrain the adapter on the new base, run the full gauntlet, promote like any candidate. The base
   version is part of the lineage record.</p>
 
+  <h3><span class="tick">▸</span>Stateless candidates — continuous, not cumulative</h3>
+  <p>“Always-on” training does not mean nudging the serving weights. <strong>Every candidate is
+  derived from the same fixed point: pinned base + content-addressed corpus snapshot + recorded
+  recipe</strong> — never from the incumbent. Chained fine-tunes compound drift and make every
+  version a function of the path that produced it; rebased ones make each version a pure function
+  of its lineage record. What rolls forward is the snapshot, not the weights. This buys:</p>
+  <ul>
+    <li><strong>Reproducibility</strong> — any version can be rebuilt from its registry entry
+    alone, which is what makes a gauntlet verdict a statement about <em>the weights</em> rather
+    than about the path that grew them.</li>
+    <li><strong>No compounding drift</strong> — error doesn't stack across promotions; distance
+    from base is re-earned per candidate, never inherited, and the drift ledger (§08) accounts
+    for it per version.</li>
+    <li><strong>Clean comparisons</strong> — candidate and incumbent differ by snapshot and
+    recipe alone, which keeps the gauntlet like-for-like by construction.</li>
+  </ul>
+
   <h3><span class="tick">▸</span>Recipe</h3>
   <ul>
     <li><strong>SFT</strong> on accepted, witness-proven trajectories — teach the shape of work
@@ -763,6 +780,12 @@
     edits — teach the difference between the attempt that failed and the revision that didn't.</li>
     <li><strong>Optional RFT</strong> against workspace benchmarks in sandboxed clones, where task
     volume justifies it — the gauntlet infrastructure doubles as the reward environment.</li>
+    <li><strong>KL-anchored objective</strong> — every run carries a divergence penalty against
+    the pinned base policy, so the adapter buys task competence without wandering the
+    distribution. Drift is constrained in the loss before any guard ever has to measure it.</li>
+    <li><strong>Replay mix</strong> — a fixed anchor set (general instruction data plus a sample
+    of the group's own historical, witness-proven trajectories) is blended into every run, so new
+    lessons are learned <em>alongside</em> old ones, not over them.</li>
   </ul>
 
   <h3><span class="tick">▸</span>Cadence — always on means three triggers</h3>
@@ -874,7 +897,7 @@
 
 <!-- ═══════════════════════════ §08 SHIPPING ═══════════════════════════ -->
 <section id="shipping"><div class="wrap">
-  <div class="sec-head"><span class="sec-num">§ 08</span><h2>Shipping weights</h2></div>
+  <div class="sec-head"><span class="sec-num">§ 08</span><h2>Shipping, drift guards &amp; graceful degradation</h2></div>
 
   <figure class="diagram">
     <svg viewBox="0 0 920 250" role="img" aria-label="Promotion pipeline: candidate through three gates to canary and stable, with rollback">
@@ -953,9 +976,124 @@
     silent weight swap is a behavioral cache-buster even when the bytes hold).</li>
     <li><strong>Promotion touches only the alias.</strong> Serving hot-swaps adapters; nothing
     restarts; in-flight sessions are untouched. The next session is simply better.</li>
-    <li><strong>Canary is a routing fraction over new sessions</strong>, with live telemetry
-    guards (loop-rate, verdict-rate, budget burn vs. incumbent baseline). A canary breach
-    auto-rolls the alias back and files the incident delta card.</li>
+    <li><strong>Canary is a routing fraction over new sessions</strong>, watched by the live
+    sentinels of the guard stack below. A breach never jumps straight to panic — it walks the
+    rollback ladder, and every rung files its delta card.</li>
+  </ul>
+
+  <h3><span class="tick">▸</span>The drift-guard stack — five layers, cheapest first</h3>
+  <p>“Drift” is three different failures wearing one name: weights wandering, behavior shifting,
+  data shifting. Each is guarded in its own space, ordered so cheap guards spend before expensive
+  ones — most bad candidates should die before the gauntlet ever pays for an agent run.</p>
+
+  <div class="tbl"><table>
+    <tr><th>Layer</th><th>Watches</th><th>Guard</th></tr>
+    <tr><td><strong>0 · Corpus</strong><br><span class="small">before training</span></td>
+        <td class="m">The incoming trace stream.</td>
+        <td class="m">Distribution monitoring on task mix, repo mix, and outcome ratios, with
+        per-workspace contribution caps. An abrupt shift — a new repo dumped into the group, a
+        suspect contributor, a dead-quiet week — routes to curation review instead of blind
+        training. A bad corpus produces no candidate at all: the cheapest rejection there is.</td></tr>
+    <tr><td><strong>1 · Weights</strong><br><span class="small">at training</span></td>
+        <td class="m">The adapter delta itself.</td>
+        <td class="m">Bounded by construction — rank caps, per-layer norm budgets, spectral caps,
+        a layer allowlist — then compared against lineage history: a candidate whose weight-space
+        distance from base is an outlier against every previously accepted adapter is flagged
+        before a single eval token is spent.</td></tr>
+    <tr><td><strong>2 · Behavior</strong><br><span class="small">before the gauntlet</span></td>
+        <td class="m">Token distributions, not task scores.</td>
+        <td class="m">A frozen probe battery — thousands of prompts, forward passes only: per-probe
+        KL divergence vs. the incumbent, tool-call format validity, refusal and safety probes,
+        calibration checks. The battery is partitioned into <strong>invariant probes</strong>
+        (must not move) and <strong>target probes</strong> (derived from the scars and lessons
+        this run trained toward — must move). Drift is judged <em>directionally</em>: change where
+        change was intended, stillness everywhere else.</td></tr>
+    <tr><td><strong>3 · Capability</strong><br><span class="small">the gauntlet</span></td>
+        <td class="m">Whether it can still do the work.</td>
+        <td class="m">Scars 100% · workspace improved with confidence · general non-inferior
+        (§07). Unchanged — the layers above exist so that this, the expensive layer, mostly
+        confirms rather than discovers.</td></tr>
+    <tr><td><strong>4 · Live</strong><br><span class="small">after promotion</span></td>
+        <td class="m">Production, against the incumbent's baseline.</td>
+        <td class="m">Sentinels as control charts: loop-detector rate, tool-call malformation
+        rate, verdict pass rate, budget burn per solved task, retry depth, session abandonment.
+        Sequential tests (CUSUM-class) let the canary conclude as early as the evidence allows —
+        at a controlled false-alarm rate, because a trigger-happy sentinel trains everyone to
+        ignore it.</td></tr>
+  </table></div>
+
+  <div class="principle">
+    <span class="k">The drift budget</span>
+    <p>Every promotion spends from a bounded behavioral distance against its parent, and the
+    lineage carries a <strong>drift ledger</strong> — cumulative distance from base. An
+    intentionally large change is split across promotions, or explicitly authorized with a longer
+    bake and a wider canary. When the ledger crosses its ceiling, the group is forced through an
+    <strong>anchor rebuild</strong>: a fresh adapter from base on the full current snapshot, an
+    extended gauntlet, and a newly blessed anchor. Drift is spent deliberately, accounted per
+    version, and periodically re-zeroed.</p>
+  </div>
+
+  <h3><span class="tick">▸</span>Graceful degradation — the rollback ladder</h3>
+  <p>Rollback is a ladder, not a switch. The standing policy: <strong>the smallest reversion that
+  clears the alarm</strong> — and every rung is warm, because parent and anchor adapters stay
+  resident on the serving plane.</p>
+
+  <div class="tbl"><table>
+    <tr><th>Rung</th><th>Fires on</th><th>Action</th><th>Blast radius</th></tr>
+    <tr><td><strong>Freeze</strong></td>
+        <td class="m">A soft sentinel signal — a dip inside noise.</td>
+        <td class="m">Stop canary expansion; extend the bake.</td>
+        <td class="m">Nobody regresses.</td></tr>
+    <tr><td><strong>Shrink</strong></td>
+        <td class="m">The soft signal persists.</td>
+        <td class="m">Cut the canary to its floor; keep gathering evidence as shadow traffic.</td>
+        <td class="m">A handful of sessions.</td></tr>
+    <tr><td><strong>Scoped rollback</strong></td>
+        <td class="m">Regression localized to one workspace or task family.</td>
+        <td class="m">Per-workspace alias override to the parent; the rest of the group stays
+        forward.</td>
+        <td class="m">One workspace.</td></tr>
+    <tr><td><strong>Full rollback</strong></td>
+        <td class="m">A hard trigger — scar-class live failure, malformation spike, safety-probe
+        regression.</td>
+        <td class="m">Alias flip to the parent. Seconds, warm, no cold start.</td>
+        <td class="m">New sessions only — pinned sessions were never touched.</td></tr>
+    <tr><td><strong>Anchor fallback</strong></td>
+        <td class="m">The parent alarms too — a systemic cause: bad probe, bad base, poisoned
+        window.</td>
+        <td class="m">Fall to the last blessed anchor version.</td>
+        <td class="m">Recent promotions unwound.</td></tr>
+    <tr><td><strong>Base fallback</strong></td>
+        <td class="m">No healthy anchor.</td>
+        <td class="m">Serve the plain open-weight base — the terminal server-side safe state.</td>
+        <td class="m">Specialization off; competence intact.</td></tr>
+    <tr><td><strong>Client fallback</strong></td>
+        <td class="m">The serving plane is unreachable entirely.</td>
+        <td class="m">The managed pack's provider chain: group model → org fallback model → any
+        configured BYOK provider.</td>
+        <td class="m">Oxagen out of the loop; Stella unbothered.</td></tr>
+  </table></div>
+
+  <div class="principle">
+    <span class="k">The floor is always ordinary Stella</span>
+    <p>Every failure mode of every server-side component degrades the client by exactly one notch
+    of specialization, never toward a brick: Uplink unreachable → cached managed config and the
+    last pinned version keep working; serving down → the fallback chain; no enrollment at all →
+    community Stella, fully functional. Degradation terminates at independence, by
+    construction.</p>
+  </div>
+
+  <h4>Hysteresis, quarantine, drills</h4>
+  <ul>
+    <li><strong>Failures upgrade the guards.</strong> Re-promotion after any rollback requires a
+    root-caused ledger entry, and the metric that caught the escape joins the probe battery or
+    the scar suite — so the same escape is caught pre-promotion next time. The guard stack itself
+    rides the flywheel.</li>
+    <li><strong>Flap damping.</strong> Cooldown windows between alias flips, and a version rolled
+    back twice is quarantined — it can be superseded, never re-promoted.</li>
+    <li><strong>Rollback drills.</strong> The ladder is exercised on schedule against synthetic
+    alarms, and drill results land in the ledger like any gauntlet. A rollback path that has
+    never fired is scaffolding, not a mechanism.</li>
   </ul>
 </div></section>
 
@@ -1018,15 +1156,12 @@
 <section id="governance"><div class="wrap">
   <div class="sec-head"><span class="sec-num">§ 10</span><h2>Governance &amp; the zero-egress contract</h2></div>
 
-  <p class="lede">This section exists because the honest version of this design collides with
-  Stella's own law, and the collision must be resolved in the open, not around it.</p>
+  <p class="lede">Trace collection is Oxagen's product surface, and it is governed like one.
+  Standalone Stella connects to nothing — there is no phone-home to disable, because the export
+  path exists only on machines an org has enrolled. Governance here isn't an apology for
+  collection; it's the feature that lets an org turn collection on with confidence.</p>
 
-  <p>Stella's invariant #3 today: <strong>zero telemetry egress by default</strong>, and even the
-  enrolled Enterprise managed mode may export only a content-free operational rollup — prompts,
-  paths, tool payloads, reasoning, and errors are <em>never exportable</em>, enforced by a
-  reviewed allowlist and a sentinel harness every egress encoder must register with. Training
-  needs the opposite: full-fidelity content. There is no clever encoding that squares that circle,
-  so the design doesn't pretend to — it adds a second, separate, stricter consent channel:</p>
+  <p>The instrument:</p>
 
   <div class="principle">
     <span class="k">The Trace Charter</span>
@@ -1046,18 +1181,17 @@
     <li><strong>Audit trail.</strong> Every export batch is logged locally and server-side —
     device, charter version, byte counts, cursor range. “What left this machine, and under what
     authority” is always answerable.</li>
-    <li><strong>Same enforcement teeth.</strong> The charter path lands as an appended amendment
-    to invariant #3 (append, never renumber) and extends the existing sentinel-harness pattern: a
-    <code>TraceExportEncoder</code> registered in the same reviewed registry, so adding an
-    exportable field fails the gate until a human answers “is this consented content?”.</li>
+    <li><strong>Enforced in code, not policy.</strong> The export path ships behind a reviewed
+    encoder registry: adding an exportable field is a human decision in review, never a side
+    effect of adding a column. What the Uplink can send is exactly what the charter says it can —
+    provably, from source.</li>
   </ul>
 
-  <div class="principle warn">
-    <span class="k">Called out loud</span>
-    <p>Amending invariant #3 is the single most consequential change this design asks of Stella.
-    It must ship as its own reviewed PR with its own witness tests — never smuggled in as a side
-    effect of the feature work. If the maintainer rejects the amendment, this design has no
-    fallback and says so.</p>
+  <div class="principle">
+    <span class="k">The standalone posture, stated once</span>
+    <p>Un-enrolled Stella is not “Stella with telemetry off” — it is Stella with no telemetry
+    path in its universe: no Uplink, no charter, no endpoint, nothing to opt out of. Enrollment
+    adds the connection; revocation removes it; both are the org's call.</p>
   </div>
 
   <h3><span class="tick">▸</span>Managed packs — per-client configuration as a product (R4)</h3>
@@ -1094,6 +1228,7 @@
 <span class="c">scars healed</span>   3 — including <span class="ok">“migration runner drops FK ordering”</span> (failed 2026-08-02, never again)
 <span class="c">workspace</span>      71% → <span class="ok">78%</span> solve rate · 24 tasks × 5 repeats · CI [+2.1, +11.8]
 <span class="c">general</span>        held · Harbor Δ +0.4 (n.s.) — no forgetting
+<span class="c">drift</span>          0.31 of budget · ledger 1.9/4.0 since base · invariant probes still · anchor rebuild not due
 <span class="c">rejected first</span> v2026.08.06-1 <span class="r">reopened scar #114</span> — gate refused it, corpus adjusted
 <span class="c">rollback</span>       one click → v2026.08.05-1 · scars stay regardless
 </div>
@@ -1180,7 +1315,8 @@
         scars authored verifier-side; periodic human spot-audit sampled under the charter.</td></tr>
     <tr><td><strong>Catastrophic forgetting</strong></td>
         <td class="m">The specialist forgets general competence.</td>
-        <td class="m">Adapter-bounded drift + the general suite as a hard non-inferiority gate.</td></tr>
+        <td class="m">KL-anchored training, replay mix, and adapter norm budgets in the loss
+        itself, with the general suite as the hard gate behind them (§06, §08).</td></tr>
     <tr><td><strong>Corpus poisoning</strong></td>
         <td class="m">One chaotic repo in a group degrades the whole model — or an adversarial
         contributor plants trajectories.</td>
@@ -1195,6 +1331,12 @@
         <td class="m">Training toward the workspace suite inflates its numbers.</td>
         <td class="m">Scars are exact regressions — overfitting them is the point. The workspace
         suite rotates a held-out split; RFT (when used) trains only on the training split.</td></tr>
+    <tr><td><strong>Guard rot</strong></td>
+        <td class="m">Frozen probes and sentinel baselines go stale as the real work shifts — the
+        guards keep passing while watching the wrong things.</td>
+        <td class="m">Probe batteries are versioned and refreshed from recent traces on a cadence;
+        every live escape must become a probe or a scar; scheduled drills prove the alarms still
+        fire (§08).</td></tr>
     <tr><td><strong>Statistical power</strong></td>
         <td class="m">Small suites can't resolve small deltas; noise promotes or blocks.</td>
         <td class="m">Repeats per task, CIs on every reported delta, suite-sized thresholds
@@ -1236,8 +1378,8 @@
   <div class="tbl"><table>
     <tr><th>Phase</th><th>Ships</th><th>Done when</th></tr>
     <tr><td><strong>P0 · Consent &amp; corpus</strong></td>
-        <td class="m">Workspace groups modeled in Oxagen; Trace Charter; invariant #3 amendment
-        PR; Uplink export path; Trace Lake.</td>
+        <td class="m">Workspace groups modeled in Oxagen; Trace Charter; Uplink export path;
+        Trace Lake.</td>
         <td class="m">An enrolled client's traces land org-scoped and workspace-keyed; revoking
         the charter stops egress at the next session boundary; community build byte-identical in
         behavior.</td></tr>
@@ -1247,8 +1389,9 @@
         <td class="m">Fresh laptop → working custom-model session, zero terminal, zero
         copy-paste (R3's acceptance, demonstrated on video).</td></tr>
     <tr><td><strong>P2 · First weights</strong></td>
-        <td class="m">Dataset Builder; first adapter training; model registry; human-approved
-        promotion; rollback.</td>
+        <td class="m">Dataset Builder; first adapter training with KL anchor + replay mix;
+        weight-space guards and probe battery v1; model registry; human-approved promotion;
+        rollback.</td>
         <td class="m">One group model beats its base on the workspace suite, is promoted, rolled
         back, and re-promoted — all three transitions clean.</td></tr>
     <tr><td><strong>P3 · Proving Ground</strong></td>
@@ -1257,10 +1400,12 @@
         <td class="m">A deliberately injected failure becomes a validated scar within a day and
         automatically blocks a candidate built to reopen it.</td></tr>
     <tr><td><strong>P4 · Autonomy</strong></td>
-        <td class="m">Continuous training triggers; autonomous promotion; canary + auto-rollback;
-        Improvement Feed and delta cards; ablation cadence.</td>
+        <td class="m">Continuous training triggers; autonomous promotion; live sentinels + drift
+        ledger; the full rollback ladder with scheduled drills; Improvement Feed and delta cards;
+        ablation cadence.</td>
         <td class="m">Thirty unattended days: promotions occurred, zero human interventions, zero
-        scar regressions in production, and the feed explains itself.</td></tr>
+        scar regressions in production, at least one drill-fired rollback recovered clean, and
+        the feed explains itself.</td></tr>
   </table></div>
 
   <div class="principle">
