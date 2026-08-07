@@ -385,6 +385,35 @@ pub enum AgentEvent {
     /// (`stella-core` steering) — the transcript's record that the model
     /// was steered, and when.
     Steered { text: String },
+    /// The turn parked on an engine-side wait (#1471, #1857): a tool
+    /// deposited a wait request and the engine is now probing on its own
+    /// clock — zero model calls until the watched state changes or the
+    /// deadline expires. The typed twin of the prose "⏳ Parked" narration,
+    /// so a consumer can tell a park from model text, render a live
+    /// heartbeat, and attribute the wall-clock gap. The matching
+    /// [`AgentEvent::TurnWoken`] ends the span. Additive to the wire
+    /// contract: consumers recorded before parked waits existed never see it.
+    TurnParked {
+        /// What the wait is for — the tool's human-readable description of
+        /// the watched condition (e.g. "CI for branch main settles").
+        description: String,
+        /// Seconds between engine-side probes of the watched state.
+        poll_interval_secs: u64,
+        /// Seconds the park may last before it wakes with a timeout.
+        deadline_secs: u64,
+    },
+    /// The parked turn woke and the next model call is imminent — closes the
+    /// span its [`AgentEvent::TurnParked`] opened. Additive to the wire
+    /// contract, like its twin.
+    TurnWoken {
+        /// `"changed"` | `"deadline_expired"` — mirrors
+        /// `stella-core::waiting::WakeReason` (kept as a string here so
+        /// `stella-protocol` never depends on `stella-core`).
+        reason: String,
+        /// Engine-side probes spent while parked — the poll history the
+        /// transcript deliberately never carries.
+        polls_used: u64,
+    },
     /// Loop detection fired (receipts spec §6.3, #364 gap 3): the typed
     /// twin of the prose steer/abort, so receipts can parse the decision
     /// instead of string-matching an `Error` prefix. Emitted on BOTH
@@ -510,6 +539,14 @@ pub enum AgentEvent {
         /// `serde(default)` — absent on pre-identity journals.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         summarized_blocks: Vec<String>,
+        /// The replacement bytes each in-place rewrite left behind, one entry
+        /// per digest — what lets reconstruction resolve a compacted block to
+        /// the bytes the model received rather than the pre-compaction output
+        /// under the same `call_id` (#1667); see [`CompactionRewrite`].
+        /// `serde(default)` — absent on journals written before rewrites were
+        /// journaled, whose compacted blocks surface as digest mismatches.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rewrites: Vec<crate::CompactionRewrite>,
         /// The budget this pass actually compared against — the raw compaction
         /// budget divided by the model's calibration factor — and that factor.
         /// The event's `before/after_tokens` are raw estimates; these are the
@@ -1046,6 +1083,8 @@ agent_event_tags! {
     SpeculationDiscarded => "speculation_discarded",
     Retry => "retry",
     Steered => "steered",
+    TurnParked => "turn_parked",
+    TurnWoken => "turn_woken",
     LoopDetected => "loop_detected",
     BudgetDenied => "budget_denied",
     RetriesExhausted => "retries_exhausted",
@@ -1450,5 +1489,8 @@ impl TaskStatus {
     }
 }
 
+// The event surface's tests, split to a sibling file (the `anthropic/tests.rs`
+// pattern) so the wire contract itself stays under the file-size ratchet
+// (#1857).
 #[cfg(test)]
 mod tests;

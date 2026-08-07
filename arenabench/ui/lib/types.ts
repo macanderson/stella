@@ -185,6 +185,17 @@ export interface TranscriptEntry {
   meta?: Record<string, unknown>;
 }
 
+/** One quick-start head-to-head as /api/presets returns it: a fully
+ * configured match in the same shape a parsed template arrives in, so the
+ * wizard applies both through one code path. */
+export interface Preset {
+  key: string;
+  title: string;
+  blurb: string;
+  match: ParsedMatch;
+  required_env?: Record<string, string[]>;
+}
+
 /** A parsed arenabench.toml as /api/templates/parse returns it. */
 export interface ParsedMatch {
   name?: string;

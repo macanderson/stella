@@ -4161,7 +4161,7 @@ async fn run_lead_turn(
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
-        cfg.provider.id.to_string(),
+        crate::cache_insight::InsightScope::from_config(cfg),
         in_tx.clone(),
         LEAD.to_string(),
         Some(registry.task_board()),
@@ -4328,7 +4328,7 @@ async fn run_lead_pipeline_turn(
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
-        cfg.provider.id.to_string(),
+        crate::cache_insight::InsightScope::from_config(cfg),
         in_tx.clone(),
         LEAD.to_string(),
         Some(registry.task_board()),

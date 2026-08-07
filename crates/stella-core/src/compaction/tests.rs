@@ -152,6 +152,60 @@ fn retention_reports_the_block_identity_the_manifest_cited() {
 }
 
 #[test]
+fn every_in_place_rewrite_journals_its_replacement_bytes() {
+    // The emission witness for #1667: a pass that rewrites a result in place
+    // must report the replacement's identity, digest, and bytes, so the
+    // journal can resolve the post-compaction block exactly. Retention ages 8
+    // distinct outputs here, so 8 distinct replacement records must ride the
+    // report — each one the record OF THE CURRENT (post-rewrite) output.
+    let mut messages = long_turn(12, 5_000);
+    let (_, report) = compact_measured(
+        &mut messages,
+        u64::MAX,
+        Some(RetentionPolicy {
+            keep_recent_steps: 4,
+        }),
+    );
+    let report = report.expect("retention must age and report");
+    assert_eq!(report.aged, 8, "{report:?}");
+    assert_eq!(report.rewrites.len(), 8, "{:?}", report.rewrites);
+    // The oldest aged result's current bytes are journaled under its current
+    // identity — byte-for-byte the record `tool_result_rewrite` derives.
+    let expected = tool_result_rewrite(&messages[3].tool_results[0].output);
+    assert!(
+        report.rewrites.contains(&expected),
+        "rewrites must carry the post-rewrite record {expected:?}: {:?}",
+        report.rewrites
+    );
+    // And no record names a pre-rewrite (full) output: every entry's content
+    // is a compacted form.
+    for rewrite in &report.rewrites {
+        let output: ToolOutput = serde_json::from_str(&rewrite.content).expect("canonical json");
+        assert!(
+            is_compacted_output(&output),
+            "a rewrite record must hold replacement bytes, not the original: {rewrite:?}"
+        );
+    }
+}
+
+#[test]
+fn identical_stub_rewrites_collapse_to_one_journal_entry() {
+    // Size discipline for #1667: every evicted result leaves the same
+    // constant stub bytes, and the journal needs that preimage once per
+    // digest, not once per result.
+    let mut messages = long_turn(6, 5_000);
+    let (_, report) = compact_measured(&mut messages, 100, None);
+    let report = report.expect("a tiny budget must force eviction");
+    assert!(report.evicted >= 2, "{report:?}");
+    let stub = tool_result_rewrite(&messages[3].tool_results[0].output);
+    assert_eq!(
+        report.rewrites,
+        vec![stub],
+        "identical stubs must dedupe to one digest-keyed entry"
+    );
+}
+
+#[test]
 fn retention_waits_for_a_batch_before_touching_the_prefix() {
     // Cache-prefix discipline (invariant 7): aging one result the moment
     // it crosses the horizon would rewrite the prefix on every step.

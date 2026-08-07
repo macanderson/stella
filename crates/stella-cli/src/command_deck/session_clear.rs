@@ -64,7 +64,10 @@
 //!    it — but their closeout is *sealed out* of the new board by the spawn
 //!    generation watermark ([`SubSessions::seal_task_board`]), and
 //!    [`settle_worker_task`] quarantines the late report as a note on the
-//!    lead's lane instead of folding it silently back in. Without the seal
+//!    lead's lane instead of folding it silently back in. The seal holds
+//!    only because the driver is the persisted mirror's sole writer: a
+//!    worker's own closeout records no board at all (#1708 — see
+//!    `subsession::closeout`). Without the seal
 //!    the drop would not even be safe: board ids restart at "1" after a
 //!    clear, so a pre-clear worker for task "1" would complete whatever
 //!    *new* task "1" the cleared session had since created.

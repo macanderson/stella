@@ -51,6 +51,7 @@ const PROVIDER_FIELDS: &[&str] = &[
     "api_key_env",
     "default_model",
     "dialect",
+    "cache_ttl",
 ];
 
 /// `mcp` — [`super::McpSettings`].

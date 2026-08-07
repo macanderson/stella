@@ -700,6 +700,12 @@ pub fn event_signature(event: &AgentEvent) -> String {
         // Steering text is user-authored free text; only its occurrence is
         // structural (same posture as budget ticks).
         AgentEvent::Steered { .. } => "steered".to_string(),
+        // Whether a turn parks at all depends on external state and timing —
+        // like `SpeculationDiscarded`, [`structural_diff`] excludes the pair
+        // before comparing; the signatures exist only to keep this function
+        // total.
+        AgentEvent::TurnParked { .. } => "turn_parked".to_string(),
+        AgentEvent::TurnWoken { .. } => "turn_woken".to_string(),
         // Budget ticks vary in magnitude every run; only their occurrence is
         // structural.
         AgentEvent::BudgetTick { mode, .. } => format!("budget_tick:{mode:?}"),
@@ -855,6 +861,11 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
     // position and report drift about the observability plane rather than
     // about behaviour. What the child DID is still compared: its forwarded
     // `tool_start`/`tool_result`/`step_usage` signatures stay in the walk.
+    // `TurnParked`/`TurnWoken` (#1857) join the exclusions on both grounds at
+    // once: whether a run parks — and how many polls it spends — depends on
+    // external state and wall-clock timing (`SpeculationDiscarded`'s reason),
+    // and the pair is additive observability absent from goldens recorded
+    // before parked waits existed (the context receipts' reason).
     let keep = |e: &&AgentEvent| {
         !matches!(
             e,
@@ -862,6 +873,8 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
                 | AgentEvent::BlockRegistered { .. }
                 | AgentEvent::StepManifest { .. }
                 | AgentEvent::SpeculationDiscarded { .. }
+                | AgentEvent::TurnParked { .. }
+                | AgentEvent::TurnWoken { .. }
                 | AgentEvent::SubAgent { .. }
                 | AgentEvent::Unknown { .. }
         )

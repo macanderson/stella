@@ -34,6 +34,7 @@ __all__ = [
     "API_CREDENTIALS",
     "AgentSpec",
     "credential_env_for",
+    "dead_seat_reason",
     "launch_flags",
     "launch_model",
     "missing_credentials",
@@ -104,6 +105,13 @@ class AgentSpec:
     #: cannot authenticate at all, so it counts as credentials present
     #: without ever being written to.
     alt_credential_env: tuple[str, ...] = ()
+    #: Environment variable this agent reads its reasoning effort from, when
+    #: it reads one at all. This is the *plumbing* for :data:`KNOB_EFFORT`:
+    #: declaring the knob honoured without naming the variable is how a match
+    #: TOML's ``effort`` ran the Claude Code arm at its default — two runs
+    #: that were secretly identical, the exact failure the honours system
+    #: exists to prevent.
+    effort_env: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -169,6 +177,7 @@ def _builtin(
     description: str = "",
     *,
     effort: bool = False,
+    effort_env: str | None = None,
     reasoning: bool = False,
     base_url_env: str | None = None,
     token_env: tuple[str, ...] = (),
@@ -181,12 +190,16 @@ def _builtin(
     most CLI agents expose neither.
 
     ``base_url_env`` implies :data:`KNOB_BASE_URL` rather than being declared
-    alongside it. The two cannot drift apart that way, and drift is exactly the
-    failure that matters here: an agent listed as honouring ``base_url`` with
-    no variable to put it in would report a route it never took.
+    alongside it, and ``effort_env`` implies :data:`KNOB_EFFORT` the same way.
+    The declaration and its variable cannot drift apart that way, and drift is
+    exactly the failure that matters here: an agent listed as honouring
+    ``base_url`` with no variable to put it in would report a route it never
+    took. ``effort`` without ``effort_env`` remains for an agent whose effort
+    Harbor itself applies — a declaration this module cannot verify, which is
+    why the variable-backed form is preferred.
     """
     honours = {KNOB_MODEL}
-    if effort:
+    if effort or effort_env:
         honours.add(KNOB_EFFORT)
     if reasoning:
         honours.add(KNOB_REASONING)
@@ -201,6 +214,7 @@ def _builtin(
         base_url_env=base_url_env,
         token_env=token_env,
         alt_credential_env=alt_credential_env,
+        effort_env=effort_env,
     )
 
 
@@ -216,7 +230,10 @@ AGENTS: dict[str, AgentSpec] = {
             "Claude Code",
             "Anthropic's coding CLI. Routable at any Anthropic-shaped "
             "endpoint, so it can also be seated on a GLM or self-hosted model.",
-            effort=True,
+            # Harbor's Claude Code agent reads this env fallback; nothing else
+            # carries a seat's effort into the CLI, so without it a match
+            # TOML's `effort` silently ran this arm at its default.
+            effort_env="CLAUDE_CODE_EFFORT_LEVEL",
             reasoning=True,
             # Harbor's Claude Code agent already forwards ANTHROPIC_BASE_URL
             # into the task container and, when one is set, hands the model
@@ -265,7 +282,7 @@ def resolve_agent(slug: str) -> AgentSpec:
         raise KeyError(f"unknown agent {slug!r}; registered agents: {known}") from None
 
 
-def launch_flags(contestant: Contestant) -> list[str]:
+def launch_flags(contestant: Contestant, binary: str | None = None) -> list[str]:
     """The ``harbor run`` flags that select this contestant's agent.
 
     ``--agent-import-path`` was folded into ``--agent`` — which takes a
@@ -273,10 +290,13 @@ def launch_flags(contestant: Contestant) -> list[str]:
     Which flag to send is asked of the installed binary rather than derived
     from its version number, so this keeps working across the fold in both
     directions (:func:`arenabench.harbor.supports_agent_import_path`).
+
+    ``binary`` is the Harbor this match resolved (datasets may pin their own);
+    the capability probe must ask that one, not whatever a global lookup finds.
     """
     spec = resolve_agent(contestant.agent)
     if spec.import_path:
-        if harbor.supports_agent_import_path():
+        if harbor.supports_agent_import_path(binary):
             return ["--agent-import-path", spec.import_path]
         return ["--agent", spec.import_path]
     if spec.harbor_agent:
@@ -344,3 +364,42 @@ def missing_credentials(contestant: Contestant) -> list[str]:
     if any(contestant.env.get(name) for name in candidates):
         return []
     return candidates
+
+
+def dead_seat_reason(contestant: Contestant) -> str | None:
+    """Why this seat would fail every trial despite passing the credential check.
+
+    The trap this catches is real and was measured: a Claude Code seat on
+    ``api: openrouter`` with no ``base_url`` holds a perfectly valid
+    ``OPENROUTER_API_KEY`` — so :func:`missing_credentials` is satisfied — but
+    the CLI only reads the variables in :attr:`AgentSpec.token_env` /
+    :attr:`AgentSpec.alt_credential_env`, none of which is set, and Harbor has
+    no endpoint to alias the provider key toward. The agent boots with
+    ``apiKeySource: none`` and every trial dies at turn one with an
+    authentication error that scores as a 0.0 indistinguishable from a real
+    loss. Refusing at creation is the honest version of that outcome.
+
+    ``None`` means no such structural failure is predicted — not that the
+    credential is *valid*, which only the provider can say.
+    """
+    spec = resolve_agent(contestant.agent)
+    own = spec.token_env + spec.alt_credential_env
+    if not own:
+        return None
+    if any(contestant.env.get(name) for name in own):
+        return None
+    if routes_directly(contestant):
+        # `_routing_environment` aliases the provider key into the agent's
+        # own variable when a base URL names where it is valid.
+        if any(
+            contestant.env.get(name)
+            for name in credential_env_for(contestant.engine.api)
+        ):
+            return None
+    names = ", ".join(own)
+    return (
+        f"{spec.title} reads credentials only from {names}; none is set, and "
+        f"a provider key for {contestant.engine.api!r} cannot reach it "
+        "without a base_url naming an endpoint that key is valid at. Seat it "
+        "on its home provider with one of those variables, or set a base_url."
+    )

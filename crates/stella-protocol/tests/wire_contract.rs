@@ -524,6 +524,15 @@ fn sample_events() -> Vec<AgentEvent> {
         AgentEvent::Steered {
             text: "actually, use the other file".into(),
         },
+        AgentEvent::TurnParked {
+            description: "CI for branch main settles".into(),
+            poll_interval_secs: 5,
+            deadline_secs: 600,
+        },
+        AgentEvent::TurnWoken {
+            reason: "changed".into(),
+            polls_used: 3,
+        },
         AgentEvent::LoopDetected {
             turn_instance: 3,
             kind: "short_cycle".into(),
@@ -551,6 +560,11 @@ fn sample_events() -> Vec<AgentEvent> {
             superseded_blocks: vec!["blk_c".into()],
             aged_blocks: vec!["blk_d".into()],
             summarized_blocks: vec!["blk_e".into()],
+            rewrites: vec![stella_protocol::CompactionRewrite {
+                block_id: "blk_f".into(),
+                content_digest: "sha256:aa".into(),
+                content: "{\"ok\":{\"content\":\"[stub]\"}}".into(),
+            }],
             effective_budget_tokens: 136_363,
             calibration_factor: 1.1,
         },
@@ -569,6 +583,7 @@ fn sample_events() -> Vec<AgentEvent> {
             superseded_blocks: vec![],
             aged_blocks: vec![],
             summarized_blocks: vec![],
+            rewrites: vec![],
             effective_budget_tokens: 0,
             calibration_factor: 0.0,
         },
