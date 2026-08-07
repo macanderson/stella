@@ -285,6 +285,7 @@ fn all_stage_kinds() -> Vec<StageKind> {
     vec![
         Triage,
         ContextRecall,
+        Research,
         Plan,
         ScopeReview,
         Witness,
@@ -315,6 +316,7 @@ fn all_model_call_roles() -> Vec<ModelCallRole> {
     vec![
         Unknown,
         Triage,
+        Research,
         Plan,
         PlanRepair,
         WitnessAuthor,

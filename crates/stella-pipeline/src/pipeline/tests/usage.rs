@@ -111,7 +111,11 @@ async fn run_triage_only(
     let result = pipeline
         .triage("inspect the repository", budget, &mut total)
         .await;
-    (result.map(|(assessment, _research)| assessment), total, drain(&mut rx))
+    (
+        result.map(|(assessment, _research)| assessment),
+        total,
+        drain(&mut rx),
+    )
 }
 
 #[tokio::test]

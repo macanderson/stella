@@ -46,7 +46,8 @@ fn tool_result_roundtrips_and_streams_without_speculated_still_parse() {
 
     // A stream recorded BEFORE the field existed must still parse, with
     // the safe default (not speculated).
-    let old = r#"{"type":"tool_result","call_id":"c","output":{"ok":{"content":""}},"duration_ms":1}"#;
+    let old =
+        r#"{"type":"tool_result","call_id":"c","output":{"ok":{"content":""}},"duration_ms":1}"#;
     match serde_json::from_str::<AgentEvent>(old) {
         Ok(AgentEvent::ToolResult { speculated, .. }) => {
             assert!(!speculated, "missing field must default to false")
@@ -180,8 +181,7 @@ fn compaction_event_carries_counts_and_block_identities() {
 fn legacy_compaction_without_identities_still_parses() {
     // A journal written before §6.2 has counts but no identity fields; it
     // must still deserialize (additive contract), with empty identity vecs.
-    let old =
-        r#"{"type":"compaction","before_tokens":9,"after_tokens":4,"evicted":1,"deduped":0}"#;
+    let old = r#"{"type":"compaction","before_tokens":9,"after_tokens":4,"evicted":1,"deduped":0}"#;
     match serde_json::from_str::<AgentEvent>(old).unwrap() {
         AgentEvent::Compaction {
             evicted,

@@ -56,7 +56,11 @@ macro_rules! research_scenario {
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
         let outcome = pipeline
-            .run("Refactor the retry layer end to end", &mut messages, &mut budget)
+            .run(
+                "Refactor the retry layer end to end",
+                &mut messages,
+                &mut budget,
+            )
             .await
             .expect("run succeeds");
         (outcome, drain(&mut rx), provider.shapes())
@@ -162,9 +166,7 @@ async fn triage_questions_fan_out_as_sub_agents_between_triage_and_plan() {
     );
     assert_eq!(finished, 2, "every bracket closes");
     assert!(
-        started
-            .iter()
-            .all(|&i| i > research_idx && i < plan_idx),
+        started.iter().all(|&i| i > research_idx && i < plan_idx),
         "the fan-out runs between Research and Plan: started at {started:?}, \
          research at {research_idx}, plan at {plan_idx}"
     );

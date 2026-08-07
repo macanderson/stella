@@ -2311,7 +2311,6 @@ fn isolated_config(n: u32) -> PipelineConfig {
 
 mod verification_honesty;
 
-
 /// The feedback airlock (`witness::airlock`) observed end to end: what a
 /// verification failure tells the operator versus what it tells the worker.
 /// A child module, so it reaches the scripted ports above via `super::*`.

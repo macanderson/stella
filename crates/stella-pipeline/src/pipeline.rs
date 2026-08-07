@@ -68,7 +68,6 @@ use crate::candidate_narration::{
 };
 use crate::candidate_steering::SteeringFanOut;
 use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt};
-use crate::research::ResearchFinding;
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, ContextRecallPort,
     CoverageProbe, DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LintProbe, LintRecord,
@@ -76,6 +75,7 @@ use crate::ports::{
     RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner,
     WorkspaceError,
 };
+use crate::research::ResearchFinding;
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
     needs_scope_review,
@@ -1343,7 +1343,6 @@ impl<'a> Pipeline<'a> {
             candidates_run,
         })
     }
-
 
     // Conversational fast path
 

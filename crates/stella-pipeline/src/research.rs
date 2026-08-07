@@ -63,7 +63,11 @@ pub fn bound_research_findings(findings: Vec<ResearchFinding>) -> Vec<ResearchFi
             break;
         }
         if finding.answer.chars().count() > RESEARCH_FINDING_CHARS {
-            let kept: String = finding.answer.chars().take(RESEARCH_FINDING_CHARS).collect();
+            let kept: String = finding
+                .answer
+                .chars()
+                .take(RESEARCH_FINDING_CHARS)
+                .collect();
             finding.answer = format!("{kept}\n{RESEARCH_DROP_MARKER}");
         }
         // Chars, matching the budget's unit, for the same reason the recall
@@ -119,7 +123,10 @@ mod tests {
         let out = bound_research_findings(vec![finding("q", &long)]);
         assert_eq!(out.len(), 1);
         assert!(out[0].answer.contains(RESEARCH_DROP_MARKER));
-        assert!(out[0].answer.chars().count() <= RESEARCH_FINDING_CHARS + RESEARCH_DROP_MARKER.len() + 1);
+        assert!(
+            out[0].answer.chars().count()
+                <= RESEARCH_FINDING_CHARS + RESEARCH_DROP_MARKER.len() + 1
+        );
     }
 
     #[test]
