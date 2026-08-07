@@ -112,6 +112,32 @@ class TestOutcomeCounting:
         assert outcomes["timeouts_after_solve"] == 1
         assert outcomes["timeouts_before_solve"] == 1
 
+    def test_outcome_reasons_are_counted_and_drive_the_timeout_split(self) -> None:
+        """#2076: the composition is the taxonomy's counts, and the timeout
+        split consumes the labels — not a substring match. The witness: an
+        unsolved trial whose exception merely CONTAINS 'timeout'
+        (`ReadTimeout`) is `agent_error`, where the old regex counted it as
+        a real budget timeout."""
+        seat = _seat(
+            {
+                "a": _trial("a", resolved=True),
+                "b": _trial("b", resolved=True, failure="AgentTimeoutError"),
+                "c": _trial("c", resolved=False, failure="ReadTimeout"),
+                "d": _trial("d", resolved=False, failure="AgentTimeoutError"),
+            }
+        )
+        outcomes = match_row(_match([seat]))["seats"][0]["outcomes"]
+        assert outcomes["outcome_reasons"] == {
+            "solved_clean": 1,
+            "solved_then_timeout": 1,
+            "agent_error": 1,
+            "timeout_before_solve": 1,
+        }
+        assert outcomes["timeouts_after_solve"] == 1
+        assert outcomes["timeouts_before_solve"] == 1, (
+            "ReadTimeout must not inflate the budget-timeout count"
+        )
+
     def test_voids_are_outside_every_rate_and_visible(self) -> None:
         """An infrastructure void (judged, no verdict) is not agent
         performance: excluded from solved/failed, reported as its own

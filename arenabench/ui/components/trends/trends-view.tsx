@@ -58,6 +58,7 @@ function zeroOutcomes(): SeriesOutcomes {
     incidents_on_solved: 0,
     timeouts_after_solve: 0,
     timeouts_before_solve: 0,
+    outcome_reasons: {},
     clock_time: 0,
     priced_cost: 0,
     priced_cost_per_solve: null,
@@ -75,6 +76,9 @@ function addOutcomes(into: SeriesOutcomes, from: SeriesOutcomes): void {
   into.incidents_on_solved += from.incidents_on_solved;
   into.timeouts_after_solve += from.timeouts_after_solve;
   into.timeouts_before_solve += from.timeouts_before_solve;
+  for (const [reason, count] of Object.entries(from.outcome_reasons ?? {})) {
+    into.outcome_reasons[reason] = (into.outcome_reasons[reason] ?? 0) + count;
+  }
   into.clock_time += from.clock_time;
   into.priced_cost =
     into.priced_cost === null || from.priced_cost === null
@@ -360,6 +364,112 @@ function PointTable({ group }: { group: Group }) {
 }
 
 /**
+ * The #2076 taxonomy in stack order, with its rendering. Group B only —
+ * voids are Group A, outside every rate, and are drawn *after* a gap in a
+ * dim tone rather than inside the scored stack, so composition never
+ * launders an infrastructure void into an agent outcome.
+ */
+const REASON_STYLE: Array<{ key: string; label: string; color: string; opacity: number }> = [
+  { key: "solved_clean", label: "solved clean", color: "var(--ok)", opacity: 1 },
+  { key: "solved_then_timeout", label: "solved, then timeout", color: "var(--ok)", opacity: 0.55 },
+  { key: "solved_then_error", label: "solved, then error", color: "var(--ok)", opacity: 0.3 },
+  { key: "failed_wrong_answer", label: "wrong answer", color: "var(--bad)", opacity: 1 },
+  { key: "timeout_before_solve", label: "timeout before solve", color: "var(--warn)", opacity: 0.9 },
+  { key: "agent_error", label: "agent error", color: "var(--bad)", opacity: 0.55 },
+];
+
+/**
+ * Outcome composition per point — the panel that makes a flat solve rate
+ * that is quietly changing *shape* (fewer wrong answers, more timeouts)
+ * visible. One proportional stacked bar per seat per SUT commit, scored
+ * trials only; voids follow after a gap as dim blocks with their count.
+ */
+function CompositionPanel({ group }: { group: Group }) {
+  const seats = group.rows[0].seats;
+  const keys = seatKeys(group.rows[0]);
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[10px] lowercase tracking-[0.09em] text-dim">
+        outcome composition
+      </div>
+      <div className="space-y-1">
+        {group.points.map((point) =>
+          seats.map((seat, seatIndex) => {
+            const o = point.seats.get(keys[seatIndex])?.outcomes;
+            if (!o || o.judged === 0) return null;
+            const reasons = o.outcome_reasons ?? {};
+            const known = REASON_STYLE.reduce((sum, r) => sum + (reasons[r.key] ?? 0), 0);
+            const unlabelled = o.scored - known;
+            return (
+              <div
+                key={`${point.sut}:${seat.id}`}
+                className="flex items-center gap-2 font-mono text-[10.5px] text-muted"
+              >
+                <span className="w-[72px] flex-none truncate">
+                  {point.sut === "unpinned" ? "unpinned" : point.sut.slice(0, 8)}
+                </span>
+                {seats.length > 1 && (
+                  <span className="w-[88px] flex-none truncate" style={{ color: seat.color }}>
+                    {seat.name}
+                  </span>
+                )}
+                <span className="flex h-[11px] w-[260px] flex-none items-stretch overflow-hidden rounded-[3px]">
+                  {REASON_STYLE.map((style) => {
+                    const count = reasons[style.key] ?? 0;
+                    if (count === 0 || o.scored === 0) return null;
+                    return (
+                      <Tip key={style.key} content={`${style.label}: ${count}/${o.scored} scored`}>
+                        <span
+                          style={{
+                            width: `${(count / o.scored) * 100}%`,
+                            background: style.color,
+                            opacity: style.opacity,
+                          }}
+                        />
+                      </Tip>
+                    );
+                  })}
+                  {unlabelled > 0 && (
+                    <Tip content={`${unlabelled} scored trial(s) without a label — matches recorded before the taxonomy existed`}>
+                      <span
+                        style={{
+                          width: `${(unlabelled / Math.max(1, o.scored)) * 100}%`,
+                          background: "var(--dim)",
+                          opacity: 0.35,
+                        }}
+                      />
+                    </Tip>
+                  )}
+                </span>
+                {o.voids > 0 && (
+                  <Tip content={`${o.voids} infrastructure void(s) — outside every rate, never part of the composition`}>
+                    <span className="text-dim">∅ {o.voids}</span>
+                  </Tip>
+                )}
+              </div>
+            );
+          }),
+        )}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-dim">
+        {REASON_STYLE.map((style) => (
+          <span key={style.key} className="inline-flex items-center gap-1">
+            <span
+              className="inline-block size-[8px] rounded-[2px]"
+              style={{ background: style.color, opacity: style.opacity }}
+            />
+            {style.label}
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1">
+          <span className="text-dim">∅</span> void (excluded from rates)
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
  * One task's verdicts pooled at one point. All-same renders a glyph;
  * disagreement renders the fraction — which is the flaky-task signature
  * (git-multibranch's PASS FAIL FAIL FAIL was invisible until this grid).
@@ -488,6 +598,7 @@ function GroupCard({ group }: { group: Group }) {
           span many SUT commits, so a step between them is not a one-change delta.
         </p>
         <PointTable group={group} />
+        <CompositionPanel group={group} />
         <TaskGrid group={group} />
       </div>
     </section>

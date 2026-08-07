@@ -76,7 +76,10 @@ def _seat_outcomes(metrics: dict[str, Any]) -> dict[str, Any]:
     is still ``None`` is an infrastructure void, outside every rate.
     Timeouts split by whether the solve had already happened — after-solve
     (did not stop when done) and before-solve (ran out of time) mean
-    opposite things and are never merged.
+    opposite things and are never merged. The split consumes the
+    ``outcome_reason`` taxonomy (#2076), not a substring match: only the
+    exception the agent-budget machinery actually raises counts, so an
+    unrelated exception that merely mentions a timeout cannot inflate it.
     """
     judged = 0
     solved = 0
@@ -84,8 +87,7 @@ def _seat_outcomes(metrics: dict[str, Any]) -> dict[str, Any]:
     voids = 0
     incidents = 0
     incidents_on_solved = 0
-    timeouts_after_solve = 0
-    timeouts_before_solve = 0
+    reasons: dict[str, int] = {}
     clock_time = 0.0
     priced: float | None = 0.0
     for m in metrics.values():
@@ -95,23 +97,20 @@ def _seat_outcomes(metrics: dict[str, Any]) -> dict[str, Any]:
         clock_time += m.clock_time or 0.0
         if priced is not None:
             priced = None if m.priced_cost is None else priced + m.priced_cost
+        reason = m.outcome_reason() or "unlabelled"
+        reasons[reason] = reasons.get(reason, 0) + 1
         if m.resolved is None:
             voids += 1
             continue
-        is_timeout = "timeout" in (m.failure or "").lower()
         if m.resolved:
             solved += 1
             if m.failure:
                 incidents += 1
                 incidents_on_solved += 1
-                if is_timeout:
-                    timeouts_after_solve += 1
         else:
             failed += 1
             if m.failure:
                 incidents += 1
-                if is_timeout:
-                    timeouts_before_solve += 1
     scored = solved + failed
     return {
         "judged": judged,
@@ -121,8 +120,11 @@ def _seat_outcomes(metrics: dict[str, Any]) -> dict[str, Any]:
         "voids": voids,
         "incidents": incidents,
         "incidents_on_solved": incidents_on_solved,
-        "timeouts_after_solve": timeouts_after_solve,
-        "timeouts_before_solve": timeouts_before_solve,
+        "timeouts_after_solve": reasons.get("solved_then_timeout", 0),
+        "timeouts_before_solve": reasons.get("timeout_before_solve", 0),
+        # The composition the trends panel stacks — sorted so the payload
+        # is deterministic.
+        "outcome_reasons": dict(sorted(reasons.items())),
         "clock_time": round(clock_time, 2),
         "priced_cost": round(priced, 6) if priced is not None else None,
         # Cost per solve stays null-poisoned like every priced figure: an
