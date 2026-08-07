@@ -92,6 +92,16 @@ export function Topbar({
           >
             Arena
           </Tabs.Tab>
+          <Tabs.Tab
+            value="trends"
+            className={cn(
+              "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
+              "hover:bg-panel hover:text-foreground",
+              "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
+            )}
+          >
+            Trends
+          </Tabs.Tab>
         </Tabs.List>
       </Tabs.Root>
       <div className="ml-auto flex items-center gap-2 text-xs">

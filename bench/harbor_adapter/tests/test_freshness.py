@@ -61,18 +61,23 @@ STALE_DISTANCE = 291
 
 
 def _git(repo: Path, *args: str) -> str:
-    """Run git in `repo`, surfacing stderr when it fails.
+    """Run git, returning stdout — a failure's message carries git's stderr.
 
-    `check=True` alone raises a `CalledProcessError` whose repr names only
-    the exit status — a CI run died here with a bare "exit status 128" and
-    the reason (git's stderr) was captured and then thrown away, leaving
-    nothing to diagnose from. The assertion carries it instead.
+    ``check=True`` with ``capture_output=True`` raises an error whose message
+    is only the exit status: the captured stderr rides the exception unprinted,
+    which once left a CI-only fixture failure reading "exit status 128" with
+    git's actual ``fatal:`` line unrecoverable.
     """
-    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
-    assert proc.returncode == 0, (
-        f"git {' '.join(args)} in {repo} exited {proc.returncode}:\n{proc.stderr}"
+    result = subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=False
     )
-    return proc.stdout.strip()
+    if result.returncode != 0:
+        command = " ".join(["git", *args])
+        raise RuntimeError(
+            f"`{command}` in {repo} exited {result.returncode}: "
+            f"{result.stderr.strip()}"
+        )
+    return result.stdout.strip()
 
 
 def _stamp(commit: str) -> bytes:
@@ -93,21 +98,28 @@ def _binary(directory: Path, commit: str | None, *, name: str = "stella") -> Pat
 
 
 def _seed(root: Path, commits: int) -> Path:
-    """A clone whose `origin/main` is ``commits`` ahead of the root commit."""
+    """A clone whose `origin/main` is ``commits`` ahead of the root commit.
+
+    Origin's whole history exists before the one ``clone``, so the fixture
+    never fetches. Nothing here needs the work tree parked at the root commit
+    — every consumer addresses history through ``origin/main`` — and the
+    fetch/upload-pack pair was the sole multi-process git step in the suite:
+    the one CI failure this fixture has produced was that fetch dying with
+    status 128 on a runner that passed the identical tree minutes later.
+    """
     origin = root / "origin"
     origin.mkdir(parents=True)
     _git(origin, "init", "-q", "--initial-branch=main")
     _git(origin, "config", "user.email", "t@example.com")
     _git(origin, "config", "user.name", "t")
     _git(origin, "commit", "-q", "--allow-empty", "-m", "base")
+    for index in range(1, commits + 1):
+        _git(origin, "commit", "-q", "--allow-empty", "-m", f"c{index}")
 
     work = root / "work"
     _git(root, "clone", "-q", str(origin), str(work))
     _git(work, "config", "user.email", "t@example.com")
     _git(work, "config", "user.name", "t")
-    for index in range(1, commits + 1):
-        _git(origin, "commit", "-q", "--allow-empty", "-m", f"c{index}")
-    _git(work, "fetch", "-q", "origin")
     return work
 
 
