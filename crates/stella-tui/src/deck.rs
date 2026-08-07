@@ -403,6 +403,7 @@ impl PipelineRole {
             // and imply three configured models where there is one.
             R::Plan
             | R::PlanRepair
+            | R::Research
             | R::WitnessAuthor
             | R::WitnessRepair
             | R::Worker

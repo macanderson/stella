@@ -660,6 +660,7 @@ fn stage_name(stage: StageKind) -> &'static str {
     match stage {
         StageKind::Triage => "triage",
         StageKind::ContextRecall => "context_recall",
+        StageKind::Research => "research",
         StageKind::Plan => "plan",
         StageKind::ScopeReview => "scope_review",
         StageKind::Witness => "witness",
@@ -680,6 +681,7 @@ fn role_name(role: ModelCallRole) -> &'static str {
     match role {
         ModelCallRole::Unknown => "unknown",
         ModelCallRole::Triage => "triage",
+        ModelCallRole::Research => "research",
         ModelCallRole::Plan => "plan",
         ModelCallRole::PlanRepair => "plan_repair",
         ModelCallRole::WitnessAuthor => "witness_author",
