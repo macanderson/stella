@@ -61,23 +61,20 @@ STALE_DISTANCE = 291
 
 
 def _git(repo: Path, *args: str) -> str:
-    """Run git, returning stdout — a failure's message carries git's stderr.
+    """Run git for a fixture, carrying git's own reason on failure.
 
-    ``check=True`` with ``capture_output=True`` raises an error whose message
-    is only the exit status: the captured stderr rides the exception unprinted,
-    which once left a CI-only fixture failure reading "exit status 128" with
-    git's actual ``fatal:`` line unrecoverable.
+    ``check=True`` alone raised a bare ``CalledProcessError`` whose message
+    names the exit status and nothing else — the ``fatal:`` line that would
+    explain a CI-only failure was captured and then discarded, which made
+    the #2080 flake structurally undiagnosable from the log.
     """
-    result = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        command = " ".join(["git", *args])
+    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    if proc.returncode != 0:
         raise RuntimeError(
-            f"`{command}` in {repo} exited {result.returncode}: "
-            f"{result.stderr.strip()}"
+            f"git {' '.join(args)} in {repo} exited {proc.returncode}: "
+            f"{proc.stderr.strip() or proc.stdout.strip() or '<no output>'}"
         )
-    return result.stdout.strip()
+    return proc.stdout.strip()
 
 
 def _stamp(commit: str) -> bytes:
@@ -112,6 +109,12 @@ def _seed(root: Path, commits: int) -> Path:
     _git(origin, "init", "-q", "--initial-branch=main")
     _git(origin, "config", "user.email", "t@example.com")
     _git(origin, "config", "user.name", "t")
+    # Both `commit` and `fetch` may spawn a *detached* `git maintenance run
+    # --auto` behind the porcelain — the one thing in this fixture that runs
+    # concurrently with it and varies run to run. A test repo does its own
+    # housekeeping never, so switch it off rather than race it (#2080).
+    _git(origin, "config", "maintenance.auto", "false")
+    _git(origin, "config", "gc.auto", "0")
     _git(origin, "commit", "-q", "--allow-empty", "-m", "base")
     for index in range(1, commits + 1):
         _git(origin, "commit", "-q", "--allow-empty", "-m", f"c{index}")
@@ -120,6 +123,11 @@ def _seed(root: Path, commits: int) -> Path:
     _git(root, "clone", "-q", str(origin), str(work))
     _git(work, "config", "user.email", "t@example.com")
     _git(work, "config", "user.name", "t")
+    _git(work, "config", "maintenance.auto", "false")
+    _git(work, "config", "gc.auto", "0")
+    for index in range(1, commits + 1):
+        _git(origin, "commit", "-q", "--allow-empty", "-m", f"c{index}")
+    _git(work, "fetch", "-q", "origin")
     return work
 
 
@@ -140,6 +148,17 @@ def repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def base_commit(repo: Path) -> str:
     """The commit `origin/main` is exactly ``STALE_DISTANCE`` ahead of."""
     return _git(repo, "rev-list", "--max-parents=0", "origin/main")
+
+
+class TestGitHelper:
+    def test_a_failing_git_command_names_its_reason(self, tmp_path: Path) -> None:
+        """The #2080 flake was structurally undiagnosable: seventeen errors,
+        each saying only "exit status 128" because ``_git`` captured stderr
+        and then discarded it. The helper's failure must carry git's own
+        ``fatal:`` line, or the next environmental failure is equally opaque."""
+        _git(tmp_path, "init", "-q")
+        with pytest.raises(RuntimeError, match="fatal"):
+            _git(tmp_path, "rev-parse", "--verify", "no-such-ref")
 
 
 class TestEmbeddedIdentity:
