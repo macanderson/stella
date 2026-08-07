@@ -73,6 +73,14 @@ struct FinishedCandidate {
     cost_usd: f64,
 }
 
+/// One candidate's identity in the fan-out: its 1-based ordinal — the number
+/// every candidate-facing surface speaks (`candidate_start_notice`,
+/// [`ProofStep::VerdictDegraded`]) — and the isolated workspace it runs in.
+struct CandidateSlot<'w> {
+    ordinal: u32,
+    ws: &'w dyn CandidateWorkspace,
+}
+
 /// A [`CandidateWorkspacePort`] that lets exactly one `create` run at a time.
 ///
 /// Wrapping the port rather than serializing at the call sites is what makes
@@ -111,16 +119,37 @@ impl<'a> Pipeline<'a> {
     /// instead — it scores as a candidate that generated nothing and the rest
     /// of the fan-out goes on. The reason travels with the slot so the
     /// dispatcher can score it without re-deriving it.
+    ///
+    /// Each workspace is also handed the approved plan for its own private
+    /// task board here ([`CandidateWorkspace::seed_task_board`], #1719):
+    /// seeding at creation, before any dispatch, is what guarantees the
+    /// worker's very first `task_start` already resolves the ordinals the
+    /// scope gate numbered. This is the one caller that knows `n`, so the
+    /// "may this candidate's board report" decision is taken here — `create`
+    /// itself deliberately carries no fan-out width.
     pub(super) async fn create_candidate_workspaces(
         &self,
         port: &dyn CandidateWorkspacePort,
         n: u32,
+        plan: Option<&[PlanStep]>,
     ) -> Vec<Result<Box<dyn CandidateWorkspace>, String>> {
+        // The exact strings the scope gate's proposal rendered
+        // (`scope::build_proposal` maps a step to its description 1:1), so a
+        // candidate board and the session board seeded from the `ScopeReview`
+        // event can never disagree on a step's id or title.
+        let steps: Vec<String> = plan
+            .unwrap_or_default()
+            .iter()
+            .map(|step| step.description.clone())
+            .collect();
         let mut workspaces = Vec::with_capacity(n as usize);
         for i in 0..n {
             self.emit_text(candidate_start_notice(i, n, true));
             match port.create().await {
-                Ok(ws) => workspaces.push(Ok(ws)),
+                Ok(ws) => {
+                    ws.seed_task_board(&steps, n == 1);
+                    workspaces.push(Ok(ws));
+                }
                 Err(e) => {
                     self.warn(format!("candidate {}/{n} skipped: {e}", i + 1));
                     workspaces.push(Err(format!("candidate isolation failed: {e}")));
@@ -199,10 +228,15 @@ impl<'a> Pipeline<'a> {
                     let mut cost_usd = 0.0;
                     let result = self
                         .run_isolated_candidate(
+                            CandidateSlot {
+                                // `n` is a `u32` config knob, so the index
+                                // always fits.
+                                ordinal: index as u32 + 1,
+                                ws,
+                            },
                             frame,
                             worker,
                             authoring,
-                            ws,
                             fan,
                             &mut Spend {
                                 budget: &mut allowance,
@@ -246,13 +280,14 @@ impl<'a> Pipeline<'a> {
     /// than in a loop iteration shared with nobody.
     async fn run_isolated_candidate(
         &self,
+        slot: CandidateSlot<'_>,
         frame: TaskFrame<'_>,
         worker: &ResolvedRole<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
-        ws: &dyn CandidateWorkspace,
         fan: Option<&SteeringFanOut<'_>>,
         spend: &mut Spend<'_>,
     ) -> CandidateResult {
+        let CandidateSlot { ordinal, ws } = slot;
         let bound_hook_runner = self.hooks.map(|(_, runner)| BoundHookRunner {
             inner: runner,
             cwd: ws.root(),
@@ -279,14 +314,12 @@ impl<'a> Pipeline<'a> {
         if let Some((hooks, runner)) = self.hooks {
             engine = engine.with_hooks(hooks, surface.hook_runner.unwrap_or(runner));
         }
-        if let Some(gate) = self.turn_gate {
-            engine = engine.with_gate(gate);
-        }
+        engine = self.attach(engine);
         let view = fan.map(SteeringFanOut::candidate);
         if let Some(view) = view.as_ref() {
             engine = engine.with_steering(view);
         }
-        self.run_candidate(frame, authoring, &engine, surface, spend)
+        self.run_candidate(ordinal, frame, authoring, &engine, surface, spend)
             .await
     }
 }

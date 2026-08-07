@@ -24,26 +24,44 @@
 //! # Which runs it continues — the conservative rule
 //!
 //! Exactly the rows `stella daemon list` paints `Crashed ↩`: a **supervised**
-//! run whose stored status is still *live*
-//! (`SessionStatus::is_live`) while its liveness lock is not
-//! held, whose workspace still exists, and which left a resume point this
-//! build can see.
+//! run whose stored status is still *live* (`SessionStatus::is_live`) — or is
+//! `Error`, a crash that lived just long enough to say so (#1696) — while its
+//! liveness lock is not held, whose workspace still exists, and which left a
+//! resume point this build can see.
 //!
-//! The load-bearing half is "stored status still live". Every deliberate end
-//! writes a terminal status on the way out — `Complete` when it finished,
-//! `Cancelled` when `stella daemon stop` or a Ctrl-C ended it, `Paused` when a
-//! deck set it aside, `Error` when it fell over having lived long enough to
-//! say so. A process the kernel took mid-turn writes nothing, so a live status
-//! with a dead lock is the signature of interruption and of nothing else.
+//! The load-bearing half is the stored status. Every deliberate end writes
+//! one on the way out — `Complete` when it finished, `Cancelled` when `stella
+//! daemon stop` or a Ctrl-C ended it, `Stopped` when the run ended itself by
+//! policy, `Paused` when a deck set it aside. A process the kernel took
+//! mid-turn writes nothing, so a live status with a dead lock is the
+//! signature of interruption.
 //!
-//! That rule is deliberately chosen to be **immune to #1653**, which records
-//! that a deliberate policy stop is stored as `Error`, indistinguishable from
-//! a crash. It is immune because no terminal status is resumable here at all:
-//! `Error` is skipped whichever of the two it means. The cost is the honest
-//! one — a crash that *did* manage to record `Error` is not resumed at boot —
-//! and it is the right side to be wrong on, because the failure this module
-//! must never have is resuming, unattended and at the operator's expense,
-//! work the operator deliberately ended.
+//! # Why an `Error` is continued too, and why that is safe (#1696)
+//!
+//! This rule used to skip *every* terminal status, `Error` included. That was
+//! a compromise forced by #1653: a deliberate policy stop (a stuck-loop
+//! escalation, the step cap, an enforced budget, an ended scope review) was
+//! recorded as `Error`, identical to a genuine crash, so continuing an
+//! `Error` could have restarted — unattended, at the operator's expense —
+//! work the operator ended on purpose. The cost was the honest one: a real
+//! crash that *did* manage to write `Error` before dying was left stranded.
+//!
+//! #1653 removed the ambiguity. A policy stop now records
+//! [`SessionStatus::Stopped`] with every other deliberate ending, which
+//! leaves `Error` meaning only "it fell over" — a run exactly as entitled to
+//! be continued as one the kernel took without warning. Two independent
+//! facts make the widening safe rather than merely intended:
+//!
+//! - **A deliberate stop has no resume point.** The engine driver discards
+//!   the checkpoint on every terminal path, abort included, so a policy stop
+//!   retracts its resume point on the way out. A row written by a build that
+//!   predates #1653 — where a policy stop really did store `Error` — is
+//!   therefore filtered by [`crate::daemon::boot::SkipReason::NoResumePoint`]
+//!   anyway, without this
+//!   module having to trust its status.
+//! - **The attempt bound still applies.** An `Error` that resumes into
+//!   another `Error` is counted like any other continuation and retired
+//!   after `MAX_BOOT_ATTEMPTS`.
 //!
 //! # What stops a boot loop
 //!
@@ -180,10 +198,13 @@ pub(super) enum SkipReason {
     /// Still running: the sweep found a run that survived, and starting a
     /// second copy of it is the one outcome worse than not resuming.
     StillRunning,
-    /// The run recorded a terminal status, so it ended on purpose or ended
-    /// having lived long enough to say so. See the module docs on #1653.
+    /// The run recorded a terminal status that says it *ended* rather than
+    /// broke — `Complete`, `Cancelled`, `Stopped`, `Paused`, `Archived`.
+    /// Since #1653 this no longer covers `Error`; see the module docs on
+    /// #1696.
     EndedDeliberately,
-    /// Nothing to continue from — a clean exit discards its resume point.
+    /// Nothing to continue from — a clean exit, and every deliberate stop,
+    /// discards its resume point.
     NoResumePoint,
     /// The workspace is gone; a resumed turn must run where its work is.
     WorkspaceGone,
@@ -201,7 +222,8 @@ impl SkipReason {
             Self::NotSupervised => "not a supervised run".to_string(),
             Self::StillRunning => "still running".to_string(),
             Self::EndedDeliberately => {
-                "ended deliberately — only an interrupted run is resumed at boot".to_string()
+                "ended deliberately — only an interrupted or crashed run is resumed at boot"
+                    .to_string()
             }
             Self::NoResumePoint => "no resume point".to_string(),
             Self::WorkspaceGone => "workspace no longer exists".to_string(),
@@ -242,7 +264,12 @@ pub(super) fn decide(candidate: &BootCandidate) -> BootDecision {
     if candidate.lock_held {
         return BootDecision::Skip(SkipReason::StillRunning);
     }
-    if !candidate.stored_status.is_live() {
+    // `Error` deliberately falls through to the resume-point check rather
+    // than being skipped here: since #1653 it means only "the run fell over",
+    // and a crash with a resume point is the case this whole module exists
+    // for (#1696). Every *other* terminal status is a run that ended on
+    // purpose.
+    if !candidate.stored_status.is_live() && candidate.stored_status != SessionStatus::Error {
         return BootDecision::Skip(SkipReason::EndedDeliberately);
     }
     if !candidate.has_resume_point {

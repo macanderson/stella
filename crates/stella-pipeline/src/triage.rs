@@ -29,7 +29,12 @@ use crate::management_prompt::ManagementPrompt;
 /// derived `Ord` is load-bearing (`deterministic_floor` takes the `max` of
 /// the model's class and the pattern floor, so the floor can only ever add
 /// planning, never remove it — L-E2 "errs toward planning").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// Serde joined for the resume frame (#1671): the class crosses to the host's
+// durable record and back. Variant names are the wire form — renaming one is
+// a frame-format change and needs the same care as a checkpoint field.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum TaskClass {
     /// A lookup/read/explain prompt: no plan, no verifier. Self-revoking on
     /// unexpected file mutations (zero-diff guard).
@@ -536,6 +541,54 @@ fn names_a_file_shaped_object(lower: &str) -> bool {
         })
 }
 
+/// Ceiling on the research questions one triage response may fan out
+/// (#1778). Each question buys a read-only sub-agent turn, so the cap is a
+/// spend bound, not parser pedantry: past a handful, more questions add
+/// latency and cost without changing what the planner needs to know.
+pub const MAX_RESEARCH_QUESTIONS: usize = 4;
+
+/// Parse the optional `RESEARCH:` line out of a triage response (#1778):
+/// up to [`MAX_RESEARCH_QUESTIONS`] self-contained questions, `|`-separated
+/// on one line. Tolerant in the same spirit as `parse_flag` — an absent
+/// line, an empty value, or an explicit `none` all mean "no research", which
+/// keeps every fast path (L-E2) untouched. A legacy bare-token response
+/// carries no such line and so degrades to exactly today's behavior.
+pub fn parse_research_questions(text: &str) -> Vec<String> {
+    for line in text.lines() {
+        let trimmed = line.trim().trim_start_matches(['-', '*', ' ']);
+        // Case-insensitive label match without lowercasing the questions
+        // themselves — they are handed verbatim to a sub-agent.
+        let Some(rest) = trimmed
+            .get(..8)
+            .filter(|label| label.eq_ignore_ascii_case("research"))
+            .map(|_| &trimmed[8..])
+        else {
+            continue;
+        };
+        // A word boundary must follow the label, same rule as `parse_flag`:
+        // `researching …` prose is not the answer line.
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        let value = rest.trim_start().trim_start_matches(':').trim();
+        if value.is_empty() || value.eq_ignore_ascii_case("none") {
+            return Vec::new();
+        }
+        return value
+            .split('|')
+            .map(str::trim)
+            .filter(|q| !q.is_empty() && !q.eq_ignore_ascii_case("none"))
+            .take(MAX_RESEARCH_QUESTIONS)
+            .map(str::to_string)
+            .collect();
+    }
+    Vec::new()
+}
+
 /// Parse a triage model's classification response into a [`TaskClass`].
 ///
 /// Reads the labeled `CLASS:` line when the model followed the structured
@@ -978,11 +1031,18 @@ fn bounded_structure(structure: &str) -> String {
 /// system message the provider adapters can cache-mark.
 const TRIAGE_INSTRUCTIONS: &str = "Classify the following user message, and decide what assurance its \
      result actually warrants. Do NOT assume it is a software task — it may \
-     just be conversation. Answer with EXACTLY these three lines and \
-     nothing else:\n\
+     just be conversation. Answer with EXACTLY these three lines — plus, for \
+     `multi` only, an optional fourth — and nothing else:\n\
      CLASS: chat|lookup|single|multi\n\
      WITNESS: yes|no\n\
-     VERIFIER: yes|no\n\n\
+     VERIFIER: yes|no\n\
+     RESEARCH: <question> | <question>\n\n\
+     RESEARCH (optional, `multi` only): up to 4 self-contained questions \
+     about THIS workspace whose answers a planner would need before naming \
+     concrete files — e.g. `Which module owns retry policy and where are its \
+     tests?`. Each must be answerable by reading files. One line, questions \
+     separated by `|`. Omit the line (or write `RESEARCH: none`) when the \
+     goal already names its files or the work is simple.\n\n\
      CLASS is what the message needs:\n\
      - `chat`    — asks for NOTHING to be done: a greeting (`hi`), thanks, \
      small talk, or a question about you. Reply conversationally; touch no \

@@ -98,6 +98,7 @@ use crate::agent::{
 mod adopt;
 mod escape;
 mod snapshot_gaps;
+mod task_events;
 mod witness_tools;
 use witness_tools::WitnessToolExecutor;
 
@@ -384,6 +385,7 @@ impl GitCandidateWorkspaces {
                 // plus the session's custom script tools, owned as one value
                 // (the workspace outlives every borrow). Custom tools re-root
                 // to `ws_root`, so their subprocesses run in the shadow.
+                let board = registry.task_board();
                 let registry: Arc<dyn stella_core::ToolExecutor> = Arc::new(registry);
                 // The witness author's reads honor the operator's tool policy
                 // exactly like the worker's do (#1784): before this wrap, a
@@ -409,6 +411,9 @@ impl GitCandidateWorkspaces {
                 let tools: Box<dyn stella_core::ToolExecutor> = Box::new(
                     crate::agent::PolicyToolSet::new_owned(tools, self.policy.clone()),
                 );
+                // Outside even the policy wrap, like the deck's session tap
+                // (#1719) — see `task_events`'s module doc.
+                let (tools, task_board) = task_events::tap(tools, board, self.events.clone());
                 let omitted = snapshot_gaps::omitted_ignored_paths(&toplevel, &root_rel).await;
                 Ok(GitCandidateWorkspace {
                     toplevel,
@@ -429,6 +434,7 @@ impl GitCandidateWorkspaces {
                         ws_root,
                         overlay: overlay_untracked,
                     },
+                    task_board,
                     omitted,
                 })
             }
@@ -623,6 +629,10 @@ pub(crate) struct GitCandidateWorkspace {
     diagnostics: GitDiagnosticRunner,
     tests: TypedTestRunner,
     repo_status: SnapshotRepoStatus,
+    /// This candidate's private task board plus its announce latch — the
+    /// pipeline drives it through [`CandidateWorkspace::seed_task_board`]
+    /// right after `create` (#1719); see [`task_events`].
+    task_board: task_events::CandidateTaskBoard,
     /// Ignored paths present in the real tree and elided from this snapshot —
     /// see [`snapshot_gaps`]. A display list for the candidate's context, not
     /// a set anything branches on.
@@ -718,6 +728,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     fn omitted_paths(&self) -> &[String] {
         &self.omitted
+    }
+
+    fn seed_task_board(&self, steps: &[String], announce: bool) {
+        self.task_board.seed(steps, announce);
     }
 
     async fn seal(&self) -> Result<(), WorkspaceError> {

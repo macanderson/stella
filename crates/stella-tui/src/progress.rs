@@ -119,6 +119,7 @@ fn stage_phase(stage: StageKind) -> usize {
         // worker has run).
         StageKind::Triage
         | StageKind::ContextRecall
+        | StageKind::Research
         | StageKind::Plan
         | StageKind::ScopeReview
         | StageKind::Witness => 0,

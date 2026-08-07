@@ -2096,13 +2096,13 @@ pub async fn run_deck_session(
                     )
                     .await,
                 );
-                // Name the workspace state this turn ended at, so it can be
-                // read back by turn number rather than by commit id
-                // (`WorkJournal::read_at_turn`). A turn that ABORTED is still a
-                // turn that ended, and the files it left behind are exactly the
-                // ones someone comparing turns wants to see — so this is not
-                // conditioned on the outcome.
-                cfg.durability.mark_turn_end();
+                // Name the workspace state this turn ended at — readable by
+                // turn number (`WorkJournal::read_at_turn`), with the turn's
+                // diff precomputed beside it (#1870). An ABORTED turn still
+                // ended, and its files are exactly what a reader comparing
+                // turns wants — so this is not conditioned on the outcome.
+                cfg.durability
+                    .mark_turn_end(&store, &session_record.id, last_execution_id);
                 // One decider for every terminal writer (#1653/#1826/#1862):
                 // a lead turn that ended in a deliberate stop exits `Stopped`.
                 session_exit = crate::daemon::outcome_status(outcome.as_ref().map(|_| ()));
@@ -4216,7 +4216,7 @@ async fn run_lead_turn(
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
-        cfg.provider.id.to_string(),
+        crate::cache_insight::InsightScope::from_config(cfg),
         in_tx.clone(),
         LEAD.to_string(),
         Some(registry.task_board()),
@@ -4383,7 +4383,7 @@ async fn run_lead_pipeline_turn(
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
-        cfg.provider.id.to_string(),
+        crate::cache_insight::InsightScope::from_config(cfg),
         in_tx.clone(),
         LEAD.to_string(),
         Some(registry.task_board()),

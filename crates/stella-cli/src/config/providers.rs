@@ -45,6 +45,7 @@ impl ProviderConfig {
         base_url: String,
         base_url_override: Option<&str>,
         aux: stella_model::AuxCredentials,
+        cache_ttl: stella_model::CacheTtl,
     ) -> stella_runtime::ProviderParts {
         stella_runtime::ProviderParts {
             id: self.id.to_string(),
@@ -56,6 +57,7 @@ impl ProviderConfig {
             base_url,
             base_url_override: base_url_override.map(str::to_string),
             aux,
+            cache_ttl,
         }
     }
 }

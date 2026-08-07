@@ -683,6 +683,7 @@ fn stage_name(stage: StageKind) -> &'static str {
     match stage {
         StageKind::Triage => "triage",
         StageKind::ContextRecall => "context_recall",
+        StageKind::Research => "research",
         StageKind::Plan => "plan",
         StageKind::ScopeReview => "scope_review",
         StageKind::Witness => "witness",
@@ -703,6 +704,7 @@ fn role_name(role: ModelCallRole) -> &'static str {
     match role {
         ModelCallRole::Unknown => "unknown",
         ModelCallRole::Triage => "triage",
+        ModelCallRole::Research => "research",
         ModelCallRole::Plan => "plan",
         ModelCallRole::PlanRepair => "plan_repair",
         ModelCallRole::WitnessAuthor => "witness_author",
@@ -909,6 +911,11 @@ mod tests {
             superseded_blocks: Vec::new(),
             aged_blocks: Vec::new(),
             summarized_blocks: Vec::new(),
+            rewrites: vec![stella_protocol::CompactionRewrite {
+                block_id: "blk-secret-name".into(),
+                content_digest: "sha256:feed".into(),
+                content: "secret-replacement-bytes".into(),
+            }],
             effective_budget_tokens: 80_000,
             calibration_factor: 1.25,
         });
@@ -918,6 +925,10 @@ mod tests {
         assert!(json.contains(r#""before_tokens":120000"#), "{json}");
         assert!(json.contains(r#""after_tokens":60000"#), "{json}");
         assert!(json.contains(r#""summarized":5"#), "{json}");
+        assert!(
+            !json.contains("secret-replacement-bytes"),
+            "rewrite preimages are raw content and must not ride along: {json}"
+        );
         assert!(
             !json.contains("blk-secret-name"),
             "block ids are content-adjacent and must not ride along: {json}"

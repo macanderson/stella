@@ -214,6 +214,15 @@ export type AgentEvent = {
    */
   evicted_blocks?: string[];
   /**
+   * The replacement bytes each in-place rewrite left behind, one entry
+   * per digest — what lets reconstruction resolve a compacted block to
+   * the bytes the model received rather than the pre-compaction output
+   * under the same `call_id` (#1667); see [`CompactionRewrite`].
+   * `serde(default)` — absent on journals written before rewrites were
+   * journaled, whose compacted blocks surface as digest mismatches.
+   */
+  rewrites?: CompactionRewrite[];
+  /**
    * Messages replaced by a model-written history summary — the
    * overflow fallback when eviction alone cannot reach budget.
    */
@@ -702,6 +711,32 @@ export type CacheZone = "stable_prefix" | "cacheable" | "volatile" | "other";
  * before rendering, never served from cache alone (L-V3).
  */
 export type CiStatus = "pending" | "running" | "passing" | "failing";
+
+/**
+ * One in-place compaction rewrite: the post-rewrite identity and bytes of a
+ * tool result a compaction pass stubbed, deduplicated, superseded, or aged.
+ *
+ * `content` is the canonical serialized form of the replacement tool output —
+ * the same `serde_json` serialization the receipts plane hashes — so
+ * `content_digest` re-derives from `content` exactly and a consumer can
+ * verify the pair without any other context.
+ */
+export interface CompactionRewrite {
+  /**
+   * The content-addressed id (`blk_…`) of the block the rewrite produced —
+   * the identity the next step's manifest cites for this result.
+   */
+  block_id: string;
+  /**
+   * The replacement bytes: the serialized post-rewrite tool output.
+   */
+  content: string;
+  /**
+   * `sha256:<hex>` of `content` — the digest the block registry records,
+   * and the key reconstruction resolves this preimage by.
+   */
+  content_digest: string;
+}
 
 /**
  * Stable-ID payload of `compiled_context_frame_built`.
@@ -1332,7 +1367,7 @@ export type MessageRole = "system" | "user" | "assistant" | "tool";
  * one-directional change in a way adding an [`AgentEvent`] variant no longer
  * is.
  */
-export type ModelCallRole = "unknown" | "triage" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "verdict" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
+export type ModelCallRole = "unknown" | "triage" | "research" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "verdict" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
 
 /**
  * One flip-oracle observation, in the order the pipeline made it — together
@@ -1409,13 +1444,14 @@ export type PrStatus = "draft" | "open" | "merged" | "closed";
 
 /**
  * One step of the proof a turn builds for its own work, in the order the
- * pipeline makes the observation. Carried by [`AgentEvent::Proof`].
+ * pipeline makes the observation. Carried by [`crate::event::AgentEvent::Proof`].
  *
  * Additive in one direction only: an older reader that does not know the
- * `proof` type tag preserves the whole event via [`AgentEvent::Unknown`],
- * but a reader that knows `Proof` and meets a future `kind` fails the whole
- * event — this nested enum is closed, with no `Unknown` step (see the
- * module docs on nested vocabularies).
+ * `proof` type tag preserves the whole event via
+ * [`crate::event::AgentEvent::Unknown`], but a reader that knows `Proof` and
+ * meets a future `kind` fails the whole event — this nested enum is closed,
+ * with no `Unknown` step (see [`crate::event`]'s module docs on nested
+ * vocabularies).
  */
 export type ProofStep = {
   kind: "assurance";
@@ -1480,6 +1516,17 @@ export type ProofStep = {
    */
   seed?: number | null;
   tree: ProofTree;
+} | {
+  /**
+   * Which candidate degraded (1-based, [`ProofStep::Oracle::run`]'s
+   * convention).
+   */
+  candidate: number;
+  kind: "verdict_degraded";
+  /**
+   * The stated reason a model verdict could not be rendered.
+   */
+  reason: string;
 };
 
 /**
@@ -1601,7 +1648,7 @@ export type ServiceTier = "auto" | "default" | "flex" | "priority";
  * exists in this workspace — never duplicated per-crate (the TS-era
  * `StageKind` duplication this structurally forbids, L-E1).
  */
-export type StageKind = "triage" | "context_recall" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
 
 /**
  * One point in a sub-agent's lifecycle. Exactly one `Started` and exactly

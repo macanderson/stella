@@ -41,10 +41,10 @@
 //!
 //! The system message and the latest user message are never touched.
 
-use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
+use stella_protocol::{CompactionRewrite, CompletionMessage, MessageRole, ToolOutput};
 
 use crate::estimator::{estimate_conversation_tokens, estimate_message_tokens};
-use crate::receipts::tool_result_block_id;
+use crate::receipts::{tool_result_block_id, tool_result_rewrite};
 
 /// What a compaction pass did, for the `Compaction` event. Carries both the
 /// counts (back-compat) and the **identities** — the `block_id`s each pass
@@ -67,6 +67,12 @@ pub struct CompactionReport {
     pub deduped_blocks: Vec<String>,
     pub superseded_blocks: Vec<String>,
     pub aged_blocks: Vec<String>,
+    /// The replacement bytes each in-place rewrite left behind (#1667) — the
+    /// post-rewrite identity, digest, and preimage of every block this call
+    /// stubbed or aged, deduplicated by digest. Journaling these beside the
+    /// identities above is what lets reconstruction resolve a compacted block
+    /// to the bytes the model actually received.
+    pub rewrites: Vec<CompactionRewrite>,
 }
 
 const EVICTION_STUB: &str =
@@ -248,8 +254,11 @@ pub struct RetentionPolicy {
 
 /// Pass 0: age every large tool result older than the policy's horizon,
 /// gated on [`RETENTION_MIN_RECLAIM_CHARS`]. Returns `(aged, aged_blocks,
-/// tokens_saved)`; block ids are captured before mutation so the report cites
-/// the identity the previous step's manifest recorded (§6.2). Token savings
+/// rewrites, tokens_saved)`; block ids are captured before mutation so the
+/// report cites the identity the previous step's manifest recorded (§6.2),
+/// and each rewrite's replacement record is captured right after it (#1667) —
+/// this pass runs before `compact_measured` snapshots `original_ids`, so its
+/// rewrites cannot be recovered by the post-pass identity walk. Token savings
 /// are measured per mutated message ([`estimate_message_tokens`] diffs),
 /// never by a whole-transcript walk — this runs on every step, including the
 /// common under-budget one, and Θ(transcript) work there is the cost class
@@ -257,7 +266,7 @@ pub struct RetentionPolicy {
 fn age_stale_tool_results(
     messages: &mut [CompletionMessage],
     policy: RetentionPolicy,
-) -> (usize, Vec<String>, u64) {
+) -> (usize, Vec<String>, Vec<CompactionRewrite>, u64) {
     let tool_positions: Vec<usize> = messages
         .iter()
         .enumerate()
@@ -270,7 +279,7 @@ fn age_stale_tool_results(
     // touch the results answering the latest call.
     let keep = policy.keep_recent_steps.max(1);
     if tool_positions.len() <= keep {
-        return (0, Vec::new(), 0);
+        return (0, Vec::new(), Vec::new(), 0);
     }
     let stale = &tool_positions[..tool_positions.len() - keep];
     let reclaimable: usize = stale
@@ -294,10 +303,11 @@ fn age_stale_tool_results(
         })
         .sum();
     if reclaimable < RETENTION_MIN_RECLAIM_CHARS {
-        return (0, Vec::new(), 0);
+        return (0, Vec::new(), Vec::new(), 0);
     }
     let mut aged = 0usize;
     let mut aged_blocks = Vec::new();
+    let mut rewrites = Vec::new();
     let mut saved = 0u64;
     for &idx in stale {
         let message = &mut messages[idx];
@@ -320,6 +330,7 @@ fn age_stale_tool_results(
                         content: aged_payload,
                     }
                 };
+                rewrites.push(tool_result_rewrite(&result.output));
                 aged += 1;
                 touched = true;
             }
@@ -328,7 +339,7 @@ fn age_stale_tool_results(
             saved += before.saturating_sub(estimate_message_tokens(message));
         }
     }
-    (aged, aged_blocks, saved)
+    (aged, aged_blocks, rewrites, saved)
 }
 
 /// Evict + dedup until the conversation fits `budget_tokens` — reclaiming
@@ -371,10 +382,11 @@ pub fn compact_measured(
     // comparison. Its savings feed the comparison, so a retention pass that
     // shrinks the transcript under budget also spares it the budget passes'
     // deeper rewrites this step.
-    let (retention_aged, retention_aged_blocks, retention_saved) = match retention {
-        Some(policy) => age_stale_tool_results(messages, policy),
-        None => (0, Vec::new(), 0),
-    };
+    let (retention_aged, retention_aged_blocks, retention_rewrites, retention_saved) =
+        match retention {
+            Some(policy) => age_stale_tool_results(messages, policy),
+            None => (0, Vec::new(), Vec::new(), 0),
+        };
     let current_tokens = before_tokens.saturating_sub(retention_saved);
     if current_tokens <= budget_tokens {
         if retention_aged == 0 {
@@ -387,6 +399,7 @@ pub fn compact_measured(
                 after_tokens: current_tokens,
                 aged: retention_aged,
                 aged_blocks: retention_aged_blocks,
+                rewrites: dedup_rewrites(retention_rewrites),
                 ..CompactionReport::default()
             }),
         );
@@ -414,6 +427,9 @@ pub fn compact_measured(
     let mut superseded_blocks: Vec<String> = Vec::new();
     let mut aged_blocks: Vec<String> = retention_aged_blocks;
     let mut evicted_blocks: Vec<String> = Vec::new();
+    // Pass 0's replacement records, captured at its mutation sites; the budget
+    // passes' records are recovered by the identity walk after pass 4 (#1667).
+    let mut rewrites: Vec<CompactionRewrite> = retention_rewrites;
     // Each tool result's ORIGINAL block_id, captured before any pass mutates
     // it, indexed by POSITION: `original_ids[message_idx][result_idx]`. A
     // result aged then evicted in the same call must be recorded under the id
@@ -702,6 +718,23 @@ pub fn compact_measured(
         // was mutated, so pass 4's re-scan is still the live count.
         return (current_tokens, None);
     }
+    // Recover the budget passes' replacement records (#1667): a result whose
+    // content identity no longer matches the `original_ids` snapshot was
+    // rewritten by passes 1–4, and its current output is the replacement the
+    // next step's manifest will cite. Only rewritten results pay a hash here —
+    // the walk itself compares against ids already captured — and a form that
+    // survives unchanged into a later call is never re-journaled, because its
+    // id then MATCHES that call's snapshot.
+    for (idx, message) in messages.iter().enumerate() {
+        if message.role != MessageRole::Tool {
+            continue;
+        }
+        for (ridx, result) in message.tool_results.iter().enumerate() {
+            if tool_result_block_id(&result.output) != id_at(idx, ridx) {
+                rewrites.push(tool_result_rewrite(&result.output));
+            }
+        }
+    }
     let after_tokens = estimate_conversation_tokens(messages);
     (
         after_tokens,
@@ -716,8 +749,21 @@ pub fn compact_measured(
             deduped_blocks,
             superseded_blocks,
             aged_blocks,
+            rewrites: dedup_rewrites(rewrites),
         }),
     )
+}
+
+/// Collapse `rewrites` to one entry per digest, preserving first-seen order.
+/// The constant stubs make duplicates the common case — every evicted result
+/// leaves the same [`EVICTION_STUB`] bytes — and a digest-keyed consumer gains
+/// nothing from the repeats, so the event should not pay to carry them.
+fn dedup_rewrites(rewrites: Vec<CompactionRewrite>) -> Vec<CompactionRewrite> {
+    let mut seen = std::collections::HashSet::with_capacity(rewrites.len());
+    rewrites
+        .into_iter()
+        .filter(|rewrite| seen.insert(rewrite.content_digest.clone()))
+        .collect()
 }
 
 #[cfg(test)]

@@ -24,22 +24,30 @@ impl Pipeline<'_> {
         &self,
         goal: &str,
         frames: &[RecalledFrame],
+        research: &[ResearchFinding],
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<PlannedScope, PipelineError> {
         let repo_structure = self.repo.structure_summary().await;
         let mut revision: Option<String> = None;
         let mut spent_revisions = 0usize;
+        let mut spend = Spend { budget, total };
 
         loop {
             let plan = match self
                 .plan_stage(
                     goal,
                     frames,
+                    research,
                     &repo_structure,
                     revision.as_deref(),
-                    budget,
-                    total,
+                    // Reborrowed per iteration: the loop replans after a
+                    // rejected scope card, and a moved `Spend` could not be
+                    // handed to the next attempt.
+                    &mut Spend {
+                        budget: &mut *budget,
+                        total: &mut *total,
+                    },
                 )
                 .await
             {

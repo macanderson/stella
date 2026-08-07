@@ -702,6 +702,7 @@ pub fn stage_label(stage: StageKind) -> &'static str {
     match stage {
         StageKind::Triage => "triage",
         StageKind::ContextRecall => "context recall",
+        StageKind::Research => "research",
         StageKind::Plan => "plan",
         StageKind::ScopeReview => "scope review",
         StageKind::Witness => "witness",
@@ -1016,6 +1017,7 @@ mod tests {
                 superseded_blocks: vec![],
                 aged_blocks: vec![],
                 summarized_blocks: vec![],
+                rewrites: vec![],
                 effective_budget_tokens: 0,
                 calibration_factor: 0.0,
             },

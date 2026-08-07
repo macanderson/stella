@@ -452,6 +452,13 @@
               },
               "type": "array"
             },
+            "rewrites": {
+              "description": "The replacement bytes each in-place rewrite left behind, one entry\nper digest — what lets reconstruction resolve a compacted block to\nthe bytes the model received rather than the pre-compaction output\nunder the same `call_id` (#1667); see [`CompactionRewrite`].\n`serde(default)` — absent on journals written before rewrites were\njournaled, whose compacted blocks surface as digest mismatches.",
+              "items": {
+                "$ref": "#/$defs/CompactionRewrite"
+              },
+              "type": "array"
+            },
             "summarized": {
               "default": 0,
               "description": "Messages replaced by a model-written history summary — the\noverflow fallback when eviction alone cannot reach budget.",
@@ -1569,6 +1576,29 @@
         }
       ]
     },
+    "CompactionRewrite": {
+      "description": "One in-place compaction rewrite: the post-rewrite identity and bytes of a\ntool result a compaction pass stubbed, deduplicated, superseded, or aged.\n\n`content` is the canonical serialized form of the replacement tool output —\nthe same `serde_json` serialization the receipts plane hashes — so\n`content_digest` re-derives from `content` exactly and a consumer can\nverify the pair without any other context.",
+      "properties": {
+        "block_id": {
+          "description": "The content-addressed id (`blk_…`) of the block the rewrite produced —\nthe identity the next step's manifest cites for this result.",
+          "type": "string"
+        },
+        "content": {
+          "description": "The replacement bytes: the serialized post-rewrite tool output.",
+          "type": "string"
+        },
+        "content_digest": {
+          "description": "`sha256:<hex>` of `content` — the digest the block registry records,\nand the key reconstruction resolves this preimage by.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "block_id",
+        "content_digest",
+        "content"
+      ],
+      "type": "object"
+    },
     "CompiledContextFrameBuilt": {
       "description": "Stable-ID payload of `compiled_context_frame_built`.",
       "properties": {
@@ -2403,6 +2433,11 @@
           "type": "string"
         },
         {
+          "const": "research",
+          "description": "A read-only research sub-agent answering one of triage's pre-plan\nquestions (#1778).",
+          "type": "string"
+        },
+        {
           "const": "plan",
           "description": "Authoring the ordered plan.",
           "type": "string"
@@ -2557,7 +2592,7 @@
       ]
     },
     "ProofStep": {
-      "description": "One step of the proof a turn builds for its own work, in the order the\npipeline makes the observation. Carried by [`AgentEvent::Proof`].\n\nAdditive in one direction only: an older reader that does not know the\n`proof` type tag preserves the whole event via [`AgentEvent::Unknown`],\nbut a reader that knows `Proof` and meets a future `kind` fails the whole\nevent — this nested enum is closed, with no `Unknown` step (see the\nmodule docs on nested vocabularies).",
+      "description": "One step of the proof a turn builds for its own work, in the order the\npipeline makes the observation. Carried by [`crate::event::AgentEvent::Proof`].\n\nAdditive in one direction only: an older reader that does not know the\n`proof` type tag preserves the whole event via\n[`crate::event::AgentEvent::Unknown`], but a reader that knows `Proof` and\nmeets a future `kind` fails the whole event — this nested enum is closed,\nwith no `Unknown` step (see [`crate::event`]'s module docs on nested\nvocabularies).",
       "oneOf": [
         {
           "description": "What assurance this turn is going to buy, stated by triage **before**\nany of it happens.\n\nEmitted first, and the reason the rail can be honest at all. Every\nother step reports something that *did* happen, so a turn where the\nanswer is \"we decided not to\" produced no steps and left the surface\nwith nothing to say — which is exactly the case that dominates in\npractice. A declared plan turns that silence into a statement: the\nwitness row reads \"waived by triage\" from the first second of the\nturn instead of implying a test is still coming.",
@@ -2723,6 +2758,31 @@
             "command",
             "passed",
             "tree"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "This candidate's model verdict degraded to the deterministic heuristic\n([`crate::LadderRung::HeuristicFallback`]): the verifier role was\nunresolvable, its response did not follow the verdict protocol, or the\ncall failed outright.\n\nEmitted once per candidate, keyed by ordinal, because the once-per-run\nprose warning cannot say *which* of a best-of-N fan-out's candidates\nwere judged by the heuristic — N candidates degrading used to leave one\ncaveat and no record (#1787). The ladder rung records *that* a round\ndegraded; this step records *whose* verdict and why.",
+          "properties": {
+            "candidate": {
+              "description": "Which candidate degraded (1-based, [`ProofStep::Oracle::run`]'s\nconvention).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "verdict_degraded",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The stated reason a model verdict could not be rendered.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "candidate",
+            "reason"
           ],
           "type": "object"
         }
@@ -2932,6 +2992,11 @@
         {
           "const": "context_recall",
           "description": "Context recall: the frames the context plane put in front of the model\nbefore it planned anything.",
+          "type": "string"
+        },
+        {
+          "const": "research",
+          "description": "Pre-plan research: triage named questions, and parallel read-only\nsub-agents answer them so the planner names files it has evidence for\nrather than guesses (#1778). Skipped whenever triage named none.",
           "type": "string"
         },
         {

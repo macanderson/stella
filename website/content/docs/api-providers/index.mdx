@@ -177,6 +177,18 @@ Observatory figures reflect the true bill. Cached input bills at $0.30/Mtok agai
 $3.00 list price — the 10× discount on the byte-stable prefix the
 [context engine](/docs/context-engine) maintains.
 
+The **cache window** is the one provider delta you may want to set. Anthropic holds a
+written prefix for 5 minutes by default and offers a 1-hour window per request. stella
+picks by surface: `stella chat` and `stella resume` ask for the hour, every headless run
+keeps the 5-minute default. The reason is arithmetic — a 1-hour write bills 2× input
+against the short window's 1.25×, and that premium only earns its keep when turns are far
+enough apart to lose the prefix. An eviction is the expensive event: it re-bills the whole
+prefix at the write rate *and* forfeits the 10× read discount on it. Interactive turns sit
+minutes apart, so the wider window is close to free insurance; a headless run's calls are
+seconds apart and would pay the premium for a prefix that was never going to expire.
+Override either default with
+[`providers.anthropic.cache_ttl`](/docs/configuration/settings) (`"5m"` or `"1h"`).
+
 `params.max_tokens` defaults to **32000 with thinking on, 4096 with it off**. Adaptive
 thinking spends from the same output allowance as the answer, so a max-effort verifier would
 otherwise truncate mid-verdict. A value you set is honoured as-is.

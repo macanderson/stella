@@ -44,12 +44,19 @@ impl RepoStatusPort for NeverRepoStatus {
     }
 }
 
+/// What a workspace's `seed_task_board` was handed (#1719): the approved
+/// plan's steps and whether this candidate may announce its board, or `None`
+/// if it was never called at all. Shared out of the workspace before it is
+/// scripted into a port, because the boxed workspace is unreachable once the
+/// run owns it.
+pub(super) type SeedProbe = Arc<std::sync::Mutex<Option<(Vec<String>, bool)>>>;
+
 /// A scripted [`CandidateWorkspace`]: per-candidate command results, a
 /// canned adoption outcome, and a shared log of lifecycle calls.
 pub(super) struct FakeWorkspace {
     id: usize,
     root: String,
-    tools: EmptyTools,
+    tools: Box<dyn ToolExecutor>,
     diagnostics: ScriptedRunner,
     repo_status: SeqRepoStatus,
     adopt_result: Result<Vec<AdoptedChange>, WorkspaceError>,
@@ -61,6 +68,10 @@ pub(super) struct FakeWorkspace {
     /// Scripted escape report (#1538) — the paths the post-seal check should
     /// claim the real tree already holds this candidate's sealed bytes at.
     escaped: Vec<String>,
+    /// What `seed_task_board` received — see [`SeedProbe`]. Its own slot
+    /// rather than a `log` entry so the tests that assert exact lifecycle
+    /// sequences stay untouched.
+    seeded: SeedProbe,
     log: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -74,15 +85,22 @@ impl FakeWorkspace {
         Self {
             id,
             root: "/candidate/workspace".into(),
-            tools: EmptyTools,
+            tools: Box::new(EmptyTools),
             diagnostics: ScriptedRunner::new(test_results, "@@ -1 +1 @@\n-a\n+b"),
             repo_status: SeqRepoStatus::new(vec![]),
             adopt_result,
             sealed_unchanged: true,
             graft_result: Ok(()),
             escaped: Vec::new(),
+            seeded: Arc::default(),
             log,
         }
+    }
+
+    /// Clone the seed-call probe out before scripting the workspace into a
+    /// port — the boxed workspace itself is unreachable once the run owns it.
+    pub(super) fn seeded_probe(&self) -> SeedProbe {
+        self.seeded.clone()
     }
 
     pub(super) fn with_repo_status(mut self, repo_status: SeqRepoStatus) -> Self {
@@ -125,6 +143,15 @@ impl FakeWorkspace {
         self
     }
 
+    /// The tool executor this candidate's engine turns run against — for
+    /// scenarios where a scripted worker must *observe* something through a
+    /// tool result (e.g. the tracked test's exit status feeding the flip
+    /// halt), which the default silent [`EmptyTools`] can never carry.
+    pub(super) fn with_tools(mut self, tools: impl ToolExecutor + 'static) -> Self {
+        self.tools = Box::new(tools);
+        self
+    }
+
     /// A candidate that wrote through its isolation (#1538): the post-seal
     /// escape check will report these paths as already holding the
     /// candidate's sealed bytes in the real tree.
@@ -149,10 +176,10 @@ impl CandidateWorkspace for FakeWorkspace {
         &self.root
     }
     fn tools(&self) -> &dyn ToolExecutor {
-        &self.tools
+        self.tools.as_ref()
     }
     fn witness_tools(&self) -> &dyn ToolExecutor {
-        &self.tools
+        self.tools.as_ref()
     }
     fn diagnostics(&self) -> &dyn DiagnosticRunner {
         &self.diagnostics
@@ -162,6 +189,9 @@ impl CandidateWorkspace for FakeWorkspace {
     }
     fn repo_status(&self) -> &dyn RepoStatusPort {
         &self.repo_status
+    }
+    fn seed_task_board(&self, steps: &[String], announce: bool) {
+        *self.seeded.lock().unwrap() = Some((steps.to_vec(), announce));
     }
     async fn seal(&self) -> Result<(), WorkspaceError> {
         self.log.lock().unwrap().push(format!("seal:{}", self.id));

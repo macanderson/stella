@@ -317,6 +317,24 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             Some(id) => obs.session(&id),
             None => return Response::error("400 Bad Request", "missing ?id=<session id>"),
         },
+        // One turn's real on-disk diff (#1870), replayed from the
+        // `session_turn_diffs` projection the owning session precomputed at
+        // turn end — never from the work journal's bare repo, which this
+        // process deliberately cannot read.
+        "/api/session-turn-diff" => {
+            match (
+                query_param(query, "id"),
+                query_param(query, "turn").and_then(|v| v.parse::<i64>().ok()),
+            ) {
+                (Some(id), Some(turn)) => obs.session_turn_diff(&id, turn),
+                _ => {
+                    return Response::error(
+                        "400 Bad Request",
+                        "missing ?id=<session id>&turn=<journal turn>",
+                    );
+                }
+            }
+        }
         // One execution's behavioural tendencies — retries, loop detections,
         // compactions, policy verdicts — folded from its journal slice for
         // the drawer's tendency strip.

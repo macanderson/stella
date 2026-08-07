@@ -53,7 +53,9 @@ use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::receipts::RECEIPT_SEQ_ALLOCATED_BASE;
 use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
-use stella_core::{AbortKind, BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
+use stella_core::{
+    AbortKind, BudgetGuard, CalibrationMap, Engine, EngineConfig, EventSender, Router, TurnOutcome,
+};
 use stella_protocol::{
     AgentEvent, CompletionMessage, LadderRung, LadderSnapshot, MessageRole, ModelCallRole,
     ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind, VerdictEvidence,
@@ -75,6 +77,7 @@ use crate::ports::{
     RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner,
     WorkspaceError,
 };
+use crate::research::ResearchFinding;
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
     needs_scope_review,
@@ -106,18 +109,24 @@ use crate::witness::{
     validate_witness_identity, validate_witness_invocation, witness_identity_matches,
     witness_prompt, witness_repair_prompt,
 };
+pub use resume_stage::{FrameProgress, PipelineResume, RecordedBaseline};
+mod attachments;
 mod authored;
 mod candidate_result;
 mod disclosure;
 mod evidence;
+mod execute_stage;
 mod fanout_stage;
 mod plan_steps;
 mod raw_usage;
 mod repair_gate;
+mod research_stage;
+mod resume_stage;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
 mod task_frame;
+mod triage_stage;
 mod verifier_stage;
 mod verify_probes;
 use verify_probes::DiffProbe;
@@ -129,6 +138,7 @@ pub use run_error::{PipelineError, PipelineRunError};
 use run_error::{RoleResolveError, WitnessAuthorIndependence};
 use stage_budget::{PipelineBudgetAbort, Spend, budget_abort};
 use task_frame::TaskFrame;
+use verifier_stage::{VerdictDegradation, VerifierNotices};
 use witness_stage::{BoundHookRunner, WitnessAuthoring};
 /// Make a diff that verification hands downstream *incapable of lying*.
 ///
@@ -271,6 +281,13 @@ pub struct PipelineConfig {
     /// `Stage { ContextRecall }` to say why. Past this, recall degrades to
     /// [`crate::ports::Recall::default`] (no frames) and the turn proceeds.
     pub recall_latency_ceiling: Duration,
+    /// Latency ceiling on each pre-plan research sub-agent (#1778) — the same
+    /// never-wedge contract as [`Self::triage_latency_ceiling`], sized for a
+    /// bounded multi-step read rather than one completion. Children run
+    /// concurrently, so the stage's wall-clock is bounded by one ceiling, not
+    /// one per question; a child past it is cancelled and degrades to a
+    /// missing finding.
+    pub research_latency_ceiling: Duration,
     /// Thresholds above which a plan triggers interactive scope review (L-E5).
     pub scope_thresholds: crate::scope::ScopeThresholds,
     /// Whether this run is headless (no interactive approver available).
@@ -485,6 +502,11 @@ impl Default for PipelineConfig {
             // trip is 100-500ms and the local path is single-digit ms, so
             // this is an order of magnitude above the realistic worst case.
             recall_latency_ceiling: Duration::from_secs(5),
+            // Wider than triage's because a research child is a bounded
+            // multi-step read (up to RESEARCH_MAX_STEPS tool round-trips),
+            // not one completion — but still a hard wall: research past it
+            // degrades to a missing finding, never a wedged turn.
+            research_latency_ceiling: Duration::from_secs(45),
             scope_thresholds: crate::scope::ScopeThresholds::default(),
             headless: false,
             headless_bypass_scope_review: false,
@@ -692,13 +714,14 @@ struct CandidateState {
     /// warrant (the #1701 recurrence a projection method used to guard
     /// against by hand).
     signals: ChangeSignals,
+    /// This candidate's verdict-degradation record (#1787) — see [`VerdictDegradation`].
+    degradation: VerdictDegradation,
     /// Ends the execute turn as soon as the tracked test goes fail→pass.
     ///
-    /// `None` whenever there is nothing to watch: no configured test command,
-    /// or a baseline that was already passing (which can never flip, so a
-    /// halt on it would end turns that had work left). See
-    /// [`crate::flip_halt`] for why stopping is a separate question from
-    /// crediting.
+    /// `None` while there is nothing to watch: no failing configured-command
+    /// baseline and no authored witness yet. `witness_on_demand` arms it the
+    /// moment a witness's failing baseline is credited (#1793). See
+    /// [`crate::flip_halt`] for why stopping is separate from crediting.
     flip_halt: Option<Arc<FlipHalt>>,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
@@ -864,6 +887,9 @@ pub struct Pipeline<'a> {
     /// engine this pipeline builds and consulted before every management
     /// call, so a paused pipeline-driven worker parks instead of spending.
     turn_gate: Option<&'a dyn stella_core::ports::TurnGate>,
+    /// Caller-owned token-drift model ([`Pipeline::with_calibration`]), lent to
+    /// every engine this pipeline builds. `None` leaves estimation uncorrected.
+    calibration: Option<&'a CalibrationMap>,
     events: EventSender,
     config: PipelineConfig,
     configured_test: Result<Option<TestInvocation>, crate::witness::TestInvocationError>,
@@ -874,12 +900,8 @@ pub struct Pipeline<'a> {
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
-    /// Whether the verifier's same-family degradation caveat (L-M8) has been
-    /// surfaced this run — see [`Pipeline::warn_verifier_caveat`].
-    verifier_caveat_warned: AtomicBool,
-    /// Whether a verdict's silent degradation to the deterministic heuristic
-    /// has been surfaced this run — see [`Pipeline::warn_verifier_fallback`].
-    verifier_fallback_warned: AtomicBool,
+    /// The once-per-run verifier notices — see [`VerifierNotices`].
+    verifier_notices: VerifierNotices,
     /// Whether more than one candidate is currently writing to [`Self::events`]
     /// — set for the duration of a concurrent best-of-N fan-out and false
     /// everywhere else.
@@ -894,6 +916,15 @@ pub struct Pipeline<'a> {
     /// When this pipeline was constructed — the turn's own elapsed clock, one
     /// pipeline being one turn. Read only by [`repair_gate`].
     started: std::time::Instant,
+    /// Where resume-relevant progress facts go as stages settle (#1671), or
+    /// `None` for a host with no durable frame to update. Owned (`Arc`, not
+    /// `&'a`) because the sink is built beside the pipeline by
+    /// `resume_frame::pipeline`, after the ports struct is already assembled.
+    frame_sink: Option<Arc<dyn crate::ports::ResumeFrameSink>>,
+    /// The accumulated progress record behind [`Pipeline::record_progress`] —
+    /// kept whole so every push to the sink carries every fact so far, never
+    /// a delta the reader would have to merge.
+    progress: Mutex<FrameProgress>,
 }
 
 impl<'a> Pipeline<'a> {
@@ -928,31 +959,17 @@ impl<'a> Pipeline<'a> {
             mcp_prefetch: ports.mcp_prefetch,
             steering: ports.steering,
             turn_gate: None,
+            calibration: None,
             events: events.into(),
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
-            verifier_caveat_warned: AtomicBool::new(false),
-            verifier_fallback_warned: AtomicBool::new(false),
+            verifier_notices: VerifierNotices::default(),
             shared_event_lane: AtomicBool::new(false),
             started: std::time::Instant::now(),
+            frame_sink: None,
+            progress: Mutex::new(FrameProgress::default()),
         }
-    }
-
-    /// Attach a boundary pause gate. Every engine the pipeline builds — the
-    /// worker's execute/revise turns and the witness author's — parks at its
-    /// step boundaries while the gate holds, and every management call
-    /// (triage, verifier, guidance) parks before dispatch: the same safe
-    /// boundary as budget aborts, never mid-tool.
-    ///
-    /// This is the seam that lets a supervisor's pause reach a
-    /// pipeline-driven worker at all. Without it only the raw step-loop path
-    /// held a gate, so `Fleet::pause_task` on a pipeline worker silently did
-    /// nothing — the named follow-up in `fleet_cmd`.
-    #[must_use]
-    pub fn with_turn_gate(mut self, gate: &'a dyn stella_core::ports::TurnGate) -> Self {
-        self.turn_gate = Some(gate);
-        self
     }
 
     /// Drive one prompt through the full staged flow. `messages` is the
@@ -1026,7 +1043,7 @@ impl<'a> Pipeline<'a> {
                 .await
                 .unwrap_or_default()
         };
-        let (assessment, mut recalled) =
+        let (triaged, mut recalled) =
             tokio::join!(self.triage(goal, budget, &mut total_cost), recall_future);
         // Bounded at the source (#616), so every consumer — the user message,
         // the planner prompt, the witness prompt — inherits one budget, and
@@ -1035,8 +1052,8 @@ impl<'a> Pipeline<'a> {
         // subsequent turn (N candidates × every revision) past the window.
         let frames = bound_recalled_frames(std::mem::take(&mut recalled.frames));
         self.emit_context_recall(&frames, &recalled);
-        let assessment = match assessment {
-            Ok(assessment) => assessment,
+        let (assessment, research_questions) = match triaged {
+            Ok(triaged) => triaged,
             Err(abort) => {
                 return Ok(self.aborted_before_execute(
                     resolve_task_class(None, goal),
@@ -1047,6 +1064,13 @@ impl<'a> Pipeline<'a> {
             }
         };
         let task_class = assessment.class;
+        // The resume frame's first facts (#1671): a kill after this point can
+        // restore the class — and the goal the verifier judges against —
+        // without re-triaging.
+        self.record_progress(|p| {
+            p.task_class = Some(task_class);
+            p.goal = Some(goal.to_string());
+        });
         // The volatile recall+goal message rides AFTER the stable system
         // prefix (L-E8) — see assemble_user_message. The verification
         // contract rides only on turns that will actually be verified: a
@@ -1100,11 +1124,18 @@ impl<'a> Pipeline<'a> {
                 .await;
         }
 
+        // --- 2b. Pre-plan research (#1778): triage named questions, so
+        // parallel read-only sub-agents answer them before the planner runs.
+        // Empty questions skip the stage byte-for-byte (L-E2).
+        let research = self
+            .research_stage(goal, &research_questions, budget, &mut total_cost)
+            .await;
+
         // --- 3+4. Plan, then scope review — one phase, because a reviewer who
         // asks for a different scope sends us back to the planner. -----------
         let plan: Option<Vec<PlanStep>> = if task_class.plans() {
             match self
-                .plan_with_review(goal, &frames, budget, &mut total_cost)
+                .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
                 .await
             {
                 Ok(PlannedScope::Steps(steps)) => Some(steps),
@@ -1121,6 +1152,12 @@ impl<'a> Pipeline<'a> {
         } else {
             None
         };
+        if let Some(steps) = &plan {
+            // The frame needs the whole plan, not the transcript's echo of it:
+            // step prompts are pushed one turn at a time, so at a mid-plan
+            // kill the unreached steps exist nowhere else (#1671).
+            self.record_progress(|p| p.plan = Some(steps.clone()));
+        }
 
         // --- 5. Witness + execute + verify (single-shot or best-of-N). ------
         let n = self.config.candidate_count();
@@ -1243,213 +1280,18 @@ impl<'a> Pipeline<'a> {
             (best, candidates_run)
         };
 
-        // Adopt the winning candidate's trajectory.
-        *messages = best.messages;
-
-        // --- 6. Complete. --------------------------------------------------
-        if let Some(abort) = best.aborted {
-            // One abort is one `error` event. A turn-originated abort already
-            // crossed the bus inside the worker turn (or, for a soft stop /
-            // host cancel, deliberately did not — a decision is not a
-            // failure); only a pipeline-originated abort still owes the
-            // stream its event (#1524).
-            if !abort.from_turn {
-                self.emit(AgentEvent::Error {
-                    message: abort.reason.clone(),
-                    retryable: false,
-                });
-            }
-            return Ok(PipelineOutcome {
-                status: PipelineStatus::Aborted {
-                    reason: abort.reason,
-                    kind: abort.kind,
-                },
-                task_class,
-                final_text: best.final_text,
-                total_cost_usd: total_cost,
-                verdict: best.verdict,
-                score: Some(best.score),
-                revisions: best.revisions,
-                candidates_run,
-            });
-        }
-
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Complete,
-        });
-        let status = match &best.verdict {
-            Some(verdict) if !verdict.passed => PipelineStatus::VerificationFailed {
-                verdict: verdict.clone(),
-            },
-            _ => PipelineStatus::Completed,
-        };
-        match &status {
-            PipelineStatus::Completed => self.emit(AgentEvent::Complete {
-                // The label is `None` only when the candidate path returned
-                // before it resolved a worker (a setup abort that then
-                // degraded to a bare run). Re-resolve rather than emit
-                // `Complete { model: "" }` — a terminal event that names no
-                // model reads to every consumer as "no model ran", which is
-                // exactly backwards on a path that did the work.
-                model: worker_model_label
-                    .or_else(|| {
-                        self.resolve_provider(Role::Worker)
-                            .ok()
-                            .map(|worker| worker.model_ref.to_string())
-                    })
-                    .unwrap_or_default(),
-                cost_usd: total_cost,
-            }),
-            PipelineStatus::VerificationFailed { verdict } => {
-                self.emit(AgentEvent::Error {
-                    message: format!("verification failed: {}", verdict.summary),
-                    retryable: false,
-                });
-            }
-            PipelineStatus::Aborted { .. } => {
-                unreachable!("aborted candidates return before terminal verification")
-            }
-        }
-        Ok(PipelineOutcome {
-            status,
+        // Adopt the winning candidate's trajectory, then settle — the §6
+        // Complete/abort projection is shared with the resumed path
+        // (`resume_stage`), so the two cannot drift.
+        let mut best = best;
+        *messages = std::mem::take(&mut best.messages);
+        Ok(self.settle_outcome(
+            best,
             task_class,
-            final_text: best.final_text,
-            total_cost_usd: total_cost,
-            verdict: best.verdict,
-            score: Some(best.score),
-            revisions: best.revisions,
+            total_cost,
+            worker_model_label,
             candidates_run,
-        })
-    }
-
-    // Stage: triage
-
-    async fn triage(
-        &self,
-        goal: &str,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
-    ) -> Result<TaskAssessment, PipelineBudgetAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Triage,
-        });
-        // Deterministic short-circuit, BEFORE the paid call.
-        //
-        // `resolve_conversational` is a disjunction whose first term ignores
-        // the model entirely, so a `true` here with `model_says_chat = false`
-        // means the greeting arm fired — and no triage answer could change the
-        // outcome. Classifying `hi` used to cost a full round-trip plus, on a
-        // wedged provider, up to `triage_latency_ceiling` of dead air, for a
-        // route the module docs already describe as never depending on a model
-        // answer. This is the same assessment the resolution-failure arm below
-        // builds; it just stops paying for it first.
-        if resolve_conversational(false, goal) {
-            return Ok(TaskAssessment {
-                conversational: true,
-                ..TaskAssessment::from_class(resolve_task_class(None, goal))
-            });
-        }
-        let resolved = match self.resolve_provider(Role::Triage) {
-            Ok(r) => r,
-            // Triage resolution failure is soft: fall through to the full path
-            // via the deterministic floor. Never fail the run on triage.
-            // The conversational route is still resolved deterministically here
-            // (`resolve_conversational(false, goal)`) — a bare greeting must
-            // route to chat even when the triage provider can't be resolved,
-            // since it never depends on a model answer.
-            Err(_) => {
-                return Ok(TaskAssessment {
-                    conversational: resolve_conversational(false, goal),
-                    ..TaskAssessment::from_class(resolve_task_class(None, goal))
-                });
-            }
-        };
-        if let Some(fb) = &resolved.fallback {
-            self.emit_fallback(fb);
-        }
-
-        let assessment = match self
-            .metered_raw_call(
-                RawCall {
-                    role: ModelCallRole::Triage,
-                    resolved: &resolved,
-                    messages: triage_prompt(goal, &self.repo.structure_summary().await)
-                        .into_messages(),
-                    policy: RetryPolicy::deterministic(),
-                    overrides: &self.config.role_overrides.triage,
-                    timeout: Some(self.config.triage_latency_ceiling),
-                },
-                budget,
-                total,
-            )
-            .await
-        {
-            Ok(result) => parse_triage_response(&result.text),
-            Err(RawCallError::Budget(abort)) => return Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => None,
-        };
-        // The class still goes through `resolve_task_class` so a failed or
-        // unparseable triage lands on the deterministic floor exactly as
-        // before; a real assessment keeps its own assurance flags.
-        // Resolve the conversational route once, up front: it must hold even
-        // when the triage model call failed/was unparseable (the `None` arm),
-        // because a bare greeting is deterministic and should never depend on a
-        // model answer. `resolve_conversational` also applies the floor veto to
-        // an over-eager model `chat` — a goal with real task signal is work.
-        //
-        // A headless run never routes to chat on the model's opinion: its goal
-        // arrived from a script, a CI job, or a benchmark harness, so there is
-        // nobody chatting, and the chat path is terminal no-work — a misroute
-        // there silently drops the task with no revision possible. The
-        // deterministic greeting arm above stays (`stella run "thanks"` is
-        // still not a task); only the model's say is withheld.
-        let model_says_chat =
-            !self.config.headless && assessment.map(|a| a.conversational).unwrap_or(false);
-        let conversational = resolve_conversational(model_says_chat, goal);
-        // The witness decision is resolved here for the same reason as the
-        // conversational one: it must hold even when the triage call failed or
-        // was unparseable. `resolve_witness` is the deterministic *ceiling* —
-        // the mirror of the floor above, and the only thing allowed to move
-        // assurance down. It fires on one shape (a bare deletion of a named
-        // artifact) where an authored witness has nothing to fail against and
-        // the author can only invent something vacuous.
-        let resolved = match assessment {
-            Some(assessment) => {
-                let class = resolve_task_class(Some(assessment.class), goal);
-                TaskAssessment {
-                    class,
-                    conversational,
-                    require_witness: Some(resolve_witness(assessment.require_witness, class, goal)),
-                    ..assessment
-                }
-            }
-            None => {
-                let class = resolve_task_class(None, goal);
-                TaskAssessment {
-                    conversational,
-                    require_witness: Some(resolve_witness(None, class, goal)),
-                    ..TaskAssessment::from_class(class)
-                }
-            }
-        };
-        // The turn's assurance PLAN, published the moment it is decided and
-        // before any later stage can fail, abort, or decline to run.
-        //
-        // Every other proof step reports something that happened, so the most
-        // common outcome by far — triage deciding this change does not warrant
-        // a test — used to produce no steps at all and leave the surface with
-        // nothing to say about the thing it exists to say. A declared plan
-        // makes "we chose not to" a statement rather than an absence.
-        //
-        // Not emitted for a conversational turn: there is no work, so there is
-        // no assurance question, and answering an unasked one is noise.
-        if !resolved.conversational {
-            self.emit_proof(ProofStep::Assurance {
-                witness: resolved.wants_witness(),
-                verifier: resolved.wants_verifier(),
-            });
-        }
-        Ok(resolved)
+        ))
     }
 
     // Conversational fast path
@@ -1565,15 +1407,16 @@ impl<'a> Pipeline<'a> {
     // Stage: plan
 
     /// `revision` is the reviewer's note from a rejected scope card, or `None`
-    /// for a turn's first plan.
+    /// for a turn's first plan. `spend` bundles budget + total as downstream
+    /// does: #1778's `research` param took the pair one over clippy's cap.
     async fn plan_stage(
         &self,
         goal: &str,
         recall: &[RecalledFrame],
+        research: &[ResearchFinding],
         repo_structure: &str,
         revision: Option<&str>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Plan,
@@ -1588,7 +1431,7 @@ impl<'a> Pipeline<'a> {
             self.emit_fallback(fb);
         }
 
-        let prompt = build_planner_prompt(goal, recall, repo_structure, revision);
+        let prompt = build_planner_prompt(goal, recall, research, repo_structure, revision);
         // Plan rides the worker's settings (same router tier, same tuning).
         let worker_overrides = RoleCallOverrides::default();
         let result = match self
@@ -1601,8 +1444,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
@@ -1626,8 +1469,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
@@ -1708,22 +1551,17 @@ impl<'a> Pipeline<'a> {
             if let Some((hooks, runner)) = self.hooks {
                 engine = engine.with_hooks(hooks, runner);
             }
-            if let Some(gate) = self.turn_gate {
-                engine = engine.with_gate(gate);
-            }
+            engine = self.attach(engine);
             let view = fan.as_ref().map(|fan| fan.candidate());
             if let Some(view) = view.as_ref() {
                 engine = engine.with_steering(view);
             }
+            // Authoring is `None`: a shared-tree run has no workspace to graft
+            // into and no pristine snapshot to author blind in, so it never
+            // buys a witness. The ordinal is 1-based, like the start notice.
             results.push(
-                self.run_candidate(
-                    frame,
-                    // A shared-tree run has no workspace to graft into and no
-                    // pristine snapshot to author blind in, so it never buys a
-                    // witness — exactly as before, when it was passed `None`.
-                    None, &engine, surface, spend,
-                )
-                .await,
+                self.run_candidate(i + 1, frame, None, &engine, surface, spend)
+                    .await,
             );
         }
         results
@@ -1855,7 +1693,7 @@ impl<'a> Pipeline<'a> {
         // workspace with the result that produced it (and with the witness
         // paths that result carries). `Err` marks a candidate that never got a
         // workspace, and carries the reason it will be scored with.
-        let workspaces = self.create_candidate_workspaces(port, n).await;
+        let workspaces = self.create_candidate_workspaces(port, n, frame.plan).await;
         // Handed to the candidate rather than spent here: whether a run buys a
         // witness is not knowable until the candidate has executed and its diff
         // can be read.
@@ -1964,6 +1802,7 @@ impl<'a> Pipeline<'a> {
 
     async fn run_candidate(
         &self,
+        candidate: u32,
         frame: TaskFrame<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
         engine: &Engine<'_>,
@@ -2019,6 +1858,17 @@ impl<'a> Pipeline<'a> {
                 if !passed {
                     flip_halt = Some(Arc::new(FlipHalt::new(cmd.command)));
                 }
+                // The baseline is an observation of the pre-execution tree,
+                // which no post-crash process can ever repeat — record it so
+                // a resumed run's oracle keeps its `Failing` precondition
+                // instead of forfeiting the flip (#1671).
+                self.record_progress(|p| {
+                    p.baseline = Some(RecordedBaseline {
+                        command: cmd.command.to_string(),
+                        passed,
+                        output_tail: output.clone(),
+                    });
+                });
             }
         }
 
@@ -2048,6 +1898,15 @@ impl<'a> Pipeline<'a> {
         // an unchanged fingerprint is not this turn's work, but one the turn
         // edited (fingerprint changed) is.
         let untracked_before = surface.repo_status.untracked_fingerprints().await;
+        // Execute is beginning: stamp the facts a resume-into-execute needs
+        // and cannot re-derive (#1671). `isolated` decides restorability — a
+        // candidate worktree dies with the process, so a resume of an
+        // isolated run must decline rather than write into the wrong tree.
+        self.record_progress(|p| {
+            p.executing = true;
+            p.isolated = surface.workspace.is_some();
+            p.untracked_before = untracked_before.clone();
+        });
 
         let mut state = CandidateState {
             messages: candidate_narration::messages_rooted_at(
@@ -2056,6 +1915,7 @@ impl<'a> Pipeline<'a> {
             ),
             final_text: String::new(),
             signals: ChangeSignals::default(),
+            degradation: VerdictDegradation::new(candidate),
             flip_halt,
             oracle,
             oracle_trace,
@@ -2142,93 +2002,6 @@ impl<'a> Pipeline<'a> {
 
         self.verify_candidate(frame, witness.as_ref(), engine, surface, spend, state)
             .await
-    }
-
-    /// Execute stage: one turn for simple/single-task; one turn per plan step
-    /// for multi-step (each step guides a fresh engine turn). The last turn's
-    /// text lands in `state.final_text`; `Err` is the first aborted turn's
-    /// reason and kind, kept typed so the driver-side emit is not repeated.
-    async fn execute_plan(
-        &self,
-        plan: Option<&[PlanStep]>,
-        engine: &Engine<'_>,
-        spend: &mut Spend<'_>,
-        state: &mut CandidateState,
-    ) -> Result<(), TurnAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
-        // Borrowed, not collected: the steps are only read, so materializing a
-        // `Vec<&PlanStep>` per candidate bought nothing.
-        let steps: &[PlanStep] = plan.unwrap_or_default();
-        if steps.is_empty() {
-            match self
-                .run_engine_turn(
-                    engine,
-                    &mut state.messages,
-                    spend.budget,
-                    &mut state.signals,
-                    state.flip_halt.clone(),
-                )
-                .await
-            {
-                TurnOutcome::Completed { text, cost_usd } => {
-                    state.final_text = text;
-                    *spend.total += cost_usd;
-                }
-                TurnOutcome::Aborted {
-                    reason,
-                    kind,
-                    cost_usd,
-                } => {
-                    *spend.total += cost_usd;
-                    return Err(TurnAbort { reason, kind });
-                }
-            }
-        } else {
-            let n = steps.len();
-            for (i, step) in steps.iter().enumerate() {
-                state
-                    .messages
-                    .push(CompletionMessage::user(plan_steps::step_prompt(
-                        i,
-                        n,
-                        &step.description,
-                    )));
-                match self
-                    .run_engine_turn(
-                        engine,
-                        &mut state.messages,
-                        spend.budget,
-                        &mut state.signals,
-                        state.flip_halt.clone(),
-                    )
-                    .await
-                {
-                    TurnOutcome::Completed { text, cost_usd } => {
-                        *spend.total += cost_usd;
-                        // #1702: a worker that declares the whole goal done
-                        // ends the walk — the remaining steps could only
-                        // re-confirm finished work, and a false declaration
-                        // is the verify stage's to refute, not this loop's.
-                        let closed_out = plan_steps::goal_declared_complete(&text);
-                        state.final_text = text;
-                        if closed_out {
-                            break;
-                        }
-                    }
-                    TurnOutcome::Aborted {
-                        reason,
-                        kind,
-                        cost_usd,
-                    } => {
-                        *spend.total += cost_usd;
-                        return Err(TurnAbort { reason, kind });
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Verify + bounded revise loop over an executed candidate: observe the
@@ -2763,7 +2536,7 @@ impl<'a> Pipeline<'a> {
                                 },
                             );
                             match self
-                                .verifier(prompt, &inputs, spend.budget, spend.total)
+                                .verifier(&mut state.degradation, prompt, &inputs, spend)
                                 .await
                             {
                                 Ok(verdict) => {
@@ -2960,7 +2733,7 @@ impl<'a> Pipeline<'a> {
                 &mut state.messages,
                 spend.budget,
                 &mut state.signals,
-                None,
+                crate::flip_halt::for_revision(&state.flip_halt, state.oracle.state()),
             )
             .await
         {
@@ -3005,171 +2778,6 @@ impl<'a> Pipeline<'a> {
             fallback: decision.fallback,
             caveat: decision.caveat,
         })
-    }
-
-    /// Run one engine turn, forwarding every event to the consumer **live**
-    /// (a concurrent drain task, not a post-hoc flush — an execute turn can
-    /// run tool loops for minutes, and buffering froze the renderer for the
-    /// whole turn) **except** the engine's `Stage`/`Complete` (the pipeline
-    /// owns those), tallying `FileChange`s into `signals.file_changes` for
-    /// the zero-diff guard and mutating-capable `ToolStart`s into
-    /// `signals.mutating_actions` for the ladder's no-op rung.
-    ///
-    /// The tallies are deliberately independent. `file_changes` answers
-    /// "did the recorder see the tree change", which a shell redirect defeats;
-    /// `mutating_actions` answers "was anything even asked to change", which
-    /// nothing can defeat, because it is counted off the calls this pipeline
-    /// dispatched rather than off any look at the world.
-    async fn run_engine_turn(
-        &self,
-        engine: &Engine<'_>,
-        messages: &mut Vec<CompletionMessage>,
-        budget: &mut BudgetGuard,
-        signals: &mut ChangeSignals,
-        flip_halt: Option<Arc<FlipHalt>>,
-    ) -> TurnOutcome {
-        // The filtered sender is SYNCHRONOUS on purpose: when the outer
-        // sender carries a durability boundary, a paid StepUsage cannot
-        // return to the engine before append+flush completes. Draining a
-        // channel from a spawned forwarder instead would let the engine make
-        // another paid call before the previous one's metering row is durable.
-        let seen_file_changes = Arc::new(AtomicU32::new(0));
-        let count = seen_file_changes.clone();
-        let seen_mutating = Arc::new(AtomicU32::new(0));
-        let mutating = seen_mutating.clone();
-        let seen_opaque = Arc::new(AtomicU32::new(0));
-        let opaque = seen_opaque.clone();
-        let read_only = self.read_only_tool_names();
-        let consumer = self.events.clone();
-        // Correlate a shell call's command line (carried on `ToolStart`) with
-        // its exit status (carried in the `ToolResult` content), because
-        // neither event has both. Keyed by `call_id` rather than a
-        // last-command slot: a step dispatches up to eight calls
-        // concurrently, so "the most recent command" is genuinely ambiguous.
-        let pending_commands: Arc<Mutex<HashMap<String, String>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        let halt_for_events = flip_halt.clone();
-        let commands = pending_commands.clone();
-        // Read once per turn, not per event: a turn belongs to one candidate,
-        // and the fan-out sets this before dispatching any of them.
-        let shared_lane = self.shared_event_lane.load(Ordering::Relaxed);
-        let filtered = EventSender::from_fn(move |event| {
-            match &event {
-                // The pipeline is the sole authority for stage boundaries and
-                // the terminal event of an outcome-producing run — drop the
-                // engine's per-turn copies.
-                AgentEvent::Stage { .. } | AgentEvent::Complete { .. } => Ok(()),
-                // Concurrent candidates share this stream, and these two are
-                // the only events whose meaning depends on arriving
-                // uninterrupted: `TextDelta` is a preview its own `Text` event
-                // supersedes, and `Reasoning` is accumulated by the consumer.
-                // Three models' fragments spliced together is not a preview of
-                // anything. Everything durable still goes out live — see
-                // `Pipeline::shared_event_lane`.
-                AgentEvent::TextDelta { .. } | AgentEvent::Reasoning { .. } if shared_lane => {
-                    Ok(())
-                }
-                AgentEvent::FileChange { kind, .. } => {
-                    // Reads ride the same event for the files panel but are
-                    // not changes — counting them would defeat the zero-diff
-                    // guard on read-only turns.
-                    if kind.is_mutation() {
-                        count.fetch_add(1, Ordering::Relaxed);
-                    }
-                    consumer.send(event)
-                }
-                AgentEvent::ToolStart { call } => {
-                    // Counted at dispatch, not at result: a call that errored
-                    // or timed out still means the turn *tried* to act, and
-                    // the no-op rung is about the attempt. Only a name the
-                    // registry positively advertises as read-only is excluded.
-                    if !read_only.contains(&call.name) {
-                        mutating.fetch_add(1, Ordering::Relaxed);
-                        // The warrant's premise check: a mutating call whose
-                        // effects the diff cannot fully account for (the
-                        // shell, processes, MCP, anything unrecognized)
-                        // forfeits every path-classified waiver (#1701).
-                        if !crate::witness::warrant::diff_accountable_mutator(&call.name) {
-                            opaque.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                    // Remember the command line so its result can be scored
-                    // against the tracked test. Only when a halt is armed —
-                    // otherwise this map is pure overhead on every turn.
-                    if halt_for_events.is_some()
-                        && let Some(command) = command_of(&call.input)
-                        && let Ok(mut pending) = commands.lock()
-                    {
-                        pending.insert(call.call_id.clone(), command.to_string());
-                    }
-                    consumer.send(event)
-                }
-                AgentEvent::ToolResult {
-                    call_id, output, ..
-                } => {
-                    // The agent running the tracked test itself is the
-                    // earliest moment anyone can know the goal is met — and
-                    // before this, it was the one observation the oracle
-                    // never saw (it watched only a pre-execute baseline and
-                    // post-execute verification). Feeding it here is what
-                    // lets the engine stop at the next step boundary instead
-                    // of running until a limit fires.
-                    if let Some(halt) = halt_for_events.as_ref() {
-                        let command = commands
-                            .lock()
-                            .ok()
-                            .and_then(|mut pending| pending.remove(call_id));
-                        if let Some(command) = command
-                            && let ToolOutput::Ok { content } = output
-                        {
-                            // Nothing is emitted on the transition: this is a
-                            // success, and the only event available in this
-                            // closure is `Error`, which a TUI renders as a
-                            // failure. The reason reaches the transcript as
-                            // the halted turn's own text (`TurnHalt`).
-                            halt.observe(&command, content);
-                        }
-                    }
-                    consumer.send(event)
-                }
-                _ => consumer.send(event),
-            }
-        });
-        // A halted engine only when there is something to watch, so a turn
-        // with no armed flip runs on exactly the engine it always did.
-        let halted;
-        let engine = match flip_halt {
-            Some(halt) => {
-                halted = engine.with_turn_halt(halt as Arc<dyn TurnHalt>);
-                &halted
-            }
-            None => engine,
-        };
-        let outcome = engine
-            .run_turn_with_sender(messages, budget, &filtered)
-            .await;
-        signals.file_changes += seen_file_changes.load(Ordering::Relaxed);
-        signals.mutating_actions += seen_mutating.load(Ordering::Relaxed);
-        signals.opaque_actions += seen_opaque.load(Ordering::Relaxed);
-        outcome
-    }
-
-    /// Tool names the registry advertises as `read_only` — the calls that
-    /// structurally cannot have changed the workspace.
-    ///
-    /// Membership is the *only* thing that lets a call be discounted, so the
-    /// direction of every uncertainty is fixed: a name this set has never
-    /// heard of (an MCP server attached mid-run, a host's own extension, a
-    /// tool added since) counts as mutating, and the ladder declines to call
-    /// the turn a no-op. Getting that backwards would let an unrecognized
-    /// tool's real work be reported as nothing attempted.
-    fn read_only_tool_names(&self) -> HashSet<String> {
-        self.tools
-            .schemas()
-            .into_iter()
-            .filter(|schema| schema.read_only)
-            .map(|schema| schema.name)
-            .collect()
     }
 
     /// Emit this recall's telemetry. The projection itself lives on

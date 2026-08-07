@@ -10,6 +10,7 @@ use stella_protocol::{
     MessageRole, ProviderError, ToolCall,
 };
 
+use crate::cache_economics::CacheTtl;
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
@@ -37,6 +38,13 @@ pub struct AnthropicProvider {
     /// pipeline's management roles). Contention is one pointer write per
     /// request.
     previous_tail: std::sync::Mutex<Option<TailPosition>>,
+    /// The prompt-cache window this session asks for (#1839): the default
+    /// 5-minute window sends today's exact bytes; the 1-hour opt-in adds
+    /// `ttl: "1h"` to every breakpoint plus the [`EXTENDED_CACHE_TTL_BETA`]
+    /// header. Session-scoped like `previous_tail` — mixing windows within a
+    /// session would pay the 2x write premium for a prefix the next turn
+    /// re-anchors on the short window anyway.
+    cache_ttl: CacheTtl,
 }
 
 impl AnthropicProvider {
@@ -60,6 +68,7 @@ impl AnthropicProvider {
             model,
             pricing,
             previous_tail: std::sync::Mutex::new(None),
+            cache_ttl: CacheTtl::default(),
         }
     }
 
@@ -68,6 +77,15 @@ impl AnthropicProvider {
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    /// Pin the prompt-cache window this session requests (#1839). The default
+    /// ([`CacheTtl::FiveMinutes`]) changes nothing on the wire; see the
+    /// `cache_ttl` field for what [`CacheTtl::OneHour`] adds.
+    #[must_use]
+    pub fn with_cache_ttl(mut self, cache_ttl: CacheTtl) -> Self {
+        self.cache_ttl = cache_ttl;
         self
     }
 }
@@ -263,13 +281,38 @@ fn map_effort(effort: stella_protocol::ReasoningEffort) -> &'static str {
 /// wire half that actually turns the cache on. Reads bill at ~0.1x the input
 /// rate, writes at ~1.25x — break-even after two requests, and the agent
 /// loop replays its prefix every turn.
+///
+/// `ttl` is the extended-window opt-in (#1839): `"1h"` widens the window to
+/// an hour (writes bill 2x instead of 1.25x) and requires the
+/// [`EXTENDED_CACHE_TTL_BETA`] header on the request. `None` — the default —
+/// omits the field entirely, so a session on the 5-minute window serializes
+/// byte-identically to one built before the knob existed (invariant 7).
 #[derive(Serialize, Clone, Copy, Debug)]
 struct AnthropicCacheControl {
     #[serde(rename = "type")]
     kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl: Option<&'static str>,
 }
 
-const EPHEMERAL_CACHE: AnthropicCacheControl = AnthropicCacheControl { kind: "ephemeral" };
+/// The `anthropic-beta` value that unlocks the `cache_control.ttl` field.
+/// Sent only when the session configured the 1-hour window: an unconditional
+/// beta header would change every request's shape for users who never asked.
+const EXTENDED_CACHE_TTL_BETA: &str = "extended-cache-ttl-2025-04-11";
+
+/// The cache marker for `ttl`'s window: bare `{"type":"ephemeral"}` on the
+/// default 5-minute window, `{"type":"ephemeral","ttl":"1h"}` on the 1-hour
+/// opt-in. One constructor so the system-block and both message breakpoints
+/// can never disagree about the window they ask for.
+const fn ephemeral_cache(ttl: CacheTtl) -> AnthropicCacheControl {
+    AnthropicCacheControl {
+        kind: "ephemeral",
+        ttl: match ttl {
+            CacheTtl::FiveMinutes => None,
+            CacheTtl::OneHour => Some("1h"),
+        },
+    }
+}
 
 /// Stamp the conversation-tail cache breakpoint: `cache_control` on the
 /// LAST content block of the final message, so each agent-loop turn reads
@@ -310,7 +353,11 @@ type TailPosition = (usize, usize);
 /// an assertion: no answer here can be *wrong*, only suboptimal. Paying a hash
 /// of every block on every request to slightly improve an anchor would cost
 /// more than it saves.
-fn stamp_remembered_tail(messages: &mut [AnthropicMessage], at: TailPosition) {
+fn stamp_remembered_tail(
+    messages: &mut [AnthropicMessage],
+    at: TailPosition,
+    marker: AnthropicCacheControl,
+) {
     let (message, block) = at;
     // Never the newest block: that is the current tail's own position, and
     // spending both message breakpoints on the same anchor is what this
@@ -322,7 +369,7 @@ fn stamp_remembered_tail(messages: &mut [AnthropicMessage], at: TailPosition) {
         match target {
             AnthropicContentBlock::Text { cache_control, .. }
             | AnthropicContentBlock::ToolResult { cache_control, .. } => {
-                *cache_control = Some(EPHEMERAL_CACHE);
+                *cache_control = Some(marker);
             }
             // The position now holds a block this adapter's schema cannot
             // mark. Leave it: a missing second breakpoint is the old
@@ -334,7 +381,10 @@ fn stamp_remembered_tail(messages: &mut [AnthropicMessage], at: TailPosition) {
     }
 }
 
-fn stamp_tail_cache_breakpoint(messages: &mut [AnthropicMessage]) -> Option<TailPosition> {
+fn stamp_tail_cache_breakpoint(
+    messages: &mut [AnthropicMessage],
+    marker: AnthropicCacheControl,
+) -> Option<TailPosition> {
     // Walk BACKWARD to the newest stampable block rather than inspecting only
     // the literal last one. The loop's ordinary shape does end on Text or
     // ToolResult — but a user message that is *only* an attachment ends on a
@@ -350,7 +400,7 @@ fn stamp_tail_cache_breakpoint(messages: &mut [AnthropicMessage]) -> Option<Tail
             match block {
                 AnthropicContentBlock::Text { cache_control, .. }
                 | AnthropicContentBlock::ToolResult { cache_control, .. } => {
-                    *cache_control = Some(EPHEMERAL_CACHE);
+                    *cache_control = Some(marker);
                     return Some((mi, bi));
                 }
                 // Media and tool_use blocks don't carry the marker in this
@@ -776,11 +826,12 @@ impl AnthropicProvider {
         // Previous first: `stamp_tail_cache_breakpoint` walks backward to the
         // newest stampable block, and re-stamping the old position afterwards
         // could otherwise land on the same block and spend both on one anchor.
+        let marker = ephemeral_cache(self.cache_ttl);
         let previous = *self.previous_tail.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(at) = previous {
-            stamp_remembered_tail(&mut messages, at);
+            stamp_remembered_tail(&mut messages, at, marker);
         }
-        if let Some(tail) = stamp_tail_cache_breakpoint(&mut messages) {
+        if let Some(tail) = stamp_tail_cache_breakpoint(&mut messages, marker) {
             *self.previous_tail.lock().unwrap_or_else(|p| p.into_inner()) = Some(tail);
         }
         let reasoning_on = req.reasoning == Some(true);
@@ -863,7 +914,7 @@ impl AnthropicProvider {
                 vec![AnthropicSystemBlock {
                     kind: "text",
                     text,
-                    cache_control: EPHEMERAL_CACHE,
+                    cache_control: marker,
                 }]
             }),
             messages,
@@ -884,12 +935,19 @@ impl AnthropicProvider {
                 .collect(),
         };
 
-        let response = self
+        let mut request = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
             .header("x-api-key", self.api_key.reveal())
             .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+        // The `ttl` field is beta-gated; the header rides only when a marker
+        // actually carries the field, so default-window requests keep today's
+        // exact header set.
+        if self.cache_ttl == CacheTtl::OneHour {
+            request = request.header("anthropic-beta", EXTENDED_CACHE_TTL_BETA);
+        }
+        let response = request
             .json(&body)
             .send()
             .await

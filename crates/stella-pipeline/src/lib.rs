@@ -106,6 +106,7 @@ pub mod pipeline;
 pub mod plan;
 pub mod ports;
 pub mod replay;
+pub mod research;
 pub mod reward;
 pub mod scope;
 pub mod triage;
@@ -114,8 +115,9 @@ pub mod witness;
 
 pub use oom::{ExitFacts, killed_by_oom};
 pub use pipeline::{
-    Pipeline, PipelineConfig, PipelineError, PipelineOutcome, PipelineRoleOverrides,
-    PipelineRunError, PipelineStatus, RoleCallOverrides, Verdict,
+    FrameProgress, Pipeline, PipelineConfig, PipelineError, PipelineOutcome, PipelineResume,
+    PipelineRoleOverrides, PipelineRunError, PipelineStatus, RecordedBaseline, RoleCallOverrides,
+    Verdict,
 };
 pub use ports::{
     AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind, AuthoredChange,
@@ -123,8 +125,8 @@ pub use ports::{
     CoverageProbe, DiagnosticInvocation, DiagnosticRunner, FileTouchPort, LineMutation, LintProbe,
     LintRecord, McpPrefetchPort, MutantOutcome, MutationProbe, NoContextRecall, NoFileTouches,
     NoRepoStatus, NoRepoStructure, PipelinePorts, ProviderResolver, Recall, RecalledFrame,
-    RepoStatusPort, RepoStructurePort, ScopeDecision, StdioApprovalGate, TestInvocation,
-    TestRunner, WorkspaceError, decision_from_line,
+    RepoStatusPort, RepoStructurePort, ResumeFrameSink, ScopeDecision, StdioApprovalGate,
+    TestInvocation, TestRunner, WorkspaceError, decision_from_line,
 };
 pub use reward::{
     DiscardReason, OutcomeWeights, RewardLabel, RewardPolicy, RewardShaping, Settlement,

@@ -285,6 +285,7 @@ fn all_stage_kinds() -> Vec<StageKind> {
     vec![
         Triage,
         ContextRecall,
+        Research,
         Plan,
         ScopeReview,
         Witness,
@@ -315,6 +316,7 @@ fn all_model_call_roles() -> Vec<ModelCallRole> {
     vec![
         Unknown,
         Triage,
+        Research,
         Plan,
         PlanRepair,
         WitnessAuthor,
@@ -437,6 +439,10 @@ fn all_proof_steps() -> Vec<ProofStep> {
             runs_required: Some(3),
             seed: Some(7741),
         },
+        ProofStep::VerdictDegraded {
+            candidate: 2,
+            reason: "the verifier call failed or timed out".into(),
+        },
     ]
 }
 
@@ -554,6 +560,11 @@ fn sample_events() -> Vec<AgentEvent> {
             superseded_blocks: vec!["blk_c".into()],
             aged_blocks: vec!["blk_d".into()],
             summarized_blocks: vec!["blk_e".into()],
+            rewrites: vec![stella_protocol::CompactionRewrite {
+                block_id: "blk_f".into(),
+                content_digest: "sha256:aa".into(),
+                content: "{\"ok\":{\"content\":\"[stub]\"}}".into(),
+            }],
             effective_budget_tokens: 136_363,
             calibration_factor: 1.1,
         },
@@ -572,6 +583,7 @@ fn sample_events() -> Vec<AgentEvent> {
             superseded_blocks: vec![],
             aged_blocks: vec![],
             summarized_blocks: vec![],
+            rewrites: vec![],
             effective_budget_tokens: 0,
             calibration_factor: 0.0,
         },

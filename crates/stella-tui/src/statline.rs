@@ -452,6 +452,7 @@ fn stage_label_upper(stage: Option<stella_protocol::StageKind>) -> &'static str 
         None => "IDLE",
         Some(S::Triage) => "TRIAGE",
         Some(S::ContextRecall) => "CONTEXT RECALL",
+        Some(S::Research) => "RESEARCH",
         Some(S::Plan) => "PLAN",
         Some(S::ScopeReview) => "SCOPE REVIEW",
         Some(S::Witness) => "WITNESS",

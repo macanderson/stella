@@ -156,20 +156,17 @@ $ stella daemon resume ses-1785956826121
 
 The relaunch continues the **same session** — same id, same sidecar, the crashed attempt's console preserved — as a fresh supervised child. Completed steps are already in the checkpointed transcript, tool results included, so nothing re-runs and no tool effect is applied twice; the no-clobber staleness map rides the same checkpoint, so a file something else edited while the run was dead is refused rather than overwritten. A run that ended cleanly has nothing to resume, and `resume` says so instead of restarting it.
 
-Two honest limits remain — and neither is silent any more. A turn that was mid-*pipeline* resumes as a plain engine turn: the checkpoint captures the worker's turn, not the pipeline's staging, so the verify and verdict stages that would have followed do not re-run. A turn that was executing in a candidate worktree resumes in the workspace, because the candidate died with the process.
-
-Both are now *announced*. `stella run` leaves a pipeline frame beside its checkpoint, and `resume` reads it before the first step: the run names every stage it is not restoring — the verify command that will not re-run, the witness flip that will not be credited, the revision rounds that will not happen, the candidate worktree that is gone — drops the green tick, and files its audit row as `resumed_complete_unverified` rather than `resumed_complete`.
+A turn that was mid-*pipeline* now **re-enters the pipeline** when its frame permits: the pipeline records its progress — task class, goal, plan cursor, test baseline — beside every checkpoint, and `resume` finishes the interrupted turn, runs the plan steps the crash never reached, then runs the witness/verify/verdict stages on the completed work. A resume that ends with a verdict files its audit row as `resumed_complete_verified` and keeps the green tick.
 
 ```text
 $ stella daemon resume ses-1785956826121
   resuming ses-1785956826121-25167 at step 14 — completed steps stay done, nothing re-runs
-  ! this was a staged pipeline run — the resume continues its interrupted TURN, not the pipeline around it
-    the verify stage will NOT re-run `cargo test`, and no verdict is recorded
-    the witness test's fail→pass flip is NOT credited — nothing proves this done
-    re-verify it with `stella run` before treating this as done
+  ! this was a staged pipeline run — resuming INTO it: the interrupted turn continues, then the witness/verify/verdict stages run on the completed work
+    the pre-crash lint baseline is gone, so the lint-regression veto (#861) sits out this run
+    an authored witness cannot be re-created after a crash — verification proceeds on the unauthored ladder
 ```
 
-An unverified resume is a resume you can still act on; an unverified resume you were never told about is not. Re-verifying is `stella run` with the verifier of your choice.
+Two honest limits remain — and neither is silent. A turn that was executing in a **candidate worktree** resumes in the workspace as a plain engine turn, because the candidate died with the process. And a frame from an **older writer** (or a run killed before execution began) carries no progress record to restore from, so it too resumes as a plain turn. In both cases the run names every stage it is not restoring — the verify command that will not re-run, the witness flip that will not be credited — drops the green tick, and files its audit row as `resumed_complete_unverified` rather than `resumed_complete`. An unverified resume is a resume you can still act on; an unverified resume you were never told about is not. Re-verifying is `stella run` with the verifier of your choice.
 
 ## `resume-all`
 
@@ -189,7 +186,9 @@ It prints one line per supervised run, continued or skipped, with the reason:
   boot-time resume 1 of 3 for ses-1785956826121
 ```
 
-**What it continues.** Exactly the rows `list` paints `Crashed ↩`: a supervised run whose recorded status is still live while its liveness lock is gone, whose workspace still exists, and which left a resume point. A run that finished, was stopped, was set aside, or recorded an error is never resumed — every deliberate ending writes a status on the way out, and a process the kernel took writes nothing, so a live status with a dead lock is the signature of interruption and of nothing else. The rule is deliberately conservative on the one ambiguous case: work you ended on purpose is never resumed behind your back, at the cost of not resuming a crash that managed to record itself.
+**What it continues.** A supervised run that was interrupted — its liveness lock gone, its workspace still there, and a resume point left behind. That is the rows `list` paints `Crashed ↩`, and now also a run that fell over having lived just long enough to record the error: both are work that stopped without meaning to.
+
+A run that finished, was stopped, was set aside, or **stopped itself by policy** — a stuck loop escalated past its warning, the step cap, an enforced budget, a scope review you ended — is never resumed. Every one of those writes a status on the way out saying the work was *ended* rather than broken, and every one of them retracts its resume point as it goes, so the rule holds twice over. Work you ended on purpose is never resumed behind your back.
 
 **What it skips because nobody is there.** A run that was waiting on a plan review when the machine went down is *not* resumed at boot. Resuming it would not fail — it would park again, waiting for an answer, and because the sweep streams one run at a time to completion it would sit there forever with every later run behind it unresumed. So the sweep names it and moves on:
 
