@@ -49,7 +49,7 @@ impl RepoStatusPort for NeverRepoStatus {
 pub(super) struct FakeWorkspace {
     id: usize,
     root: String,
-    tools: EmptyTools,
+    tools: Box<dyn ToolExecutor>,
     diagnostics: ScriptedRunner,
     repo_status: SeqRepoStatus,
     adopt_result: Result<Vec<AdoptedChange>, WorkspaceError>,
@@ -74,7 +74,7 @@ impl FakeWorkspace {
         Self {
             id,
             root: "/candidate/workspace".into(),
-            tools: EmptyTools,
+            tools: Box::new(EmptyTools),
             diagnostics: ScriptedRunner::new(test_results, "@@ -1 +1 @@\n-a\n+b"),
             repo_status: SeqRepoStatus::new(vec![]),
             adopt_result,
@@ -125,6 +125,15 @@ impl FakeWorkspace {
         self
     }
 
+    /// The tool executor this candidate's engine turns run against — for
+    /// scenarios where a scripted worker must *observe* something through a
+    /// tool result (e.g. the tracked test's exit status feeding the flip
+    /// halt), which the default silent [`EmptyTools`] can never carry.
+    pub(super) fn with_tools(mut self, tools: impl ToolExecutor + 'static) -> Self {
+        self.tools = Box::new(tools);
+        self
+    }
+
     /// A candidate that wrote through its isolation (#1538): the post-seal
     /// escape check will report these paths as already holding the
     /// candidate's sealed bytes in the real tree.
@@ -149,10 +158,10 @@ impl CandidateWorkspace for FakeWorkspace {
         &self.root
     }
     fn tools(&self) -> &dyn ToolExecutor {
-        &self.tools
+        self.tools.as_ref()
     }
     fn witness_tools(&self) -> &dyn ToolExecutor {
-        &self.tools
+        self.tools.as_ref()
     }
     fn diagnostics(&self) -> &dyn DiagnosticRunner {
         &self.diagnostics

@@ -314,6 +314,13 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .step-row > span:last-child{text-align:right}
 .tokbar{display:flex;height:10px;border-radius:0 2px 2px 0;overflow:hidden;gap:2px}
 .tokbar i{display:block;height:100%}
+/* The per-turn diff affordance in the sessions turns table (#1870). */
+.turn-diff{background:none;border:1px solid var(--hairline);color:var(--text-2);
+  border-radius:var(--radius-sm);padding:1px 6px;font:var(--fs-micro)/1.4 var(--mono);cursor:pointer}
+.turn-diff:hover{color:var(--text);border-color:var(--accent)}
+.turn-diff-row > td{background:var(--ground)}
+.diff-body{font:var(--fs-sm)/1.5 var(--mono);color:var(--text-2);margin:4px 0 0;
+  white-space:pre-wrap;word-break:break-word}
 
 /* ── Empty & structural bits ──────────────────────────────────────────── */
 .empty{padding:var(--sp4) var(--sp2);text-align:center;color:var(--text-2);
@@ -640,6 +647,30 @@ footer b{color:var(--text-2);font-weight:600}
         <div class="kick">Auto-extracted</div>
         <h2>Learned skills</h2>
         <div class="scroll-y-tall" id="imp-learned" tabindex="0"></div>
+      </div>
+    </div>
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Promotion audit trail · context.db</div>
+        <h2>Proposals &amp; their standing</h2>
+        <div class="scroll-y-tall" id="imp-proposals" tabindex="0"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Governance decisions · newest first</div>
+        <h2>Promotion events</h2>
+        <div class="scroll-y-tall" id="imp-events" tabindex="0"></div>
+      </div>
+    </div>
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Episodic memory · current revisions</div>
+        <h2>Episodes</h2>
+        <div class="scroll-y-tall" id="imp-episodes" tabindex="0"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Is injected context earning its tokens?</div>
+        <h2>Selection health</h2>
+        <div class="scroll-y-tall" id="imp-health" tabindex="0"></div>
       </div>
     </div>
   </section>
@@ -1793,6 +1824,98 @@ function renderImprove(skills) {
     : `<div class="empty">none yet — when a lesson recurs across turns, stella writes it into
        <code>.stella/skills/</code> and starts using it in future runs</div>`;
 }
+/* The self-improvement lifecycle read out of context.db (#1871): the
+   promotion audit trail (observation → proposal → promotion event), episodic
+   memory, and selection health. Lazily fetched with the tab rather than on
+   the 5 s poll — the ledger is append-only and slow-moving. */
+const LIFECYCLE_BADGE = {
+  eligible:       ["◆", "accent"], collecting: ["○", "dim"],
+  ignored:        ["✕", "dim"],    proposed:   ["◆", "accent"],
+  auto_activated: ["✓", "ok"],     confirmed:  ["✓", "ok"],
+  published:      ["✓", "ok"],     rejected:   ["✕", "bad"],
+  retired:        ["⊘", "warn"],   reverted:   ["↩", "warn"],
+};
+function lifecycleBadge(status) {
+  const [glyph, cls] = pick(LIFECYCLE_BADGE, status, ["·", "dim"]);
+  return `<span class="badge ${cls}">${glyph} ${esc(String(status ?? ""))}</span>`;
+}
+const EPISODE_OUTCOME = {
+  success: ["ok", "✓ success"], failure: ["bad", "✕ failure"],
+  partial: ["warn", "◌ partial"], aborted: ["bad", "✕ aborted"],
+};
+function renderLifecycle(d) {
+  if (!changed("lifecycle", d)) return;
+  const proposals = d.proposals ?? [];
+  $("imp-proposals").innerHTML = proposals.length
+    ? proposals.map(p => `<div class="feed-item">
+        <b>${esc(p.candidate_id)}</b> ${lifecycleBadge(p.status)}
+        <span class="chip">${esc(p.kind)}</span>
+        <span class="when">${ago(p.observed_at)}</span>
+        <div>${esc(p.body || p.title || "")}</div>
+        <div class="when">${fmtInt(p.distinct_tasks)} distinct task(s) ·
+          ${fmtInt(p.occurrences)} observation(s) · confidence ${fmtInt(p.confidence)}</div>
+      </div>`).join("")
+    : `<div class="empty">No proposals in the ledger.<br>
+       When a lesson recurs across distinct tasks, the loop files a durable
+       proposal into <code>.stella/private/context.db</code> — the audit trail
+       behind every learned skill and promoted rule.</div>`;
+
+  const events = d.events ?? [];
+  $("imp-events").innerHTML = events.length
+    ? events.map(e => `<div class="feed-item">
+        ${lifecycleBadge(e.action)} <b>${esc(e.candidate_id ?? e.proposal_lineage_id)}</b>
+        <span class="chip">${esc(e.actor)}</span>${e.enforcement
+          ? ` <span class="chip">${esc(e.enforcement)}</span>` : ""}
+        <span class="when">${ago(e.occurred_at)}</span>
+        <div>${esc(e.reason || "")}</div></div>`).join("")
+    : `<div class="empty">No governance decisions recorded.<br>
+       Keep, Edit and Ignore from <code>stella proposals</code> — and the
+       loop's own auto-activations and retirements — replay from here.</div>`;
+
+  const episodes = d.episodes ?? [];
+  $("imp-episodes").innerHTML = episodes.length
+    ? `<table><thead><tr><th scope="col">episode</th><th scope="col">outcome</th>
+        <th scope="col" class="num">files</th><th scope="col" class="num">salience</th>
+        <th scope="col" class="num">ended</th></tr></thead><tbody>` +
+      episodes.map(ep => {
+        const files = Array.isArray(ep.files_touched) ? ep.files_touched : [];
+        const [cls, label] = pick(EPISODE_OUTCOME, ep.outcome, ["dim", String(ep.outcome ?? "")]);
+        return `<tr>
+        <td class="main">${esc(ep.summary)}</td>
+        <td><span class="badge ${cls}">${esc(label)}</span></td>
+        <td class="num" title="${esc(files.join("\n"))}">${fmtInt(files.length)}</td>
+        <td class="num">${num(ep.salience).toFixed(2)}</td>
+        <td class="num">${ago(ep.ended_at)}</td></tr>`;
+      }).join("") + `</tbody></table>`
+    : `<div class="empty">No episodes recorded.<br>
+       Each turn's story — what was asked, what was touched, how it ended —
+       lands in episodic memory for future recall.</div>`;
+
+  const health = d.selection_health ?? [];
+  const pol = d.health_policy ?? {};
+  $("imp-health").innerHTML = health.length
+    ? `<table><thead><tr><th scope="col">record</th><th scope="col" class="num">uses</th>
+        <th scope="col" class="num">tasks</th><th scope="col" class="num">assessed</th>
+        <th scope="col" class="num">helpful</th><th scope="col" class="num">not helpful</th>
+        <th scope="col">standing</th></tr></thead><tbody>` +
+      health.map(h => `<tr>
+        <td class="main" title="${esc(h.context_record_id)}">${esc(h.context_record_id)}</td>
+        <td class="num">${fmtInt(h.uses)}</td>
+        <td class="num">${fmtInt(h.distinct_tasks)}</td>
+        <td class="num">${fmtInt(h.assessed_uses)}</td>
+        <td class="num">${fmtInt(h.helpful)}</td>
+        <td class="num">${fmtInt(h.not_helpful)}</td>
+        <td>${h.failing ? `<span class="badge bad">✕ failing</span>`
+            : h.attributable ? `<span class="badge ok">✓ earning</span>`
+            : `<span class="badge dim">○ unassessed</span>`}</td></tr>`).join("") +
+      `</tbody></table>
+      <div class="when" style="margin-top:6px">shipped defaults: failing =
+        ≥${fmtInt(pol.min_attributable_uses ?? 5)} assessed uses with
+        ≥${pct(pol.not_helpful_ratio_threshold ?? 0.8)} judged not helpful</div>`
+    : `<div class="empty">Nothing assessed yet.<br>
+       Every time recalled context is judged for whether it helped, the verdict
+       lands here — which injected records are earning their tokens.</div>`;
+}
 function renderRatingsChart(ratings) {
   const el = $("ch-ratings");
   const pts = ratings.filter(r => r.self_rating != null);
@@ -2600,7 +2723,10 @@ function turnRowHtml(t, i) {
       ? ` <span style="color:var(--bad)">✕${fmtInt(t.tool_errors)}</span>` : ""}</td>
     <td class="num">${fmtInt(t.files_touched)}
       <span style="color:var(--ok)">+${fmtInt(t.lines_added)}</span>
-      <span style="color:var(--bad)">−${fmtInt(t.lines_removed)}</span></td>
+      <span style="color:var(--bad)">−${fmtInt(t.lines_removed)}</span>${
+      t.journal_turn != null
+        ? ` <button type="button" class="turn-diff" data-jturn="${num(t.journal_turn)}"
+             title="what this turn changed on disk, from the work journal">±&nbsp;diff</button>` : ""}</td>
     <td class="num">${fmtTok(t.input_tokens)}·${fmtTok(t.output_tokens)}</td>
     <td class="num">${cachePct(t.cache_read_tokens, t.cache_miss_tokens)}</td>
     <td class="num">${num(t.retries) ? `<span style="color:var(--warn)">${fmtInt(t.retries)}</span>` : "0"}</td>
@@ -2696,9 +2822,56 @@ $("ses-list").addEventListener("click", (ev) => {
   if (tr) openSession(tr.dataset.ses);
 });
 $("ses-turns").addEventListener("click", (ev) => {
+  const diffBtn = ev.target.closest("button.turn-diff");
+  if (diffBtn) {
+    toggleTurnDiff(diffBtn.closest("tr[data-exec]"), +diffBtn.dataset.jturn);
+    return;
+  }
   const tr = ev.target.closest("tr[data-exec]");
-  if (tr) openDrawer(+tr.dataset.exec);
+  if (tr && !tr.classList.contains("turn-diff-row")) openDrawer(+tr.dataset.exec);
 });
+/* Expand one turn's on-disk diff (#1870) under its row — fetched from the
+   session_turn_diffs projection the owning session precomputed at turn end,
+   never from the work journal's repo. Click again to collapse. */
+async function toggleTurnDiff(row, jturn) {
+  if (!row) return;
+  const open = row.nextElementSibling;
+  if (open && open.classList.contains("turn-diff-row")) { open.remove(); return; }
+  const holder = document.createElement("tr");
+  holder.className = "turn-diff-row";
+  const cols = row.children.length;
+  holder.innerHTML = `<td colspan="${cols}"><div class="empty">Loading the turn diff…</div></td>`;
+  row.after(holder);
+  try {
+    const d = await api(`/api/session-turn-diff?id=${encodeURIComponent(state.session)}&turn=${jturn}`);
+    holder.innerHTML = `<td colspan="${cols}">${turnDiffHtml(d)}</td>`;
+  } catch (e) {
+    holder.innerHTML = `<td colspan="${cols}"><div class="empty">Could not load the diff.</div></td>`;
+  }
+}
+function turnDiffHtml(d) {
+  const files = d?.files ?? [];
+  if (!d?.found || !files.length) {
+    return `<div class="empty">No recorded diff for this turn — the session predates
+      per-turn diffs, or the turn touched nothing the journal records.</div>`;
+  }
+  const body = files.map(f => {
+    const head = `<div class="kick">${esc(f.path)}
+      <span style="color:var(--ok)">+${fmtInt(f.added)}</span>
+      <span style="color:var(--bad)">−${fmtInt(f.removed)}</span></div>`;
+    if (f.skipped) return `${head}<div class="empty">Too large to diff — listed, not rendered.</div>`;
+    const hunks = (f.hunks ?? []).map(h => `<pre class="diff-body">${
+      esc(`@@ -${num(h.old_start)},${num(h.old_count)} +${num(h.new_start)},${num(h.new_count)} @@`)}
+${(h.lines ?? []).map(l => {
+        const sigil = l.op === "add" ? "+" : l.op === "remove" ? "−" : " ";
+        const color = l.op === "add" ? "var(--ok)" : l.op === "remove" ? "var(--bad)" : "inherit";
+        return `<span style="color:${color}">${esc(sigil + l.text)}</span>`;
+      }).join("\n")}</pre>`).join("");
+    return head + hunks;
+  }).join("");
+  return body + (d.files_truncated
+    ? `<div class="empty">Listing truncated — this turn changed more files than one row records.</div>` : "");
+}
 
 /* ── tabs, lazy loads, refresh loop ──────────────────────────────────── */
 async function loadTab(tab, force) {
@@ -2725,10 +2898,13 @@ async function loadTab(tab, force) {
       lazyCache[key] = data;
       renderMemoryTab(data[0], data[1], data[2]);
     } else if (tab === "improve") {
-      const data = cached ?? await api("/api/skills");
-      lazyCache[`skills:${state.project}`] = data;
+      const data = cached ?? await Promise.all([
+        api("/api/skills"), api("/api/context-lifecycle"),
+      ]);
+      lazyCache[`skills:${state.project}`] = data[0];
       lazyCache[key] = data;
-      renderImprove(data ?? []);
+      renderImprove(data[0] ?? []);
+      renderLifecycle(data[1] ?? {});
     } else if (tab === "sessions") {
       // Never cached, same reasoning as self-driving: a session's liveness
       // (live / needs-input / crashed) is the point of the list, and the

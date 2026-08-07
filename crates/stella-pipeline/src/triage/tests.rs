@@ -675,3 +675,55 @@ fn the_instructions_ground_the_listing_as_evidence_not_the_ask() {
     // workspace that cannot run a test should not buy witness authoring.
     assert!(p.contains("whether a test could even run"));
 }
+
+// Pre-plan research questions (#1778)
+
+/// The happy path: a labeled `RESEARCH:` line with `|`-separated questions
+/// parses in order, verbatim.
+#[test]
+fn research_line_parses_pipe_separated_questions_in_order() {
+    let text = "CLASS: multi\nWITNESS: yes\nVERIFIER: yes\n\
+                RESEARCH: Which module owns retries? | Where are the retry tests?";
+    assert_eq!(
+        parse_research_questions(text),
+        vec![
+            "Which module owns retries?".to_string(),
+            "Where are the retry tests?".to_string(),
+        ]
+    );
+}
+
+/// An absent line, an empty value, and an explicit `none` all mean "no
+/// research" — the degradation the fast paths (L-E2) ride on.
+#[test]
+fn absent_empty_or_none_research_means_no_questions() {
+    assert!(parse_research_questions("CLASS: multi\nWITNESS: yes\nVERIFIER: yes").is_empty());
+    assert!(parse_research_questions("RESEARCH:").is_empty());
+    assert!(parse_research_questions("RESEARCH: none").is_empty());
+    assert!(parse_research_questions("RESEARCH: NONE").is_empty());
+}
+
+/// The fan-out cap is a spend bound: a model that lists ten questions buys
+/// [`MAX_RESEARCH_QUESTIONS`] sub-agents, not ten.
+#[test]
+fn research_questions_are_capped_at_the_fan_out_bound() {
+    let many = (0..10)
+        .map(|i| format!("q{i}"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let parsed = parse_research_questions(&format!("RESEARCH: {many}"));
+    assert_eq!(parsed.len(), MAX_RESEARCH_QUESTIONS);
+    assert_eq!(parsed[0], "q0");
+}
+
+/// The same word-boundary rule as `parse_flag`: prose that merely opens with
+/// "researching" is not the answer line, and empty `|` segments are noise,
+/// not questions.
+#[test]
+fn research_prose_and_empty_segments_do_not_parse_as_questions() {
+    assert!(parse_research_questions("researching the codebase further").is_empty());
+    assert_eq!(
+        parse_research_questions("RESEARCH: | real question | "),
+        vec!["real question".to_string()]
+    );
+}

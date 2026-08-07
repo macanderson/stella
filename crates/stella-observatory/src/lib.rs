@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! The stella Observatory — a local, loopback-only dashboard over the
-//! workspace's own telemetry (`.stella/private/store.db`, `.stella/private/fleet.db`).
+//! workspace's own telemetry (`.stella/private/store.db`,
+//! `.stella/private/fleet.db`, `.stella/private/context.db`).
 //!
 //! Design constraints, in order:
 //!
@@ -43,6 +44,7 @@
 
 mod accept;
 mod codegraph;
+mod context_db;
 mod context_diff;
 mod db;
 mod fsview;
@@ -315,6 +317,24 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             Some(id) => obs.session(&id),
             None => return Response::error("400 Bad Request", "missing ?id=<session id>"),
         },
+        // One turn's real on-disk diff (#1870), replayed from the
+        // `session_turn_diffs` projection the owning session precomputed at
+        // turn end — never from the work journal's bare repo, which this
+        // process deliberately cannot read.
+        "/api/session-turn-diff" => {
+            match (
+                query_param(query, "id"),
+                query_param(query, "turn").and_then(|v| v.parse::<i64>().ok()),
+            ) {
+                (Some(id), Some(turn)) => obs.session_turn_diff(&id, turn),
+                _ => {
+                    return Response::error(
+                        "400 Bad Request",
+                        "missing ?id=<session id>&turn=<journal turn>",
+                    );
+                }
+            }
+        }
         // One execution's behavioural tendencies — retries, loop detections,
         // compactions, policy verdicts — folded from its journal slice for
         // the drawer's tendency strip.
@@ -364,6 +384,11 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 "ratings": ratings,
             })
         }),
+        // The self-improvement lifecycle behind those skills (#1871): the
+        // promotion audit trail, episodic memory, and selection health, read
+        // straight out of `.stella/private/context.db` — the one store the
+        // dashboard never looked at.
+        "/api/context-lifecycle" => context_db::self_improvement(root),
         // self-driving is machine-scoped, not workspace-scoped: the list answers
         // "what is my agent doing anywhere", and the workspace root only marks
         // which loop belongs to the project this tab is pointed at.

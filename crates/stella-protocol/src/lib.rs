@@ -56,6 +56,7 @@ pub mod context_event;
 pub mod error;
 pub mod event;
 pub mod ladder;
+pub mod proof;
 pub mod provider;
 pub mod receipt;
 pub mod role;

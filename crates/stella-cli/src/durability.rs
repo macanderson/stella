@@ -192,7 +192,21 @@ impl SessionDurability {
     ///
     /// Best-effort and silent, like everything else here: a turn that ended is
     /// not made less ended by an unwritable marker.
-    pub fn mark_turn_end(&self) {
+    ///
+    /// Marking is also the moment the turn's workspace diff is precomputed
+    /// and persisted (#1870, [`crate::turn_diff`]) — the boundary ruling that
+    /// keeps the observatory a pure artifact reader lives there. `store` is
+    /// the workspace store when one is open (claim-mode trials run without
+    /// one), `session_id` the registry id the row is keyed under, and
+    /// `execution_id` the execution the turn ran as — the join the Sessions
+    /// view needs, since the journal's turn ordinal has no other persisted
+    /// correspondence to `executions.id`.
+    pub fn mark_turn_end(
+        &self,
+        store: &Option<Arc<stella_store::Store>>,
+        session_id: &str,
+        execution_id: Option<i64>,
+    ) {
         let Some(journal) = self.journal() else {
             return;
         };
@@ -203,7 +217,12 @@ impl SessionDurability {
             return;
         };
         let turn = journal.last_marked_turn().unwrap_or(0).saturating_add(1);
-        let _ = journal.mark_turn(turn, &tip);
+        if journal.mark_turn(turn, &tip).is_err() {
+            return;
+        }
+        if let Some(store) = store.as_deref() {
+            crate::turn_diff::record_turn_diff(&journal, store, session_id, execution_id, turn);
+        }
     }
 
     /// Compact the durable record — the end-of-session step.

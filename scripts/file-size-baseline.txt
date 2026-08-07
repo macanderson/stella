@@ -29,8 +29,8 @@
 3562 crates/stella-pipeline/src/pipeline.rs
 2574 crates/stella-pipeline/src/pipeline/tests.rs
 2965 crates/stella-protocol/src/event.rs
-1995 crates/stella-store/src/lib.rs
-2262 crates/stella-store/src/tests.rs
+1996 crates/stella-store/src/lib.rs
+2266 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs
 2181 crates/stella-tools/src/registry.rs
 1839 crates/stella-tools/src/scripts.rs

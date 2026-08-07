@@ -24,6 +24,7 @@ impl Pipeline<'_> {
         &self,
         goal: &str,
         frames: &[RecalledFrame],
+        research: &[ResearchFinding],
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<PlannedScope, PipelineError> {
@@ -36,6 +37,7 @@ impl Pipeline<'_> {
                 .plan_stage(
                     goal,
                     frames,
+                    research,
                     &repo_structure,
                     revision.as_deref(),
                     budget,

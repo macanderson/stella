@@ -106,6 +106,7 @@ pub mod pipeline;
 pub mod plan;
 pub mod ports;
 pub mod replay;
+pub mod research;
 pub mod reward;
 pub mod scope;
 pub mod triage;
