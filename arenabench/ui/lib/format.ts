@@ -19,6 +19,10 @@ export function fmtMoney(value: unknown): string {
 }
 
 export function fmtClock(value: unknown): string {
+  // An absent duration is drawn as absent, like fmtMoney (#1599). A seat
+  // nobody replayed has no wasted time to report, and `0:00` beside a seat
+  // with real data reads as the best possible score rather than as silence.
+  if (value == null) return "—";
   const seconds = Math.max(0, Math.round(Number(value) || 0));
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
