@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { AgentInfo, RoleDraft, Seat } from "@/lib/types";
+import type { AgentInfo, ModelsPayload, RoleDraft, Seat } from "@/lib/types";
 import { envStatus, CREDENTIALS } from "@/lib/env";
 import { cn, seatStyle } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,8 @@ export function SeatCard({
   agents,
   efforts,
   roles,
+  models,
+  modelsError,
   removable,
   onChange,
   onAgentChange,
@@ -27,6 +29,8 @@ export function SeatCard({
   agents: AgentInfo[];
   efforts: string[];
   roles: string[];
+  models: ModelsPayload | null;
+  modelsError: string | null;
   removable: boolean;
   onChange: (mutate: (seat: Seat) => Seat) => void;
   onAgentChange: (slug: string) => void;
@@ -35,6 +39,34 @@ export function SeatCard({
   const spec = agents.find((a) => a.slug === seat.agent);
   const honours = new Set(spec?.honours ?? []);
   const env = envStatus(seat.env, seat.engine.api);
+
+  // The role-model options (#2065): Stella's catalog, filtered to the
+  // WORKER's provider — a trial receives exactly one credential, resolved
+  // from the worker's provider, so a role on any other provider always
+  // fails at runtime, and offering it would be worse than free text. When
+  // the list cannot be trusted, `roleModelFallback` names which case it is
+  // and the free-text input stays.
+  const providerModels = models?.providers?.[(seat.engine.api || "").trim().toLowerCase()];
+  const roleModelFallback = modelsError
+    ? `catalog unavailable — ${modelsError}`
+    : models && (!providerModels || providerModels.length === 0)
+      ? `no catalog models for provider "${seat.engine.api}"`
+      : env.tone !== "ok"
+        ? "no credential for this seat yet"
+        : null;
+  const roleModelItems =
+    providerModels && roleModelFallback === null
+      ? [
+          { value: "", label: "inherit" },
+          ...providerModels.map((m) => ({
+            value: m.slug,
+            label:
+              m.slug +
+              (m.benchmarked ? "" : " · unbenchmarked") +
+              (m.output_cap === null ? " · no declared cap" : ""),
+          })),
+        ]
+      : null;
 
   const setEngine = (patch: Partial<Seat["engine"]>) =>
     onChange((s) => ({ ...s, engine: { ...s.engine, ...patch } }));
@@ -156,22 +188,48 @@ export function SeatCard({
           <div className="mt-2.5 grid gap-2">
             <div className="mt-1.5 text-[11.5px] text-muted">
               Per-role overrides. Blank inherits the engine baseline above.
+              {roleModelFallback && (
+                <span className="text-warn"> Model list unavailable ({roleModelFallback}) — free text.</span>
+              )}
             </div>
             {roles.map((role) => {
               const current = seat.engine.roles[role] ?? EMPTY_ROLE;
+              // A template may carry a model the catalog does not list;
+              // keep it selectable (and say so) rather than silently
+              // showing "inherit" for a role that actually pins something.
+              const items =
+                roleModelItems &&
+                (current.model === "" ||
+                roleModelItems.some((item) => item.value === current.model)
+                  ? roleModelItems
+                  : [
+                      ...roleModelItems,
+                      { value: current.model, label: `${current.model} · not in catalog` },
+                    ]);
               return (
                 <div
                   key={role}
                   className="grid items-center gap-2 [grid-template-columns:74px_1fr_108px_96px_96px] max-lg:[grid-template-columns:1fr_1fr]"
                 >
                   <span className="font-mono text-[11.5px] text-muted">{role}</span>
-                  <Input
-                    type="text"
-                    placeholder="inherit model"
-                    value={current.model}
-                    onChange={(e) => setRole(role, { model: e.target.value })}
-                    className="px-2 py-[5px] text-xs"
-                  />
+                  {items ? (
+                    <SimpleSelect
+                      ariaLabel={`${role} model`}
+                      size="sm"
+                      value={current.model}
+                      onValueChange={(model) => setRole(role, { model })}
+                      items={items}
+                    />
+                  ) : (
+                    <Input
+                      type="text"
+                      placeholder="inherit model"
+                      title={roleModelFallback ?? undefined}
+                      value={current.model}
+                      onChange={(e) => setRole(role, { model: e.target.value })}
+                      className="px-2 py-[5px] text-xs"
+                    />
+                  )}
                   <SimpleSelect
                     ariaLabel={`${role} effort`}
                     size="sm"

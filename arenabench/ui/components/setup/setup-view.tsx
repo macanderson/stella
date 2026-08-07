@@ -6,6 +6,7 @@ import type {
   Catalog,
   Dataset,
   MatchListRow,
+  ModelsPayload,
   ParsedMatch,
   Preset,
   Seat,
@@ -369,6 +370,26 @@ export function SetupView({
     };
   }, []);
 
+  // -- model catalog (#2065) ---------------------------------------------------
+  // The role-model select's options. A failure keeps the free-text input
+  // and carries the server's reason: an empty select would read as "no
+  // models exist" when it means "we could not tell".
+  const [models, setModels] = React.useState<ModelsPayload | null>(null);
+  const [modelsError, setModelsError] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    api<ModelsPayload>("/api/models")
+      .then((res) => {
+        if (live) setModels(res);
+      })
+      .catch((err) => {
+        if (live) setModelsError(String(err));
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
   const applyPreset = React.useCallback(
     async (preset: Preset) => {
       setTemplateErrors(null);
@@ -686,6 +707,8 @@ export function SetupView({
                   agents={catalog.agents}
                   efforts={catalog.efforts}
                   roles={catalog.roles}
+                  models={models}
+                  modelsError={modelsError}
                   removable={seats.length > 1}
                   onChange={(mutate) =>
                     setSeats((prev) => prev.map((s, i) => (i === index ? mutate(s) : s)))

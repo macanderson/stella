@@ -34,6 +34,20 @@ export interface Catalog {
   roles: string[];
 }
 
+/** One selectable model from /api/models (#2065). `benchmarked` mirrors the
+ *  adapter's _BENCHMARKED_SLUGS — measured ceilings, not inherited ones. */
+export interface CatalogModel {
+  slug: string;
+  benchmarked: boolean;
+  output_cap: number | null;
+}
+
+/** /api/models: Stella's own catalog grouped by provider — the models that
+ *  are actually reachable inside a benchmark container. */
+export interface ModelsPayload {
+  providers: Record<string, CatalogModel[]>;
+}
+
 /** Per-role overrides as the form holds them: strings, '' meaning inherit. */
 export interface RoleDraft {
   model: string;
