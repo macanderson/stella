@@ -94,8 +94,7 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         | ModelCallRole::SkillAuthor
         | ModelCallRole::DomainInference
         | ModelCallRole::Reflection
-        | ModelCallRole::Summarization
-        | ModelCallRole::Research => None,
+        | ModelCallRole::Summarization => None,
     }
 }
 
