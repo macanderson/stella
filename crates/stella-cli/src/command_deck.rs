@@ -117,6 +117,7 @@ mod profile_cmd;
 mod scope_gate;
 mod session_clear;
 mod sessions_view;
+mod settings_io;
 mod settle;
 mod task_tap;
 mod theme_cmd;
@@ -127,6 +128,7 @@ use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::spawn_forwarder;
 use scope_gate::DeckApprovalGate;
 use sessions_view::sessions_inbound;
+use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
 use task_tap::TaskTap;
 
 /// The lead agent's id — the one conversation this driver runs.
@@ -336,7 +338,7 @@ fn requeue_front(
 /// driver inline. Returns when the user quits (Ctrl-C) or the deck's input
 /// stream ends.
 pub async fn run_deck_session(
-    cfg: &Config,
+    cfg: &mut Config,
     budget_limit: Option<f64>,
     presentation: crate::term_policy::DeckPresentation,
     resume: Option<crate::session_persist::ResumeRequest>,
@@ -864,6 +866,10 @@ pub async fn run_deck_session(
     // the guard, so the retarget waits for the settle boundary (invariant
     // #6 — budget changes act between steps/turns, never mid-flight).
     let mut pending_budget: Option<Option<f64>> = None;
+    // A SETTINGS save landed mid-turn: the files changed, but the running
+    // turn holds `&Config` and is reading the fields a reload rewrites, so
+    // the re-derive waits for the same safe boundary `pending_budget` uses.
+    let mut pending_settings_reload = false;
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
     let mut subs = SubSessions::with_registry_options(registry_options.clone());
@@ -1329,6 +1335,10 @@ pub async fn run_deck_session(
                     // A stray answer/decision/control with no turn in flight
                     // falls through all four no-ops.
                     Some(other) => {
+                        // Set by a SETTINGS save below; applied before the
+                        // loop turns over, so the next turn reads the files
+                        // as they are now.
+                        let mut settings_stale = false;
                         if !crate::deck_mcp::service_mcp_action(
                             &other,
                             cfg,
@@ -1347,7 +1357,7 @@ pub async fn run_deck_session(
                             && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
                             && !handle_agents_input(&other, cfg, &in_tx)
                             && !handle_issues_input(&other, cfg, &issue_backend_cache, &in_tx)
-                            && !handle_engine_config_input(&other, cfg, &in_tx)
+                            && !handle_engine_config_input(&other, cfg, &mut settings_stale, &in_tx)
                         {
                             // The tool list is enumerated here rather than
                             // cached: MCP servers join the session
@@ -1360,7 +1370,12 @@ pub async fn run_deck_session(
                             };
                             let names =
                                 crate::tool_switches::session_tool_names(base, &custom_tools);
-                            handle_tools_input(&other, cfg, &names, &in_tx);
+                            handle_tools_input(&other, cfg, &names, &mut settings_stale, &in_tx);
+                        }
+                        // No turn is in flight here, so "applies from now on"
+                        // means the very next prompt.
+                        if settings_stale {
+                            apply_pending_reload(cfg, &in_tx);
                         }
                         continue 'session;
                     }
@@ -1976,7 +1991,12 @@ pub async fn run_deck_session(
                             input @ (WorkspaceInput::EngineConfigSave { .. }
                             | WorkspaceInput::EngineConfigRefresh),
                         ) => {
-                            handle_engine_config_input(&input, cfg, &in_tx);
+                            handle_engine_config_input(
+                                &input,
+                                cfg,
+                                &mut pending_settings_reload,
+                                &in_tx,
+                            );
                         }
                         // The TOOLS panel likewise. `base_tools` is the very
                         // stack the running turn is using, so the list the
@@ -1989,7 +2009,13 @@ pub async fn run_deck_session(
                                 base_tools,
                                 &custom_tools,
                             );
-                            handle_tools_input(&input, cfg, &names, &in_tx);
+                            handle_tools_input(
+                                &input,
+                                cfg,
+                                &names,
+                                &mut pending_settings_reload,
+                                &in_tx,
+                            );
                         }
                         // The ISSUES tab stays live while a turn runs too —
                         // every op spawns its own task and answers from it,
@@ -2029,6 +2055,14 @@ pub async fn run_deck_session(
         // BudgetTick folds `session_limit_usd` back.
         if let Some(cap) = pending_budget.take() {
             budget.set_session_limit_usd(cap);
+        }
+
+        // Likewise a SETTINGS save parked during the turn: the turn that was
+        // reading `cfg` has ended, so re-deriving it here is both sound and
+        // the earliest honest moment for "applies to runs started from now
+        // on" to become true.
+        if std::mem::take(&mut pending_settings_reload) {
+            apply_pending_reload(cfg, &in_tx);
         }
 
         match end {
@@ -3676,48 +3710,6 @@ fn engine_config_inbound(cfg: &Config, status: Option<String>) -> Inbound {
     }
 }
 
-/// Handle one ENGINE-overlay op (refresh / save) — cheap local settings
-/// I/O, answered with a fresh [`Inbound::EngineConfig`]. Called from BOTH
-/// recv sites so the overlay works mid-turn too. Returns `true` when the
-/// input was one of the overlay's.
-fn handle_engine_config_input(
-    input: &WorkspaceInput,
-    cfg: &Config,
-    in_tx: &UnboundedSender<Inbound>,
-) -> bool {
-    match input {
-        WorkspaceInput::EngineConfigRefresh => {
-            let _ = in_tx.send(engine_config_inbound(cfg, None));
-            true
-        }
-        WorkspaceInput::EngineConfigSave { state, scope } => {
-            let engine = crate::engine_config::settings_from_state(state);
-            let path = match scope {
-                AgentScope::User => crate::settings::user_config_path(),
-                AgentScope::Project => {
-                    Some(crate::settings::project_config_path(&cfg.workspace_root))
-                }
-            };
-            let status = match path {
-                None => "save failed: cannot determine $HOME for user settings".to_string(),
-                Some(path) => match engine.save_to(&path) {
-                    Ok(()) => format!(
-                        "saved to {} — applies to runs started from now on",
-                        path.display()
-                    ),
-                    Err(e) => format!("save failed: {e}"),
-                },
-            };
-            // The snapshot sent back is the MERGED view — if a project
-            // scope overrides what was just saved at the user scope, the
-            // overlay shows the effective value, not the wish.
-            let _ = in_tx.send(engine_config_inbound(cfg, Some(status)));
-            true
-        }
-        _ => false,
-    }
-}
-
 // ── Tool switches (the SETTINGS tab's TOOLS panel) ─────────────────────────
 
 /// Build an [`Inbound::ToolPolicy`] from the session's live tool surface and
@@ -3760,54 +3752,6 @@ fn tool_policy_inbound(cfg: &Config, names: &[String], status: Option<String>) -
     Inbound::ToolPolicy {
         state: crate::tool_switches::tool_policy_state(names, &effective, &scopes),
         status: (!notes.is_empty()).then(|| notes.join(" · ")),
-    }
-}
-
-/// Handle one TOOLS-panel op (refresh / save) — cheap local settings I/O,
-/// answered with a fresh [`Inbound::ToolPolicy`]. Called from BOTH recv sites
-/// so the panel works mid-turn too. Returns `true` when the input was one of
-/// the panel's.
-///
-/// A save applies to turns started afterwards: the in-flight turn already
-/// resolved its tool stack, and rebuilding it under a running engine is a
-/// different (and much larger) change than editing settings.
-fn handle_tools_input(
-    input: &WorkspaceInput,
-    cfg: &Config,
-    names: &[String],
-    in_tx: &UnboundedSender<Inbound>,
-) -> bool {
-    match input {
-        WorkspaceInput::ToolsRefresh => {
-            let _ = in_tx.send(tool_policy_inbound(cfg, names, None));
-            true
-        }
-        WorkspaceInput::ToolsSave { switches, scope } => {
-            let path = match scope {
-                AgentScope::User => crate::settings::user_config_path(),
-                AgentScope::Project => {
-                    Some(crate::settings::project_config_path(&cfg.workspace_root))
-                }
-            };
-            // The ceiling is re-read from disk rather than taken from the
-            // session's merged policy: the merged map cannot say which
-            // denials are the org's, and only the org's may refuse a grant.
-            let ceiling = crate::settings::Settings::load_tool_scopes(&cfg.workspace_root)
-                .map(|scopes| scopes.managed)
-                .unwrap_or_default();
-            let status = match path {
-                None => "save failed: cannot determine $HOME for user settings".to_string(),
-                Some(path) => {
-                    match crate::tool_switches::save_switches(&path, switches, &ceiling) {
-                        Ok(status) => status,
-                        Err(e) => format!("save failed: {e}"),
-                    }
-                }
-            };
-            let _ = in_tx.send(tool_policy_inbound(cfg, names, Some(status)));
-            true
-        }
-        _ => false,
     }
 }
 
@@ -3935,7 +3879,7 @@ async fn run_deck_command(
     system_prompt: &str,
     provider: &dyn Provider,
     registry: &ToolRegistry,
-    cfg: &Config,
+    cfg: &mut Config,
     custom: &crate::extensions::CustomExtensions,
     pipeline_on: &mut bool,
     budget_limit: Option<f64>,
@@ -4061,6 +4005,7 @@ async fn run_deck_command(
                 Ok(Err(e)) | Err(e) => say(format!("export failed: {e}")),
             }
         }
+        "/reload" => say(settings_io::reload_command(cfg, in_tx)),
         "/donate" => {
             say("❤️  Support Stella\n\
                  \n\
