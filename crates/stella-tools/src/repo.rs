@@ -199,6 +199,29 @@ impl GitCli {
         }
     }
 
+    /// `-c` overrides supplying an author, or empty when the repository
+    /// already resolves one.
+    ///
+    /// A fresh container configures no git identity at any scope, so `git
+    /// commit` exits 128 with "Author identity unknown" and the agent can
+    /// never commit at all — three failures in one benchmark cycle, and the
+    /// cost is larger than the failed calls: the model then spent turns
+    /// theorising that its work went ungraded *because* it was uncommitted,
+    /// a theory this defect made impossible to disprove (#2059).
+    ///
+    /// Conditional rather than unconditional, and passed inline rather than
+    /// written into the repository's config: committing as Stella on a
+    /// developer's own repository would be its own bug, so this only rescues
+    /// the case where git refuses outright. The probe tolerates a non-zero
+    /// exit because `--get` of an unset key exits 1 — that is the answer,
+    /// not a failure.
+    async fn commit_identity(root: &Path) -> Vec<&'static str> {
+        match Self::git(root, "repo_commit", &["config", "--get", "user.email"]).await {
+            Ok((0, email)) if !email.trim().is_empty() => Vec::new(),
+            _ => vec!["-c", "user.name=Stella", "-c", "user.email=stella@localhost"],
+        }
+    }
+
     /// [`Self::git_ok`] for output that is PARSED rather than shown: on success
     /// it yields **stdout alone**.
     ///
@@ -392,28 +415,6 @@ impl RepoBackend for GitCli {
             }
         }
         Ok(None)
-    }
-
-    /// `-c` overrides supplying an author, or empty when the repository
-    /// already resolves one.
-    ///
-    /// A fresh container configures no git identity at any scope, so `git
-    /// commit` exits 128 with "Author identity unknown" and the agent can
-    /// never commit at all — three failures in one benchmark cycle, plus the
-    /// turns the model then spent theorising that its work went ungraded
-    /// *because* it was uncommitted, which it could not disprove (#2059).
-    ///
-    /// Conditional rather than unconditional, and passed inline rather than
-    /// written into the repo's config: committing as Stella on a developer's
-    /// own repository would be its own bug, so this only rescues the case
-    /// where git refuses outright. The probe tolerates a non-zero exit
-    /// because `--get` of an unset key exits 1 — that is the answer, not a
-    /// failure.
-    async fn commit_identity(root: &Path) -> Vec<&'static str> {
-        match Self::git(root, "repo_commit", &["config", "--get", "user.email"]).await {
-            Ok((0, email)) if !email.trim().is_empty() => Vec::new(),
-            _ => vec!["-c", "user.name=Stella", "-c", "user.email=stella@localhost"],
-        }
     }
 
     async fn commit_paths(
