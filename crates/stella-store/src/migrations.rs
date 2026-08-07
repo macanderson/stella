@@ -33,7 +33,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 21] = [
+pub(crate) const MIGRATIONS: [Migration; 22] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -131,6 +131,11 @@ pub(crate) const MIGRATIONS: [Migration; 21] = [
     // correct starting state: the marks those diffs are computed from were
     // only ever written going forward too.
     migrate_v20_to_v21,
+    // v21 → v22: `executions` grows `journal_era` — which compaction-journaling
+    // era wrote this row's events (#1981). Additive, column-guarded ADD COLUMN;
+    // every existing row backfills to era 0, which is exactly what it is: a
+    // journal written before compaction recorded its replacement bytes.
+    migrate_v21_to_v22,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -157,7 +162,9 @@ pub(crate) const MIGRATIONS: [Migration; 21] = [
     //
     //   v20 → v21: CLAIMED above by the per-turn workspace diffs (#1870).
     //
-    // Nothing is reserved now: take v21 → v22 and add your own line here.
+    //   v21 → v22: CLAIMED above by the journal-era stamp (#1981).
+    //
+    // Nothing is reserved now: take v22 → v23 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
@@ -441,6 +448,33 @@ fn migrate_v19_to_v20(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 /// table changes shape.
 fn migrate_v20_to_v21(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     tx.execute_batch(SESSION_TURN_DIFFS_DDL)?;
+    Ok(())
+}
+
+/// v21 → v22: `executions` grows `journal_era` (#1981) — the writer's own
+/// statement of which compaction-journaling era produced this row's events.
+///
+/// The backfill is the column default and needs no `UPDATE`: a row already at
+/// rest was written by a build that had no era to state, and for all but the
+/// few days between PR #1979 landing and this stamp that build genuinely could
+/// not journal a rewrite. Rows from inside that window are the one place era 0
+/// is conservative rather than exact — and conservative in the only safe
+/// direction, since it can under-report an integrity signal but never invent
+/// one. Backfilling them the other way would need the very inference this
+/// column exists to avoid: a reader looking at an old execution's events
+/// cannot tell "this build journaled no rewrites" from "this run rewrote
+/// nothing", and reading it wrong raises a false alarm on routine
+/// housekeeping.
+///
+/// Plain additive ADD COLUMN with a NOT NULL default, so no §7 rebuild;
+/// column-guarded for a file whose `executions` table was created at the v22
+/// shape by this build's [`EXECUTIONS_DDL`].
+fn migrate_v21_to_v22(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "executions", "journal_era")? {
+        tx.execute_batch(
+            "ALTER TABLE executions ADD COLUMN journal_era INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
     Ok(())
 }
 
@@ -1069,6 +1103,34 @@ mod tests {
         // Idempotent on tables already at the v12 shape (fresh files, or a
         // v10→v11 upgrade run by this build's DDL).
         apply_migration(&mut conn, migrate_v11_to_v12, 12).expect("idempotent");
+    }
+
+    #[test]
+    fn v22_migration_backfills_every_existing_execution_to_the_pre_rewrite_era() {
+        // The backfill is the load-bearing half of #1981: a row already at
+        // rest was written by a build that could not journal a compaction
+        // rewrite, so era 0 is a fact about it. Reading those rows as the
+        // current era would raise an integrity alarm on every compacted block
+        // in the user's history.
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE executions (id INTEGER PRIMARY KEY, kind TEXT);
+             INSERT INTO executions (id, kind) VALUES (1, 'run');",
+        )
+        .expect("v21 schema");
+        assert!(!column_exists(&conn, "executions", "journal_era").unwrap());
+
+        apply_migration(&mut conn, migrate_v21_to_v22, 22).expect("migrate");
+
+        let era: i64 = conn
+            .query_row("SELECT journal_era FROM executions WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .expect("stamped");
+        assert_eq!(era, 0);
+        // Idempotent on a file whose executions table was created at the v22
+        // shape by this build's DDL.
+        apply_migration(&mut conn, migrate_v21_to_v22, 22).expect("idempotent");
     }
 
     #[test]

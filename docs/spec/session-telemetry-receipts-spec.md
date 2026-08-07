@@ -292,8 +292,14 @@ To reconstruct exactly what step *N* of turn *T* saw:
 2. For each `ManifestEntry.block_id`, resolve the preimage from its
    `BlockRegistered.origin` event (the `ToolResult` / `Text` / recalled-frame
    content already in the journal — §5.3 for recall frames).
-3. Verify each preimage against `content_digest`. A mismatch is a torn-journal or
-   tampering signal, surfaced by the inspector.
+3. Verify each preimage against `content_digest`. What a mismatch *means*
+   depends on the era of the journal, which the execution row records
+   (`executions.journal_era`, schema v22): on a journal written before
+   compaction journaled its replacement bytes (#1667), a compacted block
+   resolves only through the `call_id` fallback and mismatches as a matter of
+   course; on a journal that records every rewrite, nothing routine accounts
+   for it and it is a torn-journal or tampering signal. The inspector surfaces
+   both, styled differently (#1981).
 4. Concatenate in manifest order → the byte-exact `CompletionRequest.messages`.
 
 No new content store is read; the manifest is an index over the fold.

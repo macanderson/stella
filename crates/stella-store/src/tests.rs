@@ -1107,8 +1107,8 @@ fn skill_usage_records_per_execution_version_rows() {
     // `session_turn_diffs` (#1870): per (session, turn), the precomputed
     // workspace diff the work journal's turn marks describe, so the
     // observatory can replay file changes without opening the bare repo.
-    // Additive.
-    assert_eq!(SCHEMA_VERSION, 21);
+    // Additive. v22 adds `executions.journal_era` (#1981) — see `JournalEra`.
+    assert_eq!(SCHEMA_VERSION, 22);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

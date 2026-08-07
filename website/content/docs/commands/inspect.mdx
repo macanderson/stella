@@ -166,9 +166,15 @@ Two failure modes are reported separately, because they mean very different thin
     speculation, or attachments. The rest of the transcript is still faithful.
   </OptionCard>
   <OptionCard name="!! N block(s) did NOT re-hash">
-    The journal is torn or was altered. Treat the reconstruction as untrustworthy.
+    Nothing routine accounts for these bytes. Treat the reconstruction as untrustworthy.
+  </OptionCard>
+  <OptionCard name="! N block(s) did NOT re-hash … as a matter of course">
+    An older journal. Compaction rewrote a tool result in place without recording
+    the replacement, so replay recovers the pre-compaction bytes. Ordinary.
   </OptionCard>
 </CardGrid>
+
+The last two are the same failure read against different journals, and which one you get is not a guess: every execution records the journal era its writer could produce. A journal written before compaction recorded its rewrites mismatches on every compacted block, forever — reporting that as an integrity breach would be an alarm that fires on routine housekeeping, so it does not. A journal that records every rewrite has no such explanation available, and the alarm is the honest reading. `--format json` reports both halves as `journal_era` (`compaction_journaled` / `compaction_unjournaled`) and `digest_mismatch_severity` (`none` / `compaction` / `integrity`).
 
 The system prefix and the assembled user message are stored as local bytes rather than resolved from the journal, so their digest check is tautological and is deliberately **not** counted as evidence. The proof lives in the journal-resolved kinds.
 
@@ -198,12 +204,12 @@ Read the verifier's prompt instead of the worker's — the auxiliary calls at th
 stella inspect 42 --step 3 --call-seq 2 --full
 ```
 
-Check the verdict from a script without reading the transcript — `verified`, plus the two
-failure lists behind it:
+Check the verdict from a script without reading the transcript — `verified`, the two
+failure lists behind it, and what a mismatch means on this journal:
 
 ```bash
 stella inspect 42 --step 3 --format json |
-  jq '{verified, unresolved, digest_mismatches}'
+  jq '{verified, unresolved, digest_mismatches, digest_mismatch_severity}'
 ```
 
 Assert in CI that the system prompt did not drift between turns — `base` reports

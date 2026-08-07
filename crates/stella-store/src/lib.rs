@@ -207,7 +207,7 @@ pub use receipts::{
     ContextBlockRow, ExecutionSummary, InspectableExecution, ManifestBlockRow, RecordedCall,
     StepManifestRow,
 };
-pub use reconstruct::Reconstruction;
+pub use reconstruct::{JournalEra, MismatchSeverity, Reconstruction};
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo, supervised};
 /// Re-exported because it *is* this crate's task-board API: every signature
 /// in [`task_board`] speaks in these, and a caller should not have to name
@@ -797,7 +797,7 @@ impl Store {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Start an execution record; returns its id.
+    /// Start an execution record, stamped [`JournalEra::CURRENT`]; returns its id.
     pub fn begin_execution(
         &self,
         kind: &str,
@@ -807,9 +807,9 @@ impl Store {
     ) -> Result<i64> {
         let conn = self.lock();
         conn.execute(
-            "INSERT INTO executions (kind, prompt, provider, model, usage_complete, usage_status) \
-             VALUES (?, ?, ?, ?, 0, 'pending')",
-            params![kind, prompt, provider, model],
+            "INSERT INTO executions (kind, prompt, provider, model, usage_complete, usage_status, journal_era) \
+             VALUES (?, ?, ?, ?, 0, 'pending', ?)",
+            params![kind, prompt, provider, model, JournalEra::CURRENT.code()],
         )?;
         Ok(conn.last_insert_rowid())
     }

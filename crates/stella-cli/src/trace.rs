@@ -236,10 +236,17 @@ pub fn assemble(
         ) {
             Ok(reconstruction) => {
                 let verified = reconstruction.is_verified();
+                // The severity rides along with the ids, because a trace is
+                // read long after the run and by someone who cannot ask which
+                // build wrote it. `compaction` says the mismatch is the
+                // pre-#1667 journal's routine one; `integrity` says nothing
+                // routine explains it. Same verdict `stella inspect` and the
+                // deck render — one source, four surfaces (#1981).
                 let error = (!verified).then(|| {
                     format!(
-                        "unresolved: [{}]; digest mismatches: [{}]",
+                        "unresolved: [{}]; digest mismatches ({}): [{}]",
                         reconstruction.unresolved.join(", "),
+                        crate::inspect::severity_tag(reconstruction.mismatch_severity()),
                         reconstruction.digest_mismatches.join(", ")
                     )
                 });

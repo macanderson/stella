@@ -520,6 +520,12 @@ fn execution_context_rebuilds_the_message_array_a_call_was_sent() {
     assert_eq!(context["verified"], true, "{v}");
     assert_eq!(context["unresolved"], serde_json::json!([]));
     assert_eq!(context["digest_mismatches"], serde_json::json!([]));
+    // Nothing mismatched, so there is no severity to report — and the era
+    // reads as the pre-rewrite one because this fixture's `executions` table
+    // predates the column, which is exactly how a store written by an older
+    // build behaves (#1981).
+    assert_eq!(context["digest_mismatch_severity"], "none");
+    assert_eq!(context["journal_era"], "compaction_unjournaled");
     // A gap block's preimage is stored locally, so its check is tautological
     // and is deliberately not reported as evidence.
     assert!(messages[0]["blocks"][0]["digest_verified"].is_null());

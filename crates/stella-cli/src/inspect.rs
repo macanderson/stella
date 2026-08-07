@@ -79,7 +79,7 @@ use serde::Serialize;
 // prompt-diff route and this command share one implementation.
 use stella_diff::{Diff, Op, unified_diff};
 use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
-use stella_store::{Reconstruction, RecordedCall, Store};
+use stella_store::{JournalEra, MismatchSeverity, Reconstruction, RecordedCall, Store};
 
 use crate::query_format::{QueryFormat, Rows, Versioned};
 
@@ -436,12 +436,6 @@ fn print_reconstruction(
     // documented coverage gap, a digest mismatch means the bytes recovered for
     // a block are not the bytes it recorded. Collapsing them into "unverified"
     // would hide which one happened.
-    //
-    // Neither is phrased as tampering. A mismatch is almost always routine —
-    // a compaction pass rewrote a tool result in place without the journal
-    // learning about it, so replay recovers the pre-compaction output. Calling
-    // ordinary housekeeping an integrity breach trains the reader to ignore
-    // the line, which is the one outcome that would matter if it were real.
     if !recon.unresolved.is_empty() {
         println!(
             "!  {} block(s) could not be resolved (synthetic results, discarded \
@@ -450,13 +444,8 @@ fn print_reconstruction(
             recon.unresolved.join(", ")
         );
     }
-    if !recon.digest_mismatches.is_empty() {
-        println!(
-            "!  {} block(s) did NOT re-hash to their recorded digest — shown from the closest \
-             preimage (usually a compaction rewrite): {}",
-            recon.digest_mismatches.len(),
-            recon.digest_mismatches.join(", ")
-        );
+    if let Some(line) = digest_mismatch_line(recon) {
+        println!("{line}");
     }
     if recon.is_verified() {
         println!("verified: every journal-resolved block re-hashed to its recorded digest");
@@ -481,6 +470,42 @@ fn print_reconstruction(
         "\nstella inspect {execution_id} --step {step} --diff \
          to see only what changed since the previous call of this role."
     );
+}
+
+/// The digest-mismatch line, or `None` when nothing mismatched.
+///
+/// A pure function because the wording *is* the feature, and the two eras it
+/// distinguishes are the point of #1981: on a journal written before
+/// compaction recorded its rewrites (#1667) a compacted block mismatches as a
+/// matter of course, so calling that an integrity breach trains the reader to
+/// skip the line — the one outcome that would matter if it were real. On a
+/// journal that records every rewrite there is no routine explanation left,
+/// and the alarm is the honest reading.
+///
+/// The severity verdict comes from [`Reconstruction::mismatch_severity`]
+/// rather than from any reasoning here, so this surface cannot drift from
+/// `stella trace`, the deck overlay, or the observatory.
+pub(crate) fn digest_mismatch_line(recon: &Reconstruction) -> Option<String> {
+    let count = recon.digest_mismatches.len();
+    let ids = recon.digest_mismatches.join(", ");
+    match recon.mismatch_severity() {
+        MismatchSeverity::None => None,
+        MismatchSeverity::Compaction => Some(format!(
+            "!  {count} block(s) did NOT re-hash to their recorded digest — shown from the \
+             closest preimage. This journal predates compaction recording its rewrites, so a \
+             compacted block reads this way as a matter of course: {ids}"
+        )),
+        // `!!` rather than `!`: the marker is the only part of the banner a
+        // reader scanning output will register, and the two eras must not
+        // share one. The line is otherwise uncoloured like every other banner
+        // line here — a severity that survives a pipe is worth more than one
+        // that needs a terminal.
+        MismatchSeverity::Integrity => Some(format!(
+            "!! {count} block(s) did NOT re-hash to their recorded digest. This journal records \
+             every compaction rewrite, so nothing routine accounts for these bytes — treat the \
+             reconstruction as untrustworthy: {ids}"
+        )),
+    }
 }
 
 /// The earlier state a diff is taken against, already resolved to bytes plus
@@ -900,7 +925,47 @@ struct ReconstructionJson {
     verified: bool,
     unresolved: Vec<String>,
     digest_mismatches: Vec<String>,
+    /// Which compaction-journaling era wrote this execution's journal —
+    /// `compaction_journaled` or `compaction_unjournaled`. A script cannot
+    /// read `digest_mismatches` honestly without it: on an unjournaled journal
+    /// a compacted block mismatches as a matter of course.
+    journal_era: &'static str,
+    /// What those mismatches mean here — `none`, `compaction`, or `integrity`.
+    /// Derived from the two fields above so a caller never has to combine them
+    /// itself, and the same three words every other surface styles from.
+    digest_mismatch_severity: &'static str,
     messages: Vec<MessageJson>,
+}
+
+/// The stable JSON spelling of an era. Named constants rather than `Debug`,
+/// because these are a wire contract for `--format json` consumers.
+fn era_tag(era: JournalEra) -> &'static str {
+    match era {
+        JournalEra::CompactionUnjournaled => "compaction_unjournaled",
+        JournalEra::CompactionJournaled => "compaction_journaled",
+    }
+}
+
+/// The deck's mirror of a store era. `stella-tui` links no store, so the
+/// driver maps the two — the same bargain every other type on the inspect
+/// envelope takes, and it lives here beside the other inspect mappings rather
+/// than in `command_deck.rs`.
+pub(crate) fn deck_journal_era(era: JournalEra) -> stella_tui::JournalEra {
+    match era {
+        JournalEra::CompactionUnjournaled => stella_tui::JournalEra::CompactionUnjournaled,
+        JournalEra::CompactionJournaled => stella_tui::JournalEra::CompactionJournaled,
+    }
+}
+
+/// The stable JSON spelling of a mismatch verdict. Shared with the observatory
+/// payload by convention, not by linkage — that crate links no workspace crate
+/// (see its README) — so the three words are pinned by a test on both sides.
+pub(crate) fn severity_tag(severity: MismatchSeverity) -> &'static str {
+    match severity {
+        MismatchSeverity::None => "none",
+        MismatchSeverity::Compaction => "compaction",
+        MismatchSeverity::Integrity => "integrity",
+    }
 }
 
 fn execution_json(row: &stella_store::InspectableExecution) -> ExecutionJson {
@@ -932,6 +997,8 @@ fn reconstruction_json(recon: &Reconstruction) -> ReconstructionJson {
         verified: recon.is_verified(),
         unresolved: recon.unresolved.clone(),
         digest_mismatches: recon.digest_mismatches.clone(),
+        journal_era: era_tag(recon.journal_era),
+        digest_mismatch_severity: severity_tag(recon.mismatch_severity()),
         messages: recon
             .messages
             .iter()
@@ -971,6 +1038,81 @@ fn floor_char_boundary(s: &str, limit: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reconstruction with one mismatched block, written in the given era.
+    fn mismatched(journal_era: JournalEra) -> Reconstruction {
+        Reconstruction {
+            messages: Vec::new(),
+            unresolved: Vec::new(),
+            digest_mismatches: vec!["blk_res".into()],
+            journal_era,
+        }
+    }
+
+    #[test]
+    fn the_mismatch_banner_reads_differently_in_each_journal_era() {
+        // The CLI half of #1981. Before it, both of these printed the same
+        // benign line — correct for the first, a missed integrity signal for
+        // the second.
+        let legacy = digest_mismatch_line(&mismatched(JournalEra::CompactionUnjournaled))
+            .expect("a mismatch is always reported");
+        let current = digest_mismatch_line(&mismatched(JournalEra::CompactionJournaled))
+            .expect("a mismatch is always reported");
+        assert_ne!(legacy, current);
+        assert!(legacy.starts_with("!  "), "still a warning: {legacy}");
+        assert!(current.starts_with("!! "), "an alarm: {current}");
+        assert!(
+            legacy.contains("as a matter of course"),
+            "the legacy line names compaction as the routine cause: {legacy}"
+        );
+        assert!(
+            current.contains("untrustworthy"),
+            "the current-era line says what to do about it: {current}"
+        );
+        // Both name the block, because a verdict with no subject is not one.
+        assert!(legacy.contains("blk_res") && current.contains("blk_res"));
+    }
+
+    #[test]
+    fn a_clean_reconstruction_prints_no_mismatch_line_in_either_era() {
+        for era in [
+            JournalEra::CompactionUnjournaled,
+            JournalEra::CompactionJournaled,
+        ] {
+            let clean = Reconstruction {
+                messages: Vec::new(),
+                unresolved: Vec::new(),
+                digest_mismatches: Vec::new(),
+                journal_era: era,
+            };
+            assert!(digest_mismatch_line(&clean).is_none());
+            assert_eq!(severity_tag(clean.mismatch_severity()), "none");
+        }
+    }
+
+    #[test]
+    fn the_json_verdict_words_match_the_observatorys() {
+        // The dashboard emits these same three words for the same payload and
+        // links no store crate, so the two spellings are pinned by a test on
+        // each side (`crates/stella-observatory/tests/journal_era.rs`) rather
+        // than by a shared type. If one moves, one of the two fails.
+        assert_eq!(
+            severity_tag(mismatched(JournalEra::CompactionUnjournaled).mismatch_severity()),
+            "compaction"
+        );
+        assert_eq!(
+            severity_tag(mismatched(JournalEra::CompactionJournaled).mismatch_severity()),
+            "integrity"
+        );
+        assert_eq!(
+            era_tag(JournalEra::CompactionUnjournaled),
+            "compaction_unjournaled"
+        );
+        assert_eq!(
+            era_tag(JournalEra::CompactionJournaled),
+            "compaction_journaled"
+        );
+    }
 
     #[test]
     fn truncate_counts_characters_not_bytes() {
