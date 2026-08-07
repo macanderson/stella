@@ -1453,8 +1453,10 @@ impl<'a> Pipeline<'a> {
         research: &[ResearchFinding],
         repo_structure: &str,
         revision: Option<&str>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        // Bundled rather than two parameters: `Spend` exists for exactly this
+        // pair, and #1778's `research` argument pushed the loose form past
+        // clippy's arity limit.
+        spend: &mut Spend<'_>,
     ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Plan,
@@ -1482,8 +1484,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
@@ -1507,8 +1509,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
