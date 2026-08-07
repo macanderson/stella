@@ -41,7 +41,13 @@ impl Pipeline<'_> {
                     research,
                     &repo_structure,
                     revision.as_deref(),
-                    &mut Spend { budget, total },
+                    // Reborrowed per iteration: the loop replans after a
+                    // rejected scope card, and a moved `Spend` could not be
+                    // handed to the next attempt.
+                    &mut Spend {
+                        budget: &mut *budget,
+                        total: &mut *total,
+                    },
                 )
                 .await
             {
