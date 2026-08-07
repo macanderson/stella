@@ -169,6 +169,9 @@ export interface SeriesOutcomes {
   incidents_on_solved: number;
   timeouts_after_solve: number;
   timeouts_before_solve: number;
+  /** The #2076 taxonomy: closed label -> count. `void_*` labels are Group A
+   *  (outside every rate); the rest are agent performance. */
+  outcome_reasons: Record<string, number>;
   clock_time: number;
   priced_cost: number | null;
   priced_cost_per_solve: number | null;
