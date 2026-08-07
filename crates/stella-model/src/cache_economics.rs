@@ -40,14 +40,113 @@ use crate::provider_parity::{CachePosture, cache_posture};
 /// USD per million tokens divisor, matching [`Pricing::cost_usd`].
 const PER_MTOK: f64 = 1_000_000.0;
 
+/// The prompt-cache window a session asks its provider to hold — the
+/// per-request TTL choice Anthropic's Messages API exposes (#1839). One
+/// policy object with three readings that must never drift apart: how long
+/// the written prefix stays readable ([`CacheTtl::secs`]), what a write
+/// bills relative to the input rate ([`CacheTtl::write_premium_multiplier`]),
+/// and how the choice is spelled on the wire and in settings
+/// ([`CacheTtl::as_str`] — the Messages API's own `"5m"`/`"1h"` values).
+///
+/// The default is the provider default: five minutes, no `ttl` field on the
+/// wire at all, so a session that never touches the knob serializes
+/// byte-identically to one built before it existed (invariant 7). Only the
+/// providers [`provider_honors_cache_ttl`] names actually send the choice;
+/// everywhere else it is inert and the static tables below stand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheTtl {
+    /// The 5-minute window — the provider default. Writes bill at 1.25x the
+    /// input rate; nothing extra goes on the wire.
+    #[default]
+    FiveMinutes,
+    /// The 1-hour window — a per-request opt-in for sessions with human-paced
+    /// gaps (deck/REPL turns minutes apart). Writes bill at 2x the input
+    /// rate: the premium over 5m is 0.75x input per written token, repaid
+    /// the first time the prefix survives a gap the 5-minute window would
+    /// have evicted it from (an expiry re-writes the whole prefix at 1.25x
+    /// AND forfeits the ~0.9x read discount on it).
+    OneHour,
+}
+
+impl CacheTtl {
+    /// Seconds the written prefix stays readable.
+    #[must_use]
+    pub fn secs(self) -> u64 {
+        match self {
+            Self::FiveMinutes => 300,
+            Self::OneHour => 3_600,
+        }
+    }
+
+    /// What a cache write bills relative to the base input rate under this
+    /// window — the TTL-resolved form of [`cache_write_premium_multiplier`].
+    #[must_use]
+    pub fn write_premium_multiplier(self) -> f64 {
+        match self {
+            Self::FiveMinutes => 1.25,
+            Self::OneHour => 2.0,
+        }
+    }
+
+    /// The spelling shared by the Messages API `cache_control.ttl` field and
+    /// the settings knob (`providers.<id>.cache_ttl`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FiveMinutes => "5m",
+            Self::OneHour => "1h",
+        }
+    }
+}
+
+impl serde::Serialize for CacheTtl {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CacheTtl {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A typo'd window must be a loud parse error: silently falling back
+        // to 5m would quietly re-price every cache write the user thought
+        // they had pinned to the 1-hour rate.
+        let raw = String::deserialize(deserializer)?;
+        match raw.trim() {
+            "5m" => Ok(Self::FiveMinutes),
+            "1h" => Ok(Self::OneHour),
+            other => Err(serde::de::Error::custom(format!(
+                "\"cache_ttl\": {other:?} is not one of \"5m\", \"1h\""
+            ))),
+        }
+    }
+}
+
+/// Whether `provider`'s adapter puts the configured [`CacheTtl`] on the wire.
+///
+/// Only the Anthropic Messages adapter sends the per-request `ttl` choice
+/// today. Bedrock's `cachePoint` and OpenRouter's Claude routes ride the same
+/// underlying cache but their adapters do not yet forward the knob — see the
+/// tracking issue filed with #1839 — so for them (and every implicit-cache
+/// provider) the configured value is inert and the 5-minute default tables
+/// below stand. Consumers must branch on THIS predicate, never on a provider
+/// id, so extending TTL support to another adapter is a one-line change here
+/// instead of a hunt across surfaces.
+#[must_use]
+pub fn provider_honors_cache_ttl(provider: &str) -> bool {
+    provider == "anthropic"
+}
+
 /// The multiplier a provider bills a cache *write* at, relative to its base
 /// input rate — so the per-token write premium is `input_rate * (mult - 1)`.
 ///
 /// Only the opt-in cache providers actually report `cache_write_tokens`; the
 /// implicit-cache providers report zero writes, so their multiplier is never
 /// exercised and `1.0` (no premium) is the honest default. Anthropic-family
-/// 5-minute cache writes are 1.25x input (the 1-hour TTL is 2x, a per-request
-/// choice not visible in the usage envelope, so it is not modeled here).
+/// 5-minute cache writes are 1.25x input. This table is the *default-window*
+/// reading: a session that configured the 1-hour TTL on a provider
+/// [`provider_honors_cache_ttl`] names bills writes at
+/// [`CacheTtl::write_premium_multiplier`] instead, which is why TTL-aware
+/// consumers go through [`Pricing::cache_savings_usd_configured`].
 ///
 /// This is now only the *seed-time* derivation: since issue #97 landed
 /// [`Pricing::cache_write_usd_per_mtok`], the authoritative per-model rate is
@@ -114,6 +213,30 @@ impl Pricing {
             self.input_usd_per_mtok * (cache_write_premium_multiplier(provider) - 1.0).max(0.0)
         };
         self.cache_savings_usd(usage, premium)
+    }
+
+    /// [`Pricing::cache_savings_usd_for`] refined with the session's
+    /// configured [`CacheTtl`] — the form TTL-aware surfaces (the deck's
+    /// CacheInsight producer) use.
+    ///
+    /// The catalog's `cache_write_usd_per_mtok` column carries the 5-minute
+    /// rate, and the 1-hour choice is per-request — invisible to the row — so
+    /// when a provider that honors the knob runs the 1-hour window the
+    /// premium is derived from the row's input rate and
+    /// [`CacheTtl::write_premium_multiplier`] instead of the column.
+    /// Everywhere else (the default window, or a provider whose adapter never
+    /// sends the choice) this is exactly `cache_savings_usd_for`.
+    pub fn cache_savings_usd_configured(
+        &self,
+        provider: &str,
+        usage: &CompletionUsage,
+        ttl: CacheTtl,
+    ) -> f64 {
+        if provider_honors_cache_ttl(provider) && ttl != CacheTtl::FiveMinutes {
+            let premium = self.input_usd_per_mtok * (ttl.write_premium_multiplier() - 1.0);
+            return self.cache_savings_usd(usage, premium);
+        }
+        self.cache_savings_usd_for(provider, usage)
     }
 }
 
@@ -241,9 +364,11 @@ pub fn diagnose_cache_with_idle(
 /// provider with no documented eviction window (nothing to schedule around).
 ///
 /// Anthropic's default cache TTL is 5 minutes; Bedrock and OpenRouter's Claude
-/// routes ride the same default. The 1-hour Anthropic/OpenRouter TTL is a
-/// per-request opt-in that bills writes at 2x — a caller's choice, not modeled
-/// here (this is the *default* a TTL-blind scheduler forfeits).
+/// routes ride the same default. The 1-hour window is a per-request opt-in
+/// modeled by [`CacheTtl`]: a caller that knows the session's configured
+/// choice reaches this table through [`configured_cache_ttl_secs`], and this
+/// bare form remains the default-window reading for callers with no
+/// configuration in hand (historical telemetry, other sessions' rows).
 ///
 /// Local const table, deliberately: the authoritative home is the
 /// `provider_parity` matrix's not-yet-added TTL column. Merge this into that
@@ -253,6 +378,19 @@ pub fn provider_cache_ttl_secs(provider: &str) -> Option<u64> {
     match provider {
         "anthropic" | "bedrock" | "openrouter" => Some(300),
         _ => None,
+    }
+}
+
+/// [`provider_cache_ttl_secs`] refined with the session's configured
+/// [`CacheTtl`]: the configured window for a provider whose adapter puts the
+/// choice on the wire ([`provider_honors_cache_ttl`]), the static default for
+/// everyone else, and still `None` where no documented window exists at all.
+#[must_use]
+pub fn configured_cache_ttl_secs(provider: &str, configured: CacheTtl) -> Option<u64> {
+    if provider_honors_cache_ttl(provider) {
+        Some(configured.secs())
+    } else {
+        provider_cache_ttl_secs(provider)
     }
 }
 
@@ -522,34 +660,32 @@ mod tests {
 
     #[test]
     fn the_write_premium_and_the_ttl_table_encode_the_same_cache_window() {
-        // These two tables are two readings of ONE provider policy choice, and
-        // nothing but this test says so. Anthropic's 5-minute cache writes bill
-        // at 1.25x input and evict after 300s; the 1-hour window bills at 2x and
-        // evicts after 3600s. Change the window in one table and not the other
-        // and every write is silently mis-priced — `cache_savings_usd` keeps
-        // returning a number, just the wrong one, and no surface can tell.
-        //
-        // The 1-hour TTL is a per-request opt-in that is not observable in the
-        // usage envelope, so nothing downstream can detect the mismatch after
-        // the fact. Today it is unreachable — the adapter's `AnthropicCacheControl`
-        // has no `ttl` field at all, so every request takes the 5-minute default
-        // and 1.25x is correct. This test is the tripwire for the change that
-        // would make it wrong: adding TTL support means touching both tables,
-        // and this fails until both move.
+        // A window and its write premium are two readings of ONE provider
+        // policy choice, and nothing but this test says so. Change one half
+        // and not the other and every write is silently mis-priced —
+        // `cache_savings_usd` keeps returning a number, just the wrong one,
+        // and no surface can tell. The pairing now lives on `CacheTtl`
+        // (#1839), so pin both variants against the provider's published
+        // rates: 5 minutes at 1.25x input, 1 hour at 2x.
+        assert_eq!(CacheTtl::FiveMinutes.secs(), 300);
+        assert!((CacheTtl::FiveMinutes.write_premium_multiplier() - 1.25).abs() < 1e-12);
+        assert_eq!(CacheTtl::OneHour.secs(), 3_600);
+        assert!((CacheTtl::OneHour.write_premium_multiplier() - 2.0).abs() < 1e-12);
+
+        // The static per-provider tables are the DEFAULT-window reading and
+        // must agree with the `FiveMinutes` variant — the catalog's write-rate
+        // column is seeded from this multiplier, so a drift here mis-prices
+        // every write on a session that never touched the knob.
         for provider in ["anthropic", "bedrock", "openrouter"] {
             assert_eq!(
                 cache_write_premium_multiplier(provider),
-                1.25,
-                "{provider}: premium is no longer the 5-minute rate — if this is \
-                 1-hour support (2x), provider_cache_ttl_secs must move to 3600 \
-                 in the same change"
+                CacheTtl::FiveMinutes.write_premium_multiplier(),
+                "{provider}: the default-table premium must be the 5-minute rate"
             );
             assert_eq!(
                 provider_cache_ttl_secs(provider),
-                Some(300),
-                "{provider}: TTL is no longer the 5-minute window — \
-                 cache_write_premium_multiplier must move off 1.25 in the same \
-                 change, or every cache write is priced at the wrong rate"
+                Some(CacheTtl::FiveMinutes.secs()),
+                "{provider}: the default-table TTL must be the 5-minute window"
             );
         }
 
@@ -558,6 +694,84 @@ mod tests {
         // this pair ever diverges the taxonomy has changed, not the pricing.
         assert_eq!(cache_write_premium_multiplier("zai"), 1.0);
         assert_eq!(provider_cache_ttl_secs("zai"), None);
+    }
+
+    /// **Witness (#1839).** The configured-TTL refinements: the window a
+    /// session pinned reaches `ttl_secs` and the savings premium for exactly
+    /// the providers whose adapter puts the choice on the wire, and is inert
+    /// everywhere else.
+    #[test]
+    fn configured_ttl_reaches_exactly_the_providers_whose_adapter_sends_it() {
+        // Anthropic honors the knob: the configured window wins.
+        assert_eq!(
+            configured_cache_ttl_secs("anthropic", CacheTtl::OneHour),
+            Some(3_600)
+        );
+        assert_eq!(
+            configured_cache_ttl_secs("anthropic", CacheTtl::FiveMinutes),
+            Some(300)
+        );
+        // Bedrock/OpenRouter ride the same cache but their adapters do not
+        // forward the choice yet — the configured value must be inert, or the
+        // deck would count down a window the provider never granted.
+        assert_eq!(
+            configured_cache_ttl_secs("bedrock", CacheTtl::OneHour),
+            Some(300)
+        );
+        assert_eq!(
+            configured_cache_ttl_secs("openrouter", CacheTtl::OneHour),
+            Some(300)
+        );
+        // No documented window stays no window, whatever was configured.
+        assert_eq!(configured_cache_ttl_secs("zai", CacheTtl::OneHour), None);
+    }
+
+    /// **Witness (#1839).** Under the 1-hour window a cache write bills at 2x
+    /// input, and the savings figure must charge that premium — the catalog
+    /// row's write column carries the 5-minute rate and cannot see the
+    /// per-request choice.
+    #[test]
+    fn one_hour_savings_charge_the_2x_write_premium_not_the_rows_5m_rate() {
+        let pricing = Pricing {
+            input_usd_per_mtok: 3.00,
+            output_usd_per_mtok: 15.00,
+            cached_input_usd_per_mtok: 0.30,
+            cache_write_usd_per_mtok: 3.75,
+        };
+        let turn = usage(1_000_000, 400_000, 100_000);
+        // 1h: read_saved = 0.4 * 2.70 = 1.08; write premium = 0.1 * 3.00 = 0.30.
+        let one_hour = pricing.cache_savings_usd_configured("anthropic", &turn, CacheTtl::OneHour);
+        assert!((one_hour - (1.08 - 0.30)).abs() < 1e-9, "got {one_hour}");
+        // The default window delegates to the row-derived premium (0.75/M).
+        let five_min =
+            pricing.cache_savings_usd_configured("anthropic", &turn, CacheTtl::FiveMinutes);
+        let row_form = pricing.cache_savings_usd_for("anthropic", &turn);
+        assert!((five_min - row_form).abs() < 1e-12);
+        // A provider that never sends the choice keeps the row premium even
+        // when a 1-hour window was configured — its writes really billed 1.25x.
+        let inert = pricing.cache_savings_usd_configured("bedrock", &turn, CacheTtl::OneHour);
+        assert!((inert - pricing.cache_savings_usd_for("bedrock", &turn)).abs() < 1e-12);
+    }
+
+    /// The settings/wire spelling round-trips and a typo is a loud error, not
+    /// a silent 5-minute fallback that re-prices every write.
+    #[test]
+    fn cache_ttl_serde_speaks_5m_and_1h_and_rejects_anything_else() {
+        assert_eq!(
+            serde_json::to_string(&CacheTtl::FiveMinutes).unwrap(),
+            "\"5m\""
+        );
+        assert_eq!(serde_json::to_string(&CacheTtl::OneHour).unwrap(), "\"1h\"");
+        assert_eq!(
+            serde_json::from_str::<CacheTtl>("\"1h\"").unwrap(),
+            CacheTtl::OneHour
+        );
+        assert_eq!(
+            serde_json::from_str::<CacheTtl>("\"5m\"").unwrap(),
+            CacheTtl::FiveMinutes
+        );
+        let err = serde_json::from_str::<CacheTtl>("\"1hr\"").unwrap_err();
+        assert!(err.to_string().contains("1hr"), "{err}");
     }
 
     #[test]
@@ -602,6 +816,13 @@ mod tests {
                 provider_cache_ttl_secs(id).is_some(),
                 opt_in,
                 "`{id}`: a cache TTL must be declared for exactly the opt-in cache providers"
+            );
+            // A provider can only honor a per-request TTL choice if its cache
+            // is opt-in at all — an `honors` entry for an implicit-cache id
+            // would count down a window that provider never grants.
+            assert!(
+                opt_in || !provider_honors_cache_ttl(id),
+                "`{id}`: provider_honors_cache_ttl names a provider whose cache is not opt-in"
             );
         }
     }

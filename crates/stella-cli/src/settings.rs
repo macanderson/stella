@@ -91,6 +91,14 @@ pub struct ProviderSettings {
     /// dialect is fixed by its adapter).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dialect: Option<Dialect>,
+    /// Prompt-cache window pin (`"5m"` / `"1h"`, #1839). Absent — the normal
+    /// case — lets the session surface decide: the interactive deck/REPL asks
+    /// for the 1-hour window (human-paced gaps outlive 5 minutes; losing the
+    /// prefix re-bills it whole), headless runs keep the 5-minute provider
+    /// default (seconds-long gaps would pay the 2x write premium for
+    /// nothing). Honored today by the `anthropic` provider only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_ttl: Option<stella_model::CacheTtl>,
 }
 
 impl ProviderSettings {
@@ -112,6 +120,7 @@ impl ProviderSettings {
         take!(api_key_env);
         take!(default_model);
         take!(dialect);
+        take!(cache_ttl);
     }
 }
 

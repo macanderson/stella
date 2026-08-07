@@ -69,7 +69,12 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
     (
         "anthropic",
         CachePosture::OptIn {
-            mechanism: "Messages API cache_control breakpoints (system + conversation tail)",
+            mechanism: "Messages API cache_control breakpoints (system + conversation tail), \
+                        with a configurable 5m/1h TTL window (#1839): the 1-hour opt-in adds \
+                        ttl: \"1h\" to every marker plus the extended-cache-ttl beta header, \
+                        witnessed in anthropic/tests/cache_breakpoints.rs from both sides — \
+                        the pair reaches the wire when configured, and the default window \
+                        stays byte-identical",
             witness: "request_serializes_both_cache_breakpoints",
         },
     ),
@@ -365,9 +370,10 @@ mod tests {
     /// is a false alarm rather than the rotted proof it exists to catch. The
     /// parent `tests.rs` is over the file-size ratchet, so those splits keep
     /// happening — the list has to follow them.
-    fn adapter_sources() -> [&'static str; 13] {
+    fn adapter_sources() -> [&'static str; 14] {
         [
             include_str!("anthropic/tests.rs"),
+            include_str!("anthropic/tests/cache_breakpoints.rs"),
             include_str!("anthropic/tests/thinking.rs"),
             include_str!("bedrock/tests.rs"),
             include_str!("openai.rs"),
