@@ -454,14 +454,17 @@ fn migrate_v20_to_v21(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 /// v21 → v22: `executions` grows `journal_era` (#1981) — the writer's own
 /// statement of which compaction-journaling era produced this row's events.
 ///
-/// The backfill is the default and needs no `UPDATE`: every row already at
-/// rest was written before this column existed, so it was written before
-/// compaction journaled its replacement bytes (#1667), and era 0 is a fact
-/// about it rather than a guess. That is the whole reason the era is a stamp
-/// and not an inference — a reader looking at an old execution's events cannot
-/// distinguish "this build journaled no rewrites" from "this run happened not
-/// to rewrite anything", and one of those readings raises a false integrity
-/// alarm on routine housekeeping.
+/// The backfill is the column default and needs no `UPDATE`: a row already at
+/// rest was written by a build that had no era to state, and for all but the
+/// few days between PR #1979 landing and this stamp that build genuinely could
+/// not journal a rewrite. Rows from inside that window are the one place era 0
+/// is conservative rather than exact — and conservative in the only safe
+/// direction, since it can under-report an integrity signal but never invent
+/// one. Backfilling them the other way would need the very inference this
+/// column exists to avoid: a reader looking at an old execution's events
+/// cannot tell "this build journaled no rewrites" from "this run rewrote
+/// nothing", and reading it wrong raises a false alarm on routine
+/// housekeeping.
 ///
 /// Plain additive ADD COLUMN with a NOT NULL default, so no §7 rebuild;
 /// column-guarded for a file whose `executions` table was created at the v22
