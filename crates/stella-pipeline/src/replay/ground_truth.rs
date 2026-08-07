@@ -65,6 +65,12 @@ pub struct PendingPass {
     /// Whether a model verifier produced it (`false` = a deterministic ladder
     /// pass, the comparison cohort).
     pub verifier: bool,
+    /// The grader-independence fact the pass's ladder snapshot recorded
+    /// (#1795), carried out of the fold so a late verdict settles the right
+    /// grader cohort (#1865). `None` — no snapshot, or a snapshot from
+    /// before the fact existed — stays the unknown cohort, never assumed.
+    /// Meaningless when `verifier` is `false`: nothing graded.
+    pub grader_independent: Option<bool>,
     /// Commit SHAs the session recorded after this pass.
     pub commits: Vec<String>,
     /// PR URLs the session recorded after this pass.
@@ -192,6 +198,9 @@ pub fn reconcile(
             report.verifier_reconciled += 1;
             report.verifier_false_positives += false_positive;
             report.verifier_reverted += reverted;
+            let tally = report.by_grader.tally_mut(pass.grader_independent);
+            tally.reconciled += 1;
+            tally.false_positives += false_positive;
         } else {
             report.deterministic_reconciled += 1;
             report.deterministic_false_positives += false_positive;
@@ -246,6 +255,7 @@ mod tests {
         PendingPass {
             session: "sess-1".into(),
             verifier,
+            grader_independent: None,
             commits: commits.iter().map(|s| (*s).to_string()).collect(),
             prs: prs.iter().map(|s| (*s).to_string()).collect(),
         }
