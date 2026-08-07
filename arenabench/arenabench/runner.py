@@ -114,8 +114,8 @@ def _provenance_for(match: Match) -> provenance.Provenance:
     from . import __version__
 
     try:
-        version: str | None = harbor.harbor_version()
-        binary = harbor.harbor_bin()
+        binary = harbor.harbor_bin(match.spec.dataset)
+        version: str | None = harbor.harbor_version(binary)
     except harbor.HarborUnavailableError:
         # The launch below will fail and say so properly. The record still
         # gets written, unknown rather than absent, so a half-started match
@@ -641,13 +641,17 @@ class MatchRunner:
         for knob in spec.unhonoured(contestant.engine):
             run.warnings.append(f"{spec.title} ignores {knob}")
 
-        # Resolve Harbor and check it is new enough to grade THIS dataset
-        # before anything is launched. A Harbor that predates a task setting
-        # discards it and produces a complete run with a wrong score, so this
-        # is a refusal, not a warning (see `arenabench.harbor`).
-        harbor_exe = harbor.harbor_bin()
-        harbor.require_for_dataset(match.dataset.min_harbor, match.dataset.title)
-        run.notes.append(f"harbor {harbor.harbor_version()} ({harbor_exe})")
+        # Resolve Harbor — per dataset, so one server can pin the audited
+        # 0.6.1 for Terminal-Bench while Frontier-Bench runs its 0.20.0 venv —
+        # and check it is new enough to grade THIS dataset before anything is
+        # launched. A Harbor that predates a task setting discards it and
+        # produces a complete run with a wrong score, so this is a refusal,
+        # not a warning (see `arenabench.harbor`).
+        harbor_exe = harbor.harbor_bin(match.spec.dataset)
+        harbor.require_for_dataset(
+            match.dataset.min_harbor, match.dataset.title, binary=harbor_exe
+        )
+        run.notes.append(f"harbor {harbor.harbor_version(harbor_exe)} ({harbor_exe})")
 
         # Prefer an offline export. Given a registry ref, Harbor resolves
         # every task against its backend at run time, and one failed lookup
@@ -671,7 +675,7 @@ class MatchRunner:
             harbor_exe, "run",
             "--env", "docker",
             *source,
-            *launch_flags(contestant),
+            *launch_flags(contestant, harbor_exe),
             "--model", launch_model(contestant),
             "--job-name", job_name,
             "--jobs-dir", str(match.jobs_root),
@@ -800,6 +804,22 @@ class MatchRunner:
             env.update(spec.extra_env)
         if contestant.agent != "stella":
             env.update(self._routing_environment(contestant, run))
+            # The plumbing behind the `effort` honour for a built-in seat:
+            # Harbor forwards this variable into the container and the CLI
+            # reads it. Without it a match's `effort` silently ran the arm at
+            # its default — two runs that were secretly identical.
+            #
+            # No "unless the seat already set it" guard here, deliberately:
+            # a seat's `env` is a credentials-only channel (`screen_env`
+            # rejects every name that is not credential-shaped, and reports
+            # it), so a seat cannot carry this variable at all. The engine's
+            # `effort` is the only place the setting can come from, which is
+            # what makes the seat's declared posture and the wire agree.
+            if spec.effort_env and contestant.engine.effort:
+                env[spec.effort_env] = contestant.engine.effort
+                run.notes.append(
+                    f"effort {contestant.engine.effort} via {spec.effort_env}"
+                )
             return env
 
         # The engine config the ArenaBench Stella adapter reads back.

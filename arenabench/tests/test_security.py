@@ -98,10 +98,14 @@ class TestSeatEnvironmentIsScreened:
         # binary and asks it for a version and a flag list before building
         # argv, and a real lookup here would let the machine's Harbor (or its
         # absence) decide whether this security assertion runs at all.
-        monkeypatch.setattr("arenabench.harbor.harbor_bin", lambda: "/usr/bin/harbor")
-        monkeypatch.setattr("arenabench.harbor.harbor_version", lambda: "0.20.0")
         monkeypatch.setattr(
-            "arenabench.harbor.supports_agent_import_path", lambda: False
+            "arenabench.harbor.harbor_bin", lambda dataset_key=None: "/usr/bin/harbor"
+        )
+        monkeypatch.setattr(
+            "arenabench.harbor.harbor_version", lambda binary=None: "0.20.0"
+        )
+        monkeypatch.setattr(
+            "arenabench.harbor.supports_agent_import_path", lambda binary=None: False
         )
         seen: dict = {}
 
