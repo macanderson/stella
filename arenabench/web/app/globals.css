@@ -1,0 +1,125 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0e14;
+  --panel: #131722;
+  --line: #232a3b;
+  --text: #dbe2f0;
+  --dim: #7c8598;
+  --accent: #7aa2ff;
+  --ok: #63d68b;
+  --bad: #ff7a7a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+main {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 40px 20px 80px;
+}
+
+h1 {
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+h1 span {
+  color: var(--accent);
+}
+
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--dim);
+  margin: 36px 0 10px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th {
+  text-align: left;
+  color: var(--dim);
+  font-weight: 500;
+  padding: 4px 12px 8px 0;
+}
+
+td {
+  padding: 5px 12px 5px 0;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.status-done,
+.status-SUCCEEDED {
+  color: var(--ok);
+}
+
+.status-failed,
+.status-FAILED {
+  color: var(--bad);
+}
+
+form {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-right: 18px;
+}
+
+input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 7px 10px;
+  font: inherit;
+  width: 220px;
+}
+
+button {
+  background: var(--accent);
+  color: #0b0e14;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.note {
+  color: var(--dim);
+  font-size: 12.5px;
+}
+
+code {
+  color: var(--accent);
+}
