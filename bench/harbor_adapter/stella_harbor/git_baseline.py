@@ -50,6 +50,13 @@ GIT_BASELINE_COMMIT_MESSAGE = "stella-harbor: task workspace baseline"
 GIT_BASELINE_IDENT = "stella-harbor"
 GIT_BASELINE_EMAIL = "stella-harbor@bench.invalid"
 
+# The repo-wide ref pinning the baseline commit for Stella's witness
+# machinery: `verify_done` resolves it in preference to HEAD, because the
+# agent's own work is committed on top of the baseline during the trial and
+# a flip measured against HEAD is then structurally impossible (#2067). The
+# spelling is `WITNESS_BASELINE_TASK_REF` in `crates/stella-tools/src/verify.rs`.
+GIT_BASELINE_REF = "refs/stella/task-baseline"
+
 
 def git_baseline_script(workdir: str | None) -> str:
     """Build the POSIX-sh script that establishes the workspace git baseline.
@@ -81,6 +88,11 @@ def git_baseline_script(workdir: str | None) -> str:
     - ``--allow-empty`` guarantees a baseline commit exists even for an
       empty task directory, so "repository with no HEAD" is not a state the
       diff probe can encounter.
+    - ``update-ref`` pins the baseline commit at ``GIT_BASELINE_REF`` in the
+      same chain, so a ``state=created`` workspace always carries the pin
+      Stella's ``verify_done`` prefers over a HEAD the agent's own commits
+      have advanced (#2067). ``state=preexisting`` deliberately writes no
+      ref: a task-owned repository is left alone.
 
     The committer identity rides per-invocation ``-c`` flags, so no config
     file the task or the agent could observe is written, and the commit is
@@ -114,7 +126,8 @@ def git_baseline_script(workdir: str | None) -> str:
         "&& printf '%s\\n' '.stella/' >> .git/info/exclude "
         "&& git add -A >/dev/null 2>&1 "
         f"&& git {ident} commit -q --allow-empty --no-verify --no-gpg-sign "
-        f"-m {shlex.quote(GIT_BASELINE_COMMIT_MESSAGE)} >/dev/null 2>&1; then "
+        f"-m {shlex.quote(GIT_BASELINE_COMMIT_MESSAGE)} >/dev/null 2>&1 "
+        f"&& git update-ref {GIT_BASELINE_REF} HEAD >/dev/null 2>&1; then "
         f'echo "{GIT_BASELINE_MARKER} state=created '
         'commit=$(git rev-parse HEAD 2>/dev/null)"; '
         "else "

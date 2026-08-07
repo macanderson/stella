@@ -715,6 +715,14 @@ mod tests {
             witness_baseline_symptom("error[E0425]: cannot find function `retry_delays`"),
             Some("build_failure")
         );
+        // The import/loader shape (#2067): a baseline dying on a module that
+        // is a build artifact absent from a fresh checkout ran nothing.
+        assert_eq!(
+            witness_baseline_symptom(
+                "ModuleNotFoundError: No module named 'portfolio_optimized_c'"
+            ),
+            Some("build_failure")
+        );
         assert_eq!(
             witness_baseline_symptom(
                 "thread 'witness' panicked at 'assertion failed: `(left == right)`'"

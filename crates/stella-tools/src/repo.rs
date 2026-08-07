@@ -228,7 +228,12 @@ impl GitCli {
             {
                 Vec::new()
             }
-            _ => vec!["-c", "user.name=Stella", "-c", "user.email=stella@localhost"],
+            _ => vec![
+                "-c",
+                "user.name=Stella",
+                "-c",
+                "user.email=stella@localhost",
+            ],
         }
     }
 
