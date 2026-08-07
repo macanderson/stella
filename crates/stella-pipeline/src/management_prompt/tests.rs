@@ -62,11 +62,7 @@ const ALL_ROLES: [ModelCallRole; 14] = [
 fn management_system_block(role: ModelCallRole) -> Option<String> {
     let ctx = DiffContext::default();
     match role {
-        ModelCallRole::Triage => Some(
-            triage_prompt("goal", "src/lib.rs")
-                .instructions
-                .to_string(),
-        ),
+        ModelCallRole::Triage => Some(triage_prompt("goal", "src/lib.rs").instructions.to_string()),
         ModelCallRole::Verdict => Some(
             verifier_prompt("goal", "+a\n", "no flip", &ctx)
                 .instructions
