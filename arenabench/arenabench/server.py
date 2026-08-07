@@ -62,6 +62,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .agents import AGENTS, dead_seat_reason
 from .artifacts import MAX_TEXT_BYTES, preview_kind, resolve_within, tree
+from .catalog import models_payload
 from .claude_oauth import apply_local_claude_login
 from .config import MatchTemplateError, dump_match, match_from_toml, required_env
 from .credentials import (
@@ -780,6 +781,12 @@ def _handler_factory(
                     )
                 case ["agents"]:
                     self._json(arena.agents())
+                case ["models"]:
+                    # The role-model select's catalog (#2065). Raises with an
+                    # actionable reason when no checkout/source is readable;
+                    # the 500 body is what the UI shows beside its free-text
+                    # fallback.
+                    self._json(models_payload())
                 case ["presets"]:
                     self._json(arena.presets())
                 case ["sut"]:
