@@ -483,8 +483,7 @@ fn extract(
         for execution in &batch {
             cursor = execution.execution_id;
             scanned += 1;
-            let Some(record) =
-                accepted_record(store, execution, repo, args, policy, &mut counts)?
+            let Some(record) = accepted_record(store, execution, repo, args, policy, &mut counts)?
             else {
                 continue;
             };

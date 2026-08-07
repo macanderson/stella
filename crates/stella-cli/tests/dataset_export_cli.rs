@@ -305,7 +305,10 @@ fn seeded_workspace() -> (tempfile::TempDir, i64, i64) {
     store
         .record_step_manifest(
             tampered,
-            &worker_manifest(vec![manifest_entry("blk_sys", 0), manifest_entry("blk_goal", 1)]),
+            &worker_manifest(vec![
+                manifest_entry("blk_sys", 0),
+                manifest_entry("blk_goal", 1),
+            ]),
         )
         .expect("manifest");
     store
