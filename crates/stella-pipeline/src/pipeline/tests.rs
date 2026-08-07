@@ -2331,6 +2331,9 @@ mod mcp_prefetch;
 /// reaches the scripted ports above via `super::*`.
 mod plan_walk;
 mod research;
+/// The resumed execute stage and its verdict (#1671). A child module, so it
+/// reaches the scripted ports above via `super::*`.
+mod resume;
 mod scope_gate_interactive;
 mod shared_worktree;
 mod terminal_outcomes;
