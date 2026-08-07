@@ -211,6 +211,13 @@ enum LastAction {
     Message(String),
     /// Waiting on a human — approval, a secret, a decision.
     Blocked(String),
+    /// Parked on an engine-side wait (#1857): the worker is probing external
+    /// state on its own clock and will resume itself.
+    ///
+    /// Deliberately not [`LastAction::Blocked`], which means a human must act.
+    /// A park needs nobody — reading it as blocked would send an operator
+    /// looking for an approval prompt that does not exist.
+    Parked(String),
     /// A non-retryable error headline.
     Error(String),
 }
@@ -295,6 +302,7 @@ impl TaskRow {
             LastAction::Thinking => "thinking…".to_string(),
             LastAction::Message(s) => s.clone(),
             LastAction::Blocked(reason) => format!("waiting: {reason}"),
+            LastAction::Parked(desc) => format!("parked: {desc}"),
             LastAction::Error(msg) => msg.clone(),
         }
     }
@@ -457,6 +465,19 @@ impl FleetBoard {
                     row.action = LastAction::Message(line);
                 }
             }
+            // A park with no arm here would freeze the row on whatever tool
+            // ran last, so an operator watching a fleet would read a worker
+            // that is deliberately waiting as one that is stuck mid-tool.
+            // The status stays whatever it was — a park is the worker running,
+            // not blocked (nobody has to act) and not terminal.
+            AgentEvent::TurnParked { description, .. } => {
+                row.action = LastAction::Parked(first_line(description));
+            }
+            // The wake carries no subject of its own; the next tool or message
+            // repaints the row a beat later, so clearing to `Idle` here would
+            // only flicker. Holding the park until then reads as "it woke and
+            // is picking back up", which is what happened.
+            AgentEvent::TurnWoken { .. } => {}
             AgentEvent::AskUser { question, .. } => {
                 row.action = LastAction::Blocked(first_line(question));
                 if !row.status.is_terminal() {
