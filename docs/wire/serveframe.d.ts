@@ -68,6 +68,34 @@ export type AgentEvent = {
   type: "steered";
 } | {
   /**
+   * Seconds the park may last before it wakes with a timeout.
+   */
+  deadline_secs: number;
+  /**
+   * What the wait is for — the tool's human-readable description of
+   * the watched condition (e.g. "CI for branch main settles").
+   */
+  description: string;
+  /**
+   * Seconds between engine-side probes of the watched state.
+   */
+  poll_interval_secs: number;
+  type: "turn_parked";
+} | {
+  /**
+   * Engine-side probes spent while parked — the poll history the
+   * transcript deliberately never carries.
+   */
+  polls_used: number;
+  /**
+   * `"changed"` | `"deadline_expired"` — mirrors
+   * `stella-core::waiting::WakeReason` (kept as a string here so
+   * `stella-protocol` never depends on `stella-core`).
+   */
+  reason: string;
+  type: "turn_woken";
+} | {
+  /**
    * `false`: first detection, the turn was steered and continues.
    * `true`: detection persisted after the warning, the turn aborted.
    */

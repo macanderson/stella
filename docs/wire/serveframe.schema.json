@@ -187,6 +187,63 @@
           "type": "object"
         },
         {
+          "description": "The turn parked on an engine-side wait (#1471, #1857): a tool\ndeposited a wait request and the engine is now probing on its own\nclock — zero model calls until the watched state changes or the\ndeadline expires. The typed twin of the prose \"⏳ Parked\" narration,\nso a consumer can tell a park from model text, render a live\nheartbeat, and attribute the wall-clock gap. The matching\n[`AgentEvent::TurnWoken`] ends the span. Additive to the wire\ncontract: consumers recorded before parked waits existed never see it.",
+          "properties": {
+            "deadline_secs": {
+              "description": "Seconds the park may last before it wakes with a timeout.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "description": {
+              "description": "What the wait is for — the tool's human-readable description of\nthe watched condition (e.g. \"CI for branch main settles\").",
+              "type": "string"
+            },
+            "poll_interval_secs": {
+              "description": "Seconds between engine-side probes of the watched state.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "turn_parked",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "description",
+            "poll_interval_secs",
+            "deadline_secs"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The parked turn woke and the next model call is imminent — closes the\nspan its [`AgentEvent::TurnParked`] opened. Additive to the wire\ncontract, like its twin.",
+          "properties": {
+            "polls_used": {
+              "description": "Engine-side probes spent while parked — the poll history the\ntranscript deliberately never carries.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reason": {
+              "description": "`\"changed\"` | `\"deadline_expired\"` — mirrors\n`stella-core::waiting::WakeReason` (kept as a string here so\n`stella-protocol` never depends on `stella-core`).",
+              "type": "string"
+            },
+            "type": {
+              "const": "turn_woken",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "reason",
+            "polls_used"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Loop detection fired (receipts spec §6.3, #364 gap 3): the typed\ntwin of the prose steer/abort, so receipts can parse the decision\ninstead of string-matching an `Error` prefix. Emitted on BOTH\noutcomes — the first detection steers (`aborted: false`) and a\ndetection that persists past the warning aborts (`aborted: true`).\nAdditive to the wire contract: older consumers never see it.",
           "properties": {
             "aborted": {
