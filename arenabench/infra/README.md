@@ -146,10 +146,11 @@ frontier baselines — specifically Opus 5.
    champion and against Claude Code / Opus 5 arms; trials run on
    `arenabench-measure`, traces (`stella-events.jsonl`, trajectories,
    recordings, `results.json`) land under `runs/`.
-3. **Dataset export**: `arenabench datasets` compiles traces into training
-   corpora under `datasets/` — the witness stage's **oracle flip**
-   (fail→pass, tamper-excluded) is the reward signal that separates verified
-   solutions from claimed ones.
+3. **Dataset export** (to be built; tracked as a follow-up issue): a
+   trace→corpus exporter compiles `runs/` into training data under
+   `datasets/` — the witness stage's **oracle flip** (fail→pass,
+   tamper-excluded) is the reward signal that separates verified solutions
+   from claimed ones.
 4. **Tune**: fine-tuning jobs run on the `arenabench-tune` GPU queue
    (g6e/g6/g5, zero idle cost; blocked on the GPU quota above). The tuned
    open-weight model is served OpenAI-compatibly and seated as just another
