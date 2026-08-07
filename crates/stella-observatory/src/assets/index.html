@@ -1060,8 +1060,23 @@ function renderActivity() {
 }
 
 /* Clip to n characters without assuming the field is a string: several of
-   these arrive from JSON that a bad row can leave null. */
-const clip = (s, n) => { const v = String(s ?? ""); return v.length > n ? v.slice(0, n) + "…" : v; };
+   these arrive from JSON that a bad row can leave null.
+
+   `n` counts code points, matching the server's `db::truncate` exactly — see
+   tests/page_clipper.rs, which runs this very function against that one. It
+   is deliberately NOT `v.length`/`v.slice`, which count UTF-16 code units and
+   would cut a surrogate pair in half, putting a lone surrogate — a `�` — in
+   the DOM for any prompt whose n-th unit lands mid-emoji (#2026).
+
+   The `v.length <= n` fast path is exact, not an approximation: a code point
+   is one or two code units, so code units <= n proves code points <= n. Only
+   a string that might actually need clipping pays for the array. */
+const clip = (s, n) => {
+  const v = String(s ?? "");
+  if (v.length <= n) return v;
+  const cp = Array.from(v);
+  return cp.length > n ? cp.slice(0, n).join("") + "…" : v;
+};
 
 /* ── models table ────────────────────────────────────────────────────── */
 function renderModels(rows) {

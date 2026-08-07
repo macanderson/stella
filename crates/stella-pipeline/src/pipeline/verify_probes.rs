@@ -288,6 +288,7 @@ impl<'a> Pipeline<'a> {
                 lines: 0,
                 text: String::new(),
                 available: false,
+                untracked_rendered: Vec::new(),
             };
         };
         let out = surface.diagnostics.run_diagnostic(diagnostic).await;
@@ -318,10 +319,12 @@ impl<'a> Pipeline<'a> {
                     DIFF_PROBE_FAILED.to_string()
                 },
                 available: false,
+                untracked_rendered: Vec::new(),
             };
         }
         let mut lines = count_diff_lines(&out.stdout_tail);
         let mut text = out.stdout_tail;
+        let mut untracked_rendered = Vec::new();
         if matches!(diagnostic, DiagnosticInvocation::GitDiff) {
             let after = surface.repo_status.untracked_fingerprints().await;
             // Created (absent before) OR modified (fingerprint changed) this
@@ -363,14 +366,20 @@ impl<'a> Pipeline<'a> {
                 text.push('\n');
                 text.push_str(&crate::witness::warrant::untracked_change_line(path, added));
                 // …and the content underneath it, so a verifier grades the
-                // change rather than the filename (#2027). The marker alone
-                // is a line count: a run whose entire deliverable was one
-                // untracked file was graded PASS by a verifier that said so
-                // in as many words — "the unseen content cannot itself
-                // justify a FAIL".
+                // change rather than the filename. The marker alone is a line
+                // count: a run whose entire deliverable was one untracked
+                // file was graded PASS by a verifier that said so in as many
+                // words — "the unseen content cannot itself justify a FAIL".
+                //
+                // A hunk body is the file's content and makes the authored
+                // channel's copy redundant; git's binary sentence is not, so
+                // only the former claims the path.
                 if !body.is_empty() {
                     text.push('\n');
                     text.push_str(&body);
+                    if body.starts_with("@@ ") {
+                        untracked_rendered.push(path.to_string());
+                    }
                 }
             }
         }
@@ -378,6 +387,7 @@ impl<'a> Pipeline<'a> {
             lines,
             text,
             available: true,
+            untracked_rendered,
         }
     }
 
@@ -442,7 +452,7 @@ impl<'a> Pipeline<'a> {
         // asserting that the tree was successfully re-read.
         state.diff_available = probe.available;
         state.diff_text = verification_honest_diff(
-            authored::splice_authored(probe.text, &authored),
+            authored::splice_authored(probe.text, &authored, &probe.untracked_rendered),
             state.signals.file_changes,
         );
     }
@@ -515,6 +525,22 @@ pub(super) struct DiffProbe {
     /// Whether the probe could read the working tree AT ALL. Never `false`
     /// merely because the diff came back empty.
     pub(super) available: bool,
+    /// Untracked paths whose CONTENT this probe's text already carries.
+    ///
+    /// The authored channel renders the same content for any file written
+    /// through the file tools, and the two halves are concatenated — so
+    /// without this, a tool-written untracked file reached the verifier
+    /// twice, spending a token budget twice to say one thing. Naming the
+    /// paths here lets [`super::authored::splice_authored`] drop the
+    /// redundant half, and keeps the choice of *which* half explicit rather
+    /// than inferred by re-parsing the text.
+    ///
+    /// The probe's copy is the one kept, for the reason `authored`'s module
+    /// docs already give: on-disk state is the stronger claim about what
+    /// survived the turn. A path whose body could not be rendered (binary,
+    /// failed probe) is deliberately absent, so the authored channel still
+    /// covers it.
+    pub(super) untracked_rendered: Vec<String>,
 }
 
 /// How many `git diff --no-index --numstat` probes [`Pipeline::gather_diff`]

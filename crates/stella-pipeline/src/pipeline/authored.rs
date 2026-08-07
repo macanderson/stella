@@ -37,17 +37,36 @@ const AUTHORED_SECTION_HEADER: &str =
 /// legal: every consumer downstream (`changed_paths`, `changed_lines`,
 /// `mutants_from_diff`) parses the joined string with one parser and cannot
 /// tell which half a hunk came from, which is the point.
+/// `already_rendered` names the untracked paths the probe half now carries the
+/// CONTENT of, not merely a marker for. Those chunks are dropped from the
+/// authored half: both halves would otherwise render the same file, spending a
+/// token budget twice to say one thing, and leaving a verifier to wonder
+/// whether it is looking at one change or two. The probe's copy is the one
+/// kept, by the same precedence this module already applies — on-disk state is
+/// the stronger claim about what survived.
+///
+/// This is the text-side analogue of the `max` (never a sum) that
+/// `absorb_probe` applies to the two channels' line counts, and it exists for
+/// the same reason: they are two views of one change, not two changes.
 pub(super) fn splice_authored(
     probe_text: String,
     authored: &crate::ports::AuthoredChange,
+    already_rendered: &[String],
 ) -> String {
     if authored.is_empty() {
         return probe_text;
     }
-    if probe_text.trim().is_empty() {
-        return authored.text.clone();
+    // Reuses the verifier-prompt chunk dropper rather than a second parser:
+    // one definition of "a chunk for this path" keeps the two callers from
+    // disagreeing about what a chunk boundary is.
+    let authored_text = crate::verify::strip_witness_hunks(&authored.text, already_rendered).diff;
+    if authored_text.trim().is_empty() {
+        return probe_text;
     }
-    format!("{probe_text}\n{AUTHORED_SECTION_HEADER}\n{}", authored.text)
+    if probe_text.trim().is_empty() {
+        return authored_text;
+    }
+    format!("{probe_text}\n{AUTHORED_SECTION_HEADER}\n{authored_text}")
 }
 
 #[cfg(test)]
@@ -76,16 +95,51 @@ mod tests {
     fn an_empty_authored_change_leaves_the_probe_text_untouched() {
         let probe = "diff --git a/x b/x\n".to_string();
         assert_eq!(
-            splice_authored(probe.clone(), &AuthoredChange::default()),
+            splice_authored(probe.clone(), &AuthoredChange::default(), &[]),
             probe
         );
+    }
+
+    /// The duplication guard: once the probe carries an untracked file's
+    /// content, the authored channel's copy of that same file is redundant and
+    /// must be dropped. Both halves rendering it would spend the diff budget
+    /// twice on one change and leave a verifier reading the same file twice.
+    #[test]
+    fn a_file_the_probe_already_rendered_is_not_repeated_by_the_authored_half() {
+        let probe = "+ untracked change: solution.py (+2 lines)\n\
+                     @@ -0,0 +1,2 @@\n+def ok(n):\n+    return n >= 2";
+        let spliced = splice_authored(
+            probe.to_string(),
+            &authored_create(),
+            &["solution.py".to_string()],
+        );
+        assert_eq!(spliced, probe, "the authored half added nothing: {spliced}");
+        assert_eq!(
+            spliced.matches("def ok(n):").count(),
+            1,
+            "the content appears exactly once: {spliced}"
+        );
+    }
+
+    /// …and the drop is per path. A file only the tools saw is still spliced,
+    /// which is the whole reason the authored channel exists.
+    #[test]
+    fn a_file_the_probe_did_not_render_is_still_spliced() {
+        let probe = "+ untracked change: other.py (+1 lines)\n@@ -0,0 +1 @@\n+x = 1";
+        let spliced = splice_authored(
+            probe.to_string(),
+            &authored_create(),
+            &["other.py".to_string()],
+        );
+        assert!(spliced.contains(AUTHORED_SECTION_HEADER), "{spliced}");
+        assert!(spliced.contains("def ok(n):"), "{spliced}");
     }
 
     /// The Terminal-Bench case: the probe could not look, so the authored diff is
     /// the entire answer and must not be buried under a joining header.
     #[test]
     fn a_blank_probe_yields_the_authored_diff_alone() {
-        let spliced = splice_authored(String::new(), &authored_create());
+        let spliced = splice_authored(String::new(), &authored_create(), &[]);
         assert!(spliced.starts_with("--- /dev/null"), "{spliced}");
         assert!(!spliced.contains(AUTHORED_SECTION_HEADER), "{spliced}");
     }
@@ -96,7 +150,7 @@ mod tests {
     #[test]
     fn both_channels_are_joined_with_the_tree_first() {
         let probe = "diff --git a/lib.rs b/lib.rs\n--- a/lib.rs\n+++ b/lib.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
-        let spliced = splice_authored(probe.to_string(), &authored_create());
+        let spliced = splice_authored(probe.to_string(), &authored_create(), &[]);
         let tree = spliced.find("a/lib.rs").expect("tree half");
         let header = spliced.find(AUTHORED_SECTION_HEADER).expect("the label");
         let authored = spliced.find("b/solution.py").expect("authored half");
