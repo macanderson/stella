@@ -233,6 +233,18 @@ accent): the glyph and the badge context, never the hue, say "warning".
 - **The page is embedded at compile time.** Editing
   [`src/assets/index.html`](src/assets/index.html) does nothing until you
   rebuild — `--example serve` included.
+- **Text is clipped twice, and the two clippers must agree.** The server clips
+  in `db::truncate` and the page clips again in `clip`
+  ([`src/assets/index.html`](src/assets/index.html)); both cut on a **code
+  point** and append `…`, and only the *lengths* are per-surface. The page's
+  copy is the one no Rust gate can see — rustc, clippy and the golden payloads
+  all read straight past it — and it is the one that drifted: it counted
+  UTF-16 code units and cut with `slice`, so any prompt whose n-th unit landed
+  mid-emoji reached the DOM as a lone surrogate, a `�` (#2026).
+  [`tests/page_clipper.rs`](tests/page_clipper.rs) now runs that function under
+  `node` against the contract, so a fourth spelling of "clip" fails at
+  `cargo test`. If you add clipping to the page, call `clip` — do not inline
+  `slice`.
 - **The test schema is a hand-written copy, and it has already drifted.**
   `seeded_workspace` in `src/lib.rs` spells out its own DDL for the subset of
   tables the observatory reads, and nothing checks it against
@@ -276,8 +288,17 @@ cargo test -p stella-observatory
 
 There is no crate-specific `make` target — the root `Makefile` has one only for
 core/model/tools/cli/protocol — so `make test` picks this up with the workspace.
-Every test is an inline `#[cfg(test)] mod tests`: no `tests/` directory, no
-fixture dir, feature flag or env var.
+No fixture dir, feature flag or env var. Most tests are an inline
+`#[cfg(test)] mod tests`; four suites live in `tests/` because each needs
+something the inline module cannot have — a dev-dependency on the crate whose
+schema it is checking, a real socket, or `node`:
+
+| Suite | Why it is not inline |
+|---|---|
+| [`tests/schema_conformance.rs`](tests/schema_conformance.rs) | Builds `store.db` through `stella-store`'s real migrations (#827) — a **dev**-dependency, so production still links nothing. |
+| [`tests/journal_era.rs`](tests/journal_era.rs) | The other half of the digest alarm: which of two things a mismatch means depends on `executions.journal_era` (#1981). |
+| [`tests/live_stream.rs`](tests/live_stream.rs) | Drives the live endpoint over a real socket. |
+| [`tests/page_clipper.rs`](tests/page_clipper.rs) | Executes the page's own JavaScript under `node` — see below. |
 
 The dominant shape: `seeded_workspace()` builds a `TempDir` with a `store.db`
 seeded from hand-written DDL, `seed_fs_surfaces()` layers on the file-backed
