@@ -336,7 +336,7 @@ fn requeue_front(
 /// driver inline. Returns when the user quits (Ctrl-C) or the deck's input
 /// stream ends.
 pub async fn run_deck_session(
-    cfg: &Config,
+    cfg: &mut Config,
     budget_limit: Option<f64>,
     presentation: crate::term_policy::DeckPresentation,
     resume: Option<crate::session_persist::ResumeRequest>,
@@ -3682,7 +3682,7 @@ fn engine_config_inbound(cfg: &Config, status: Option<String>) -> Inbound {
 /// input was one of the overlay's.
 fn handle_engine_config_input(
     input: &WorkspaceInput,
-    cfg: &Config,
+    cfg: &mut Config,
     in_tx: &UnboundedSender<Inbound>,
 ) -> bool {
     match input {
@@ -3701,10 +3701,21 @@ fn handle_engine_config_input(
             let status = match path {
                 None => "save failed: cannot determine $HOME for user settings".to_string(),
                 Some(path) => match engine.save_to(&path) {
-                    Ok(()) => format!(
-                        "saved to {} — applies to runs started from now on",
-                        path.display()
-                    ),
+                    // A save is immediately live: reload this session's
+                    // `Config` from the same scope chain the write just
+                    // landed in, the same effect `/reload` has. Saving and
+                    // then needing a second manual step to make it count
+                    // was exactly the surprise this closes.
+                    Ok(()) => match cfg.reload_from_disk() {
+                        Ok(()) => format!(
+                            "saved to {} and reloaded — applies to runs started from now on",
+                            path.display()
+                        ),
+                        Err(e) => format!(
+                            "saved to {} but reload failed: {e} (restart to pick it up)",
+                            path.display()
+                        ),
+                    },
                     Err(e) => format!("save failed: {e}"),
                 },
             };
@@ -3773,7 +3784,7 @@ fn tool_policy_inbound(cfg: &Config, names: &[String], status: Option<String>) -
 /// different (and much larger) change than editing settings.
 fn handle_tools_input(
     input: &WorkspaceInput,
-    cfg: &Config,
+    cfg: &mut Config,
     names: &[String],
     in_tx: &UnboundedSender<Inbound>,
 ) -> bool {
@@ -3799,7 +3810,12 @@ fn handle_tools_input(
                 None => "save failed: cannot determine $HOME for user settings".to_string(),
                 Some(path) => {
                     match crate::tool_switches::save_switches(&path, switches, &ceiling) {
-                        Ok(status) => status,
+                        // Live the moment it lands, same as `/reload` — see
+                        // the identical seam in `handle_engine_config_input`.
+                        Ok(status) => match cfg.reload_from_disk() {
+                            Ok(()) => format!("{status} (reloaded)"),
+                            Err(e) => format!("{status} (reload failed: {e})"),
+                        },
                         Err(e) => format!("save failed: {e}"),
                     }
                 }
@@ -3935,7 +3951,7 @@ async fn run_deck_command(
     system_prompt: &str,
     provider: &dyn Provider,
     registry: &ToolRegistry,
-    cfg: &Config,
+    cfg: &mut Config,
     custom: &crate::extensions::CustomExtensions,
     pipeline_on: &mut bool,
     budget_limit: Option<f64>,
@@ -4059,6 +4075,27 @@ async fn run_deck_command(
                     ));
                 }
                 Ok(Err(e)) | Err(e) => say(format!("export failed: {e}")),
+            }
+        }
+        "/reload" => {
+            // Re-read the settings scope chain (user + project, managed
+            // ceiling folded in) and re-apply everything it derives —
+            // engine posture, tool policy, authority, recap/trace/reward/
+            // worktree switches — to THIS session's live `Config`, without
+            // restarting. Provider/model/credential resolution is
+            // deliberately untouched (see `Config::reload_from_disk`);
+            // `/model` and the SETTINGS tab are the seam for that.
+            match cfg.reload_from_disk() {
+                Ok(()) => {
+                    say("configuration reloaded — engine, tools, and authority settings \
+                         re-read from disk."
+                        .to_string());
+                    // The SETTINGS tab's overlays cache what they last
+                    // rendered; push fresh snapshots so a `/reload` while
+                    // either is open reflects the new values immediately.
+                    let _ = in_tx.send(engine_config_inbound(cfg, None));
+                }
+                Err(e) => say(format!("reload failed: {e}")),
             }
         }
         "/donate" => {

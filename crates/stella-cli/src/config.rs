@@ -619,6 +619,50 @@ impl Config {
         Ok(cfg)
     }
 
+    /// Re-read the settings scope chain (user + project, managed ceiling
+    /// folded in) and re-apply everything [`Config::load_with_settings`]
+    /// derives from it *except* provider/model/credential resolution — those
+    /// need the full startup chain (interactive prompt included) and a
+    /// mid-session change of provider is a much larger step than a config
+    /// refresh. This is the `/reload` slash command's engine: same fields,
+    /// same precedence (trusted-launcher engine override still wins), just
+    /// re-derived from whatever is on disk *now* instead of what it was at
+    /// session start.
+    ///
+    /// Settings unreadable (malformed JSON/TOML) is reported rather than
+    /// silently keeping the stale in-memory values — the whole point of a
+    /// manual reload is that it either worked or you were told why not.
+    pub fn reload_from_disk(&mut self) -> Result<(), String> {
+        let settings = crate::settings::Settings::load(&self.workspace_root)?;
+        let mut settings = settings;
+        let trusted_engine = trusted_engine_config_override()?;
+        let engine_is_trusted = trusted_engine.is_some();
+        if let Some(engine) = trusted_engine {
+            settings.agent_engine_config = Some(engine);
+        }
+        self.engine_settings = if engine_is_trusted {
+            settings.agent_engine_config.clone()
+        } else {
+            crate::engine_config::engine_with_provider_baseline(
+                self.provider.id,
+                &settings.agent_engine_config,
+            )
+        };
+        self.engine_settings_trusted = engine_is_trusted;
+        self.authority = settings.authority_policy;
+        self.tool_policy = settings.tool_policy();
+        self.enable_recap = settings.recap_enabled();
+        self.trace_capture = settings.trace_capture_enabled();
+        self.reward_policy = settings.reward_policy()?;
+        self.create_worktrees = settings.create_worktrees();
+        self.hooks = if crate::enterprise_telemetry::process_free_authority_active() {
+            None
+        } else {
+            settings.hooks.clone()
+        };
+        Ok(())
+    }
+
     /// The provider-resolution body of [`Config::load_with_settings`] —
     /// everything except the hooks stamp, so its many early returns stay
     /// exactly as they were.

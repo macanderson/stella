@@ -1177,7 +1177,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     signals::block_on_interruptible(
                         rt()?,
                         command_deck::run_deck_session(
-                            &cfg,
+                            &mut cfg,
                             cli.globals.budget,
                             deck_presentation(&cli.globals),
                             None,
@@ -1225,7 +1225,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             signals::block_on_interruptible(
                 rt()?,
                 command_deck::run_deck_session(
-                    &cfg,
+                    &mut cfg,
                     cli.globals.budget,
                     deck_presentation(&cli.globals),
                     Some(request),
