@@ -590,8 +590,11 @@ pub trait DiagnosticRunner: Send + Sync {
 pub trait TestRunner: Send + Sync {
     /// Spawn `invocation.program` with `invocation.args` directly.
     async fn run_test(&self, invocation: &TestInvocation) -> CmdOutcome;
-    /// Whether this version-style probe invocation completes with exit 0 —
-    /// "is this runner actually usable here?", never a test run (#1539).
+    /// Whether this probe invocation completes with exit 0 — "is this
+    /// runner actually usable here?", never a test run (#1539).
+    /// Version-style for every language runner; the cheapest no-op
+    /// (`sh -c 'exit 0'`) for the shell, whose `--version` is non-portable
+    /// (#2064).
     ///
     /// The witness author's tool surface is deliberately unable to execute
     /// anything, so runner existence is a fact only the pipeline can
