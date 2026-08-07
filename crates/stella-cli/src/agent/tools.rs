@@ -673,6 +673,14 @@ impl DiagnosticRunner for GitDiagnosticRunner {
             DiagnosticInvocation::UntrackedNumstat { path } => {
                 cmd.args(["diff", "--no-index", "--numstat", "--", "/dev/null", path]);
             }
+            DiagnosticInvocation::UntrackedPatch { path } => {
+                // Same probe as the numstat above, minus `--numstat`, so the
+                // two answers about one untracked file can never disagree
+                // about which file they read. `--no-color` because a
+                // configured `color.ui = always` would otherwise paint SGR
+                // escapes into a prompt.
+                cmd.args(["diff", "--no-index", "--no-color", "--", "/dev/null", path]);
+            }
         }
         cmd.current_dir(&self.root).env("PWD", &self.root);
         for var in stella_tools::exec::GIT_REPO_ENV_VARS {

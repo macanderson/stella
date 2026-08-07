@@ -875,6 +875,10 @@ impl DiagnosticRunner for RemoteVerificationRunner {
                 "invocation": "untracked_numstat",
                 "path": path,
             }),
+            DiagnosticInvocation::UntrackedPatch { path } => serde_json::json!({
+                "invocation": "untracked_patch",
+                "path": path,
+            }),
         };
         dispatch_verification_call(
             &self.frames,

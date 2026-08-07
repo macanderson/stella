@@ -238,6 +238,33 @@ impl<'a> Pipeline<'a> {
             .unwrap_or(1)
     }
 
+    /// The reviewable body of one untracked file's patch — its hunks, with
+    /// git's file headers removed.
+    ///
+    /// The headers are dropped rather than passed through because
+    /// [`crate::witness::warrant::changed_paths`] reads `+++ `/`--- ` lines to
+    /// decide which paths a change touched, and an untracked path already
+    /// reaches it through the marker line this body sits under. Letting both
+    /// channels name the file would move untracked-only changes off the
+    /// `paths.is_empty()` branch that keeps them
+    /// [`WitnessWarrant::Required`](crate::witness::warrant::WitnessWarrant),
+    /// turning "the verifier can now read the file" into a silent relaxation
+    /// of when a witness is owed. One change, one effect.
+    ///
+    /// A binary file keeps git's `Binary files … differ` sentence instead of
+    /// its bytes: that sentence is the useful evidence (there is nothing here
+    /// a reviewer can read), and it is also what stops a database sidecar
+    /// from pouring escape bytes into a prompt.
+    async fn untracked_patch_body(&self, surface: CandidateSurface<'_>, path: &str) -> String {
+        let out = surface
+            .diagnostics
+            .run_diagnostic(&DiagnosticInvocation::UntrackedPatch {
+                path: path.to_string(),
+            })
+            .await;
+        patch_body(&out.stdout_tail)
+    }
+
     /// Run the diff command and return `(changed_line_count, raw_diff)`.
     ///
     /// `git diff` cannot see untracked files, so a turn whose entire change is
@@ -316,14 +343,18 @@ impl<'a> Pipeline<'a> {
             // the tail would let a large untracked change slip under a budget
             // it should have tripped. `buffered` preserves input order, so
             // the appended evidence stays deterministic.
-            let counted: Vec<(&str, u32)> =
+            let counted: Vec<(&str, u32, String)> =
                 futures_util::stream::iter(fresh.into_iter().map(|path| async move {
-                    (path, self.untracked_added_lines(surface, path).await)
+                    let (added, body) = futures_util::join!(
+                        self.untracked_added_lines(surface, path),
+                        self.untracked_patch_body(surface, path),
+                    );
+                    (path, added, body)
                 }))
                 .buffered(UNTRACKED_NUMSTAT_CONCURRENCY)
                 .collect()
                 .await;
-            for (path, added) in counted {
+            for (path, added, body) in counted {
                 lines += added;
                 // The shared builder, so `witness::warrant` can parse these
                 // paths back out and hold them to the same path rules as
@@ -331,6 +362,16 @@ impl<'a> Pipeline<'a> {
                 // blinded the warrant to every untracked file.
                 text.push('\n');
                 text.push_str(&crate::witness::warrant::untracked_change_line(path, added));
+                // …and the content underneath it, so a verifier grades the
+                // change rather than the filename (#2027). The marker alone
+                // is a line count: a run whose entire deliverable was one
+                // untracked file was graded PASS by a verifier that said so
+                // in as many words — "the unseen content cannot itself
+                // justify a FAIL".
+                if !body.is_empty() {
+                    text.push('\n');
+                    text.push_str(&body);
+                }
             }
         }
         DiffProbe {
@@ -481,3 +522,25 @@ pub(super) struct DiffProbe {
 /// costs roughly one round-trip instead of N, low enough that a turn which
 /// creates hundreds cannot fork an unbounded burst of git processes.
 const UNTRACKED_NUMSTAT_CONCURRENCY: usize = 16;
+
+/// Reduce one `git diff --no-index -- /dev/null <path>` patch to the part a
+/// reviewer can read: the hunks, or git's binary sentence.
+///
+/// Everything above the first `@@` is git's file-header preamble
+/// (`diff --git`, `new file mode`, `index`, `--- `, `+++ `), which
+/// [`Pipeline::untracked_patch_body`] explains must not survive into the
+/// diff text. An output with neither a hunk nor a binary sentence — an empty
+/// probe, a failed one — contributes nothing rather than a confusing
+/// fragment; the marker line above it still states the file changed.
+fn patch_body(raw: &str) -> String {
+    if let Some(start) = raw.find("\n@@ ") {
+        return raw[start + 1..].trim_end().to_string();
+    }
+    if raw.starts_with("@@ ") {
+        return raw.trim_end().to_string();
+    }
+    raw.lines()
+        .find(|line| line.starts_with("Binary files ") && line.ends_with(" differ"))
+        .unwrap_or_default()
+        .to_string()
+}
