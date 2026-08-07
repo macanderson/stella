@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import harbor, provenance
+from . import harbor, provenance, sut
 from .agents import (
     credential_env_for,
     launch_flags,
@@ -121,12 +121,28 @@ def _provenance_for(match: Match) -> provenance.Provenance:
         # gets written, unknown rather than absent, so a half-started match
         # is not mistaken later for one that ran on the current Harbor.
         version, binary = None, ""
+
+    # The SUT half, resolved the same way the launch resolves it so the record
+    # names the binary that actually ran. Failure leaves both fields empty —
+    # unknown, never guessed, for the same reason `harbor_version` is.
+    sut_commit, sut_sha256 = "", ""
+    if match.spec.sut_ref:
+        try:
+            sut_commit = sut.resolve_ref(match.spec.sut_ref)
+            staged = sut.binary_for(sut_commit)
+            sut_sha256 = staged.sha256 if staged else ""
+        except sut.SutUnavailableError:
+            sut_commit = ""
+
     return provenance.Provenance(
         dataset_key=match.spec.dataset,
         dataset_ref=match.dataset.harbor_id,
         dataset_digest=match.dataset.digest,
         harbor_version=version,
         harbor_bin=binary,
+        sut_ref=match.spec.sut_ref,
+        sut_commit=sut_commit,
+        sut_sha256=sut_sha256,
         arenabench_version=__version__,
         source=provenance.SOURCE_RECORDED,
     )
@@ -711,7 +727,7 @@ class MatchRunner:
             )
         env = _base_environment()
         env.update(seat_env)
-        env.update(self._agent_environment(contestant, run))
+        env.update(self._agent_environment(contestant, run, match.spec.sut_ref))
 
         # The seat's launch record — the only artifact that can say which
         # route this job's trials were actually served by. `launch_model`
@@ -795,7 +811,7 @@ class MatchRunner:
         return env
 
     def _agent_environment(
-        self, contestant: Contestant, run: ContestantRun
+        self, contestant: Contestant, run: ContestantRun, sut_ref: str = ""
     ) -> dict[str, str]:
         """Agent-specific environment, layered over the operator's ``.env``."""
         spec = resolve_agent(contestant.agent)
@@ -842,9 +858,33 @@ class MatchRunner:
             roots.append(existing)
         env["PYTHONPATH"] = os.pathsep.join(roots)
 
+        # Which Stella actually runs. A pinned `sut_ref` resolves to a commit
+        # and the binary built from *that* commit is used; the ambient
+        # STELLA_BINARY is only the fallback for an explicitly unpinned match.
+        # `ArenaServer.create_match` has already refused a pinned match with no
+        # matching build, so reaching here with a pin means the binary exists.
+        if sut_ref:
+            try:
+                commit = sut.resolve_ref(sut_ref)
+                staged = sut.binary_for(commit)
+            except sut.SutUnavailableError:
+                staged = None
+            if staged is not None:
+                env["STELLA_BINARY"] = str(staged.path)
+                run.notes.append(
+                    f"stella {commit[:8]} ({sut_ref}) "
+                    f"sha256:{staged.sha256[:12] or 'unrecorded'}"
+                )
+                return env
+
         binary = os.environ.get("STELLA_BINARY")
         if binary:
             env["STELLA_BINARY"] = binary
+            run.warnings.append(
+                "SUT not pinned to a commit — running whatever STELLA_BINARY "
+                "points at, so these numbers cannot be attributed to a "
+                "specific Stella revision"
+            )
         return env
 
     # -- supervision ------------------------------------------------------

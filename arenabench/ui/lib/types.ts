@@ -185,6 +185,66 @@ export interface TranscriptEntry {
   meta?: Record<string, unknown>;
 }
 
+/** A branch the SUT can be built from, as /api/sut/branches returns it. */
+export interface SutBranch {
+  name: string;
+  ref: string;
+  commit: string;
+  short: string;
+  subject?: string;
+  committed_at?: number;
+  is_default?: boolean;
+}
+
+/** How far a staged binary is from the commit a match asked for. */
+export interface SutDrift {
+  staged: string;
+  target: string;
+  behind: number;
+  ahead: number;
+  comparable: boolean;
+  identical: boolean;
+  summary: string;
+}
+
+export interface SutBinary {
+  path: string;
+  commit: string;
+  short: string;
+  sha256: string;
+  built_at: number;
+  known: boolean;
+}
+
+/** Which Stella a match pinned to `ref` would run — /api/sut. */
+export interface SutStatus {
+  ref: string;
+  repo: string | null;
+  target: string | null;
+  staged: SutBinary | null;
+  legacy: SutBinary | null;
+  drift: SutDrift | null;
+  /** True only when a binary built from exactly `target` is staged. */
+  ready: boolean;
+  problem: string | null;
+}
+
+/** One SUT build, from queued to done — /api/sut/build[s]. */
+export interface SutBuild {
+  id: string;
+  ref: string;
+  commit: string;
+  short: string;
+  status: "queued" | "building" | "done" | "failed";
+  elapsed: number;
+  binary: string;
+  sha256: string;
+  error: string;
+  log_tail: string[];
+  cached: boolean;
+  done: boolean;
+}
+
 /** One quick-start head-to-head as /api/presets returns it: a fully
  * configured match in the same shape a parsed template arrives in, so the
  * wizard applies both through one code path. */

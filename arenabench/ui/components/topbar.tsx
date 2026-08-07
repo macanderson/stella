@@ -66,7 +66,7 @@ export function Topbar({
   conn: ConnState;
 }) {
   return (
-    <header className="sticky top-0 z-40 flex h-14 items-center gap-6 border-b border-line bg-background/85 px-5 backdrop-blur-md">
+    <header className="sticky top-0 z-40 flex h-14 items-center gap-6 border-b border-line bg-background/85 px-5 backdrop-blur-md mx-auto max-w-[1600px] px-5 m-b-5">
       <Brand />
       <Tabs.Root value={view} onValueChange={(v) => onViewChange(v as View)}>
         <Tabs.List className="flex gap-1">

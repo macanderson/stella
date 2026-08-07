@@ -21,6 +21,7 @@ import { Step, ErrorBox } from "@/components/setup/step";
 import { DatasetGrid } from "@/components/setup/dataset-grid";
 import { TaskPicker, type TaskFilters } from "@/components/setup/task-picker";
 import { SeatCard, ApiDatalist } from "@/components/setup/seat-card";
+import { SutPanel } from "@/components/setup/sut-panel";
 
 interface TasksState {
   loading: boolean;
@@ -64,11 +65,13 @@ function matchPayload(args: {
   concurrency: number;
   setupTimeout: number;
   recordVideo: boolean;
+  sutRef: string;
 }) {
   return {
     name: args.name.trim() || undefined,
     dataset: args.dataset,
     tasks: [...args.selected],
+    sut_ref: args.sutRef,
     contestants: args.seats.map((seat) => {
       const roles: Record<string, Record<string, unknown>> = {};
       for (const [role, cfg] of Object.entries(seat.engine.roles)) {
@@ -142,6 +145,8 @@ export function SetupView({
   const [concurrency, setConcurrency] = React.useState(1);
   const [setupTimeout, setSetupTimeout] = React.useState(1);
   const [recordVideo, setRecordVideo] = React.useState(false);
+  // `main` means origin/main. Empty is the explicit "do not verify" opt-out.
+  const [sutRef, setSutRef] = React.useState("main");
   const [launching, setLaunching] = React.useState(false);
   const [launchError, setLaunchError] = React.useState<string | null>(null);
 
@@ -410,6 +415,7 @@ export function SetupView({
           concurrency,
           setupTimeout,
           recordVideo,
+          sutRef,
         }),
       );
       const blob = new Blob([toml], { type: "application/toml" });
@@ -428,7 +434,17 @@ export function SetupView({
     } catch (error) {
       setTemplateErrors([String(error)]);
     }
-  }, [matchName, dataset, selected, seats, attempts, concurrency, setupTimeout, recordVideo]);
+  }, [
+    matchName,
+    dataset,
+    selected,
+    seats,
+    attempts,
+    concurrency,
+    setupTimeout,
+    recordVideo,
+    sutRef,
+  ]);
 
   // -- launch --------------------------------------------------------------------
 
@@ -443,6 +459,7 @@ export function SetupView({
       concurrency,
       setupTimeout,
       recordVideo,
+      sutRef,
     });
     if (!payload.tasks.length) {
       setLaunchError("Select at least one task.");
@@ -466,6 +483,7 @@ export function SetupView({
     concurrency,
     setupTimeout,
     recordVideo,
+    sutRef,
     onOpenMatch,
   ]);
 
@@ -635,6 +653,21 @@ export function SetupView({
         <>
           <Step
             n="3"
+            title="stella build"
+            hint={
+              <>
+                Which Stella the seats under test run. A branch is what you pick; the{" "}
+                <strong>commit</strong> it resolves to is what gets recorded, because a
+                branch moves and a result has to stay checkable. <code>main</code> here
+                means <code>origin/main</code>, never a local branch of that name.
+              </>
+            }
+          >
+            <SutPanel sutRef={sutRef} onChangeRef={setSutRef} />
+          </Step>
+
+          <Step
+            n="4"
             title="contestants"
             hint={
               <>
@@ -674,7 +707,7 @@ export function SetupView({
             </Button>
           </Step>
 
-          <Step n="4" title="launch">
+          <Step n="5" title="launch">
             <div className="mb-[18px] flex flex-wrap items-end gap-4">
               <Field label="Match name" className="min-w-[170px] flex-1">
                 <Input
