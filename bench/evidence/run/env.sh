@@ -83,10 +83,40 @@ assert_portable_binary() {
   }
 }
 
+# Assert the SUT binary is close enough to `origin/main` to be reported as it.
+#
+# `assert_portable_binary` answers "can this run"; the SHA-256 comparison
+# answers "did it arrive intact"; `STELLA_SOURCE_COMMIT` answers "which commit
+# is it". None of them answers "is that commit anywhere near the one a reader
+# will assume was measured" — and on 2026-08-07 the path this file exports as
+# STELLA_BINARY was 291 commits behind main, accompanied by its own
+# sut_commit.txt, so it looked pinned and passed everything. Pinning and
+# freshness are different properties; this checks the second.
+#
+# The limit deliberately lives in the checker and is not restated here: one
+# copy cannot drift from the other. Pass --max-behind to measure older code on
+# purpose, which puts the distance in the launch command rather than in a
+# default nobody reads.
+assert_fresh_sut() {
+  local binary="${1:-$STELLA_BINARY}"
+  [ "$#" -gt 0 ] && shift
+  local checker="$TB_REPO/bench/harbor_adapter/stella_harbor/freshness.py"
+  command -v python3 >/dev/null 2>&1 || {
+    echo "FATAL: python3 is required to verify SUT binary freshness"; return 1; }
+  test -f "$checker" || { echo "FATAL: freshness checker missing at $checker"; return 1; }
+  python3 "$checker" "$binary" --repo "$TB_REPO" ${1+"$@"} || {
+    echo "FATAL: $binary is not the code this run would be reported as measuring."
+    echo "       Rebuild with bench/evidence/run/build_sut.sh. Repointing the"
+    echo "       path or refreshing sut_commit.txt does not make the binary newer."
+    return 1
+  }
+}
+
 preflight() {
   test -n "${OPENROUTER_API_KEY:-}" || { echo "FATAL: OPENROUTER_API_KEY unset"; return 1; }
   test -x "$STELLA_BINARY" || { echo "FATAL: no SUT binary at $STELLA_BINARY (run build_sut.sh)"; return 1; }
   assert_portable_binary || return 1
+  assert_fresh_sut || return 1
   test "${#STELLA_SOURCE_COMMIT}" = 40 || { echo "FATAL: STELLA_SOURCE_COMMIT is not a full SHA"; return 1; }
   test "$(command -v harbor)" = "$VENV/bin/harbor" || { echo "FATAL: wrong harbor on PATH"; return 1; }
   test "$(harbor --version)" = "0.6.1" || { echo "FATAL: harbor $(harbor --version) != 0.6.1 (audited constant)"; return 1; }
