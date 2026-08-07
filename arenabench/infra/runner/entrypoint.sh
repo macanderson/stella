@@ -25,9 +25,28 @@ JOB_ID="${AWS_BATCH_JOB_ID:-local-$$}"
 
 log() { printf '[runner] %s\n' "$*"; }
 
+cleanup_dockerd() {
+    kill "${DOCKERD_PID:-0}" 2>/dev/null || true
+    wait "${DOCKERD_PID:-0}" 2>/dev/null || true
+    [ -n "${JOB_SLUG:-}" ] && rm -rf "/scratch/$JOB_SLUG" 2>/dev/null || true
+}
+
 start_dockerd() {
-    log "starting dockerd"
-    dockerd >/var/log/dockerd.log 2>&1 &
+    # Overlayfs cannot nest: with /var/lib/docker on the container's own
+    # overlay root, the inner dockerd's mounts fail with EINVAL. The job
+    # definition mounts a host-path volume at /scratch; a per-job
+    # subdirectory there gives each concurrent trial its own storage on a
+    # real filesystem, cleaned up on exit to free the shared instance disk.
+    local data_root=/var/lib/docker
+    if [ -d /scratch ]; then
+        JOB_SLUG=$(printf '%s' "$JOB_ID" | tr -c 'A-Za-z0-9_-' '_')
+        data_root="/scratch/$JOB_SLUG/docker"
+        mkdir -p "$data_root"
+        trap 'cleanup_dockerd' EXIT
+    fi
+    log "starting dockerd (data-root $data_root)"
+    dockerd --data-root "$data_root" >/var/log/dockerd.log 2>&1 &
+    DOCKERD_PID=$!
     for _ in $(seq 1 60); do
         if docker info >/dev/null 2>&1; then
             log "dockerd is up"

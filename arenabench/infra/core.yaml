@@ -551,6 +551,17 @@ Resources:
         Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/arenabench/runner:latest
         JobRoleArn: !GetAtt TrialJobRole.Arn
         Privileged: true
+        # The inner dockerd cannot stack overlayfs on the container's own
+        # overlay root (EINVAL); it needs a data root on a real filesystem.
+        # The entrypoint carves a per-job subdirectory under this host
+        # volume so concurrent trials on one instance never share storage.
+        Volumes:
+          - Name: dind-scratch
+            Host:
+              SourcePath: /var/lib/arenabench-scratch
+        MountPoints:
+          - SourceVolume: dind-scratch
+            ContainerPath: /scratch
         ResourceRequirements:
           - Type: VCPU
             Value: "2"
