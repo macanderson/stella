@@ -132,6 +132,9 @@ export interface Cell {
   status: string;
   resolved: boolean | null;
   failure?: string | null;
+  /** The #2076 taxonomy label; null until judged. Absent only in payloads
+   *  recorded before the field existed. */
+  outcome_reason?: string | null;
   age_s?: number | null;
   steps: number;
   tools: number;

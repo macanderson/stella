@@ -112,7 +112,15 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
       for (const seat of seats) {
         const cell = row.cells[seat.id];
         if (!cell || cell.status !== "done" || !cell.failure) continue;
-        const isTimeout = /timeout/i.test(cell.failure);
+        // The taxonomy label (#2076) is authoritative — only the exception
+        // the agent-budget machinery actually raises counts as a timeout.
+        // The substring test survives solely for payloads recorded before
+        // the field existed.
+        const isTimeout =
+          cell.outcome_reason != null
+            ? cell.outcome_reason === "solved_then_timeout" ||
+              cell.outcome_reason === "timeout_before_solve"
+            : /timeout/i.test(cell.failure);
         if (cell.resolved === true) {
           onSolved += 1;
           if (isTimeout) timeoutAfterSolve += 1;
