@@ -578,8 +578,9 @@ impl WorkJournal {
     ///
     /// A turn whose predecessor was never marked (the session's first, or a
     /// mark lost to pruning) diffs against nothing: every path in its tree is
-    /// new. Reserved journal records ([`JOURNAL_DIR`]) are never workspace
-    /// paths and are filtered out.
+    /// new. Reserved journal records (the private `journal_blob_path`
+    /// namespace, `.stella-journal/`) are never workspace paths and are
+    /// filtered out.
     ///
     /// **Read-only by construction.** Both shapes are tree-to-tree plumbing
     /// (`diff-tree`, `ls-tree`) that touches neither an index nor the work
