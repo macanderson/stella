@@ -57,7 +57,7 @@ BUCKET = f"arenabench-artifacts-{ACCOUNT}"
 # --------------------------------------------------------------------------
 
 
-class _NoSuchKey(Exception):
+class _NoSuchKeyError(Exception):
     pass
 
 
@@ -65,17 +65,20 @@ class FakeS3:
     def __init__(self, objects: dict[str, bytes] | None = None) -> None:
         self.objects: dict[str, bytes] = dict(objects or {})
         self.calls: list[tuple] = []
-        self.exceptions = SimpleNamespace(NoSuchKey=_NoSuchKey)
+        # boto3 spells it NoSuchKey; the adapter catches it by that name.
+        self.exceptions = SimpleNamespace(NoSuchKey=_NoSuchKeyError)
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **_: object) -> dict:
+    # The keyword casing is the AWS SDK's, not PEP 8's: the adapter calls
+    # with Bucket=/Key=/Body=, so the fakes must accept those spellings.
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **_: object) -> dict:  # noqa: N803
         self.calls.append(("put_object", Bucket, Key))
         self.objects[Key] = Body
         return {}
 
-    def get_object(self, *, Bucket: str, Key: str) -> dict:
+    def get_object(self, *, Bucket: str, Key: str) -> dict:  # noqa: N803
         self.calls.append(("get_object", Bucket, Key))
         if Key not in self.objects:
-            raise _NoSuchKey(Key)
+            raise _NoSuchKeyError(Key)
         return {"Body": io.BytesIO(self.objects[Key])}
 
     def list_objects_v2(self, **kwargs: object) -> dict:
@@ -459,7 +462,7 @@ class TestSubmitContract:
         return s3, batch, jobs
 
     def test_one_job_per_trial_with_the_entrypoint_env_contract(self) -> None:
-        s3, batch, jobs = self._submit(_spec())
+        _s3, batch, _jobs = self._submit(_spec())
         assert len(batch.submitted) == 4  # 2 tasks x 2 seats
         match_uris = set()
         for submitted in batch.submitted:

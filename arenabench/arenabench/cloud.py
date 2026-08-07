@@ -58,10 +58,10 @@ from .model import MatchSpec, slugify
 
 __all__ = [
     "BURST_QUEUE",
-    "CloudError",
-    "CloudExecutor",
     "JOB_DEFINITION",
     "MEASURE_QUEUE",
+    "CloudError",
+    "CloudExecutor",
     "Progress",
     "SutBinary",
     "TrialPlan",
