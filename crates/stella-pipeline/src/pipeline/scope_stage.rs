@@ -31,10 +31,6 @@ impl Pipeline<'_> {
         let repo_structure = self.repo.structure_summary().await;
         let mut revision: Option<String> = None;
         let mut spent_revisions = 0usize;
-        // Built once and reborrowed per re-plan: the two halves travel
-        // together everywhere else in the crate, and bundling them is what
-        // keeps `plan_stage` structurally inside the argument limit rather
-        // than behind an `#[allow]`.
         let mut spend = Spend { budget, total };
 
         loop {
