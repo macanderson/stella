@@ -701,7 +701,7 @@ async fn run_worker(
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
-        cfg.provider.id.to_string(),
+        crate::cache_insight::InsightScope::from_config(cfg),
         in_tx.clone(),
         spec.lane.clone(),
         Some(registry.task_board()),

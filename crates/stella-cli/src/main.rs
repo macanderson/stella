@@ -1183,6 +1183,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             )?;
         }
         Command::Chat => {
+            // Both chat surfaces are human-paced: turns arrive minutes apart,
+            // so ask the provider for the 1-hour cache window (#1839) unless
+            // settings pinned a choice. Headless commands never widen it.
+            cfg.adopt_interactive_cache_ttl();
             // The Command Deck (tabbed TUI) is the default chat surface on a
             // real terminal; `--plain` / STELLA_PLAIN=1 / a non-TTY stream
             // falls back to the line-based REPL.
@@ -1236,6 +1240,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 Some(id) => session_persist::ResumeRequest::Id(id),
                 None => session_persist::ResumeRequest::Latest,
             };
+            // A reopened deck session is as human-paced as a fresh one.
+            cfg.adopt_interactive_cache_ttl();
             signals::block_on_interruptible(
                 rt()?,
                 command_deck::run_deck_session(

@@ -230,6 +230,7 @@ fn config_debug_never_leaks_the_api_key() {
         credential_source: Some(stella_model::credential::CredentialSource::EnvVar),
         credential_advisories: Vec::new(),
         aux_credentials: Default::default(),
+        cache_ttl: None,
     };
     let dbg = format!("{cfg:?}");
     assert!(!dbg.contains(secret), "Config Debug leaked the key: {dbg}");
@@ -269,6 +270,48 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
 /// `$HOME`, `/etc`, or a real workspace.
 fn settings_from(json: &str) -> crate::settings::Settings {
     serde_json::from_str(json).expect("test settings JSON must parse")
+}
+
+/// **Witness (#1839).** `providers.<id>.cache_ttl` reaches the resolved
+/// config, a pin outranks the interactive-surface stamp, and an unpinned
+/// config widens to the 1-hour window only when a surface asks.
+#[test]
+fn cache_ttl_pin_resolves_and_the_interactive_default_never_overrides_it() {
+    use stella_model::CacheTtl;
+    let _env = crate::test_env::lock();
+    let settings = settings_from(r#"{"providers": {"local": {"cache_ttl": "5m"}}}"#);
+    let mut pinned = Config::load_with_settings(
+        Some("local/test-model"),
+        None,
+        Some("http://localhost:11434/v1"),
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .unwrap();
+    assert_eq!(pinned.cache_ttl, Some(CacheTtl::FiveMinutes));
+    pinned.adopt_interactive_cache_ttl();
+    assert_eq!(
+        pinned.effective_cache_ttl(),
+        CacheTtl::FiveMinutes,
+        "a settings pin outranks the surface default"
+    );
+
+    let mut unpinned = Config::load_with_settings(
+        Some("local/test-model"),
+        None,
+        Some("http://localhost:11434/v1"),
+        &crate::settings::Settings::default(),
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .unwrap();
+    assert_eq!(unpinned.cache_ttl, None);
+    assert_eq!(
+        unpinned.effective_cache_ttl(),
+        CacheTtl::FiveMinutes,
+        "headless paths never widen the provider default"
+    );
+    unpinned.adopt_interactive_cache_ttl();
+    assert_eq!(unpinned.effective_cache_ttl(), CacheTtl::OneHour);
 }
 
 #[test]

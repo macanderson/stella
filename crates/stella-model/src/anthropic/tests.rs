@@ -514,14 +514,14 @@ fn request_serializes_both_cache_breakpoints() {
             }],
         },
     ];
-    stamp_tail_cache_breakpoint(&mut messages);
+    stamp_tail_cache_breakpoint(&mut messages, ephemeral_cache(CacheTtl::FiveMinutes));
     let body = AnthropicRequest {
         model: "claude-fable-5",
         max_tokens: 64,
         system: Some(vec![AnthropicSystemBlock {
             kind: "text",
             text: "You are a coding agent.",
-            cache_control: EPHEMERAL_CACHE,
+            cache_control: ephemeral_cache(CacheTtl::FiveMinutes),
         }]),
         messages,
         stream: true,
@@ -582,7 +582,7 @@ fn a_media_tail_still_gets_a_conversation_breakpoint_on_the_newest_text() {
             }],
         },
     ];
-    stamp_tail_cache_breakpoint(&mut messages);
+    stamp_tail_cache_breakpoint(&mut messages, ephemeral_cache(CacheTtl::FiveMinutes));
     match &messages[0].content[0] {
         AnthropicContentBlock::Text { cache_control, .. } => assert!(
             cache_control.is_some(),
@@ -599,7 +599,7 @@ fn a_media_tail_still_gets_a_conversation_breakpoint_on_the_newest_text() {
             source: AnthropicMediaSource::base64("image/png", "aGk=".into()),
         }],
     }];
-    stamp_tail_cache_breakpoint(&mut all_media);
+    stamp_tail_cache_breakpoint(&mut all_media, ephemeral_cache(CacheTtl::FiveMinutes));
     let body = serde_json::to_string(&all_media).expect("serializes");
     assert!(
         !body.contains("cache_control"),

@@ -292,6 +292,7 @@ impl LiveProvider {
             display_name: self.id,
             dialect: self.dialect,
             seeded: self.seeded,
+            cache_ttl: stella_model::CacheTtl::default(),
         }
     }
 }

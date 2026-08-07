@@ -454,6 +454,17 @@ pub struct Config {
     /// provider. See `config::aux` for which credential sources are
     /// supported and which are deliberately excluded.
     pub aux_credentials: AuxCredentials,
+    /// The prompt-cache window this session's providers request (#1839).
+    /// `Some` when `providers.<id>.cache_ttl` pinned it in settings; `None`
+    /// leaves the choice to the session surface — the interactive entry
+    /// points (deck/REPL, where human-paced gaps routinely outlive the
+    /// 5-minute window) stamp the 1-hour window via
+    /// [`Config::adopt_interactive_cache_ttl`], and every headless path keeps
+    /// the 5-minute provider default (seconds-long gaps would pay the 2x
+    /// write premium for nothing). Read through
+    /// [`Config::effective_cache_ttl`]; honored on the wire by the Anthropic
+    /// adapter only (`stella_model::provider_honors_cache_ttl`).
+    pub cache_ttl: Option<stella_model::CacheTtl>,
 }
 
 impl Config {
@@ -616,6 +627,13 @@ impl Config {
         cfg.trace_capture = settings.trace_capture_enabled();
         cfg.reward_policy = settings.reward_policy()?;
         cfg.create_worktrees = settings.create_worktrees();
+        // Keyed off the provider actually picked, like the engine baseline
+        // above — a `providers.anthropic.cache_ttl` pin must not leak onto a
+        // session that resolved to a different provider.
+        cfg.cache_ttl = settings
+            .providers
+            .get(cfg.provider.id)
+            .and_then(|entry| entry.cache_ttl);
         Ok(cfg)
     }
 
@@ -769,6 +787,7 @@ impl Config {
                     // `local` speaks the OpenAI-compatible dialect; nothing to
                     // resolve beyond the (optional) bearer token above.
                     aux_credentials: AuxCredentials::new(),
+                    cache_ttl: None,
                 });
             }
 
@@ -984,7 +1003,31 @@ impl Config {
             // process (which was handed an empty in-memory file) cannot pick
             // up a Bedrock secret from a task image's credentials.toml.
             aux_credentials: provider_aux(provider, credentials_file),
+            // Stamped by `load_with_settings` from the provider's settings
+            // entry, once the provider is known.
+            cache_ttl: None,
         })
+    }
+
+    /// The prompt-cache window this session actually requests: the settings
+    /// pin when one exists, the 5-minute provider default otherwise. Entry
+    /// points that widened the default first (see
+    /// [`Config::adopt_interactive_cache_ttl`]) read their stamp back here.
+    pub fn effective_cache_ttl(&self) -> stella_model::CacheTtl {
+        self.cache_ttl.unwrap_or_default()
+    }
+
+    /// Adopt the interactive-surface cache default (#1839): the 1-hour window,
+    /// unless settings pinned a choice. Called by the deck/REPL entry points
+    /// only — an interactive user thinks and types between turns, and any gap
+    /// past 5 minutes evicts the whole prefix, re-billing it at the write rate
+    /// on the next turn. Headless runs never call this: their inter-call gaps
+    /// are seconds, so the 1-hour window's 2x write premium (vs 1.25x) would
+    /// buy nothing.
+    pub fn adopt_interactive_cache_ttl(&mut self) {
+        if self.cache_ttl.is_none() {
+            self.cache_ttl = Some(stella_model::CacheTtl::OneHour);
+        }
     }
 
     /// Print the provider/model table for an interactive session. The listing
