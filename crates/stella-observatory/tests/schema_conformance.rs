@@ -114,6 +114,10 @@ const ROUTES: &[(&str, Option<&str>)] = &[
     ("/api/explorations", None),
     ("/api/rules", Some("/db/0/rule_id")),
     ("/api/reflections", Some("/ratings/0/execution_id")),
+    (
+        "/api/session-turn-diff?id=ses-1700000000000-424242&turn=1",
+        Some("/files/0/hunks/0/lines/0/op"),
+    ),
     // Empty in a store-only fixture: the lifecycle reads context.db, which
     // this workspace deliberately does not build. Its own real-schema gate is
     // `context_lifecycle_returns_the_promotion_lineage` below (#1871).
@@ -269,6 +273,29 @@ fn real_store_workspace() -> tempfile::TempDir {
             }],
         )
         .expect("files");
+    // The precomputed turn diff (#1870), through the real write API — what
+    // `stella-cli`'s `turn_diff::record_turn_diff` persists at turn end.
+    let turn_diff = serde_json::json!({
+        "files": [{
+            "path": "src/lib.rs",
+            "added": 1,
+            "removed": 1,
+            "hunks": [{
+                "old_start": 1, "old_count": 3, "new_start": 1, "new_count": 3,
+                "lines": [
+                    {"op": "equal", "text": "one"},
+                    {"op": "remove", "text": "two"},
+                    {"op": "add", "text": "TWO"},
+                    {"op": "equal", "text": "three"},
+                ],
+            }],
+            "skipped": false,
+        }],
+        "files_truncated": false,
+    });
+    store
+        .record_session_turn_diff(SESSION_ID, 1, Some(completed), &turn_diff.to_string())
+        .expect("turn diff");
     store
         .record_memory_citations(
             completed,
@@ -945,6 +972,71 @@ fn context_diff_names_the_moved_line_and_reports_identity_honestly() {
         "prev on a first call resolves: {first}"
     );
     assert_eq!(first["base_label"], "prompt as submitted", "{first}");
+}
+
+/// The #1870 observatory witness: a recorded turn diff replays through the
+/// route with its hunks naming the changed lines, the session view stamps
+/// the turn with its journal ordinal (the only persisted join between the
+/// two numbering schemes), and an unrecorded turn answers `found: false`
+/// with the full key set. Fails on main — the route is absent.
+#[test]
+fn session_turn_diff_replays_the_recorded_hunks() {
+    let workspace = real_store_workspace();
+    let root: &Path = workspace.path();
+
+    let body = respond(
+        root,
+        "/api/session-turn-diff?id=ses-1700000000000-424242&turn=1",
+    )
+    .body;
+    let v: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(v["found"], true, "{v}");
+    assert_eq!(v["execution_id"], 1, "the store-side turn identity: {v}");
+    assert_eq!(v["files"][0]["path"], "src/lib.rs", "{v}");
+    let lines = v["files"][0]["hunks"][0]["lines"]
+        .as_array()
+        .expect("lines");
+    let removed: Vec<&str> = lines
+        .iter()
+        .filter(|l| l["op"] == "remove")
+        .filter_map(|l| l["text"].as_str())
+        .collect();
+    let added: Vec<&str> = lines
+        .iter()
+        .filter(|l| l["op"] == "add")
+        .filter_map(|l| l["text"].as_str())
+        .collect();
+    assert_eq!(removed, vec!["two"], "the hunks name the old line: {v}");
+    assert_eq!(added, vec!["TWO"], "and the new one: {v}");
+
+    // The session view carries the join: the seeded execution's turn row is
+    // stamped with the journal ordinal its diff was recorded under.
+    let session: serde_json::Value =
+        serde_json::from_slice(&respond(root, "/api/session?id=ses-1700000000000-424242").body)
+            .expect("json");
+    let stamped = session["turns"]
+        .as_array()
+        .expect("turns")
+        .iter()
+        .find(|t| t["id"] == 1)
+        .expect("the seeded execution's turn row");
+    assert_eq!(
+        stamped["journal_turn"], 1,
+        "the page can only offer a diff through this stamp: {session}"
+    );
+
+    // Missing is a state: an unrecorded turn, and a store without the v21
+    // table at all, both answer the full (empty) shape.
+    let absent: serde_json::Value = serde_json::from_slice(
+        &respond(
+            root,
+            "/api/session-turn-diff?id=ses-1700000000000-424242&turn=99",
+        )
+        .body,
+    )
+    .expect("json");
+    assert_eq!(absent["found"], false, "{absent}");
+    assert_eq!(absent["files"], serde_json::json!([]), "{absent}");
 }
 
 /// One ledger append through the real write API, with the record's own
