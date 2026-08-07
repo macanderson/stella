@@ -214,6 +214,35 @@ INFRASTRUCTURE_FAILURES: frozenset[str] = frozenset(
     }
 )
 
+#: Sub-buckets of :data:`INFRASTRUCTURE_FAILURES` for the outcome taxonomy
+#: (#2076) — *why* a void voided, at the grain a trends chart can act on. A
+#: test pins their union equal to the set above, so a name added there must
+#: be bucketed here in the same change rather than silently falling into a
+#: catch-all.
+VOID_SETUP: frozenset[str] = frozenset(
+    {
+        "AgentSetupTimeoutError",
+        "EnvironmentStartTimeoutError",
+        "HealthcheckError",
+        "AddTestsDirError",
+        "DownloadVerifierDirError",
+        "MissingExtraError",
+    }
+)
+VOID_CREDENTIALS: frozenset[str] = frozenset(
+    {"AuthenticationError", "OAuthCallbackError", "RefreshTokenExpiredError"}
+)
+VOID_CANCELLED: frozenset[str] = frozenset({"CancelledError"})
+VOID_VERIFIER: frozenset[str] = frozenset(
+    {
+        "VerifierTimeoutError",
+        "VerifierOutputParseError",
+        "RewardFileNotFoundError",
+        "RewardFileEmptyError",
+        "MultimodalExportError",
+    }
+)
+
 
 @dataclass
 class TrialMetrics:
@@ -296,6 +325,51 @@ class TrialMetrics:
             return None
         return min(100.0, self.cache_read / self.tokens_in * 100.0)
 
+    def outcome_reason(self) -> str | None:
+        """One closed label for *how* this judged trial ended (#2076).
+
+        ``None`` until the trial is judged. The label ANNOTATES Harbor's
+        verdict, never overrides it: ``resolved`` is read, not recomputed,
+        and a solved trial that also raised keeps both facts as
+        ``solved_then_*`` (#2066's two-facts rule). Group A voids carry a
+        ``void_`` prefix, so "outside every rate" is mechanically
+        recognizable; Group B is agent performance. Classified from the
+        structured fields — the exception class name, the verdict, the
+        infrastructure flag — never by matching prose out of a message.
+        """
+        if self.status != "done":
+            return None
+        if self.resolved is None:
+            # Group A: judged, no verdict — not agent performance.
+            if not self.failure:
+                return "void_unjudged"
+            if self.failure in VOID_SETUP:
+                return "void_setup"
+            if self.failure in VOID_CREDENTIALS:
+                return "void_credentials"
+            if self.failure in VOID_CANCELLED:
+                return "void_cancelled"
+            if self.failure in VOID_VERIFIER:
+                return "void_verifier"
+            # The zero-spend guard's shape: an agent-named exception
+            # (NonZeroAgentExitCodeError) voided because not one token was
+            # ever observed — never a fair attempt (#1480).
+            return "void_no_fair_attempt"
+        if self.resolved:
+            if not self.failure:
+                return "solved_clean"
+            if self.failure == "AgentTimeoutError":
+                # Solved, then burned the rest of the budget: the agent did
+                # not stop when done — the opposite pathology from
+                # `timeout_before_solve`, and never merged with it.
+                return "solved_then_timeout"
+            return "solved_then_error"
+        if not self.failure:
+            return "failed_wrong_answer"
+        if self.failure == "AgentTimeoutError":
+            return "timeout_before_solve"
+        return "agent_error"
+
     def to_json(self) -> dict[str, Any]:
         return {
             "task": self.task,
@@ -304,6 +378,7 @@ class TrialMetrics:
             "resolved": self.resolved,
             "reward": self.reward,
             "failure": self.failure,
+            "outcome_reason": self.outcome_reason(),
             "infrastructure": self.infrastructure,
             "steps": self.steps,
             "tools": self.tools,
