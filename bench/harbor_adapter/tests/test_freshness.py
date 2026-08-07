@@ -61,9 +61,18 @@ STALE_DISTANCE = 291
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    """Run git in `repo`, surfacing stderr when it fails.
+
+    `check=True` alone raises a `CalledProcessError` whose repr names only
+    the exit status — a CI run died here with a bare "exit status 128" and
+    the reason (git's stderr) was captured and then thrown away, leaving
+    nothing to diagnose from. The assertion carries it instead.
+    """
+    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    assert proc.returncode == 0, (
+        f"git {' '.join(args)} in {repo} exited {proc.returncode}:\n{proc.stderr}"
+    )
+    return proc.stdout.strip()
 
 
 def _stamp(commit: str) -> bytes:
