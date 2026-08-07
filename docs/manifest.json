@@ -396,6 +396,26 @@
       "status": "implemented",
       "title": "Project scripts index"
     },
+    "self-driving-foundry": {
+      "path": "docs/spec/self-driving-foundry.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "status": "proposed",
+      "title": "Self-driving campaigns \u2014 the manifest, the twin arena, and the foundry loop"
+    },
     "semantic-resolution-bridge": {
       "path": "docs/spec/semantic-resolution-bridge.md",
       "status": "implemented",
