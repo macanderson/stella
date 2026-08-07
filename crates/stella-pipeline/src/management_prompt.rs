@@ -77,3 +77,6 @@ impl ManagementPrompt {
         format!("{}\n\n{}", self.instructions, self.payload)
     }
 }
+
+#[cfg(test)]
+mod tests;

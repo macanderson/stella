@@ -1381,13 +1381,14 @@ export type PrStatus = "draft" | "open" | "merged" | "closed";
 
 /**
  * One step of the proof a turn builds for its own work, in the order the
- * pipeline makes the observation. Carried by [`AgentEvent::Proof`].
+ * pipeline makes the observation. Carried by [`crate::event::AgentEvent::Proof`].
  *
  * Additive in one direction only: an older reader that does not know the
- * `proof` type tag preserves the whole event via [`AgentEvent::Unknown`],
- * but a reader that knows `Proof` and meets a future `kind` fails the whole
- * event — this nested enum is closed, with no `Unknown` step (see the
- * module docs on nested vocabularies).
+ * `proof` type tag preserves the whole event via
+ * [`crate::event::AgentEvent::Unknown`], but a reader that knows `Proof` and
+ * meets a future `kind` fails the whole event — this nested enum is closed,
+ * with no `Unknown` step (see [`crate::event`]'s module docs on nested
+ * vocabularies).
  */
 export type ProofStep = {
   kind: "assurance";
@@ -1452,6 +1453,17 @@ export type ProofStep = {
    */
   seed?: number | null;
   tree: ProofTree;
+} | {
+  /**
+   * Which candidate degraded (1-based, [`ProofStep::Oracle::run`]'s
+   * convention).
+   */
+  candidate: number;
+  kind: "verdict_degraded";
+  /**
+   * The stated reason a model verdict could not be rendered.
+   */
+  reason: string;
 };
 
 /**

@@ -11,6 +11,45 @@
 
 use super::*;
 
+/// The once-per-run verifier notices, grouped where their emitters live: both
+/// flags describe the run's *configuration* (a same-family caveat, a dead or
+/// non-compliant verifier), which cannot change mid-run, so each is surfaced
+/// to the transcript exactly once however many calls observe it.
+#[derive(Default)]
+pub(super) struct VerifierNotices {
+    /// Whether the router's same-family degradation caveat (L-M8) has been
+    /// surfaced — see [`Pipeline::warn_verifier_caveat`].
+    caveat_warned: AtomicBool,
+    /// Whether a verdict's degradation to the deterministic heuristic has
+    /// been surfaced — see [`Pipeline::warn_verifier_fallback`].
+    fallback_warned: AtomicBool,
+}
+
+/// One candidate's verdict-degradation record: its ordinal (1-based,
+/// [`ProofStep::Oracle`]'s `run` convention) and whether the degradation fact
+/// has been emitted yet.
+///
+/// Per candidate rather than per run, because a best-of-N fan-out degrading N
+/// times used to leave one prose caveat and no record of *which* candidates
+/// the heuristic judged (#1787) — and per candidate rather than per round,
+/// because the escalation loop can hit the same dead verifier on every
+/// revision and the fact does not change. Plain candidate-local state, never
+/// a shared flag: candidates run concurrently, and resetting a run-wide flag
+/// at candidate boundaries would race.
+pub(super) struct VerdictDegradation {
+    candidate: u32,
+    recorded: bool,
+}
+
+impl VerdictDegradation {
+    pub(super) fn new(candidate: u32) -> Self {
+        Self {
+            candidate,
+            recorded: false,
+        }
+    }
+}
+
 impl<'a> Pipeline<'a> {
     /// One distress-guidance call: best-effort and never a verdict — the
     /// failure it reacts to is already deterministic, so the verifier's job
@@ -76,10 +115,10 @@ impl<'a> Pipeline<'a> {
     /// call can fail.
     pub(super) async fn verifier(
         &self,
+        degradation: &mut VerdictDegradation,
         prompt: ManagementPrompt,
         inputs: &LadderInputs,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<ModelVerifierVerdict, PipelineBudgetAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Verdict,
@@ -89,6 +128,7 @@ impl<'a> Pipeline<'a> {
             // Verifier unresolvable → conservative heuristic verdict (L-E11).
             Err(_) => {
                 self.warn_verifier_fallback(
+                    degradation,
                     "the verifier role is unresolvable (no routable provider); check the \
                      `pipeline_verifier_model` provider and its credential",
                 );
@@ -117,8 +157,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &self.config.role_overrides.verifier,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
@@ -136,6 +176,7 @@ impl<'a> Pipeline<'a> {
                 }
                 None => {
                     self.warn_verifier_fallback(
+                        degradation,
                         "the verifier's response did not follow the verdict protocol",
                     );
                     Ok(heuristic_fallback(inputs))
@@ -143,7 +184,7 @@ impl<'a> Pipeline<'a> {
             },
             Err(RawCallError::Budget(abort)) => Err(abort),
             Err(RawCallError::Provider | RawCallError::Timeout) => {
-                self.warn_verifier_fallback("the verifier call failed or timed out");
+                self.warn_verifier_fallback(degradation, "the verifier call failed or timed out");
                 Ok(heuristic_fallback(inputs))
             }
         }
@@ -160,25 +201,40 @@ impl<'a> Pipeline<'a> {
     /// *checks* also call and which must stay silent (its doc contract).
     fn warn_verifier_caveat(&self, resolved: &ResolvedRole<'_>) {
         if let Some(caveat) = &resolved.caveat
-            && !self.verifier_caveat_warned.swap(true, Ordering::Relaxed)
+            && !self
+                .verifier_notices
+                .caveat_warned
+                .swap(true, Ordering::Relaxed)
         {
             self.warn(caveat.clone());
         }
     }
 
-    /// Surface a verdict's degradation to the deterministic heuristic — once
-    /// per run, like the caveat above, because the escalation loop can hit
-    /// the same dead verifier several times and the transcript needs the fact,
-    /// not an echo. The ladder rung (`HeuristicFallback`) records *that* it
-    /// happened on every round either way; this is the prose account of *why*,
-    /// which used to be silent (a configured-on pipeline must never degrade
-    /// without saying so and naming a way out).
-    fn warn_verifier_fallback(&self, why: &str) {
-        if !self.verifier_fallback_warned.swap(true, Ordering::Relaxed) {
+    /// Surface a verdict's degradation to the deterministic heuristic — the
+    /// prose warning once per run, like the caveat above, because the
+    /// escalation loop can hit the same dead verifier several times and the
+    /// transcript needs the fact, not an echo; and the structured
+    /// [`ProofStep::VerdictDegraded`] fact once per candidate, because the
+    /// run-wide warning cannot say *which* of a fan-out's candidates the
+    /// heuristic judged (#1787). The ladder rung (`HeuristicFallback`)
+    /// records *that* it happened on every round either way.
+    fn warn_verifier_fallback(&self, degradation: &mut VerdictDegradation, why: &str) {
+        if !self
+            .verifier_notices
+            .fallback_warned
+            .swap(true, Ordering::Relaxed)
+        {
             self.warn(format!(
                 "the verifier could not render a model verdict — {why}; this round's verdict \
                  falls back to a deterministic heuristic"
             ));
+        }
+        if !degradation.recorded {
+            degradation.recorded = true;
+            self.emit_proof(ProofStep::VerdictDegraded {
+                candidate: degradation.candidate,
+                reason: why.to_string(),
+            });
         }
     }
 }

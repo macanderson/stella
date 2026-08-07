@@ -266,7 +266,15 @@ async fn late_verdict_is_abandoned_and_falls_back_to_the_heuristic() {
     };
 
     let verdict = pipeline
-        .verifier(prompt, &inputs, &mut budget, &mut total)
+        .verifier(
+            &mut super::super::verifier_stage::VerdictDegradation::new(1),
+            prompt,
+            &inputs,
+            &mut Spend {
+                budget: &mut budget,
+                total: &mut total,
+            },
+        )
         .await
         .expect("a wedged verifier is never a run-ending failure");
 

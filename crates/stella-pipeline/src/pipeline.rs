@@ -132,6 +132,7 @@ pub use run_error::{PipelineError, PipelineRunError};
 use run_error::{RoleResolveError, WitnessAuthorIndependence};
 use stage_budget::{PipelineBudgetAbort, Spend, budget_abort};
 use task_frame::TaskFrame;
+use verifier_stage::{VerdictDegradation, VerifierNotices};
 use witness_stage::{BoundHookRunner, WitnessAuthoring};
 /// Make a diff that verification hands downstream *incapable of lying*.
 ///
@@ -203,7 +204,7 @@ fn conversational_window(messages: &[CompletionMessage]) -> Vec<CompletionMessag
     head.iter().chain(&rest[tail..]).cloned().collect()
 }
 
-const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software engineering agent. The user's latest \
+pub(crate) const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software engineering agent. The user's latest \
      message is a greeting, small talk, or a question about you — not a coding \
      task. Reply briefly and warmly in plain prose: no tools, no code, no plan, \
      no test. Do not invent a task. If it fits, add one short line inviting \
@@ -707,13 +708,14 @@ struct CandidateState {
     /// warrant (the #1701 recurrence a projection method used to guard
     /// against by hand).
     signals: ChangeSignals,
+    /// This candidate's verdict-degradation record (#1787) — see [`VerdictDegradation`].
+    degradation: VerdictDegradation,
     /// Ends the execute turn as soon as the tracked test goes fail→pass.
     ///
-    /// `None` whenever there is nothing to watch: no configured test command,
-    /// or a baseline that was already passing (which can never flip, so a
-    /// halt on it would end turns that had work left). See
-    /// [`crate::flip_halt`] for why stopping is a separate question from
-    /// crediting.
+    /// `None` while there is nothing to watch: no failing configured-command
+    /// baseline and no authored witness yet. `witness_on_demand` arms it the
+    /// moment a witness's failing baseline is credited (#1793). See
+    /// [`crate::flip_halt`] for why stopping is separate from crediting.
     flip_halt: Option<Arc<FlipHalt>>,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
@@ -889,12 +891,8 @@ pub struct Pipeline<'a> {
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
-    /// Whether the verifier's same-family degradation caveat (L-M8) has been
-    /// surfaced this run — see [`Pipeline::warn_verifier_caveat`].
-    verifier_caveat_warned: AtomicBool,
-    /// Whether a verdict's silent degradation to the deterministic heuristic
-    /// has been surfaced this run — see [`Pipeline::warn_verifier_fallback`].
-    verifier_fallback_warned: AtomicBool,
+    /// The once-per-run verifier notices — see [`VerifierNotices`].
+    verifier_notices: VerifierNotices,
     /// Whether more than one candidate is currently writing to [`Self::events`]
     /// — set for the duration of a concurrent best-of-N fan-out and false
     /// everywhere else.
@@ -947,8 +945,7 @@ impl<'a> Pipeline<'a> {
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
-            verifier_caveat_warned: AtomicBool::new(false),
-            verifier_fallback_warned: AtomicBool::new(false),
+            verifier_notices: VerifierNotices::default(),
             shared_event_lane: AtomicBool::new(false),
             started: std::time::Instant::now(),
         }
@@ -1608,15 +1605,12 @@ impl<'a> Pipeline<'a> {
             if let Some(view) = view.as_ref() {
                 engine = engine.with_steering(view);
             }
+            // Authoring is `None`: a shared-tree run has no workspace to graft
+            // into and no pristine snapshot to author blind in, so it never
+            // buys a witness. The ordinal is 1-based, like the start notice.
             results.push(
-                self.run_candidate(
-                    frame,
-                    // A shared-tree run has no workspace to graft into and no
-                    // pristine snapshot to author blind in, so it never buys a
-                    // witness — exactly as before, when it was passed `None`.
-                    None, &engine, surface, spend,
-                )
-                .await,
+                self.run_candidate(i + 1, frame, None, &engine, surface, spend)
+                    .await,
             );
         }
         results
@@ -1857,6 +1851,7 @@ impl<'a> Pipeline<'a> {
 
     async fn run_candidate(
         &self,
+        candidate: u32,
         frame: TaskFrame<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
         engine: &Engine<'_>,
@@ -1949,6 +1944,7 @@ impl<'a> Pipeline<'a> {
             ),
             final_text: String::new(),
             signals: ChangeSignals::default(),
+            degradation: VerdictDegradation::new(candidate),
             flip_halt,
             oracle,
             oracle_trace,
@@ -2656,7 +2652,7 @@ impl<'a> Pipeline<'a> {
                                 },
                             );
                             match self
-                                .verifier(prompt, &inputs, spend.budget, spend.total)
+                                .verifier(&mut state.degradation, prompt, &inputs, spend)
                                 .await
                             {
                                 Ok(verdict) => {
@@ -2853,7 +2849,7 @@ impl<'a> Pipeline<'a> {
                 &mut state.messages,
                 spend.budget,
                 &mut state.signals,
-                None,
+                state.flip_halt.as_ref().and_then(FlipHalt::unfired),
             )
             .await
         {
