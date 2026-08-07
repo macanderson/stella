@@ -498,6 +498,19 @@ class MatchSpec:
     #: Seconds between snapshots — the floor on how precisely a flip can be
     #: located, traded against how much work each capture adds to the host.
     snapshot_interval: float = 30.0
+    #: Which Stella the seats under test are built from — a git ref, resolved
+    #: to a commit at launch and recorded there (see :mod:`arenabench.sut`).
+    #:
+    #: ``"main"`` means ``origin/main``, deliberately: a bare branch name that
+    #: resolved to a *local* branch is how a benchmark ends up measuring an
+    #: operator's stale checkout while claiming to measure the project.
+    #:
+    #: Empty string is the explicit opt-out — run whatever ``STELLA_BINARY``
+    #: points at without checking which commit it is. That is allowed, because
+    #: a bisect or a local experiment is a real need, and it is recorded as an
+    #: unverified SUT so no number produced that way can be mistaken for one
+    #: from a known commit.
+    sut_ref: str = "main"
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -512,6 +525,7 @@ class MatchSpec:
             "record_video": self.record_video,
             "capture_snapshots": self.capture_snapshots,
             "snapshot_interval": self.snapshot_interval,
+            "sut_ref": self.sut_ref,
         }
 
     @classmethod
@@ -538,6 +552,13 @@ class MatchSpec:
             # A zero or negative interval would spin the watcher; clamp rather
             # than reject, so a typo degrades to "often" instead of failing a run.
             snapshot_interval=max(1.0, float(raw.get("snapshot_interval") or 30.0)),
+            # Absent means `main`, not "unverified". A payload written before
+            # this field existed asked for the project's own default branch —
+            # reading it as the opt-out would turn every old template into one
+            # that silently accepts any binary.
+            sut_ref=(
+                "main" if raw.get("sut_ref") is None else str(raw["sut_ref"]).strip()
+            ),
         )
 
     def validate(self) -> list[str]:

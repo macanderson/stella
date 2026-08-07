@@ -75,6 +75,8 @@ from .presets import preset_listing
 from .recorder import preflight as recorder_preflight
 from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
 from .runner import MatchRunner
+from .sut import SutUnavailableError, list_branches, sut_problem_for, sut_status
+from .sut_build import SutBuilder
 from .telemetry import TranscriptReader
 
 __all__ = ["ArenaServer", "serve"]
@@ -158,6 +160,9 @@ class ArenaServer:
         # one starts, so a restart never erases what the workspace remembers.
         self.runner.restore_from_disk()
         self.recorder_status: tuple[bool, str] = (False, "not checked")
+        #: Owns SUT builds. One per server so a build survives the request
+        #: that started it and can be polled from any later one.
+        self.builder = SutBuilder()
 
     # -- API handlers -----------------------------------------------------
 
@@ -227,6 +232,42 @@ class ArenaServer:
     def presets(self) -> Any:
         return {"presets": preset_listing()}
 
+    def sut(self, ref: str = "main") -> Any:
+        """Which Stella a match pinned to ``ref`` would run, and whether it exists."""
+        return sut_status(ref)
+
+    def sut_branches(self, fetch: bool = False) -> Any:
+        """The branch picklist. Never raises: an unusable rig is a state to show.
+
+        ``fetch`` is opt-in because it is a network round trip, and a picker
+        that silently talks to a remote every time it opens is a picker that
+        hangs on a bad link.
+        """
+        try:
+            branches = list_branches(fetch=fetch)
+        except SutUnavailableError as exc:
+            return {"branches": [], "problem": str(exc)}
+        return {"branches": [b.to_json() for b in branches], "problem": None}
+
+    def build_sut(self, payload: dict[str, Any]) -> Any:
+        """Start a build of the SUT at ``ref``, or report one already running.
+
+        Returns immediately with a build id; progress is polled. A release
+        cross-compile takes minutes, and holding an HTTP request open for that
+        is how a launch path acquires new ways to fail.
+        """
+        ref = str(payload.get("ref") or "main").strip() or "main"
+        return self.builder.start(ref)
+
+    def sut_build(self, build_id: str) -> Any:
+        record = self.builder.get(build_id)
+        if record is None:
+            raise KeyError(build_id)
+        return record
+
+    def sut_builds(self) -> Any:
+        return {"builds": self.builder.recent()}
+
     def create_match(self, payload: dict[str, Any]) -> Any:
         payload = dict(payload)
         payload.setdefault("id", uuid.uuid4().hex[:12])
@@ -265,6 +306,15 @@ class ArenaServer:
             raise ValueError(
                 "; ".join(f"{name}: {reason}" for name, reason in dead.items())
             )
+        problem = sut_problem_for(spec)
+        if problem:
+            # The third refusal, and the one that protects the *subject* of the
+            # measurement rather than its apparatus. A match that runs a binary
+            # nobody can attribute produces a number about no particular
+            # version of Stella — measured 2026-08-06, the staged binary was
+            # 291 commits behind main and every match in between reported it
+            # without a word.
+            raise ValueError(problem)
         match = self.runner.create(spec)
         for note in oauth_notes:
             match.note = f"{match.note}; {note}" if match.note else note
@@ -732,6 +782,20 @@ def _handler_factory(
                     self._json(arena.agents())
                 case ["presets"]:
                     self._json(arena.presets())
+                case ["sut"]:
+                    query = parse_qs(urlparse(self.path).query)
+                    self._json(arena.sut((query.get("ref") or ["main"])[0]))
+                case ["sut", "branches"]:
+                    query = parse_qs(urlparse(self.path).query)
+                    self._json(
+                        arena.sut_branches(
+                            fetch=(query.get("fetch") or [""])[0] == "1"
+                        )
+                    )
+                case ["sut", "builds"]:
+                    self._json(arena.sut_builds())
+                case ["sut", "builds", build_id]:
+                    self._json(arena.sut_build(build_id))
                 case ["matches"]:
                     self._json(arena.list_matches())
                 case ["matches", match_id]:
@@ -791,6 +855,8 @@ def _handler_factory(
                         self._json(arena.parse_template(payload.get("toml") or ""))
                     case ["templates", "render"]:
                         self._json({"toml": arena.render_template(payload)})
+                    case ["sut", "build"]:
+                        self._json(arena.build_sut(payload))
                     case ["matches", match_id, "cancel"]:
                         self._json(arena.cancel(match_id))
                     case _:

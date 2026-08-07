@@ -85,6 +85,20 @@ class Provenance:
     harbor_bound: str | None = None
     #: The Harbor binary's path, for a machine running more than one.
     harbor_bin: str = ""
+    #: The git ref the operator pinned the system under test to, e.g. ``main``.
+    #: Empty means the match ran unpinned — see :attr:`sut_commit`.
+    sut_ref: str = ""
+    #: The **commit** that ref resolved to at launch, which is the half that
+    #: identifies the code. A ref is a moving pointer: recording only "main"
+    #: dates a result to whenever someone happens to read the record, which is
+    #: the same reason :mod:`arenabench.registry` pins datasets by digest.
+    #: Empty means genuinely unknown, never a guess — an unpinned match ran a
+    #: binary nobody can attribute, and saying so is the honest record.
+    sut_commit: str = ""
+    #: SHA-256 of the exact binary that ran. Two builds of one commit on
+    #: different toolchains are not the same artifact, and this is what tells
+    #: them apart after the fact.
+    sut_sha256: str = ""
     arenabench_version: str = ""
     recorded_at: float = field(default_factory=time.time)
     source: str = SOURCE_RECORDED
@@ -105,7 +119,11 @@ class Provenance:
             grader = f"harbor?{self.harbor_bound}"
         else:
             grader = "harbor?"
-        return f"{self.dataset_key or 'unknown'}@{digest}/{grader}"
+        # The SUT belongs in the key for the same reason the dataset digest
+        # does: two runs of different Stella revisions answer different
+        # questions, and a key that hides that invites them into one average.
+        sut = f"stella{self.sut_commit[:8]}" if self.sut_commit else "stella?"
+        return f"{self.dataset_key or 'unknown'}@{digest}/{grader}/{sut}"
 
     @property
     def measured(self) -> bool:
