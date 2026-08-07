@@ -73,6 +73,14 @@ struct FinishedCandidate {
     cost_usd: f64,
 }
 
+/// One candidate's identity in the fan-out: its 1-based ordinal — the number
+/// every candidate-facing surface speaks (`candidate_start_notice`,
+/// [`ProofStep::VerdictDegraded`]) — and the isolated workspace it runs in.
+struct CandidateSlot<'w> {
+    ordinal: u32,
+    ws: &'w dyn CandidateWorkspace,
+}
+
 /// A [`CandidateWorkspacePort`] that lets exactly one `create` run at a time.
 ///
 /// Wrapping the port rather than serializing at the call sites is what makes
@@ -199,10 +207,15 @@ impl<'a> Pipeline<'a> {
                     let mut cost_usd = 0.0;
                     let result = self
                         .run_isolated_candidate(
+                            CandidateSlot {
+                                // `n` is a `u32` config knob, so the index
+                                // always fits.
+                                ordinal: index as u32 + 1,
+                                ws,
+                            },
                             frame,
                             worker,
                             authoring,
-                            ws,
                             fan,
                             &mut Spend {
                                 budget: &mut allowance,
@@ -246,13 +259,14 @@ impl<'a> Pipeline<'a> {
     /// than in a loop iteration shared with nobody.
     async fn run_isolated_candidate(
         &self,
+        slot: CandidateSlot<'_>,
         frame: TaskFrame<'_>,
         worker: &ResolvedRole<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
-        ws: &dyn CandidateWorkspace,
         fan: Option<&SteeringFanOut<'_>>,
         spend: &mut Spend<'_>,
     ) -> CandidateResult {
+        let CandidateSlot { ordinal, ws } = slot;
         let bound_hook_runner = self.hooks.map(|(_, runner)| BoundHookRunner {
             inner: runner,
             cwd: ws.root(),
@@ -286,7 +300,7 @@ impl<'a> Pipeline<'a> {
         if let Some(view) = view.as_ref() {
             engine = engine.with_steering(view);
         }
-        self.run_candidate(frame, authoring, &engine, surface, spend)
+        self.run_candidate(ordinal, frame, authoring, &engine, surface, spend)
             .await
     }
 }

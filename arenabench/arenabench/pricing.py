@@ -126,6 +126,22 @@ PRICES: dict[str, Price] = {
     "claude-sonnet-4.5": Price(
         input=3.0, output=15.0, cache_read=0.3, cache_write=3.75
     ),
+    # List price, per Anthropic's pricing page and the Stella seed catalog
+    # (`crates/stella-model/src/catalog.rs`, the `claude-sonnet-5` row). An
+    # introductory rate ($2.00/$10.00) runs to 2026-08-31; this table carries
+    # the durable number, so costs over-state slightly until then — the safe
+    # direction, and it corrects itself without an edit.
+    "claude-sonnet-5": Price(
+        input=3.0, output=15.0, cache_read=0.3, cache_write=3.75
+    ),
+    # The same model on the OpenRouter route, which prices it at the
+    # introductory rate with no end date of its own (catalog row
+    # `openrouter/anthropic/claude-sonnet-5`, verified 2026-08-03). A route
+    # row exists exactly for this case: the seat's launch record says which
+    # rate its tokens actually billed at (#1498).
+    "openrouter/anthropic/claude-sonnet-5": Price(
+        input=2.0, output=10.0, cache_read=0.2, cache_write=2.5
+    ),
 }
 
 #: Routing prefixes that are ArenaBench's or Harbor's, never the provider's.

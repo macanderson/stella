@@ -93,7 +93,7 @@ use crate::{Result, Store};
 /// export audit trail keyed by `(sink_fingerprint, execution_id)`, and
 /// `executions.id` is `AUTOINCREMENT` (ids are never reused), so a retained
 /// ledger row can never be mistaken for a different execution.
-pub const DEPENDENT_TABLES: [&str; 13] = [
+pub const DEPENDENT_TABLES: [&str; 14] = [
     "events",
     "telemetry",
     "files_touched",
@@ -107,6 +107,12 @@ pub const DEPENDENT_TABLES: [&str; 13] = [
     "context_blocks",
     "step_manifest",
     "step_receipt",
+    // Turn diffs are replay material, the same class as `events`: pruning a
+    // turn's transcript reclaims its diff with it. Rows whose `execution_id`
+    // is NULL (a turn that ended without opening an execution) are outside
+    // the execution-keyed cascade and survive, which is honest — nothing
+    // proves which execution they belonged to.
+    "session_turn_diffs",
 ];
 
 /// A prune that deletes at least this many rows triggers an automatic
@@ -460,7 +466,11 @@ mod tests {
                 values.push(match ty.to_ascii_uppercase().as_str() {
                     "TEXT" => "'x'".to_string(),
                     "REAL" => "0.0".to_string(),
-                    _ => "1".to_string(),
+                    // The execution id, not a constant: a table with a
+                    // UNIQUE key over invented columns (`session_turn_diffs`'
+                    // `(session_id, turn)`) must seed distinct rows per
+                    // execution, or the second seed collides.
+                    _ => execution_id.to_string(),
                 });
             }
             conn.execute(

@@ -487,6 +487,68 @@ impl Observatory {
         crate::sessions::session_detail(self.store().as_ref(), &self.workspace_root, id)
     }
 
+    /// One turn's precomputed workspace diff (#1870), read from the
+    /// `session_turn_diffs` projection.
+    ///
+    /// The real thing lives in the work journal's bare git repo
+    /// (`~/.stella/work/<workspace-id>.git`), and the observatory
+    /// deliberately never opens it — reading a repo means spawning `git` or
+    /// linking an object reader, and this crate reads artifacts and spawns
+    /// nothing. The session that owns the journal shapes these hunks at turn
+    /// end instead (`stella-cli`'s `turn_diff` module records that boundary
+    /// ruling), so this is a plain projection read: a missing table (store
+    /// older than v21) and a turn that recorded nothing both answer
+    /// `found: false` with the full key set.
+    pub fn session_turn_diff(&self, id: &str, turn: i64) -> Result<Value, DbError> {
+        let absent = json!({
+            "session": id,
+            "turn": turn,
+            "found": false,
+            "execution_id": Value::Null,
+            "recorded_at": Value::Null,
+            "files": [],
+            "files_truncated": false,
+        });
+        let Some(conn) = self.store() else {
+            return Ok(absent);
+        };
+        let row = conn.query_row(
+            "SELECT execution_id, recorded_at, files FROM session_turn_diffs
+             WHERE session_id = ?1 AND turn = ?2",
+            rusqlite::params![id, turn],
+            |r| {
+                Ok((
+                    r.get::<_, Option<i64>>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        );
+        let (execution_id, recorded_at, files) = match row {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(absent),
+            Err(e) if is_missing_schema(&e) => return Ok(absent),
+            Err(e) => return Err(e.into()),
+        };
+        // The stored payload is the writer's JSON, verbatim. A row whose
+        // bytes no longer parse (a hand-edited store) degrades to the empty
+        // shape rather than failing the route — same policy as a transcript
+        // payload that no longer parses.
+        let payload: Value = serde_json::from_str(&files).unwrap_or(Value::Null);
+        Ok(json!({
+            "session": id,
+            "turn": turn,
+            "found": true,
+            "execution_id": execution_id,
+            "recorded_at": recorded_at,
+            "files": payload.get("files").cloned().unwrap_or_else(|| json!([])),
+            "files_truncated": payload
+                .get("files_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }))
+    }
+
     /// One execution's behavioural tendencies (retries, loop detections,
     /// compactions, policy verdicts), folded from its journal slice — the
     /// fourth sanctioned `events` read; see `sessions::execution_tendencies`.

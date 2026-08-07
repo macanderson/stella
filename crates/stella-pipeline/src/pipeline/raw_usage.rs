@@ -77,7 +77,10 @@ fn management_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffor
         ModelCallRole::Worker => (Some(2048), Some(ReasoningEffort::Low)),
         // Never dispatched through this chokepoint today; if one ever is,
         // inheriting the engine base is exactly the pre-existing behavior.
+        // (`Research` runs as an engine sub-agent turn, never a raw call —
+        // its bounds live on its `SubAgentSpec`.)
         ModelCallRole::Unknown
+        | ModelCallRole::Research
         | ModelCallRole::WitnessAuthor
         | ModelCallRole::WitnessRepair
         | ModelCallRole::AgentAuthor

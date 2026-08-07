@@ -24,6 +24,7 @@
 use serde::Deserialize;
 
 use crate::ports::RecalledFrame;
+use crate::research::ResearchFinding;
 
 /// One ordered step in an execution plan. Deliberately minimal — a step is a
 /// natural-language instruction the execute stage turns into one engine turn.
@@ -207,6 +208,7 @@ fn balanced_span(text: &str, open: char, close: char) -> Option<&str> {
 pub fn build_planner_prompt(
     goal: &str,
     recall: &[RecalledFrame],
+    research: &[ResearchFinding],
     repo_structure: &str,
     revision: Option<&str>,
 ) -> String {
@@ -231,6 +233,21 @@ pub fn build_planner_prompt(
         );
         prompt.push_str(note);
         prompt.push_str("\n\n");
+    }
+
+    // Research findings are their own section, NOT recall frames: recall is
+    // what the context plane remembered, research is what a read-only
+    // sub-agent verified against this workspace just now (#1778) — the
+    // planner should be able to weigh the two provenances differently.
+    if !research.is_empty() {
+        prompt.push_str("## Research findings\n");
+        for finding in research {
+            prompt.push_str("### ");
+            prompt.push_str(finding.question.trim());
+            prompt.push('\n');
+            prompt.push_str(finding.answer.trim());
+            prompt.push_str("\n\n");
+        }
     }
 
     if !recall.is_empty() {
@@ -384,6 +401,7 @@ mod tests {
         let prompt = build_planner_prompt(
             "Fix the failing budget test",
             &recall,
+            &[],
             "crates/\n  stella-core/src/budget.rs",
             None,
         );
@@ -396,7 +414,7 @@ mod tests {
 
     #[test]
     fn planner_prompt_omits_empty_recall_and_structure_sections() {
-        let prompt = build_planner_prompt("goal", &[], "", None);
+        let prompt = build_planner_prompt("goal", &[], &[], "", None);
         assert!(!prompt.contains("Recalled context"));
         assert!(!prompt.contains("Repository structure"));
     }
@@ -405,7 +423,7 @@ mod tests {
     /// exists once a human has rejected something.
     #[test]
     fn planner_prompt_omits_the_revision_section_without_a_note() {
-        let prompt = build_planner_prompt("goal", &[], "", None);
+        let prompt = build_planner_prompt("goal", &[], &[], "", None);
         assert!(!prompt.contains("Revision requested"));
     }
 
@@ -415,6 +433,7 @@ mod tests {
     fn planner_prompt_carries_the_revision_note_and_marks_it_overriding() {
         let prompt = build_planner_prompt(
             "add issue keybindings",
+            &[],
             &[],
             "",
             Some("only the ctrl+O dialog, skip the rest"),
@@ -432,7 +451,7 @@ mod tests {
     /// it nothing to act on.
     #[test]
     fn planner_prompt_treats_a_blank_revision_as_no_revision() {
-        let prompt = build_planner_prompt("goal", &[], "", Some("   \n  "));
+        let prompt = build_planner_prompt("goal", &[], &[], "", Some("   \n  "));
         assert!(!prompt.contains("Revision requested"));
     }
 
