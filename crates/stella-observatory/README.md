@@ -296,7 +296,11 @@ Adding an API route:
    [`src/global.rs`](src/global.rs) for `usage.db`,
    [`src/fsview.rs`](src/fsview.rs) for files,
    [`src/codegraph.rs`](src/codegraph.rs) for the graph. Degrade a missing
-   file or table to an empty payload; do not return an error.
+   file or table to an empty payload; do not return an error. Clip long text
+   through `db::truncate` — the crate's one clipper, so the ellipsis, the
+   char-not-byte count and `max` excluding the ellipsis stay one decision
+   rather than a per-module one (#1999). The clip *lengths* are per-surface;
+   the clip *shape* is not.
 2. Add the arm to the `match route` in `respond` (`src/lib.rs:148`). Take
    filters via `query_param`, never by splitting the query string yourself.
 3. Add the path to `empty_workspace_degrades_to_empty_payloads_not_errors`'s
