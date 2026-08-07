@@ -6,7 +6,7 @@
 # runs `arenabench run` against a match TOML fetched from S3.
 #
 # Build context is the repository root. PKG_PATH locates the ArenaBench
-# package inside it: "arenabench" while ArenaBench lives in the stella
+# package inside it: "arenabench" while ArenaBench lives in the Stella
 # monorepo, "." once it is ejected into its own repository.
 ARG PKG_PATH=arenabench
 

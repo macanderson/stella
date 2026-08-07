@@ -8,10 +8,10 @@ nothing when idle. One CloudFormation template (`core.yaml`) is the whole
 control plane; the web app lives on Vercel (arenabench.org) and reaches AWS
 through an OIDC-assumed role, never long-lived keys.
 
-**Standalone by design.** ArenaBench is being ejected from the stella
+**Standalone by design.** ArenaBench is being ejected from the Stella
 monorepo. Nothing here assumes that monorepo: the system under test (SUT) is
 always fetched by **git URL + ref**, the runner image locates the package via
-a `PkgPath` parameter (`arenabench` today, `.` post-ejection), and stella is
+a `PkgPath` parameter (`arenabench` today, `.` post-ejection), and Stella is
 just the first entry in the agent roster — Claude Code is the required day-1
 comparison arm, anything else is a seat in a match TOML.
 

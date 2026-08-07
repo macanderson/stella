@@ -31,7 +31,7 @@ Parameters:
     Default: arenabench
     Description: >-
       Path of the ArenaBench package inside InfraGitUrl's repo. "arenabench"
-      while ArenaBench lives inside the stella monorepo; "." after ejection.
+      while ArenaBench lives inside the Stella monorepo; "." after ejection.
   VercelTeamSlug:
     Type: String
     Default: oxagen
