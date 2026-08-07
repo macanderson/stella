@@ -79,26 +79,20 @@ and the root `Cargo.toml` members list in the same PR.
 
 ## God files — do not add lines
 
-The gate's `file-size` guard (`scripts/check-file-size.sh`) enforces a
-1500-line ratchet — a NEW file over the limit is a hard failure with no
-baseline escape — and this crate has exactly one file grandfathered at a
-recorded ceiling in `scripts/file-size-baseline.txt`. It is a god file: already
-too big, closed to growth. Plan event work so no new line lands in it: new
-supporting vocabulary goes in a new module re-exported from
-[`src/lib.rs`](src/lib.rs) — the crate's own precedent is
-[`src/ladder.rs`](src/ladder.rs), split out of `event.rs` when the ladder rung
-joined it (#1043), with the re-export keeping `stella_protocol::LadderSnapshot`
-at its old path — and types you touch there are candidates to extract, taking
-their inline round-trip tests with them. A genuinely new `AgentEvent` variant
-cannot avoid its lines in `event.rs`; offset them by extracting the variant's
-supporting types, or move the ceiling honestly as below.
+This crate has no god files: no file exceeds the gate's 1500-line ratchet
+(`scripts/check-file-size.sh`), and none may appear — a new file crossing
+1500 lines fails the gate outright, and `scripts/file-size-baseline.txt`
+accepts no new entries. When a file here approaches the limit, split it before
+it crosses.
 
-- [`src/event.rs`](src/event.rs)
-
-A ceiling can move only via `make file-size-update`, which lands as a
-reviewable baseline diff justified like any other change — treat it as an
-escape hatch for an irreducible line (a module declaration in an oversized
-`lib.rs`), never as a planning assumption.
+[`src/event.rs`](src/event.rs) was the crate's one god file until its inline
+round-trip tests moved to `src/event/tests.rs`; it sits just under the limit,
+so plan event work the way its era as a god file demanded: new supporting
+vocabulary goes in a new module re-exported from [`src/lib.rs`](src/lib.rs) —
+the crate's own precedent is [`src/ladder.rs`](src/ladder.rs), split out of
+`event.rs` when the ladder rung joined it (#1043), with the re-export keeping
+`stella_protocol::LadderSnapshot` at its old path — never as more lines in
+`event.rs` itself.
 
 ## Layout
 
