@@ -45,11 +45,12 @@ async fn an_authored_witness_arms_the_revision_flip_halt() {
             vec![("tests/authority_witness.rs", "sha256:test")],
         ]));
     // Authoring baseline: the witness fails there, which is what arms it.
-    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone())
-        .with_repo_status(SeqRepoStatus::new(vec![
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![
             vec![],
             vec![("tests/authority_witness.rs", "sha256:test")],
-        ]));
+        ]),
+    );
     let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log);
     let session_runner = NeverRunner;
     let session_status = NeverRepoStatus;
