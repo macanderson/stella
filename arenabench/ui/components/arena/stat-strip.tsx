@@ -96,6 +96,41 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
   // a fraction printed "1%".
   const solveRate = totals.judged > 0 ? (totals.passed / totals.judged) * 100 : 0;
 
+  // Incidents, counted from the cells because seat totals do not carry them.
+  // Kept strictly apart from the solve rate in BOTH directions (#2066): a
+  // trial can score the reward and then raise, and folding either number
+  // into the other hides exactly the trials most flattered by a headline
+  // rate. Timeouts split by whether the solve had already happened — the
+  // two mean opposite things (did not stop after success vs. ran out of
+  // time before it) and a merged count cannot be acted on.
+  const incidents = React.useMemo(() => {
+    let onSolved = 0;
+    let onFailed = 0;
+    let timeoutAfterSolve = 0;
+    let timeoutBeforeSolve = 0;
+    for (const row of snapshot.rows) {
+      for (const seat of seats) {
+        const cell = row.cells[seat.id];
+        if (!cell || cell.status !== "done" || !cell.failure) continue;
+        const isTimeout = /timeout/i.test(cell.failure);
+        if (cell.resolved === true) {
+          onSolved += 1;
+          if (isTimeout) timeoutAfterSolve += 1;
+        } else {
+          onFailed += 1;
+          if (isTimeout) timeoutBeforeSolve += 1;
+        }
+      }
+    }
+    return {
+      onSolved,
+      onFailed,
+      timeoutAfterSolve,
+      timeoutBeforeSolve,
+      total: onSolved + onFailed,
+    };
+  }, [snapshot.rows, seats]);
+
   // The leader line, stated only when there is a strict winner on solve rate.
   const ranked = [...seats].sort(
     (a, b) => (Number(b.totals.solve_rate) || 0) - (Number(a.totals.solve_rate) || 0),
@@ -153,6 +188,20 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
         value={`${fmtTokens(totals.tokensIn)}/${fmtTokens(totals.tokensOut)}`}
         sub="in / out"
         blurb="Input and output tokens summed across every seat."
+      />
+      <Stat
+        label="incidents"
+        value={String(incidents.total)}
+        sub={`${incidents.onSolved} on solved · ${incidents.onFailed} on failed`}
+        tone={incidents.onSolved > 0 ? "warn" : undefined}
+        blurb={
+          "Trials that raised an exception, counted apart from the solve rate in both " +
+          "directions — a trial can score the reward and then raise, and the tick alone " +
+          "hides it. An incident on a SOLVED trial means the agent kept burning budget " +
+          "after succeeding; on a failed trial it is the ordinary kind. Timeouts here: " +
+          `${incidents.timeoutAfterSolve} after the solve (did not stop when done), ` +
+          `${incidents.timeoutBeforeSolve} before it (ran out of time).`
+        }
       />
       {critical > 0 ? (
         <Stat
