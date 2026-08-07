@@ -47,6 +47,7 @@ use crate::{OutputFormat, config::Config, resume_frame};
 use stella_context::EpisodeOutcome;
 
 mod coverage;
+mod diagnostics;
 mod engine;
 mod goal;
 mod graph;

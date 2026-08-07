@@ -554,7 +554,27 @@ impl CmdOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagnosticInvocation {
     GitDiff,
-    UntrackedNumstat { path: String },
+    UntrackedNumstat {
+        path: String,
+    },
+    /// The full patch for one untracked file — its *content*, not just its
+    /// shape.
+    ///
+    /// [`Self::UntrackedNumstat`] answers "how many lines", which is all the
+    /// diff-size budget and the zero-diff guard ever needed. A verifier needs
+    /// the other half: for a task whose entire deliverable IS an untracked
+    /// file, a marker naming the path and a line count is a review of a
+    /// filename. Graded that way, a verdict can only restate that something
+    /// was written — which is what one did, in as many words, before this
+    /// variant existed ("the unseen regex content cannot itself justify a
+    /// FAIL").
+    ///
+    /// Git renders binary content as `Binary files ... differ`, so the bytes
+    /// of a database sidecar or a compiled artifact can never reach a prompt
+    /// through here.
+    UntrackedPatch {
+        path: String,
+    },
 }
 
 #[async_trait]

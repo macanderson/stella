@@ -15,11 +15,11 @@
 1911 bench/terminal_bench_analysis/tb21_evidence_contract.py
 4334 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
 1659 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
-2269 crates/stella-cli/src/agent.rs
+2270 crates/stella-cli/src/agent.rs
 1752 crates/stella-cli/src/agent/tests.rs
-4621 crates/stella-cli/src/command_deck.rs
+4566 crates/stella-cli/src/command_deck.rs
 1507 crates/stella-cli/src/fleet_cmd.rs
-2126 crates/stella-core/src/bus.rs
+1891 crates/stella-core/src/bus.rs
 2572 crates/stella-core/src/driver.rs
 3681 crates/stella-core/src/driver/tests.rs
 1781 crates/stella-model/src/anthropic/tests.rs
