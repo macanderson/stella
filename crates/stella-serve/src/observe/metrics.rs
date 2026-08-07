@@ -74,6 +74,15 @@ pub struct Metrics {
     tools_failed_total: AtomicU64,
     speculation_discarded_total: AtomicU64,
     loop_detections_total: AtomicU64,
+    /// Parked waits opened across all settled turns (#2006). Without it a
+    /// scrape sees `model_calls_total` flat and `turn_duration_ms_total`
+    /// climbing and has no way to tell a fleet that is waiting on external
+    /// state from one that is stuck — the same blind spot `TurnTally` closes
+    /// one layer down.
+    parked_spans_total: AtomicU64,
+    /// Seconds those spans were licensed to sit still — the denominator that
+    /// makes a long, quiet turn defensible rather than alarming.
+    parked_deadline_secs_total: AtomicU64,
 
     reverse_dispatched_provider_total: AtomicU64,
     reverse_dispatched_tool_total: AtomicU64,
@@ -139,6 +148,8 @@ pub struct Snapshot {
     pub tools_failed_total: u64,
     pub speculation_discarded_total: u64,
     pub loop_detections_total: u64,
+    pub parked_spans_total: u64,
+    pub parked_deadline_secs_total: u64,
 
     pub reverse_dispatched_provider_total: u64,
     pub reverse_dispatched_tool_total: u64,
@@ -211,6 +222,8 @@ impl Metrics {
             tools_failed_total: self.tools_failed_total.load(ORDER),
             speculation_discarded_total: self.speculation_discarded_total.load(ORDER),
             loop_detections_total: self.loop_detections_total.load(ORDER),
+            parked_spans_total: self.parked_spans_total.load(ORDER),
+            parked_deadline_secs_total: self.parked_deadline_secs_total.load(ORDER),
 
             reverse_dispatched_provider_total: self.reverse_dispatched_provider_total.load(ORDER),
             reverse_dispatched_tool_total: self.reverse_dispatched_tool_total.load(ORDER),
@@ -316,6 +329,10 @@ impl Observer for Metrics {
                     .fetch_add(u64::from(tally.speculation_discarded), ORDER);
                 self.loop_detections_total
                     .fetch_add(u64::from(tally.loop_detections), ORDER);
+                self.parked_spans_total
+                    .fetch_add(u64::from(tally.parked_spans), ORDER);
+                self.parked_deadline_secs_total
+                    .fetch_add(tally.parked_deadline_secs, ORDER);
             }
             ServeEvent::TurnReclaimed { .. } => {
                 self.turns_reclaimed_total.fetch_add(1, ORDER);
@@ -555,6 +572,10 @@ mod tests {
                 speculation_discarded: 4,
                 loop_detections: 1,
                 frames_dropped: 0,
+                parked_spans: 2,
+                parked_spans_woken: 1,
+                parked_polls: 60,
+                parked_deadline_secs: 2400,
             },
         });
         let snap = metrics.snapshot();
@@ -567,6 +588,10 @@ mod tests {
         assert_eq!(snap.tools_failed_total, 1);
         assert_eq!(snap.speculation_discarded_total, 4);
         assert_eq!(snap.loop_detections_total, 1);
+        // A scrape that cannot see the parks reads this turn's quiet stretch
+        // as a stall (#2006).
+        assert_eq!(snap.parked_spans_total, 2);
+        assert_eq!(snap.parked_deadline_secs_total, 2400);
     }
 
     /// The registry gauge tracks occupancy, and refusals are separated by
