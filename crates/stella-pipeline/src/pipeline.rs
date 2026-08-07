@@ -692,13 +692,13 @@ struct CandidateState {
     /// warrant (the #1701 recurrence a projection method used to guard
     /// against by hand).
     signals: ChangeSignals,
-    /// Ends the execute turn as soon as the tracked test goes fail→pass.
+    /// Ends an engine turn — execute, or a revision that gets the latch via
+    /// [`FlipHalt::unfired`] — as soon as the tracked test goes fail→pass.
     ///
-    /// `None` whenever there is nothing to watch: no configured test command,
-    /// or a baseline that was already passing (which can never flip, so a
-    /// halt on it would end turns that had work left). See
-    /// [`crate::flip_halt`] for why stopping is a separate question from
-    /// crediting.
+    /// `None` while there is nothing to watch: no failing configured-command
+    /// baseline and no authored witness yet. `witness_on_demand` arms it the
+    /// moment a witness's failing baseline is credited (#1793). See
+    /// [`crate::flip_halt`] for why stopping is separate from crediting.
     flip_halt: Option<Arc<FlipHalt>>,
     oracle: FlipOracle,
     /// The oracle's observations in the order they were made (#864) —
@@ -2960,7 +2960,7 @@ impl<'a> Pipeline<'a> {
                 &mut state.messages,
                 spend.budget,
                 &mut state.signals,
-                None,
+                state.flip_halt.as_ref().and_then(FlipHalt::unfired),
             )
             .await
         {
