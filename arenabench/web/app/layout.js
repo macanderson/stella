@@ -1,4 +1,7 @@
+import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+
+const mono = JetBrains_Mono({ subsets: ["latin"] });
 
 export const metadata = {
   title: "ArenaBench",
@@ -8,7 +11,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className={mono.className}>{children}</body>
     </html>
   );
 }

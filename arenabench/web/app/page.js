@@ -15,13 +15,18 @@ export default async function Home() {
   return (
     <main>
       <h1>
-        Arena<span>Bench</span> <span className="note">control plane</span>
+        Arena<span className="gold">Bench</span>{" "}
+        <span className="note">cloud — early access</span>
       </h1>
       <p className="note">
-        Scale-to-zero AWS substrate: builds via CodeBuild, trials via AWS
-        Batch, artifacts in S3. Interim wall: Vercel team authentication —
-        passwordless magic-link login is tracked in{" "}
-        <a href="https://github.com/macanderson/stella/issues/2100">#2100</a>.
+        The cloud substrate is live: Stella binaries build from any git ref,
+        trials run on scale-to-zero AWS Batch, artifacts land in S3. The full
+        arena interface — scoreboard, live transcripts, recordings — arrives
+        when its API is ported onto this substrate:{" "}
+        <a href="https://github.com/macanderson/stella/issues/2100">#2100</a>{" "}
+        (login) and{" "}
+        <a href="https://github.com/macanderson/stella/issues/2099">#2099</a>{" "}
+        (match execution). Until then this page is the control surface.
       </p>
 
       <h2>Actions</h2>

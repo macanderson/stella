@@ -1,13 +1,30 @@
+/* ArenaBench brand tokens — docs/brand/brand-guidelines.html (Comet kit).
+   Dark is the default (matching `arenabench serve`); light is the paper
+   palette the ArenaBench UI itself ships in ui/app/globals.css. */
 :root {
   color-scheme: dark;
-  --bg: #0b0e14;
-  --panel: #131722;
-  --line: #232a3b;
-  --text: #dbe2f0;
-  --dim: #7c8598;
-  --accent: #7aa2ff;
-  --ok: #63d68b;
-  --bad: #ff7a7a;
+  --bg: #0b0b0c;
+  --panel: #131315;
+  --line: #232327;
+  --text: #f4f1ea;
+  --dim: #9b9890;
+  --accent: #ffb000;
+  --ok: #4fbf72;
+  --bad: #e0565e;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f2efe7;
+    --panel: #faf8f2;
+    --line: #d8d3c4;
+    --text: #1c1b16;
+    --dim: #6e6a5f;
+    --accent: #a37200;
+    --ok: #1c7c43;
+    --bad: #c0343c;
+  }
 }
 
 * {
@@ -18,7 +35,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 15px;
+  line-height: 1.55;
 }
 
 main {
@@ -32,7 +50,7 @@ h1 {
   letter-spacing: 0.04em;
 }
 
-h1 span {
+h1 .gold {
   color: var(--accent);
 }
 
@@ -42,6 +60,10 @@ h2 {
   letter-spacing: 0.14em;
   color: var(--dim);
   margin: 36px 0 10px;
+}
+
+a {
+  color: var(--accent);
 }
 
 .panel {
@@ -100,7 +122,7 @@ input[type="text"] {
 
 button {
   background: var(--accent);
-  color: #0b0e14;
+  color: var(--bg);
   border: 0;
   border-radius: 6px;
   padding: 8px 14px;
