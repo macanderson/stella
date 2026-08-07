@@ -524,6 +524,15 @@ fn sample_events() -> Vec<AgentEvent> {
         AgentEvent::Steered {
             text: "actually, use the other file".into(),
         },
+        AgentEvent::TurnParked {
+            description: "CI for branch main settles".into(),
+            poll_interval_secs: 5,
+            deadline_secs: 600,
+        },
+        AgentEvent::TurnWoken {
+            reason: "changed".into(),
+            polls_used: 3,
+        },
         AgentEvent::LoopDetected {
             turn_instance: 3,
             kind: "short_cycle".into(),

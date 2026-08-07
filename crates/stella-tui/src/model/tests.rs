@@ -14,6 +14,51 @@ fn text(delta: &str) -> AgentEvent {
     AgentEvent::Text { text: delta.into() }
 }
 
+/// Witness for #1857's deck half: the park and the wake fold into typed
+/// transcript entries carrying their own facts, rather than being
+/// indistinguishable from model narration.
+///
+/// The distinction is the whole point of the wire pair — before it both
+/// arrived as `AgentEvent::Text` and coalesced into whatever answer text
+/// happened to precede them.
+#[test]
+fn a_parked_wait_folds_into_typed_entries_not_narration() {
+    let mut model = SessionModel::new();
+    model.apply(&text("checking CI"));
+    model.apply(&AgentEvent::TurnParked {
+        description: "CI for branch main settles".into(),
+        poll_interval_secs: 5,
+        deadline_secs: 600,
+    });
+    model.apply(&AgentEvent::TurnWoken {
+        reason: "changed".into(),
+        polls_used: 3,
+    });
+
+    // Three entries, not one coalesced blob: the park did not merge into
+    // the answer text the way a synthetic Text delta would have.
+    assert_eq!(model.transcript.len(), 3, "{:?}", model.transcript);
+    match &model.transcript[1] {
+        TranscriptEntry::Parked {
+            description,
+            poll_interval_secs,
+            deadline_secs,
+        } => {
+            assert_eq!(description, "CI for branch main settles");
+            assert_eq!(*poll_interval_secs, 5);
+            assert_eq!(*deadline_secs, 600);
+        }
+        other => panic!("expected a typed park entry, got {other:?}"),
+    }
+    match &model.transcript[2] {
+        TranscriptEntry::Woken { reason, polls_used } => {
+            assert_eq!(reason, "changed");
+            assert_eq!(*polls_used, 3);
+        }
+        other => panic!("expected a typed wake entry, got {other:?}"),
+    }
+}
+
 #[test]
 fn streaming_text_deltas_coalesce_into_one_entry() {
     let mut model = SessionModel::new();
