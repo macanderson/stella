@@ -1,11 +1,16 @@
 //! Unit cover for the dataset fold: the acceptance predicate, the journal
-//! pass, the truncation inference, and the post-assembly redaction.
+//! pass, the reward labelling (#2083), the truncation inference, and the
+//! post-assembly redaction.
 //!
 //! The end-to-end witness — the real binary against a seeded workspace, both
 //! output files, byte-identity — lives in `tests/dataset_export_cli.rs`.
 
 use super::*;
-use stella_protocol::{FileChangeKind, ModelCallRole, ToolCall, ToolOutput, VerdictEvidence};
+use stella_pipeline::reward::DiscardReason;
+use stella_protocol::{
+    FileChangeKind, LadderRung, LadderSnapshot, ModelCallRole, ToolCall, ToolOutput,
+    VerdictEvidence,
+};
 use stella_store::SessionEventRecord;
 
 fn journal(events: Vec<AgentEvent>) -> Vec<SessionEventRecord> {
@@ -191,6 +196,93 @@ fn require_verdict_demands_a_passing_judgement() {
     assert!(acceptance_predicate(true).contains("verdict"));
 }
 
+/// A `Verdict` event whose evidence names a rung — or none, for the
+/// pre-#1043 shape a reader must not guess about.
+fn ladder_verdict(passed: bool, rung: Option<LadderRung>) -> AgentEvent {
+    AgentEvent::Verdict {
+        passed,
+        evidence: VerdictEvidence {
+            summary: "verifier prose that must never reach a label".into(),
+            deterministic: matches!(rung, Some(LadderRung::SubmitFast | LadderRung::Revise)),
+            evidence_refs: Vec::new(),
+            ladder: rung.map(|rung| {
+                Box::new(LadderSnapshot {
+                    rung: Some(rung),
+                    tracked_command: None,
+                    oracle_trace: Vec::new(),
+                    flip_achieved: false,
+                    unstable_flip: false,
+                    flip_refused_different_failure: false,
+                    touched_tests_passed: None,
+                    test_infra: None,
+                    diff_lines: 0,
+                    diff_budget: 0,
+                    diff_available: false,
+                    file_change_events: 0,
+                    mutating_actions: 0,
+                    new_diag_errors: 0,
+                    new_diag_warnings: 0,
+                    witness_intact: None,
+                    witness_mutation: None,
+                    diff_coverage: None,
+                    verifier_independent: None,
+                })
+            }),
+        },
+    }
+}
+
+/// The issue's own table (#2083 ⇢ #1043): a deterministic flip earns +1.0, a
+/// tampered/red-test settlement −1.0, and the policy rides on the label.
+#[test]
+fn a_flip_labels_plus_one_and_a_red_settlement_minus_one() {
+    let policy = RewardPolicy::default();
+
+    let mut events = edit_events();
+    events.push(ladder_verdict(true, Some(LadderRung::SubmitFast)));
+    let flip = fold_journal(&journal(events));
+    let flipped = reward_label(&flip, 1, 0.0, &policy).expect("a settled verdict labels");
+    assert_eq!(flipped.rung, Some(LadderRung::SubmitFast));
+    assert_eq!(flipped.outcome, Some(1.0));
+    assert!(flipped.is_scored());
+
+    let mut events = edit_events();
+    events.push(ladder_verdict(false, Some(LadderRung::Revise)));
+    let red = fold_journal(&journal(events));
+    let labelled = reward_label(&red, 1, 0.0, &policy).expect("a settled verdict labels");
+    assert_eq!(labelled.rung, Some(LadderRung::Revise));
+    assert_eq!(labelled.outcome, Some(-1.0));
+    assert_eq!(labelled.policy, policy, "the policy travels with the label");
+}
+
+/// No verdict, no label: `null` states "nothing to derive from" rather than
+/// synthesizing a discard under a policy the run never saw.
+#[test]
+fn a_journal_with_no_verdict_earns_no_label() {
+    let fold = fold_journal(&journal(edit_events()));
+    assert_eq!(reward_label(&fold, 1, 0.0, &RewardPolicy::default()), None);
+}
+
+/// The last verdict settles, earlier ones are revision rounds, and a
+/// rung-less verdict is marked unknown rather than guessed at.
+#[test]
+fn the_last_verdict_settles_and_a_rungless_one_is_marked_not_guessed() {
+    let mut events = edit_events();
+    events.push(ladder_verdict(false, Some(LadderRung::Revise)));
+    events.push(ladder_verdict(true, Some(LadderRung::SubmitFast)));
+    let fold = fold_journal(&journal(events));
+    let labelled = reward_label(&fold, 2, 0.0, &RewardPolicy::default()).expect("settled");
+    assert_eq!(labelled.rung, Some(LadderRung::SubmitFast));
+    assert_eq!(labelled.cost.revisions, 1);
+
+    let mut events = edit_events();
+    events.push(ladder_verdict(true, None));
+    let fold = fold_journal(&journal(events));
+    let unknown = reward_label(&fold, 1, 0.0, &RewardPolicy::default()).expect("still a record");
+    assert_eq!(unknown.reward, None);
+    assert_eq!(unknown.discard, Some(DiscardReason::RungUnknown));
+}
+
 /// The half-open window, on the timestamp form SQLite actually writes.
 #[test]
 fn the_date_window_is_half_open_and_accepts_a_bare_date() {
@@ -238,6 +330,18 @@ fn redaction_runs_after_assembly_over_every_string_leaf() {
         outcome: "completed".into(),
         cost_usd: 0.01,
         prompt: "rotate ghp_0123456789abcdef0123456789abcdef012345".into(),
+        calls: vec![DatasetCall {
+            turn_instance: 0,
+            step: 0,
+            call_seq: 0,
+            role: "worker".into(),
+            provider: "zai".into(),
+            model: "glm-5.2".into(),
+            prompt_messages: vec![serde_json::json!({
+                "role": "user",
+                "content": "deploy with AKIAIOSFODNN7EXAMPLE",
+            })],
+        }],
         tool_calls: vec![DatasetToolCall {
             seq: 1,
             turn_instance: 0,
@@ -250,6 +354,7 @@ fn redaction_runs_after_assembly_over_every_string_leaf() {
         }],
         changes: Vec::new(),
         verdict: None,
+        reward: None,
         redacted: false,
     };
 
@@ -273,8 +378,16 @@ fn redaction_runs_after_assembly_over_every_string_leaf() {
     // Serializing the STRUCT (not the intermediate Value) pins the key order
     // to the declaration order, whatever `serde_json::Map` happens to be.
     assert!(
-        line.starts_with(r#"{"schema":1,"execution_id":1,"session_id":"ses-fixture""#),
+        line.starts_with(r#"{"schema":2,"execution_id":1,"session_id":"ses-fixture""#),
         "declaration order is the wire order: {line}"
+    );
+    // The transcript is a string leaf like any other: the key planted in
+    // `prompt_messages` is gone too, because redaction runs over the whole
+    // assembled tree rather than field-by-field.
+    let messages = serde_json::to_string(&redacted.calls[0].prompt_messages).expect("serialize");
+    assert!(
+        !messages.contains("AKIAIOSFODNN7EXAMPLE") && messages.contains(PLACEHOLDER),
+        "a secret inside a reconstructed message survived: {messages}"
     );
 }
 
@@ -295,9 +408,11 @@ fn a_clean_record_is_not_reported_as_redacted() {
         outcome: "completed".into(),
         cost_usd: 0.0,
         prompt: "fix the failing test".into(),
+        calls: Vec::new(),
         tool_calls: Vec::new(),
         changes: Vec::new(),
         verdict: None,
+        reward: None,
         redacted: false,
     };
     assert!(!redact_after_assembly(&record).expect("redact").redacted);

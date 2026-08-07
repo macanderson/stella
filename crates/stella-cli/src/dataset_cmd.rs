@@ -26,10 +26,26 @@
 //! `goal_met`, `goal_unmet`, `verification_failed`, `aborted`, `cancelled`,
 //! `failed`, `error`, `interrupted` — and `AgentEvent::Verdict`. So the
 //! predicate is named ([`is_accepted`]), documented, and echoed **verbatim**
-//! into the manifest, rather than left implicit in a `WHERE` clause. No
-//! numeric reward is invented: nothing in the tree maps a ladder decision to
-//! a reward scalar yet (#1043 is open), so the raw verdict is emitted and
-//! scoring is left to whoever gets there.
+//! into the manifest, rather than left implicit in a `WHERE` clause.
+//!
+//! ## Rewards and transcripts (#2083)
+//!
+//! Two things #872 shipped without now exist in tree and are carried. The
+//! verdict → scalar mapping (#1043, [`stella_pipeline::reward`]) labels each
+//! record from the journal's settled verdict under the workspace's resolved
+//! [`RewardPolicy`] — and the policy rides on every label, so records from
+//! differently-weighted workspaces stay comparable. And the receipts plane
+//! rebuilds any model call byte-exactly
+//! ([`stella_store::Store::reconstruct_call`] — the same source `trace.rs`
+//! reads, so SFT pairs need no other source), so each record carries every
+//! call's exact `prompt_messages`, admitted only when the reconstruction
+//! digest-verifies. An execution that cannot vouch for its own transcripts —
+//! no recorded call at all, or any call short of
+//! [`stella_store::Reconstruction::is_verified`] — is excluded under the
+//! default filter and **counted** in the manifest, the same named-predicate
+//! discipline as the rest of the acceptance rule. The raw verdict is still
+//! emitted beside the label, so a reader can re-derive a label under other
+//! weights without trusting this one.
 //!
 //! ## What a "diff" can honestly be here
 //!
@@ -61,12 +77,18 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use stella_core::redact::{PLACEHOLDER, redact_secrets};
+use stella_pipeline::reward::{RewardLabel, RewardPolicy, Settlement, TrajectoryCost, label};
 use stella_protocol::AgentEvent;
-use stella_store::{FinishedExecution, Store};
+use stella_store::{FinishedExecution, RecordedCall, Store};
 
 /// Bump when [`DatasetRecord`]'s shape changes incompatibly, so a reader can
 /// refuse a dataset it does not understand instead of misparsing it.
-pub const DATASET_SCHEMA_VERSION: u32 = 1;
+///
+/// `2` (#2083) added the per-call verified transcripts ([`DatasetRecord::calls`])
+/// and the reward label ([`DatasetRecord::reward`], #1043), and tightened the
+/// default filter to transcript-verified executions — so a v1 dataset is not
+/// comparable to a v2 one even where the shared fields agree.
+pub const DATASET_SCHEMA_VERSION: u32 = 2;
 
 /// The dataset file written under `--output`.
 pub const DATASET_FILE: &str = "dataset.jsonl";
@@ -98,6 +120,12 @@ const SCAN_BATCH: u32 = 500;
 /// That is off by default because most executions never reach a verifier at all
 /// (the deterministic ladder can fast-submit), so requiring it would silently
 /// shrink the dataset to the subset that escalated.
+///
+/// This is the journal half of the stated predicate. The transcript half —
+/// every recorded model call reconstructing digest-verified — needs the
+/// receipts plane rather than the fold, so [`accepted_record`] applies it via
+/// [`verified_transcripts`] after this returns true, and the manifest counts
+/// what it excludes.
 fn is_accepted(outcome: &str, fold: &JournalFold, require_verdict: bool) -> bool {
     ACCEPTED_OUTCOMES.contains(&outcome)
         && !fold.changes.is_empty()
@@ -109,7 +137,9 @@ fn is_accepted(outcome: &str, fold: &JournalFold, require_verdict: bool) -> bool
 /// without reading this file.
 fn acceptance_predicate(require_verdict: bool) -> String {
     let base = format!(
-        "executions.outcome in {{{}}} AND at least one mutating file_change event",
+        "executions.outcome in {{{}}} AND at least one mutating file_change event \
+         AND at least one recorded model call, every one reconstructing \
+         digest-verified (Reconstruction::is_verified)",
         ACCEPTED_OUTCOMES.join(", ")
     );
     if require_verdict {
@@ -169,6 +199,8 @@ pub enum DatasetCmd {
 /// Every field is always present — no `skip_serializing_if` anywhere — so
 /// each line of the dataset carries the same keys and a consumer never has to
 /// distinguish "absent" from "not applicable". Absence is spelled `null`.
+/// (Inside [`RewardLabel`] the pipeline's own wire shape applies; that type
+/// belongs to `stella-pipeline` and is carried verbatim.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetRecord {
     pub schema: u32,
@@ -199,16 +231,50 @@ pub struct DatasetRecord {
     // ---- the trajectory ---------------------------------------------------
     /// The prompt as submitted, before the context engine expanded it.
     pub prompt: String,
+    /// Every model call, in wire order, each with the exact messages it was
+    /// sent — reconstructed from the receipts plane and digest-verified
+    /// before admission (#2083). Never empty: an execution whose transcripts
+    /// do not all verify is excluded by the default filter, not exported
+    /// with a gap here.
+    pub calls: Vec<DatasetCall>,
     /// Every tool invocation, in journal order.
     pub tool_calls: Vec<DatasetToolCall>,
     /// Every mutating file change, in journal order.
     pub changes: Vec<DatasetChange>,
     /// The last verifier verdict, when the turn reached one.
     pub verdict: Option<DatasetVerdict>,
+    /// The training label the settled verdict earned (#1043), computed under
+    /// the workspace's resolved [`RewardPolicy`] (stamped on the label, so
+    /// the scalar is interpretable outside this workspace). `None` when the
+    /// journal holds no verdict at all: there is no proof or ladder evidence
+    /// to derive a label from, and synthesizing a discard under a policy the
+    /// run never saw would claim more than the store knows.
+    pub reward: Option<RewardLabel>,
     /// Whether redaction actually replaced something anywhere in this record.
     /// Recorded so "this was redacted" is a visible fact rather than an
     /// assumption (the `stella_core::redact` posture).
     pub redacted: bool,
+}
+
+/// One model call: who was called, in which role, and exactly what it saw.
+///
+/// The transcript half of the record. Each entry of `prompt_messages` is a
+/// full serialized [`stella_protocol::CompletionMessage`] (role, content,
+/// tool calls with arguments, tool results) rebuilt by
+/// [`stella_store::Store::reconstruct_call`] — so an SFT pair needs no other
+/// source — and admitted only when the reconstruction digest-verifies, so an
+/// unvouched transcript never reaches a dataset silently.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatasetCall {
+    pub turn_instance: u32,
+    pub step: u64,
+    pub call_seq: u64,
+    /// `ModelCallRole` as its wire token ("worker", "verifier", …).
+    pub role: String,
+    pub provider: String,
+    pub model: String,
+    /// The exact messages this call was sent, in wire order.
+    pub prompt_messages: Vec<serde_json::Value>,
 }
 
 /// One tool invocation: what the model asked for and what came back.
@@ -251,8 +317,9 @@ pub struct DatasetChange {
     pub diff_truncated: bool,
 }
 
-/// A verifier verdict, carried raw. No reward scalar is derived from it: nothing
-/// in the tree maps a ladder decision onto one yet (#1043).
+/// A verifier verdict, carried raw beside the label #1043 derives from it
+/// ([`DatasetRecord::reward`]) — so a reader can re-derive a label under
+/// different weights without trusting this export's.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetVerdict {
     pub passed: bool,
@@ -294,7 +361,12 @@ pub struct DatasetFilter {
     pub executions_scanned: u64,
     /// Of those, how many fell inside the `since`/`until` window.
     pub executions_in_window: u64,
-    /// Of those, how many the predicate accepted. Equals `records`.
+    /// Of the executions the outcome-and-change half of the predicate
+    /// accepted, how many were excluded because their transcripts did not
+    /// verify: no recorded model call at all, or some call's reconstruction
+    /// short of [`stella_store::Reconstruction::is_verified`] (#2083).
+    pub executions_transcripts_unverified: u64,
+    /// Of those, how many the whole predicate accepted. Equals `records`.
     pub executions_accepted: u64,
 }
 
@@ -341,8 +413,15 @@ fn run_export(args: &ExportArgs) -> Result<(), String> {
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let store = open_readonly_store(&workspace_root)?;
     let repo = stella_store::identity::TelemetryScope::resolve(&workspace_root).repo_id;
+    // The same resolution the runtime labels traces under (settings `reward`
+    // block, defaults where absent), so a dataset label and a trace label of
+    // the same execution agree — and a refused weight fails here, loudly,
+    // before any record is written under it.
+    let policy = crate::settings::Settings::load(&workspace_root)
+        .and_then(|settings| settings.reward_policy())
+        .map_err(|e| format!("cannot resolve the reward policy: {e}"))?;
 
-    let (records, filter) = extract(&store, &repo, args)?;
+    let (records, filter) = extract(&store, &repo, args, &policy)?;
     let manifest = DatasetManifest {
         schema: DATASET_SCHEMA_VERSION,
         format: args.format.wire().to_string(),
@@ -388,9 +467,11 @@ fn extract(
     store: &Store,
     repo: &str,
     args: &ExportArgs,
+    policy: &RewardPolicy,
 ) -> Result<(Vec<DatasetRecord>, DatasetFilter), String> {
     let mut records: Vec<DatasetRecord> = Vec::new();
-    let (mut scanned, mut in_window) = (0u64, 0u64);
+    let mut scanned = 0u64;
+    let mut counts = ScanCounts::default();
     let mut cursor = 0i64;
     loop {
         let batch = store
@@ -402,7 +483,8 @@ fn extract(
         for execution in &batch {
             cursor = execution.execution_id;
             scanned += 1;
-            let Some(record) = accepted_record(store, execution, repo, args, &mut in_window)?
+            let Some(record) =
+                accepted_record(store, execution, repo, args, policy, &mut counts)?
             else {
                 continue;
             };
@@ -419,10 +501,23 @@ fn extract(
         until: args.until.clone(),
         require_verdict: args.require_verdict,
         executions_scanned: scanned,
-        executions_in_window: in_window,
+        executions_in_window: counts.in_window,
+        executions_transcripts_unverified: counts.transcripts_unverified,
         executions_accepted: records.len() as u64,
     };
     Ok((records, filter))
+}
+
+/// What the fold counts beyond the records it keeps — the manifest's
+/// accounting of the executions each stage of the filter turned away.
+#[derive(Default)]
+struct ScanCounts {
+    /// Executions the `since`/`until` window admitted.
+    in_window: u64,
+    /// Executions the outcome-and-change predicate accepted whose transcripts
+    /// then failed to verify — see
+    /// [`DatasetFilter::executions_transcripts_unverified`].
+    transcripts_unverified: u64,
 }
 
 /// One execution's record, or `None` when the window or the predicate excludes
@@ -432,7 +527,8 @@ fn accepted_record(
     execution: &FinishedExecution,
     repo: &str,
     args: &ExportArgs,
-    in_window: &mut u64,
+    policy: &RewardPolicy,
+    counts: &mut ScanCounts,
 ) -> Result<Option<DatasetRecord>, String> {
     let id = execution.execution_id;
     let Some(summary) = store
@@ -450,7 +546,7 @@ fn accepted_record(
     ) {
         return Ok(None);
     }
-    *in_window += 1;
+    counts.in_window += 1;
 
     let journal = store
         .execution_events(id)
@@ -459,6 +555,19 @@ fn accepted_record(
     if !is_accepted(&execution.outcome, &fold, args.require_verdict) {
         return Ok(None);
     }
+
+    // The transcript half of the predicate, checked only for otherwise-
+    // accepted executions: reconstruction reads the whole receipts plane, and
+    // the count the manifest wants is "accepted but unvouched", not "never
+    // eligible anyway".
+    let receipts = store
+        .recorded_calls(id)
+        .map_err(|e| format!("cannot read receipts for execution {id}: {e}"))?;
+    let Some(calls) = verified_transcripts(store, id, &receipts)? else {
+        counts.transcripts_unverified += 1;
+        return Ok(None);
+    };
+    let reward = reward_label(&fold, receipts.len(), summary.cost_usd, policy);
 
     let record = DatasetRecord {
         schema: DATASET_SCHEMA_VERSION,
@@ -473,12 +582,93 @@ fn accepted_record(
         outcome: execution.outcome.clone(),
         cost_usd: summary.cost_usd,
         prompt: summary.prompt,
+        calls,
         tool_calls: fold.tool_calls,
         changes: fold.changes,
         verdict: fold.verdict,
+        reward,
         redacted: false,
     };
     Ok(Some(redact_after_assembly(&record)?))
+}
+
+/// Every recorded call's exact prompt transcript, digest-verified — or `None`
+/// when this execution cannot vouch for its own: it recorded no model call at
+/// all, or some call's reconstruction fell short of
+/// [`stella_store::Reconstruction::is_verified`]. `None` is an exclusion the
+/// manifest counts, never a silent downgrade to an unverified transcript.
+fn verified_transcripts(
+    store: &Store,
+    execution_id: i64,
+    receipts: &[RecordedCall],
+) -> Result<Option<Vec<DatasetCall>>, String> {
+    if receipts.is_empty() {
+        return Ok(None);
+    }
+    let mut calls = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        let reconstruction = store
+            .reconstruct_call(
+                execution_id,
+                receipt.turn_instance,
+                receipt.step,
+                receipt.call_seq,
+            )
+            .map_err(|e| {
+                format!(
+                    "cannot reconstruct execution {execution_id} turn {} step {} call {}: {e}",
+                    receipt.turn_instance, receipt.step, receipt.call_seq
+                )
+            })?;
+        if !reconstruction.is_verified() {
+            return Ok(None);
+        }
+        let mut prompt_messages = Vec::with_capacity(reconstruction.messages.len());
+        for message in &reconstruction.messages {
+            prompt_messages.push(
+                serde_json::to_value(message)
+                    .map_err(|e| format!("cannot serialize a reconstructed message: {e}"))?,
+            );
+        }
+        calls.push(DatasetCall {
+            turn_instance: receipt.turn_instance,
+            step: receipt.step,
+            call_seq: receipt.call_seq,
+            role: receipt.call_role.clone(),
+            provider: receipt.provider.clone(),
+            model: receipt.model.clone(),
+            prompt_messages,
+        });
+    }
+    Ok(Some(calls))
+}
+
+/// The record's training label, when the journal holds anything to derive one
+/// from.
+///
+/// `None` exactly when no `Verdict` event reached the journal. Everything
+/// else — an abstention, a pre-rung verdict, an invalid policy — labels
+/// through [`stella_pipeline::reward::label`], which marks what it cannot
+/// score rather than dropping it. Steps count every recorded call (every
+/// role, not just the worker's) and revisions the verdicts beyond the
+/// settling one — the same fold `trace.rs` applies, so a dataset label and a
+/// trace label of one execution agree.
+fn reward_label(
+    fold: &JournalFold,
+    steps: usize,
+    cost_usd: f64,
+    policy: &RewardPolicy,
+) -> Option<RewardLabel> {
+    let settlement = fold.settlement?;
+    Some(label(
+        settlement,
+        TrajectoryCost {
+            steps: u32::try_from(steps).unwrap_or(u32::MAX),
+            cost_usd,
+            revisions: fold.verdicts.saturating_sub(1),
+        },
+        policy,
+    ))
 }
 
 /// Half-open `[since, until)` on the timestamp string. Both bounds are
@@ -495,6 +685,13 @@ struct JournalFold {
     changes: Vec<DatasetChange>,
     verdict: Option<DatasetVerdict>,
     turn_instance: u32,
+    /// The last verdict's [`Settlement`] — the one that settled the turn;
+    /// earlier verdicts are the revision rounds counted below.
+    settlement: Option<Settlement>,
+    /// Verdicts the journal holds. `saturating_sub(1)` is the revision count
+    /// the reward's shaping prices (see [`TrajectoryCost::revisions`] for
+    /// what that over-counts and why the direction is safe).
+    verdicts: u32,
 }
 
 fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
@@ -559,6 +756,10 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
                     deterministic: evidence.deterministic,
                     summary: evidence.summary.clone(),
                 });
+                // Overwritten on every verdict so the last one wins: that is
+                // the settlement, and the earlier ones are revision rounds.
+                fold.settlement = Some(Settlement::from_evidence(*passed, evidence));
+                fold.verdicts = fold.verdicts.saturating_add(1);
             }
             _ => {}
         }
@@ -772,13 +973,21 @@ fn report(
         filter.executions_in_window,
     );
     println!("  accepted when: {}", filter.acceptance_predicate);
+    if filter.executions_transcripts_unverified > 0 {
+        println!(
+            "  {} otherwise-accepted turn(s) excluded: transcripts not digest-verified",
+            filter.executions_transcripts_unverified
+        );
+    }
     println!("  {}", dataset_path.display().to_string().cyan());
     println!("  {}", manifest_path.display().to_string().cyan());
     if records.is_empty() {
         println!(
             "\nNothing matched. Turns qualify only once they have settled with a \
-             success outcome AND changed a file; a read-only or aborted turn is \
-             recorded but is not a trajectory to distil from."
+             success outcome, changed a file, AND can prove what each model call \
+             saw (every recorded call reconstructing digest-verified); a \
+             read-only, aborted, or unvouched turn is recorded but is not a \
+             trajectory to distil from."
         );
         return;
     }
