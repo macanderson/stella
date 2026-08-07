@@ -114,42 +114,6 @@ async fn an_authored_witness_arms_the_revision_flip_halt() {
          flipped, not spend the scripted steps beyond it"
     );
 }
-/// A shell double whose every command "passes": the output carries the
-/// trailing exit-0 marker [`crate::flip_halt::exit_status`] parses. What
-/// [`EmptyTools`] can never express — a worker *observing* the tracked test
-/// succeed through a tool result.
-struct PassingShell;
-#[async_trait]
-impl ToolExecutor for PassingShell {
-    fn schemas(&self) -> Vec<ToolSchema> {
-        vec![ToolSchema {
-            name: "bash".into(),
-            description: "run a shell command".into(),
-            input_schema: serde_json::json!({ "type": "object" }),
-            read_only: false,
-            speculation_safe: false,
-        }]
-    }
-    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
-        ToolOutput::Ok {
-            content: "1 passed\n[exit code: 0]".into(),
-        }
-    }
-}
-
-/// A completion that runs `command` through the shell — the observation the
-/// flip halt correlates by `call_id` and scores against the tracked test.
-fn shell_call_result(command: &str) -> CompletionResult {
-    CompletionResult {
-        tool_calls: vec![ToolCall {
-            call_id: format!("call-shell-{command}"),
-            name: "bash".into(),
-            input: serde_json::json!({ "command": command }),
-        }],
-        ..text_result("")
-    }
-}
-
 /// #1793 witness (configured-command side): a revision that observes the
 /// tracked test go fail→pass halts at that step boundary instead of running
 /// on. The provider is scripted with steps BEYOND the flip; consuming them
