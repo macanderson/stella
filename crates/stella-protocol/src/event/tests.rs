@@ -770,6 +770,26 @@ fn task_status_open_vs_terminal() {
     assert!(!TaskStatus::Cancelled.is_open());
 }
 
+/// The research stage's two wire tokens (#1778), pinned in both directions
+/// (invariant 4): the snake_case token is what a recorded stream carries, and
+/// a role addition is one-directional (`ModelCallRole` has no catch-all), so
+/// what this build writes is exactly what a future build must read.
+#[test]
+fn research_stage_and_role_roundtrip_with_snake_case_tokens() {
+    let stage = serde_json::to_string(&StageKind::Research).unwrap();
+    assert_eq!(stage, "\"research\"");
+    assert_eq!(
+        serde_json::from_str::<StageKind>(&stage).unwrap(),
+        StageKind::Research
+    );
+    let role = serde_json::to_string(&ModelCallRole::Research).unwrap();
+    assert_eq!(role, "\"research\"");
+    assert_eq!(
+        serde_json::from_str::<ModelCallRole>(&role).unwrap(),
+        ModelCallRole::Research
+    );
+}
+
 #[test]
 fn stream_json_is_one_line_per_event() {
     let events = [
