@@ -295,6 +295,10 @@ impl<'a> Pipeline<'a> {
             messages,
             final_text: String::new(),
             signals,
+            // Ordinal 1: a resume re-enters exactly one candidate — the fan-out
+            // it may have belonged to died with the process, and only the
+            // checkpointed turn comes back (#1787's per-candidate record).
+            degradation: VerdictDegradation::new(1),
             flip_halt,
             oracle,
             oracle_trace,
