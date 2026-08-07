@@ -624,7 +624,7 @@ fn requeue_front_mirrors_each_front_insert_to_the_deck() {
 fn a_chrome_note_is_marked_as_the_program_speaking() {
     let Inbound::Event {
         agent,
-        event: AgentEvent::Text { delta },
+        event: AgentEvent::Text { text: delta },
     } = chrome_note("conversation cleared".into())
     else {
         panic!("chrome rides the transcript as Text on the lead lane");
@@ -642,7 +642,7 @@ fn a_chrome_note_is_marked_as_the_program_speaking() {
 #[test]
 fn an_already_marked_note_is_not_marked_twice() {
     let Inbound::Event {
-        event: AgentEvent::Text { delta },
+        event: AgentEvent::Text { text: delta },
         ..
     } = chrome_note(format!("{}already mine", stella_tui::NOTICE_MARKER))
     else {

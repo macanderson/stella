@@ -155,7 +155,7 @@ pub fn adapt_reference_stream(jsonl: &str) -> Result<Vec<AgentEvent>, ReferenceA
                     .ok_or(ReferenceAdapterError::UnmappedStage { line, label })?;
                 events.push(AgentEvent::Stage { name });
             }
-            ReferenceEvent::Text { delta } => events.push(AgentEvent::Text { delta }),
+            ReferenceEvent::Text { delta } => events.push(AgentEvent::Text { text: delta }),
             ReferenceEvent::Reasoning { delta } => events.push(AgentEvent::Reasoning { delta }),
             ReferenceEvent::Tool {
                 phase,

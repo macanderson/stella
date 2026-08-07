@@ -24,6 +24,7 @@ impl Pipeline<'_> {
         &self,
         goal: &str,
         frames: &[RecalledFrame],
+        research: &[ResearchFinding],
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<PlannedScope, PipelineError> {
@@ -36,6 +37,7 @@ impl Pipeline<'_> {
                 .plan_stage(
                     goal,
                     frames,
+                    research,
                     &repo_structure,
                     revision.as_deref(),
                     budget,
@@ -83,7 +85,7 @@ impl Pipeline<'_> {
                     // appears with no stated cause, which reads as the
                     // pipeline having restarted itself.
                     self.emit(AgentEvent::Text {
-                        delta: format!(
+                        text: format!(
                             "\n[re-planning ({spent_revisions}/{MAX_SCOPE_REVISIONS}) with your \
                              note: {note}]\n"
                         ),

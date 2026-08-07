@@ -92,7 +92,6 @@
 //!   is why this is a caveat rather than a design; POSIX offers no way to
 //!   close it.
 
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -256,6 +255,7 @@ pub(crate) fn supervise_this_invocation(
     title: &str,
     stdin: &[u8],
     posture: detach::Posture,
+    format: crate::OutputFormat,
 ) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to supervise: {e}"))?;
@@ -286,10 +286,22 @@ pub(crate) fn supervise_this_invocation(
         stdin,
     )?;
     if posture == detach::Posture::Detached {
-        return detach::release(run);
+        return detach::release(run, format);
     }
     run.announce();
-    watch(rt, &registry, run)
+    watch(rt, &registry, run, None).map(|_| ())
+}
+
+/// How a [`watch`] ended, for the caller that set a ceiling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Watched {
+    /// The child ran to its own end — its console and its terminal status
+    /// carry the verdict, whatever it was.
+    Finished,
+    /// The caller's wall-clock ceiling expired first, and the child was
+    /// stopped the way Ctrl-C stops one — asked with `SIGTERM`, given
+    /// [`STOP_GRACE`] to abort at a safe boundary, killed only then.
+    CeilingReached,
 }
 
 /// Stream a just-spawned child to this terminal until it finishes — or until
@@ -301,18 +313,50 @@ pub(crate) fn supervise_this_invocation(
 /// implementation because the interrupt path is the subtle half — Ctrl-C must
 /// reach the child as a stop, and a divergent copy here is how a resumed run
 /// would come to treat it as a detach.
+///
+/// `ceiling` bounds the watch by wall clock, for a caller with more runs
+/// waiting behind this one (the boot sweep, #1921). Expiry stops the child
+/// through [`Supervised::interrupt_and_drain`] — the same graceful discipline
+/// as Ctrl-C, never a bare kill that would land mid-tool (invariant 6) — and
+/// records the stop as deliberate, exactly as the interrupt arm does.
 fn watch(
     rt: tokio::runtime::Runtime,
     registry: &SessionRegistry,
     mut run: Supervised,
-) -> Result<(), String> {
-    match rt.block_on(crate::signals::until_interrupted(run.follow())) {
-        Ok(followed) => {
+    ceiling: Option<Duration>,
+) -> Result<Watched, String> {
+    // `None` means the ceiling expired before the child exited; dropping the
+    // timed-out `follow` future loses nothing, because every byte of
+    // streaming state lives on `run` itself.
+    let bounded = async {
+        match ceiling {
+            None => Some(run.follow().await),
+            Some(limit) => tokio::time::timeout(limit, run.follow()).await.ok(),
+        }
+    };
+    match rt.block_on(crate::signals::until_interrupted(bounded)) {
+        Ok(Some(followed)) => {
             rt.shutdown_timeout(Duration::from_secs(2));
             if let Some(code) = followed? {
                 FORWARDED.store(u16::from(code), std::sync::atomic::Ordering::SeqCst);
             }
-            Ok(())
+            Ok(Watched::Finished)
+        }
+        Ok(None) => {
+            // Reachable only through the race's `Some(limit)` arm.
+            if let Some(limit) = ceiling {
+                eprintln!(
+                    "{} {} hit its {} ceiling; stopping it at a safe boundary",
+                    "⚠".yellow(),
+                    run.id.dimmed(),
+                    boot::describe_ceiling(limit)
+                );
+            }
+            let drained = rt.block_on(run.interrupt_and_drain());
+            mark_stopped(registry, &run.id);
+            rt.shutdown_timeout(Duration::from_secs(2));
+            drained?;
+            Ok(Watched::CeilingReached)
         }
         Err(signal) => {
             // Ctrl-C means stop, here as everywhere else — so the child is
@@ -702,100 +746,6 @@ impl Supervised {
     }
 }
 
-/// A file being read forward as something else appends to it.
-struct Tail {
-    file: std::fs::File,
-    offset: u64,
-}
-
-impl Tail {
-    fn open(path: &Path) -> Result<Self, String> {
-        let file = std::fs::File::open(path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        Ok(Self { file, offset: 0 })
-    }
-
-    // There is deliberately no `seek_to_end` here, for the same reason
-    // `console::Follower` carries no `skip_to_now`: that pair was the only
-    // caller, and #1632 removed it as a defect — seeking past everything
-    // already written threw away the run's shutdown output, which on the
-    // Ctrl-C path is precisely what the person who pressed the key is
-    // waiting to read.
-
-    /// Start `lines` lines back from the end, or at the beginning if the file
-    /// is shorter than that.
-    ///
-    /// Reads the whole file rather than scanning backwards in blocks: a
-    /// console is bounded by one run's output, and a block-wise reverse scan
-    /// is three times the code for a saving nobody can perceive.
-    fn seek_back_lines(&mut self, lines: usize) -> Result<(), String> {
-        let mut all = Vec::new();
-        self.file
-            .read_to_end(&mut all)
-            .map_err(|e| format!("cannot read the console: {e}"))?;
-        let start = all
-            .iter()
-            .enumerate()
-            .rev()
-            .filter(|(_, byte)| **byte == b'\n')
-            // The trailing newline ends the last line rather than starting
-            // one, so it is not a boundary this may stop at.
-            .skip(usize::from(all.last() == Some(&b'\n')))
-            .nth(lines.saturating_sub(1))
-            .map(|(at, _)| at + 1)
-            .unwrap_or(0);
-        self.offset = start as u64;
-        Ok(())
-    }
-
-    /// Copy up to [`PUMP_CHUNK`] bytes appended since the last call to `out`,
-    /// and answer how many that was.
-    ///
-    /// Bounded rather than "everything to EOF": attaching to a run that has
-    /// been writing `stream-json` for a day would otherwise read a console of
-    /// arbitrary size into one allocation before printing a byte of it. The
-    /// callers all loop until a terminal condition, so a partial pump is a
-    /// smaller step, never a lost one — and a nonzero return already means
-    /// "come straight back", so a backlog drains at memory speed.
-    fn pump(&mut self, out: &mut impl Write) -> Result<usize, String> {
-        self.file
-            .seek(SeekFrom::Start(self.offset))
-            .map_err(|e| format!("cannot seek the console: {e}"))?;
-        let mut buf = vec![0u8; PUMP_CHUNK];
-        let read = self
-            .file
-            .read(&mut buf)
-            .map_err(|e| format!("cannot read the console: {e}"))?;
-        if read > 0 {
-            // A closed pipe on the reading side is a routine way to stop
-            // watching (`stella daemon attach … | head`), not an error worth
-            // failing a run over.
-            let _ = out.write_all(&buf[..read]);
-            let _ = out.flush();
-            self.offset += read as u64;
-        }
-        Ok(read)
-    }
-}
-
-/// The most one [`Tail::pump`] moves. Large enough that a normal run is one
-/// read, small enough that a huge console cannot be a huge allocation.
-const PUMP_CHUNK: usize = 64 * 1024;
-
-impl Tail {
-    /// Copy everything appended so far, however many [`PUMP_CHUNK`]s that
-    /// takes.
-    ///
-    /// This is what every *terminal* read must use. A single bounded `pump`
-    /// where the run has just ended shows the first 64KiB of what is left and
-    /// silently drops the rest — and the rest, at that moment, is the run's
-    /// answer.
-    fn drain(&mut self, out: &mut impl Write) -> Result<(), String> {
-        while self.pump(out)? > 0 {}
-        Ok(())
-    }
-}
-
 /// Send `signal` to the whole process group `pgid`.
 ///
 /// The group, not the pid: the child leads a session whose members include
@@ -1033,10 +983,14 @@ pub(crate) fn outcome_status(outcome: Result<(), &crate::failure::CliFailure>) -
 /// committed step boundary (`crate::agent::resume`); completed steps are
 /// already in the checkpointed transcript, so nothing re-runs and nothing is
 /// double-applied.
+///
+/// `ceiling` is the boot sweep's wall-clock bound (#1921); a hand-run resume
+/// passes `None` and streams for as long as the turn takes.
 pub(crate) fn resume_supervised(
     rt: tokio::runtime::Runtime,
     id: Option<&str>,
-) -> Result<(), String> {
+    ceiling: Option<Duration>,
+) -> Result<Watched, String> {
     let registry = SessionRegistry::open_default();
     let record = resolve(&registry, id)?;
     let sidecar = registry.sidecar_dir(&record.id);
@@ -1084,19 +1038,20 @@ pub(crate) fn resume_supervised(
         id.dimmed(),
         checkpoint.step
     );
-    watch(rt, &registry, run)
+    watch(rt, &registry, run, ceiling)
 }
 
 /// `stella daemon resume-all` — the boot-time sweep (#1627).
 ///
 /// Thin on purpose: the decision about *which* runs a boot continues, and the
-/// bound that stops it continuing them forever, live in [`boot`] where they
-/// are pure enough to witness.
-pub(crate) fn resume_all<F>(dry_run: bool, runtime: F) -> Result<(), String>
+/// bounds that stop it continuing them forever — the attempt ledger and the
+/// per-run wall-clock `ceiling` (#1921) — live in [`boot`] where they are
+/// pure enough to witness.
+pub(crate) fn resume_all<F>(dry_run: bool, ceiling: Duration, runtime: F) -> Result<(), String>
 where
     F: FnMut() -> Result<tokio::runtime::Runtime, String>,
 {
-    boot::resume_all(dry_run, runtime)
+    boot::resume_all(dry_run, ceiling, runtime)
 }
 
 /// The resume point `record` left behind, decoded — or the precise reason
@@ -1426,8 +1381,8 @@ fn logs(registry: &SessionRegistry, id: Option<&str>, lines: usize) -> Result<()
     )? {
         return Ok(());
     }
-    let mut out = Tail::open(&sidecar.join(supervised::STDOUT_LOG))?;
-    let mut err = Tail::open(&sidecar.join(supervised::STDERR_LOG))?;
+    let mut out = console::Tail::open(&sidecar.join(supervised::STDOUT_LOG))?;
+    let mut err = console::Tail::open(&sidecar.join(supervised::STDERR_LOG))?;
     out.seek_back_lines(lines)?;
     err.seek_back_lines(lines)?;
     out.drain(&mut std::io::stdout())?;

@@ -285,6 +285,7 @@ fn all_stage_kinds() -> Vec<StageKind> {
     vec![
         Triage,
         ContextRecall,
+        Research,
         Plan,
         ScopeReview,
         Witness,
@@ -315,6 +316,7 @@ fn all_model_call_roles() -> Vec<ModelCallRole> {
     vec![
         Unknown,
         Triage,
+        Research,
         Plan,
         PlanRepair,
         WitnessAuthor,
@@ -437,6 +439,10 @@ fn all_proof_steps() -> Vec<ProofStep> {
             runs_required: Some(3),
             seed: Some(7741),
         },
+        ProofStep::VerdictDegraded {
+            candidate: 2,
+            reason: "the verifier call failed or timed out".into(),
+        },
     ]
 }
 
@@ -497,10 +503,10 @@ fn tool_call() -> ToolCall {
 fn sample_events() -> Vec<AgentEvent> {
     let mut events = vec![
         AgentEvent::Text {
-            delta: "the answer".into(),
+            text: "the answer".into(),
         },
         AgentEvent::TextDelta {
-            text: "the ".into(),
+            delta: "the ".into(),
         },
         AgentEvent::Reasoning {
             delta: "considering".into(),

@@ -27,7 +27,7 @@ fn model_with_subagent() -> WorkspaceModel {
     m.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
         event: AgentEvent::Text {
-            delta: "the transcript body".into(),
+            text: "the transcript body".into(),
         },
     });
     m

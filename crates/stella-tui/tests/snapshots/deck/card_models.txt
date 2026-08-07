@@ -17,17 +17,17 @@
      returns: watch CI + open PR → lead inbox
 ┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────┌ plan review ───────────────────────────────────────────────────────────┐──────────────────────────────────────────┘
-┌ transcript · 21 lines · following ───────│Refactor the automations store into a shared workspace package          │──┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│                                          │                                                                        │  ││Refactor the automations store into a…│
-│  Planning the automations cluster: list, │ ○  1. extract types                                                    │  ││○ 1. extract types                    │
-│                                          │ ○  2. move hooks                                                       │  ││○ 2. move hooks                       │
-│☰  plan  4/7  ·  Wire the triggers API    │ ○  3. update 9 imports                                                 │  ││○ 3. update 9 imports                 │
-│                                          │┌ models  resolved routing ───────────────────────────────── esc close ┐│  ││                                      │
-│── WITNESS ───────────────────────────────││session   glm-5.2                                                     ││──││                                      │
-│                                          ││auto      model off · effort on · thinking off                        ││  ││                                      │
-│── EXECUTE ───────────────────────────────││                                                                      ││──││                                      │
-│                                          └│lead      zai/glm-5.2-air                                             │┘  ││                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ transcript · 21 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
+│                                                                                                                      ││Refactor the automations store into a…│
+│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││○ 1. extract types                    │
+│                                                                                                                      ││○ 2. move hooks                       │
+│☰  plan  4/7  ·  Wire the triggers API                                                                                ││○ 3. update 9 imports                 │
+│                                           ┌ models  resolved routing ───────────────────────────────── esc close ┐   ││                                      │
+│── WITNESS ────────────────────────────────│session   glm-5.2                                                     │───││                                      │
+│                                           │auto      model off · effort on · thinking off                        │   ││                                      │
+│── EXECUTE ────────────────────────────────│                                                                      │───││                                      │
+│                                           │lead      zai/glm-5.2-air                                             │   ││                                      │
 │● read_file    apps/app/automations/page.ts│          medium · thinking on · from default_model                   │   │└────────────────────── /plan reads it ┘
 │  ⎿ 312 lines                              │think     z-ai/glm-5.2                                    unassigned  │2ms│┌ DONE VERIFICATION ───────────────────┐
 │                                           │          low · thinking off · from agents.triage.model               │   ││○ warrant  pending                    │

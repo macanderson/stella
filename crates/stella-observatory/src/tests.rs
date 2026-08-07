@@ -161,7 +161,8 @@ fn seeded_workspace() -> TempDir {
              (1, 2, 'reasoning', '{"type":"reasoning","delta":"plan the edit"}'),
              (1, 3, 'tool_start', '{"type":"tool_start","call":{"call_id":"c1","name":"read_file","input":{"path":"src/lib.rs"}}}'),
              (1, 4, 'tool_result', '{"type":"tool_result","call_id":"c1","output":{"ok":{"content":"fn a() {}"}},"duration_ms":12,"speculated":false}'),
-             (1, 5, 'text', '{"type":"text","delta":"added the function"}');"#,
+             (1, 5, 'text', '{"type":"text","delta":"added the function"}'),
+             (1, 6, 'text', '{"type":"text","text":"and named it well"}');"#,
     )
     .unwrap();
     // The context receipts (#1475), also in their own batch: one recorded
@@ -381,7 +382,14 @@ fn execution_journal_replays_transcript_without_deltas() {
         .collect();
     assert_eq!(
         types,
-        ["stage", "reasoning", "tool_start", "tool_result", "text"],
+        [
+            "stage",
+            "reasoning",
+            "tool_start",
+            "tool_result",
+            "text",
+            "text"
+        ],
         "seq order, text_delta excluded"
     );
     assert_eq!(v[0]["label"], "build");
@@ -391,8 +399,11 @@ fn execution_journal_replays_transcript_without_deltas() {
     assert_eq!(v[3]["ok"], true);
     assert_eq!(v[3]["body"], "fn a() {}");
     assert_eq!(v[3]["duration_ms"], 12);
+    // Seq 5 is the pre-#1886 spelling (`delta`), seq 6 the current one
+    // (`text`) — the transcript reads both generations of journal row.
     assert_eq!(v[4]["body"], "added the function");
     assert_eq!(v[4]["truncated"], false);
+    assert_eq!(v[5]["body"], "and named it well");
     // No execution 2 events were seeded — an empty transcript, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=2");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
@@ -406,8 +417,8 @@ fn execution_journal_replays_transcript_without_deltas() {
 #[test]
 fn execution_journal_after_seq_returns_only_newer_rows() {
     let ws = seeded_workspace();
-    // Seq 3 is the tool_start row; only tool_result (4) and text (5) — both
-    // > 3 — should come back.
+    // Seq 3 is the tool_start row; only tool_result (4) and the two text
+    // rows (5, 6) — all > 3 — should come back.
     let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=3");
     let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let seqs: Vec<i64> = v
@@ -416,7 +427,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
         .iter()
         .map(|e| e["seq"].as_i64().unwrap())
         .collect();
-    assert_eq!(seqs, [4, 5], "only rows with seq > 3 come back");
+    assert_eq!(seqs, [4, 5, 6], "only rows with seq > 3 come back");
     // A cursor past every seeded row degrades to empty, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=1&after_seq=99");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
@@ -427,7 +438,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
     let v: serde_json::Value = serde_json::from_slice(&all.body).unwrap();
     assert_eq!(
         v.as_array().unwrap().len(),
-        5,
+        6,
         "seq 0 survives after_seq=-1"
     );
 }

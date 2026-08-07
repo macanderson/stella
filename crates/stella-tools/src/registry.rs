@@ -345,6 +345,10 @@ pub struct StorageIndex {
 /// once above the whole session tool stack.
 #[derive(Clone, Default)]
 pub struct RegistryOptions {
+    /// Where the issue backend comes from. Defaults to
+    /// [`crate::IssueBackendSource::None`], so construction spawns no process
+    /// and reads no environment until a caller opts in (#1596).
+    pub issue_backend: crate::IssueBackendSource,
     pub media_spend_gate: Option<Arc<dyn stella_media::MediaSpendGate>>,
     pub media_operation_ids: Option<Arc<dyn crate::media::MediaOperationIdSource>>,
     pub media_operation_journal: Option<Arc<dyn stella_media::MediaOperationJournal>>,
@@ -353,13 +357,11 @@ pub struct RegistryOptions {
 }
 
 impl ToolRegistry {
-    /// Construct with auto-detected optional backends.
+    /// Construct with the issue backend `options` declares (or probes for)
+    /// and an auto-detected media backend.
     pub fn new(root: PathBuf, options: RegistryOptions) -> Self {
-        let issue_backend = if crate::media::process_free(options.media_host_data_isolation) {
-            None
-        } else {
-            crate::issues::detect_issue_backend()
-        };
+        let process_free = crate::media::process_free(options.media_host_data_isolation);
+        let issue_backend = options.issue_backend.resolve(process_free);
         Self::with_backends_and_options(
             root,
             issue_backend,
@@ -368,15 +370,12 @@ impl ToolRegistry {
         )
     }
 
-    /// [`ToolRegistry::new`] with the process-spawning issue-backend probe
+    /// [`ToolRegistry::new`] with any process-spawning issue-backend probe
     /// routed through the blocking pool (#64) — the constructor every async
     /// session driver uses.
     pub async fn new_detected(root: PathBuf, options: RegistryOptions) -> Self {
-        let issue_backend = if crate::media::process_free(options.media_host_data_isolation) {
-            None
-        } else {
-            crate::issues::detect_issue_backend_async().await
-        };
+        let process_free = crate::media::process_free(options.media_host_data_isolation);
+        let issue_backend = options.issue_backend.resolve_async(process_free).await;
         Self::with_backends_and_options(
             root,
             issue_backend,

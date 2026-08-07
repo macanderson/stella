@@ -490,7 +490,7 @@ mod envelope_pin {
             7,
             ServerFrame::Event {
                 event: stella_protocol::AgentEvent::TextDelta {
-                    text: "hi".to_string(),
+                    delta: "hi".to_string(),
                 },
             },
         );

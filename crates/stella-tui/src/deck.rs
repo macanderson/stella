@@ -403,6 +403,7 @@ impl PipelineRole {
             // and imply three configured models where there is one.
             R::Plan
             | R::PlanRepair
+            | R::Research
             | R::WitnessAuthor
             | R::WitnessRepair
             | R::Worker
@@ -1272,10 +1273,10 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             (TraceKind::Other, format!("unrecognized `{event_type}`"))
         }
         AgentEvent::Stage { name } => (TraceKind::Stage, format!("{name:?}").to_lowercase()),
-        AgentEvent::Text { delta } => (TraceKind::Text, snip(delta)),
+        AgentEvent::Text { text } => (TraceKind::Text, snip(text)),
         // Mapped for completeness; `apply_event` never traces deltas (one
         // row per token would churn the capped ring — see the guard there).
-        AgentEvent::TextDelta { text } => (TraceKind::Text, snip(text)),
+        AgentEvent::TextDelta { delta } => (TraceKind::Text, snip(delta)),
         AgentEvent::Reasoning { delta } => (TraceKind::Reasoning, snip(delta)),
         AgentEvent::ToolStart { call } => (TraceKind::Tool, format!("{}()", call.name)),
         AgentEvent::SpeculationDiscarded { name, reason, .. } => {

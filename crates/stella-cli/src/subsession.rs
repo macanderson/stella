@@ -775,7 +775,7 @@ async fn run_worker(
         let _ = in_tx.send(Inbound::Event {
             agent: spec.lane.clone(),
             event: AgentEvent::Text {
-                delta: format!(
+                text: format!(
                     "note: {} task_assign request(s) were not dispatched — delegation \
                      runs from the lead session only",
                     stranded.len()
@@ -863,7 +863,7 @@ pub(crate) fn drain_queue(
         let _ = in_tx.send(Inbound::ShellEvent {
             agent: LEAD.to_string(),
             event: AgentEvent::Text {
-                delta: spawn_notice(&lane, &text),
+                text: spawn_notice(&lane, &text),
             },
         });
         let (stop_tx, stop_rx) = oneshot::channel();

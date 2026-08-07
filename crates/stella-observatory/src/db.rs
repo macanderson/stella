@@ -487,6 +487,68 @@ impl Observatory {
         crate::sessions::session_detail(self.store().as_ref(), &self.workspace_root, id)
     }
 
+    /// One turn's precomputed workspace diff (#1870), read from the
+    /// `session_turn_diffs` projection.
+    ///
+    /// The real thing lives in the work journal's bare git repo
+    /// (`~/.stella/work/<workspace-id>.git`), and the observatory
+    /// deliberately never opens it — reading a repo means spawning `git` or
+    /// linking an object reader, and this crate reads artifacts and spawns
+    /// nothing. The session that owns the journal shapes these hunks at turn
+    /// end instead (`stella-cli`'s `turn_diff` module records that boundary
+    /// ruling), so this is a plain projection read: a missing table (store
+    /// older than v21) and a turn that recorded nothing both answer
+    /// `found: false` with the full key set.
+    pub fn session_turn_diff(&self, id: &str, turn: i64) -> Result<Value, DbError> {
+        let absent = json!({
+            "session": id,
+            "turn": turn,
+            "found": false,
+            "execution_id": Value::Null,
+            "recorded_at": Value::Null,
+            "files": [],
+            "files_truncated": false,
+        });
+        let Some(conn) = self.store() else {
+            return Ok(absent);
+        };
+        let row = conn.query_row(
+            "SELECT execution_id, recorded_at, files FROM session_turn_diffs
+             WHERE session_id = ?1 AND turn = ?2",
+            rusqlite::params![id, turn],
+            |r| {
+                Ok((
+                    r.get::<_, Option<i64>>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        );
+        let (execution_id, recorded_at, files) = match row {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(absent),
+            Err(e) if is_missing_schema(&e) => return Ok(absent),
+            Err(e) => return Err(e.into()),
+        };
+        // The stored payload is the writer's JSON, verbatim. A row whose
+        // bytes no longer parse (a hand-edited store) degrades to the empty
+        // shape rather than failing the route — same policy as a transcript
+        // payload that no longer parses.
+        let payload: Value = serde_json::from_str(&files).unwrap_or(Value::Null);
+        Ok(json!({
+            "session": id,
+            "turn": turn,
+            "found": true,
+            "execution_id": execution_id,
+            "recorded_at": recorded_at,
+            "files": payload.get("files").cloned().unwrap_or_else(|| json!([])),
+            "files_truncated": payload
+                .get("files_truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }))
+    }
+
     /// One execution's behavioural tendencies (retries, loop detections,
     /// compactions, policy verdicts), folded from its journal slice — the
     /// fourth sanctioned `events` read; see `sessions::execution_tendencies`.
@@ -1110,7 +1172,8 @@ fn recall_timings(conn: &Connection, execution_id: i64) -> Result<Vec<Value>, Db
 /// Shape one raw `events` row into the transcript entry the drawer renders.
 ///
 /// The payload is the internally-tagged `AgentEvent` JSON the store
-/// persisted (`{"type":"text","delta":…}`). Only the fields the transcript
+/// persisted (`{"type":"text","text":…}`; rows written before #1886 spell
+/// the field `delta`, so `text` reads both). Only the fields the transcript
 /// needs are lifted out, keyed by the row's own `event_type` column. A
 /// payload that no longer parses (a hand-edited store, a variant this binary
 /// predates) keeps its seq/type header with no body rather than erroring —
@@ -1134,7 +1197,12 @@ fn journal_entry(row: Value, full: bool) -> Value {
             out["label"] = payload["name"].clone();
         }
         "text" | "reasoning" => {
-            set_journal_body(&mut out, payload["delta"].as_str().unwrap_or(""), full);
+            // `text` carries `text` since #1886, `delta` before; `reasoning`
+            // still carries `delta`. One bilingual read covers all three.
+            let body = payload["text"]
+                .as_str()
+                .or_else(|| payload["delta"].as_str());
+            set_journal_body(&mut out, body.unwrap_or(""), full);
         }
         "tool_start" => {
             out["call_id"] = payload["call"]["call_id"].clone();
@@ -1212,7 +1280,7 @@ struct ToolAgg {
 }
 
 /// Open a SQLite file strictly read-only; `None` when it doesn't exist.
-fn open_read_only(path: &Path) -> Option<Connection> {
+pub(crate) fn open_read_only(path: &Path) -> Option<Connection> {
     if !path.exists() {
         return None;
     }
@@ -1230,7 +1298,7 @@ fn open_read_only(path: &Path) -> Option<Connection> {
 
 /// Run a query collecting every row; a missing table degrades to `[]` so a
 /// dashboard section renders empty instead of failing the whole page.
-fn collect_rows<F>(conn: &Connection, sql: &str, map: F) -> Result<Vec<Value>, DbError>
+pub(crate) fn collect_rows<F>(conn: &Connection, sql: &str, map: F) -> Result<Vec<Value>, DbError>
 where
     F: Fn(&rusqlite::Row<'_>) -> rusqlite::Result<Value>,
 {

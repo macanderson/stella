@@ -329,6 +329,32 @@ pub fn statline_items(model: &WorkspaceModel, ui: &DeckUi) -> Vec<StatItem> {
         ));
     }
 
+    // REVIEW: the run is halted on a human and only SESSION shows the dialog
+    // (#1679). Priority 9 — above every other cell including unread mail,
+    // because this is the one state where nothing at all progresses until it
+    // is answered, and the statline clips rather than wraps.
+    //
+    // The value names WHERE, not just what: a reviewer on TRACES learns the
+    // decision is one tab away rather than merely that something is pending.
+    let reviews = crate::views::scope_dialog::pending_anywhere(model, ui);
+    if reviews > 0 {
+        items.push(StatItem::new(
+            "review",
+            "REVIEW",
+            9,
+            vec![Span::styled(
+                if reviews > 1 {
+                    format!("⚑ {reviews} · ⇥ SESSION")
+                } else {
+                    "⚑ ⇥ SESSION".to_string()
+                },
+                Style::new()
+                    .fg(theme::WARNING_BRIGHT)
+                    .add_modifier(Modifier::BOLD),
+            )],
+        ));
+    }
+
     // INBOX: persist-until-read notifications. The badge is the always-on
     // surface; `/inbox` opens the overlay that clears it.
     let unread = ui.notifications.iter().filter(|n| !n.read).count();
@@ -426,6 +452,7 @@ fn stage_label_upper(stage: Option<stella_protocol::StageKind>) -> &'static str 
         None => "IDLE",
         Some(S::Triage) => "TRIAGE",
         Some(S::ContextRecall) => "CONTEXT RECALL",
+        Some(S::Research) => "RESEARCH",
         Some(S::Plan) => "PLAN",
         Some(S::ScopeReview) => "SCOPE REVIEW",
         Some(S::Witness) => "WITNESS",

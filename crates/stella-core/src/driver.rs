@@ -1097,10 +1097,15 @@ impl<'a> Engine<'a> {
         // this very step (#554).
         let revision = state.memos.revision;
         snapshot_result_identities(&state.messages, &mut state.memos.identities, revision);
+        // Latched, not recomputed per step (#1841): compaction and the
+        // manifest below must compare against the same number, and a budget
+        // that moves mid-turn defeats compaction's own hysteresis.
+        let fresh = self.effective_compaction_budget(state.calibration_model.as_deref());
+        let sized = state.latch_effective_budget(fresh);
         let pass = self
             .run_compaction_pass(
                 &mut state.messages,
-                state.calibration_model.as_deref(),
+                sized,
                 &mut state.budget,
                 &mut state.memos.health,
                 state.step,
@@ -1111,13 +1116,10 @@ impl<'a> Engine<'a> {
         if pass.rewrote {
             state.mark_transcript_rewritten();
         }
-        // The manifest reports the budget compaction just compared against.
-        let (effective_budget, calibration_factor) =
-            self.effective_compaction_budget(state.calibration_model.as_deref());
-        state
-            .memos
-            .receipts
-            .set_effective_budget(effective_budget, calibration_factor);
+        // The manifest reports the budget compaction just compared against —
+        // now the same latched value, not a second computation that happened
+        // to agree.
+        state.memos.receipts.set_effective_budget(sized.0, sized.1);
         // Set immediately after the pass that may have rewritten the
         // transcript, so the ledger's digest memo cannot serve a stale block.
         let revision = state.memos.revision;
@@ -1312,13 +1314,11 @@ impl<'a> Engine<'a> {
     /// bounds how far either way a noisy sample can move this.
     fn effective_compaction_budget(&self, calibration_model: Option<&str>) -> (u64, f64) {
         match self.calibration {
-            Some(calibration) => {
-                let factor = calibration.factor(calibration_model);
-                (
-                    (self.config.compaction_budget_tokens as f64 / factor) as u64,
-                    factor,
-                )
-            }
+            // Solves for the conversation size the budget allows, subtracting
+            // the fitted per-request overhead ONCE rather than folding it into
+            // a factor that then scales the whole budget (#1841).
+            Some(calibration) => calibration
+                .effective_budget(calibration_model, self.config.compaction_budget_tokens),
             None => (self.config.compaction_budget_tokens, 1.0),
         }
     }
@@ -1334,13 +1334,13 @@ impl<'a> Engine<'a> {
     async fn run_compaction_pass(
         &self,
         messages: &mut Vec<CompletionMessage>,
-        calibration_model: Option<&str>,
+        sized: (u64, f64),
         budget: &mut BudgetGuard,
         health: &mut SummarizerHealth,
         step: usize,
         events: &EventSender,
     ) -> CompactionPass {
-        let (compaction_budget, factor) = self.effective_compaction_budget(calibration_model);
+        let (compaction_budget, factor) = sized;
         // Whether anything was rewritten IN PLACE, decided at the mutation sites
         // below and reported through a `#[must_use]` return.
         let mut rewrote = false;
@@ -2112,7 +2112,7 @@ impl<'a> Engine<'a> {
         // answer and must not stream a blank `Text` event.
         if !result.text.trim().is_empty() {
             let _ = events.send(AgentEvent::Text {
-                delta: result.text.clone(),
+                text: result.text.clone(),
             });
         }
         messages.push(CompletionMessage {
@@ -2205,7 +2205,7 @@ impl<'a> Engine<'a> {
         // then abort as "no text" — events and history stay consistent.
         if !result.text.trim().is_empty() {
             let _ = events.send(AgentEvent::Text {
-                delta: result.text.clone(),
+                text: result.text.clone(),
             });
         }
 
@@ -2235,7 +2235,7 @@ impl<'a> Engine<'a> {
                     ContinuationPlan::Continue(plan) => {
                         *length_continuations += 1;
                         let (note, appended) = plan.into_parts();
-                        let _ = events.send(AgentEvent::Text { delta: note });
+                        let _ = events.send(AgentEvent::Text { text: note });
                         messages.extend(appended);
                         return None;
                     }
@@ -2273,7 +2273,7 @@ impl<'a> Engine<'a> {
             // success past this point.
             if result.finish_reason == Some(FinishReason::Length) {
                 let _ = events.send(AgentEvent::Text {
-                    delta: if out_of_time {
+                    text: if out_of_time {
                         // Names the deadline, not the token limit, because the
                         // token limit is what happened and the deadline is why
                         // nothing followed it. A reader who sees only "output

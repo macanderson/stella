@@ -632,7 +632,7 @@ mod tests {
                 id,
                 0,
                 &AgentEvent::Text {
-                    delta: "recoverable transcript".into(),
+                    text: "recoverable transcript".into(),
                 },
             )
             .expect("event");
@@ -760,7 +760,7 @@ mod tests {
                         id,
                         seq,
                         &AgentEvent::Text {
-                            delta: format!("{seq} {}", "padding ".repeat(24)),
+                            text: format!("{seq} {}", "padding ".repeat(24)),
                         },
                     )
                     .expect("event");

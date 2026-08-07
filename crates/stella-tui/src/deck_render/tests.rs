@@ -23,7 +23,7 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
     model.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
         event: AgentEvent::Text {
-            delta: "Found the root cause.".into(),
+            text: "Found the root cause.".into(),
         },
     });
 
@@ -158,7 +158,7 @@ fn trace_strip_shows_a_rule_and_the_newest_trace_entry() {
     model.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
         event: AgentEvent::Text {
-            delta: "Found the root cause.".into(),
+            text: "Found the root cause.".into(),
         },
     });
     let area = Rect::new(0, 0, 60, 2);

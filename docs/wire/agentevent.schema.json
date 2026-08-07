@@ -800,6 +800,11 @@
           "type": "string"
         },
         {
+          "const": "research",
+          "description": "A read-only research sub-agent answering one of triage's pre-plan\nquestions (#1778).",
+          "type": "string"
+        },
+        {
           "const": "plan",
           "description": "Authoring the ordered plan.",
           "type": "string"
@@ -954,7 +959,7 @@
       ]
     },
     "ProofStep": {
-      "description": "One step of the proof a turn builds for its own work, in the order the\npipeline makes the observation. Carried by [`AgentEvent::Proof`].\n\nAdditive in one direction only: an older reader that does not know the\n`proof` type tag preserves the whole event via [`AgentEvent::Unknown`],\nbut a reader that knows `Proof` and meets a future `kind` fails the whole\nevent — this nested enum is closed, with no `Unknown` step (see the\nmodule docs on nested vocabularies).",
+      "description": "One step of the proof a turn builds for its own work, in the order the\npipeline makes the observation. Carried by [`crate::event::AgentEvent::Proof`].\n\nAdditive in one direction only: an older reader that does not know the\n`proof` type tag preserves the whole event via\n[`crate::event::AgentEvent::Unknown`], but a reader that knows `Proof` and\nmeets a future `kind` fails the whole event — this nested enum is closed,\nwith no `Unknown` step (see [`crate::event`]'s module docs on nested\nvocabularies).",
       "oneOf": [
         {
           "description": "What assurance this turn is going to buy, stated by triage **before**\nany of it happens.\n\nEmitted first, and the reason the rail can be honest at all. Every\nother step reports something that *did* happen, so a turn where the\nanswer is \"we decided not to\" produced no steps and left the surface\nwith nothing to say — which is exactly the case that dominates in\npractice. A declared plan turns that silence into a statement: the\nwitness row reads \"waived by triage\" from the first second of the\nturn instead of implying a test is still coming.",
@@ -1122,6 +1127,31 @@
             "tree"
           ],
           "type": "object"
+        },
+        {
+          "description": "This candidate's model verdict degraded to the deterministic heuristic\n([`crate::LadderRung::HeuristicFallback`]): the verifier role was\nunresolvable, its response did not follow the verdict protocol, or the\ncall failed outright.\n\nEmitted once per candidate, keyed by ordinal, because the once-per-run\nprose warning cannot say *which* of a best-of-N fan-out's candidates\nwere judged by the heuristic — N candidates degrading used to leave one\ncaveat and no record (#1787). The ladder rung records *that* a round\ndegraded; this step records *whose* verdict and why.",
+          "properties": {
+            "candidate": {
+              "description": "Which candidate degraded (1-based, [`ProofStep::Oracle::run`]'s\nconvention).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "verdict_degraded",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The stated reason a model verdict could not be rendered.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "candidate",
+            "reason"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -1274,6 +1304,11 @@
         {
           "const": "context_recall",
           "description": "Context recall: the frames the context plane put in front of the model\nbefore it planned anything.",
+          "type": "string"
+        },
+        {
+          "const": "research",
+          "description": "Pre-plan research: triage named questions, and parallel read-only\nsub-agents answer them so the planner names files it has evidence for\nrather than guesses (#1778). Skipped whenever triage named none.",
           "type": "string"
         },
         {
@@ -1662,9 +1697,9 @@
       "type": "object"
     },
     {
-      "description": "The step's answer text, in full — the authoritative, durable record.\nThe field name `delta` is wire-frozen legacy and does NOT mean a\nfragment: the live fragments are [`AgentEvent::TextDelta`], which the\njournal deliberately drops. Consumers must REPLACE any accumulated\npreview with this value, never append it to one.",
+      "description": "The step's answer text, in full — the authoritative, durable record.\nNot a fragment, despite the live preview sibling\n[`AgentEvent::TextDelta`]: consumers must REPLACE any accumulated\npreview with this value, never append it to one.\n\nWire history (#1886): this field was spelled `delta` (and\n`text_delta`'s payload was spelled `text` — each variant carried the\nother's natural name). Serialization writes the self-describing name;\nthe alias keeps every recorded stream replaying. Raw-JSONL readers\nmust stay bilingual the same way: `text` first, legacy `delta` back.",
       "properties": {
-        "delta": {
+        "text": {
           "type": "string"
         },
         "type": {
@@ -1674,14 +1709,14 @@
       },
       "required": [
         "type",
-        "delta"
+        "text"
       ],
       "type": "object"
     },
     {
-      "description": "One in-order fragment of the answer text, emitted live while the\nmodel call streams. Strictly a best-effort preview: the step's\nfollowing `Text` event carries the full text and is authoritative —\nconsumers must REPLACE any accumulated deltas with it, never merge\n(a retried model call re-streams its deltas from the start, so the\naccumulation can be garbled; there is no reset marker). Additive to\nthe stream-json wire contract: consumers must tolerate `text_delta`\nlines appearing between events, and persistence layers may drop them\n(the `Text` event is the durable record).",
+      "description": "One in-order fragment of the answer text, emitted live while the\nmodel call streams. Strictly a best-effort preview: the step's\nfollowing `Text` event carries the full text and is authoritative —\nconsumers must REPLACE any accumulated deltas with it, never merge\n(a retried model call re-streams its deltas from the start, so the\naccumulation can be garbled; there is no reset marker). Additive to\nthe stream-json wire contract: consumers must tolerate `text_delta`\nlines appearing between events, and persistence layers may drop them\n(the `Text` event is the durable record). Wire history: `delta` was\nspelled `text` before #1886 — the alias accepts both; see [`AgentEvent::Text`].",
       "properties": {
-        "text": {
+        "delta": {
           "type": "string"
         },
         "type": {
@@ -1691,7 +1726,7 @@
       },
       "required": [
         "type",
-        "text"
+        "delta"
       ],
       "type": "object"
     },

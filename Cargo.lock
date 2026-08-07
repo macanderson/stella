@@ -3045,7 +3045,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-cli"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "clap",
@@ -3092,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3108,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3126,7 +3126,7 @@ dependencies = [
 
 [[package]]
 name = "stella-diag"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "proptest",
  "serde",
@@ -3137,11 +3137,11 @@ dependencies = [
 
 [[package]]
 name = "stella-diff"
-version = "0.6.127"
+version = "0.6.130"
 
 [[package]]
 name = "stella-engine"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "serde",
@@ -3154,7 +3154,7 @@ dependencies = [
 
 [[package]]
 name = "stella-fleet"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3173,7 +3173,7 @@ dependencies = [
 
 [[package]]
 name = "stella-graph"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "contextgraph-types",
  "notify",
@@ -3200,11 +3200,11 @@ dependencies = [
 
 [[package]]
 name = "stella-home"
-version = "0.6.127"
+version = "0.6.130"
 
 [[package]]
 name = "stella-mcp"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3226,7 +3226,7 @@ dependencies = [
 
 [[package]]
 name = "stella-media"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3248,7 +3248,7 @@ dependencies = [
 
 [[package]]
 name = "stella-model"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3270,12 +3270,13 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "libc",
  "rusqlite",
  "serde_json",
  "sha2 0.11.0",
+ "stella-context",
  "stella-core",
  "stella-diff",
  "stella-home",
@@ -3289,14 +3290,14 @@ dependencies = [
 
 [[package]]
 name = "stella-parity"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "stella-serve",
 ]
 
 [[package]]
 name = "stella-pipeline"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3313,7 +3314,7 @@ dependencies = [
 
 [[package]]
 name = "stella-protocol"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "schemars",
@@ -3325,7 +3326,7 @@ dependencies = [
 
 [[package]]
 name = "stella-runtime"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "serde",
@@ -3346,7 +3347,7 @@ dependencies = [
 
 [[package]]
 name = "stella-serve"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3365,7 +3366,7 @@ dependencies = [
 
 [[package]]
 name = "stella-store"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "base64 0.23.0",
  "libc",
@@ -3381,7 +3382,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tools"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3409,7 +3410,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tui"
-version = "0.6.127"
+version = "0.6.130"
 dependencies = [
  "arboard",
  "crossterm",

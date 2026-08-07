@@ -1022,7 +1022,7 @@ mod stream_tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
         let _ = events.send(AgentEvent::Text {
-            delta: "let me read the file".into(),
+            text: "let me read the file".into(),
         });
         let _ = events.send(AgentEvent::ToolStart { call: call.clone() });
         let _ = events.send(AgentEvent::ToolResult {

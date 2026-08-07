@@ -121,7 +121,7 @@ async fn main() -> std::io::Result<()> {
                         let _ = react_tx.send(Inbound::Event {
                             agent: agent.clone(),
                             event: AgentEvent::Text {
-                                delta: format!("scope decision: {decision:?}\n"),
+                                text: format!("scope decision: {decision:?}\n"),
                             },
                         });
                         // Any non-ScopeReview stage clears the pending gate;
