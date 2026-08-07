@@ -12,6 +12,12 @@
 
 use serde::{Deserialize, Serialize};
 
+// Doc-link target only: the type is named in `ModelCallRole`'s docs but not
+// used in this module's code. `cfg(doc)` keeps rustdoc's intra-doc link
+// resolving without an import that a normal build would flag as unused.
+#[cfg(doc)]
+use super::AgentEvent;
+
 /// Concrete purpose of one provider call. This is more precise than the
 /// router's tier role: repair and guidance calls must remain distinguishable
 /// in the paid-call ledger even when they share a provider/model.
@@ -21,13 +27,15 @@ use serde::{Deserialize, Serialize};
 /// catch-all for an unrecognized one. A role token this build has never seen
 /// fails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —
 /// because a known `"type"` with a body that does not fit stays a hard error by
-/// design (see the [event module docs](super)). Adding a variant here is
-/// therefore a one-directional change in a way adding an
-/// [`AgentEvent`](super::AgentEvent) variant no longer is.
-///
-/// Adding a variant? The `E0004` at `model_call_roles!` below is the first
-/// tripwire, and adding the name there is the whole obligation — every
-/// consumer that enumerates the family reads [`Self::ALL`].
+/// design (see the module docs). Adding a variant here is therefore a
+/// one-directional change in a way adding an [`AgentEvent`] variant no longer
+/// is.
+//
+// Everything a *maintainer* needs on top of the above is deliberately a
+// non-doc comment: this doc comment is the `description` field of
+// `docs/wire/agentevent.schema.json` and its TypeScript twin, so a note about
+// Rust match exhaustiveness would ship to consumers who have no Rust. The
+// tripwire for adding a variant is documented on `model_call_roles!` below.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
