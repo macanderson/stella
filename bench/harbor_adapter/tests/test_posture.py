@@ -137,26 +137,16 @@ class TestBenchmarkPosture:
         `config::trusted_engine_config_shape_is_strict` refuses any posture with
         a root key outside `settings::ENGINE_ROOT_FIELDS`, so a posture that
         grew a descriptive field would not be a mislabelled run — it would be a
-        refused one. Mirrored here so the Python side fails in unit tests rather
-        than on the first container.
+        refused one. Checked against the vocabulary PARSED from `unknown.rs`
+        (#2033) so the Python side fails in unit tests rather than on the
+        first container — including when the Rust side removes a key this
+        posture still emits, which a hand-copy silently missed.
         """
-        engine_root_fields = {
-            "default_model",
-            "pipeline_verifier_model",
-            "pipeline_worker_model",
-            "pipeline_triage_model",
-            "allowed_models",
-            "auto_mode",
-            "effort_auto",
-            "reasoning_auto",
-            "headless_scope_bypass",
-            "agents",
-        }
         for verifier in (None, "openrouter/deepseek/deepseek-v4-pro"):
             posture, _json_text, _digest = _benchmark_engine_posture(
                 "openrouter/z-ai/glm-5.1", verifier=verifier
             )
-            unknown = set(posture) - engine_root_fields
+            unknown = set(posture) - _engine_root_fields()
             assert not unknown, (
                 f"the trusted launcher seam would refuse this posture: {unknown}"
             )
@@ -379,9 +369,13 @@ class TestAttemptCountArms:
 
         `config::trusted_engine_config_shape_is_strict` shares its vocabulary
         with `settings::ENGINE_ROOT_FIELDS`, so an unrecognised key here is not
-        dropped — the trial dies at launch. This asserts against a literal copy
-        of that list on purpose: a shared constant would drift together with
-        the thing it is supposed to catch drifting.
+        dropped — the trial dies at launch. Checked against the vocabulary
+        parsed from `unknown.rs` (#2033). This used to argue for a literal
+        copy ("a shared constant would drift together with the thing it
+        catches drifting"), but the argument runs backwards for the direction
+        that costs money: a key REMOVED from the Rust side left the literal
+        green while every run refused at launch. The parsed set moves with
+        the authority, which is exactly what makes a removal fail here.
         """
         posture, _normalized, _digest = _benchmark_engine_posture(
             self._MODEL,
@@ -393,23 +387,7 @@ class TestAttemptCountArms:
             verifier_evidence_demand=True,
             model_timeout_secs=1572,
         )
-        allowed_roots = {
-            "default_model",
-            "pipeline_verifier_model",
-            "pipeline_worker_model",
-            "pipeline_triage_model",
-            "allowed_models",
-            "auto_mode",
-            "effort_auto",
-            "reasoning_auto",
-            "headless_scope_bypass",
-            "pipeline_max_revisions",
-            "pipeline_candidates",
-            "pipeline_verifier_evidence_demand",
-            "model_timeout_secs",
-            "agents",
-        }
-        assert set(posture) <= allowed_roots
+        assert set(posture) <= _engine_root_fields()
 
     def test_resolvers_treat_unset_as_inherit_and_refuse_a_lost_value(self) -> None:
         """`None` inherits; empty is a refusal, not a second spelling of `None`.
