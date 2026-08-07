@@ -118,7 +118,10 @@ pub fn turn_outcome_payload(outcome: &TurnOutcome, steps: usize) -> serde_json::
 /// and identifiers only (see the module docs). The description rides
 /// `AgentEvent::TurnParked` on the transcript stream, which already has a
 /// considered exposure story.
-pub(super) fn turn_parked_payload(poll_interval_secs: u64, deadline_secs: u64) -> serde_json::Value {
+pub(super) fn turn_parked_payload(
+    poll_interval_secs: u64,
+    deadline_secs: u64,
+) -> serde_json::Value {
     serde_json::json!({
         "poll_interval_secs": poll_interval_secs,
         "deadline_secs": deadline_secs,

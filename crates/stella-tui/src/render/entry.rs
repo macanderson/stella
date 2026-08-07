@@ -471,7 +471,9 @@ fn entry_body(
                 vec![
                     Span::styled(format!("until {description} "), value()),
                     Span::styled(
-                        format!("· every {poll_interval_secs}s, up to {deadline_secs}s, no model calls"),
+                        format!(
+                            "· every {poll_interval_secs}s, up to {deadline_secs}s, no model calls"
+                        ),
                         quiet(),
                     ),
                 ],
@@ -491,7 +493,9 @@ fn entry_body(
                     Span::styled(
                         match reason.as_str() {
                             "changed" => "· the watched state changed".to_string(),
-                            "deadline_expired" => "· the deadline expired with no change".to_string(),
+                            "deadline_expired" => {
+                                "· the deadline expired with no change".to_string()
+                            }
                             other => format!("· {other}"),
                         },
                         quiet(),
