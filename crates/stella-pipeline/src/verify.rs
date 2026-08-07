@@ -789,6 +789,8 @@ pub fn deterministic_fail_evidence(tail: &str) -> VerdictEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verdict {
     pub passed: bool,
+    /// Why the verifier answered as it did — **bounded**, see
+    /// [`MAX_VERDICT_REASONING_CHARS`].
     pub reasoning: String,
     /// `true` when this came from [`heuristic_fallback`] rather than from a
     /// model that answered.
@@ -821,6 +823,41 @@ impl Verdict {
         } else {
             LadderRung::ModelVerdict
         }
+    }
+}
+
+/// Cap on [`Verdict::reasoning`], in characters (#1787).
+///
+/// The reasoning is the verifier's whole reply, and it travels: into the
+/// worker's revision prompt and into the verdict cache. Unbounded, a reasoning
+/// model that thinks out loud for 100 KB puts 100 KB into the next worker turn
+/// — on every revision round, at the full input rate, and into a cache entry
+/// that keeps it.
+///
+/// The disclosure ladder already caps what crosses to the worker, but as
+/// policy applied downstream; this is the structural bound at the point the
+/// value is constructed, so no future consumer can be added that forgets it.
+///
+/// The **head** is kept, not the tail: the verifier prompt asks for the
+/// verdict token and its reasons first, so the front is the part a revision
+/// acts on. Roughly a thousand tokens — enough for the reasons, far short of a
+/// transcript.
+pub const MAX_VERDICT_REASONING_CHARS: usize = 4_000;
+
+/// [`Verdict::reasoning`] as it is stored: trimmed, and clipped to
+/// [`MAX_VERDICT_REASONING_CHARS`] with the clipping stated rather than silent.
+///
+/// Clipped on a **character** boundary, not a byte one: a verifier answering in
+/// a language whose characters are multi-byte would otherwise panic here, and
+/// this runs on model output, which is runtime data (invariant 5).
+fn bounded_reasoning(text: &str) -> String {
+    let trimmed = text.trim();
+    match trimmed.char_indices().nth(MAX_VERDICT_REASONING_CHARS) {
+        None => trimmed.to_string(),
+        Some((cut, _)) => format!(
+            "{}\n\n[… verifier reasoning clipped at {MAX_VERDICT_REASONING_CHARS} characters]",
+            &trimmed[..cut]
+        ),
     }
 }
 
@@ -880,7 +917,7 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
                 "pass" | "passed" | "approve" | "approved" => {
                     return Some(Verdict {
                         passed: !negated,
-                        reasoning: text.trim().to_string(),
+                        reasoning: bounded_reasoning(text),
                         heuristic: false,
                         verifier_independent: None,
                     });
@@ -888,7 +925,7 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
                 "fail" | "failed" | "reject" | "rejected" if !negated => {
                     return Some(Verdict {
                         passed: false,
-                        reasoning: text.trim().to_string(),
+                        reasoning: bounded_reasoning(text),
                         heuristic: false,
                         verifier_independent: None,
                     });
