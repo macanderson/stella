@@ -10,12 +10,20 @@ import { REPO_URL, SITE_URL } from "@/lib/site";
 // The root layout's metadata is titled/described for the docs section it
 // mostly serves ("stella — docs"); the landing page is the one route that
 // needs its own voice instead of inheriting that.
+//
+// Which is why the title below is `absolute`. A plain string here is still
+// run through the root layout's `template: "%s — stella docs"`, so the front
+// page shipped as "stella — the terminal agent that proves its work finished
+// — stella docs": 71 characters, past the ~60 a search result renders, and the
+// part that got cut was the proposition. It also disagreed with the Open Graph
+// and Twitter titles right below it, which are NOT template-expanded — the tab
+// said one thing and every shared card said another.
 const HOME_TITLE = "stella — the terminal agent that proves its work finished";
 const HOME_DESCRIPTION =
   "A terminal coding agent that runs on the API keys you already have, speaks ten providers' own protocols, and ends a run only when a second model has confirmed the goal from evidence.";
 
 export const metadata: Metadata = {
-  title: HOME_TITLE,
+  title: { absolute: HOME_TITLE },
   description: HOME_DESCRIPTION,
   alternates: { canonical: SITE_URL },
   openGraph: {
