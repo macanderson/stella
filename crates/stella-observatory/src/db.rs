@@ -1218,7 +1218,7 @@ struct ToolAgg {
 }
 
 /// Open a SQLite file strictly read-only; `None` when it doesn't exist.
-fn open_read_only(path: &Path) -> Option<Connection> {
+pub(crate) fn open_read_only(path: &Path) -> Option<Connection> {
     if !path.exists() {
         return None;
     }
@@ -1236,7 +1236,7 @@ fn open_read_only(path: &Path) -> Option<Connection> {
 
 /// Run a query collecting every row; a missing table degrades to `[]` so a
 /// dashboard section renders empty instead of failing the whole page.
-fn collect_rows<F>(conn: &Connection, sql: &str, map: F) -> Result<Vec<Value>, DbError>
+pub(crate) fn collect_rows<F>(conn: &Connection, sql: &str, map: F) -> Result<Vec<Value>, DbError>
 where
     F: Fn(&rusqlite::Row<'_>) -> rusqlite::Result<Value>,
 {

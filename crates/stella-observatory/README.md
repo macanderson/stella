@@ -61,7 +61,7 @@ Only [`stella-cli`](../stella-cli) depends on it: `run_observe`
 preflights the private store paths and calls `serve` (`--port`, default `7787`; `0` picks a
 free one). This crate builds no binary —
 [`examples/serve.rs`](examples/serve.rs) is the dev harness. It reads two tiers:
-`<root>/.stella/private/{store,fleet,codegraph}.db` per workspace, and
+`<root>/.stella/private/{store,fleet,codegraph,context}.db` per workspace, and
 `~/.stella/usage.db`, the cross-project hub.
 
 ## Layout
@@ -71,6 +71,7 @@ free one). This crate builds no binary —
 | [`src/lib.rs`](src/lib.rs) | The HTTP responder: the route table, the `Host` and head-cap gates, the CSP, `serve`. Open it to add a route or to touch anything security-relevant. |
 | [`src/db.rs`](src/db.rs) | Every query against `.stella/private/store.db` and `fleet.db`. Open it when a panel needs a new aggregate; the SQL deliberately mirrors `stella stats` semantics (resolved = outcome `completed`, `off-grid` = provider `local`). |
 | [`src/sent_context.rs`](src/sent_context.rs) | `/api/execution-context`: the receipt queries (`step_receipt`, `step_manifest`, `context_blocks`) and the fold that rebuilds the messages one model call was sent, with the digest-verification verdict. Kept out of `src/db.rs` so that file stays clear of the 1500-line ratchet. |
+| [`src/context_db.rs`](src/context_db.rs) | `/api/context-lifecycle` (#1871): the self-improvement plane read out of `.stella/private/context.db` — the promotion audit trail (`context_records` folded by lineage in append order), current episodes, and selection health. Record bodies deserialize through `stella-core`'s own `context_record` types and the health fold is the CLI's `fold_selection_health`, linked rather than copied. |
 | [`src/context_diff.rs`](src/context_diff.rs) | `/api/execution-context-diff` (#1511): `stella inspect --diff`, served — the unified diff between one call's reconstruction and its resolved baseline (`prev`/`first`/`prompt`, same-role, whole-session). The differ itself is the `stella-diff` leaf crate. |
 | [`src/sessions.rs`](src/sessions.rs) | The sessions plane: the `~/.stella/sessions/` registry (with the read-time pid-liveness downgrade) merged with per-session store rollups (`/api/sessions`, `/api/session`), plus the per-execution behavioural-tendencies fold (`/api/execution-tendencies`). |
 | [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). |

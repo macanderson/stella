@@ -61,3 +61,9 @@ tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
 # on a user's dashboard. See tests/schema_conformance.rs.
 stella-store = { path = "../stella-store" }
 stella-protocol = { path = "../stella-protocol" }
+# The second real-schema gate (#1871), same bargain as stella-store above:
+# production reads context.db with hand-written SQL over SQLITE_OPEN_READ_ONLY,
+# and the test builds the file through ContextStore's real migration path so a
+# renamed ledger or episode column fails at `cargo test` rather than on a
+# user's dashboard.
+stella-context = { path = "../stella-context" }

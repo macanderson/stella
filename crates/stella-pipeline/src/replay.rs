@@ -40,9 +40,11 @@
 
 pub mod golden;
 pub mod ground_truth;
+pub mod independence;
 pub mod reference_adapter;
 
 use ground_truth::PendingPass;
+use independence::GraderCohorts;
 use stella_protocol::{AgentEvent, OracleObservation, ProofTree, StageKind, VerdictEvidence};
 
 /// Verifier-calibration tallies folded from recorded event streams (#871).
@@ -97,6 +99,11 @@ pub struct CalibrationReport {
     pub verifier_reverted: u32,
     /// The same, for the deterministic cohort.
     pub deterministic_reverted: u32,
+    /// The verifier cohort above, partitioned by who graded it (#1865):
+    /// self-graded / independent / unknown, with unknown never assumed into
+    /// either measured cohort. The three partitions sum to the unpartitioned
+    /// verifier tallies.
+    pub by_grader: GraderCohorts,
 }
 
 impl CalibrationReport {
@@ -113,6 +120,7 @@ impl CalibrationReport {
         self.verifier_passes_standing_alone += other.verifier_passes_standing_alone;
         self.verifier_reverted += other.verifier_reverted;
         self.deterministic_reverted += other.deterministic_reverted;
+        self.by_grader = self.by_grader.merge(other.by_grader);
         self
     }
 
@@ -152,20 +160,7 @@ impl CalibrationReport {
 /// body. States unmeasured rates as unmeasured and names the cohort sizes,
 /// so a rate is never read without its denominator.
 pub fn render_calibration(report: &CalibrationReport) -> String {
-    fn cohort(label: &str, passes: u32, reconciled: u32, false_positives: u32) -> String {
-        let rate = if reconciled > 0 {
-            format!(
-                "{:.0}% false-positive rate",
-                100.0 * f64::from(false_positives) / f64::from(reconciled)
-            )
-        } else {
-            "rate unmeasured (no CI ground truth recorded yet)".to_string()
-        };
-        format!(
-            "{label}: {passes} pass(es), {reconciled} reconciled against CI, \
-             {false_positives} CI-failed — {rate}"
-        )
-    }
+    use independence::cohort_line as cohort;
     // #1295: the rate that decides whether asking for evidence is worth a
     // turn. Rendered beside the calibration cohorts because it is read for
     // the same reason — to replace an argument about the verifier with a number
@@ -195,9 +190,21 @@ pub fn render_calibration(report: &CalibrationReport) -> String {
              {verifier} verifier, {deterministic} deterministic"
         ),
     };
+    // #1865: the model-verifier line above, partitioned by who graded it.
+    // Rendered only once there is a verifier pass to partition — the section
+    // answers a question about recorded verifier verdicts, and with none
+    // recorded there is no cohort to compare.
+    let grader = if report.verifier_passes > 0 {
+        format!(
+            "\n{}",
+            independence::render_grader_cohorts(&report.by_grader)
+        )
+    } else {
+        String::new()
+    };
     format!(
         "verifier calibration (#871) — passes reconciled against later CI verdicts and reverts\n\
-         {}\n{}{reverts}\n\
+         {}\n{}{reverts}{grader}\n\
          note: a pass is reconciled by a terminal CI verdict or by a revert of\n\
          a commit it covers, from any session or from the git history (#1293).\n\
          A pass no evidence reaches stays UNRECONCILED and out of every\n\
@@ -286,14 +293,23 @@ pub fn calibration_pending(
                 if !*passed {
                     continue;
                 }
+                // #1865: which model graded a verifier pass rides the ladder
+                // snapshot (#1795); absent — pre-#1795, worker-unresolvable,
+                // or no snapshot at all — stays UNKNOWN, never assumed.
+                let grader_independent = evidence
+                    .ladder
+                    .as_deref()
+                    .and_then(|snapshot| snapshot.verifier_independent);
                 if evidence.deterministic {
                     report.deterministic_passes += 1;
                 } else {
                     report.verifier_passes += 1;
+                    report.by_grader.tally_mut(grader_independent).passes += 1;
                 }
                 pending.push(PendingPass {
                     session: session.to_string(),
                     verifier: !evidence.deterministic,
+                    grader_independent,
                     commits: Vec::new(),
                     prs: Vec::new(),
                 });
@@ -323,6 +339,9 @@ pub fn calibration_pending(
                     if pass.verifier {
                         report.verifier_reconciled += 1;
                         report.verifier_false_positives += u32::from(failing);
+                        let tally = report.by_grader.tally_mut(pass.grader_independent);
+                        tally.reconciled += 1;
+                        tally.false_positives += u32::from(failing);
                     } else {
                         report.deterministic_reconciled += 1;
                         report.deterministic_false_positives += u32::from(failing);
