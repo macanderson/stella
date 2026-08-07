@@ -803,6 +803,25 @@ pub trait CandidateWorkspace: Send + Sync {
     fn omitted_paths(&self) -> &[String] {
         &[]
     }
+    /// Hand this candidate the approved plan's steps for its own private
+    /// task board, and whether that board's activity may be announced on the
+    /// turn's event channel.
+    ///
+    /// The pipeline calls this once per workspace, right after `create` and
+    /// before any dispatch (#1719). `steps` are the approval gate's rendered
+    /// plan steps in gate order, so the ordinal ids the worker was shown
+    /// (`task_start "3"`) resolve against this candidate's board exactly as
+    /// they do against the session's; empty when the run planned nothing.
+    /// `announce` is true only when this candidate is alone in the fan-out —
+    /// a full-board `TaskUpdate` snapshot carries no candidate tag, so
+    /// several private boards reporting onto one channel would splice into a
+    /// checklist that is nobody's (the same reasoning that mutes `TextDelta`
+    /// on a shared event lane). Boards stay per-candidate at every width:
+    /// a step is completable exactly once per board, and the second sibling
+    /// to finish it must not be told its work already happened.
+    ///
+    /// Default: no-op — a substrate with no task board has nothing to seed.
+    fn seed_task_board(&self, _steps: &[String], _announce: bool) {}
     /// Commit the current candidate bytes into its private immutable history
     /// immediately before a final verification observation.
     async fn seal(&self) -> Result<(), WorkspaceError>;

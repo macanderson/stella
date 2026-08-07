@@ -83,12 +83,9 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         // adopt the split these arms move to `Some(...)` and the roles join
         // the parity witness automatically.
         ModelCallRole::Plan | ModelCallRole::PlanRepair => None,
-        // Never dispatched through the management chokepoint.
-        //
-        // `Research` (#1778) joins them because its calls are sub-agents run
-        // through `Engine::run_sub_agent_with_sender`, not `metered_raw_call`
-        // — the same reason the witness roles are here. It also carries no
-        // system block of its own to declare.
+        // Never dispatched through the management chokepoint. `Research`
+        // (#1778) rides the sub-agent primitive — its system prompt travels
+        // on the `SubAgentSpec`, not through `metered_raw_call`.
         ModelCallRole::Unknown
         | ModelCallRole::Research
         | ModelCallRole::WitnessAuthor

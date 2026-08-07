@@ -1693,7 +1693,7 @@ impl<'a> Pipeline<'a> {
         // workspace with the result that produced it (and with the witness
         // paths that result carries). `Err` marks a candidate that never got a
         // workspace, and carries the reason it will be scored with.
-        let workspaces = self.create_candidate_workspaces(port, n).await;
+        let workspaces = self.create_candidate_workspaces(port, n, frame.plan).await;
         // Handed to the candidate rather than spent here: whether a run buys a
         // witness is not knowable until the candidate has executed and its diff
         // can be read.

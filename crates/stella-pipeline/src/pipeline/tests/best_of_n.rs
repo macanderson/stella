@@ -26,31 +26,23 @@ async fn best_of_two_adopts_only_the_winner_and_removes_every_workspace() {
         text_result("cand1 done"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let port = FakeWorkspacePort::new(
-        vec![
-            // Candidate 0: baseline fail, still failing → Failed.
-            Ok(FakeWorkspace::new(
-                0,
-                vec![false, false],
-                Ok(vec![]),
-                log.clone(),
-            )),
-            // Candidate 1: fail→pass flip → DeterministicPass (winner).
-            Ok(FakeWorkspace::new(
-                1,
-                vec![false, true],
-                Ok(vec![AdoptedChange {
-                    path: "src/x.rs".into(),
-                    kind: FileChangeKind::Modified,
-                    added: 9,
-                    removed: 4,
-                    diff: Some("@@ -1 +1 @@\n-old\n+new\n".into()),
-                }]),
-                log.clone(),
-            )),
-        ],
+    // Candidate 0: baseline fail, still failing → Failed.
+    let loser = FakeWorkspace::new(0, vec![false, false], Ok(vec![]), log.clone());
+    // Candidate 1: fail→pass flip → DeterministicPass (winner).
+    let winner = FakeWorkspace::new(
+        1,
+        vec![false, true],
+        Ok(vec![AdoptedChange {
+            path: "src/x.rs".into(),
+            kind: FileChangeKind::Modified,
+            added: 9,
+            removed: 4,
+            diff: Some("@@ -1 +1 @@\n-old\n+new\n".into()),
+        }]),
         log.clone(),
     );
+    let seeded = [loser.seeded_probe(), winner.seeded_probe()];
+    let port = FakeWorkspacePort::new(vec![Ok(loser), Ok(winner)], log.clone());
 
     let (outcome, events, messages) =
         run_isolated(&provider, &port, isolated_config(2), "Fix the failing test").await;
@@ -76,6 +68,17 @@ async fn best_of_two_adopts_only_the_winner_and_removes_every_workspace() {
         vec!["adopt:1"],
         "only the winner is ever adopted: {log:?}"
     );
+    // #1719: every candidate's private board is seeded at creation (this
+    // single-class run planned nothing, so the steps are empty), and a
+    // fan-out of two must not let either board report onto the shared
+    // channel.
+    for probe in &seeded {
+        assert_eq!(
+            *probe.lock().unwrap(),
+            Some((vec![], false)),
+            "a fan-out candidate is seeded but never announces"
+        );
+    }
     assert!(
         log.contains(&"remove:0".to_string()) && log.contains(&"remove:1".to_string()),
         "every workspace is removed after the run: {log:?}"
@@ -715,4 +718,78 @@ async fn every_isolated_candidate_also_sees_the_steer() {
         text.contains("its own isolated workspace"),
         "an isolated fan-out must say the candidates are isolated: {text:?}"
     );
+}
+
+/// #1719's seeding contract, driven at the one seam that knows both the plan
+/// and `n`: every created workspace's private task board receives the
+/// approved plan's exact step strings, and only a lone candidate is allowed
+/// to announce its board on the turn's event channel — several untagged
+/// full-board snapshots interleaved on one stream would render a checklist
+/// that is nobody's.
+#[tokio::test]
+async fn workspace_creation_seeds_the_plan_and_only_a_lone_candidate_may_report() {
+    let provider = ScriptedProvider::new(vec![]);
+    let resolver = OneProvider(&provider);
+    let diagnostics = NeverRunner;
+    let repo_status = NeverRepoStatus;
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut _rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &diagnostics,
+            tests: &diagnostics,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        isolated_config(1),
+    );
+    let plan = vec![
+        crate::plan::PlanStep::new("read the layout"),
+        crate::plan::PlanStep::new("fold the rail"),
+    ];
+    let approved: Vec<String> = plan.iter().map(|s| s.description.clone()).collect();
+
+    for (n, announce) in [(1u32, true), (2, false)] {
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut script = Vec::new();
+        let mut probes = Vec::new();
+        for i in 0..n {
+            let ws = FakeWorkspace::new(i as usize, vec![], Ok(vec![]), log.clone());
+            probes.push(ws.seeded_probe());
+            script.push(Ok(ws));
+        }
+        let port = FakeWorkspacePort::new(script, log.clone());
+        let created = pipeline
+            .create_candidate_workspaces(&port, n, Some(&plan))
+            .await;
+        assert_eq!(created.len(), n as usize);
+        for probe in probes {
+            assert_eq!(
+                *probe.lock().unwrap(),
+                Some((approved.clone(), announce)),
+                "n={n}: the gate's step strings must reach the board verbatim, \
+                 and announce must be n == 1"
+            );
+        }
+    }
 }
