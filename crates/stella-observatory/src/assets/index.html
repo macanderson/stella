@@ -195,6 +195,17 @@ td.main{color:var(--text)}
 td.wrap-txt{white-space:normal}
 tr.click,tr.drill{cursor:pointer}
 tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-visible td{background:var(--accent-wash)}
+/* A selected row was being marked with a class no stylesheet defined, so the
+   sessions list looked identical before and after a click while a whole
+   detail card appeared below the fold. Selection is a gold edge plus a wash —
+   never hue alone, and never invisible. */
+tbody tr.sel > td{background:var(--accent-wash);color:var(--text)}
+tbody tr.sel > td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
+/* The affordance that says a row opens something. Gold, right-aligned, and
+   present on every row rather than revealed on hover: the reason the turn
+   list read as inert is that nothing on it looked like a link. */
+td.go{color:var(--gold);text-align:right}
+tr:hover td.go{text-decoration:underline}
 .scroll-x{overflow-x:auto}
 .scroll-y{max-height:340px;overflow-y:auto}
 .scroll-y-tall{max-height:520px;overflow-y:auto}
@@ -281,37 +292,129 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
      box-shadow:0 6px 20px rgba(5,5,6,.6)}
 #tip b{color:var(--text);display:block;margin-bottom:2px;white-space:normal;word-break:break-all}
 
-/* ── Drawer ───────────────────────────────────────────────────────────── */
-#drawer{position:fixed;inset:0 0 0 auto;width:min(680px,94vw);background:var(--surface);
-        border-left:1px solid var(--hairline-strong);transform:translateX(102%);
-        transition:transform .24s cubic-bezier(.2,.8,.2,1);z-index:40;overflow-y:auto;
-        padding:var(--sp3);visibility:hidden}
-#drawer.open{transform:none;visibility:visible}
-#scrim{position:fixed;inset:0;background:rgba(5,5,6,.66);opacity:0;pointer-events:none;
-       transition:opacity .24s;z-index:30}
-#scrim.open{opacity:1;pointer-events:auto}
-#drawer .close{position:absolute;top:18px;right:18px;background:none;
-               border:1px solid var(--control-edge);border-radius:var(--radius-sm);
-               color:var(--text-2);font:var(--fs-micro)/1.4 var(--mono);padding:5px 10px;cursor:pointer}
-#drawer .close:hover{color:var(--text);border-color:var(--accent)}
-#drawer h2{font:600 var(--fs-md)/1.4 var(--mono);margin:6px 0 2px;max-width:85%}
-#drawer .sect{margin-top:var(--sp3)}
-#drawer .jrnl{margin:10px 0;border-left:2px solid var(--hairline);padding-left:10px}
-#drawer .jrnl.err{border-left-color:var(--bad)}
-#drawer .jrnl-body{font:var(--fs-sm)/1.5 var(--mono);color:var(--text-2);margin:4px 0 0;
-  white-space:pre-wrap;word-break:break-word;max-height:320px;overflow-y:auto}
-#drawer .jrnl-stage{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3);
-  text-transform:uppercase;letter-spacing:.08em;margin:12px 0 2px}
-#drawer .jrnl-full{background:none;border:1px solid var(--hairline);color:var(--text-2);
+/* ── Transcript page ──────────────────────────────────────────────────────
+   One turn, inspected, as a route of its own (`#transcript/<execution>`)
+   rather than an overlay. It replaced a 680px right-hand drawer: a prompt
+   diff and a system prompt are the widest text this product produces, and
+   the drawer gave them a third of the viewport, two nested disclosures deep,
+   with no address you could reload or share. Everything here follows from
+   that — full page width, the type one step up the scale, and the sections a
+   sticky rail jumps between instead of a single scroll to hunt through. */
+.tx-head{border-bottom:1px solid var(--hairline-strong);padding-bottom:var(--sp2);
+         margin-bottom:var(--sp3)}
+.tx-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+           font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3);margin-bottom:var(--sp1)}
+.tx-crumbs .sep{color:var(--hairline-strong)}
+.tx-back{background:none;border:1px solid var(--control-edge);border-radius:var(--radius-sm);
+         color:var(--text-2);font:var(--fs-micro)/1.4 var(--mono);padding:4px 10px;cursor:pointer}
+.tx-back:hover{color:var(--text);border-color:var(--accent)}
+.tx-prompt{font:600 var(--fs-md)/1.5 var(--mono);color:var(--text);max-width:92ch;
+           white-space:pre-wrap;word-break:break-word;margin:2px 0 var(--sp1)}
+.tx-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+         font:var(--fs-sm)/1.6 var(--mono);color:var(--text-3)}
+.tx-steps{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp1);margin-top:var(--sp2)}
+.tx-step{background:none;border:1px solid var(--control-edge);border-radius:var(--radius-sm);
+         color:var(--text-2);font:var(--fs-sm)/1.4 var(--mono);padding:5px 12px;cursor:pointer}
+.tx-step:hover:not(:disabled){color:var(--text);border-color:var(--accent)}
+.tx-step:disabled{color:var(--hairline-strong);border-color:var(--hairline);cursor:default}
+.tx-cols{display:grid;grid-template-columns:200px minmax(0,1fr);gap:var(--sp3);align-items:start}
+@media(max-width:980px){.tx-cols{grid-template-columns:minmax(0,1fr)}
+  .tx-rail{position:static!important;max-height:none!important}}
+.tx-rail{position:sticky;top:56px;display:flex;flex-direction:column;gap:1px;
+         max-height:calc(100vh - 80px);overflow-y:auto}
+.tx-rail a{display:flex;justify-content:space-between;gap:var(--sp1);text-decoration:none;
+  color:var(--text-2);font:var(--fs-sm)/1.5 var(--mono);padding:7px 11px;
+  border-left:2px solid transparent;border-radius:0 var(--radius-sm) var(--radius-sm) 0}
+.tx-rail a:hover{color:var(--text);background:var(--accent-wash)}
+.tx-rail a .n{color:var(--text-3);font-variant-numeric:tabular-nums}
+.tx-rail a.on{color:var(--text);border-left-color:var(--accent);background:var(--accent-wash)}
+/* Each section is a card so the page reads as parts, not one long scroll.
+   `scroll-margin-top` clears the sticky nav bar when the rail jumps here. */
+.tx-sect{background:var(--surface);border:1px solid var(--hairline-strong);
+         border-radius:var(--radius);padding:var(--sp2) var(--sp2) 18px;
+         margin-bottom:var(--sp2);scroll-margin-top:64px;min-width:0}
+.tx-sect > h2{font:600 var(--fs-md)/1.3 var(--mono);letter-spacing:-.005em;margin-bottom:4px}
+.tx-sect > .kick{margin-bottom:var(--sp2)}
+
+/* ── Transcript entries (shared with the sessions turn-diff rows) ─────── */
+.jrnl{margin:10px 0;border-left:2px solid var(--hairline);padding-left:12px}
+.jrnl.err{border-left-color:var(--bad)}
+/* One step up the scale from the drawer's 12px, with the line-height of
+   something meant to be read rather than glanced at. The clip stays — a
+   200KB tool result must not own the page — but at page width it is a
+   scroll box, not a keyhole. */
+.jrnl-body{font:var(--fs-base)/1.65 var(--mono);color:var(--text-2);margin:5px 0 0;
+  white-space:pre-wrap;word-break:break-word;max-height:520px;overflow-y:auto;
+  background:var(--sunken);border:1px solid var(--hairline);border-radius:var(--radius-sm);
+  padding:10px 12px}
+.jrnl-stage{font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3);
+  text-transform:uppercase;letter-spacing:.08em;margin:18px 0 2px}
+.jrnl-full{background:none;border:1px solid var(--control-edge);color:var(--text-2);
   font:var(--fs-micro)/1 var(--mono);padding:6px 10px;border-radius:var(--radius-sm);
   cursor:pointer;margin-top:8px}
-#drawer .jrnl-full:hover{color:var(--text);border-color:var(--accent)}
-/* The same button, sitting inside a step row rather than under a section. */
-#drawer .ctx-call{margin-top:0;padding:3px 8px}
+.jrnl-full:hover{color:var(--text);border-color:var(--accent)}
+
+/* ── Context-receipt call list ────────────────────────────────────────────
+   One row per recorded model call, each row a control: the two buttons pick
+   what the panel below shows, and the picked one stays lit. The drawer drew
+   these as anonymous rows whose output appeared in a shared box far below
+   them, so nothing said which row you were looking at. */
+.ctx-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp1);
+  padding:9px 11px;border:1px solid var(--hairline);border-radius:var(--radius-sm);
+  margin-bottom:6px;font:var(--fs-sm)/1.5 var(--mono);color:var(--text-2)}
+.ctx-row.on{border-color:var(--accent-edge);background:var(--accent-wash)}
+.ctx-row .who{color:var(--text);font-weight:600}
+.ctx-row .spacer{margin-left:auto}
+.ctx-row button{margin-top:0;padding:4px 10px;font:var(--fs-micro)/1.4 var(--mono)}
+.ctx-row button.on{color:var(--ground);background:var(--accent);border-color:var(--accent);
+                   font-weight:600}
+/* position:relative so a row's offsetTop is measured against the box that
+   scrolls it (see markCtxRow). */
+.ctx-list{position:relative;max-height:264px;overflow-y:auto;padding-right:4px;
+          border-bottom:1px solid var(--hairline);margin-bottom:var(--sp2)}
+#ctx-body{min-height:1px}
+#ctx-body:empty{display:none}
+.ctx-verdict{font:var(--fs-sm)/1.6 var(--mono);margin-bottom:var(--sp1)}
+
+/* ── Unified diff ─────────────────────────────────────────────────────────
+   Git's shape, drawn the way a reviewer expects to read it: old and new line
+   numbers in their own gutters, the sigil in a third, and the change carried
+   by a tinted row rather than by colored glyphs alone — hue is never the
+   only signal (BRAND.md). `minmax(max-content,1fr)` is what lets a long
+   line scroll the block horizontally while the row tint still paints the
+   full width. */
+.dx{overflow-x:auto;border:1px solid var(--hairline);border-radius:var(--radius-sm);
+    background:var(--sunken)}
+.dx-hunk{min-width:100%}
+.dx-hunk + .dx-hunk{border-top:1px solid var(--hairline)}
+.dx-at{font:var(--fs-micro)/1.8 var(--mono);color:var(--text-3);background:var(--raised);
+       padding:3px 12px;white-space:pre;border-bottom:1px solid var(--hairline)}
+.dx-line{display:grid;grid-template-columns:52px 52px 22px minmax(max-content,1fr);
+         font:var(--fs-base)/1.6 var(--mono);color:var(--text-2)}
+.dx-line > span{padding:0 6px;white-space:pre}
+.dx-line .no,.dx-line .nn{color:var(--text-3);text-align:right;font-size:var(--fs-micro);
+  font-variant-numeric:tabular-nums;-webkit-user-select:none;user-select:none}
+.dx-line .sg{text-align:center;-webkit-user-select:none;user-select:none}
+.dx-line .tx{padding-right:var(--sp2)}
+.dx-line.add{background:rgba(74,222,128,.10);color:var(--text)}
+.dx-line.add .sg{color:var(--ok)}
+.dx-line.rem{background:rgba(255,92,122,.10);color:var(--text)}
+.dx-line.rem .sg{color:var(--bad)}
+.dx-tally{font:600 var(--fs-md)/1.4 var(--mono);margin:0 0 4px}
+.dx-tally .plus{color:var(--ok)}
+.dx-tally .minus{color:var(--bad)}
+.dx-scope{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp1);margin-bottom:var(--sp1)}
+
 .step-row{display:grid;grid-template-columns:34px minmax(0,1fr) 160px;gap:var(--sp2);
           align-items:center;font:var(--fs-micro)/1.6 var(--mono);color:var(--text-3);padding:3px 0}
 .step-row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .step-row > span:last-child{text-align:right}
+/* The step/tool/file rows carry 11px in a card beside a chart, where they are
+   scanned. On the transcript page they ARE the content, so they take the same
+   step up the scale as everything else here. */
+.tx-sect .step-row{font-size:var(--fs-sm);color:var(--text-2);padding:4px 0;
+                   border-bottom:1px solid var(--hairline)}
+.tx-sect .step-row:last-child{border-bottom:0}
 .tokbar{display:flex;height:10px;border-radius:0 2px 2px 0;overflow:hidden;gap:2px}
 .tokbar i{display:block;height:100%}
 /* The per-turn diff affordance in the sessions turns table (#1870). */
@@ -365,6 +468,12 @@ footer b{color:var(--text-2);font-weight:600}
     <div class="tabs" id="tabs" role="tablist" aria-label="Sections">
       <button role="tab" id="tab-overview" aria-controls="panel-overview" data-tab="overview">Overview</button>
       <button role="tab" id="tab-sessions" aria-controls="panel-sessions" data-tab="sessions">Sessions</button>
+      <!-- A child route of Sessions, so it appears only once a turn is open.
+           A tab rather than an overlay: the transcript is the widest, longest
+           thing this dashboard shows, and it needs the whole page and an
+           address of its own. Hidden and empty until then — an always-present
+           "Transcript" tab with nothing in it would be a dead end. -->
+      <button role="tab" id="tab-transcript" aria-controls="panel-transcript" data-tab="transcript" hidden>Transcript</button>
       <button role="tab" id="tab-activity" aria-controls="panel-activity" data-tab="activity">Activity</button>
       <button role="tab" id="tab-graph" aria-controls="panel-graph" data-tab="graph">Code graph</button>
       <button role="tab" id="tab-skills" aria-controls="panel-skills" data-tab="skills">Skills</button>
@@ -393,7 +502,8 @@ footer b{color:var(--text-2);font-weight:600}
   <section data-tab="sessions" id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0">
     <div class="grid kpis" id="ses-kpis"></div>
     <div class="card section-gap">
-      <div class="kick">Every session of this workspace · registry + store · select one</div>
+      <div class="kick">Every session of this workspace · registry + store ·
+        select one to list its turns below</div>
       <h2>Sessions</h2>
       <div class="scroll-x" id="ses-list"></div>
     </div>
@@ -401,7 +511,9 @@ footer b{color:var(--text-2);font-weight:600}
       <div class="kick" id="ses-detail-kick">Nothing selected</div>
       <h2 id="ses-detail-title">Session replay</h2>
       <div id="ses-summary"></div>
-      <div class="kick" style="margin-top:12px">Turn by turn · oldest first · select a turn to replay it</div>
+      <div class="kick" style="margin-top:12px">Turn by turn · oldest first ·
+        open a turn for its full transcript, the context each model call was
+        sent, and what changed in the prompt between calls</div>
       <div class="scroll-x" id="ses-turns"></div>
     </div>
     <div class="grid cols-2" id="ses-panels" hidden>
@@ -427,6 +539,16 @@ footer b{color:var(--text-2);font-weight:600}
         <h2>Outcomes</h2>
         <div class="scroll-y" id="ses-outcomes"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ══ TRANSCRIPT (one turn, inspected) ══════════════════════════════ -->
+  <section data-tab="transcript" id="panel-transcript" role="tabpanel"
+           aria-labelledby="tab-transcript" tabindex="0">
+    <div class="tx-head" id="tx-head"></div>
+    <div class="tx-cols">
+      <nav class="tx-rail" id="tx-rail" aria-label="Sections of this transcript"></nav>
+      <div id="tx-main"></div>
     </div>
   </section>
 
@@ -730,8 +852,6 @@ footer b{color:var(--text-2);font-weight:600}
   <footer><b>stella</b> · verified done, not claimed done · dashboard refreshes every 5s while visible</footer>
 </div>
 
-<div id="scrim"></div>
-<aside id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" tabindex="-1" aria-hidden="true"></aside>
 <div id="tip" aria-hidden="true"></div>
 
 <script>
@@ -953,7 +1073,7 @@ function renderTimeline() {
       `${fmtTok(r.input_tokens)} in · ${fmtTok(r.output_tokens)} out<br>` +
       `${fmtUsd(r.cost_usd)} · ${fmtMs(r.model_ms)} · ${esc(r.outcome ?? "running")}`));
     g.addEventListener("mouseleave", hideTip);
-    g.addEventListener("click", () => openDrawer(r.id));
+    g.addEventListener("click", () => goTranscript(r.id));
     g.style.cursor = "pointer";
   });
 }
@@ -1260,26 +1380,43 @@ function renderExecutions() {
 }
 $("executions").addEventListener("click", (ev) => {
   const tr = ev.target.closest("tr[data-id]");
-  if (tr) openDrawer(+tr.dataset.id);
+  if (tr) goTranscript(+tr.dataset.id);
 });
 
-/* ── drawer ──────────────────────────────────────────────────────────── */
-let drawerReturn = null;          // element focus came from, restored on close
-/* The live transcript refresh (#1476): set on drawer-open, cleared on close.
-   `lastSeq` is the highest journal `seq` already rendered — the drawer's
-   incremental poll asks for `after_seq=lastSeq` instead of the whole
-   transcript. `finished` stops the poll once the execution closes out. */
-let drawerState = null;           // { id, full, lastSeq, finished } | null
-function showDrawer(html) {
-  const el = $("drawer");
-  el.innerHTML = `<button type="button" class="close" aria-label="Close detail">esc</button>` + html;
-  el.querySelector(".close").addEventListener("click", closeDrawer);
-  el.classList.add("open");
-  el.removeAttribute("aria-hidden");
-  $("scrim").classList.add("open");
-  el.focus();
-}
-/* One transcript entry's HTML — shared by the initial drawer render and the
+/* ── transcript page ──────────────────────────────────────────────────────
+   `#transcript/<execution>` — one turn, inspected, on the whole page.
+
+   This replaced a right-hand drawer. The drawer was the wrong container for
+   what it held: a reconstructed prompt and a prompt diff are the widest text
+   this product produces, and it gave them min(680px, 94vw) at 12px, behind a
+   click on an unmarked table row, with the diff two disclosures deep and no
+   URL to reload or share. The page keeps every payload the drawer fetched —
+   the same four endpoints, the same lazy per-call reconstruction — and
+   changes only where they land: full width, one step up the type scale, a
+   sticky rail across the sections, prev/next through the session's turns,
+   and an address.
+
+   `tx` is the open transcript's live-refresh state, the drawer's `drawerState`
+   under a new name: `lastSeq` is the highest journal `seq` already drawn, so
+   the poll asks for `after_seq` instead of the whole transcript (#1476), and
+   `finished` stops the poll when the execution closes out. */
+let tx = null;                       // { id, full, lastSeq, finished } | null
+let txFrom = "sessions";             // route the ← button returns to
+/* The turn list of the session this transcript belongs to — what ← prev and
+   next → step through. Filled by openSession when you arrive from the list,
+   and refilled from /api/session when you arrive by URL instead. */
+let txSiblings = { session: null, ids: [] };
+let txRailObserver = null;
+
+/* Navigation is a hash change, not a function call, so the back button, a
+   reload and a pasted link all land in the same place. */
+const goTranscript = (id) => {
+  if (!Number.isFinite(id)) return;
+  txFrom = isTab(state.tab) && state.tab !== "transcript" ? state.tab : "sessions";
+  location.hash = "transcript/" + id;
+};
+
+/* One transcript entry's HTML — shared by the initial page render and the
    incremental refresh below, so the two can never draw the same entry type
    differently. Every model/workspace-derived string routes through esc(). */
 function journalEntryHtml(e) {
@@ -1301,155 +1438,13 @@ function journalEntryHtml(e) {
     <div class="kick">${head}${e.truncated ? ` · <span style="color:var(--warn)">clipped</span>` : ""}</div>
     ${e.body ? `<pre class="jrnl-body">${esc(e.body)}</pre>` : ""}</div>`;
 }
-async function openDrawer(id, full = false) {
-  if (!Number.isFinite(id)) return;
-  drawerReturn = document.activeElement;
-  let d = null;
-  try { d = await api(`/api/execution?id=${encodeURIComponent(id)}`); } catch { d = null; }
-  if (!d || d.id == null) {
-    showDrawer(`<h2 id="drawerTitle">Execution ${esc(String(id))} could not be loaded</h2>
-      <p class="kick" style="margin-top:8px">The dashboard reached
-      <code>/api/execution</code> but got no usable row back. The run may have been
-      pruned from <code>.stella</code>, or the server may have stopped. The Live
-      indicator in the masthead reports the connection.</p>`);
-    return;
-  }
-  /* The transcript replay: the run's answer text, reasoning and tool
-     traffic, folded server-side from the events journal. Fetched once per
-     drawer-open (never on the 5 s poll); `full` lifts the per-body clip.
-     Every string field here is model/workspace output — the page's most
-     attacker-influenced text — so each one goes through esc(). */
-  let j = null;
-  try { j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}${full ? "&full=1" : ""}`); } catch { j = null; }
-  /* The receipt index (#1475): which model calls this run recorded a receipt
-     for. Only the index is fetched here — a reconstruction is one call's whole
-     prompt, so it loads on demand when a row is drilled into. */
-  let cx = null;
-  try { cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`); } catch { cx = null; }
-  /* The behavioural tendencies fold: retries, loop detections, compactions,
-     policy verdicts — the "how it went" beside the transcript's "what it
-     did". All-zero payloads render no section at all. */
-  let td = null;
-  try { td = await api(`/api/execution-tendencies?id=${encodeURIComponent(id)}`); } catch { td = null; }
-  const entries = Array.isArray(j) ? j : [];
-  const jrnl = entries.map(journalEntryHtml).join("");
-  // Rendered even with zero entries while the run is still going: the
-  // container has to exist up front so the incremental refresh below has
-  // somewhere to append into, rather than reconstructing the drawer's DOM
-  // mid-poll. A finished execution with nothing to show still gets no
-  // section, matching the original one-shot behaviour.
-  const stillRunning = d.finished_at == null;
-  const jrnlSect = (jrnl || stillRunning)
-    ? `<div class="sect" id="jrnl-sect"><div class="kick">Transcript${full ? " · full" : ""}</div>
-        <div id="jrnl-list">${jrnl}</div>${
-        entries.some(e => e.truncated)
-          ? `<button type="button" class="jrnl-full" id="jrnl-full">show full bodies</button>` : ""}</div>`
-    : "";
-  const tok = (s) => num(s.input_tokens) + num(s.output_tokens);
-  const maxTok = Math.max(...(d.steps ?? []).map(tok), 1);
-  const steps = (d.steps ?? []).map(s => {
-    const t = tok(s);
-    const w = 100 * t / maxTok;
-    const inW = t ? 100 * num(s.input_tokens) / t : 0;
-    return `<div class="step-row"><span>${fmtInt(s.step)}</span>
-      <span class="tokbar" style="width:${w.toFixed(1)}%">
-        <i style="background:var(--c4);width:${inW.toFixed(1)}%"></i>
-        <i style="background:var(--c2);flex:1"></i></span>
-      <span>${fmtTok(s.input_tokens)} in · ${fmtTok(s.output_tokens)} out · ${fmtMs(s.duration_ms)}${
-        num(s.retries) ? ` · <span style="color:var(--warn)">◌ ${fmtInt(s.retries)} retries</span>` : ""}</span>
-    </div>`;
-  }).join("");
-  const tools = (d.tools ?? []).map(t => `<div class="step-row">
-      <span>${fmtInt(t.seq)}</span>
-      <span class="name" style="color:${t.ok ? "var(--text)" : "var(--bad)"}">
-        ${esc(t.name)}${t.surface !== "native" ? ` <span class="badge dim">${esc(t.surface)}</span>` : ""}
-        ${t.ok ? "" : " ✕ " + esc(clip(t.error, 60))}</span>
-      <span>${fmtMs(t.duration_ms)} · ${fmtTok(t.bytes_out)}B</span></div>`).join("");
-  const files = (d.files ?? []).map(f => `<div class="step-row">
-      <span>${esc(f.ops)}</span><span class="name" title="${esc(f.path)}">${esc(f.path)}</span>
-      <span><span style="color:var(--ok)">+${fmtInt(f.lines_added)}</span>
-        <span style="color:var(--bad)">−${fmtInt(f.lines_removed)}</span></span>
-    </div>`).join("");
-  const rf = d.reflection;
-  const refl = rf ? `<div class="sect"><div class="kick">Self-reflection</div>
-      <p style="font:var(--fs-sm)/1.6 var(--mono);color:var(--text-2);margin-top:6px">
-        ${rf.self_rating != null ? `rated ${esc(String(rf.self_rating))}/10 · ` : ""}
-        ${rf.delivered != null ? (rf.delivered ? "delivered" : "not delivered") : ""}
-        ${rf.what_to_improve ? `<br>improve: ${esc(rf.what_to_improve)}` : ""}
-      </p></div>` : "";
-  showDrawer(`
-    <div class="kick">Execution ${fmtInt(d.id)} · ${esc(d.kind)} · ${esc(d.provider)}/${esc(d.model)}</div>
-    <h2 id="drawerTitle">${esc(d.prompt)}</h2>
-    <p style="margin:8px 0 0">${badge(d.outcome)}
-      <span class="kick"> · ${fmtUsd(d.cost_usd)} · ${esc(d.started_at)} UTC</span></p>
-    ${steps ? `<div class="sect"><div class="kick">Per-step tokens and latency</div>${steps}</div>`
-            : `<div class="sect"><div class="kick">Per-step tokens and latency</div>
-               <div class="empty">No steps recorded for this run.</div></div>`}
-    ${tendenciesSectionHtml(td)}
-    ${sentContextSectionHtml(cx)}
-    ${jrnlSect}
-    ${tools ? `<div class="sect"><div class="kick">Tool calls</div>${tools}</div>` : ""}
-    ${files ? `<div class="sect"><div class="kick">Files touched</div>${files}</div>` : ""}
-    ${refl}`);
-  const fullBtn = $("jrnl-full");
-  if (fullBtn) fullBtn.addEventListener("click", () => openDrawer(id, true));
-  for (const b of $("drawer").querySelectorAll(".ctx-call")) {
-    b.addEventListener("click", () =>
-      loadSentContext(id, +b.dataset.turn, +b.dataset.step, +b.dataset.seq));
-  }
-  for (const b of $("drawer").querySelectorAll(".ctx-diff")) {
-    b.addEventListener("click", () =>
-      loadContextDiff(id, +b.dataset.turn, +b.dataset.step, +b.dataset.seq));
-  }
-  drawerState = {
-    id,
-    full,
-    lastSeq: entries.length ? entries[entries.length - 1].seq : -1,
-    finished: !stillRunning,
-  };
-}
-/* Append newly-persisted journal entries to an open, still-running drawer
-   (#1476) instead of re-fetching the whole transcript. Piggybacked on the
-   page's existing poll — both `pollOnce` and the live-stream tick handler
-   call this right after they notice the cursor moved — so an idle
-   workspace pays only for the `after_seq` query's index probe, and a busy
-   one appends rather than re-downloads. `full` mode carries over: the
-   incremental fetch asks for the same clip setting the drawer opened with. */
-async function refreshDrawerJournal() {
-  if (!drawerState || drawerState.finished) return;
-  const el = $("drawer");
-  if (!el.classList.contains("open")) { drawerState = null; return; }
-  const { id, full, lastSeq } = drawerState;
-  let j = null;
-  try {
-    j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}&after_seq=${lastSeq}${full ? "&full=1" : ""}`);
-  } catch {
-    return;
-  }
-  const entries = Array.isArray(j) ? j : [];
-  if (!entries.length) return;
-  const list = $("jrnl-list");
-  if (list) list.insertAdjacentHTML("beforeend", entries.map(journalEntryHtml).join(""));
-  if (entries.some(e => e.truncated) && !$("jrnl-full")) {
-    const sect = $("jrnl-sect");
-    if (sect) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "jrnl-full";
-      btn.id = "jrnl-full";
-      btn.textContent = "show full bodies";
-      btn.addEventListener("click", () => openDrawer(id, true));
-      sect.appendChild(btn);
-    }
-  }
-  drawerState.lastSeq = entries[entries.length - 1].seq;
-}
-/* One execution's behavioural-tendency strip: badges for every nonzero
-   counter the journal fold reported. All-zero (or unreachable) payloads
-   render nothing — an uneventful run should not grow a section saying so.
-   Loop kinds and policy verdicts are maps whose keys come from the journal;
-   they are workspace-derived strings and go through esc() like the rest. */
-function tendenciesSectionHtml(td) {
+
+/* One execution's behavioural-tendency chips: every nonzero counter the
+   journal fold reported. All-zero (or unreachable) payloads render nothing —
+   an uneventful run should not grow a strip saying so. Loop kinds and policy
+   verdicts are maps whose keys come from the journal; they are
+   workspace-derived strings and go through esc() like the rest. */
+function tendencyChipsHtml(td) {
   if (!td) return "";
   const chips = [];
   const chip = (n, label, cls) => {
@@ -1470,95 +1465,97 @@ function tendenciesSectionHtml(td) {
   chip(td.steered, "steered", "warn");
   chip(td.provider_fallback, "provider fallback", "warn");
   chip(td.usage_incomplete, "usage incomplete", "warn");
-  if (!chips.length) return "";
-  return `<div class="sect"><div class="kick">Tendencies</div>
-    <p style="margin:6px 0 0;display:flex;flex-wrap:wrap;gap:6px">${chips.join(" ")}</p></div>`;
+  return chips.join(" ");
 }
+
 /* ── sent context (#1475) ────────────────────────────────────────────────
    What a model call was *given*, as opposed to what the run did: the
    message array rebuilt server-side from that call's context receipt, the
    same view `stella inspect <execution> --step N` prints. One row per
    recorded call — the receipt plane's own step rows, keyed
-   (turn, step, call_seq) — each drilling into the reconstruction below it.
-   Every string here is workspace-influenced text (a system prompt is the
-   most workspace-influenced text on the page), so all of it goes through
-   esc(). */
+   (turn, step, call_seq) — and the two buttons on the row pick what the
+   panel below it shows. Every string here is workspace-influenced text (a
+   system prompt is the most workspace-influenced text on the page), so all
+   of it goes through esc(). */
 function sentContextSectionHtml(cx) {
-  if (!cx) return "";
   // A store with no receipts is a state, not a failure: say which state, in
   // the words `stella inspect` uses for the same case.
-  if (!cx.receipts_recorded) {
-    return `<div class="sect"><div class="kick">Context sent</div>
-      <div class="empty">${esc(cx.note ?? "No receipts recorded for this run.")}</div></div>`;
+  if (!cx || !cx.receipts_recorded) {
+    return `<div class="empty">${
+      esc(cx?.note ?? "No context receipts were recorded for this run.")}</div>`;
   }
-  const rows = (cx.calls ?? []).map(c => `<div class="step-row">
-      <span>${fmtInt(c.step)}</span>
-      <span class="name">${esc(c.call_role)} · ${esc(c.provider)}/${esc(c.model)}
-        · ${fmtTok(c.estimated_input_tokens)} tok${
+  const calls = cx.calls ?? [];
+  const rows = calls.map(c => `<div class="ctx-row"
+      data-turn="${esc(String(c.turn))}" data-step="${esc(String(c.step))}"
+      data-seq="${esc(String(c.call_seq))}">
+      <span class="who">step ${fmtInt(c.step)} · ${esc(c.call_role)}</span>
+      <span>${esc(c.provider)}/${esc(c.model)} · ${fmtTok(c.estimated_input_tokens)} tok${
         num(c.turn) || num(c.call_seq) ? ` · turn ${fmtInt(c.turn)} seq ${fmtInt(c.call_seq)}` : ""}</span>
-      <span><button type="button" class="jrnl-full ctx-call" data-turn="${esc(String(c.turn))}"
-        data-step="${esc(String(c.step))}" data-seq="${esc(String(c.call_seq))}"
-        >context sent</button>
-      <button type="button" class="jrnl-full ctx-diff" data-turn="${esc(String(c.turn))}"
-        data-step="${esc(String(c.step))}" data-seq="${esc(String(c.call_seq))}"
-        title="unified diff against the previous call of this role"
-        >what changed</button></span>
+      <span class="spacer"></span>
+      <button type="button" class="jrnl-full ctx-diff"
+        title="unified diff against the previous call of this role">what changed</button>
+      <button type="button" class="jrnl-full ctx-call"
+        title="the whole message array this call was given">context sent</button>
     </div>`).join("");
-  return `<div class="sect"><div class="kick">Context sent</div>${rows}
-    <div id="ctx-body"></div></div>`;
+  /* The picker comes first — it is the control, and a control belongs before
+     what it controls — but it scrolls inside a fixed box. A long agentic turn
+     records a receipt per model call, and a real turn in this workspace has
+     202: at full height the list alone was three screens, and the panel it
+     drives opened below all of them. */
+  return `<div class="ctx-list">${rows}</div>
+    <div id="ctx-body"></div>`;
 }
 /* The two failure modes stay separate, as they do on the CLI: an unresolved
-   block is a documented coverage gap, a digest mismatch is a statement about
-   bytes. Collapsing them into one "unverified" word would hide which one
-   happened.
-
-   A mismatch means one of two things, and the payload's
-   `digest_mismatch_severity` says which (#1981). On a journal written before
-   compaction recorded its rewrites (#1667) a compacted block mismatches as a
-   matter of course — this panel used to call that a torn or altered journal,
-   which is a tampering accusation levelled at routine housekeeping, and an
-   alarm that fires on housekeeping is one nobody reads. On a journal that
-   records every rewrite there is no such explanation left, and the alarm is
-   the honest reading. Never decided here: the server sends the verdict every
-   surface styles from. */
+   block is a documented coverage gap, a digest mismatch is a torn-journal or
+   tampering signal. Collapsing them into one "unverified" word would hide
+   which one happened. */
 function sentContextVerdictHtml(c) {
   if (c.verified) {
-    return `<div class="kick" style="color:var(--ok)">✓ verified · every
+    return `<div class="ctx-verdict" style="color:var(--ok)">✓ verified · every
       journal-resolved block re-hashed to its recorded digest</div>`;
   }
   const bad = (c.digest_mismatches ?? []).length;
   const gaps = (c.unresolved ?? []).length;
-  const integrity = c.digest_mismatch_severity === "integrity";
-  const mismatch = integrity
-    ? `<div class="kick" style="color:var(--bad)">✕ ${fmtInt(bad)} block(s) did NOT re-hash to
-       their recorded digest — this journal records every compaction rewrite, so these bytes
-       are unaccounted for</div>`
-    : `<div class="kick" style="color:var(--warn)">! ${fmtInt(bad)} block(s) did not re-hash —
-       shown from the closest preimage. This journal predates compaction recording its
-       rewrites, so a compacted block reads this way as a matter of course</div>`;
-  return `${bad ? mismatch : ""}
-    ${gaps ? `<div class="kick" style="color:var(--warn)">◌ ${fmtInt(gaps)} block(s) could not
+  return `${bad ? `<div class="ctx-verdict" style="color:var(--bad)">✕ ${fmtInt(bad)} block(s)
+      did NOT re-hash to their recorded digest — the journal is torn or was altered</div>` : ""}
+    ${gaps ? `<div class="ctx-verdict" style="color:var(--warn)">◌ ${fmtInt(gaps)} block(s) could not
       be resolved (synthetic results, discarded speculation, or attachments)</div>` : ""}`;
 }
-/* `integrity` comes from the verdict above rather than from the blocks alone:
-   a mismatched block on a pre-#1667 journal is compaction's doing, and putting
-   the danger rail on its message would be the same false alarm the verdict
-   line no longer raises. */
-function sentContextMessageHtml(m, integrity) {
+function sentContextMessageHtml(m) {
   const blocks = m.blocks ?? [];
-  const torn = integrity && blocks.some(b => b.digest_verified === false);
+  const torn = blocks.some(b => b.digest_verified === false);
   return `<div class="jrnl${torn ? " err" : ""}">
     <div class="kick">[${fmtInt(m.index)}] ${esc(m.role)} · ${fmtInt(blocks.length)} block${
       blocks.length === 1 ? "" : "s"}${
       m.truncated ? ` · <span style="color:var(--warn)">clipped</span>` : ""}</div>
     ${m.body ? `<pre class="jrnl-body">${esc(m.body)}</pre>` : ""}</div>`;
 }
-/* Load one call's reconstruction into the open drawer. On demand rather than
-   with the drawer: this is a whole prompt — the largest payload the dashboard
-   can ask for — and a run has one per model call. */
+/* Which call row is lit, and which of its two buttons. The drawer left every
+   row unmarked and dropped the output into a shared box below them, so
+   nothing on screen said what you were reading. */
+function markCtxRow(turn, step, seq, which) {
+  for (const r of document.querySelectorAll("#tx-main .ctx-row")) {
+    const on = +r.dataset.turn === turn && +r.dataset.step === step && +r.dataset.seq === seq;
+    r.classList.toggle("on", on);
+    for (const b of r.querySelectorAll("button"))
+      b.classList.toggle("on", on && b.classList.contains(which));
+    /* Keep the lit row visible inside its own scroll box — with 202 of them
+       the default pick sits far below its bottom edge. Set on the box rather
+       than via scrollIntoView, which walks every scrollable ancestor: on
+       arrival that would scroll the PAGE to reach the list, which is the
+       below-the-fold jump this page exists to remove. `.ctx-list` is
+       position:relative, so offsetTop is measured against it. */
+    if (on && r.parentElement)
+      r.parentElement.scrollTop = Math.max(0, r.offsetTop - 8);
+  }
+}
+/* Load one call's reconstruction. On demand rather than with the page: this
+   is a whole prompt — the largest payload the dashboard can ask for — and a
+   run has one per model call. */
 async function loadSentContext(id, turn, step, callSeq, full = false) {
   const body = $("ctx-body");
   if (!body) return;
+  markCtxRow(turn, step, callSeq, "ctx-call");
   let cx = null;
   try {
     cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`
@@ -1572,22 +1569,42 @@ async function loadSentContext(id, turn, step, callSeq, full = false) {
     return;
   }
   const messages = c.messages ?? [];
-  const integrity = c.digest_mismatch_severity === "integrity";
-  body.innerHTML = `${sentContextVerdictHtml(c)}${
-    messages.map(m => sentContextMessageHtml(m, integrity)).join("")}${
+  body.innerHTML = `<div class="kick">Context sent to step ${fmtInt(step)} ·
+      ${fmtInt(messages.length)} message${messages.length === 1 ? "" : "s"}</div>
+    ${sentContextVerdictHtml(c)}${messages.map(sentContextMessageHtml).join("")}${
     messages.some(m => m.truncated)
       ? `<button type="button" class="jrnl-full" id="ctx-full">show full bodies</button>` : ""}`;
   const btn = $("ctx-full");
   if (btn) btn.addEventListener("click", () => loadSentContext(id, turn, step, callSeq, true));
 }
+/* Git's hunk shape, drawn with both line-number gutters. The line numbers are
+   walked from the hunk header rather than served: `@@ -old_start +new_start @@`
+   plus the ops is exactly the information git itself uses to print them. */
+function diffHunksHtml(d) {
+  return `<div class="dx">${(d.hunks ?? []).map(h => {
+    let o = num(h.old_start), n = num(h.new_start);
+    const lines = (h.lines ?? []).map(l => {
+      const add = l.op === "add", rem = l.op === "remove";
+      const oNo = add ? "" : String(o++);
+      const nNo = rem ? "" : String(n++);
+      return `<div class="dx-line${add ? " add" : rem ? " rem" : ""}"
+        ><span class="no">${oNo}</span><span class="nn">${nNo}</span
+        ><span class="sg">${add ? "+" : rem ? "−" : " "}</span
+        ><span class="tx">${esc(l.text ?? "")}</span></div>`;
+    }).join("");
+    return `<div class="dx-hunk"><div class="dx-at">${
+      esc(`@@ -${num(h.old_start)},${num(h.old_count)} +${num(h.new_start)},${num(h.new_count)} @@`)
+      }</div>${lines}</div>`;
+  }).join("")}</div>`;
+}
 /* What changed since the previous call of this role (#1511): the served
-   `stella inspect --diff`. Hunks arrive in git's exact shape; add/remove
-   coloring mirrors the terminal's. The resolved base is reported, not the
-   requested one — `prev` on a role's first call resolves to `prompt` — and a
-   coarse (non-minimal) diff says so instead of posing as a precise answer. */
+   `stella inspect --diff`. The resolved base is reported, not the requested
+   one — `prev` on a role's first call resolves to `prompt` — and a coarse
+   (non-minimal) diff says so instead of posing as a precise answer. */
 async function loadContextDiff(id, turn, step, callSeq, only = "all") {
   const body = $("ctx-body");
   if (!body) return;
+  markCtxRow(turn, step, callSeq, "ctx-diff");
   let d = null;
   try {
     d = await api(`/api/execution-context-diff?id=${encodeURIComponent(id)}`
@@ -1600,63 +1617,280 @@ async function loadContextDiff(id, turn, step, callSeq, only = "all") {
     return;
   }
   const scopeBtn = `<button type="button" class="jrnl-full" id="ctx-diff-scope">${
-    only === "all" ? "system only" : "all roles"}</button>`;
-  if (!d.changed) {
-    body.innerHTML = `<div class="kick">--- ${esc(d.base_label)} · +++ ${esc(d.target_label)}</div>
-      <div class="empty">no change: the ${esc(d.scope)} are byte-identical to ${esc(d.base_label)}.</div>
-      ${scopeBtn}`;
-  } else {
-    const hunks = (d.hunks ?? []).map(h => `<pre class="jrnl-body">${
-      esc(`@@ -${num(h.old_start)},${num(h.old_count)} +${num(h.new_start)},${num(h.new_count)} @@`)}
-${(h.lines ?? []).map(l => {
-        const sigil = l.op === "add" ? "+" : l.op === "remove" ? "−" : " ";
-        const color = l.op === "add" ? "var(--ok)" : l.op === "remove" ? "var(--bad)" : "inherit";
-        return `<span style="color:${color}">${esc(sigil + l.text)}</span>`;
-      }).join("\n")}</pre>`).join("");
-    body.innerHTML = `<div class="kick">--- ${esc(d.base_label)} · +++ ${esc(d.target_label)}</div>
-      <div class="kick"><span style="color:var(--ok)">+${fmtInt(d.added)}</span> ·
-        <span style="color:var(--bad)">−${fmtInt(d.removed)}</span> (${esc(d.scope)}${
-        d.minimal ? "" : ` · <span style="color:var(--warn)">coarse: input too large for an exact diff</span>`}${
-        d.base === "prompt" ? " · baseline: prompt as submitted" : ""})</div>
-      ${hunks}${scopeBtn}`;
-  }
+    only === "all" ? "system prompt only" : "all roles"}</button>`;
+  const header = `<div class="dx-scope">${scopeBtn}
+      <span class="kick">--- ${esc(d.base_label)} · +++ ${esc(d.target_label)} · ${esc(d.scope)}${
+      d.base === "prompt" ? " · baseline: prompt as submitted" : ""}${
+      d.minimal ? "" : ` · <span style="color:var(--warn)">coarse: input too large for an exact diff</span>`
+      }</span></div>`;
+  body.innerHTML = d.changed
+    ? `<p class="dx-tally"><span class="plus">+${fmtInt(d.added)}</span>
+        <span class="minus">−${fmtInt(d.removed)}</span></p>${header}${diffHunksHtml(d)}`
+    : `${header}<div class="empty">No change: the ${esc(d.scope)} are byte-identical
+        to ${esc(d.base_label)}.</div>`;
   const scope = $("ctx-diff-scope");
   if (scope) scope.addEventListener("click", () =>
     loadContextDiff(id, turn, step, callSeq, only === "all" ? "system" : "all"));
 }
+
+/* The rail: one link per section actually rendered, with its count. Built
+   from the same list the sections are, so a section can never be listed and
+   missing (or present and unlisted). */
+function buildRail(sections) {
+  $("tx-rail").innerHTML = sections.map((s, i) =>
+    `<a href="#" data-sect="${esc(s.id)}"${i === 0 ? ' class="on"' : ""}>${esc(s.label)}${
+      s.n != null ? `<span class="n">${fmtInt(s.n)}</span>` : ""}</a>`).join("");
+  if (txRailObserver) { txRailObserver.disconnect(); txRailObserver = null; }
+  // Highlight whichever section owns the top of the viewport. Cheap, and the
+  // alternative — a scroll handler measuring every section — is not.
+  txRailObserver = new IntersectionObserver((ents) => {
+    const hit = ents.filter(e => e.isIntersecting)
+      .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (!hit) return;
+    for (const a of $("tx-rail").querySelectorAll("a"))
+      a.classList.toggle("on", a.dataset.sect === hit.target.id);
+  }, { rootMargin: "-64px 0px -70% 0px" });
+  for (const s of sections) {
+    const el = $(s.id);
+    if (el) txRailObserver.observe(el);
+  }
+}
+$("tx-rail").addEventListener("click", (ev) => {
+  const a = ev.target.closest("a[data-sect]");
+  if (!a) return;
+  ev.preventDefault();
+  const el = $(a.dataset.sect);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+/* Prev / next through the owning session's turns. `openSession` fills the
+   sibling list on the way in; a transcript opened by URL has no list yet, so
+   it is fetched once from the execution's own `session_id`. */
+async function txLoadSiblings(sessionId) {
+  if (!sessionId || txSiblings.session === sessionId) return;
+  try {
+    const d = await api("/api/session?id=" + encodeURIComponent(sessionId));
+    txSiblings = { session: sessionId, ids: (d?.turns ?? []).map(t => num(t.id)) };
+  } catch { /* prev/next simply stays unavailable */ }
+}
+
+async function openTranscript(id, full = false) {
+  if (!Number.isFinite(id)) return;
+  const head = $("tx-head"), main = $("tx-main");
+  let d = null;
+  try { d = await api(`/api/execution?id=${encodeURIComponent(id)}`); } catch { d = null; }
+  if (!d || d.id == null) {
+    $("tx-rail").innerHTML = "";
+    head.innerHTML = `<button type="button" class="tx-back" id="tx-back">← back</button>
+      <h2 class="tx-prompt">Execution ${esc(String(id))} could not be loaded</h2>`;
+    main.innerHTML = `<div class="empty">The dashboard reached <code>/api/execution</code>
+      but got no usable row back. The run may have been pruned from
+      <code>.stella</code>, or the server may have stopped. The Live indicator in
+      the masthead reports the connection.</div>`;
+    $("tx-back").addEventListener("click", leaveTranscript);
+    tx = null;
+    return;
+  }
+  /* Three more folds of the same run, each its own endpoint and each fetched
+     once per page-open (never on the 5s poll): the transcript replay folded
+     from the events journal, the receipt index, and the behavioural
+     tendencies. `full` lifts the per-body clip on the transcript. Every
+     string in all three is model or workspace output — the most
+     attacker-influenced text on the page — so each one goes through esc(). */
+  const [j, cx, td] = await Promise.all([
+    api(`/api/execution-journal?id=${encodeURIComponent(id)}${full ? "&full=1" : ""}`).catch(() => null),
+    api(`/api/execution-context?id=${encodeURIComponent(id)}`).catch(() => null),
+    api(`/api/execution-tendencies?id=${encodeURIComponent(id)}`).catch(() => null),
+  ]);
+  await txLoadSiblings(d.session_id);
+
+  const entries = Array.isArray(j) ? j : [];
+  const stillRunning = d.finished_at == null;
+  const steps = d.steps ?? [], tools = d.tools ?? [], files = d.files ?? [];
+  const calls = (cx && cx.calls) ? cx.calls : [];
+  const inTok = steps.reduce((a, s) => a + num(s.input_tokens), 0);
+  const outTok = steps.reduce((a, s) => a + num(s.output_tokens), 0);
+  const ms = steps.reduce((a, s) => a + num(s.duration_ms), 0);
+
+  /* ── head ── */
+  const idx = txSiblings.ids.indexOf(id);
+  const chips = tendencyChipsHtml(td);
+  head.innerHTML = `
+    <div class="tx-crumbs">
+      <button type="button" class="tx-back" id="tx-back">← back</button>
+      <span>Sessions</span><span class="sep">/</span>
+      <span>${esc(clip(d.session_id ?? "session unknown", 48))}</span><span class="sep">/</span>
+      <span>${idx >= 0 ? `Turn ${fmtInt(idx + 1)} of ${fmtInt(txSiblings.ids.length)}`
+                       : `Execution ${fmtInt(d.id)}`}</span>
+    </div>
+    <h2 class="tx-prompt">${esc(d.prompt)}</h2>
+    <p class="tx-meta">${badge(d.outcome)}
+      <span>${esc(d.kind)}</span><span class="sep">·</span>
+      <span>${esc(d.provider)}/${esc(d.model)}</span><span class="sep">·</span>
+      <span>${fmtTok(inTok)} in · ${fmtTok(outTok)} out</span><span class="sep">·</span>
+      <span>${fmtUsd(d.cost_usd)}</span><span class="sep">·</span>
+      <span>${fmtMs(ms)}</span><span class="sep">·</span>
+      <span title="${esc(d.started_at)} UTC">${ago(d.started_at)}</span></p>
+    ${chips ? `<p class="tx-meta" style="margin-top:6px">${chips}</p>` : ""}
+    <div class="tx-steps">
+      <button type="button" class="tx-step" id="tx-prev"${
+        idx > 0 ? "" : " disabled"}>← previous turn</button>
+      <button type="button" class="tx-step" id="tx-next"${
+        idx >= 0 && idx < txSiblings.ids.length - 1 ? "" : " disabled"}>next turn →</button>
+      <span class="kick">the same view as
+        <code>stella inspect ${fmtInt(d.id)}</code></span>
+    </div>`;
+  $("tx-back").addEventListener("click", leaveTranscript);
+  $("tx-prev").addEventListener("click", () => goTranscript(txSiblings.ids[idx - 1]));
+  $("tx-next").addEventListener("click", () => goTranscript(txSiblings.ids[idx + 1]));
+
+  /* ── sections ── */
+  const stepRows = steps.map(s => {
+    const t = num(s.input_tokens) + num(s.output_tokens);
+    const maxTok = Math.max(...steps.map(x => num(x.input_tokens) + num(x.output_tokens)), 1);
+    const inW = t ? 100 * num(s.input_tokens) / t : 0;
+    return `<div class="step-row"><span>${fmtInt(s.step)}</span>
+      <span class="tokbar" style="width:${(100 * t / maxTok).toFixed(1)}%">
+        <i style="background:var(--c4);width:${inW.toFixed(1)}%"></i>
+        <i style="background:var(--c2);flex:1"></i></span>
+      <span>${fmtTok(s.input_tokens)} in · ${fmtTok(s.output_tokens)} out · ${fmtMs(s.duration_ms)}${
+        num(s.retries) ? ` · <span style="color:var(--warn)">◌ ${fmtInt(s.retries)} retries</span>` : ""}</span>
+    </div>`;
+  }).join("");
+  const toolRows = tools.map(t => `<div class="step-row">
+      <span>${fmtInt(t.seq)}</span>
+      <span class="name" style="color:${t.ok ? "var(--text)" : "var(--bad)"}">
+        ${esc(t.name)}${t.surface !== "native" ? ` <span class="badge dim">${esc(t.surface)}</span>` : ""}
+        ${t.ok ? "" : " ✕ " + esc(clip(t.error, 60))}</span>
+      <span>${fmtMs(t.duration_ms)} · ${fmtTok(t.bytes_out)}B</span></div>`).join("");
+  const fileRows = files.map(f => `<div class="step-row">
+      <span>${esc(f.ops)}</span><span class="name" title="${esc(f.path)}">${esc(f.path)}</span>
+      <span><span style="color:var(--ok)">+${fmtInt(f.lines_added)}</span>
+        <span style="color:var(--bad)">−${fmtInt(f.lines_removed)}</span></span>
+    </div>`).join("");
+  const rf = d.reflection;
+
+  const sect = (id_, label, kick, inner) =>
+    `<section class="tx-sect" id="${id_}"><h2>${label}</h2>
+      <div class="kick">${kick}</div>${inner}</section>`;
+
+  /* Context first, deliberately: what a call was *given* is the question the
+     drawer buried deepest and the one this page exists to surface. The
+     transcript — what the run then did — follows it. */
+  main.innerHTML =
+    sect("tx-context", "Prompt &amp; what changed",
+      "One row per recorded model call. “what changed” is the unified diff against "
+      + "the previous call of that role; “context sent” is the whole message array.",
+      sentContextSectionHtml(cx))
+    + sect("tx-transcript", `Transcript${full ? " · full" : ""}`,
+      "Answer text, reasoning and tool traffic, folded from the events journal.",
+      `<div id="jrnl-list">${entries.map(journalEntryHtml).join("")}</div>${
+        entries.length || stillRunning ? "" : `<div class="empty">No journal entries for this run.</div>`}${
+        entries.some(e => e.truncated)
+          ? `<button type="button" class="jrnl-full" id="jrnl-full">show full bodies</button>` : ""}`)
+    + sect("tx-steps", "Steps",
+      "Per-step tokens and latency. The bar is total tokens; the teal head is input.",
+      stepRows || `<div class="empty">No steps recorded for this run.</div>`)
+    + sect("tx-tools", "Tool calls", "In call order, with duration and result size.",
+      toolRows || `<div class="empty">This run called no tools.</div>`)
+    + sect("tx-files", "Files touched", "Every path this run created, edited or deleted.",
+      fileRows || `<div class="empty">This run touched no files.</div>`)
+    + (rf ? sect("tx-reflection", "Self-reflection",
+      "What the agent said about its own turn once it was over.",
+      `<p style="font:var(--fs-base)/1.7 var(--mono);color:var(--text-2)">
+        ${rf.self_rating != null ? `rated ${esc(String(rf.self_rating))}/10 · ` : ""}
+        ${rf.delivered != null ? (rf.delivered ? "delivered" : "not delivered") : ""}
+        ${rf.what_to_improve ? `<br>improve: ${esc(rf.what_to_improve)}` : ""}</p>`) : "");
+
+  buildRail([
+    { id: "tx-context", label: "Prompt & changes", n: calls.length },
+    { id: "tx-transcript", label: "Transcript", n: entries.length },
+    { id: "tx-steps", label: "Steps", n: steps.length },
+    { id: "tx-tools", label: "Tool calls", n: tools.length },
+    { id: "tx-files", label: "Files", n: files.length },
+    ...(rf ? [{ id: "tx-reflection", label: "Reflection" }] : []),
+  ]);
+
+  const fullBtn = $("jrnl-full");
+  if (fullBtn) fullBtn.addEventListener("click", () => openTranscript(id, true));
+  for (const row of main.querySelectorAll(".ctx-row")) {
+    const at = [+row.dataset.turn, +row.dataset.step, +row.dataset.seq];
+    row.querySelector(".ctx-call").addEventListener("click", () => loadSentContext(id, ...at));
+    row.querySelector(".ctx-diff").addEventListener("click", () => loadContextDiff(id, ...at));
+  }
+  /* Open the newest call's diff without being asked. The whole point of the
+     page is that this is the interesting artifact, and behind two clicks it
+     was being missed entirely. The newest call is chosen because a role's
+     FIRST call has no previous call to diff against — its base resolves to
+     the prompt as submitted, so it renders the entire prompt as one wall of
+     additions, which is the least useful thing the endpoint can return. */
+  const last = calls[calls.length - 1];
+  if (last) loadContextDiff(id, num(last.turn), num(last.step), num(last.call_seq));
+
+  tx = {
+    id,
+    full,
+    lastSeq: entries.length ? entries[entries.length - 1].seq : -1,
+    finished: !stillRunning,
+  };
+}
+
+/* Append newly-persisted journal entries to an open, still-running
+   transcript (#1476) instead of re-fetching the whole thing. Piggybacked on
+   the page's existing poll — both `pollOnce` and the live-stream tick
+   handler call this right after they notice the cursor moved — so an idle
+   workspace pays only for the `after_seq` query's index probe, and a busy
+   one appends rather than re-downloads. `full` mode carries over: the
+   incremental fetch asks for the same clip setting the page opened with. */
+async function refreshTranscriptJournal() {
+  if (!tx || tx.finished) return;
+  if (state.tab !== "transcript") { tx = null; return; }
+  const { id, full, lastSeq } = tx;
+  let j = null;
+  try {
+    j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}&after_seq=${lastSeq}${full ? "&full=1" : ""}`);
+  } catch {
+    return;
+  }
+  const entries = Array.isArray(j) ? j : [];
+  if (!entries.length) return;
+  const list = $("jrnl-list");
+  if (list) list.insertAdjacentHTML("beforeend", entries.map(journalEntryHtml).join(""));
+  if (entries.some(e => e.truncated) && !$("jrnl-full")) {
+    const sect = $("tx-transcript");
+    if (sect) {
+      sect.insertAdjacentHTML("beforeend",
+        `<button type="button" class="jrnl-full" id="jrnl-full">show full bodies</button>`);
+      $("jrnl-full").addEventListener("click", () => openTranscript(id, true));
+    }
+  }
+  tx.lastSeq = entries[entries.length - 1].seq;
+}
 /* The main poll already re-fetches `/api/executions` (with `finished_at`)
    on every cursor move — reuse that instead of a dedicated per-tick
-   `/api/execution` call just to learn the drawer's execution closed out. */
-function checkDrawerFinished() {
-  if (!drawerState || drawerState.finished) return;
-  const row = (D.executions ?? []).find(e => e.id === drawerState.id);
-  if (row && row.finished_at != null) drawerState.finished = true;
+   `/api/execution` call just to learn the open transcript closed out. */
+function checkTranscriptFinished() {
+  if (!tx || tx.finished) return;
+  const row = (D.executions ?? []).find(e => e.id === tx.id);
+  if (row && row.finished_at != null) tx.finished = true;
 }
-function closeDrawer() {
-  const el = $("drawer");
-  if (!el.classList.contains("open")) return;
-  el.classList.remove("open");
-  el.setAttribute("aria-hidden", "true");
-  $("scrim").classList.remove("open");
-  if (drawerReturn && document.contains(drawerReturn)) drawerReturn.focus();
-  drawerReturn = null;
-  drawerState = null;
+/* Leaving clears the page rather than leaving a stale turn behind the hidden
+   tab, and hides the tab itself: it is a child route of Sessions and must
+   not outlive the transcript that created it. */
+function leaveTranscript() {
+  location.hash = isTab(txFrom) && txFrom !== "transcript" ? txFrom : "sessions";
 }
-$("scrim").addEventListener("click", closeDrawer);
-/* Keep Tab inside the open drawer: it is aria-modal, so focus escaping it
-   would leave a screen reader reading a page it says is not there. */
-$("drawer").addEventListener("keydown", (e) => {
-  if (e.key !== "Tab") return;
-  const f = $("drawer").querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])');
-  if (!f.length) return;
-  const first = f[0], last = f[f.length - 1];
-  if (e.shiftKey && (document.activeElement === first || document.activeElement === $("drawer"))) {
-    last.focus(); e.preventDefault();
-  } else if (!e.shiftKey && document.activeElement === last) {
-    first.focus(); e.preventDefault();
-  }
+function closeTranscript() {
+  tx = null;
+  if (txRailObserver) { txRailObserver.disconnect(); txRailObserver = null; }
+  $("tab-transcript").hidden = true;
+  $("tx-head").innerHTML = "";
+  $("tx-rail").innerHTML = "";
+  $("tx-main").innerHTML = "";
+}
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.tab === "transcript") leaveTranscript();
 });
-addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 
 /* ── projects switcher ───────────────────────────────────────────────── */
 function renderProjects(p) {
@@ -2693,10 +2927,18 @@ $("fa-runs").addEventListener("click", (ev) => {
    The session list merges two sources the server keeps honest about
    (`registry: false` marks a session the registry has pruned but the store
    still remembers). Drilling a session lists its turns oldest-first; drilling
-   a turn opens the same execution drawer the Overview uses — transcript,
-   sent context, tendencies — so the replay path is one continuous descent:
-   session → turn → step → call → block/tool. Every workspace- or
-   model-derived string routes through esc(). */
+   a turn navigates to the transcript page the Overview also links to —
+   transcript, sent context, tendencies — so the replay path is one continuous
+   descent: session → turn → step → call → block/tool. Every workspace- or
+   model-derived string routes through esc().
+
+   Both tables are made to *look* like the controls they are. They were not:
+   the rows carried no cursor, no hover, and a `sel` class no stylesheet
+   defined, while the panel a click revealed opened below the fold. Nothing on
+   screen connected the click to its effect, so the descent was invisible past
+   its first step. Hence, here: `tr.click` on every row, a gold "turns ↓" /
+   "open ↗" cell that names what the row does, and a scroll to the panel a
+   click just revealed. */
 function sesBadge(s, crashed) {
   if (crashed) return `<span class="badge bad">crashed</span>`;
   const cls = pick({
@@ -2729,8 +2971,8 @@ function renderSessions(d) {
       <th>Session</th><th>Status</th><th class="num">Turns</th>
       <th class="num">Tools</th><th class="num">Files</th><th class="num">Tokens</th>
       <th class="num">Cache</th><th class="num">Skills</th><th class="num">MCP</th>
-      <th class="num">Cost</th><th>Updated</th></tr></thead><tbody>
-    ${rows.map(r => `<tr data-ses="${esc(r.id)}">
+      <th class="num">Cost</th><th>Updated</th><th></th></tr></thead><tbody>
+    ${rows.map(r => `<tr class="click" data-ses="${esc(r.id)}">
       <td><span class="name" title="${esc(r.id)}">${esc(clip(r.title || r.summary || r.id, 64))}</span>${
         r.supervised ? ` <span class="badge dim">supervised</span>` : ""}${
         r.registry ? "" : ` <span class="badge dim">store only</span>`}</td>
@@ -2744,7 +2986,8 @@ function renderSessions(d) {
       <td class="num">${fmtInt(r.skill_uses)}</td>
       <td class="num">${fmtInt(r.mcp_calls)}</td>
       <td class="num">${fmtUsd(r.cost_usd)}</td>
-      <td>${r.updated_at_ms ? agoMs(r.updated_at_ms) : "—"}</td></tr>`).join("")}
+      <td>${r.updated_at_ms ? agoMs(r.updated_at_ms) : "—"}</td>
+      <td class="go">turns ↓</td></tr>`).join("")}
     </tbody></table>`
     : `<div class="empty">No sessions recorded yet. Run <code>stella</code> in this
        workspace and the session appears here as it works.</div>`;
@@ -2757,7 +3000,7 @@ function renderSessions(d) {
 function turnRowHtml(t, i) {
   const rating = t.reflection && t.reflection.self_rating != null
     ? `${fmtInt(t.reflection.self_rating)}/10` : "—";
-  return `<tr data-exec="${fmtInt(t.id)}">
+  return `<tr class="click" data-exec="${fmtInt(t.id)}">
     <td class="num">${fmtInt(i + 1)}</td>
     <td><span class="name" title="execution ${fmtInt(t.id)}">${esc(clip(t.prompt ?? "", 80))}</span>${
       (t.skills ?? []).map(s => ` <span class="badge accent">${esc(s)}</span>`).join("")}${
@@ -2777,7 +3020,8 @@ function turnRowHtml(t, i) {
     <td class="num">${num(t.retries) ? `<span style="color:var(--warn)">${fmtInt(t.retries)}</span>` : "0"}</td>
     <td class="num">${fmtUsd(t.cost_usd)}</td>
     <td class="num">${rating}</td>
-    <td class="num">${num(t.receipts) ? "✓" : "—"}</td></tr>`;
+    <td class="num">${num(t.receipts) ? "✓" : "—"}</td>
+    <td class="go">open ↗</td></tr>`;
 }
 async function openSession(id, quiet) {
   state.session = id;
@@ -2822,10 +3066,18 @@ async function openSession(id, quiet) {
       <th class="num">#</th><th>Turn</th><th>Outcome</th><th class="num">Steps</th>
       <th class="num">Tools</th><th class="num">Files</th><th class="num">Tok in·out</th>
       <th class="num">Cache</th><th class="num">Retries</th><th class="num">Cost</th>
-      <th class="num">Rated</th><th class="num">Receipts</th></tr></thead><tbody>
+      <th class="num">Rated</th><th class="num">Receipts</th><th></th></tr></thead><tbody>
     ${turns.map(turnRowHtml).join("")}</tbody></table>`
     : `<div class="empty">No turns stamped for this session yet${
        reg ? " — it may not have completed a turn" : ""}.</div>`;
+  // What ← prev / next → on the transcript page step through, so arriving
+  // from this list costs no extra request.
+  txSiblings = { session: id, ids: turns.map(t => num(t.id)) };
+  // A click that reveals a panel below the fold reads as a click that did
+  // nothing. Only on a real click: `quiet` marks the auto-selection that
+  // happens on every 5s re-render, and scrolling the page under the reader
+  // twelve times a minute would be its own defect.
+  if (!quiet) $("ses-detail-card").scrollIntoView({ behavior: "smooth", block: "start" });
   const skills = d?.skills ?? [], agents = d?.agents ?? [];
   $("ses-skills").innerHTML = (skills.length || agents.length) ? `
     ${skills.map(s => `<div class="feed-item"><b>${esc(s.skill)}</b> —
@@ -2873,7 +3125,7 @@ $("ses-turns").addEventListener("click", (ev) => {
     return;
   }
   const tr = ev.target.closest("tr[data-exec]");
-  if (tr && !tr.classList.contains("turn-diff-row")) openDrawer(+tr.dataset.exec);
+  if (tr && !tr.classList.contains("turn-diff-row")) goTranscript(+tr.dataset.exec);
 });
 /* Expand one turn's on-disk diff (#1870) under its row — fetched from the
    session_turn_diffs projection the owning session precomputed at turn end,
@@ -2978,8 +3230,16 @@ async function loadTab(tab, force) {
 
 /* ── tab bar: roving tabindex, arrow keys, aria-selected ──────────────── */
 const TABS = [...document.querySelectorAll('#tabs button[role="tab"]')];
-function switchTab(tab) {
+/* The transcript tab is hidden until a turn is open, and a roving tabindex
+   must not park focus on a `hidden` button — so the arrow keys walk the
+   visible tabs, which is also the set the reader can see. */
+const visibleTabs = () => TABS.filter(b => !b.hidden);
+function switchTab(tab, arg = "") {
+  // A transcript route with no execution behind it is not a route.
+  if (tab === "transcript" && !arg) { location.hash = "sessions"; return; }
+  const left = state.tab === "transcript" && tab !== "transcript";
   state.tab = tab;
+  if (tab === "transcript") $("tab-transcript").hidden = false;
   TABS.forEach(b => {
     const on = b.dataset.tab === tab;
     b.setAttribute("aria-selected", on ? "true" : "false");
@@ -2987,34 +3247,74 @@ function switchTab(tab) {
   });
   document.querySelectorAll("section[data-tab]").forEach(s =>
     s.classList.toggle("on", s.dataset.tab === tab));
-  if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
-  loadTab(tab, false);
+  const route = tab === "transcript" ? `${tab}/${arg}` : tab;
+  if (location.hash !== "#" + route) history.replaceState(null, "", "#" + route);
+  if (left) closeTranscript();
+  if (tab === "transcript") {
+    // The panel is a whole viewport's worth of new content; arriving from a
+    // row halfway down the sessions list would otherwise open it scrolled to
+    // that row's offset, which is exactly the "it appeared below the fold"
+    // failure this page was built to end.
+    scrollTo(0, 0);
+    openTranscript(Number(arg));
+  } else {
+    loadTab(tab, false);
+  }
 }
 $("tabs").addEventListener("click", (ev) => {
   const b = ev.target.closest('button[role="tab"]');
-  if (b) switchTab(b.dataset.tab);
+  if (!b) return;
+  if (b.dataset.tab === "transcript") { if (tx) switchTab("transcript", String(tx.id)); return; }
+  switchTab(b.dataset.tab);
 });
 $("tabs").addEventListener("keydown", (ev) => {
-  const i = TABS.indexOf(document.activeElement);
+  const vis = visibleTabs();
+  const i = vis.indexOf(document.activeElement);
   if (i < 0) return;
   const step = { ArrowRight: 1, ArrowLeft: -1 };
   let next = -1;
-  if (ev.key in step) next = (i + step[ev.key] + TABS.length) % TABS.length;
+  if (ev.key in step) next = (i + step[ev.key] + vis.length) % vis.length;
   else if (ev.key === "Home") next = 0;
-  else if (ev.key === "End") next = TABS.length - 1;
+  else if (ev.key === "End") next = vis.length - 1;
   if (next < 0) return;
   ev.preventDefault();
-  TABS[next].focus();
-  switchTab(TABS[next].dataset.tab);
+  vis[next].focus();
+  const tab = vis[next].dataset.tab;
+  if (tab === "transcript") { if (tx) switchTab("transcript", String(tx.id)); return; }
+  switchTab(tab);
 });
 // Matched against the sections rather than interpolated into a selector: a
 // crafted `#a"]` would make querySelector throw, and the throw at load time
 // (below) would take the whole dashboard down with it.
 const isTab = (tab) => !!tab &&
   [...document.querySelectorAll("section[data-tab]")].some(s => s.dataset.tab === tab);
+/* One route grammar for the whole page: `#<tab>`, or `#<tab>/<arg>` for a
+   tab that addresses one record. Only the transcript takes an argument
+   today, and the argument is coerced to a number where it is used — the
+   fragment is user-supplied text and never reaches a selector or the DOM.
+   Splitting on the FIRST slash only, so a future arg may contain one. */
+function parseRoute(hash) {
+  const raw = String(hash ?? "").replace(/^#/, "");
+  const cut = raw.indexOf("/");
+  return cut < 0 ? { tab: raw, arg: "" }
+                 : { tab: raw.slice(0, cut), arg: raw.slice(cut + 1) };
+}
+function routeTo(hash) {
+  const { tab, arg } = parseRoute(hash);
+  if (!isTab(tab)) return false;
+  if (tab === "transcript" && !/^\d+$/.test(arg)) return false;
+  switchTab(tab, arg);
+  return true;
+}
+/* A rejected route puts the address back to the section actually on screen —
+   and, on the transcript, back to the *whole* route including the execution,
+   since a bare `#transcript` is itself not a route. Leaving
+   `#transcript/notanumber` in the bar while something else is rendered is a
+   URL that lies, and this page's whole premise is that the URL is the truth. */
+const currentRoute = () =>
+  state.tab === "transcript" && tx ? `transcript/${tx.id}` : state.tab;
 addEventListener("hashchange", () => {
-  const tab = location.hash.slice(1);
-  if (isTab(tab)) switchTab(tab);
+  if (!routeTo(location.hash)) history.replaceState(null, "", "#" + currentRoute());
 });
 
 /* ── time window: a real radiogroup, arrow-key operable ──────────────── */
@@ -3132,8 +3432,8 @@ async function pollOnce() {
     if (stamp !== lastCursor) {
       lastCursor = stamp;
       await refresh();
-      await refreshDrawerJournal();
-      checkDrawerFinished();
+      await refreshTranscriptJournal();
+      checkTranscriptFinished();
       // The sessions tab is lazy-loaded and never cached; while it is the one
       // on screen, a moved cursor means its liveness column is stale too.
       if (state.tab === "sessions") loadTab("sessions", true);
@@ -3215,8 +3515,8 @@ function connectLive() {
     // frames that already updated the page.
     lastCursor = JSON.stringify(payload.cursor);
     if (payload.changed) {
-      refresh().then(checkDrawerFinished);
-      refreshDrawerJournal();
+      refresh().then(checkTranscriptFinished);
+      refreshTranscriptJournal();
       if (state.tab === "sessions") loadTab("sessions", true);
     }
   });
@@ -3233,7 +3533,7 @@ function connectLive() {
    most environment-dependent thing on the page; a throw there must not take
    the data plane with it, which is what a bare sequence of calls did. */
 try { bindGraphEvents(); } catch (e) { fail("The code graph could not be initialised.", e); }
-switchTab(isTab(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
+if (!routeTo(location.hash)) switchTab("overview");
 refresh().then(connectLive);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 /* A hidden tab already skips its tick; pagehide is the one exit that never

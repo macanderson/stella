@@ -80,7 +80,7 @@ free one). This crate builds no binary —
 | [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain, exploration maps — plus `redact`, the credential scrubber. |
 | [`src/self_driving.rs`](src/self_driving.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/self-driving/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
 | [`src/codegraph.rs`](src/codegraph.rs) | `codegraph.db` flattened to `{nodes, edges, groups}` for the force-directed canvas, including the Rust module-path resolution the indexer doesn't do. |
-| [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. |
+| [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. Sections are addressed by fragment: `#<tab>`, or `#<tab>/<arg>` for a tab that addresses one record. `#transcript/<execution>` is the only argument-taking route today, and its tab stays hidden until a turn is open. |
 | `src/assets/mark.svg`, `src/assets/wordmark.svg` | Favicon and header lockup, served from `/assets/`. |
 | [`examples/serve.rs`](examples/serve.rs) | `cargo run -p stella-observatory --example serve -- <root> <port>` — serve any workspace without building the CLI. |
 
@@ -246,15 +246,18 @@ accent): the glyph and the badge context, never the hue, say "warning".
   `cargo test`. If you add clipping to the page, call `clip` — do not inline
   `slice`.
 - **The test schema is a hand-written copy, and it has already drifted.**
-  `seeded_workspace` in `src/lib.rs` spells out its own DDL for the subset of
+  `seeded_workspace` in `src/tests.rs` spells out its own DDL for the subset of
   tables the observatory reads, and nothing checks it against
   `../stella-store/src/ddl.rs` — nor does any open here read the
   `PRAGMA user_version` those migrations stamp. The store's shipped
-  `executions` carries `session_id`, `usage_complete` and `usage_status`, and
-  its `telemetry` carries `call_role` and `usage_complete`; the fixture has
-  none of them. That divergence is harmless only because no query selects
-  those columns. A column this crate *does* read, renamed in the store, keeps
-  this suite green and breaks the dashboard at runtime.
+  `executions` carries `usage_complete` and `usage_status`, and its `telemetry`
+  carries `call_role` and `usage_complete`; the fixture has none of them. That
+  divergence is harmless only because no query selects those columns. A column
+  this crate *does* read, renamed in the store, keeps this suite green and
+  breaks the dashboard at runtime. (`executions.session_id` was on that list
+  until the execution detail route began serving it; the fixture carries it
+  now, because a column this crate reads has to be there or every route test
+  500s.)
 - **Store paths are hardcoded**, `<root>/.stella/private/<name>` — this crate
   can't use `stella-store`'s path resolver (see *Where it sits*; `stella-home`
   answers where `~/.stella` is, not where a workspace's private store is), so a
