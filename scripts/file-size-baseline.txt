@@ -20,7 +20,7 @@
 4621 crates/stella-cli/src/command_deck.rs
 1504 crates/stella-cli/src/fleet_cmd.rs
 2126 crates/stella-core/src/bus.rs
-2568 crates/stella-core/src/driver.rs
+2571 crates/stella-core/src/driver.rs
 3681 crates/stella-core/src/driver/tests.rs
 1781 crates/stella-model/src/anthropic/tests.rs
 2093 crates/stella-model/src/openai.rs
