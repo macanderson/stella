@@ -53,8 +53,10 @@ reconstruction `stella_store::Store::reconstruct_call` performs (#1475). The
 last is the largest of the four and the only one with a *byte-level* coupling
 — it rebuilds a `tool_call` block's preimage in `stella_protocol::ToolCall`'s
 field order — so `tests/schema_conformance.rs` seeds its digests from that
-crate's own serializer: a reordered field fails the suite instead of printing
-"the journal is torn" on a user's dashboard.
+crate's own serializer: a reordered field fails the suite instead of raising an
+integrity alarm on a user's dashboard. `tests/journal_era.rs` covers the other
+half of that alarm — which of the two things a digest mismatch means depends on
+the journal's era, read from `executions.journal_era` (#1981).
 
 Only [`stella-cli`](../stella-cli) depends on it: `run_observe`
 ([`../stella-cli/src/storage_cmd.rs:47`](../stella-cli/src/storage_cmd.rs))
