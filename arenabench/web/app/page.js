@@ -3,11 +3,26 @@ import { buildSutAction, smokeAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
+// An AWS read that failed must never render as an empty backend: "no
+// binaries" and "the control plane is unreachable" call for opposite
+// operator actions (build vs. wait), and both builds and smoke trials cost
+// real money. Failures are carried into the render as their own state.
+async function read(promise) {
+  try {
+    return { ok: true, value: await promise };
+  } catch (err) {
+    return { ok: false, error: String(err?.message ?? err) };
+  }
+}
+
 export default async function Home() {
-  const [refs, jobs] = await Promise.all([
-    listBinaryRefs().catch(() => []),
-    recentJobs().catch(() => []),
+  const [refsRead, jobsRead] = await Promise.all([
+    read(listBinaryRefs()),
+    read(recentJobs()),
   ]);
+  const refs = refsRead.ok ? refsRead.value : [];
+  const jobs = jobsRead.ok ? jobsRead.value : [];
+  const outage = !refsRead.ok || !jobsRead.ok;
   const manifests = await Promise.all(
     refs.slice(0, 8).map(async (ref) => ({ ref, m: await latestManifest(ref) })),
   );
@@ -29,20 +44,38 @@ export default async function Home() {
         (match execution). Until then this page is the control surface.
       </p>
 
+      {outage && (
+        <div className="panel">
+          <p className="error">
+            Control plane unreachable — the readings below are incomplete, not
+            a picture of an empty backend.
+          </p>
+          {!refsRead.ok && (
+            <p className="note">Binary listing (S3): {refsRead.error}</p>
+          )}
+          {!jobsRead.ok && (
+            <p className="note">Job history (DynamoDB): {jobsRead.error}</p>
+          )}
+        </div>
+      )}
+
       <h2>Actions</h2>
       <div className="panel">
         <form action={buildSutAction}>
           <input type="text" name="ref" placeholder="git ref (default: main)" />
-          <button type="submit">Build Stella binary</button>
+          <button type="submit" disabled={outage}>
+            Build Stella binary
+          </button>
         </form>
         <form action={smokeAction}>
-          <button type="submit" className="secondary">
+          <button type="submit" className="secondary" disabled={outage}>
             Run smoke trial
           </button>
         </form>
         <p className="note">
-          Builds take ~8 min warm-cached; a smoke trial scales Batch from
-          zero (~5 min) and back.
+          {outage
+            ? "Actions are disabled while the control plane is unreachable — a build kicked off blind costs money with no way to watch it."
+            : "Builds take ~8 min warm-cached; a smoke trial scales Batch from zero (~5 min) and back."}
         </p>
       </div>
 
@@ -68,7 +101,14 @@ export default async function Home() {
                 <td>{m ? m.sha256.slice(0, 16) : "—"}</td>
               </tr>
             ))}
-            {manifests.length === 0 && (
+            {!refsRead.ok && (
+              <tr>
+                <td colSpan={4} className="error">
+                  Binary listing unavailable — see the outage notice above.
+                </td>
+              </tr>
+            )}
+            {refsRead.ok && manifests.length === 0 && (
               <tr>
                 <td colSpan={4} className="note">
                   No binaries yet — build one above.
@@ -101,7 +141,14 @@ export default async function Home() {
                 <td>{j.detail}</td>
               </tr>
             ))}
-            {jobs.length === 0 && (
+            {!jobsRead.ok && (
+              <tr>
+                <td colSpan={5} className="error">
+                  Job history unavailable — see the outage notice above.
+                </td>
+              </tr>
+            )}
+            {jobsRead.ok && jobs.length === 0 && (
               <tr>
                 <td colSpan={5} className="note">
                   No jobs recorded yet.
