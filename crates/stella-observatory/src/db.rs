@@ -248,9 +248,15 @@ impl Observatory {
         let Some(conn) = self.store() else {
             return Ok(Value::Null);
         };
+        // `session_id` rides along because a transcript reached by URL alone
+        // has no other way back to its session: the dashboard's transcript
+        // page is deep-linkable (`#transcript/<id>`), so on a cold load the
+        // owning session — the breadcrumb, and the turn list prev/next steps
+        // through — is derivable only from the row itself. NULL for a run
+        // recorded before schema v8 stamped it.
         let head = or_empty(conn.query_row(
             "SELECT id, kind, prompt, provider, model, outcome, cost_usd,
-                    started_at, finished_at
+                    started_at, finished_at, session_id
              FROM executions WHERE id = ?1",
             [id],
             |r| {
@@ -264,6 +270,7 @@ impl Observatory {
                     "cost_usd": r.get::<_, f64>(6)?,
                     "started_at": r.get::<_, String>(7)?,
                     "finished_at": r.get::<_, Option<String>>(8)?,
+                    "session_id": r.get::<_, Option<String>>(9)?,
                 }))
             },
         ))?;
