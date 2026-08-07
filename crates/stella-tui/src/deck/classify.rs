@@ -302,4 +302,3 @@ pub(super) fn snip(text: &str) -> String {
         format!("{head}…")
     }
 }
-

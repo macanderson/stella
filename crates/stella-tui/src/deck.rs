@@ -26,7 +26,7 @@ use stella_protocol::{
 };
 
 use crate::envelope::{AgentId, AgentMeta, AgentStatus, Inbound};
-use crate::model::SessionModel;
+use crate::model::{OpenPark, SessionModel};
 
 /// The top-level tabs of the deck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,6 +179,17 @@ pub struct AgentEntry {
     /// turn begins. `None` before any turn has finished, so the header clock
     /// reads zero at rest.
     pub last_turn_ms: Option<u64>,
+    /// Deck-clock ms at which the most recent parked wait began (#2007).
+    ///
+    /// Stamped like [`Self::turn_started_ms`] and for the same reason: a park
+    /// runs up to its deadline with the engine emitting **nothing at all**, so
+    /// the ⏳ countdown has no event to ride and has to count on the deck's own
+    /// clock. Whether a park is currently *open* is deliberately not this
+    /// field's business — that is `SessionModel::parked`, folded purely from
+    /// the event stream — so a stamp left behind by a park that already woke is
+    /// inert rather than wrong. [`Self::live_park`] is the only place the pure
+    /// "what" and the stamped "since when" are joined.
+    pub parked_since_ms: Option<u64>,
     /// [`Self::tokens_out`] as it stood when the live turn began — snapshotted
     /// with `turn_started_ms` so the progress bar's tok/s divides only the
     /// turn's own output by the turn's own elapsed (cumulative session tokens
@@ -246,6 +257,7 @@ impl AgentEntry {
             activity: ActivitySpark::new(ACTIVITY_WINDOW),
             turn_started_ms: None,
             last_turn_ms: None,
+            parked_since_ms: None,
             turn_start_tokens_out: 0,
             active_task: None,
             witness_phase_ms: WitnessPhaseStamps::default(),
@@ -276,6 +288,18 @@ impl AgentEntry {
         if let Some(start) = self.turn_started_ms.take() {
             self.last_turn_ms = Some(now_ms.saturating_sub(start));
         }
+    }
+
+    /// The parked wait currently open and how long it has been running in ms,
+    /// or `None` when this agent is not parked (#2007).
+    ///
+    /// The join the ⏳ chip needs, and the one place the purely-folded "is it
+    /// parked, and for what" meets the stamped "since when". Gating on the
+    /// fold rather than on the stamp is what makes a leftover
+    /// [`Self::parked_since_ms`] harmless.
+    pub fn live_park(&self, now_ms: u64) -> Option<(&OpenPark, u64)> {
+        let park = self.model.parked.as_ref()?;
+        Some((park, now_ms.saturating_sub(self.parked_since_ms?)))
     }
 
     /// Spend per hour, or `0.0` before any wall-clock has elapsed.
@@ -772,6 +796,13 @@ impl WorkspaceModel {
                 entry.status = status;
             }
             match event {
+                // Stamp the park's arrival. This is the whole out-of-band
+                // half of #2007: the engine goes silent for the length of the
+                // wait, so the countdown has no later event to ride and the
+                // deck's own clock is the only source of elapsed. Whether the
+                // span is still open stays with the pure fold, so nothing
+                // clears this — see `AgentEntry::live_park`.
+                AgentEvent::TurnParked { .. } => entry.parked_since_ms = Some(now),
                 AgentEvent::StepUsage {
                     input_tokens,
                     output_tokens,

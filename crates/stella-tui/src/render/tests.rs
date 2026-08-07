@@ -221,3 +221,93 @@ fn sample_entries() -> Vec<TranscriptEntry> {
         },
     ]
 }
+
+/// The stat box's content row, flattened.
+///
+/// `⏳` is double-width, so flattening the buffer leaves its trailing filler
+/// cell in the string; the assertions below match on the clock rather than on
+/// the glyph's spacing for that reason.
+fn hud_row(parked: Option<(&OpenPark, u64)>) -> String {
+    let mut buf = Buffer::empty(Rect::new(0, 0, 120, HUD_H));
+    render_hud(&Hud::default(), parked, buf.area, &mut buf);
+    buffer_rows(&buf).remove(1)
+}
+
+/// The rendering half of #2007's witness: the stat box states elapsed against
+/// the deadline, and the readout is a function of elapsed alone — so it moves
+/// between two frames with no event in between.
+///
+/// The transcript row this complements states only the *budget* ("up to
+/// 1800s") and then sits motionless for the length of the wait, which is why a
+/// park ten seconds old and one twenty-nine minutes into its deadline used to
+/// look the same, and why a wedged engine looked like both.
+#[test]
+fn the_hud_counts_an_open_park_up_against_its_deadline() {
+    let park = OpenPark {
+        description: "CI for branch main settles".into(),
+        poll_interval_secs: 30,
+        deadline_secs: 1_800,
+    };
+
+    let early = hud_row(Some((&park, 10_000)));
+    assert!(
+        early.contains("parked 0:10 / 30:00"),
+        "elapsed over the deadline, both in one unit: {early}"
+    );
+    assert!(
+        early.contains('⏳'),
+        "chipped like the transcript row: {early}"
+    );
+    assert!(
+        early.contains("CI for branch main settles"),
+        "and which wait it is: {early}"
+    );
+
+    let late = hud_row(Some((&park, 1_752_000)));
+    assert!(late.contains("parked 29:12 / 30:00"), "{late}");
+    assert_ne!(
+        early, late,
+        "the same park at two moments must not render identically — that is \
+         the whole defect"
+    );
+}
+
+/// An hour-long wait rolls to `H:MM:SS` rather than printing `73:20`, and a
+/// turn that is not parked pays nothing at all — which is also why the deck's
+/// golden frames are undisturbed by this feature.
+#[test]
+fn the_park_clock_rolls_past_an_hour_and_is_absent_when_not_parked() {
+    let long = OpenPark {
+        description: "the nightly suite finishes".into(),
+        poll_interval_secs: 60,
+        deadline_secs: 7_200,
+    };
+    let row = hud_row(Some((&long, 4_400_000)));
+    assert!(row.contains("parked 1:13:20 / 2:00:00"), "{row}");
+
+    let idle = hud_row(None);
+    assert!(
+        !idle.contains("parked"),
+        "no chip when nothing is parked: {idle}"
+    );
+}
+
+/// A tool is free to write a paragraph into `TurnParked.description`, and the
+/// stat box is one line. The subject is capped so the clock — the part that
+/// cannot be read anywhere else — is never the thing pushed off the row.
+#[test]
+fn a_long_park_description_cannot_push_the_clock_off_the_box() {
+    let wordy = OpenPark {
+        description: "the continuous integration pipeline for the release \
+                      branch reaches a terminal state"
+            .into(),
+        poll_interval_secs: 30,
+        deadline_secs: 600,
+    };
+    let row = hud_row(Some((&wordy, 65_000)));
+    assert!(row.contains("parked 1:05 / 10:00"), "{row}");
+    assert!(
+        row.contains('…'),
+        "the subject is elided, not the clock: {row}"
+    );
+}
