@@ -148,6 +148,7 @@ fn compaction_event_carries_counts_and_block_identities() {
         // Fewer identities than the `summarized` count: the summary folded
         // three messages but only two were identity-bearing tool results.
         summarized_blocks: vec!["blk_sum1".into(), "blk_sum2".into()],
+        rewrites: vec![],
         effective_budget_tokens: 136_363,
         calibration_factor: 1.1,
     };

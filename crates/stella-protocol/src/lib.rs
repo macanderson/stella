@@ -51,6 +51,7 @@
 
 pub mod attachment;
 pub mod cache;
+pub mod compaction_rewrite;
 pub mod completion;
 pub mod context_event;
 pub mod error;
@@ -71,6 +72,7 @@ pub use attachment::{
     media_type_for_path,
 };
 pub use cache::CacheCause;
+pub use compaction_rewrite::CompactionRewrite;
 pub use completion::{
     CompletionMessage, CompletionRequest, CompletionRequestRef, CompletionResult, CompletionUsage,
     FinishReason, GenerationParams, MessageRole, PartialUsage, ReasoningEffort, ServiceTier,

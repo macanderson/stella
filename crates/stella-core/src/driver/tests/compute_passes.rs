@@ -451,6 +451,95 @@ async fn compaction_mid_turn_invalidates_the_receipt_ledgers_digest_memo() {
     assert!(checked > 0, "manifests must cite blocks");
 }
 
+#[tokio::test]
+async fn a_compaction_pass_journals_the_replacement_bytes_it_wrote() {
+    // The wiring witness for #1667, on the same fixture as the memo test
+    // above: the driver must forward the pass's replacement records onto the
+    // `Compaction` event, and each record must name the block a later step's
+    // manifest actually cites — that citation is what makes the journaled
+    // bytes the resolvable preimage of a block the model then received. A
+    // record's block may instead be rewritten again by a later pass, in which
+    // case that pass names it in its identity lists.
+    let mut script: Vec<_> = (0..5)
+        .map(|i| {
+            let mut r = tool_call_result(&format!("call_{i}"), "bash");
+            if let Some(call) = r.tool_calls.first_mut() {
+                call.input = serde_json::json!({ "cmd": format!("echo {i}") });
+            }
+            Ok(r)
+        })
+        .collect();
+    script.push(Ok(text_result("done")));
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(script),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = BigOutputTools { filler: 4_000 };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        compaction_budget_tokens: 800,
+        summarize_overflow: false,
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+
+    let events = drain_events(&mut rx);
+    let mut journaled = 0usize;
+    // Replacement block ids still awaiting their citation (or re-rewrite).
+    let mut pending: Vec<String> = Vec::new();
+    for event in &events {
+        match event {
+            AgentEvent::Compaction {
+                rewrites,
+                evicted_blocks,
+                aged_blocks,
+                deduped_blocks,
+                superseded_blocks,
+                ..
+            } => {
+                let rewritten_again: std::collections::HashSet<&String> = evicted_blocks
+                    .iter()
+                    .chain(aged_blocks)
+                    .chain(deduped_blocks)
+                    .chain(superseded_blocks)
+                    .collect();
+                pending.retain(|id| !rewritten_again.contains(id));
+                assert!(
+                    !rewrites.is_empty(),
+                    "a pass that rewrote blocks must journal their replacements: {event:?}"
+                );
+                journaled += rewrites.len();
+                pending.extend(rewrites.iter().map(|r| r.block_id.clone()));
+            }
+            AgentEvent::StepManifest { blocks, .. } => {
+                let cited: std::collections::HashSet<&String> =
+                    blocks.iter().map(|b| &b.block_id).collect();
+                pending.retain(|id| !cited.contains(id));
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        journaled > 0,
+        "fixture must journal replacement records, or this proves nothing"
+    );
+    assert!(
+        pending.is_empty(),
+        "every journaled replacement must be cited by a later manifest or \
+         rewritten again — an uncited record journals bytes no step sent: {pending:?}"
+    );
+}
+
 /// The invariant the identity memo's soundness actually rests on.
 ///
 /// `snapshot_result_identities` memoizes a result's identity by position, and
