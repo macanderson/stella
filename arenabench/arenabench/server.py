@@ -75,6 +75,7 @@ from .presets import preset_listing
 from .recorder import preflight as recorder_preflight
 from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
 from .runner import MatchRunner
+from .series import series_payload
 from .sut import SutUnavailableError, list_branches, sut_problem_for, sut_status
 from .sut_build import SutBuilder
 from .telemetry import TranscriptReader
@@ -327,6 +328,15 @@ class ArenaServer:
                 match.spec = replace(match.spec, record_video=False)
         self.runner.start(match)
         return match.snapshot()
+
+    def series(self) -> Any:
+        """Cross-match outcome series for the trends view (#2068).
+
+        One row per match, oldest first, with the comparability key the
+        client is required to group by — see :mod:`.series` for why the
+        grouping is enforced rather than assumed.
+        """
+        return series_payload(list(self.runner.matches.values()))
 
     def list_matches(self) -> Any:
         return {
@@ -796,6 +806,8 @@ def _handler_factory(
                     self._json(arena.sut_builds())
                 case ["sut", "builds", build_id]:
                     self._json(arena.sut_build(build_id))
+                case ["series"]:
+                    self._json(arena.series())
                 case ["matches"]:
                     self._json(arena.list_matches())
                 case ["matches", match_id]:

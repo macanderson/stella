@@ -142,6 +142,75 @@ export interface TaskRow {
   cells: Record<string, Cell | null | undefined>;
 }
 
+/** Per-seat outcome aggregates in one series row (`/api/series`, #2068). */
+export interface SeriesOutcomes {
+  judged: number;
+  /** Judged trials that received a verdict — the rate denominator. */
+  scored: number;
+  solved: number;
+  failed: number;
+  /** Judged, no verdict: infrastructure voids, outside every rate. */
+  voids: number;
+  incidents: number;
+  incidents_on_solved: number;
+  timeouts_after_solve: number;
+  timeouts_before_solve: number;
+  clock_time: number;
+  priced_cost: number | null;
+  priced_cost_per_solve: number | null;
+}
+
+export interface SeriesTaskVerdict {
+  outcome: "solved" | "failed" | "void";
+  incident: boolean;
+}
+
+export interface SeriesSeat {
+  id: string;
+  color: string;
+  name: string;
+  agent: string;
+  model: string;
+  roles: Record<string, string>;
+  arm: "control" | "treatment";
+  outcomes: SeriesOutcomes;
+  per_task: Record<string, SeriesTaskVerdict>;
+}
+
+export interface SeriesComparability {
+  dataset: string;
+  dataset_digest: string;
+  task_digest: string;
+  task_count: number;
+  tasks: string[];
+  sut_commit: string;
+  seats: Array<{
+    name: string;
+    agent: string;
+    model: string;
+    roles: Record<string, string>;
+    arm: "control" | "treatment";
+  }>;
+  /** Everything but the SUT. Rows sharing it are one series; rows that
+   *  differ in it are different measurements and are never connected. */
+  group_key: string;
+}
+
+export interface SeriesRow {
+  id: string;
+  name: string;
+  status: string;
+  created_at: number;
+  finished_at: number | null;
+  provenance: Record<string, unknown> | null;
+  comparability: SeriesComparability;
+  seats: SeriesSeat[];
+}
+
+export interface SeriesPayload {
+  matches: SeriesRow[];
+}
+
 /**
  * One monitor rule firing once, for one arm on one task — the agent monitor
  * protocol's severity semantics: `critical` means the match's numbers are
