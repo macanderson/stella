@@ -7,10 +7,11 @@
 //! ports.
 
 use super::*;
-use stella_pipeline::{
-    ArtifactIdentity, ArtifactKind, CmdKind, DiagnosticInvocation, DiagnosticRunner,
-    TestInvocation, TestRunner,
-};
+// `DiagnosticInvocation`/`DiagnosticRunner` are deliberately absent: the impl
+// that used them moved to `super::diagnostics`, and only this file's tests
+// still name them. They are imported per test module rather than here so a
+// non-test build does not carry an unused import.
+use stella_pipeline::{ArtifactIdentity, ArtifactKind, CmdKind, TestInvocation, TestRunner};
 
 /// Apply the cross-crate policy shared by every model/repository-controlled
 /// subprocess. Kept as a named seam so the CLI's pipeline-only spawns have a
@@ -848,6 +849,8 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
+    use stella_pipeline::{DiagnosticInvocation, DiagnosticRunner};
+
     use stella_media::{
         CostDecision, ImageRequest, MediaArtifact, MediaCapabilities, MediaError, MediaJob,
         MediaJobStatus, MediaKind, MediaProvider, MediaSpendGate, MediaSpendRequest, VideoRequest,
@@ -1364,7 +1367,7 @@ mod benchmark_tests {
 #[cfg(test)]
 mod diff_baseline_tests {
     use super::*;
-    use stella_pipeline::DiagnosticInvocation;
+    use stella_pipeline::{DiagnosticInvocation, DiagnosticRunner};
 
     fn git(root: &std::path::Path, args: &[&str]) {
         let ok = std::process::Command::new("git")
