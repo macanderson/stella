@@ -104,6 +104,7 @@ pub(crate) mod mcp_prefetch;
 pub mod oom;
 pub mod pipeline;
 pub mod plan;
+pub mod research;
 pub mod ports;
 pub mod replay;
 pub mod reward;
