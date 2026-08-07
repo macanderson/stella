@@ -15,7 +15,7 @@ use stella_pipeline::{
 /// Apply the cross-crate policy shared by every model/repository-controlled
 /// subprocess. Kept as a named seam so the CLI's pipeline-only spawns have a
 /// direct regression test rather than relying only on stella-tools tests.
-fn scrub_model_subprocess(command: &mut tokio::process::Command) {
+pub(super) fn scrub_model_subprocess(command: &mut tokio::process::Command) {
     stella_tools::subprocess_env::scrub_sensitive_env(command);
 }
 
@@ -596,7 +596,7 @@ impl GitDiagnosticRunner {
         Self { root, baseline }
     }
 
-    fn baseline_commit(&self) -> Option<&str> {
+    pub(super) fn baseline_commit(&self) -> Option<&str> {
         self.baseline.as_deref()
     }
 }
@@ -656,41 +656,7 @@ fn test_process(invocation: &TestInvocation, root: &std::path::Path) -> tokio::p
     cmd
 }
 
-#[async_trait::async_trait]
-impl DiagnosticRunner for GitDiagnosticRunner {
-    async fn run_diagnostic(&self, invocation: &DiagnosticInvocation) -> CmdOutcome {
-        let mut cmd = tokio::process::Command::new("git");
-        scrub_model_subprocess(&mut cmd);
-        match invocation {
-            DiagnosticInvocation::GitDiff => match self.baseline_commit() {
-                Some(baseline) => {
-                    cmd.args(["diff", baseline]);
-                }
-                None => {
-                    cmd.args(["diff"]);
-                }
-            },
-            DiagnosticInvocation::UntrackedNumstat { path } => {
-                cmd.args(["diff", "--no-index", "--numstat", "--", "/dev/null", path]);
-            }
-            DiagnosticInvocation::UntrackedPatch { path } => {
-                // Same probe as the numstat above, minus `--numstat`, so the
-                // two answers about one untracked file can never disagree
-                // about which file they read. `--no-color` because a
-                // configured `color.ui = always` would otherwise paint SGR
-                // escapes into a prompt.
-                cmd.args(["diff", "--no-index", "--no-color", "--", "/dev/null", path]);
-            }
-        }
-        cmd.current_dir(&self.root).env("PWD", &self.root);
-        for var in stella_tools::exec::GIT_REPO_ENV_VARS {
-            cmd.env_remove(var);
-        }
-        run_command(cmd).await
-    }
-}
-
-async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
+pub(super) async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     // Cancellation drops this future without unwinding into the timeout arm
