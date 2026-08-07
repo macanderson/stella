@@ -43,6 +43,29 @@
     cannot have both, state which one you are giving up and why, and let a
     human choose. Deciding it silently is how a reference implementation
     stops being one.
+- **A bench conclusion comes from the trace, never from a surface signal.**
+  The measurement machinery is younger than the thing it measures, and its
+  summary layer is a set of projections that each have their own bugs. On
+  2026-08-07 every surface reading was wrong, in a different direction each
+  time: a 5/5 → 3/5 "regression" was a flaky task that also fails on the old
+  binary; a trial showing `✗ failed` had scored reward 1.0 (the verdict cell is
+  either/or, so it *hides* the exception when a task passes); a
+  `WITNESS CONFIRMED` was a false proof off a `ModuleNotFoundError`; and "no
+  witness authored" had three stacked structural causes, each concealed by the
+  one above it. So:
+  - **Open `stella-events.jsonl` before claiming anything.** It is ground
+    truth; the UI and `result.json` are projections of it. Census
+    `(role, model)` from `step_usage` before believing a claim about which
+    model ran; join `tool_start` → `tool_result` for real tool wall clock;
+    read the **full** `proof` reason strings, because they are truncated
+    everywhere else and the truncated half is usually the part that matters.
+  - **Run the cheap control before any bisect.** Re-run the failing task alone
+    on the *old* SUT. One trial either establishes the regression or ends the
+    investigation — and it is how the 11-commit bisect above got cancelled.
+  - **A five-task solve rate cannot resolve anything smaller than a
+    catastrophe.** Treat it as a guardrail; the mechanism metrics are the
+    measurement. Comparisons need repeats per task, and any two runs differing
+    by more than one commit are confounded and must be reported as such.
 - **AGENTS.md is the orientation document.** Commands, architectural
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —
