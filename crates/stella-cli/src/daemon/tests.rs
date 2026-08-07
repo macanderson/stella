@@ -183,7 +183,12 @@ fn the_liveness_lock_is_held_while_the_run_lives_and_free_once_it_ends() {
         "a running child holds its lock"
     );
     std::fs::write(&gate, b"").expect("open the child's exit gate");
-    let _ = run.child.wait();
+    let status = run.child.wait().expect("wait for child to exit");
+    assert!(
+        status.success(),
+        "child exited unsuccessfully with status {:?} (possible gate timeout or shell error)",
+        status
+    );
     assert!(
         eventually(Duration::from_secs(10), || lock_is_held(&sidecar)
             == Some(false)),
