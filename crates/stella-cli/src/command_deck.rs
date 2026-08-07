@@ -4005,33 +4005,7 @@ async fn run_deck_command(
                 Ok(Err(e)) | Err(e) => say(format!("export failed: {e}")),
             }
         }
-        "/reload" => {
-            // Re-read the settings scope chain (user + project, managed
-            // ceiling folded in) and re-apply everything it derives —
-            // engine posture, tool policy, authority, recap/trace/reward/
-            // worktree switches — to THIS session's live `Config`, without
-            // restarting. Provider/model/credential resolution is
-            // deliberately untouched (see `Config::reload_from_disk`);
-            // `/model` and the SETTINGS tab are the seam for that.
-            match cfg.reload_from_disk() {
-                Ok(()) => {
-                    say(
-                        "configuration reloaded — engine, tools, and authority settings \
-                         re-read from disk."
-                            .to_string(),
-                    );
-                    // Refresh an open SETTINGS tab with the merged view, the
-                    // same courtesy `/model` pays. The deck renders the last
-                    // snapshot it was sent, so a hand edit picked up by
-                    // `/reload` is invisible in an open overlay until one
-                    // arrives. The TOOLS panel is deliberately not refreshed
-                    // here: an accurate row list needs the MCP-inclusive live
-                    // stack, which this function does not hold (#1966).
-                    let _ = in_tx.send(engine_config_inbound(cfg, None));
-                }
-                Err(e) => say(format!("reload failed: {e}")),
-            }
-        }
+        "/reload" => say(settings_io::reload_command(cfg, in_tx)),
         "/donate" => {
             say("❤️  Support Stella\n\
                  \n\

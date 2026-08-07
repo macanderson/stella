@@ -128,6 +128,28 @@ pub(super) fn handle_tools_input(
     }
 }
 
+/// The `/reload` command: re-read the settings scope chain (user + project,
+/// managed ceiling folded in) and re-apply everything it derives — engine
+/// posture, tool policy, authority, recap/trace/reward/worktree switches — to
+/// THIS session's live [`Config`], without restarting.
+///
+/// Provider/model/credential resolution is deliberately untouched (see
+/// [`Config::reload_from_disk`]); `/model` and the SETTINGS tab are the seam
+/// for that. Returns the line to print in the lead transcript.
+pub(super) fn reload_command(cfg: &mut Config, in_tx: &UnboundedSender<Inbound>) -> String {
+    if let Err(e) = cfg.reload_from_disk() {
+        return format!("reload failed: {e}");
+    }
+    // Refresh an open SETTINGS tab with the merged view, the same courtesy
+    // `/model` pays. The deck renders the last snapshot it was sent, so a
+    // hand edit picked up by `/reload` is invisible in an open overlay until
+    // one arrives. The TOOLS panel is deliberately not refreshed here: an
+    // accurate row list needs the MCP-inclusive live stack, which this
+    // function does not hold (#1990).
+    let _ = in_tx.send(engine_config_inbound(cfg, None));
+    "configuration reloaded — engine, tools, and authority settings re-read from disk.".to_string()
+}
+
 /// Re-derive the live [`Config`] from disk after a save, reporting a failure
 /// to the deck rather than swallowing it.
 ///
