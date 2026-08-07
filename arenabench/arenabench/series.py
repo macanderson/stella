@@ -158,10 +158,30 @@ def match_row(match: Any) -> dict[str, Any]:
     """One series row for one match — apparatus, comparability, outcomes."""
     spec = match.spec
     prov = match.provenance
-    tasks = sorted(spec.tasks)
     seat_signatures = [_seat_signature(c) for c in spec.contestants]
     dataset_digest = (prov.dataset_digest if prov else "") or ""
     sut_commit = (prov.sut_commit if prov else "") or ""
+    # Metrics before the task list, because the list may have to come from
+    # them: an empty ``spec.tasks`` means "the whole dataset" (MatchSpec's
+    # contract), so the comparability key derives the list from the trials
+    # that actually exist — the same derivation the live grid uses
+    # (``Match.snapshot``) — instead of digesting the empty list, which would
+    # stamp every whole-dataset match with one degenerate token and collapse
+    # distinct series. A still-running whole-dataset match digests only what
+    # has run so far and therefore keys apart from its finished siblings;
+    # that is the comparability rule working, not a bug — a 40-task partial
+    # charted against an 89-task full run is exactly the confounded trend
+    # this key exists to forbid.
+    metrics_by_seat = {c.id: match.metrics_for(c.id) for c in spec.contestants}
+    if spec.tasks:
+        tasks = sorted(spec.tasks)
+        tasks_source = "spec"
+    else:
+        observed: set[str] = set()
+        for metrics in metrics_by_seat.values():
+            observed.update(metrics)
+        tasks = sorted(observed)
+        tasks_source = "observed"
     # Sorted, not spec-ordered: an h2h with its seats swapped is the same
     # measurement, and seat order must not split a group.
     seat_sig_token = "&".join(
@@ -172,7 +192,7 @@ def match_row(match: Any) -> dict[str, Any]:
     )
     seats = []
     for contestant in spec.contestants:
-        metrics = match.metrics_for(contestant.id)
+        metrics = metrics_by_seat[contestant.id]
         seats.append(
             {
                 "id": contestant.id,
@@ -196,13 +216,20 @@ def match_row(match: Any) -> dict[str, Any]:
             "task_digest": _task_digest(tasks),
             "task_count": len(tasks),
             "tasks": tasks,
+            # ``spec`` when the template pinned the list; ``observed`` when it
+            # was derived from the trials of a whole-dataset match — so the
+            # client can label the count as measured rather than declared.
+            "tasks_source": tasks_source,
             "sut_commit": sut_commit,
             "seats": seat_signatures,
             # Everything but the SUT: rows sharing this key are one series;
             # rows that differ in it are different measurements, and the
-            # client must say so rather than draw a line between them.
+            # client must say so rather than draw a line between them. When
+            # provenance never recorded a dataset digest, the registry name
+            # stands in — two unprovenanced matches on different datasets are
+            # different measurements too, and "unknown" must not join them.
             "group_key": (
-                f"{dataset_digest.removeprefix('sha256:')[:8] or 'unknown'}"
+                f"{dataset_digest.removeprefix('sha256:')[:8] or spec.dataset or 'unknown'}"
                 f"|{_task_digest(tasks)}|{seat_sig_token}"
             ),
         },

@@ -464,7 +464,9 @@ function GroupCard({ group }: { group: Group }) {
           {comparability.dataset}
         </h2>
         <span className="font-mono text-[11px] text-muted">
-          {comparability.task_count} tasks · digest {comparability.task_digest}
+          {comparability.task_count} tasks
+          {comparability.tasks_source === "observed" ? " (observed)" : ""} · digest{" "}
+          {comparability.task_digest}
         </span>
         {comparability.seats.map((seat) => (
           <span key={seat.name} className="font-mono text-[11px] text-muted">

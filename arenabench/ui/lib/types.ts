@@ -183,6 +183,9 @@ export interface SeriesComparability {
   task_digest: string;
   task_count: number;
   tasks: string[];
+  /** "spec" when the template pinned the list; "observed" when it was
+   *  derived from the trials of a whole-dataset match. */
+  tasks_source: "spec" | "observed";
   sut_commit: string;
   seats: Array<{
     name: string;

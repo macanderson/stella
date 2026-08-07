@@ -219,6 +219,42 @@ class TestComparability:
         )
 
 
+class TestWholeDatasetMatches:
+    def test_empty_spec_tasks_derives_the_list_from_observed_trials(self) -> None:
+        """``spec.tasks == []`` means "the whole dataset" (MatchSpec's
+        contract), so the row reports the tasks that actually ran — the
+        union across seats, as the live grid derives it — never a zero
+        count, an empty grid, and the digest of the empty list."""
+        forward = _seat({"a": _trial("a", resolved=True)}, name="stella")
+        backward = _seat(
+            {"b": _trial("b", resolved=False)}, name="cc", model="claude-sonnet-5"
+        )
+        comp = match_row(_match([forward, backward], tasks=[]))["comparability"]
+        assert comp["tasks"] == ["a", "b"]
+        assert comp["task_count"] == 2
+        assert comp["tasks_source"] == "observed"
+
+    def test_declared_tasks_win_over_observed_and_say_so(self) -> None:
+        metrics = {"a": _trial("a", resolved=True), "b": _trial("b", resolved=True)}
+        comp = match_row(_match([_seat(metrics)], tasks=["a"]))["comparability"]
+        assert comp["tasks"] == ["a"]
+        assert comp["tasks_source"] == "spec"
+
+    def test_unprovenanced_whole_dataset_matches_split_by_dataset_name(self) -> None:
+        """No digest and no declared tasks used to leave nothing but the
+        seat signature in the key, so whole-dataset matches on *different*
+        datasets collapsed into one series. The registry name stands in
+        when provenance never recorded a digest."""
+        metrics = {"a": _trial("a", resolved=True)}
+        one = _match([_seat(metrics)], match_id="m1", tasks=[])
+        other = _match([_seat(metrics)], match_id="m2", tasks=[])
+        for m in (one, other):
+            m.provenance = None
+        other.spec.dataset = "swe-bench-verified"
+        key = lambda m: match_row(m)["comparability"]["group_key"]  # noqa: E731
+        assert key(one) != key(other)
+
+
 class TestPayloadOrdering:
     def test_rows_come_back_oldest_first(self) -> None:
         metrics = {"a": _trial("a", resolved=True)}
