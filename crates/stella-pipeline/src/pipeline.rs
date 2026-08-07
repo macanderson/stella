@@ -53,7 +53,9 @@ use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::receipts::RECEIPT_SEQ_ALLOCATED_BASE;
 use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
-use stella_core::{AbortKind, BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
+use stella_core::{
+    AbortKind, BudgetGuard, CalibrationMap, Engine, EngineConfig, EventSender, Router, TurnOutcome,
+};
 use stella_protocol::{
     AgentEvent, CompletionMessage, LadderRung, LadderSnapshot, MessageRole, ModelCallRole,
     ModelRef, OracleObservation, ProofStep, ProofTree, Provider, Role, StageKind, VerdictEvidence,
@@ -108,6 +110,7 @@ use crate::witness::{
     witness_prompt, witness_repair_prompt,
 };
 pub use resume_stage::{FrameProgress, PipelineResume, RecordedBaseline};
+mod attachments;
 mod authored;
 mod candidate_result;
 mod disclosure;
@@ -884,6 +887,9 @@ pub struct Pipeline<'a> {
     /// engine this pipeline builds and consulted before every management
     /// call, so a paused pipeline-driven worker parks instead of spending.
     turn_gate: Option<&'a dyn stella_core::ports::TurnGate>,
+    /// Caller-owned token-drift model ([`Pipeline::with_calibration`]), lent to
+    /// every engine this pipeline builds. `None` leaves estimation uncorrected.
+    calibration: Option<&'a CalibrationMap>,
     events: EventSender,
     config: PipelineConfig,
     configured_test: Result<Option<TestInvocation>, crate::witness::TestInvocationError>,
@@ -953,6 +959,7 @@ impl<'a> Pipeline<'a> {
             mcp_prefetch: ports.mcp_prefetch,
             steering: ports.steering,
             turn_gate: None,
+            calibration: None,
             events: events.into(),
             config,
             configured_test,
@@ -963,22 +970,6 @@ impl<'a> Pipeline<'a> {
             frame_sink: None,
             progress: Mutex::new(FrameProgress::default()),
         }
-    }
-
-    /// Attach a boundary pause gate. Every engine the pipeline builds — the
-    /// worker's execute/revise turns and the witness author's — parks at its
-    /// step boundaries while the gate holds, and every management call
-    /// (triage, verifier, guidance) parks before dispatch: the same safe
-    /// boundary as budget aborts, never mid-tool.
-    ///
-    /// This is the seam that lets a supervisor's pause reach a
-    /// pipeline-driven worker at all. Without it only the raw step-loop path
-    /// held a gate, so `Fleet::pause_task` on a pipeline worker silently did
-    /// nothing — the named follow-up in `fleet_cmd`.
-    #[must_use]
-    pub fn with_turn_gate(mut self, gate: &'a dyn stella_core::ports::TurnGate) -> Self {
-        self.turn_gate = Some(gate);
-        self
     }
 
     /// Drive one prompt through the full staged flow. `messages` is the
@@ -1560,9 +1551,7 @@ impl<'a> Pipeline<'a> {
             if let Some((hooks, runner)) = self.hooks {
                 engine = engine.with_hooks(hooks, runner);
             }
-            if let Some(gate) = self.turn_gate {
-                engine = engine.with_gate(gate);
-            }
+            engine = self.attach(engine);
             let view = fan.as_ref().map(|fan| fan.candidate());
             if let Some(view) = view.as_ref() {
                 engine = engine.with_steering(view);
@@ -2744,7 +2733,7 @@ impl<'a> Pipeline<'a> {
                 &mut state.messages,
                 spend.budget,
                 &mut state.signals,
-                state.flip_halt.as_ref().and_then(FlipHalt::unfired),
+                crate::flip_halt::for_revision(&state.flip_halt, state.oracle.state()),
             )
             .await
         {

@@ -41,7 +41,7 @@ impl Pipeline<'_> {
                     research,
                     &repo_structure,
                     revision.as_deref(),
-                    &mut spend,
+                    &mut Spend { budget, total },
                 )
                 .await
             {
