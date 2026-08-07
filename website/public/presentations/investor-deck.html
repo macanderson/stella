@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stella · oxagen investor deck</title>
+<meta name="description" content="Frontier models are expensive, opaque, and unverifiable. Oxagen's witness protocol makes done deterministic, and turns verified work into training data.">
+<meta property="og:title" content="stella · oxagen investor deck">
+<meta property="og:description" content="Verified done, not claimed done. The witness protocol, the context system of record, and frontier quality at a 90% discount.">
+<link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" fill="%230B0B0C"/><path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="%23FFB000"/></svg>'>
+<style>
+/* ==========================================================================
+   stella brand kit v1.0 "the comet": Phosphor Gold on Ink, JetBrains Mono.
+   Gold is the signal, never the surface. Assemble, don't spin.
+   ========================================================================== */
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("../brand/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("../brand/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 700; font-display: swap; src: url("../brand/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 800; font-display: swap; src: url("../brand/fonts/jetbrains-mono-latin-800-normal.woff2") format("woff2"); }
+
+:root {
+  --gold: #FFB000;
+  --gold-deep: #A37200;
+  --gold-300: #FCD07D;
+  --ink: #0B0B0C;
+  --paper: #F4F1EA;
+  --surface: #131315;
+  --border: #232327;
+  --muted: #9B9890;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --glow-gold: 0 0 24px rgb(255 176 0 / 0.28), 0 0 96px rgb(255 176 0 / 0.12);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: clamp(14px, 1.35vw, 18px);
+  line-height: 1.65;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* terminal grid + starfield texture, behind everything */
+.texture {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgb(244 241 234 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(244 241 234 / 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+.starfield { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+
+/* ---- deck chrome -------------------------------------------------------- */
+.progress {
+  position: fixed; top: 0; left: 0; height: 2px; width: 0%;
+  background: var(--gold); z-index: 40;
+  transition: width 280ms var(--ease-arrive);
+}
+.chrome {
+  position: fixed; z-index: 30; font-size: 0.72em; font-weight: 500;
+  letter-spacing: 0.14em; color: var(--muted); user-select: none;
+}
+.chrome.brand { top: 20px; left: 28px; display: flex; align-items: center; gap: 10px; }
+.chrome.brand svg { display: block; }
+.chrome.counter { top: 22px; right: 28px; font-variant-numeric: tabular-nums; }
+.chrome.hint { bottom: 18px; left: 28px; }
+@media (max-width: 640px) { .chrome.hint { display: none; } }
+
+.navbtns { position: fixed; bottom: 14px; right: 20px; z-index: 30; display: flex; gap: 8px; }
+.navbtns button {
+  font-family: var(--mono); font-size: 14px; font-weight: 500;
+  color: var(--paper); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px;
+  width: 40px; height: 34px; cursor: pointer;
+}
+.navbtns button:hover { border-color: var(--gold); color: var(--gold); }
+.navbtns button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+/* ---- slides ------------------------------------------------------------- */
+.slide {
+  position: absolute; inset: 0; z-index: 1;
+  display: none;
+  align-items: center;
+  padding: clamp(24px, 6vw, 96px);
+}
+.slide.active { display: flex; }
+.frame { max-width: 1060px; margin: 0 auto; width: 100%; position: relative; z-index: 2; }
+
+.overline {
+  font-size: 0.72em; font-weight: 500; letter-spacing: 0.14em;
+  color: var(--gold); margin-bottom: 1.6em;
+}
+.overline .idx { color: var(--muted); }
+h1, h2 {
+  font-weight: 800; letter-spacing: -0.02em; line-height: 1.15;
+  font-size: clamp(1.9rem, 5vw, 3.4rem);
+  margin-bottom: 0.55em;
+}
+h1 em, h2 em { font-style: normal; color: var(--gold); }
+.lead { font-size: clamp(0.95rem, 1.8vw, 1.2rem); color: var(--paper); max-width: 44em; }
+.lead + .lead { margin-top: 1em; }
+.muted { color: var(--muted); }
+.kicker {
+  margin-top: 2em; padding-left: 1em; border-left: 3px solid var(--gold);
+  font-weight: 700; max-width: 40em;
+}
+
+/* stat tiles */
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 2.4em; }
+@media (max-width: 760px) { .tiles { grid-template-columns: 1fr; } }
+.tile {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px 22px;
+}
+.tile .big { font-size: clamp(1.5rem, 3.4vw, 2.2rem); font-weight: 800; letter-spacing: -0.02em; color: var(--gold); line-height: 1.15; }
+.tile .cap { font-size: 0.78em; color: var(--muted); margin-top: 0.5em; line-height: 1.5; }
+
+/* flow steps (oracle flip) */
+.steps { display: grid; gap: 12px; margin-top: 2em; counter-reset: step; }
+.step {
+  display: grid; grid-template-columns: 44px 1fr; gap: 16px; align-items: baseline;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 18px;
+}
+.step .n { font-weight: 800; color: var(--gold); font-size: 1.1em; }
+.step .t { font-weight: 700; }
+.step .d { color: var(--muted); font-size: 0.85em; margin-top: 0.2em; }
+.badge {
+  display: inline-block; font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em;
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 12px;
+  vertical-align: middle;
+}
+.badge.fail { color: #E4408F; border-color: #E4408F; }
+.badge.pass { color: #2FD3C6; border-color: #2FD3C6; }
+
+/* comparison table */
+table.vs { width: 100%; border-collapse: collapse; margin-top: 2em; font-size: 0.9em; }
+table.vs th, table.vs td { text-align: left; padding: 12px 16px; border: 1px solid var(--border); }
+table.vs th { font-weight: 700; font-size: 0.8em; letter-spacing: 0.14em; color: var(--muted); }
+table.vs td.gold { color: var(--gold); font-weight: 700; }
+
+/* terminal card */
+.term {
+  background: var(--ink); border: 1px solid var(--border); border-radius: 14px;
+  padding: 18px 22px; margin-top: 2em; font-size: 0.88em; line-height: 1.9;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 28px rgb(0 0 0 / 0.35);
+  max-width: 46em;
+}
+.term .p { color: var(--muted); }
+.term .g { color: var(--gold); }
+.term .ok { color: #2FD3C6; }
+.term .no { color: #E4408F; }
+
+/* cover */
+.cover { text-align: left; }
+.cover .lockup { display: flex; align-items: center; gap: 22px; margin: 0.6em 0 0.4em; }
+.cover .wordmark { font-size: clamp(3rem, 9vw, 6rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
+.cover .wordmark sup { color: var(--gold); font-size: 0.45em; }
+.cover .comet { filter: drop-shadow(0 0 24px rgb(255 176 0 / 0.28)); }
+.links a { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(--gold-deep); }
+.links a:hover { border-bottom-color: var(--gold); }
+
+/* assemble, don't spin: content arrives with a small rise, staggered */
+.rise { opacity: 0; transform: translateY(14px); }
+.slide.active .rise {
+  animation: arrive 280ms var(--ease-arrive) forwards;
+}
+.slide.active .rise:nth-child(2) { animation-delay: 70ms; }
+.slide.active .rise:nth-child(3) { animation-delay: 140ms; }
+.slide.active .rise:nth-child(4) { animation-delay: 210ms; }
+.slide.active .rise:nth-child(5) { animation-delay: 280ms; }
+.slide.active .rise:nth-child(6) { animation-delay: 350ms; }
+@keyframes arrive { to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .rise { opacity: 1; transform: none; }
+  .slide.active .rise { animation: none; }
+  .progress { transition: none; }
+}
+
+/* print: every slide on its own page */
+@media print {
+  body { overflow: visible; background: #fff; color: #0B0B0C; }
+  .slide { display: flex !important; position: relative; page-break-after: always; min-height: 100vh; }
+  .rise { opacity: 1 !important; transform: none !important; }
+  .chrome, .navbtns, .progress, .texture, .starfield { display: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="texture" aria-hidden="true"></div>
+<svg class="starfield" aria-hidden="true" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <g fill="#F4F1EA">
+    <circle cx="140" cy="120" r="1.2" opacity="0.16"/><circle cx="420" cy="80" r="0.9" opacity="0.10"/>
+    <circle cx="820" cy="150" r="1.1" opacity="0.13"/><circle cx="1240" cy="90" r="0.8" opacity="0.10"/>
+    <circle cx="1520" cy="210" r="1.2" opacity="0.14"/><circle cx="240" cy="520" r="0.9" opacity="0.09"/>
+    <circle cx="90" cy="780" r="1.0" opacity="0.12"/><circle cx="680" cy="820" r="1.1" opacity="0.11"/>
+    <circle cx="1100" cy="740" r="0.9" opacity="0.10"/><circle cx="1460" cy="600" r="1.2" opacity="0.15"/>
+    <circle cx="980" cy="420" r="0.8" opacity="0.08"/><circle cx="1330" cy="380" r="0.9" opacity="0.10"/>
+  </g>
+  <g fill="#FFB000">
+    <circle cx="560" cy="260" r="1.1" opacity="0.14"/><circle cx="1560" cy="820" r="1.0" opacity="0.12"/>
+    <circle cx="60" cy="360" r="0.9" opacity="0.10"/>
+  </g>
+</svg>
+
+<div class="progress" id="progress" aria-hidden="true"></div>
+
+<div class="chrome brand">
+  <svg width="22" height="22" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+    <line x1="10" y1="48" x2="30" y2="48" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+    <line x1="18" y1="34" x2="30" y2="34" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+    <line x1="18" y1="62" x2="30" y2="62" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+    <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#FFB000"/>
+  </svg>
+  <span>stella · oxagen</span>
+</div>
+<div class="chrome counter" id="counter" aria-live="polite">01 / 12</div>
+<div class="chrome hint">&larr; &rarr; or space to navigate</div>
+<div class="navbtns">
+  <button id="prev" aria-label="previous slide">&larr;</button>
+  <button id="next" aria-label="next slide">&rarr;</button>
+</div>
+
+<!-- 01 · cover -->
+<section class="slide cover" aria-label="cover">
+  <div class="frame">
+    <p class="overline rise">oxagen · investor briefing · august 2026</p>
+    <div class="lockup rise">
+      <svg class="comet" width="96" height="96" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+        <line x1="10" y1="48" x2="30" y2="48" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+        <line x1="18" y1="34" x2="30" y2="34" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+        <line x1="18" y1="62" x2="30" y2="62" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+        <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#FFB000"/>
+      </svg>
+      <div class="wordmark">stella<sup>*</sup></div>
+    </div>
+    <h1 class="rise">verified done,<br>not claimed done.</h1>
+    <p class="lead rise">The open-source coding agent with a deterministic definition of done, and the enterprise control plane behind it.</p>
+  </div>
+</section>
+
+<!-- 02 · pain: cost -->
+<section class="slide" aria-label="the pain: cost">
+  <div class="frame">
+    <p class="overline rise">the pain <span class="idx">· 01 of 03</span></p>
+    <h2 class="rise">Your AI bill is <em>out of control.</em></h2>
+    <p class="lead rise">Frontier models bill by the token, and agents never get tired. They work through the night, retry until the budget is gone, and hand you the invoice either way. Headcount stays flat while spend compounds.</p>
+    <div class="tiles rise">
+      <div class="tile"><div class="big">24/7</div><div class="cap">an agent that never sleeps is a meter that never stops</div></div>
+      <div class="tile"><div class="big">$15+</div><div class="cap">frontier list price per 1M output tokens, before retries</div></div>
+      <div class="tile"><div class="big">0</div><div class="cap">built-in reasons for the model to stop and say "good enough"</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 03 · pain: black box -->
+<section class="slide" aria-label="the pain: black box">
+  <div class="frame">
+    <p class="overline rise">the pain <span class="idx">· 02 of 03</span></p>
+    <h2 class="rise">You cannot see <em>how it works.</em></h2>
+    <p class="lead rise">A frontier model is a black box: trillions of weights nobody can read. When it is wrong, you cannot ask why. When it is right, you cannot prove it will be right again tomorrow.</p>
+    <p class="lead rise muted">Explainability here is not a roadmap item. It is structurally impossible.</p>
+    <div class="term rise" role="img" aria-label="terminal showing an unexplainable answer">
+      <div><span class="p">$</span> why did the model do that?</div>
+      <div><span class="no">error:</span> not inspectable. 1.8T parameters, no trace, no warrant.</div>
+      <div><span class="p">$</span> will it do it again?</div>
+      <div><span class="no">error:</span> unknowable. sampling is probabilistic.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 04 · pain: trust -->
+<section class="slide" aria-label="the pain: trust">
+  <div class="frame">
+    <p class="overline rise">the pain <span class="idx">· 03 of 03</span></p>
+    <h2 class="rise">"Done," <em>says the model.</em></h2>
+    <p class="lead rise">You are asked to take its word for it. Agents routinely claim a task is finished when it is not: the test was never run, the edge case never handled, the file never saved.</p>
+    <p class="lead rise">The industry's fix is an LLM judging another LLM. A probabilistic grader stacked on a probabilistic worker. The doubt compounds, it does not cancel.</p>
+    <div class="term rise" role="img" aria-label="terminal showing a false done claim">
+      <div><span class="p">agent:</span> all tests pass, task complete <span class="ok">&check;</span></div>
+      <div><span class="p">$</span> npm test</div>
+      <div><span class="no">4 failed</span>, 2 passed</div>
+    </div>
+  </div>
+</section>
+
+<!-- 05 · pain summed -->
+<section class="slide" aria-label="the pain, summed">
+  <div class="frame">
+    <p class="overline rise">the deal on the table today</p>
+    <h2 class="rise">Expensive. Opaque. <em>Unverifiable.</em></h2>
+    <p class="lead rise">Every enterprise buying AI right now is asked to accept all three at once: trust a black box that bills you either way.</p>
+    <p class="kicker rise">Nobody would buy that from any other vendor, in any other decade.</p>
+  </div>
+</section>
+
+<!-- 06 · the invention -->
+<section class="slide" aria-label="the invention: the witness protocol">
+  <div class="frame">
+    <p class="overline rise">the invention</p>
+    <h2 class="rise">The <em>witness protocol.</em></h2>
+    <p class="lead rise">Oxagen replaced the judge with an oracle. A task is done only when a unit test proves it: a test that fails on the old code and passes on the new. Not an opinion. A flip.</p>
+    <p class="kicker rise">A deterministic system controls the definition of done. Models do the work. They never grade it.</p>
+  </div>
+</section>
+
+<!-- 07 · oracle flip -->
+<section class="slide" aria-label="how the oracle flip works">
+  <div class="frame">
+    <p class="overline rise">how it works</p>
+    <h2 class="rise">The oracle <em>flip.</em></h2>
+    <div class="steps rise">
+      <div class="step"><span class="n">1</span><span><span class="t">An independent verifier authors a witness test in a shadow sandbox.</span><br><span class="d">A separate model, in a detached workspace. The worker never touches it, and the working tree is never mutated.</span></span></div>
+      <div class="step"><span class="n">2</span><span><span class="t">The test runs on the old code. <span class="badge fail">must fail</span></span><br><span class="d">Proof the behavior was genuinely absent before the change.</span></span></div>
+      <div class="step"><span class="n">3</span><span><span class="t">The test runs on the new code. <span class="badge pass">must pass</span></span><br><span class="d">Proof the behavior is genuinely present after it.</span></span></div>
+      <div class="step"><span class="n">4</span><span><span class="t">Tamper evidence voids the flip.</span><br><span class="d">If the worker modified the witness files, the proof is invalidated. No credit.</span></span></div>
+    </div>
+    <p class="kicker rise">fail &rarr; pass, witnessed, tamper-checked. Beyond problematic, probabilistic LLM judges.</p>
+  </div>
+</section>
+
+<!-- 08 · self-labelling data -->
+<section class="slide" aria-label="self-labelling training data">
+  <div class="frame">
+    <p class="overline rise">the byproduct</p>
+    <h2 class="rise">Verified work <em>labels itself.</em></h2>
+    <p class="lead rise">Every flip yields a training example with ground truth attached: the goal, the context, the diff, and a deterministic proof that it worked. No human labelers. No judge models. The label is the flip.</p>
+    <div class="tiles rise">
+      <div class="tile"><div class="big">goal</div><div class="cap">what was asked, in the language of your business</div></div>
+      <div class="tile"><div class="big">diff</div><div class="cap">what the agent actually changed to deliver it</div></div>
+      <div class="tile"><div class="big">proof</div><div class="cap">the fail &rarr; pass flip that certifies the pair</div></div>
+    </div>
+    <p class="kicker rise">Self-labelling AI training data, produced as a side effect of doing the job.</p>
+  </div>
+</section>
+
+<!-- 09 · system of record -->
+<section class="slide" aria-label="oxagen, the system of record for context">
+  <div class="frame">
+    <p class="overline rise">the business</p>
+    <h2 class="rise">Oxagen is the <em>system of record</em> for context.</h2>
+    <p class="lead rise">The aggregator of that verified data, and the home of everything your agents need to know: your business ontology, your rules, your memory, your proof of what worked.</p>
+    <p class="lead rise muted">CRMs made customer data an asset. Oxagen does it for context: governed, permissioned, and owned by you.</p>
+  </div>
+</section>
+
+<!-- 10 · open weights -->
+<section class="slide" aria-label="frontier quality at a 90 percent discount">
+  <div class="frame">
+    <p class="overline rise">the payoff</p>
+    <h2 class="rise">Frontier quality at a <em>90% discount.</em></h2>
+    <p class="lead rise">We train open-weight models on just your verified data. Your models, tuned on proof instead of scraped text, running where your data already lives.</p>
+    <div class="tiles rise">
+      <div class="tile"><div class="big">~90%</div><div class="cap">lower cost per task than frontier API pricing</div></div>
+      <div class="tile"><div class="big">yours</div><div class="cap">open weights, your ontology, your infrastructure</div></div>
+      <div class="tile"><div class="big">0 bytes</div><div class="cap">of your data crossing the wire to a frontier lab</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 · go to market -->
+<section class="slide" aria-label="go to market">
+  <div class="frame">
+    <p class="overline rise">go to market</p>
+    <h2 class="rise">stella is free. <em>The control plane is not.</em></h2>
+    <p class="lead rise">stella is open source and bring-your-own-key, head-to-head with Cursor and Claude Code, with one thing neither can claim: a deterministic definition of done. Oxagen sells the enterprise layer above it: identity, governance, the context system of record, and your private models.</p>
+    <table class="vs rise" aria-label="comparison with cursor and claude code">
+      <tr><th></th><th>cursor / claude code</th><th>stella + oxagen</th></tr>
+      <tr><td class="muted">definition of done</td><td>the model's word</td><td class="gold">a witnessed fail &rarr; pass flip</td></tr>
+      <tr><td class="muted">your data</td><td>leaves the building</td><td class="gold">stays on your network</td></tr>
+      <tr><td class="muted">the model</td><td>rented, forever</td><td class="gold">open weights, trained on your proof</td></tr>
+      <tr><td class="muted">the agent</td><td>subscription</td><td class="gold">free and open source</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- 12 · close -->
+<section class="slide cover" aria-label="close">
+  <div class="frame">
+    <div class="lockup rise">
+      <svg class="comet" width="72" height="72" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+        <line x1="10" y1="48" x2="30" y2="48" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+        <line x1="18" y1="34" x2="30" y2="34" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+        <line x1="18" y1="62" x2="30" y2="62" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+        <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#FFB000"/>
+      </svg>
+    </div>
+    <h2 class="rise">verified done,<br>not claimed done.</h2>
+    <p class="lead rise links">
+      <a href="https://stella.oxagen.sh">stella.oxagen.sh</a> &nbsp;·&nbsp;
+      <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a> &nbsp;·&nbsp;
+      <a href="mailto:mac@oxagen.sh">mac@oxagen.sh</a>
+    </p>
+  </div>
+</section>
+
+<script>
+(function () {
+  "use strict";
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var progress = document.getElementById("progress");
+  var counter = document.getElementById("counter");
+  var idx = 0;
+
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+
+  function fromHash() {
+    var m = /^#s(\d+)$/.exec(location.hash);
+    return m ? Math.min(slides.length - 1, Math.max(0, parseInt(m[1], 10) - 1)) : 0;
+  }
+
+  function go(i, replace) {
+    idx = Math.min(slides.length - 1, Math.max(0, i));
+    slides.forEach(function (s, j) { s.classList.toggle("active", j === idx); });
+    progress.style.width = (((idx + 1) / slides.length) * 100) + "%";
+    counter.textContent = pad(idx + 1) + " / " + pad(slides.length);
+    var h = "#s" + (idx + 1);
+    if (location.hash !== h) {
+      if (replace) { history.replaceState(null, "", h); }
+      else { history.pushState(null, "", h); }
+    }
+  }
+
+  document.getElementById("next").addEventListener("click", function () { go(idx + 1); });
+  document.getElementById("prev").addEventListener("click", function () { go(idx - 1); });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) { return; }
+    switch (e.key) {
+      case "ArrowRight": case "ArrowDown": case " ": case "PageDown": e.preventDefault(); go(idx + 1); break;
+      case "ArrowLeft": case "ArrowUp": case "PageUp": e.preventDefault(); go(idx - 1); break;
+      case "Home": e.preventDefault(); go(0); break;
+      case "End": e.preventDefault(); go(slides.length - 1); break;
+    }
+  });
+
+  var touchX = null;
+  document.addEventListener("touchstart", function (e) { touchX = e.changedTouches[0].clientX; }, { passive: true });
+  document.addEventListener("touchend", function (e) {
+    if (touchX === null) { return; }
+    var dx = e.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(dx) > 48) { go(dx < 0 ? idx + 1 : idx - 1); }
+  }, { passive: true });
+
+  window.addEventListener("hashchange", function () { go(fromHash(), true); });
+  go(fromHash(), true);
+})();
+</script>
+</body>
+</html>

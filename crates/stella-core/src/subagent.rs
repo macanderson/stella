@@ -450,7 +450,13 @@ impl TurnSteering for ChildSteering<'_> {
 /// child that is no longer running.
 pub struct AgentAttribution<'a> {
     bus: Option<&'a HookBus>,
-    previous: Option<String>,
+    /// The stack entry this guard owns, removed on drop.
+    ///
+    /// A token rather than the displaced value (#1853): restoring what was
+    /// displaced is only correct while scopes nest strictly, and two sibling
+    /// children overlap. Removing *this* entry leaves a later sibling's
+    /// attribution standing and cannot resurrect an earlier one.
+    token: Option<crate::bus::attribution::AttributionToken>,
 }
 
 impl<'a> AgentAttribution<'a> {
@@ -458,15 +464,15 @@ impl<'a> AgentAttribution<'a> {
     /// so callers without an extension bus pay nothing.
     #[must_use]
     pub fn enter(bus: Option<&'a HookBus>, agent_id: &str) -> Self {
-        let previous = bus.and_then(|bus| bus.set_agent(Some(agent_id.to_string())));
-        Self { bus, previous }
+        let token = bus.map(|bus| bus.push_agent(agent_id.to_string()));
+        Self { bus, token }
     }
 }
 
 impl Drop for AgentAttribution<'_> {
     fn drop(&mut self) {
-        if let Some(bus) = self.bus {
-            bus.set_agent(self.previous.take());
+        if let (Some(bus), Some(token)) = (self.bus, self.token.as_ref()) {
+            bus.drop_agent(token);
         }
     }
 }

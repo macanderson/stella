@@ -563,7 +563,7 @@ pub(crate) async fn run_goal_turn(
 /// `Engine::run_turn`.
 ///
 /// The goal-loop verifier is distinct from the pipeline's verify verifier: the verify
-/// verifier (inside [`Pipeline::run`]) answers "did this change pass its tests?",
+/// verifier (inside [`stella_pipeline::Pipeline::run`]) answers "did this change pass its tests?",
 /// while the goal verifier here answers "does the whole effort meet the goal?".
 /// Both are independent of the worker model.
 #[allow(clippy::too_many_arguments)]
@@ -769,7 +769,8 @@ async fn run_goal_pipeline_turn(
                 // Goal pipeline rounds run without an interactive steer tap.
                 steering: None,
             };
-            let pipeline = Pipeline::new(ports, tx.clone(), pipeline_config);
+            let pipeline =
+                crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), pipeline_config);
             // The same kickoff wording as the raw goal loop and the served
             // one — `stella_core::goal` owns the bytes for all three.
             let round_goal = stella_core::goal::goal_kickoff_text(goal);
