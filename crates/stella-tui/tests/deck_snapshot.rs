@@ -615,7 +615,7 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
          signal:\n{current}"
     );
     assert!(
-        !current.contains("a compaction rewrite this journal predates"),
+        !current.contains("older journal"),
         "…and must not offer the excuse this journal does not have:\n{current}"
     );
 }

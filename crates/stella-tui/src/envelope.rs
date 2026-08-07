@@ -508,15 +508,11 @@ impl InspectView {
         }
         Some(match self.journal_era {
             JournalEra::CompactionUnjournaled => (
-                format!(
-                    "  ! {n} block(s) did not re-hash — a compaction rewrite this journal predates"
-                ),
+                format!("  ! {n} block(s) did not re-hash — an older journal's compaction rewrite"),
                 false,
             ),
             JournalEra::CompactionJournaled => (
-                format!(
-                    "  !! {n} block(s) unaccounted for — this journal records every compaction rewrite"
-                ),
+                format!("  !! {n} block(s) unaccounted for — this journal records its rewrites"),
                 true,
             ),
         })
@@ -1429,6 +1425,39 @@ mod tests {
             AgentStatus::Killed,
         ] {
             assert!(!(s.is_active() && s.is_terminal()), "{s:?}");
+        }
+    }
+
+    /// The INSPECT overlay clips rather than wraps, and its popup is
+    /// `min(frame - 6, 120)` columns wide — so on an 80-column terminal a
+    /// banner line has about 72 to work with. Both variants are written to
+    /// that budget and put the meaning first; this pins it, because a wording
+    /// change that silently pushes the distinguishing half off the right edge
+    /// would undo #1981 without failing anything else (see #2029).
+    #[test]
+    fn both_mismatch_lines_survive_an_eighty_column_terminal() {
+        for era in [
+            JournalEra::CompactionUnjournaled,
+            JournalEra::CompactionJournaled,
+        ] {
+            let view = InspectView {
+                call: RecordedCallInfo {
+                    turn_instance: 0,
+                    step: 1,
+                    call_seq: 0,
+                    call_role: "worker".into(),
+                    provider: "zai".into(),
+                    model: "glm-5.2".into(),
+                    estimated_input_tokens: 10,
+                },
+                messages: Vec::new(),
+                verified: false,
+                digest_mismatches: 999,
+                unresolved: 0,
+                journal_era: era,
+            };
+            let (line, _) = view.digest_mismatch_line().expect("a mismatch is reported");
+            assert!(line.chars().count() <= 72, "{} cols: {line}", line.len());
         }
     }
 
