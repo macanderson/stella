@@ -43,6 +43,7 @@
 //! the work is credited is a separate question with its own, stricter,
 //! machinery.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use stella_core::driver::TurnHalt;
@@ -124,6 +125,19 @@ impl FlipHalt {
     #[must_use]
     pub fn is_flipped(&self) -> bool {
         self.flipped.load(Ordering::SeqCst)
+    }
+
+    /// The latch to hand a follow-up turn: `Some(self)` only while unfired.
+    ///
+    /// A latch that already fired belongs to the turn it stopped. A revision
+    /// dispatched after that flip was requested *despite* it — the ladder
+    /// found something else to fix (a lint regression, a refuted verdict) —
+    /// so the stale latch must not end the revision at its first step
+    /// boundary. Only a flip observed during the new turn itself may stop it,
+    /// and that is exactly what an unfired latch delivers (#1793).
+    #[must_use]
+    pub fn unfired(self: &Arc<Self>) -> Option<Arc<Self>> {
+        (!self.is_flipped()).then(|| Arc::clone(self))
     }
 
     /// Feed one finished shell call. Returns `true` if this observation
@@ -220,6 +234,21 @@ mod tests {
         let halt = FlipHalt::new("pytest -q");
         assert!(!halt.observe("pytest -q", "3 passed"));
         assert!(!halt.is_flipped());
+    }
+
+    #[test]
+    fn a_fired_latch_is_withheld_from_a_follow_up_turn() {
+        let halt = Arc::new(FlipHalt::new("pytest -q"));
+        // Unfired: the follow-up turn gets the same latch, not a copy — a
+        // flip it observes must be visible to the caller that armed it.
+        let handed = halt.unfired().expect("an unfired latch is handed on");
+        assert!(Arc::ptr_eq(&halt, &handed));
+
+        halt.observe("pytest -q", "ok\n[exit code: 0]");
+        assert!(
+            halt.unfired().is_none(),
+            "a latch that already fired must not end a later turn at its first step boundary"
+        );
     }
 
     #[test]

@@ -7,6 +7,12 @@
 use super::*;
 use crate::LineMutation;
 
+/// The authored-witness arming of the mid-turn flip halt (#1793) — a child
+/// rather than a sibling module so it reaches the shared fakes through this
+/// file's own `use super::*`, and so the already-oversized `tests.rs` does
+/// not grow another module declaration.
+mod flip_halt_arming;
+
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
 /// must escalate to the model verifier, never credit `DeterministicPass`. Before
