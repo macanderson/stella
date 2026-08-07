@@ -106,6 +106,11 @@ use witness_tools::WitnessToolExecutor;
 /// inside the shadow and are discarded with it) — the user's repo may have
 /// no identity configured (CI), and their real identity must never be
 /// implied on machinery commits.
+///
+/// The email is also `verify_done`'s vocabulary: its baseline walk skips
+/// seal commits by this identity (#2067). A `const` array cannot embed the
+/// other crate's constant, so a parity test below pins the two spellings
+/// together instead.
 const SNAPSHOT_IDENT: [&str; 4] = [
     "-c",
     "user.name=stella-pipeline",
@@ -560,6 +565,22 @@ async fn populate_snapshot(
     ]);
     git(dir, &commit_args).await?;
     let baseline = git(dir, &["rev-parse", "HEAD"]).await?.trim().to_string();
+    // Pin the session baseline where every tool later running in this
+    // workspace can see it. The pipeline advances HEAD with seal commits
+    // after each verified step, so by the time the worker calls
+    // `verify_done` HEAD already contains the work under proof — the pin is
+    // what keeps its flip oracle measuring against the pre-session tree
+    // (#2067). Per-worktree, so parallel candidates never clobber each
+    // other and nothing appears in the user's real checkout.
+    git(
+        dir,
+        &[
+            "update-ref",
+            stella_tools::verify::WITNESS_BASELINE_WORKTREE_REF,
+            &baseline,
+        ],
+    )
+    .await?;
     Ok((overlay, baseline))
 }
 
@@ -659,7 +680,10 @@ impl GitCandidateWorkspace {
             "--no-gpg-sign",
             "-q",
             "-m",
-            "stella: candidate verified snapshot",
+            // The subject is `verify_done`'s vocabulary too: its baseline
+            // walk skips exactly these seals (#2067), so the two crates
+            // share one spelling.
+            stella_tools::verify::CANDIDATE_SEAL_SUBJECT,
         ]);
         git(&self.dir, &commit_args).await.map_err(fail)?;
         let sealed = git(&self.dir, &["rev-parse", "HEAD"])
@@ -763,6 +787,21 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 mod tests {
     use super::*;
     use stella_protocol::FileChangeKind;
+
+    /// #2067: the seal identity is the vocabulary `verify_done`'s baseline
+    /// walk skips — the two crates must spell it identically, and a `const`
+    /// array cannot embed the other crate's constant, so this test is the
+    /// binding.
+    #[test]
+    fn snapshot_identity_matches_the_verify_done_walk_vocabulary() {
+        assert_eq!(
+            SNAPSHOT_IDENT[3],
+            format!(
+                "user.email={}",
+                stella_tools::verify::CANDIDATE_SNAPSHOT_EMAIL
+            )
+        );
+    }
 
     #[test]
     fn candidate_port_keeps_the_exact_host_operation_journal() {

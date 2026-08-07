@@ -127,6 +127,13 @@ impl SymptomClass {
             || lower.contains("syntaxerror")
             || lower.contains("cannot find")
             || lower.contains("compilation failed")
+            // The import/loader family (#2067): a run that dies importing a
+            // module — the shape a build artifact missing from a fresh
+            // checkout produces — ran nothing, exactly like a compile error.
+            || lower.contains("modulenotfounderror")
+            || lower.contains("no module named")
+            || lower.contains("importerror")
+            || lower.contains("error while loading shared libraries")
         {
             return Self::BuildFailure;
         }
