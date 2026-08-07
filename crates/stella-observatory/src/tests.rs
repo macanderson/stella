@@ -36,12 +36,16 @@ fn host_header_gates_dns_rebinding() {
 /// real schema (the subset the observatory reads).
 ///
 /// A hand-written *subset*, not a copy, and deliberately a divergent one:
-/// `stella-store`'s shipped DDL also carries `executions.session_id`,
-/// `usage_complete` and `usage_status`, and `telemetry.call_role` and
-/// `usage_complete` — columns no query in this crate selects. The point of
-/// the subset is speed and focus: these are routing and rendering tests, and
-/// they should not pay for a migration run to assert that a query string
-/// parses.
+/// `stella-store`'s shipped DDL also carries `executions.usage_complete` and
+/// `usage_status`, and `telemetry.call_role` and `usage_complete` — columns
+/// no query in this crate selects. The point of the subset is speed and
+/// focus: these are routing and rendering tests, and they should not pay for
+/// a migration run to assert that a query string parses.
+///
+/// `executions.session_id` used to sit in that list and no longer does: the
+/// execution detail route serves it, so the transcript page can name the
+/// session a deep-linked turn belongs to. A column this crate reads has to be
+/// here or every route test 500s.
 ///
 /// What used to be wrong with that is now covered elsewhere. Nothing checked
 /// the two schemas against each other, so a column this crate *does* read,
@@ -65,7 +69,7 @@ fn seeded_workspace() -> TempDir {
                kind TEXT NOT NULL, prompt TEXT NOT NULL,
                provider TEXT NOT NULL, model TEXT NOT NULL,
                started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-               finished_at TEXT, outcome TEXT,
+               finished_at TEXT, outcome TEXT, session_id TEXT,
                cost_usd REAL NOT NULL DEFAULT 0);
              CREATE TABLE telemetry (
                execution_id INTEGER NOT NULL, step INTEGER NOT NULL,
@@ -97,10 +101,10 @@ fn seeded_workspace() -> TempDir {
                lines_removed INTEGER NOT NULL DEFAULT 0,
                events TEXT NOT NULL DEFAULT '[]');
              INSERT INTO executions
-               (kind, prompt, provider, model, outcome, cost_usd)
+               (kind, prompt, provider, model, outcome, session_id, cost_usd)
              VALUES
-               ('run', 'add a function', 'zai', 'glm-5.2', 'completed', 0.03),
-               ('goal', 'make tests pass', 'local', 'llama', 'goal_unmet', 0.0);
+               ('run', 'add a function', 'zai', 'glm-5.2', 'completed', 'ses-1', 0.03),
+               ('goal', 'make tests pass', 'local', 'llama', 'goal_unmet', NULL, 0.0);
              INSERT INTO telemetry
                (execution_id, step, ts, provider, model, input_tokens,
                 estimated_input_tokens, output_tokens, cache_read_tokens,
@@ -362,6 +366,32 @@ fn execution_detail_includes_steps_tools_files() {
         serde_json::Value::Null,
         "unreflected runs stay null"
     );
+}
+
+/// The execution detail route names the session that owns the turn.
+///
+/// The transcript is a page with an address (`#transcript/<execution>`), so it
+/// is routinely reached by reload or by a pasted link, with no session list in
+/// memory to have come from. Without this field such an arrival can say
+/// neither which session the turn belongs to nor which turns sit either side
+/// of it, and the page's breadcrumb and prev/next controls are dead. NULL is a
+/// real answer — a run recorded before schema v8 stamped `session_id` has no
+/// session — and must survive as `null` rather than as a missing key, because
+/// the page distinguishes "no session" from "field not served".
+#[test]
+fn execution_detail_carries_its_session_id() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/execution?id=1");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(v["session_id"], "ses-1");
+
+    let unstamped = respond(ws.path(), "/api/execution?id=2");
+    let v: serde_json::Value = serde_json::from_slice(&unstamped.body).unwrap();
+    assert!(
+        v.get("session_id").is_some(),
+        "the key must be served even when the value is null"
+    );
+    assert_eq!(v["session_id"], serde_json::Value::Null);
 }
 
 /// The transcript replay (#1461): the journal route folds an execution's
@@ -1301,6 +1331,37 @@ fn percent_decode_tolerates_malformed_escapes() {
     assert_eq!(percent_decode("caf%C3%A9"), "café");
     assert_eq!(percent_decode("%ff"), "\u{fffd}");
     assert_eq!(percent_decode("plain"), "plain");
+}
+
+/// Inspecting a turn is a route, not an overlay.
+///
+/// This asserts structure, not rendering: that the transcript panel and its
+/// `#transcript/<id>` route exist, that both drill paths (the Overview's
+/// execution table and the Sessions turn table) navigate to it, and that the
+/// modal drawer they used to open is gone rather than merely bypassed — a
+/// second, stale way in is how two renderings of the same data drift apart.
+/// Whether the page then *looks* right is not decidable from Rust; that was
+/// verified by driving the served dashboard in a browser.
+#[test]
+fn inspecting_a_turn_is_a_page_not_a_drawer() {
+    for needle in [
+        "data-tab=\"transcript\"",              // the panel
+        "id=\"panel-transcript\"",              // …addressed by its tab
+        "location.hash = \"transcript/\" + id", // the route
+        "goTranscript(+tr.dataset.exec)",       // sessions → turn
+        "goTranscript(+tr.dataset.id)",         // overview → execution
+    ] {
+        assert!(
+            INDEX_HTML.contains(needle),
+            "the transcript page is missing {needle}"
+        );
+    }
+    for gone in ["id=\"drawer\"", "id=\"scrim\"", "openDrawer(", "aria-modal"] {
+        assert!(
+            !INDEX_HTML.contains(gone),
+            "the execution drawer was replaced by the transcript page, but {gone} survives"
+        );
+    }
 }
 
 /// The page must be fully self-contained: any http(s) URL in the HTML

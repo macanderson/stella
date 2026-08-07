@@ -80,8 +80,9 @@ pub const MAX_SYMLINK_EXPANSIONS: usize = 40;
 #[derive(Debug)]
 pub enum RootError {
     /// The path named a location outside the workspace root — by climbing
-    /// above it, by being absolute, or by going through a symlink that
-    /// leaves it.
+    /// above it, by being absolute *and not under it*, or by going through a
+    /// symlink that leaves it. An absolute path that does name something
+    /// inside the root is rebased onto it rather than refused (#2058).
     Escapes(String),
     /// An ordinary filesystem failure: the file is missing, is a directory,
     /// is not readable.
@@ -448,6 +449,34 @@ impl RootHandle {
     /// Containment does not depend on the choice. Every interior component is
     /// opened `O_NOFOLLOW` either way, so a link cannot redirect the walk
     /// itself; only the final name's own indirection is at stake.
+    /// The path the walk actually starts from: `rel` with the workspace root
+    /// stripped when `rel` is an absolute name *for something inside it*.
+    ///
+    /// A model that writes `/app/feal.c` in a workspace rooted at `/app` is
+    /// naming a file in the workspace, not escaping it — but every absolute
+    /// path used to reach [`steps_of`], which refuses a `RootDir` component,
+    /// so the agent was told its own files were outside its own root. It was
+    /// the largest single class of tool error in a benchmark cycle (8 of 49),
+    /// and the message asserted something false, so the model retried
+    /// variations instead of correcting (#2058).
+    ///
+    /// Stripping is lexical and *only* rewrites the starting point: the
+    /// remainder is still walked component-by-component by the same
+    /// `O_NOFOLLOW` loop, `..` still pops the stack whose base is the root,
+    /// and a symlink out of the tree is still caught at expansion. So this
+    /// cannot smuggle anything past containment — it decides which name the
+    /// walk begins with, never whether the walk is checked. An absolute path
+    /// that does not lie under the root is returned unchanged and refused by
+    /// `steps_of` exactly as before, which is the honest reading of that
+    /// message.
+    fn entry_path<'p>(&self, rel: &'p str) -> &'p Path {
+        let path = Path::new(rel);
+        match path.strip_prefix(&self.canon_root) {
+            Ok(inside) if path.is_absolute() => inside,
+            _ => path,
+        }
+    }
+
     fn resolve_leaf(
         &self,
         rel: &str,
@@ -455,7 +484,7 @@ impl RootHandle {
         follow_leaf: bool,
     ) -> Result<(OwnedFd, CString), RootError> {
         let mut queue: std::collections::VecDeque<Step> = std::collections::VecDeque::new();
-        splice(&mut queue, Path::new(rel), rel)?;
+        splice(&mut queue, self.entry_path(rel), rel)?;
 
         // `stack[0]` is the root. `..` pops it rather than opening `".."`:
         // a directory renamed out of the tree under us still answers `..`,
@@ -838,6 +867,46 @@ mod tests {
         let target = handle.open_write("a/b/c.txt", true).expect("write");
         assert!(target.created);
         assert!(root.join("a/b/c.txt").exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// An absolute path *inside* the root names a file in the workspace.
+    ///
+    /// The walker refuses any `RootDir` component, so before #2058 a model
+    /// writing `/app/feal.c` in a workspace rooted at `/app` was told its own
+    /// file was outside its own root — 8 of 49 tool errors in one benchmark
+    /// cycle. The three refusals asserted below are the reason the fix strips
+    /// only the *starting* name and leaves the walk itself untouched.
+    #[test]
+    fn an_absolute_path_inside_the_root_names_a_file_in_the_workspace() {
+        let root = scratch("absolute-inside");
+        std::fs::write(root.join("a.txt"), b"hello").unwrap();
+        let handle = RootHandle::open(&root).expect("open root");
+        // Built from the canonical root: `scratch` sits under a symlinked
+        // temp dir on macOS, and the root prefix is compared lexically.
+        let canon = root.canonicalize().expect("canonicalize root");
+
+        let got = handle
+            .read_to_string(canon.join("a.txt").to_str().unwrap())
+            .expect("an absolute path inside the root is not an escape");
+        assert_eq!(got, "hello");
+
+        // Containment is unchanged in every direction that matters.
+        let outside = handle
+            .read_to_string("/etc/passwd")
+            .expect_err("absolute and outside the root must still refuse");
+        assert!(outside.is_escape(), "{outside}");
+
+        // Stripping the prefix must not become a way to smuggle `..` past
+        // the walk: the remainder is still walked, so this still climbs out
+        // of a stack whose base is the root, and is still refused.
+        let climb = canon.join("../escaped.txt");
+        let escaped = handle
+            .open_write(climb.to_str().unwrap(), true)
+            .expect_err("a root-prefixed path must not climb out");
+        assert!(escaped.is_escape(), "{escaped}");
+        assert!(!root.parent().unwrap().join("escaped.txt").exists());
+
         std::fs::remove_dir_all(&root).ok();
     }
 

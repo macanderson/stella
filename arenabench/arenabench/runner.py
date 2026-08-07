@@ -880,11 +880,26 @@ class MatchRunner:
         binary = os.environ.get("STELLA_BINARY")
         if binary:
             env["STELLA_BINARY"] = binary
-            run.warnings.append(
-                "SUT not pinned to a commit — running whatever STELLA_BINARY "
-                "points at, so these numbers cannot be attributed to a "
-                "specific Stella revision"
-            )
+            # `create_match` has already refused an unpinned seat whose binary
+            # is measurably stale, so anything reaching here is either close to
+            # `main` or carries no commit stamp at all. Say which: "cannot be
+            # attributed" is true of the second and false of the first, and a
+            # warning that overstates its case is one operators learn to skip.
+            ambient = sut.ambient_sut()
+            if ambient is not None and ambient.commit:
+                run.warnings.append(
+                    f"SUT not pinned — running {ambient.path}, built from "
+                    f"{ambient.commit[:8]}. The commit is recorded here but "
+                    "not in the match, so pin the SUT to make the result "
+                    "self-describing"
+                )
+            else:
+                run.warnings.append(
+                    "SUT not pinned to a commit — running whatever "
+                    "STELLA_BINARY points at, and that binary carries no "
+                    "compile-time commit stamp, so these numbers cannot be "
+                    "attributed to a specific Stella revision"
+                )
         return env
 
     # -- supervision ------------------------------------------------------

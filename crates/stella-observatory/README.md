@@ -80,7 +80,7 @@ free one). This crate builds no binary —
 | [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain, exploration maps — plus `redact`, the credential scrubber. |
 | [`src/self_driving.rs`](src/self_driving.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/self-driving/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
 | [`src/codegraph.rs`](src/codegraph.rs) | `codegraph.db` flattened to `{nodes, edges, groups}` for the force-directed canvas, including the Rust module-path resolution the indexer doesn't do. |
-| [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. |
+| [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. Sections are addressed by fragment: `#<tab>`, or `#<tab>/<arg>` for a tab that addresses one record. `#transcript/<execution>` is the only argument-taking route today, and its tab stays hidden until a turn is open. |
 | `src/assets/mark.svg`, `src/assets/wordmark.svg` | Favicon and header lockup, served from `/assets/`. |
 | [`examples/serve.rs`](examples/serve.rs) | `cargo run -p stella-observatory --example serve -- <root> <port>` — serve any workspace without building the CLI. |
 
@@ -233,16 +233,31 @@ accent): the glyph and the badge context, never the hue, say "warning".
 - **The page is embedded at compile time.** Editing
   [`src/assets/index.html`](src/assets/index.html) does nothing until you
   rebuild — `--example serve` included.
+- **Text is clipped twice, and the two clippers must agree.** The server clips
+  in `db::truncate` and the page clips again in `clip`
+  ([`src/assets/index.html`](src/assets/index.html)); both cut on a **code
+  point** and append `…`, and only the *lengths* are per-surface. The page's
+  copy is the one no Rust gate can see — rustc, clippy and the golden payloads
+  all read straight past it — and it is the one that drifted: it counted
+  UTF-16 code units and cut with `slice`, so any prompt whose n-th unit landed
+  mid-emoji reached the DOM as a lone surrogate, a `�` (#2026).
+  [`tests/page_clipper.rs`](tests/page_clipper.rs) now runs that function under
+  `node` against the contract, so a fourth spelling of "clip" fails at
+  `cargo test`. If you add clipping to the page, call `clip` — do not inline
+  `slice`.
 - **The test schema is a hand-written copy, and it has already drifted.**
-  `seeded_workspace` in `src/lib.rs` spells out its own DDL for the subset of
+  `seeded_workspace` in `src/tests.rs` spells out its own DDL for the subset of
   tables the observatory reads, and nothing checks it against
   `../stella-store/src/ddl.rs` — nor does any open here read the
   `PRAGMA user_version` those migrations stamp. The store's shipped
-  `executions` carries `session_id`, `usage_complete` and `usage_status`, and
-  its `telemetry` carries `call_role` and `usage_complete`; the fixture has
-  none of them. That divergence is harmless only because no query selects
-  those columns. A column this crate *does* read, renamed in the store, keeps
-  this suite green and breaks the dashboard at runtime.
+  `executions` carries `usage_complete` and `usage_status`, and its `telemetry`
+  carries `call_role` and `usage_complete`; the fixture has none of them. That
+  divergence is harmless only because no query selects those columns. A column
+  this crate *does* read, renamed in the store, keeps this suite green and
+  breaks the dashboard at runtime. (`executions.session_id` was on that list
+  until the execution detail route began serving it; the fixture carries it
+  now, because a column this crate reads has to be there or every route test
+  500s.)
 - **Store paths are hardcoded**, `<root>/.stella/private/<name>` — this crate
   can't use `stella-store`'s path resolver (see *Where it sits*; `stella-home`
   answers where `~/.stella` is, not where a workspace's private store is), so a
@@ -276,8 +291,17 @@ cargo test -p stella-observatory
 
 There is no crate-specific `make` target — the root `Makefile` has one only for
 core/model/tools/cli/protocol — so `make test` picks this up with the workspace.
-Every test is an inline `#[cfg(test)] mod tests`: no `tests/` directory, no
-fixture dir, feature flag or env var.
+No fixture dir, feature flag or env var. Most tests are an inline
+`#[cfg(test)] mod tests`; four suites live in `tests/` because each needs
+something the inline module cannot have — a dev-dependency on the crate whose
+schema it is checking, a real socket, or `node`:
+
+| Suite | Why it is not inline |
+|---|---|
+| [`tests/schema_conformance.rs`](tests/schema_conformance.rs) | Builds `store.db` through `stella-store`'s real migrations (#827) — a **dev**-dependency, so production still links nothing. |
+| [`tests/journal_era.rs`](tests/journal_era.rs) | The other half of the digest alarm: which of two things a mismatch means depends on `executions.journal_era` (#1981). |
+| [`tests/live_stream.rs`](tests/live_stream.rs) | Drives the live endpoint over a real socket. |
+| [`tests/page_clipper.rs`](tests/page_clipper.rs) | Executes the page's own JavaScript under `node` — see below. |
 
 The dominant shape: `seeded_workspace()` builds a `TempDir` with a `store.db`
 seeded from hand-written DDL, `seed_fs_surfaces()` layers on the file-backed

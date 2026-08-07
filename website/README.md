@@ -26,6 +26,13 @@ layers, in order:
 Do not put a hex literal in `global.css` or a component — add a token to
 `tokens.css` and reference it, so the site and the kit cannot drift.
 
+**A route used by exactly one page may keep its own stylesheet** beside it,
+imported from that route's layout — `src/app/releases/releases.css` is the
+pattern. It buys the same thing `global.css` does (one stylesheet per page, not
+a `<style>` tag per component) without growing a sitewide file with rules
+nothing else can use. The token rule above still applies: no hex literals
+anywhere, and a `--rl-`-style prefix so the selectors cannot collide.
+
 **Brand assets are copies of the kit, not originals.** Every SVG under
 `public/brand/` mirrors `docs/brand/logo/svg/`; `public/icons/*`,
 `src/app/favicon.ico`, `src/app/icon.svg`, and `src/app/apple-icon.png` mirror
@@ -83,7 +90,7 @@ content/docs/            # all documentation (MDX + meta.json ordering)
   extensions.mdx         # the extension event bus
   scripting.mdx          # headless JSON output for CI
   showcase.mdx           # teams shipping with Stella (Oxagen, …)
-  release-notes.mdx      # what's new, per minor release
+  release-notes.mdx      # where release notes live (points at /releases)
   donate.mdx             # how to support the project
 
 src/app/                 # Next.js App Router

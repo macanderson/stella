@@ -37,23 +37,60 @@ fi
 
 model="${CHANGELOG_AI_MODEL:-anthropic/claude-sonnet-5}"
 
+# A SERIES range — the whole minor line, which is what a section is drafted
+# from now — spans hundreds of commits, and its raw diff is far past anything a
+# 100,000-character window represents fairly: truncating it hands the model
+# whatever git happened to emit first and silently drops the rest, so the
+# section would describe the start of the range rather than the important part
+# of it. Above the threshold the diff is dropped entirely and the draft leans on
+# commit subjects and bodies — which in this repository are conventional-commit
+# titles carrying the PR number and a real sentence, a better signal per token
+# than a truncated hunk — with the subject and body caps widened to match.
+# Below it a single release's diff still fits, and the diff still wins: commit
+# messages describe intent, the diff is what shipped.
+commit_count="$(git rev-list --no-merges --count ${range:+"$range"} 2>/dev/null || echo 0)"
+if [ "${commit_count}" -gt 60 ]; then
+  scope="series"
+  subject_cap=600
+  body_cap=1200
+  echo "changelog-ai: ${commit_count} commits in '${range:-<all>}'; drafting a series section from subjects and diffstat." >&2
+else
+  scope="release"
+  subject_cap=100
+  body_cap=400
+fi
+
 # The release's real content: everything in the range except the release
 # machinery's own commits (the "stella X.Y.Z" stamp and the version-sync PR).
 bot_re='^(stella [0-9]|chore\(release\): sync versions)'
-commits="$(git log --no-merges --format='%s' ${range:+"$range"} | grep -Ev "$bot_re" | head -n 100 || true)"
+commits="$(git log --no-merges --format='%s' ${range:+"$range"} | grep -Ev "$bot_re" | head -n "$subject_cap" || true)"
 if [ -z "$commits" ]; then
   echo "changelog-ai: no non-bot commits in range '${range:-<all>}'; printing nothing." >&2
   exit 0
 fi
 
-bodies="$(git log --no-merges --format='--- %s%n%b' ${range:+"$range"} | head -n 400 || true)"
+bodies="$(git log --no-merges --format='--- %s%n%b' ${range:+"$range"} | head -n "$body_cap" || true)"
 stat="$(git diff --stat ${range:+"$range"} -- ':(exclude)Cargo.lock' | tail -n 100 || true)"
-diff="$(git diff ${range:+"$range"} -- ':(exclude)Cargo.lock' ':(exclude)website/pnpm-lock.yaml' 2>/dev/null | head -c 100000 || true)"
+
+if [ "$scope" = series ]; then
+  diff=""
+else
+  diff="$(git diff ${range:+"$range"} -- ':(exclude)Cargo.lock' ':(exclude)website/pnpm-lock.yaml' 2>/dev/null | head -c 100000 || true)"
+fi
+
+# The shared half of the instruction — voice, format, and what counts as
+# user-facing — is identical either way; only the scope sentence differs.
+common='Keep a Changelog format: "### Added" / "### Changed" / "### Fixed" / "### Removed" / "### Security" headings (only the ones that apply, in that order), each bullet starting with a bold lead claim, then one or two plain sentences saying what a user of the CLI would notice — concrete, everyday words, wrapped at 80 columns, ending with the PR reference like (#1234) when the commit subject carries one. Tests, CI workflows, gates and baselines, bench-harness internals, and refactors are not user-facing. Output ONLY the section body markdown - no version heading, no preamble, no code fences.'
+
+if [ "$scope" = series ]; then
+  intro="Write the CHANGELOG.md section body for one MINOR RELEASE LINE of \"stella\", a Rust coding-agent CLI — the whole series of releases listed below, summarized as one section a reader upgrading across it would want. ${common} 8-16 bullets total: group the work into themes, lead with the changes that alter what the tool does, and drop everything routine. Base every claim on the commit subjects and bodies below."
+else
+  intro="Write the CHANGELOG.md section body for one release of \"stella\", a Rust coding-agent CLI. ${common} 1-3 bullets total; pick the biggest user-visible changes and drop the rest. Base every claim on the diff below — commit messages describe intent, the diff is what shipped. If the release contains nothing user-facing, output exactly one line instead: _Internal: <six-to-twelve-word summary>; no user-facing changes._"
+fi
 
 # shellcheck disable=SC2016  # the format string's backticks are literal markdown
 prompt="$(printf '%s\n\n## Commit subjects\n%s\n\n## Commit bodies (squash-merge PR descriptions)\n%s\n\n## Files changed\n%s\n\n## Diff (truncated)\n```diff\n%s\n```\n' \
-  'Write the CHANGELOG.md section body for one release of "stella", a Rust coding-agent CLI. Keep a Changelog format: "### Added" / "### Changed" / "### Fixed" / "### Removed" / "### Security" headings (only the ones that apply, in that order), each bullet starting with a bold lead claim, then one or two plain sentences saying what a user of the CLI would notice — concrete, everyday words, wrapped at 80 columns, ending with the PR reference like (#1234) when the commit subject carries one. 1-3 bullets total; pick the biggest user-visible changes and drop the rest. Base every claim on the diff below — commit messages describe intent, the diff is what shipped. Tests, CI workflows, gates and baselines, bench-harness internals, and refactors are not user-facing: if the release contains nothing user-facing, output exactly one line instead: _Internal: <six-to-twelve-word summary>; no user-facing changes._ Output ONLY the section body markdown - no version heading, no preamble, no code fences.' \
-  "$commits" "$bodies" "$stat" "$diff")"
+  "$intro" "$commits" "$bodies" "$stat" "$diff")"
 
 payload="$(jq -n --arg m "$model" --arg c "$prompt" \
   '{model:$m, messages:[{role:"user",content:$c}], temperature:0.2}')"
