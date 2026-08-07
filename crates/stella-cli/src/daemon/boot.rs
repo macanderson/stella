@@ -57,8 +57,7 @@
 //!   retracts its resume point on the way out. A row written by a build that
 //!   predates #1653 — where a policy stop really did store `Error` — is
 //!   therefore filtered by [`crate::daemon::boot::SkipReason::NoResumePoint`]
-//!   anyway, without this
-//!   module having to trust its status.
+//!   anyway, without this module having to trust its status.
 //! - **The attempt bound still applies.** An `Error` that resumes into
 //!   another `Error` is counted like any other continuation and retired
 //!   after `MAX_BOOT_ATTEMPTS`.
