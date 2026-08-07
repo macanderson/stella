@@ -822,7 +822,16 @@ def _locate_binary() -> Path:
     ``PATH``, then ``./target/release/stella`` walking up from the current
     working directory. Never imported at module load — only ``install`` calls
     this, so importing the adapter never requires Stella to be present.
+
+    A trial whose environment carries ``ARENABENCH_SUT_COMMIT`` was *pinned*
+    to a commit by its launcher, and the launcher always sets ``STELLA_BINARY``
+    beside it. Reaching the ``PATH``/cwd tiers with the pin present is
+    therefore always a broken pin, and it fails closed: those tiers exist for
+    genuinely unpinned development runs, and falling through them once
+    uploaded the operator's native macOS arm64 build into every Linux task
+    container (#2098).
     """
+    pinned = os.environ.get("ARENABENCH_SUT_COMMIT")
     explicit = os.environ.get("STELLA_BINARY")
     if explicit:
         binary = Path(explicit)
@@ -831,6 +840,15 @@ def _locate_binary() -> Path:
                 f"STELLA_BINARY={explicit!r} does not point at a file"
             )
         return binary
+    if pinned:
+        raise FileNotFoundError(
+            f"this trial is pinned to Stella commit {pinned[:12]} "
+            "(ARENABENCH_SUT_COMMIT) but STELLA_BINARY is not set — a broken "
+            "pin fails closed. Refusing to fall back to `stella` on PATH or "
+            "a cwd walk: an ambient binary has no relation to the pinned "
+            "commit, and that fallback once uploaded a host's native macOS "
+            "build into Linux task containers (#2098)."
+        )
 
     on_path = _cached_binary(_BINARY_NAME)
     if on_path is not None:
