@@ -1453,9 +1453,6 @@ impl<'a> Pipeline<'a> {
         research: &[ResearchFinding],
         repo_structure: &str,
         revision: Option<&str>,
-        // Bundled rather than two parameters: `Spend` exists for exactly this
-        // pair, and #1778's `research` argument pushed the loose form past
-        // clippy's arity limit.
         spend: &mut Spend<'_>,
     ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
         self.emit(AgentEvent::Stage {
