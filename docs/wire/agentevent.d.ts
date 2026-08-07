@@ -83,6 +83,32 @@ export type CacheZone = "stable_prefix" | "cacheable" | "volatile" | "other";
 export type CiStatus = "pending" | "running" | "passing" | "failing";
 
 /**
+ * One in-place compaction rewrite: the post-rewrite identity and bytes of a
+ * tool result a compaction pass stubbed, deduplicated, superseded, or aged.
+ *
+ * `content` is the canonical serialized form of the replacement tool output —
+ * the same `serde_json` serialization the receipts plane hashes — so
+ * `content_digest` re-derives from `content` exactly and a consumer can
+ * verify the pair without any other context.
+ */
+export interface CompactionRewrite {
+  /**
+   * The content-addressed id (`blk_…`) of the block the rewrite produced —
+   * the identity the next step's manifest cites for this result.
+   */
+  block_id: string;
+  /**
+   * The replacement bytes: the serialized post-rewrite tool output.
+   */
+  content: string;
+  /**
+   * `sha256:<hex>` of `content` — the digest the block registry records,
+   * and the key reconstruction resolves this preimage by.
+   */
+  content_digest: string;
+}
+
+/**
  * Stable-ID payload of `compiled_context_frame_built`.
  */
 export interface CompiledContextFrameBuilt {
@@ -1227,6 +1253,17 @@ export type AgentEvent = {
    * exception). `serde(default)` — absent on pre-identity journals.
    */
   evicted_blocks?: string[];
+  /**
+   * The replacement bytes each in-place rewrite left behind — the
+   * post-rewrite identity, digest, and preimage of every block this
+   * pass stubbed or aged, deduplicated by digest. Journaling these is
+   * what lets reconstruction resolve a compacted block to the bytes
+   * the model actually received instead of the pre-compaction output
+   * under the same `call_id` (#1667). `serde(default)` — absent on
+   * journals written before rewrites were journaled, whose compacted
+   * blocks surface as digest mismatches.
+   */
+  rewrites?: CompactionRewrite[];
   /**
    * Messages replaced by a model-written history summary — the
    * overflow fallback when eviction alone cannot reach budget.

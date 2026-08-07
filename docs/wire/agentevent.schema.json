@@ -176,6 +176,29 @@
         }
       ]
     },
+    "CompactionRewrite": {
+      "description": "One in-place compaction rewrite: the post-rewrite identity and bytes of a\ntool result a compaction pass stubbed, deduplicated, superseded, or aged.\n\n`content` is the canonical serialized form of the replacement tool output —\nthe same `serde_json` serialization the receipts plane hashes — so\n`content_digest` re-derives from `content` exactly and a consumer can\nverify the pair without any other context.",
+      "properties": {
+        "block_id": {
+          "description": "The content-addressed id (`blk_…`) of the block the rewrite produced —\nthe identity the next step's manifest cites for this result.",
+          "type": "string"
+        },
+        "content": {
+          "description": "The replacement bytes: the serialized post-rewrite tool output.",
+          "type": "string"
+        },
+        "content_digest": {
+          "description": "`sha256:<hex>` of `content` — the digest the block registry records,\nand the key reconstruction resolves this preimage by.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "block_id",
+        "content_digest",
+        "content"
+      ],
+      "type": "object"
+    },
     "CompiledContextFrameBuilt": {
       "description": "Stable-ID payload of `compiled_context_frame_built`.",
       "properties": {
@@ -2068,6 +2091,13 @@
           "description": "The `block_id`s each pass stubbed (spec §6.2) — identities, not just\ncounts, so the receipt records *which* blocks left context and a\nlater pass can prove a block was evicted before it was ever cited or\nreferenced (the wasted-carry signal). For the pure passes each vec's\nlength equals its count field (`summarized_blocks` is the documented\nexception). `serde(default)` — absent on pre-identity journals.",
           "items": {
             "type": "string"
+          },
+          "type": "array"
+        },
+        "rewrites": {
+          "description": "The replacement bytes each in-place rewrite left behind — the\npost-rewrite identity, digest, and preimage of every block this\npass stubbed or aged, deduplicated by digest. Journaling these is\nwhat lets reconstruction resolve a compacted block to the bytes\nthe model actually received instead of the pre-compaction output\nunder the same `call_id` (#1667). `serde(default)` — absent on\njournals written before rewrites were journaled, whose compacted\nblocks surface as digest mismatches.",
+          "items": {
+            "$ref": "#/$defs/CompactionRewrite"
           },
           "type": "array"
         },
