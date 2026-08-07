@@ -558,6 +558,10 @@ fn pin_role(
         entry.config.base_url.to_string(),
         None,
         entry.aux.clone(),
+        // Routed management roles fire in bursts within a turn — their
+        // inter-call gaps are seconds, so the 5-minute cache window is the
+        // right ask whatever surface the session runs on (#1839).
+        stella_model::CacheTtl::default(),
     ) {
         Ok(provider) => {
             for &role in roles {
@@ -875,6 +879,7 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
         cfg.effective_base_url().to_string(),
         cfg.base_url_override.as_deref(),
         cfg.aux_credentials.clone(),
+        cfg.effective_cache_ttl(),
     )
 }
 
@@ -913,6 +918,7 @@ fn build_provider_parts(
     effective_base_url: String,
     base_url_override: Option<&str>,
     aux: stella_model::AuxCredentials,
+    cache_ttl: stella_model::CacheTtl,
 ) -> Result<Box<dyn Provider>, String> {
     // The full anti-invalid-slug ladder, for EVERY provider (not just seeded
     // ones): the seed floor always passes; a provider whose master-list rows
@@ -950,6 +956,7 @@ fn build_provider_parts(
         effective_base_url,
         base_url_override,
         aux,
+        cache_ttl,
     ))
     .map_err(|error| error.to_string())
 }
@@ -1039,6 +1046,9 @@ pub(crate) fn resolve_cross_family_verifier(
         entry.config.base_url.to_string(),
         None,
         entry.aux.clone(),
+        // The routed verifier's calls land in bursts within a run; the
+        // 5-minute window is the right ask regardless of surface (#1839).
+        stella_model::CacheTtl::default(),
     )
     .ok()?;
     Some((verifier, decision.model_ref.provider))

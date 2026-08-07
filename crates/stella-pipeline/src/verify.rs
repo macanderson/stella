@@ -870,10 +870,24 @@ fn bounded_reasoning(text: &str) -> String {
 /// token appears — the signal the caller uses to invoke the
 /// [`heuristic_fallback`] verdict rather than trusting an unparseable
 /// verifier response.
+///
+/// Two lines are authoritative, tried in order: the reply's **first** non-empty
+/// line, then its **last** (#1787). The head alone was the whole protocol, and
+/// a verifier that opens with "Here is my assessment:" therefore parsed to
+/// nothing — silently converting every verdict from that model into
+/// [`heuristic_fallback`], which fails anything without green touched tests. A
+/// reasoning model does not decline to answer; it answers *after* thinking, so
+/// the concluding line is where its verdict actually is.
+///
+/// Deliberately two positions and not a scan of the whole body: the head and
+/// the tail are the places the protocol could plausibly put a verdict, while
+/// intermediate prose is where a verifier *discusses* failing tests. Reading
+/// that would reintroduce the misread the token set was narrowed to prevent —
+/// and the head still wins, so a reply that leads with its verdict is parsed
+/// exactly as before no matter what its closing line says.
 pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
-    // Only the FIRST non-empty line decides the verdict — the verifier prompt asks
-    // for PASS/FAIL there. And the ambiguous "yes"/"no" synonyms are excluded:
-    // scanning the whole body for them misread a genuine PASS line like "no
+    // Within a line, the ambiguous "yes"/"no" synonyms are excluded:
+    // scanning for them misread a genuine PASS line like "no
     // obvious issues. PASS" as a FAIL because "no" was hit first.
     // A negated verdict token is not that verdict: "the tests do not pass" is
     // a FAIL, and crediting its "pass" token as a PASS inverted real verdicts.
@@ -901,45 +915,46 @@ pub fn parse_verifier_response(text: &str) -> Option<Verdict> {
     // ("it does not, in this case, pass"), so counting them would drop real
     // negations to buy back cases the token window already handles.
     const CLAUSE_BREAKS: &[char] = &['.', '!', '?', ';', ':'];
-    let first_line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
-    let lower = first_line.to_ascii_lowercase();
-    for clause in lower.split(CLAUSE_BREAKS) {
-        let mut since_negation: Option<u32> = None;
-        for raw in clause.split(|c: char| !c.is_ascii_alphanumeric()) {
-            if raw.is_empty() {
-                continue;
-            }
-            // `distance` is 0 for the token immediately after the negator, so the
-            // bound of 1 is the documented two-token window: "not pass" and
-            // "not currently pass" negate; "not a problem PASS" does not.
-            let negated = matches!(since_negation, Some(distance) if distance <= 1);
-            match raw {
-                "pass" | "passed" | "approve" | "approved" => {
-                    return Some(Verdict {
-                        passed: !negated,
-                        reasoning: bounded_reasoning(text),
-                        heuristic: false,
-                        verifier_independent: None,
-                    });
+    // `Some(passed)` if this one line states a verdict. Pulled out of the
+    // caller so the head and the tail are scanned by identical rules — a
+    // second copy of this is how the two positions would drift apart.
+    let verdict_of = |line: &str| -> Option<bool> {
+        let lower = line.to_ascii_lowercase();
+        for clause in lower.split(CLAUSE_BREAKS) {
+            let mut since_negation: Option<u32> = None;
+            for raw in clause.split(|c: char| !c.is_ascii_alphanumeric()) {
+                if raw.is_empty() {
+                    continue;
                 }
-                "fail" | "failed" | "reject" | "rejected" if !negated => {
-                    return Some(Verdict {
-                        passed: false,
-                        reasoning: bounded_reasoning(text),
-                        heuristic: false,
-                        verifier_independent: None,
-                    });
+                // `distance` is 0 for the token immediately after the negator, so the
+                // bound of 1 is the documented two-token window: "not pass" and
+                // "not currently pass" negate; "not a problem PASS" does not.
+                let negated = matches!(since_negation, Some(distance) if distance <= 1);
+                match raw {
+                    "pass" | "passed" | "approve" | "approved" => return Some(!negated),
+                    "fail" | "failed" | "reject" | "rejected" if !negated => return Some(false),
+                    _ => {}
                 }
-                _ => {}
+                since_negation = if NEGATORS.contains(&raw) {
+                    Some(0)
+                } else {
+                    since_negation.map(|distance| distance + 1)
+                };
             }
-            since_negation = if NEGATORS.contains(&raw) {
-                Some(0)
-            } else {
-                since_negation.map(|distance| distance + 1)
-            };
         }
-    }
-    None
+        None
+    };
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.next()?;
+    // The head wins outright; the tail is consulted only when the head
+    // declined to state a verdict at all.
+    let passed = verdict_of(first).or_else(|| verdict_of(lines.next_back()?))?;
+    Some(Verdict {
+        passed,
+        reasoning: bounded_reasoning(text),
+        heuristic: false,
+        verifier_independent: None,
+    })
 }
 
 /// Ceiling on verifier prose forwarded into a worker's revision prompt.

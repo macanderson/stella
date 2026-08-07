@@ -55,10 +55,15 @@ def _fake_harbor(monkeypatch, *, version: str = "0.20.0", import_path_flag: bool
     the things the launch actually branches on — stubbing the lookup alone
     would leave the real binary (or its absence) deciding the test's outcome.
     """
-    monkeypatch.setattr("arenabench.harbor.harbor_bin", lambda: "/usr/bin/harbor")
-    monkeypatch.setattr("arenabench.harbor.harbor_version", lambda: version)
     monkeypatch.setattr(
-        "arenabench.harbor.supports_agent_import_path", lambda: import_path_flag
+        "arenabench.harbor.harbor_bin", lambda dataset_key=None: "/usr/bin/harbor"
+    )
+    monkeypatch.setattr(
+        "arenabench.harbor.harbor_version", lambda binary=None: version
+    )
+    monkeypatch.setattr(
+        "arenabench.harbor.supports_agent_import_path",
+        lambda binary=None: import_path_flag,
     )
 
 

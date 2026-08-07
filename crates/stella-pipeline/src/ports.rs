@@ -88,6 +88,23 @@ pub struct RecalledFrame {
     pub content_digest: Option<String>,
 }
 
+/// Where the pipeline reports the resume-relevant facts it learns mid-run
+/// (#1671) — triage's class, the plan, the execute cursor, the test
+/// baseline — so a host can store them beside the engine checkpoint and hand
+/// them back to [`crate::Pipeline::resume`] after a crash.
+///
+/// Mirrors [`stella_core::step::CheckpointSink`]'s posture: synchronous,
+/// infallible, best-effort. A record that cannot be stored costs the run its
+/// resumability, never its correctness — refusing to run would trade a
+/// working turn for none. The pipeline owns this port (not `stella-core`)
+/// because the frame is a pipeline shape and the engine must never learn
+/// those (invariant 1).
+pub trait ResumeFrameSink: Send + Sync {
+    /// Store `progress` — the complete record so far, not a delta — beside
+    /// the session's checkpoint.
+    fn record(&self, progress: &crate::pipeline::FrameProgress);
+}
+
 /// Context recall at turn start (L-E8): a *live provider query*, never a
 /// cached prompt block. The recalled frames ride as a volatile message
 /// **after** the byte-stable system prefix so prompt-cache hits on that

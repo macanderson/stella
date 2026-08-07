@@ -314,9 +314,7 @@ impl<'a> Pipeline<'a> {
         if let Some((hooks, runner)) = self.hooks {
             engine = engine.with_hooks(hooks, surface.hook_runner.unwrap_or(runner));
         }
-        if let Some(gate) = self.turn_gate {
-            engine = engine.with_gate(gate);
-        }
+        engine = self.attach(engine);
         let view = fan.map(SteeringFanOut::candidate);
         if let Some(view) = view.as_ref() {
             engine = engine.with_steering(view);

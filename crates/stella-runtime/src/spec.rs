@@ -64,6 +64,13 @@ pub struct ProviderParts {
     /// seeded provider rejects an unknown slug; `local` and user-defined
     /// endpoints serve whatever the user pulled into them.
     pub seeded: bool,
+    /// The prompt-cache window the session asks for (#1839): the CLI resolves
+    /// it from settings and the session surface (1h for the interactive
+    /// deck/REPL, the 5-minute provider default for headless runs); a server
+    /// fills it from its session-create request. Honored today by the
+    /// Anthropic adapter only — see
+    /// `stella_model::provider_honors_cache_ttl`.
+    pub cache_ttl: stella_model::CacheTtl,
     /// The model slug to run.
     pub model_id: String,
     /// The credential, already wrapped in the zeroizing newtype — cloned
@@ -98,6 +105,7 @@ impl ProviderParts {
             display_name: &self.display_name,
             dialect: self.dialect,
             seeded: self.seeded,
+            cache_ttl: self.cache_ttl,
         }
     }
 }

@@ -237,12 +237,38 @@ class Registry:
     def get(self, key: str) -> Dataset | None:
         return self.datasets.get(key)
 
-    def task_roots(self, dataset: Dataset) -> list[Path]:
-        """Candidate directories that might hold this dataset's tasks."""
+    def export_candidates(self, dataset: Dataset) -> list[Path]:
+        """Directories an export of this dataset may have been written to.
+
+        **The single definition of where an export lives**, shared by
+        :meth:`task_roots` (what the picker enumerates) and
+        :meth:`local_run_path` (what Harbor is pointed at). They were once
+        two lists, and the omission was invisible in exactly the way that
+        matters: a dataset exported to the default root ran perfectly from
+        ``--path`` while the task picker showed zero tasks, so the benchmark
+        looked unavailable in the UI while being fully materialised on disk.
+        """
         roots: list[Path] = []
         explicit = self.export_dirs.get(dataset.key)
         if explicit:
             roots.append(Path(explicit))
+        roots.append(export_root() / dataset.key)
+        return roots
+
+    def task_roots(self, dataset: Dataset) -> list[Path]:
+        """Candidate directories that might hold this dataset's tasks.
+
+        An export nests its tasks one level down, under the package name
+        (``<root>/frontier-bench/<task>/task.toml``), while Harbor's cache is
+        already at the namespace. Both spellings are offered because
+        :func:`_iter_task_tomls` reads either shape, and offering both is what
+        lets an operator point ``ARENABENCH_TASKS_*`` at whichever level they
+        happen to have.
+        """
+        roots: list[Path] = []
+        for candidate in self.export_candidates(dataset):
+            roots.append(candidate / dataset.package_dir)
+            roots.append(candidate)
         env_key = f"ARENABENCH_TASKS_{dataset.key.upper().replace('-', '_')}"
         env_override = os.environ.get(env_key)
         if env_override:
@@ -273,12 +299,7 @@ class Registry:
         dataset = self.get(key)
         if dataset is None:
             return None
-        roots = []
-        explicit = self.export_dirs.get(key)
-        if explicit:
-            roots.append(Path(explicit))
-        roots.append(export_root() / key)
-        for root in roots:
+        for root in self.export_candidates(dataset):
             candidate = root / dataset.package_dir
             if candidate.is_dir() and any(candidate.glob("*/task.toml")):
                 return candidate

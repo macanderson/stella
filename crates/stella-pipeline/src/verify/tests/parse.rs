@@ -29,10 +29,71 @@ fn parses_pass_and_fail_verdicts() {
         parse_verifier_response("PASS — no obvious issues").map(|v| v.passed),
         Some(true)
     );
-    // Only the first non-empty line is authoritative.
+    // The head wins outright: a reply that leads with its verdict is read
+    // there, whatever the prose below it says.
     assert_eq!(
         parse_verifier_response("FAIL\nthe change looks fine otherwise").map(|v| v.passed),
         Some(false)
+    );
+}
+
+/// **Witness (#1787).** A verifier that thinks before it answers is still
+/// answering.
+///
+/// The protocol consulted only the first non-empty line, so a reply opening
+/// with "Here is my assessment:" carried no verdict token there and parsed to
+/// `None`. `None` is the signal for [`crate::verify::heuristic_fallback`],
+/// which passes only on an observed flip or green touched tests and otherwise
+/// FAILS — so this did not degrade one verdict, it silently converted *every*
+/// verdict from a preambling model into a heuristic that mostly refuses.
+/// Reasoning models preamble by construction, which makes this a whole model
+/// family the verifier could not grade with.
+#[test]
+fn a_verifier_that_preambles_is_read_at_its_conclusion() {
+    let pass = "Here is my assessment:\n\n\
+                The diff adds the missing endpoint and the witness covers it.\n\n\
+                PASS";
+    assert_eq!(
+        parse_verifier_response(pass).map(|v| v.passed),
+        Some(true),
+        "a preamble before a PASS must not read as an unparseable reply"
+    );
+
+    let fail = "Let me work through this.\n\n\
+                The handler is added but nothing asserts on it.\n\n\
+                FAIL — the test is vacuous";
+    assert_eq!(parse_verifier_response(fail).map(|v| v.passed), Some(false));
+
+    // The reasoning is still the whole reply, not just the line the verdict
+    // was found on — a revision acts on the thinking, not the token.
+    let verdict = parse_verifier_response(pass).expect("a PASS token is present");
+    assert!(verdict.reasoning.contains("missing endpoint"));
+    assert!(
+        !verdict.heuristic,
+        "a parsed verdict is never the heuristic"
+    );
+}
+
+/// The tail is consulted only as a second resort, and only ever the *last*
+/// line — never the body in between.
+///
+/// This is the property that keeps the widened protocol safe. A verifier's
+/// middle paragraphs are where it *discusses* failing tests, and reading them
+/// would reintroduce exactly the misread the token set was narrowed to
+/// prevent: here the body says "the tests fail" while the verifier's actual
+/// verdict, stated last, is a PASS.
+#[test]
+fn intermediate_prose_never_decides_a_verdict() {
+    let reply = "Assessment follows.\n\
+                 Before the change the tests fail, which is what the witness needs.\n\
+                 PASS";
+    assert_eq!(parse_verifier_response(reply).map(|v| v.passed), Some(true));
+
+    // And a reply that never states a verdict at either position is still
+    // unparseable — the widening must not invent one out of prose.
+    assert_eq!(
+        parse_verifier_response("Here is my assessment:\n\nI need more information."),
+        None
     );
 }
 

@@ -18,15 +18,19 @@
 //! and reports, in [`ResumeFrame::advisory`], exactly which stages it is not
 //! restoring.
 //!
-//! # Why this is a report and not yet a restoration
+//! # Report first, restoration where the record permits
 //!
-//! Re-entering the pipeline at the execute stage needs more than the frame:
-//! the candidate workspace the turn was writing into died with the process,
-//! and `stella_pipeline::Pipeline` exposes no seam to run the post-execute
-//! stages over an already-produced result (`run` is its only entry point).
-//! Both are tracked separately. What ships here is the half that must never
-//! wait for them: a resumed run **says** it came back smaller instead of
-//! presenting an unverified answer as a finished one.
+//! The report half shipped first (#1615): a resumed run **says** it came
+//! back smaller instead of presenting an unverified answer as a finished
+//! one. The restoration half (#1671) rides the same frame: the pipeline
+//! pushes its mid-run progress — class, goal, plan cursor, test baseline —
+//! through [`stella_pipeline::ResumeFrameSink`] into
+//! [`PipelineFrame::progress`], and a resume whose frame carries enough
+//! re-enters the pipeline via [`stella_pipeline::Pipeline::resume`] instead
+//! of degrading. The advisory shrinks to what genuinely remains
+//! unrestorable ([`restored_advisory`]); a frame that predates the progress
+//! record, or a run that executed in a candidate worktree (it died with the
+//! process), keeps the full report and the bare-turn path.
 //!
 //! # Fail loud, not open
 //!
@@ -47,10 +51,13 @@ pub const FRAME_VERSION: u32 = 1;
 
 /// The staged pipeline a checkpointed turn was running inside.
 ///
-/// Deliberately made of *decisions*, not content: which stages the run had
-/// configured, never the goal text, the plan, or a diff. The transcript in the
-/// checkpoint beside it already carries all of that, and duplicating it would
-/// make the frame a second, divergent copy of the same facts.
+/// The configuration half is *decisions*, not content: which stages the run
+/// had configured. [`Self::progress`] is the deliberate exception (#1671) —
+/// restoration needs the goal, the plan and the test baseline, which exist
+/// nowhere the resume can re-derive them (the plan's unreached steps are not
+/// in the transcript; the baseline observed a tree that no longer exists).
+/// The frame lives beside the transcript in `.stella/private/`, so the
+/// exception widens no exposure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipelineFrame {
     /// See [`FRAME_VERSION`].
@@ -80,6 +87,14 @@ pub struct PipelineFrame {
     /// Revision rounds the verifier could still have demanded.
     #[serde(default)]
     pub max_revisions: u32,
+    /// The facts the pipeline learned while running — task class, plan,
+    /// execute cursor, test baseline — pushed by the pipeline through
+    /// [`stella_pipeline::ResumeFrameSink`] as each settles (#1671). `None`
+    /// on a frame from before the progress record existed, or on a run
+    /// killed before triage; either way the resume declines to restore and
+    /// keeps the honest bare-turn path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<stella_pipeline::FrameProgress>,
 }
 
 impl PipelineFrame {
@@ -95,6 +110,28 @@ impl PipelineFrame {
                 stella_pipeline::ports::WorktreePolicy::Never
             ),
             max_revisions: config.max_revisions,
+            progress: None,
+        }
+    }
+}
+
+/// The write side of [`PipelineFrame::progress`]: carries the pipeline's
+/// progress facts into the frame that rides every checkpoint commit.
+///
+/// Holds the frame's configuration half and re-serializes the whole frame on
+/// every push — the frame slot in [`crate::durability`] is one JSON value,
+/// and two writers patching halves of it is how the halves drift.
+struct ProgressSink {
+    durability: crate::durability::SessionDurability,
+    base: PipelineFrame,
+}
+
+impl stella_pipeline::ResumeFrameSink for ProgressSink {
+    fn record(&self, progress: &stella_pipeline::FrameProgress) {
+        let mut frame = self.base.clone();
+        frame.progress = Some(progress.clone());
+        if let Ok(json) = serde_json::to_string(&frame) {
+            self.durability.set_pipeline_frame(json);
         }
     }
 }
@@ -226,6 +263,44 @@ impl ResumeFrame {
     }
 }
 
+/// What a resume can restore from `frame`, or `None` for the bare-turn path
+/// (#1671): a validated [`stella_pipeline::PipelineResume`] plus the frame's
+/// configuration half, which re-arms the pipeline with the run's *original*
+/// decisions rather than whatever flags this process happened to start with.
+///
+/// Pure — the one decision `run_resume` takes is testable without a session
+/// behind it. Validation itself lives in `PipelineResume::from_progress`, so
+/// "restore approximately" is not a state either layer can reach.
+pub fn restoration(
+    frame: &ResumeFrame,
+    checkpoint: &stella_core::step::Checkpoint,
+) -> Option<(stella_pipeline::PipelineResume, PipelineFrame)> {
+    let ResumeFrame::Pipeline(pipeline_frame) = frame else {
+        return None;
+    };
+    let progress = pipeline_frame.progress.clone()?;
+    let spec = stella_pipeline::PipelineResume::from_progress(checkpoint.clone(), progress)?;
+    Some((spec, (**pipeline_frame).clone()))
+}
+
+/// The lines to print when a resume IS re-entering the pipeline (#1671) —
+/// the short successor to [`ResumeFrame::advisory`] for the restored path:
+/// most of that list now comes back, and what remains unrestorable is named
+/// so the operator is never told more was restored than was.
+pub fn restored_advisory() -> Vec<String> {
+    vec![
+        "this was a staged pipeline run — resuming INTO it: the interrupted turn \
+         continues, then the witness/verify/verdict stages run on the completed work"
+            .to_string(),
+        "  the pre-crash lint baseline is gone, so the lint-regression veto (#861) \
+         sits out this run"
+            .to_string(),
+        "  an authored witness cannot be re-created after a crash — verification \
+         proceeds on the unauthored ladder"
+            .to_string(),
+    ]
+}
+
 /// Declare that the turns from here on belong to a staged pipeline run, so
 /// every checkpoint they write carries the frame describing it.
 ///
@@ -265,7 +340,15 @@ pub fn pipeline<'a>(
     config: stella_pipeline::PipelineConfig,
 ) -> stella_pipeline::Pipeline<'a> {
     declare(durability, &config);
-    stella_pipeline::Pipeline::new(ports, events, config)
+    // The progress sink rides the same construction path as the frame, and
+    // for the same reason (#1672): a pipeline whose checkpoints carry no
+    // progress cannot be resumed into, and per-surface wiring is how three
+    // of four surfaces forgot the frame itself.
+    let sink = ProgressSink {
+        durability: durability.clone(),
+        base: PipelineFrame::of(&config),
+    };
+    stella_pipeline::Pipeline::new(ports, events, config).with_frame_sink(std::sync::Arc::new(sink))
 }
 
 #[cfg(test)]
@@ -280,6 +363,7 @@ mod tests {
             candidates: 1,
             isolation_possible: true,
             max_revisions: 2,
+            progress: None,
         }
     }
 
@@ -363,6 +447,70 @@ mod tests {
         assert_eq!(frame.test_command, None);
         assert!(!frame.witness_writer);
         assert_eq!(frame.candidates, 0);
+        assert_eq!(
+            frame.progress, None,
+            "no FRAME_VERSION bump for the progress addition (#1671): an old \
+             frame reads as progress-unknown, which declines restoration"
+        );
+    }
+
+    /// The checkpoint a restoration test rides — content is irrelevant to the
+    /// decision under test.
+    fn checkpoint() -> stella_core::step::Checkpoint {
+        stella_core::step::Checkpoint {
+            version: stella_core::step::CHECKPOINT_VERSION,
+            step: 1,
+            messages: vec![],
+            budget: stella_core::step::BudgetSnapshot {
+                mode: stella_protocol::BudgetMode::Off,
+                turn_limit_usd: None,
+                session_limit_usd: None,
+                turn_spent_usd: 0.0,
+                session_spent_usd: 0.0,
+            },
+            total_cost_usd: 0.0,
+            calibration_model: None,
+            loop_steered: false,
+            loop_steered_pattern: Vec::new(),
+            loop_steered_inputs: None,
+            transcript_rewrites: 0,
+        }
+    }
+
+    /// **The #1671 witness (decision half).** A frame carrying restorable
+    /// progress restores — with the run's original configuration riding along
+    /// — and every other frame keeps the bare-turn path. On `main` neither
+    /// `PipelineFrame::progress` nor `restoration` exists: a mid-pipeline
+    /// kill can only ever resume as a plain engine turn.
+    #[test]
+    fn a_frame_with_progress_restores_and_the_rest_stay_bare() {
+        let mut frame = pipeline_frame();
+        frame.progress = Some(stella_pipeline::FrameProgress {
+            task_class: Some(stella_pipeline::triage::TaskClass::SingleTask),
+            goal: Some("fix the parser".into()),
+            executing: true,
+            ..stella_pipeline::FrameProgress::default()
+        });
+        // Round-trip first: the progress record crosses through the stored
+        // JSON blob, not through memory (invariant 4).
+        let json = serde_json::to_string(&frame).unwrap();
+        let parsed = ResumeFrame::parse(&json);
+
+        let (spec, config) =
+            restoration(&parsed, &checkpoint()).expect("restorable progress restores");
+        assert_eq!(spec.goal, "fix the parser");
+        assert_eq!(
+            config.test_command.as_deref(),
+            Some("cargo test -p stella-core"),
+            "the run's ORIGINAL decisions ride along for the pipeline's re-arm"
+        );
+
+        // Everything else declines: no progress, a bare turn, an unreadable
+        // frame — the honest report path is the fallback, never a guess.
+        let plain = ResumeFrame::Pipeline(Box::new(pipeline_frame()));
+        assert!(restoration(&plain, &checkpoint()).is_none());
+        assert!(restoration(&ResumeFrame::BareTurn, &checkpoint()).is_none());
+        assert!(restoration(&ResumeFrame::Unreadable("x".into()), &checkpoint()).is_none());
     }
 
     /// **Witness (#1672).** Every surface that builds a `Pipeline` declares
