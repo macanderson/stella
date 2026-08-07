@@ -43,11 +43,29 @@ macro_rules! tool_steering {
     };
 }
 
+/// The scope contract shared by both static prompts: the unit of delivery is
+/// the prompt actually sent, never the larger project inferred around it.
+/// Born from a real bench run — a worker that saw "Step 1/9" implemented all
+/// nine steps up front with invented specifics (deploy paths, hook mechanism),
+/// then spent every remaining turn discovering the real steps contradicted its
+/// guesses: stale hook targets, an nginx vhost pointing at directories it had
+/// itself deleted. One shared literal, embedded verbatim by both prompts,
+/// same as `tool_steering!` and for the same anti-drift reason (#450).
+macro_rules! scope_discipline {
+    () => {
+        r#"Scope: the deliverable is what THIS prompt asks for, not the larger project you infer around it. A prompt that marks itself one step of a longer sequence ("Step 1/9") delivers only that step's spec — later steps' real specifics (paths, names, mechanisms) arrive with their own prompts, and any version you invent now is a guess their spec will contradict, turning those steps into rework. Read ahead freely; build ahead never: complete the delivered step, verify it, and stop."#
+    };
+}
+
 pub(crate) const SYSTEM_PROMPT: &str = concat!(
     r#"You are Stella, a fast terminal coding agent. You help the user with software engineering tasks by reading files, writing code, running commands, and searching the codebase.
 
 "#,
     tool_steering!(),
+    r#"
+
+"#,
+    scope_discipline!(),
     r#"
 
 Rules:
@@ -68,6 +86,10 @@ pub(crate) const PIPELINE_SYSTEM_PROMPT: &str = concat!(
 
 "#,
     tool_steering!(),
+    r#"
+
+"#,
+    scope_discipline!(),
     r#"
 
 Methodology (always follow in order):
@@ -505,6 +527,23 @@ mod tests {
             assert!(
                 prompt.contains(shared),
                 "{label} does not embed the shared steering block verbatim"
+            );
+        }
+    }
+
+    /// Witness for the front-run defect: a bench worker that saw "Step 1/9"
+    /// implemented all nine steps immediately with invented specifics, then
+    /// spent every later turn reconciling the real steps against its guesses
+    /// (stale hook paths, an nginx vhost aimed at directories it had deleted).
+    /// Neither prompt carried any scope contract at all; pin the shared
+    /// literal verbatim in both so a trim cannot quietly reopen the hole.
+    #[test]
+    fn both_prompts_scope_delivery_to_the_prompt_actually_sent() {
+        let shared = scope_discipline!();
+        for (label, prompt) in PROMPTS {
+            assert!(
+                prompt.contains(shared),
+                "{label} does not embed the shared scope-discipline block verbatim"
             );
         }
     }
