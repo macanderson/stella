@@ -544,7 +544,7 @@ pub const MAX_RESEARCH_QUESTIONS: usize = 4;
 
 /// Parse the optional `RESEARCH:` line out of a triage response (#1778):
 /// up to [`MAX_RESEARCH_QUESTIONS`] self-contained questions, `|`-separated
-/// on one line. Tolerant in the same spirit as [`parse_flag`] — an absent
+/// on one line. Tolerant in the same spirit as `parse_flag` — an absent
 /// line, an empty value, or an explicit `none` all mean "no research", which
 /// keeps every fast path (L-E2) untouched. A legacy bare-token response
 /// carries no such line and so degrades to exactly today's behavior.

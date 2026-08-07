@@ -17,7 +17,7 @@
 //! prompt fragments, and the budget clamp. The I/O sequencing — sub-agent
 //! dispatch, the per-child latency ceiling, budget carves — lives in
 //! `pipeline/research_stage.rs`, following the same decision/sequencing split
-//! as [`crate::candidate_fanout`] and `pipeline/fanout_stage.rs`.
+//! as `candidate_fanout` and `pipeline/fanout_stage.rs`.
 
 /// One answered research question, as it will be shown to the planner.
 #[derive(Debug, Clone, PartialEq, Eq)]
