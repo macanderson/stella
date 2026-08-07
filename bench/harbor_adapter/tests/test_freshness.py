@@ -95,7 +95,15 @@ def _binary(directory: Path, commit: str | None, *, name: str = "stella") -> Pat
 
 
 def _seed(root: Path, commits: int) -> Path:
-    """A clone whose `origin/main` is ``commits`` ahead of the root commit."""
+    """A clone whose `origin/main` is ``commits`` ahead of the root commit.
+
+    Origin's whole history exists before the one ``clone``, so the fixture
+    never fetches. Nothing here needs the work tree parked at the root commit
+    — every consumer addresses history through ``origin/main`` — and the
+    fetch/upload-pack pair was the sole multi-process git step in the suite:
+    the one CI failure this fixture has produced was that fetch dying with
+    status 128 on a runner that passed the identical tree minutes later.
+    """
     origin = root / "origin"
     origin.mkdir(parents=True)
     _git(origin, "init", "-q", "--initial-branch=main")
@@ -108,6 +116,8 @@ def _seed(root: Path, commits: int) -> Path:
     _git(origin, "config", "maintenance.auto", "false")
     _git(origin, "config", "gc.auto", "0")
     _git(origin, "commit", "-q", "--allow-empty", "-m", "base")
+    for index in range(1, commits + 1):
+        _git(origin, "commit", "-q", "--allow-empty", "-m", f"c{index}")
 
     work = root / "work"
     _git(root, "clone", "-q", str(origin), str(work))

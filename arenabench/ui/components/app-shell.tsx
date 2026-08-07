@@ -7,8 +7,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Topbar, type ConnState } from "@/components/topbar";
 import { SetupView } from "@/components/setup/setup-view";
 import { ArenaView } from "@/components/arena/arena-view";
+import { TrendsView } from "@/components/trends/trends-view";
 
-export type View = "setup" | "arena";
+export type View = "setup" | "arena" | "trends";
 
 /**
  * Owns what both views need: the catalog, which view is showing, which match
@@ -93,6 +94,9 @@ export function AppShell() {
           />
         </main>
       )}
+      <main className={view === "trends" ? "block" : "hidden"}>
+        <TrendsView active={view === "trends"} />
+      </main>
     </TooltipProvider>
   );
 }
