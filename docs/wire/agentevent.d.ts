@@ -1254,14 +1254,12 @@ export type AgentEvent = {
    */
   evicted_blocks?: string[];
   /**
-   * The replacement bytes each in-place rewrite left behind — the
-   * post-rewrite identity, digest, and preimage of every block this
-   * pass stubbed or aged, deduplicated by digest. Journaling these is
-   * what lets reconstruction resolve a compacted block to the bytes
-   * the model actually received instead of the pre-compaction output
-   * under the same `call_id` (#1667). `serde(default)` — absent on
-   * journals written before rewrites were journaled, whose compacted
-   * blocks surface as digest mismatches.
+   * The replacement bytes each in-place rewrite left behind, one entry
+   * per digest — what lets reconstruction resolve a compacted block to
+   * the bytes the model received rather than the pre-compaction output
+   * under the same `call_id` (#1667); see [`CompactionRewrite`].
+   * `serde(default)` — absent on journals written before rewrites were
+   * journaled, whose compacted blocks surface as digest mismatches.
    */
   rewrites?: CompactionRewrite[];
   /**

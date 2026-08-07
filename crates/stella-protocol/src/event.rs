@@ -510,14 +510,12 @@ pub enum AgentEvent {
         /// `serde(default)` — absent on pre-identity journals.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         summarized_blocks: Vec<String>,
-        /// The replacement bytes each in-place rewrite left behind — the
-        /// post-rewrite identity, digest, and preimage of every block this
-        /// pass stubbed or aged, deduplicated by digest. Journaling these is
-        /// what lets reconstruction resolve a compacted block to the bytes
-        /// the model actually received instead of the pre-compaction output
-        /// under the same `call_id` (#1667). `serde(default)` — absent on
-        /// journals written before rewrites were journaled, whose compacted
-        /// blocks surface as digest mismatches.
+        /// The replacement bytes each in-place rewrite left behind, one entry
+        /// per digest — what lets reconstruction resolve a compacted block to
+        /// the bytes the model received rather than the pre-compaction output
+        /// under the same `call_id` (#1667); see [`CompactionRewrite`].
+        /// `serde(default)` — absent on journals written before rewrites were
+        /// journaled, whose compacted blocks surface as digest mismatches.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         rewrites: Vec<crate::CompactionRewrite>,
         /// The budget this pass actually compared against — the raw compaction

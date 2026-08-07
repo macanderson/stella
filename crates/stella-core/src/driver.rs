@@ -1635,8 +1635,7 @@ impl<'a> Engine<'a> {
             superseded_blocks: Vec::new(),
             aged_blocks: Vec::new(),
             summarized_blocks,
-            // A splice replaces messages rather than rewriting a result in
-            // place; the summary block's preimage rides its own registry row.
+            // A splice replaces whole messages; nothing is rewritten in place.
             rewrites: Vec::new(),
             effective_budget_tokens: compaction_budget,
             calibration_factor: factor,
