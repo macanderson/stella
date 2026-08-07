@@ -220,7 +220,7 @@ pub(crate) fn manifest_entries(
 pub(crate) fn journal_payloads(conn: &Connection, id: i64) -> Result<Vec<String>, DbError> {
     let sql = "SELECT payload FROM events
                WHERE execution_id = ?1
-                 AND event_type IN ('tool_start', 'tool_result', 'text')
+                 AND event_type IN ('tool_start', 'tool_result', 'text', 'compaction')
                ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
@@ -283,6 +283,10 @@ pub(crate) struct Preimages {
     tool_outputs: HashMap<String, String>,
     /// `content_digest` (`sha256:<hex>`) → the assistant text bytes.
     text_by_digest: HashMap<String, String>,
+    /// `content_digest` (`sha256:<hex>`) → the serialized post-rewrite tool
+    /// output a compaction pass journaled (#1667). Consulted before the
+    /// `call_id` route, which can only reach the pre-compaction bytes.
+    rewrites_by_digest: HashMap<String, String>,
 }
 
 impl Preimages {
@@ -317,6 +321,17 @@ impl Preimages {
                     if let Some(text) = body {
                         out.text_by_digest
                             .insert(format!("sha256:{}", sha256_hex(text)), text.to_owned());
+                    }
+                }
+                "compaction" => {
+                    for rewrite in event["rewrites"].as_array().into_iter().flatten() {
+                        if let (Some(digest), Some(content)) = (
+                            rewrite["content_digest"].as_str(),
+                            rewrite["content"].as_str(),
+                        ) {
+                            out.rewrites_by_digest
+                                .insert(digest.to_owned(), content.to_owned());
+                        }
                     }
                 }
                 _ => {}
@@ -462,9 +477,14 @@ fn resolve_content(entry: &ManifestEntry, kind: &str, preimages: &Preimages) -> 
         return Some(content.clone());
     }
     match kind {
-        "tool_result" => preimages
-            .tool_outputs
-            .get(entry.birth_call_id.as_deref()?)
+        // Digest-keyed first (#1667): a compacted block's journaled
+        // replacement is the exact preimage; the `call_id` route below
+        // reaches only the pre-compaction bytes.
+        "tool_result" => entry
+            .content_digest
+            .as_deref()
+            .and_then(|digest| preimages.rewrites_by_digest.get(digest))
+            .or_else(|| preimages.tool_outputs.get(entry.birth_call_id.as_deref()?))
             .cloned(),
         "tool_call" => preimages
             .tool_calls

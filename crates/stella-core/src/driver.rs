@@ -1374,6 +1374,7 @@ impl<'a> Engine<'a> {
                 // The pure passes never summarize — the overflow fallback below
                 // owns that path and its block identities.
                 summarized_blocks: Vec::new(),
+                rewrites: report.rewrites,
                 effective_budget_tokens: compaction_budget,
                 calibration_factor: factor,
             });
@@ -1634,6 +1635,9 @@ impl<'a> Engine<'a> {
             superseded_blocks: Vec::new(),
             aged_blocks: Vec::new(),
             summarized_blocks,
+            // A splice replaces messages rather than rewriting a result in
+            // place; the summary block's preimage rides its own registry row.
+            rewrites: Vec::new(),
             effective_budget_tokens: compaction_budget,
             calibration_factor: factor,
         });
