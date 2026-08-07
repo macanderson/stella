@@ -152,7 +152,22 @@ default:
     Wire adapter for a **new** provider: `openai-compatible`, `openai-responses`,
     `anthropic`, or `gemini`. `vertex` and `bedrock` are reserved to built-ins.
   </OptionCard>
+  <OptionCard name="cache_ttl">
+    Prompt-cache window: `"5m"` or `"1h"`. Leave it out and the **surface** decides —
+    `stella chat` / `stella resume` ask for the 1-hour window, every headless run keeps
+    the 5-minute provider default. Honored today by the `anthropic` provider only.
+  </OptionCard>
 </CardGrid>
+
+<Callout type="info">
+  **Why `cache_ttl` defaults by surface.** A 1-hour cache write bills 2x the input rate
+  against the 5-minute window's 1.25x. That premium only pays for itself when turns are
+  far enough apart to lose the prefix: an eviction re-bills the whole prefix at the write
+  rate *and* forfeits the ~0.9x read discount on it. Interactive turns routinely sit
+  minutes apart, so the wider window is nearly free insurance; a headless run's calls are
+  seconds apart, so it would pay the premium for a prefix that was never going to expire.
+  Pin the field to override either default.
+</Callout>
 
 The map key **is** the provider id (`zai` above). Leave a field out entirely to inherit the
 built-in default — note that an **empty string** for `base_url`, `name`, or

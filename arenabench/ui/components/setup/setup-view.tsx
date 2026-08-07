@@ -7,6 +7,7 @@ import type {
   Dataset,
   MatchListRow,
   ParsedMatch,
+  Preset,
   Seat,
   Snapshot,
   Task,
@@ -106,9 +107,13 @@ export function SetupView({
   historyVersion: number;
 }) {
   // -- step 0: entry point -------------------------------------------------
-  const [startMode, setStartMode] = React.useState<"scratch" | "upload">("scratch");
+  const [startMode, setStartMode] = React.useState<"scratch" | "upload" | "preset">(
+    "scratch",
+  );
   const [templateErrors, setTemplateErrors] = React.useState<string[] | null>(null);
   const [templateOk, setTemplateOk] = React.useState<React.ReactNode>(null);
+  const [presets, setPresets] = React.useState<Preset[]>([]);
+  const [presetKey, setPresetKey] = React.useState<string | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
 
   // -- steps 1-2: benchmark + tasks -----------------------------------------
@@ -245,10 +250,68 @@ export function SetupView({
 
   // -- templates ---------------------------------------------------------------
 
+  /** Push a fully-specified match into every piece of wizard state.
+   *
+   * The one applier, shared by an uploaded .toml and a built-in preset. Two
+   * copies of this would be two definitions of what loading a match means,
+   * and the drift would be invisible until a preset and its downloaded
+   * template disagreed about what they were describing. */
+  const applyMatch = React.useCallback(
+    async (match: ParsedMatch) => {
+      if (!catalog) return;
+      const ds = catalog.datasets.find((d) => d.key === match.dataset);
+      if (ds) await pickDataset(ds);
+      setSelected(new Set(match.tasks || []));
+      setDraw(null);
+      setSeedText("");
+      setSeats(
+        (match.contestants || []).map((c, index) => ({
+          id: c.id || `seat-${index + 1}`,
+          name: c.name,
+          agent: c.agent,
+          color: c.color || PALETTE[index % PALETTE.length],
+          engine: {
+            api: c.engine.api,
+            model: c.engine.model,
+            reasoning: c.engine.reasoning,
+            effort: c.engine.effort,
+            base_url: c.engine.base_url || "",
+            budget_usd: c.engine.budget_usd == null ? "" : String(c.engine.budget_usd),
+            max_tokens: c.engine.max_tokens == null ? "" : String(c.engine.max_tokens),
+            roles: Object.fromEntries(
+              Object.entries(c.engine.roles || {}).map(([name, cfg]) => [
+                name,
+                {
+                  model: cfg.model || "",
+                  effort: cfg.effort || "",
+                  reasoning: (cfg.reasoning == null
+                    ? ""
+                    : cfg.reasoning
+                      ? "on"
+                      : "off") as "" | "on" | "off",
+                  max_tokens: cfg.max_tokens == null ? "" : String(cfg.max_tokens),
+                },
+              ]),
+            ),
+          },
+          env: "", // never from a file, never from a preset
+        })),
+      );
+      setMatchName(match.name || "");
+      setAttempts(match.attempts || 1);
+      setConcurrency(match.concurrency || 1);
+      setSetupTimeout(match.setup_timeout_multiplier || 1);
+      setRecordVideo(!!match.record_video);
+      setForceOpen(true);
+    },
+    [catalog, pickDataset],
+  );
+
   const loadTemplate = React.useCallback(
     async (text: string, filename: string) => {
       setTemplateErrors(null);
       setTemplateOk(null);
+      setPresetKey(null);
       if (!catalog) return;
       try {
         const res = await postJson<{
@@ -262,50 +325,7 @@ export function SetupView({
           return;
         }
         const match = res.match;
-        const ds = catalog.datasets.find((d) => d.key === match.dataset);
-        if (ds) await pickDataset(ds);
-        setSelected(new Set(match.tasks || []));
-        setDraw(null);
-        setSeedText("");
-        setSeats(
-          (match.contestants || []).map((c, index) => ({
-            id: c.id || `seat-${index + 1}`,
-            name: c.name,
-            agent: c.agent,
-            color: c.color || PALETTE[index % PALETTE.length],
-            engine: {
-              api: c.engine.api,
-              model: c.engine.model,
-              reasoning: c.engine.reasoning,
-              effort: c.engine.effort,
-              base_url: c.engine.base_url || "",
-              budget_usd: c.engine.budget_usd == null ? "" : String(c.engine.budget_usd),
-              max_tokens: c.engine.max_tokens == null ? "" : String(c.engine.max_tokens),
-              roles: Object.fromEntries(
-                Object.entries(c.engine.roles || {}).map(([name, cfg]) => [
-                  name,
-                  {
-                    model: cfg.model || "",
-                    effort: cfg.effort || "",
-                    reasoning: (cfg.reasoning == null
-                      ? ""
-                      : cfg.reasoning
-                        ? "on"
-                        : "off") as "" | "on" | "off",
-                    max_tokens: cfg.max_tokens == null ? "" : String(cfg.max_tokens),
-                  },
-                ]),
-              ),
-            },
-            env: "", // never from a file
-          })),
-        );
-        setMatchName(match.name || "");
-        setAttempts(match.attempts || 1);
-        setConcurrency(match.concurrency || 1);
-        setSetupTimeout(match.setup_timeout_multiplier || 1);
-        setRecordVideo(!!match.record_video);
-        setForceOpen(true);
+        await applyMatch(match);
         setStartMode("upload");
         const needed = Object.values(res.required_env || {}).flat();
         setTemplateOk(
@@ -325,7 +345,55 @@ export function SetupView({
         setTemplateErrors([String(error)]);
       }
     },
-    [catalog, pickDataset],
+    [catalog, applyMatch],
+  );
+
+  // -- presets -----------------------------------------------------------------
+
+  React.useEffect(() => {
+    let live = true;
+    api<{ presets: Preset[] }>("/api/presets")
+      .then((res) => {
+        if (live) setPresets(res.presets || []);
+      })
+      .catch(() => {
+        /* presets are a shortcut; the wizard works without them */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const applyPreset = React.useCallback(
+    async (preset: Preset) => {
+      setTemplateErrors(null);
+      setTemplateOk(null);
+      try {
+        await applyMatch(preset.match);
+        setStartMode("preset");
+        setPresetKey(preset.key);
+        const needed = [...new Set(Object.values(preset.required_env || {}).flat())];
+        setTemplateOk(
+          <>
+            <div>
+              loaded “{preset.title}” — {preset.match.contestants?.length ?? 0} seats,{" "}
+              {preset.match.tasks?.length ?? 0} tasks
+            </div>
+            <div className="mt-1 text-muted">
+              {needed.includes("CLAUDE_CODE_OAUTH_TOKEN")
+                ? "the Claude Code seat authenticates from this machine’s own Claude Code login, read fresh at launch. "
+                : ""}
+              {needed.length
+                ? `credentials needed: ${needed.join(", ")}`
+                : "no credentials declared"}
+            </div>
+          </>,
+        );
+      } catch (error) {
+        setTemplateErrors([String(error)]);
+      }
+    },
+    [applyMatch],
   );
 
   const downloadTemplate = React.useCallback(async () => {
@@ -466,6 +534,27 @@ export function SetupView({
             <span className="text-[11px] text-muted">save the current setup as .toml</span>
           </button>
         </div>
+        {presets.length > 0 && (
+          <div className="mt-3">
+            <div className="mb-2 text-[11px] lowercase text-muted">
+              or one click: stella vs claude code, same model and effort on both
+              arms, stella verifying with a stronger independent judge
+            </div>
+            <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(210px,1fr))]">
+              {presets.map((preset) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  className={startCard(startMode === "preset" && presetKey === preset.key)}
+                  onClick={() => applyPreset(preset)}
+                >
+                  <span className="text-[13px] font-bold lowercase">{preset.title}</span>
+                  <span className="text-[11px] text-muted">{preset.blurb}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {templateErrors && (
           <ErrorBox>
             {templateErrors.map((line, i) => (

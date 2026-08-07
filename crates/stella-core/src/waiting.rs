@@ -136,6 +136,19 @@ pub enum WakeReason {
     DeadlineExpired,
 }
 
+impl WakeReason {
+    /// The stable token `AgentEvent::TurnWoken.reason` carries on the wire
+    /// (#1857). A method here rather than a `Display` impl so the wire
+    /// spelling can never drift apart from a human-facing rendering.
+    #[must_use]
+    pub fn wire_token(self) -> &'static str {
+        match self {
+            WakeReason::Changed => "changed",
+            WakeReason::DeadlineExpired => "deadline_expired",
+        }
+    }
+}
+
 /// The fingerprint of one probe observation, or `None` when the probe
 /// errored — a transient `gh`/network hiccup must keep the turn waiting
 /// rather than waking it with a phantom change (the deadline is the

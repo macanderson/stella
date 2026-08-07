@@ -244,6 +244,16 @@ pub enum TranscriptEntry {
     /// A model call was retried (surfaced only once the step commits — the
     /// engine defers these, L-E10).
     Retry { attempt: u32, reason: String },
+    /// The turn parked on an engine-side wait (#1857) — kept typed rather
+    /// than folded into `Text` so the deck can render a park distinctly from
+    /// model narration, which was the whole point of the wire pair.
+    Parked {
+        description: String,
+        poll_interval_secs: u64,
+        deadline_secs: u64,
+    },
+    /// The parked turn woke; `reason` is the closed `WakeReason` token.
+    Woken { reason: String, polls_used: u64 },
     /// A compaction pass ran.
     Compaction {
         before_tokens: u64,
@@ -642,6 +652,23 @@ impl SessionModel {
                 // reader (and a replay) it landed at a step boundary.
                 self.transcript
                     .push(TranscriptEntry::User(format!("(steered mid-turn) {text}")));
+            }
+            AgentEvent::TurnParked {
+                description,
+                poll_interval_secs,
+                deadline_secs,
+            } => {
+                self.transcript.push(TranscriptEntry::Parked {
+                    description: description.clone(),
+                    poll_interval_secs: *poll_interval_secs,
+                    deadline_secs: *deadline_secs,
+                });
+            }
+            AgentEvent::TurnWoken { reason, polls_used } => {
+                self.transcript.push(TranscriptEntry::Woken {
+                    reason: reason.clone(),
+                    polls_used: *polls_used,
+                });
             }
             AgentEvent::Compaction {
                 before_tokens,

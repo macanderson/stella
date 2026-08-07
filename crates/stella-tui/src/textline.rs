@@ -78,6 +78,43 @@ pub fn retry(attempt: u32, reason: &str) -> EventLine {
     }
 }
 
+/// The park notice (#1857) — the turn is waiting on the engine's clock, with
+/// no model calls until the watched state changes or the deadline expires.
+pub fn parked(description: &str, poll_interval_secs: u64, deadline_secs: u64) -> EventLine {
+    EventLine {
+        glyph: "⏳",
+        tone: Tone::Info,
+        strong: true,
+        body: format!(
+            "parked until {description} — probing every {poll_interval_secs}s for up to \
+             {deadline_secs}s, no model calls while waiting"
+        ),
+        detail: None,
+    }
+}
+
+/// The wake notice closing a [`parked`] span — how the wait ended and what
+/// it cost in engine-side probes.
+pub fn woken(reason: &str, polls_used: u64) -> EventLine {
+    EventLine {
+        glyph: "▶",
+        tone: Tone::Info,
+        strong: true,
+        body: format!(
+            "wait ended after {polls_used} probe{}:",
+            if polls_used == 1 { "" } else { "s" }
+        ),
+        detail: Some(
+            match reason {
+                "changed" => "the watched state changed.",
+                "deadline_expired" => "the deadline expired with no change.",
+                other => other,
+            }
+            .to_string(),
+        ),
+    }
+}
+
 /// The step-boundary injection notice — the plain surface's record that a
 /// queued prompt was steered into the running turn.
 pub fn steered(text: &str) -> EventLine {
@@ -540,6 +577,12 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         AgentEvent::SubAgent { phase } => Some(sub_agent(phase)),
         AgentEvent::Retry { attempt, reason } => Some(retry(*attempt, reason)),
         AgentEvent::Steered { text } => Some(steered(text)),
+        AgentEvent::TurnParked {
+            description,
+            poll_interval_secs,
+            deadline_secs,
+        } => Some(parked(description, *poll_interval_secs, *deadline_secs)),
+        AgentEvent::TurnWoken { reason, polls_used } => Some(woken(reason, *polls_used)),
         AgentEvent::Compaction {
             before_tokens,
             after_tokens,
@@ -952,6 +995,15 @@ mod tests {
                 attempt: 1,
                 reason: "x".into(),
             },
+            AgentEvent::TurnParked {
+                description: "CI settles".into(),
+                poll_interval_secs: 5,
+                deadline_secs: 600,
+            },
+            AgentEvent::TurnWoken {
+                reason: "changed".into(),
+                polls_used: 3,
+            },
             AgentEvent::Compaction {
                 before_tokens: 2,
                 after_tokens: 1,
@@ -965,6 +1017,7 @@ mod tests {
                 superseded_blocks: vec![],
                 aged_blocks: vec![],
                 summarized_blocks: vec![],
+                rewrites: vec![],
                 effective_budget_tokens: 0,
                 calibration_factor: 0.0,
             },

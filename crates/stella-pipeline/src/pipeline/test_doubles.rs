@@ -44,6 +44,13 @@ impl RepoStatusPort for NeverRepoStatus {
     }
 }
 
+/// What a workspace's `seed_task_board` was handed (#1719): the approved
+/// plan's steps and whether this candidate may announce its board, or `None`
+/// if it was never called at all. Shared out of the workspace before it is
+/// scripted into a port, because the boxed workspace is unreachable once the
+/// run owns it.
+pub(super) type SeedProbe = Arc<std::sync::Mutex<Option<(Vec<String>, bool)>>>;
+
 /// A scripted [`CandidateWorkspace`]: per-candidate command results, a
 /// canned adoption outcome, and a shared log of lifecycle calls.
 pub(super) struct FakeWorkspace {
@@ -61,6 +68,10 @@ pub(super) struct FakeWorkspace {
     /// Scripted escape report (#1538) — the paths the post-seal check should
     /// claim the real tree already holds this candidate's sealed bytes at.
     escaped: Vec<String>,
+    /// What `seed_task_board` received — see [`SeedProbe`]. Its own slot
+    /// rather than a `log` entry so the tests that assert exact lifecycle
+    /// sequences stay untouched.
+    seeded: SeedProbe,
     log: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -81,8 +92,15 @@ impl FakeWorkspace {
             sealed_unchanged: true,
             graft_result: Ok(()),
             escaped: Vec::new(),
+            seeded: Arc::default(),
             log,
         }
+    }
+
+    /// Clone the seed-call probe out before scripting the workspace into a
+    /// port — the boxed workspace itself is unreachable once the run owns it.
+    pub(super) fn seeded_probe(&self) -> SeedProbe {
+        self.seeded.clone()
     }
 
     pub(super) fn with_repo_status(mut self, repo_status: SeqRepoStatus) -> Self {
@@ -171,6 +189,9 @@ impl CandidateWorkspace for FakeWorkspace {
     }
     fn repo_status(&self) -> &dyn RepoStatusPort {
         &self.repo_status
+    }
+    fn seed_task_board(&self, steps: &[String], announce: bool) {
+        *self.seeded.lock().unwrap() = Some((steps.to_vec(), announce));
     }
     async fn seal(&self) -> Result<(), WorkspaceError> {
         self.log.lock().unwrap().push(format!("seal:{}", self.id));

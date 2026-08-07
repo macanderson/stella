@@ -41,18 +41,26 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run a committed ``arenabench.toml`` headlessly — the CI entry point.
 
     Credentials are read from the process environment against each seat's
-    declared ``required`` list, never from the file — and then from the saved
-    credential set at :func:`~.credentials.credentials_path` for whatever the
-    environment left unset (:func:`~.credentials.apply_saved_credentials`), so
-    a local, repeat ``arenabench run`` does not need the same ``export`` lines
+    declared ``required`` list, never from the file — then from the saved
+    credential set at :func:`~.credentials.credentials_path`, and finally, for
+    a seat that declared the Claude subscription token, from this machine's own
+    Claude Code login (:func:`~.claude_oauth.apply_local_claude_login`). So a
+    local, repeat ``arenabench run`` does not need the same ``export`` lines
     pasted before every invocation. A seat's own environment always wins over
-    the saved file. A candidate still missing from both aborts before any
-    container starts, because an unauthenticated arm scores zero and a zero is
-    indistinguishable from a real result on a scoreboard.
+    every fill layer. A candidate still missing from all of them aborts before
+    any container starts, because an unauthenticated arm scores zero and a zero
+    is indistinguishable from a real result on a scoreboard.
+
+    The layers are the server's, in the server's order, on purpose: a template
+    that launches from the UI and the same template run here must resolve the
+    same credentials, or "reproduces this match exactly" is false in the one
+    place nobody checks.
     """
     import os
     import time
 
+    from .agents import dead_seat_reason
+    from .claude_oauth import apply_local_claude_login
     from .config import MatchTemplateError, load_match, required_env
     from .credentials import apply_saved_credentials, credentials_path, load_credentials
     from .monitor import MatchWatcher
@@ -86,6 +94,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         if filled:
             print(f"credentials: {filled} value(s) filled in from {credentials_path()}")
 
+    spec, oauth_notes = apply_local_claude_login(spec)
+    for note in oauth_notes:
+        print(f"credentials: {note}")
+
     missing: list[str] = []
     for contestant in spec.contestants:
         candidates = needed.get(contestant.id, [])
@@ -99,6 +111,22 @@ def _cmd_run(args: argparse.Namespace) -> int:
         for line in missing:
             print(f"  {line}", file=sys.stderr)
         print("  (use --allow-missing-env to run anyway)", file=sys.stderr)
+        return 2
+
+    # A seat can hold a perfectly valid credential its CLI has no way to read
+    # — measured as eleven trials dying at turn one, each scoring a 0.0
+    # indistinguishable from a real loss. No `--allow-missing-env` escape
+    # here: that flag says "run uncredentialled on purpose", while this is a
+    # seat that believes it *is* credentialled and is wrong.
+    dead = [
+        f"{contestant.name}: {reason}"
+        for contestant in spec.contestants
+        if (reason := dead_seat_reason(contestant))
+    ]
+    if dead:
+        print("error: seat(s) cannot authenticate as configured:", file=sys.stderr)
+        for line in dead:
+            print(f"  {line}", file=sys.stderr)
         return 2
 
     workspace = Path(args.workspace).expanduser()

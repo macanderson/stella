@@ -87,6 +87,7 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         // (#1778) rides the sub-agent primitive — its system prompt travels
         // on the `SubAgentSpec`, not through `metered_raw_call`.
         ModelCallRole::Unknown
+        | ModelCallRole::Research
         | ModelCallRole::WitnessAuthor
         | ModelCallRole::WitnessRepair
         | ModelCallRole::AgentAuthor

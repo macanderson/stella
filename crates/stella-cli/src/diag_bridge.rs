@@ -584,6 +584,29 @@ impl DomainBridge {
             AgentEvent::Steered { .. } => {
                 self.emit(Level::Info, "agent.steered", self.at_seq());
             }
+            // The timing envelope is numbers; the description is tool-authored
+            // free text and stays off the record (stella-diag's content-free
+            // contract).
+            AgentEvent::TurnParked {
+                poll_interval_secs,
+                deadline_secs,
+                ..
+            } => {
+                self.emit(
+                    Level::Info,
+                    "agent.turn.parked",
+                    self.at_seq()
+                        .with("poll_interval_secs", *poll_interval_secs)
+                        .with("deadline_secs", *deadline_secs),
+                );
+            }
+            AgentEvent::TurnWoken { polls_used, .. } => {
+                self.emit(
+                    Level::Info,
+                    "agent.turn.woken",
+                    self.at_seq().with("polls_used", *polls_used),
+                );
+            }
             AgentEvent::Proof { .. } => {
                 self.emit(Level::Debug, "agent.proof", self.at_seq());
             }
@@ -888,6 +911,11 @@ mod tests {
             superseded_blocks: Vec::new(),
             aged_blocks: Vec::new(),
             summarized_blocks: Vec::new(),
+            rewrites: vec![stella_protocol::CompactionRewrite {
+                block_id: "blk-secret-name".into(),
+                content_digest: "sha256:feed".into(),
+                content: "secret-replacement-bytes".into(),
+            }],
             effective_budget_tokens: 80_000,
             calibration_factor: 1.25,
         });
@@ -897,6 +925,10 @@ mod tests {
         assert!(json.contains(r#""before_tokens":120000"#), "{json}");
         assert!(json.contains(r#""after_tokens":60000"#), "{json}");
         assert!(json.contains(r#""summarized":5"#), "{json}");
+        assert!(
+            !json.contains("secret-replacement-bytes"),
+            "rewrite preimages are raw content and must not ride along: {json}"
+        );
         assert!(
             !json.contains("blk-secret-name"),
             "block ids are content-adjacent and must not ride along: {json}"

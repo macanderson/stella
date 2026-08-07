@@ -832,6 +832,7 @@ fn cfg_for(provider_id: &str) -> Config {
         authority: crate::settings::AuthorityPolicy::default(),
         credential_advisories: Vec::new(),
         aux_credentials: Default::default(),
+        cache_ttl: None,
     }
 }
 

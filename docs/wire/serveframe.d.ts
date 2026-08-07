@@ -68,6 +68,34 @@ export type AgentEvent = {
   type: "steered";
 } | {
   /**
+   * Seconds the park may last before it wakes with a timeout.
+   */
+  deadline_secs: number;
+  /**
+   * What the wait is for — the tool's human-readable description of
+   * the watched condition (e.g. "CI for branch main settles").
+   */
+  description: string;
+  /**
+   * Seconds between engine-side probes of the watched state.
+   */
+  poll_interval_secs: number;
+  type: "turn_parked";
+} | {
+  /**
+   * Engine-side probes spent while parked — the poll history the
+   * transcript deliberately never carries.
+   */
+  polls_used: number;
+  /**
+   * `"changed"` | `"deadline_expired"` — mirrors
+   * `stella-core::waiting::WakeReason` (kept as a string here so
+   * `stella-protocol` never depends on `stella-core`).
+   */
+  reason: string;
+  type: "turn_woken";
+} | {
+  /**
    * `false`: first detection, the turn was steered and continues.
    * `true`: detection persisted after the warning, the turn aborted.
    */
@@ -185,6 +213,15 @@ export type AgentEvent = {
    * exception). `serde(default)` — absent on pre-identity journals.
    */
   evicted_blocks?: string[];
+  /**
+   * The replacement bytes each in-place rewrite left behind, one entry
+   * per digest — what lets reconstruction resolve a compacted block to
+   * the bytes the model received rather than the pre-compaction output
+   * under the same `call_id` (#1667); see [`CompactionRewrite`].
+   * `serde(default)` — absent on journals written before rewrites were
+   * journaled, whose compacted blocks surface as digest mismatches.
+   */
+  rewrites?: CompactionRewrite[];
   /**
    * Messages replaced by a model-written history summary — the
    * overflow fallback when eviction alone cannot reach budget.
@@ -674,6 +711,32 @@ export type CacheZone = "stable_prefix" | "cacheable" | "volatile" | "other";
  * before rendering, never served from cache alone (L-V3).
  */
 export type CiStatus = "pending" | "running" | "passing" | "failing";
+
+/**
+ * One in-place compaction rewrite: the post-rewrite identity and bytes of a
+ * tool result a compaction pass stubbed, deduplicated, superseded, or aged.
+ *
+ * `content` is the canonical serialized form of the replacement tool output —
+ * the same `serde_json` serialization the receipts plane hashes — so
+ * `content_digest` re-derives from `content` exactly and a consumer can
+ * verify the pair without any other context.
+ */
+export interface CompactionRewrite {
+  /**
+   * The content-addressed id (`blk_…`) of the block the rewrite produced —
+   * the identity the next step's manifest cites for this result.
+   */
+  block_id: string;
+  /**
+   * The replacement bytes: the serialized post-rewrite tool output.
+   */
+  content: string;
+  /**
+   * `sha256:<hex>` of `content` — the digest the block registry records,
+   * and the key reconstruction resolves this preimage by.
+   */
+  content_digest: string;
+}
 
 /**
  * Stable-ID payload of `compiled_context_frame_built`.

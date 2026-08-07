@@ -176,6 +176,29 @@
         }
       ]
     },
+    "CompactionRewrite": {
+      "description": "One in-place compaction rewrite: the post-rewrite identity and bytes of a\ntool result a compaction pass stubbed, deduplicated, superseded, or aged.\n\n`content` is the canonical serialized form of the replacement tool output —\nthe same `serde_json` serialization the receipts plane hashes — so\n`content_digest` re-derives from `content` exactly and a consumer can\nverify the pair without any other context.",
+      "properties": {
+        "block_id": {
+          "description": "The content-addressed id (`blk_…`) of the block the rewrite produced —\nthe identity the next step's manifest cites for this result.",
+          "type": "string"
+        },
+        "content": {
+          "description": "The replacement bytes: the serialized post-rewrite tool output.",
+          "type": "string"
+        },
+        "content_digest": {
+          "description": "`sha256:<hex>` of `content` — the digest the block registry records,\nand the key reconstruction resolves this preimage by.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "block_id",
+        "content_digest",
+        "content"
+      ],
+      "type": "object"
+    },
     "CompiledContextFrameBuilt": {
       "description": "Stable-ID payload of `compiled_context_frame_built`.",
       "properties": {
@@ -1863,6 +1886,63 @@
       "type": "object"
     },
     {
+      "description": "The turn parked on an engine-side wait (#1471, #1857): a tool\ndeposited a wait request and the engine is now probing on its own\nclock — zero model calls until the watched state changes or the\ndeadline expires. The typed twin of the prose \"⏳ Parked\" narration,\nso a consumer can tell a park from model text, render a live\nheartbeat, and attribute the wall-clock gap. The matching\n[`AgentEvent::TurnWoken`] ends the span. Additive to the wire\ncontract: consumers recorded before parked waits existed never see it.",
+      "properties": {
+        "deadline_secs": {
+          "description": "Seconds the park may last before it wakes with a timeout.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "description": {
+          "description": "What the wait is for — the tool's human-readable description of\nthe watched condition (e.g. \"CI for branch main settles\").",
+          "type": "string"
+        },
+        "poll_interval_secs": {
+          "description": "Seconds between engine-side probes of the watched state.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "turn_parked",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "description",
+        "poll_interval_secs",
+        "deadline_secs"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "The parked turn woke and the next model call is imminent — closes the\nspan its [`AgentEvent::TurnParked`] opened. Additive to the wire\ncontract, like its twin.",
+      "properties": {
+        "polls_used": {
+          "description": "Engine-side probes spent while parked — the poll history the\ntranscript deliberately never carries.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "description": "`\"changed\"` | `\"deadline_expired\"` — mirrors\n`stella-core::waiting::WakeReason` (kept as a string here so\n`stella-protocol` never depends on `stella-core`).",
+          "type": "string"
+        },
+        "type": {
+          "const": "turn_woken",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "reason",
+        "polls_used"
+      ],
+      "type": "object"
+    },
+    {
       "description": "Loop detection fired (receipts spec §6.3, #364 gap 3): the typed\ntwin of the prose steer/abort, so receipts can parse the decision\ninstead of string-matching an `Error` prefix. Emitted on BOTH\noutcomes — the first detection steers (`aborted: false`) and a\ndetection that persists past the warning aborts (`aborted: true`).\nAdditive to the wire contract: older consumers never see it.",
       "properties": {
         "aborted": {
@@ -2068,6 +2148,13 @@
           "description": "The `block_id`s each pass stubbed (spec §6.2) — identities, not just\ncounts, so the receipt records *which* blocks left context and a\nlater pass can prove a block was evicted before it was ever cited or\nreferenced (the wasted-carry signal). For the pure passes each vec's\nlength equals its count field (`summarized_blocks` is the documented\nexception). `serde(default)` — absent on pre-identity journals.",
           "items": {
             "type": "string"
+          },
+          "type": "array"
+        },
+        "rewrites": {
+          "description": "The replacement bytes each in-place rewrite left behind, one entry\nper digest — what lets reconstruction resolve a compacted block to\nthe bytes the model received rather than the pre-compaction output\nunder the same `call_id` (#1667); see [`CompactionRewrite`].\n`serde(default)` — absent on journals written before rewrites were\njournaled, whose compacted blocks surface as digest mismatches.",
+          "items": {
+            "$ref": "#/$defs/CompactionRewrite"
           },
           "type": "array"
         },
