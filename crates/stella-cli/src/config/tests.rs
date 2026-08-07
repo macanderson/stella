@@ -264,6 +264,82 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
     assert_eq!(cfg.authority, authority);
 }
 
+/// Witness for `/reload` (`Config::reload_from_disk`): a settings edit made
+/// *after* the session's `Config` was resolved is re-applied to the live
+/// value — the fields the scope chain derives (the recap toggle, the tool
+/// switches) flip without a restart. Fails to compile on a build without
+/// `reload_from_disk`.
+#[test]
+fn reload_from_disk_reapplies_the_settings_scope_chain() {
+    // The scope chain reads `STELLA_CONFIG_DIR` and `reload_from_disk` reads
+    // the trusted-engine env var; hold the binary-wide env lock and pin the
+    // chain to a scratch dir so ambient developer state cannot leak in
+    // (setenv racing any concurrent getenv is UB on POSIX).
+    let _env = crate::test_env::lock();
+    let user_dir =
+        std::env::temp_dir().join(format!("stella-test-reload-user-{}", std::process::id()));
+    let workspace = user_dir.join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+    // SAFETY: test-only env mutation behind the env lock (see above).
+    unsafe {
+        std::env::set_var("STELLA_CONFIG_DIR", &user_dir);
+        std::env::remove_var("STELLA_MANAGED_SETTINGS");
+        std::env::remove_var(TRUSTED_ENGINE_CONFIG_ENV);
+    }
+
+    let mut cfg = Config {
+        provider: PROVIDERS[0].clone(),
+        model_id: "glm-5.2".to_string(),
+        turn_budget: None,
+        max_output_tokens: None,
+        plan_mode: false,
+        model_pinned_by_flag: false,
+        durability: Default::default(),
+        create_worktrees: Default::default(),
+        api_key: ApiKey::new("k"),
+        workspace_root: workspace,
+        base_url_override: None,
+        hooks: None,
+        engine_settings: None,
+        engine_settings_trusted: false,
+        tool_policy: Default::default(),
+        enable_recap: false,
+        trace_capture: false,
+        reward_policy: Default::default(),
+        authority: crate::settings::AuthorityPolicy::default(),
+        credential_source: Some(stella_model::credential::CredentialSource::EnvVar),
+        credential_advisories: Vec::new(),
+        aux_credentials: Default::default(),
+    };
+    assert!(
+        cfg.tool_policy.allows("bash"),
+        "premise: the default policy allows bash"
+    );
+
+    // The edit a running session would previously only see after a restart.
+    std::fs::write(
+        user_dir.join("settings.json"),
+        r#"{"enable_recap": "on", "tools": {"bash": "off"}}"#,
+    )
+    .unwrap();
+
+    cfg.reload_from_disk().unwrap();
+
+    assert!(
+        cfg.enable_recap,
+        "reload must re-derive the recap toggle from the scope chain on disk"
+    );
+    assert!(
+        !cfg.tool_policy.allows("bash"),
+        "reload must re-derive the tool switches from the scope chain on disk"
+    );
+
+    unsafe {
+        std::env::remove_var("STELLA_CONFIG_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&user_dir);
+}
+
 /// Helper: a Settings value parsed from JSON, as the scope-merge would
 /// produce it — the seam for exercising resolution without touching
 /// `$HOME`, `/etc`, or a real workspace.
