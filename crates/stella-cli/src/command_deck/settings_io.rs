@@ -156,7 +156,9 @@ pub(super) fn reload_command(cfg: &mut Config, in_tx: &UnboundedSender<Inbound>)
 /// The one place both call sites converge, so "a save is live" is stated once.
 /// A failed reload leaves the session on its previous (still coherent) values
 /// — the files are already written, so a restart picks them up regardless,
-/// which is what the note says.
+/// which is what the note says. That coherence is not this function's doing:
+/// it rests on [`Config::reload_from_disk`] being all-or-nothing, so the note
+/// below is only honest while that holds.
 pub(super) fn apply_pending_reload(cfg: &mut Config, in_tx: &UnboundedSender<Inbound>) {
     if let Err(e) = cfg.reload_from_disk() {
         let _ = in_tx.send(super::chrome_note(format!(
