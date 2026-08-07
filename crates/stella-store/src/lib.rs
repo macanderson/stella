@@ -797,15 +797,7 @@ impl Store {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Start an execution record; returns its id.
-    ///
-    /// Stamps [`JournalEra::CURRENT`] on the row. That stamp is a statement
-    /// about *this binary* — whether the events it is about to write carry
-    /// compaction's replacement bytes (#1667) — and it has to be made here,
-    /// while the writer is the one talking, because no later reader can
-    /// recover it from the events themselves. It is what lets
-    /// [`Reconstruction::mismatch_severity`] tell a real integrity failure
-    /// from the compaction rewrites an older journal mismatches on forever.
+    /// Start an execution record, stamped [`JournalEra::CURRENT`]; returns its id.
     pub fn begin_execution(
         &self,
         kind: &str,
@@ -815,8 +807,7 @@ impl Store {
     ) -> Result<i64> {
         let conn = self.lock();
         conn.execute(
-            "INSERT INTO executions \
-               (kind, prompt, provider, model, usage_complete, usage_status, journal_era) \
+            "INSERT INTO executions (kind, prompt, provider, model, usage_complete, usage_status, journal_era) \
              VALUES (?, ?, ?, ?, 0, 'pending', ?)",
             params![kind, prompt, provider, model, JournalEra::CURRENT.code()],
         )?;

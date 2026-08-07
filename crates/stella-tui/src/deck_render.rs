@@ -784,12 +784,8 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         // journal, and `InspectView` (not this renderer) holds that verdict —
         // see `envelope::InspectView::digest_mismatch_line`, which also keeps
         // both variants short enough to survive this overlay's clip (#1981).
-        if let Some((text, integrity)) = view.digest_mismatch_line() {
-            let tone = if integrity {
-                theme::DANGER
-            } else {
-                theme::WARN
-            };
+        if let Some((text, alarm)) = view.digest_mismatch_line() {
+            let tone = if alarm { theme::DANGER } else { theme::WARN };
             lines.push(Line::from(Span::styled(text, Style::default().fg(tone))));
         }
         if view.verified {

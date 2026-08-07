@@ -1107,11 +1107,7 @@ fn skill_usage_records_per_execution_version_rows() {
     // `session_turn_diffs` (#1870): per (session, turn), the precomputed
     // workspace diff the work journal's turn marks describe, so the
     // observatory can replay file changes without opening the bare repo.
-    // Additive. v22 adds `executions.journal_era` (#1981): the writer's own
-    // statement of whether the events it wrote carry compaction's replacement
-    // bytes, which is what lets a reader tell a real digest-mismatch integrity
-    // signal from the ordinary compaction rewrite an older journal mismatches
-    // on forever. Additive; every existing row backfills to era 0.
+    // Additive. v22 adds `executions.journal_era` (#1981) — see `JournalEra`.
     assert_eq!(SCHEMA_VERSION, 22);
 
     let id = store
