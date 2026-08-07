@@ -151,10 +151,30 @@ fn the_record_carries_the_childs_pid_not_the_supervisors() {
 /// Liveness is the lock, not the pid (see the module docs). The kernel
 /// releases it when the process dies, so this is the one liveness answer a
 /// recycled pid cannot forge.
+///
+/// The child's lifetime is gated on a file this test creates, not a timer:
+/// `pre_exec` takes the lock before `exec` and `spawn` does not return until
+/// `exec` succeeded, so "held" is certain while the child lives — but a
+/// `sleep 0.2` child raced the first assertion on a loaded runner, and the
+/// lock it had honestly released read as never held. The wait is bounded so
+/// a panic between spawn and gate cannot leak the child forever.
 #[test]
 fn the_liveness_lock_is_held_while_the_run_lives_and_free_once_it_ends() {
     let (dir, registry) = temp_registry("lock");
-    let mut run = spawn_sh(&registry, "lock", "sleep 0.2");
+    let gate = std::env::temp_dir().join(format!(
+        "stella-daemon-lock-gate-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_file(&gate);
+    let mut run = spawn_sh(
+        &registry,
+        "lock",
+        &format!(
+            "i=0; until [ -e '{}' ]; do i=$((i+1)); [ \"$i\" -gt 1200 ] && exit 1; sleep 0.05; done",
+            gate.display()
+        ),
+    );
     let sidecar = registry.sidecar_dir(&run.id);
 
     assert_eq!(
@@ -162,13 +182,20 @@ fn the_liveness_lock_is_held_while_the_run_lives_and_free_once_it_ends() {
         Some(true),
         "a running child holds its lock"
     );
-    let _ = run.child.wait();
+    std::fs::write(&gate, b"").expect("open the child's exit gate");
+    let status = run.child.wait().expect("wait for child to exit");
+    assert!(
+        status.success(),
+        "child exited unsuccessfully with status {:?} (possible gate timeout or shell error)",
+        status
+    );
     assert!(
         eventually(Duration::from_secs(10), || lock_is_held(&sidecar)
             == Some(false)),
         "the kernel must release the lock when the process exits"
     );
 
+    let _ = std::fs::remove_file(&gate);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
