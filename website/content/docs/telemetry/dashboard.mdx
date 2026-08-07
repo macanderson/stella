@@ -46,7 +46,9 @@ panels labeled *all-time* ignore it.
     files touched, tokens, and cost. Clicking a row opens a drill-down drawer with per-step
     tokens and latency, **context sent** — the message array each recorded model call was
     given, system prompt included, rebuilt from that call's context receipt and checked
-    against the digests recorded when it was emitted (what `stella inspect` prints) — the
+    against the digests recorded when it was emitted (what `stella inspect` prints, with
+    the same two readings of a failed check: routine on a journal written before
+    compaction recorded its rewrites, a real integrity signal on one written since) — the
     **transcript** replayed from the run's event journal — answer text, reasoning, and each
     tool call's arguments and output, with long bodies clipped until you ask for them in
     full — every tool call, the files touched, and the post-turn self-reflection.
