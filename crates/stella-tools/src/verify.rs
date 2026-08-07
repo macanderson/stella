@@ -12,11 +12,30 @@
 //! # How the "previous version" is produced — without touching your tree
 //!
 //! The working tree is NEVER mutated (no stash, no checkout —). Instead a
-//! detached shadow git worktree is created at `HEAD`, the *test* files
-//! (only) are copied from the working tree into it, and the test command
-//! runs there. `HEAD` is the previous version; the copied test files are
-//! the witness. The shadow worktree is removed afterward, success or
-//! failure.
+//! detached shadow git worktree is created at the *witness baseline*, the
+//! *test* files (only) are copied from the working tree into it, and the
+//! test command runs there. The copied test files are the witness. The
+//! shadow worktree is removed afterward, success or failure.
+//!
+//! # Which commit is the previous version
+//!
+//! `HEAD` is only the default. Inside a pipeline candidate workspace the
+//! pipeline itself commits the agent's work after every verified step, so by
+//! witness time `HEAD` *is* the solved tree and a flip against it is
+//! structurally impossible (#2067). The baseline is resolved in preference
+//! order:
+//!
+//! 1. [`WITNESS_BASELINE_WORKTREE_REF`] — pinned by the candidate workspace
+//!    at creation (per-worktree, so parallel candidates never collide and
+//!    nothing leaks into the user's real checkout);
+//! 2. [`WITNESS_BASELINE_TASK_REF`] — pinned by an orchestrating harness
+//!    when it gives a task workspace its baseline commit;
+//! 3. `HEAD`, after walking first-parent history past any pipeline seal
+//!    commits sitting on top of it;
+//! 4. and when every reachable commit is such a snapshot, an honest refusal:
+//!    no true baseline exists, which is a fact about the workspace — never a
+//!    `VACUOUS` accusation that sends the author off strengthening a test
+//!    that was not the problem.
 //!
 //! # Cancellation
 //!
@@ -89,6 +108,175 @@ fn git_in(dir: &std::path::Path) -> Command {
     cmd
 }
 
+/// Per-worktree ref a pipeline candidate workspace pins at creation, naming
+/// the session-baseline commit — the tree as it stood before the agent's
+/// work began. Lives under `refs/worktree/` so each candidate carries its
+/// own pin and nothing ever appears in the user's real checkout.
+pub const WITNESS_BASELINE_WORKTREE_REF: &str = "refs/worktree/stella/witness-baseline";
+
+/// Repo-wide ref an orchestrating harness pins when it creates a task
+/// workspace's baseline commit (the bench adapter's
+/// `stella-harbor: task workspace baseline`). Only consulted when no
+/// per-worktree pin exists.
+pub const WITNESS_BASELINE_TASK_REF: &str = "refs/stella/task-baseline";
+
+/// The committer email on candidate snapshot plumbing commits —
+/// `stella-cli`'s `SNAPSHOT_IDENT`, parity-tested there so the two
+/// spellings cannot drift.
+pub const CANDIDATE_SNAPSHOT_EMAIL: &str = "pipeline@stella.invalid";
+
+/// The subject of the seal commits the pipeline stacks onto a candidate
+/// workspace after each verified step — the auto-snapshots that advance
+/// `HEAD` past the session baseline. `stella-cli`'s `seal_inner` uses this
+/// constant directly, so the walk below and the writer share one spelling.
+pub const CANDIDATE_SEAL_SUBJECT: &str = "stella: candidate verified snapshot";
+
+/// How far back the seal walk looks for a true baseline. A session seals
+/// once per verified step, so a history that is snapshots 500 deep with no
+/// base underneath is not a walk cut short — it is a workspace with no
+/// baseline to find.
+const SEAL_WALK_LIMIT: &str = "500";
+
+/// The commit the flip is measured against, plus the provenance a reader
+/// needs to audit that choice — embedded in every verdict.
+struct WitnessBaseline {
+    sha: String,
+    provenance: String,
+}
+
+impl WitnessBaseline {
+    fn short(&self) -> &str {
+        &self.sha[..self.sha.len().min(8)]
+    }
+}
+
+/// Resolve `name` to a commit SHA, or `None` when the ref does not exist.
+async fn pinned_baseline(root: &std::path::Path, name: &str) -> Option<String> {
+    let mut cmd = git_in(root);
+    cmd.args(["rev-parse", "--verify", "--quiet"]);
+    cmd.arg(format!("{name}^{{commit}}"));
+    match crate::exec::run_captured(cmd, 30).await {
+        crate::exec::Captured::Done(out) if out.status.success() => {
+            let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (!sha.is_empty()).then_some(sha)
+        }
+        _ => None,
+    }
+}
+
+/// Walk first-parent history from `HEAD`, skipping the pipeline's seal
+/// commits, and return the first real commit plus how many seals were
+/// skipped — or `None` when every visited commit was a seal.
+async fn walk_past_seals(root: &std::path::Path) -> Result<Option<(String, usize)>, String> {
+    let mut cmd = git_in(root);
+    cmd.args([
+        "log",
+        "--first-parent",
+        "-n",
+        SEAL_WALK_LIMIT,
+        "--format=%H%x1f%ae%x1f%s",
+        "HEAD",
+    ]);
+    let out = match crate::exec::run_captured(cmd, 30).await {
+        crate::exec::Captured::Done(out) if out.status.success() => out,
+        _ => return Err("git log failed while resolving the witness baseline".to_string()),
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut skipped = 0usize;
+    for line in text.lines() {
+        let mut parts = line.splitn(3, '\u{1f}');
+        let sha = parts.next().unwrap_or_default();
+        let email = parts.next().unwrap_or_default();
+        let subject = parts.next().unwrap_or_default();
+        if sha.is_empty() {
+            continue;
+        }
+        if email == CANDIDATE_SNAPSHOT_EMAIL && subject == CANDIDATE_SEAL_SUBJECT {
+            skipped += 1;
+            continue;
+        }
+        return Ok(Some((sha.to_string(), skipped)));
+    }
+    Ok(None)
+}
+
+/// Choose the previous-version commit per the module-level preference order.
+/// `Err` carries a complete, user-facing refusal message.
+async fn resolve_witness_baseline(
+    root: &std::path::Path,
+    head: &str,
+) -> Result<WitnessBaseline, String> {
+    if let Some(sha) = pinned_baseline(root, WITNESS_BASELINE_WORKTREE_REF).await {
+        return Ok(WitnessBaseline {
+            sha,
+            provenance: format!("pinned by {WITNESS_BASELINE_WORKTREE_REF}"),
+        });
+    }
+    if let Some(sha) = pinned_baseline(root, WITNESS_BASELINE_TASK_REF).await {
+        return Ok(WitnessBaseline {
+            sha,
+            provenance: format!("pinned by {WITNESS_BASELINE_TASK_REF}"),
+        });
+    }
+    match walk_past_seals(root).await? {
+        Some((_, 0)) => Ok(WitnessBaseline {
+            sha: head.to_string(),
+            provenance: "HEAD".to_string(),
+        }),
+        Some((sha, skipped)) => Ok(WitnessBaseline {
+            sha,
+            provenance: format!(
+                "HEAD with {skipped} pipeline snapshot commit{} skipped",
+                if skipped == 1 { "" } else { "s" }
+            ),
+        }),
+        None => Err(format!(
+            "WITNESS BASELINE UNRESOLVED — every commit reachable from HEAD is a pipeline \
+             snapshot of the agent's own work (`{CANDIDATE_SEAL_SUBJECT}`), and no baseline \
+             ref is pinned, so no pre-change tree exists to measure a flip against. This is \
+             a fact about the workspace, NOT about your test — do not weaken or rewrite the \
+             test in response. An orchestrator that creates such workspaces should pin the \
+             true baseline: `git update-ref {WITNESS_BASELINE_TASK_REF} <baseline-commit>`."
+        )),
+    }
+}
+
+/// Output signatures proving the previous-code run died while *loading* the
+/// test or its imports — no behavioural assertion ever executed, so the
+/// failure is not evidence of a flip (#2067). The live false positive: a
+/// compiled `.so` present in the working tree but absent from a fresh shadow
+/// checkout fails `import` on the old side and fakes a confirmation.
+///
+/// Deliberately narrow, and deliberately NOT the compile-error family:
+/// a witness that fails to *build* on the old code (rustc `error[E…]`) is
+/// the canonical missing-API witness shape and stays credited with the
+/// existing weaker-evidence warning (#1790). The import/loader family is
+/// different: the author can always convert module absence into an
+/// assertion (`try: import x … except ImportError: ok = False`), so refusal
+/// is actionable, while crediting it lets a stale artifact decide the
+/// verdict. `SyntaxError` and "No such file or directory" are also absent —
+/// both can BE the witnessed behaviour (a fix-the-parse-error task; a shell
+/// witness asserting a file the change creates).
+fn import_failure_signature(output: &str) -> Option<&'static str> {
+    const SIGNATURES: &[(&str, &str)] = &[
+        ("modulenotfounderror", "a Python `ModuleNotFoundError`"),
+        ("no module named", "a missing Python module"),
+        ("importerror", "a Python `ImportError`"),
+        (
+            "error while loading shared libraries",
+            "a missing shared library",
+        ),
+        ("cannot find module", "a missing Node module"),
+        ("error collecting", "a pytest collection error"),
+        ("errors during collection", "a pytest collection error"),
+    ];
+    let lower = output.to_ascii_lowercase();
+    SIGNATURES
+        .iter()
+        .find(|(needle, _)| lower.contains(needle))
+        .map(|(_, label)| *label)
+}
+
 /// Best-effort removal of the shadow worktree — both the registration and
 /// the directory.
 async fn cleanup_shadow(root: &std::path::Path, shadow: &std::path::Path) {
@@ -139,8 +327,10 @@ impl Tool for VerifyDone {
         ToolSchema {
             name: "verify_done".into(),
             description: "Prove a change is done: test_cmd must PASS on your code and FAIL on \
-                          git HEAD with your test files layered in. Call before declaring any \
-                          implementation complete. Never mutates the working tree."
+                          the pre-change baseline (git HEAD, or the pinned session/task \
+                          baseline in orchestrated workspaces) with your test files layered \
+                          in. Call before declaring any implementation complete. Never \
+                          mutates the working tree."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -298,6 +488,16 @@ impl Tool for VerifyDone {
         // concurrent one's).
         let _ = git_in(root).args(["worktree", "prune"]).output().await;
 
+        // Which commit is "the previous version" — see the module docs. HEAD
+        // is only the default: inside a candidate workspace the pipeline has
+        // already committed the work under proof on top of the baseline, and
+        // comparing against it makes every real flip structurally impossible
+        // while a missing build artifact fakes one (#2067).
+        let baseline = match resolve_witness_baseline(root, &head).await {
+            Ok(b) => b,
+            Err(message) => return ToolOutput::Error { message },
+        };
+
         // Half 1: the new code must pass.
         let (new_exit, new_output) = match run(test_cmd, root, timeout_secs).await {
             Ok(pair) => pair,
@@ -326,7 +526,7 @@ impl Tool for VerifyDone {
         let added = git_in(root)
             .args(["worktree", "add", "--detach"])
             .arg(&shadow)
-            .arg(&head)
+            .arg(&baseline.sha)
             .output()
             .await;
         match added {
@@ -390,12 +590,40 @@ impl Tool for VerifyDone {
         if old_exit == 0 {
             return ToolOutput::Error {
                 message: format!(
-                    "VACUOUS TEST — the witness test ALSO PASSES on the previous code (HEAD \
-                     {}). It does not witness your change: either the behavior already \
-                     existed, the test doesn't exercise the new behavior, or your change \
-                     isn't wired in. Strengthen the test so it fails without your change.\n\
+                    "VACUOUS TEST — the witness test ALSO PASSES on the previous code \
+                     (baseline {}, {}). It does not witness your change: either the behavior \
+                     already existed, the test doesn't exercise the new behavior, or your \
+                     change isn't wired in. Strengthen the test so it fails without your \
+                     change.\n--- previous-code output tail ---\n{}",
+                    baseline.short(),
+                    baseline.provenance,
+                    tail(&old_output)
+                ),
+            };
+        }
+
+        // A failure while LOADING the test is not a failure OF the test:
+        // classify before crediting, so a missing build artifact in the fresh
+        // shadow checkout cannot fake a flip (#2067).
+        if let Some(label) = import_failure_signature(&old_output) {
+            return ToolOutput::Error {
+                message: format!(
+                    "WITNESS_INCONCLUSIVE_BUILD_ERROR — the previous-code run failed with \
+                     {label}, so the baseline could not be built or imported and no \
+                     behavioural assertion ever ran: this failure is NOT evidence that your \
+                     change is what flipped it. Two common causes, each with a fix:\n\
+                     - a build artifact (compiled `.so`, `node_modules/`, a target dir) \
+                     exists in your working tree but not in a fresh checkout → make \
+                     `test_cmd` build both sides from source as part of the command;\n\
+                     - the missing module IS your change's deliverable → assert its \
+                     observable behaviour instead of bare-importing it (e.g. guard the \
+                     import and fail on the assertion), so the old code fails on the \
+                     assertion rather than the import.\n\
+                     - new code:      `{test_cmd}` exit 0 (PASS)\n\
+                     - previous code: baseline {} ({}) → exit {old_exit}, before any test ran\n\
                      --- previous-code output tail ---\n{}",
-                    &head[..head.len().min(8)],
+                    baseline.short(),
+                    baseline.provenance,
                     tail(&old_output)
                 ),
             };
@@ -405,12 +633,13 @@ impl Tool for VerifyDone {
             content: format!(
                 "WITNESS CONFIRMED — deterministic definition of done met:\n\
                  - new code:      `{test_cmd}` exit 0 (PASS)\n\
-                 - previous code: HEAD {} + your test files → exit {old_exit} (FAIL)\n\
+                 - previous code: baseline {} ({}) + your test files → exit {old_exit} (FAIL)\n\
                  Check the tail below: an assertion failure is a strong witness; a compile \
-                 error (test references symbols that don't exist on HEAD) is weaker — \
-                 prefer behavioral assertions when possible.\n\
+                 error (test references symbols that don't exist on the baseline) is weaker \
+                 — prefer behavioral assertions when possible.\n\
                  --- previous-code failure tail ---\n{}",
-                &head[..head.len().min(8)],
+                baseline.short(),
+                baseline.provenance,
                 tail(&old_output)
             ),
         }
@@ -434,33 +663,40 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        // Scrub hook-exported GIT_* vars exactly like the production paths
-        // (`git_in`) — without this, running the suite from inside a git
-        // hook (the pre-push gate) re-targets `git init` at the HOST repo.
-        let scratch_git = |args: &[&str]| {
-            let mut cmd = std::process::Command::new("git");
-            cmd.args(args).current_dir(&root);
-            for var in crate::exec::GIT_REPO_ENV_VARS {
-                cmd.env_remove(var);
-            }
-            let out = cmd.output().unwrap();
-            assert!(out.status.success(), "git {args:?} failed");
-        };
         for args in [
             &["init", "-q"][..],
             &["config", "user.email", "t@t.t"],
             &["config", "user.name", "t"],
         ] {
-            scratch_git(args);
+            scratch_git(&root, args);
         }
         std::fs::write(root.join("impl.txt"), "old behavior\n").unwrap();
         for args in [
             &["add", "."][..],
             &["commit", "-q", "-m", "previous version"],
         ] {
-            scratch_git(args);
+            scratch_git(&root, args);
         }
         root
+    }
+
+    /// Run `git <args>` in `root` with hook-exported GIT_* vars scrubbed
+    /// exactly like the production paths (`git_in`) — without this, running
+    /// the suite from inside a git hook (the pre-push gate) re-targets every
+    /// command at the HOST repo. Returns stdout; panics on failure.
+    fn scratch_git(root: &std::path::Path, args: &[&str]) -> String {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(args).current_dir(root);
+        for var in crate::exec::GIT_REPO_ENV_VARS {
+            cmd.env_remove(var);
+        }
+        let out = cmd.output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     #[tokio::test]
@@ -542,6 +778,237 @@ mod tests {
             other => panic!("expected vacuous rejection, got {other:?}"),
         }
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// #2067 witness (baseline drift): the pipeline commits the agent's work
+    /// on top of the session baseline, so a flip against `HEAD` is
+    /// structurally impossible — the per-worktree pin restores the true
+    /// previous version.
+    #[tokio::test]
+    async fn a_pinned_baseline_ref_beats_a_head_that_contains_the_fix() {
+        let root = scaffold("pinref").await;
+        let base = scratch_git(&root, &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
+        scratch_git(&root, &["update-ref", WITNESS_BASELINE_WORKTREE_REF, &base]);
+        // The auto-snapshot: the fix, already committed past the baseline.
+        std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
+        scratch_git(&root, &["add", "."]);
+        scratch_git(&root, &["commit", "-q", "-m", "agent work, sealed"]);
+        std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
+
+        let out = VerifyDone
+            .execute(
+                &serde_json::json!({
+                    "test_cmd": "bash witness.sh",
+                    "test_files": ["witness.sh"],
+                    "timeout_secs": 60
+                }),
+                &root,
+            )
+            .await;
+        match &out {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("WITNESS CONFIRMED"), "{content}");
+                assert!(content.contains("pinned"), "{content}");
+            }
+            other => panic!("a pinned baseline must restore the flip, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// #2067: the harness-pinned task baseline (`refs/stella/task-baseline`)
+    /// is honored when no per-worktree pin exists.
+    #[tokio::test]
+    async fn a_task_baseline_ref_is_honored_when_no_worktree_pin_exists() {
+        let root = scaffold("taskref").await;
+        let base = scratch_git(&root, &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
+        scratch_git(&root, &["update-ref", WITNESS_BASELINE_TASK_REF, &base]);
+        std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
+        scratch_git(&root, &["add", "."]);
+        scratch_git(&root, &["commit", "-q", "-m", "trial work"]);
+        std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
+
+        let out = VerifyDone
+            .execute(
+                &serde_json::json!({
+                    "test_cmd": "bash witness.sh",
+                    "test_files": ["witness.sh"],
+                    "timeout_secs": 60
+                }),
+                &root,
+            )
+            .await;
+        match &out {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("WITNESS CONFIRMED"), "{content}");
+                assert!(content.contains(WITNESS_BASELINE_TASK_REF), "{content}");
+            }
+            other => panic!("the task baseline pin must restore the flip, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// #2067: with no pin at all, seal-shaped commits (the snapshot identity
+    /// plus [`CANDIDATE_SEAL_SUBJECT`]) are walked past to the first real
+    /// commit underneath them.
+    #[tokio::test]
+    async fn seal_commits_are_walked_past_when_no_ref_is_pinned() {
+        let root = scaffold("sealwalk").await;
+        let email_arg = format!("user.email={CANDIDATE_SNAPSHOT_EMAIL}");
+        std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
+        scratch_git(&root, &["add", "."]);
+        scratch_git(
+            &root,
+            &[
+                "-c",
+                "user.name=stella-pipeline",
+                "-c",
+                &email_arg,
+                "commit",
+                "-q",
+                "-m",
+                CANDIDATE_SEAL_SUBJECT,
+            ],
+        );
+        std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
+
+        let out = VerifyDone
+            .execute(
+                &serde_json::json!({
+                    "test_cmd": "bash witness.sh",
+                    "test_files": ["witness.sh"],
+                    "timeout_secs": 60
+                }),
+                &root,
+            )
+            .await;
+        match &out {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("WITNESS CONFIRMED"), "{content}");
+                assert!(content.contains("snapshot commit"), "{content}");
+            }
+            other => panic!("the seal walk must restore the flip, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// #2067 witness (honest degradation): a workspace whose entire history
+    /// is pipeline snapshots has no true baseline — that is a fact about the
+    /// workspace and must be reported as such, never as a `VACUOUS` verdict
+    /// that sends the author off strengthening a test that was never the
+    /// problem.
+    #[tokio::test]
+    async fn an_all_snapshot_history_is_refused_not_called_vacuous() {
+        let root = std::env::temp_dir().join(format!(
+            "stella_verify_test_allsnap_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        scratch_git(&root, &["init", "-q"]);
+        let email_arg = format!("user.email={CANDIDATE_SNAPSHOT_EMAIL}");
+        std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
+        scratch_git(&root, &["add", "."]);
+        scratch_git(
+            &root,
+            &[
+                "-c",
+                "user.name=stella-pipeline",
+                "-c",
+                &email_arg,
+                "commit",
+                "-q",
+                "-m",
+                CANDIDATE_SEAL_SUBJECT,
+            ],
+        );
+        std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
+
+        let out = VerifyDone
+            .execute(
+                &serde_json::json!({
+                    "test_cmd": "bash witness.sh",
+                    "test_files": ["witness.sh"],
+                    "timeout_secs": 60
+                }),
+                &root,
+            )
+            .await;
+        match &out {
+            ToolOutput::Error { message } => {
+                assert!(message.contains("WITNESS BASELINE UNRESOLVED"), "{message}");
+                assert!(
+                    !message.contains("VACUOUS"),
+                    "an unresolved baseline must not accuse the test: {message}"
+                );
+            }
+            other => panic!("expected an honest refusal, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// #2067 witness (false positive): a previous-code run that dies on an
+    /// import — the shape a missing build artifact produces in a fresh
+    /// checkout — observed no behaviour and must not be credited as a flip.
+    #[tokio::test]
+    async fn an_import_failure_on_the_previous_code_is_not_a_confirmed_flip() {
+        let root = scaffold("importfail").await;
+        std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
+        std::fs::write(
+            root.join("witness.sh"),
+            "if grep -q 'new behavior' impl.txt; then exit 0; else echo \
+             \"ModuleNotFoundError: No module named 'portfolio_optimized_c'\"; exit 1; fi\n",
+        )
+        .unwrap();
+
+        let out = VerifyDone
+            .execute(
+                &serde_json::json!({
+                    "test_cmd": "bash witness.sh",
+                    "test_files": ["witness.sh"],
+                    "timeout_secs": 60
+                }),
+                &root,
+            )
+            .await;
+        match &out {
+            ToolOutput::Error { message } => {
+                assert!(
+                    message.contains("WITNESS_INCONCLUSIVE_BUILD_ERROR"),
+                    "{message}"
+                );
+            }
+            other => panic!("an import failure must not confirm a witness, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The import/loader vocabulary is deliberately narrow: behavioural
+    /// failures — assertions, files a shell witness checks for, and the Rust
+    /// missing-API compile shape (#1790) — stay credited.
+    #[test]
+    fn import_failure_signatures_are_narrow() {
+        assert!(import_failure_signature("ModuleNotFoundError: No module named 'x'").is_some());
+        assert!(import_failure_signature("ImportError: undefined symbol: foo").is_some());
+        assert!(
+            import_failure_signature("./app: error while loading shared libraries: libz.so.1")
+                .is_some()
+        );
+        assert!(import_failure_signature("Error: Cannot find module 'left-pad'").is_some());
+        assert!(import_failure_signature("assertion failed: `(left == right)`").is_none());
+        assert!(
+            import_failure_signature("cat: /etc/nginx/ssl/cert.pem: No such file or directory")
+                .is_none()
+        );
+        assert!(
+            import_failure_signature("error[E0425]: cannot find function `retry_delays`").is_none()
+        );
     }
 
     #[tokio::test]
