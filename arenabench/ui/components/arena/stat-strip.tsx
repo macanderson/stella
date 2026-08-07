@@ -91,8 +91,10 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
 
   // Solve rate over *judged* trials, not over every trial that exists: a
   // queued trial is not a failure, and dividing by it reports a rate that
-  // climbs as the match runs for no reason but arithmetic.
-  const solveRate = totals.judged > 0 ? totals.passed / totals.judged : 0;
+  // climbs as the match runs for no reason but arithmetic. Scaled to 0–100
+  // here because `fmtPct` renders, never rescales — 3/6 judged fed to it as
+  // a fraction printed "1%".
+  const solveRate = totals.judged > 0 ? (totals.passed / totals.judged) * 100 : 0;
 
   // The leader line, stated only when there is a strict winner on solve rate.
   const ranked = [...seats].sort(
