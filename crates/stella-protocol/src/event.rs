@@ -84,6 +84,9 @@ use crate::context_event::CompiledContextFrameBuilt;
 // against. Re-exported rather than imported so `event::LadderSnapshot` — the
 // path these types had before the move — still resolves for every reader.
 pub use crate::ladder::{LadderRung, LadderSnapshot, OracleObservation, ProofTree};
+// The proof-step vocabulary moved to `crate::proof` the same way (#1787), with
+// the same contract: `event::ProofStep` still resolves for every reader.
+pub use crate::proof::ProofStep;
 use crate::subagent_event::SubAgentPhase;
 use crate::tool::{ToolCall, ToolOutput};
 
@@ -1225,104 +1228,6 @@ pub struct VerdictEvidence {
     /// rather than a diff cold. Absent on events recorded before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ladder: Option<Box<LadderSnapshot>>,
-}
-
-/// One step of the proof a turn builds for its own work, in the order the
-/// pipeline makes the observation. Carried by [`AgentEvent::Proof`].
-///
-/// Additive in one direction only: an older reader that does not know the
-/// `proof` type tag preserves the whole event via [`AgentEvent::Unknown`],
-/// but a reader that knows `Proof` and meets a future `kind` fails the whole
-/// event — this nested enum is closed, with no `Unknown` step (see the
-/// module docs on nested vocabularies).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ProofStep {
-    /// What assurance this turn is going to buy, stated by triage **before**
-    /// any of it happens.
-    ///
-    /// Emitted first, and the reason the rail can be honest at all. Every
-    /// other step reports something that *did* happen, so a turn where the
-    /// answer is "we decided not to" produced no steps and left the surface
-    /// with nothing to say — which is exactly the case that dominates in
-    /// practice. A declared plan turns that silence into a statement: the
-    /// witness row reads "waived by triage" from the first second of the
-    /// turn instead of implying a test is still coming.
-    Assurance {
-        /// Whether an independently authored witness test was called for.
-        witness: bool,
-        /// Whether a model verifier was called for on inconclusive evidence.
-        ///
-        /// Aliased: this field shipped as `judge`, and every recorded session
-        /// and golden fixture spells it that way. Renaming it without the
-        /// alias makes those streams unparseable — which is exactly what the
-        /// golden fixtures caught.
-        #[serde(alias = "judge")]
-        verifier: bool,
-    },
-    /// The warrant read the diff and answered "does this change need a test".
-    /// Emitted once per candidate, before any witness is bought — a change
-    /// with nothing to prove is a *stated* outcome here, never silence.
-    Warrant {
-        required: bool,
-        /// The stated reason when no test is warranted; `None` when one is.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-        /// Size of the change the answer was read from.
-        diff_lines: u32,
-    },
-    /// An independent model authored the failing witness, and its bytes are
-    /// pinned: any later change to `path` fails the candidate closed.
-    WitnessAuthored {
-        path: String,
-        /// The command that arms the flip oracle.
-        command: String,
-        /// The accepted artifact's fingerprint — what tamper exclusion compares
-        /// against for the rest of the run.
-        fingerprint: String,
-    },
-    /// A warranted witness could not be *produced* (no independent author, an
-    /// author that got stuck, a failed graft). The work stands; it is simply
-    /// unproven, and saying so is the point.
-    WitnessUnavailable { reason: String },
-    /// **Every** evidence channel was blind, so the ladder abstained rather
-    /// than judging: no flip oracle, no test result, a working tree the diff
-    /// probe could not read, and no recorded file change.
-    ///
-    /// Distinct from a failing verdict, and the distinction is the point. The
-    /// turn this exists for ended with a verifier asserting a file "likely does
-    /// not exist" while the file sat in the container — a claim about the
-    /// *instruments* delivered as a claim about the *work* (#973). Without a
-    /// step of its own, an abstention reaches the rail as `✓ passed · model
-    /// verifier`, which is the same silent outcome in the other direction.
-    VerificationUnavailable { reason: String },
-    /// The flip oracle observed one run of the tracked command against one
-    /// tree. A fail in `Baseline` followed by a pass in `Candidate` is the
-    /// flip; anything else is not.
-    ///
-    /// `run`/`runs_required`/`seed` are the witness surface's replay facts
-    /// (D6) — which candidate replay this observation is, how many the flip
-    /// requires, and the deterministic seed the replay pinned. All additive
-    /// (`serde(default)`): observations recorded before they existed parse
-    /// with each absent, and an emitter that has no replay discipline (a
-    /// single-run oracle) simply omits them.
-    Oracle {
-        command: String,
-        passed: bool,
-        tree: ProofTree,
-        /// Which candidate replay this observation is (1-based). `None` on
-        /// baseline runs and on single-run oracles.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        run: Option<u32>,
-        /// How many passing candidate replays the flip requires, when the
-        /// oracle runs more than one.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        runs_required: Option<u32>,
-        /// The deterministic seed the replay pinned, when one was pinned.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        seed: Option<u64>,
-    },
 }
 
 /// What a `ScopeReview` gate presents for approval before a large plan
