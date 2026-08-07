@@ -1454,7 +1454,9 @@ impl<'a> Pipeline<'a> {
     // Stage: plan
 
     /// `revision` is the reviewer's note from a rejected scope card, or `None`
-    /// for a turn's first plan.
+    /// for a turn's first plan. `spend` bundles the turn's budget guard and
+    /// running total, as everywhere downstream of the fan-out — the #1778
+    /// research param pushed the unbundled pair over clippy's argument cap.
     async fn plan_stage(
         &self,
         goal: &str,
@@ -1462,8 +1464,7 @@ impl<'a> Pipeline<'a> {
         research: &[ResearchFinding],
         repo_structure: &str,
         revision: Option<&str>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Plan,
@@ -1491,8 +1492,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
@@ -1516,8 +1517,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
