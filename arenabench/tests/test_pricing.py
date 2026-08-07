@@ -130,3 +130,31 @@ class TestRoutePricing:
         )
 
 
+
+
+class TestSonnet5Pricing:
+    """The model both seats of the kvk matches actually ran (2026-08-06).
+
+    Witness: on the old table `claude-sonnet-5` had no row at all, so every
+    trial's comparable cost was None and the arena's cost tile read '—' for
+    an entire finished match.
+    """
+
+    def test_the_first_party_rate_is_the_durable_list_price(self):
+        price = price_for("claude-sonnet-5")
+        assert price is not None
+        assert (price.input, price.output) == (3.0, 15.0)
+        assert (price.cache_read, price.cache_write) == (0.3, 3.75)
+
+    def test_the_recorded_openrouter_route_prices_at_its_own_rate(self):
+        price = price_for_route("openrouter/anthropic/claude-sonnet-5")
+        assert price is not None
+        assert (price.input, price.output) == (2.0, 10.0)
+        assert (price.cache_read, price.cache_write) == (0.2, 2.5)
+
+    def test_a_recorded_id_off_the_anthropic_route_prices_at_list(self):
+        # A seat manifest that says `anthropic/claude-sonnet-5` has no route
+        # row of its own and must collapse to the bare first-party tier.
+        price = price_for_route("anthropic/claude-sonnet-5")
+        assert price is not None
+        assert price.input == 3.0
