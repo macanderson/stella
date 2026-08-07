@@ -44,6 +44,24 @@ from arenabench.registry import DEFAULT_REGISTRY, Task, sample_tasks
 from arenabench.runner import ContestantRun, MatchRunner, _base_environment
 from arenabench.telemetry import seat_manifest_path
 
+
+def _fake_harbor(monkeypatch, *, version: str = "0.20.0", import_path_flag: bool = False):
+    """Stand in for an installed Harbor.
+
+    `_launch` resolves the binary and asks it for a version and a flag list
+    before it builds any argv, so a test that never touches Harbor still needs
+    those three answers. They are stubbed at the `arenabench.harbor` seam
+    rather than at `shutil.which`, because the version and the CLI shape are
+    the things the launch actually branches on — stubbing the lookup alone
+    would leave the real binary (or its absence) deciding the test's outcome.
+    """
+    monkeypatch.setattr("arenabench.harbor.harbor_bin", lambda: "/usr/bin/harbor")
+    monkeypatch.setattr("arenabench.harbor.harbor_version", lambda: version)
+    monkeypatch.setattr(
+        "arenabench.harbor.supports_agent_import_path", lambda: import_path_flag
+    )
+
+
 # --------------------------------------------------------------------------
 # model
 # --------------------------------------------------------------------------
@@ -276,9 +294,19 @@ class TestRegistry:
         assert tasks[0].difficulty == "easy"
 
 
-def test_every_registered_agent_declares_how_it_launches():
+@pytest.mark.parametrize("import_path_flag", [True, False])
+def test_every_registered_agent_declares_how_it_launches(monkeypatch, import_path_flag):
+    """Every agent in the registry can name the flags that launch it.
+
+    Harbor is stubbed because `launch_flags` asks the installed binary which
+    of `--agent-import-path`/`--agent` it takes, and this is an assertion
+    about the *registry*, not about what happens to be on PATH. Both answers
+    run: the fold between those two flags is the one thing that varies here,
+    and its docstring claims to work in both directions.
+    """
     from arenabench.agents import launch_flags
 
+    _fake_harbor(monkeypatch, import_path_flag=import_path_flag)
     for slug in AGENTS:
         seat = Contestant.from_json({"name": slug, "agent": slug, "engine": {"model": "m"}})
         assert launch_flags(seat), slug
@@ -370,6 +398,92 @@ class TestRecorder:
         supervisor._record_failure(trial_dir, "transient")
         assert supervisor._failures[trial_dir] == 1
         assert trial_dir not in supervisor._finished
+
+    def _stub_trial(self, tmp_path: Path, payload: bytes) -> Path:
+        trial_dir = tmp_path / "job" / "t__1"
+        (trial_dir / "arena").mkdir(parents=True)
+        (trial_dir / "arena" / "recording.mp4").write_bytes(payload)
+        return trial_dir
+
+    def _stop(self, supervisor, trial_dir: Path, monkeypatch: pytest.MonkeyPatch):
+        from arenabench.recorder import _Recording
+
+        # `docker stop` is the only shell-out on this path and it is not what
+        # is under test; the file on disk is.
+        monkeypatch.setattr(
+            "arenabench.recorder.subprocess.run", lambda *a, **k: None
+        )
+        supervisor._stop_container(_Recording("c", trial_dir, 0.0), trial_dir)
+
+    def test_a_stub_too_small_to_play_is_not_reported_as_a_recording(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+    ):
+        """An encoder killed before it flushed a fragment leaves 28 bytes of
+        `ftyp` and nothing else. A bare `size > 0` check calls that a success
+        and prints "recorded ... (0.0 MB)", so an operator has no reason to
+        look — which is how a head-to-head finishes with a full gallery of
+        unplayable stubs. Measured on a 32-vCPU rig, where x264 sized its
+        thread pool from the host's cores and the container was OOM-killed.
+        """
+        import logging
+
+        supervisor = self._supervisor(tmp_path)
+        trial_dir = self._stub_trial(tmp_path, b"\x00" * 28)
+
+        with caplog.at_level(logging.INFO, logger="arenabench.recorder"):
+            self._stop(supervisor, trial_dir, monkeypatch)
+
+        assert not [r for r in caplog.records if r.levelno == logging.INFO], (
+            "a 28-byte stub was reported as a successful recording"
+        )
+        warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warned, "a stub too small to play produced no warning at all"
+        # The operator needs the cause, not just the symptom.
+        assert "28 bytes" in warned[0]
+        assert "memory limit" in warned[0]
+
+    def test_a_real_recording_is_still_reported_as_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+    ):
+        """The guard above must not swallow the ordinary case."""
+        import logging
+
+        from arenabench.recorder import MIN_PLAYABLE_BYTES
+
+        supervisor = self._supervisor(tmp_path)
+        trial_dir = self._stub_trial(tmp_path, b"\x00" * (MIN_PLAYABLE_BYTES + 1))
+
+        with caplog.at_level(logging.INFO, logger="arenabench.recorder"):
+            self._stop(supervisor, trial_dir, monkeypatch)
+
+        assert [r for r in caplog.records if r.levelno == logging.INFO]
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+class TestRecorderEncoder:
+    """The encoder's footprint must be a property of the recorder, not of the
+    host it lands on."""
+
+    def _script(self) -> str:
+        from pathlib import Path as _Path
+
+        import arenabench
+
+        return (
+            _Path(arenabench.__file__).resolve().parent.parent / "recorder" / "record.sh"
+        ).read_text()
+
+    def test_the_encoder_thread_pool_is_pinned(self):
+        """x264 sizes its pool from the CPUs it can *see* — the host's, since
+        `--cpus` is a scheduling quota and not a visible core count. On a
+        32-vCPU host it chose 28 threads, and the per-thread frame buffers blew
+        through the recorder's 512 MB cgroup within a second of ffmpeg
+        starting. Unpinned, this file only works on small machines, and a
+        benchmark rig is not one.
+        """
+        script = self._script()
+        assert "-threads" in script, "ffmpeg's thread pool is unpinned"
+        assert "ARENA_THREADS" in script, "the pool size is not overridable"
 
 
 # --------------------------------------------------------------------------
@@ -638,6 +752,73 @@ class TestOfflineTaskSource:
         from arenabench.registry import TERMINAL_BENCH_21
         assert TERMINAL_BENCH_21.package_dir == "terminal-bench-2-1"
 
+    def test_a_backfilled_record_never_invents_a_harbor_version(self, tmp_path: Path):
+        """The whole point of the record is that a version you can trust looks
+        different from one nobody measured. Harbor writes its version nowhere,
+        so a reconstructed record must say so — a plausible guess here would be
+        indistinguishable from a real reading, which is the confusion this
+        exists to prevent."""
+        from arenabench import provenance
+
+        job = tmp_path / "jobs" / "m-seat"
+        job.mkdir(parents=True)
+        (job / "config.json").write_text(
+            json.dumps({
+                "job_name": "m-seat",
+                # No `install_only` / `extra_instruction_paths`: the shape a
+                # pre-0.20.0 Harbor wrote.
+                "datasets": [{
+                    "name": "terminal-bench/terminal-bench-2-1",
+                    "ref": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0"
+                           "ea7c4186773687d177ad3a0699a",
+                }],
+            })
+        )
+
+        record = provenance.backfill_match(tmp_path)
+        assert record is not None
+        assert record.harbor_version is None, "a guessed version is worse than none"
+        assert record.harbor_bound == "<0.20.0"
+        assert record.measured is False
+        assert record.source == provenance.SOURCE_BACKFILLED
+        # The digest IS recoverable here, and must be recovered.
+        assert record.dataset_digest.endswith("3a0699a")
+        assert record.dataset_key == "terminal-bench-2.1"
+
+    def test_a_measured_key_never_collides_with_an_unmeasured_one(self):
+        """Two result sets are only comparable when the apparatus matches. An
+        unknown Harbor must not produce the same grouping key as a known one,
+        or the labelling silently permits exactly the mixing it forbids."""
+        from arenabench.provenance import Provenance
+
+        measured = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version="0.6.1",
+        )
+        unmeasured = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version=None, harbor_bound="<0.20.0",
+        )
+        newer = Provenance(
+            dataset_key="terminal-bench-2.1", dataset_digest="sha256:7d7bdc1c",
+            harbor_version="0.20.0",
+        )
+        keys = {measured.comparability_key, unmeasured.comparability_key,
+                newer.comparability_key}
+        assert len(keys) == 3, keys
+
+    def test_frontier_bench_declares_the_harbor_it_needs_to_grade_correctly(self):
+        """The floor is the point of the entry, not a nicety.
+
+        Every Frontier-Bench task sets `environment_mode = "separate"`, which
+        Harbor 0.6.1 drops silently — the run finishes and reports a score
+        graded against the wrong container topology. An entry without this
+        field would be an invitation to publish that number.
+        """
+        from arenabench.registry import FRONTIER_BENCH
+        assert FRONTIER_BENCH.min_harbor == "0.20.0"
+        assert DEFAULT_REGISTRY.get("frontier-bench") is not None
+
     def _launched_command(self, tmp_path: Path, monkeypatch, export: bool) -> list[str]:
         """The argv `_launch` actually hands Harbor, with the process stubbed."""
         if export:
@@ -645,7 +826,7 @@ class TestOfflineTaskSource:
             monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path))
         else:
             monkeypatch.setenv("ARENABENCH_DATASETS", str(tmp_path / "nope"))
-        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+        _fake_harbor(monkeypatch)
 
         seen: dict = {}
 
@@ -695,7 +876,7 @@ class TestSeatLaunchRecord:
     def test_the_route_is_recorded_beside_the_job_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+        _fake_harbor(monkeypatch)
 
         class _Fake:
             def __init__(self, command, **kwargs):
@@ -780,6 +961,187 @@ class TestMatchTemplateRoles:
         raw = match_to_toml_dict(self._spec("judge"))
         roles = raw["contestant"][0]["engine"]["roles"]
         assert "verifier" in roles and "judge" not in roles
+
+
+class TestFailedMatchStatus:
+    """A match whose every seat died before a single trial ran must land
+    `failed`, never `finished`.
+
+    Witnessed against match 1eb525153bc5: Docker was down, both Harbor
+    processes exited in two seconds with one log line each, and the arena
+    stamped the run `finished` — a green pill over 0/0 trials. `failed` had
+    been in the status enum from the start; nothing ever set it.
+    """
+
+    def _match(self, tmp_path: Path):
+        from arenabench.runner import Match
+
+        spec = MatchSpec.from_json(
+            {
+                "id": "deadbeef0000",
+                "name": "kvk",
+                "dataset": "terminal-bench-2.1",
+                "contestants": [
+                    {
+                        "id": "st",
+                        "name": "Stella",
+                        "agent": "stella",
+                        "engine": {"api": "anthropic", "model": "claude-sonnet-5"},
+                    },
+                    {
+                        "id": "cc",
+                        "name": "Claude Code",
+                        "agent": "claude-code",
+                        "engine": {"api": "anthropic", "model": "claude-sonnet-5"},
+                    },
+                ],
+            }
+        )
+        dataset = DEFAULT_REGISTRY.get("terminal-bench-2.1")
+        match = Match(spec, dataset, tmp_path / "ws")
+        match.status = "running"
+        return match
+
+    def _run_for(self, match, contestant, **kwargs) -> ContestantRun:
+        job_name = f"{match.spec.id}-{contestant.slug}"
+        return ContestantRun(
+            contestant=contestant,
+            job_name=job_name,
+            job_dir=match.jobs_root / job_name,
+            log_path=match.workspace / f"{contestant.slug}.log",
+            **kwargs,
+        )
+
+    def test_seats_that_never_launched_fail_the_match(self, tmp_path: Path):
+        match = self._match(tmp_path)
+        for contestant in match.spec.contestants:
+            match.runs[contestant.id] = self._run_for(
+                match, contestant, error="harbor: command not found"
+            )
+        MatchRunner(DEFAULT_REGISTRY, tmp_path)._await_completion(match)
+        assert match.status == "failed"
+        assert "no trial ever ran" in match.note
+        assert "harbor: command not found" in match.note
+
+    def test_instant_nonzero_exits_fail_the_match_with_the_logged_reason(
+        self, tmp_path: Path
+    ):
+        import subprocess
+
+        match = self._match(tmp_path)
+        for contestant in match.spec.contestants:
+            run = self._run_for(match, contestant)
+            run.log_path.write_text(
+                "Docker daemon is not running. Please start Docker and try again.\n",
+                encoding="utf-8",
+            )
+            run.process = subprocess.Popen(["/bin/sh", "-c", "exit 1"])
+            run.process.wait()
+            match.runs[contestant.id] = run
+        MatchRunner(DEFAULT_REGISTRY, tmp_path)._await_completion(match)
+        assert match.status == "failed"
+        # The operator learns why from the match itself, not the seat logs.
+        assert "Docker daemon is not running" in match.note
+
+    def test_a_match_that_produced_trials_still_finishes(self, tmp_path: Path):
+        """Harbor can exit nonzero after real trials ran; that contest is
+        still worth reading, and the seat badges carry the crash."""
+        import subprocess
+
+        match = self._match(tmp_path)
+        for contestant in match.spec.contestants:
+            run = self._run_for(match, contestant)
+            (run.job_dir / "fix-git__1").mkdir(parents=True)
+            run.process = subprocess.Popen(["/bin/sh", "-c", "exit 1"])
+            run.process.wait()
+            match.runs[contestant.id] = run
+        MatchRunner(DEFAULT_REGISTRY, tmp_path)._await_completion(match)
+        assert match.status == "finished"
+        assert match.note == ""
+
+
+class TestRestoredMatches:
+    """A server restart must not erase the history sitting on disk (#1885).
+
+    Witness: on the old code every one of these fails — the runner had no
+    restore path at all, so a rebooted `ArenaServer` listed nothing and
+    `arena.match(...)` raised for a match whose artifacts were fully intact.
+    """
+
+    FIXTURE = Path(__file__).parent / "fixtures" / "matches" / "dd52a57a6f49"
+
+    def _workspace_with_fixture(self, tmp_path: Path) -> Path:
+        import shutil
+
+        workspace = tmp_path / "ws"
+        (workspace / "matches").mkdir(parents=True)
+        shutil.copytree(self.FIXTURE, workspace / "matches" / "dd52a57a6f49")
+        return workspace
+
+    def test_a_finished_match_on_disk_is_listed_after_boot(self, tmp_path: Path):
+        from arenabench.server import ArenaServer
+
+        arena = ArenaServer(self._workspace_with_fixture(tmp_path))
+        listed = {m["id"]: m for m in arena.list_matches()["matches"]}
+        assert "dd52a57a6f49" in listed
+        assert listed["dd52a57a6f49"]["status"] == "finished"
+
+    def test_a_restored_match_serves_its_snapshot_and_seats_read_done(
+        self, tmp_path: Path
+    ):
+        from arenabench.server import ArenaServer
+
+        arena = ArenaServer(self._workspace_with_fixture(tmp_path))
+        snap = arena.match("dd52a57a6f49")
+        assert snap["status"] == "finished"
+        assert len(snap["contestants"]) == 2
+        assert all(c["state"] == "done" for c in snap["contestants"])
+        assert snap["rows"], "the task grid must come back from the job dirs"
+        # History replays; it never re-runs. No process, no supervisor.
+        match = arena.runner.matches["dd52a57a6f49"]
+        assert all(run.process is None for run in match.runs.values())
+
+    def test_create_persists_a_secret_free_spec_for_the_next_boot(
+        self, tmp_path: Path
+    ):
+        spec = MatchSpec.from_json(
+            {
+                "name": "kvk",
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["fix-git"],
+                "contestants": [
+                    {
+                        "name": "Stella",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "z-ai/glm-5.2"},
+                        "env": "OPENROUTER_API_KEY=sk-secret-value",
+                    },
+                    {
+                        "name": "Claude Code",
+                        "agent": "claude-code",
+                        "engine": {"api": "anthropic", "model": "claude-sonnet-5"},
+                    },
+                ],
+            }
+        )
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path)
+        match = runner.create(spec)
+        raw = (match.workspace / "spec.json").read_text(encoding="utf-8")
+        assert "sk-secret-value" not in raw, "credential values must never touch disk"
+        restored = MatchSpec.from_json(json.loads(raw))
+        assert restored.id == spec.id
+        assert [c.name for c in restored.contestants] == ["Stella", "Claude Code"]
+        assert restored.tasks == ("fix-git",)
+
+    def test_junk_directories_do_not_break_the_boot(self, tmp_path: Path):
+        from arenabench.server import ArenaServer
+
+        workspace = self._workspace_with_fixture(tmp_path)
+        (workspace / "matches" / "no-jobs-here").mkdir()
+        (workspace / "matches" / "empty-jobs" / "jobs").mkdir(parents=True)
+        arena = ArenaServer(workspace)
+        listed = [m["id"] for m in arena.list_matches()["matches"]]
+        assert listed == ["dd52a57a6f49"]
 
 
 class TestSnapshotDetections:

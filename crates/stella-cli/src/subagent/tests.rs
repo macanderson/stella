@@ -34,6 +34,11 @@ impl ToolExecutor for LedgerBase {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         stella_core::subagent::drain_sub_agent_spend(&self.0)
     }
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        // The registry claims exactly this for the `task` tool
+        // (`Tool::parallel_safe`); the stand-in reports it the same way.
+        std::collections::HashSet::from(["task".to_string()])
+    }
 }
 
 struct NeverProvider;
@@ -101,6 +106,101 @@ async fn the_production_tool_stack_forwards_sub_agent_spend() {
     );
 }
 
+/// The wait-request twin of the spend witness above: `drain_wait_request`
+/// has a `None` default, so any one decorator forgetting to forward would
+/// silently turn parked waits (#1471) back into model-step polling for
+/// every session composed through it — and no compiler would say so.
+#[tokio::test]
+async fn the_production_tool_stack_forwards_wait_requests() {
+    /// A leaf holding one deposited request, standing in for the registry.
+    struct WaitingBase(std::sync::Mutex<Option<stella_core::WaitRequest>>);
+
+    #[async_trait]
+    impl ToolExecutor for WaitingBase {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            Vec::new()
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+            }
+        }
+        fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+            self.0.lock().unwrap().take()
+        }
+    }
+
+    let request = stella_core::WaitRequest {
+        description: "CI for branch main settles".into(),
+        probe: stella_core::WaitCall {
+            name: "ci_status".into(),
+            input: json!({ "probe": true, "branch": "main" }),
+        },
+        baseline: "pending".into(),
+        on_wake: None,
+        poll_interval_secs: 15,
+        timeout_secs: 0,
+    };
+    let base = WaitingBase(std::sync::Mutex::new(Some(request.clone())));
+
+    let customs =
+        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
+    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &customs,
+        stub_tx,
+        crate::interactive::default_ask_io(false),
+    );
+    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
+    let discovery =
+        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+
+    assert_eq!(
+        discovery.drain_wait_request(),
+        Some(request),
+        "a deposited wait request must survive every decorator between the \
+         engine and the registry — one that swallows it re-enables polling"
+    );
+    assert_eq!(
+        discovery.drain_wait_request(),
+        None,
+        "and the drain stays destructive through the stack"
+    );
+}
+
+/// **The parallel-dispatch counterpart of the spend witness above.**
+///
+/// `parallel_safe_names` has an empty default, so any decorator that forgets
+/// to forward it silently serializes sibling `task` calls in every real
+/// session — the registry's claim never reaches the engine, and the feature
+/// (#1776) is dead exactly where it shipped. Asserted through the shipped
+/// composition for the same reason as the spend test: a future decorator
+/// inserted into the real stack fails here, and nowhere else.
+#[tokio::test]
+async fn the_production_tool_stack_forwards_parallel_safe_names() {
+    let ledger: SubAgentSpendLedger = Arc::default();
+    let base = LedgerBase(ledger);
+
+    let customs =
+        stella_tools::custom::CustomToolSet::new(&base, Vec::new(), std::path::PathBuf::from("."));
+    let (stub_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &customs,
+        stub_tx,
+        crate::interactive::default_ask_io(false),
+    );
+    let permitted = crate::agent::PolicyToolSet::new(&interactive, Default::default());
+    let discovery =
+        crate::discovery::DiscoveryToolSet::new(&permitted, std::path::PathBuf::from("."));
+
+    assert!(
+        discovery.parallel_safe_names().contains("task"),
+        "the registry's concurrency claim must survive every decorator \
+         between the engine and the registry — one that swallows it silently \
+         serializes sibling spawns"
+    );
+}
+
 /// A dispatcher whose registry has been dropped reports a refusal rather
 /// than panicking a torn-down session.
 #[tokio::test]
@@ -146,6 +246,62 @@ async fn the_pool_binds_and_a_failed_child_charges_nothing() {
         pool.session_spent_usd(),
         0.0,
         "a failed child that never billed must not charge the pool"
+    );
+}
+
+/// A session that passed no `--budget` must still install a pool ceiling
+/// (#1849).
+///
+/// `DEFAULT_POOL_LIMIT_USD` was documented as the bound that stops "a model
+/// looping on `task`" and bound nothing: every production installer passed
+/// `None` to `with_pool_limit`, which means *unlimited*, not "keep the
+/// default". So an unbudgeted session whose model wedged on delegation ran
+/// every child to `max_steps` with no dollar bound at any layer.
+///
+/// Both halves are asserted, because the first alone is satisfiable by a
+/// ceiling that never reaches a child: the pool binds, AND a carve against it
+/// hands the child finite headroom. `carve(None, None)` on an unlimited pool
+/// yields `ceiling: None`, which is the shape that made this invisible.
+#[test]
+fn an_unbudgeted_session_still_installs_a_sub_agent_pool_ceiling() {
+    assert_eq!(
+        crate::subagent::session_pool_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "the documented default must be what a session actually installs"
+    );
+
+    // Constructed exactly as `install_for_session` constructs it — same mode,
+    // same limit. Only the provider differs, because building the real one
+    // needs credentials a unit test has no business holding.
+    let registry = registry();
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NeverProvider),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_pool_limit(crate::subagent::session_pool_limit_usd());
+
+    let pool = *dispatcher.pool.lock().unwrap();
+    assert_eq!(
+        pool.session_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "the pool must carry the ceiling, not an unbounded guard"
+    );
+
+    // The half that reaches the child: an unlimited pool carves an unlimited
+    // child, so a ceiling nothing inherits is the same as no ceiling.
+    let child = pool.carve(None);
+    assert_eq!(
+        child.session_limit_usd(),
+        Some(crate::subagent::DEFAULT_POOL_LIMIT_USD),
+        "a child carved against the pool must inherit finite headroom"
+    );
+    assert_eq!(
+        child.mode(),
+        stella_protocol::BudgetMode::Observed,
+        "and the session's mode — the pool warns, it does not stop (the \
+         parent's guard is the enforcing bound)"
     );
 }
 
@@ -575,5 +731,105 @@ async fn an_uncancelled_child_is_charged_exactly_once() {
     assert!(
         (charged - 0.06).abs() < 1e-9,
         "six steps at a cent each, counted once; got {charged}"
+    );
+}
+
+/// Bills on its first call, panics on its second — the shape that loses money.
+///
+/// The first completion carries a cost AND a tool call, so the turn continues
+/// and the child's carve really has spend in it by the time the panic lands.
+/// A provider that panicked immediately would prove nothing: there would be
+/// nothing to settle.
+struct PanicAfterBillingProvider {
+    calls: std::sync::atomic::AtomicUsize,
+    cost_usd: f64,
+}
+
+#[async_trait]
+impl Provider for PanicAfterBillingProvider {
+    fn id(&self) -> &str {
+        "panic-after-billing"
+    }
+    async fn complete_ref(
+        &self,
+        _request: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(n < 2, "the child should not get past the panic");
+        if n == 1 {
+            panic!("scripted child panic (#1850)");
+        }
+        Ok(stella_protocol::CompletionResult {
+            text: String::new(),
+            tool_calls: vec![stella_protocol::ToolCall {
+                call_id: "c0".into(),
+                name: "read_file".into(),
+                input: json!({ "path": "no-such-file.txt" }),
+            }],
+            usage: stella_protocol::CompletionUsage {
+                reported: true,
+                ..stella_protocol::CompletionUsage::default()
+            },
+            model: "panic-after-billing".into(),
+            cost_usd: self.cost_usd,
+            finish_reason: None,
+        })
+    }
+}
+
+/// **Witness (#1850).** A child that panics mid-turn must still have its
+/// spend folded into both ledgers.
+///
+/// The settle block ran AFTER `runtime.block_on`, so a panic inside the turn
+/// unwound straight past it: dollars the child had genuinely spent landed in
+/// neither the pool nor the parent's spend ledger. The comment at the
+/// `wait.await` claimed settling happened "on every path" — a panic was the
+/// path it did not.
+///
+/// Debug profile only by nature: `panic = "abort"` in release means there is
+/// no unwind to catch, and the module header now says so instead of implying
+/// otherwise. Tests build with unwind, which is exactly where the fix is
+/// observable.
+#[tokio::test]
+async fn a_panicking_child_still_settles_the_spend_it_incurred() {
+    let registry = registry();
+    let provider = Arc::new(PanicAfterBillingProvider {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        cost_usd: 0.25,
+    });
+    let dispatcher = SessionSubAgents::new(
+        provider,
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_pool_limit(Some(10.0));
+
+    // The panic is scripted, so the child's thread will print a panic
+    // message. Silence it: a passing test that looks like a crash teaches
+    // readers to ignore real ones.
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let outcome = dispatcher
+        .dispatch(SubAgentSpec::read_only("panicker", "investigate"))
+        .await;
+    std::panic::set_hook(previous);
+
+    assert!(
+        matches!(outcome, SubAgentOutcome::Refused { .. }),
+        "a panicking child reports a refusal, never a completion: {outcome:?}"
+    );
+
+    let pool = *dispatcher.pool.lock().unwrap();
+    assert!(
+        pool.session_spent_usd() >= 0.25,
+        "the pool must carry what the child spent before it panicked, not 0 \
+         (got {})",
+        pool.session_spent_usd()
+    );
+    assert!(
+        stella_core::subagent::drain_sub_agent_spend(&registry.sub_agent_spend_ledger()) >= 0.25,
+        "and so must the parent's ledger — that is what the engine folds into \
+         the budget at the next step boundary"
     );
 }

@@ -26,13 +26,14 @@
 #   2. Every step is named in CONTRIBUTING.md's gate fence, via the alias table
 #      below (that fence lists raw commands, on purpose — its reader wants to
 #      run them without make).
-#   3. Both documents' spelled-out count matches the real number of steps.
-#   4. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
+#   3. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
 #      gate step — which is how a removed guard leaves a ghost behind. Only
 #      that fence is checked this way: it is a delimited list of commands,
 #      whereas AGENTS.md's block is prose with parenthetical glosses.
 #
-# What it deliberately does NOT check: the prose *around* the lists. Whether
+# What it deliberately does NOT check: the spelled-out step total — that check
+# existed and was removed; see "The count is deliberately NOT checked any
+# more" below (#1883) — and the prose *around* the lists. Whether
 # "ci.yml's required job runs everything except invariants and doc-links" is
 # still true is a claim about a workflow, not about this list, and pretending a
 # grep could settle it would be worse than leaving it to review.
@@ -49,7 +50,23 @@ agents="AGENTS.md"
 contributing="CONTRIBUTING.md"
 
 fail=0
-note() { printf 'check-gate-parity: %s\n' "$1" >&2; }
+
+# The verdict is decided before anything is written (#1815). Failure lines are
+# buffered while the checks run and emitted in one final write: a guard that
+# prints as it scans dies mid-report when its reader exits early, and under
+# `set -euo pipefail` whatever partial state it had reached becomes the exit
+# status. scripts/check-file-size.sh is the shape being copied.
+report=""
+note() { report="${report}check-gate-parity: $1"$'\n'; }
+
+# Emission is best-effort: the verdict is already decided, so a reader that
+# closed the pipe (`| head -1`, `| true`) must be able to change neither the
+# report nor the exit code. SIGPIPE is ignored so a failed write surfaces as a
+# discarded error instead of killing the script (#1815).
+emit() {
+  trap '' PIPE
+  printf '%s' "$report" >&2 || true
+}
 
 # ── The truth ────────────────────────────────────────────────────────────────
 
@@ -57,12 +74,14 @@ if ! steps="$(make -s print-gate-steps 2>/dev/null)"; then
   note "FAIL — could not read GATE_STEPS (\`make -s print-gate-steps\`)."
   note "     That target is what makes this guard derived rather than a"
   note "     second copy of the list. Restore it in the Makefile."
+  emit
   exit 1
 fi
 
 count="$(printf '%s\n' "$steps" | wc -w | tr -d ' ')"
 if [ "$count" -eq 0 ]; then
   note "FAIL — GATE_STEPS is empty."
+  emit
   exit 1
 fi
 
@@ -84,6 +103,7 @@ word="$(number_word "$count")"
 if [ -z "$word" ]; then
   note "FAIL — $count gate steps is outside the range number_word() spells."
   note "     Extend the table in this script; the documents spell the count."
+  emit
   exit 1
 fi
 
@@ -94,11 +114,16 @@ fi
 contributing_alias() {
   case "$1" in
   shellcheck) echo 'shellcheck ' ;;
+  # Two Python guards, so the `.sh` default below does not fit them.
   doc-links) echo 'check-doc-links' ;;
+  module-reachability) echo 'check-module-reachability' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;
   test) echo 'cargo test' ;;
+  # The one guard whose script is not check-*.sh: it is a test harness, not a
+  # tree guard, so it is named for what it tests.
+  self-driving-test) echo 'test-self-driving.sh' ;;
   *) echo "check-$1.sh" ;;
   esac
 }
@@ -125,11 +150,6 @@ for doc in "$agents" "$contributing"; do
     fi
   done
 
-  if ! grep -qF -- "$word" "$doc"; then
-    note "FAIL — $doc does not spell the gate's step count as '$word'."
-    note "     The gate runs $count steps. Find the stale count and fix it."
-    fail=1
-  fi
 done
 
 # ── Ghosts ───────────────────────────────────────────────────────────────────
@@ -168,8 +188,10 @@ if [ "$fail" -ne 0 ]; then
   note "The gate's composition lives in GATE_STEPS in the Makefile, and these"
   note "two documents restate it for readers. When you add or remove a guard,"
   note "update all three in the same PR — that is what this guard is for."
+  emit
   exit 1
 fi
 
+emit
 printf 'check-gate-parity: OK — %s (%s) gate steps, named in %s and %s.\n' \
-  "$count" "$word" "$agents" "$contributing"
+  "$count" "$word" "$agents" "$contributing" || true

@@ -83,12 +83,12 @@ use stella_core::router::CircuitBreaker;
 use stella_core::{BudgetGuard, CalibrationMap, Engine, Router, TurnOutcome};
 use stella_model::provider::Provider;
 use stella_pipeline::{
-    ContextRecallPort, McpPrefetchPort, NoContextRecall, Pipeline, PipelineConfig, PipelinePorts,
+    ContextRecallPort, McpPrefetchPort, NoContextRecall, PipelineConfig, PipelinePorts,
     PipelineStatus,
 };
 use stella_protocol::{
     AgentEvent, CiStatus, CompletionMessage, CompletionRequest, ModelRef, PrStatus, TaskItem,
-    ToolOutput, ToolSchema,
+    ToolOutput,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -116,7 +116,9 @@ mod model_cmd;
 mod profile_cmd;
 mod scope_gate;
 mod session_clear;
+mod sessions_view;
 mod settle;
+mod task_tap;
 mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -124,6 +126,8 @@ use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::spawn_forwarder;
 use scope_gate::DeckApprovalGate;
+use sessions_view::sessions_inbound;
+use task_tap::TaskTap;
 
 /// The lead agent's id — the one conversation this driver runs.
 pub(crate) const LEAD: &str = "lead";
@@ -155,14 +159,14 @@ pub(crate) fn now_ms() -> u64 {
 /// CLI already uses on the normal screen for its own voice — costs a character
 /// and removes the lie.
 pub(crate) fn chrome_note(text: String) -> Inbound {
-    let delta = if text.starts_with(stella_tui::NOTICE_MARKER) {
+    let noted = if text.starts_with(stella_tui::NOTICE_MARKER) {
         text
     } else {
         format!("{}{text}", stella_tui::NOTICE_MARKER)
     };
     Inbound::Event {
         agent: LEAD.to_string(),
-        event: AgentEvent::Text { delta },
+        event: AgentEvent::Text { text: noted },
     }
 }
 
@@ -221,7 +225,7 @@ fn debug_log_path() -> Option<PathBuf> {
 /// How one dispatched turn ended, as seen by the driver loop.
 enum TurnEnd {
     /// The turn future resolved (completed or aborted-with-reason).
-    Finished(Result<(), String>),
+    Finished(Result<(), crate::failure::CliFailure>),
     /// The user stopped it mid-flight; the future was dropped. `hold` is the
     /// double-Esc variant: the interrupted prompt goes back to the FRONT of
     /// the backlog and dispatch parks until the user's next submission
@@ -1022,7 +1026,9 @@ pub async fn run_deck_session(
                             &mut messages,
                             &system_prompt,
                             &sidecar_dir,
-                            &subs.live_lanes(),
+                            &mut subs,
+                            registry.as_ref(),
+                            store.as_deref().zip(Some(session_record.id.as_str())),
                             &in_tx,
                         );
                         continue 'session;
@@ -1433,7 +1439,7 @@ pub async fn run_deck_session(
                 if let Some(report) = custom.problems_report() {
                     let _ = in_tx.send(Inbound::Event {
                         agent: LEAD.to_string(),
-                        event: AgentEvent::Text { delta: report },
+                        event: AgentEvent::Text { text: report },
                     });
                     let _ = in_tx.send(Inbound::Status {
                         agent: LEAD.to_string(),
@@ -1518,38 +1524,19 @@ pub async fn run_deck_session(
         );
         if let Some((_, id)) = &execution {
             last_execution_id = Some(*id);
-            // Tell memory which execution it is reflecting on, before the turn
-            // runs. The post-turn self-review is stored 1:1 with an execution,
-            // so a loop that cannot name the row writes nothing — which is why
-            // `self_rating` was NULL on every reflection row this deck ever
-            // recorded, and the Observatory's self-improve panels sat empty.
-            if let Some(m) = &mut memory {
-                m.set_execution_id(*id);
-            }
         }
+        // The shared execution seam (#1872): stamp the execution onto memory
+        // (the post-turn self-review is stored 1:1 with it) and record this
+        // turn's skill-version usage — the same seam every headless path hits,
+        // so the deck no longer carries a private copy of the recorder.
+        agent::stamp_and_record_skill_usage(
+            &execution,
+            memory.as_mut(),
+            &prompt,
+            &cfg.workspace_root,
+        );
         let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
-
-        // Skill-version usage telemetry: record which skills recall selected for
-        // this turn, at their pinned version, keyed to this execution. Recorded
-        // at turn start (the skills are injected regardless of how the turn
-        // ends); best-effort, and only for the deck path for now — the other
-        // `record_execution_end` sites can adopt it later.
-        if let (Some((store, id)), Some(m)) = (&execution, &memory) {
-            let selected = m.selected_skills(&prompt);
-            if !selected.is_empty() {
-                let versions = crate::skill_manager::pinned_versions(&cfg.workspace_root);
-                let rows: Vec<stella_store::SkillUsageRow> = selected
-                    .into_iter()
-                    .map(|(skill, reason)| stella_store::SkillUsageRow {
-                        version: versions.get(&skill).copied().unwrap_or(1),
-                        skill,
-                        reason,
-                    })
-                    .collect();
-                let _ = store.record_skill_usage(*id, &rows);
-            }
-        }
 
         // Resolve the turn's tool executor from the MCP slot at dispatch:
         // connected servers join the session the moment the background
@@ -1567,7 +1554,7 @@ pub async fn run_deck_session(
             let _ = in_tx.send(Inbound::Event {
                 agent: LEAD.to_string(),
                 event: AgentEvent::Text {
-                    delta: "MCP servers are still connecting — this turn runs with native \
+                    text: "MCP servers are still connecting — this turn runs with native \
                             tools; connected servers join from the next turn"
                         .to_string(),
                 },
@@ -1587,7 +1574,7 @@ pub async fn run_deck_session(
         // The lead lane's pause seam — `p` on the lead row (#1219).
         let lead_pause = lead_control::LeadPause::new();
         let end = {
-            // Both arms return `Result<(), String>`, so one pinned future
+            // Both arms return `Result<(), CliFailure>`, so one pinned future
             // drives either path through the same select loop.
             let turn = async {
                 if pipeline_on {
@@ -1768,7 +1755,7 @@ pub async fn run_deck_session(
                                 let _ = in_tx.send(Inbound::Event {
                                     agent: LEAD.to_string(),
                                     event: AgentEvent::Text {
-                                        delta: "\n[stopping at the next step boundary — Esc again to cancel immediately]\n".to_string(),
+                                        text: "\n[stopping at the next step boundary — Esc again to cancel immediately]\n".to_string(),
                                     },
                                 });
                             } else {
@@ -2047,13 +2034,13 @@ pub async fn run_deck_session(
         match end {
             TurnEnd::Finished(outcome) => {
                 if let Err(reason) = &outcome {
-                    if reason == stella_core::SOFT_STOP_REASON {
+                    if reason.message() == stella_core::SOFT_STOP_REASON {
                         // A user choice, not a failure: no Error row — the
                         // work is kept and the next prompt continues from it.
                         let _ = in_tx.send(Inbound::Event {
                             agent: LEAD.to_string(),
                             event: AgentEvent::Text {
-                                delta: "\n[stopped at the step boundary — completed work kept]\n"
+                                text: "\n[stopped at the step boundary — completed work kept]\n"
                                     .to_string(),
                             },
                         });
@@ -2063,7 +2050,7 @@ pub async fn run_deck_session(
                         let _ = in_tx.send(Inbound::Event {
                             agent: LEAD.to_string(),
                             event: AgentEvent::Error {
-                                message: reason.clone(),
+                                message: reason.to_string(),
                                 retryable: false,
                             },
                         });
@@ -2116,11 +2103,9 @@ pub async fn run_deck_session(
                 // ones someone comparing turns wants to see — so this is not
                 // conditioned on the outcome.
                 cfg.durability.mark_turn_end();
-                session_exit = if outcome.is_err() {
-                    stella_store::SessionStatus::Error
-                } else {
-                    stella_store::SessionStatus::Complete
-                };
+                // One decider for every terminal writer (#1653/#1826/#1862):
+                // a lead turn that ended in a deliberate stop exits `Stopped`.
+                session_exit = crate::daemon::outcome_status(outcome.as_ref().map(|_| ()));
                 session_record.status = stella_store::SessionStatus::NeedsInput;
                 let _ = session_registry.upsert(&session_record);
                 let turn_secs = crate::memory::unix_now_secs().saturating_sub(started_unix);
@@ -2261,7 +2246,9 @@ pub async fn run_deck_session(
                     &mut messages,
                     &system_prompt,
                     &sidecar_dir,
-                    &subs.live_lanes(),
+                    &mut subs,
+                    registry.as_ref(),
+                    store.as_deref().zip(Some(session_record.id.as_str())),
                     &in_tx,
                 );
                 // No `continue`: the shared tail below re-snapshots the
@@ -2620,57 +2607,6 @@ fn recorded_call_info(call: &stella_store::RecordedCall) -> stella_tui::Recorded
     }
 }
 
-/// The SESSIONS overlay snapshot: every registry record mapped to the deck's
-/// [`stella_tui::SessionInfo`], flagging this process's own record and the
-/// rows that can be reopened HERE (no live owner, this workspace, durable
-/// state on disk — ⏎ navigates into those).
-fn sessions_inbound(
-    registry: &stella_store::SessionRegistry,
-    mine: &str,
-    workspace: &str,
-) -> Inbound {
-    let sessions = registry
-        .list()
-        .into_iter()
-        .map(|r| {
-            // A session mid-mapping advertises its slices right in the
-            // summary line, so a human sees "already being mapped" before
-            // typing a prompt that would duplicate the exploration.
-            let summary = if r.exploring.is_empty() {
-                r.summary
-            } else {
-                format!("{} [mapping: {}]", r.summary, r.exploring.join(", "))
-            };
-            stella_tui::SessionInfo {
-                mine: r.id == mine,
-                resumable: r.id != mine && r.workspace == workspace && registry.resumable(&r.id),
-                phase: session_phase(r.status),
-                id: r.id,
-                title: r.title,
-                summary,
-                workspace: r.workspace,
-                started_ms: r.started_at_ms,
-                updated_ms: r.updated_at_ms,
-            }
-        })
-        .collect();
-    Inbound::Sessions(sessions)
-}
-
-/// Store status → TUI phase (the TUI mirrors the enum so it never links the
-/// store crate).
-fn session_phase(status: stella_store::SessionStatus) -> stella_tui::SessionPhase {
-    match status {
-        stella_store::SessionStatus::InProgress => stella_tui::SessionPhase::InProgress,
-        stella_store::SessionStatus::NeedsInput => stella_tui::SessionPhase::NeedsInput,
-        stella_store::SessionStatus::Paused => stella_tui::SessionPhase::Paused,
-        stella_store::SessionStatus::Cancelled => stella_tui::SessionPhase::Cancelled,
-        stella_store::SessionStatus::Complete => stella_tui::SessionPhase::Complete,
-        stella_store::SessionStatus::Archived => stella_tui::SessionPhase::Archived,
-        stella_store::SessionStatus::Error => stella_tui::SessionPhase::Error,
-    }
-}
-
 /// The inbox snapshot for the deck (badge + overlay), newest first.
 fn notifications_inbound(store: &stella_store::NotificationStore) -> Inbound {
     let items = store
@@ -2722,7 +2658,7 @@ fn handle_supervisor_msg(
                 let _ = in_tx.send(Inbound::Event {
                     agent: LEAD.to_string(),
                     event: AgentEvent::Text {
-                        delta: format!(
+                        text: format!(
                             "note: task #{} already has a live worker — the duplicate \
                              task_assign was not dispatched",
                             request.task_id
@@ -2778,30 +2714,18 @@ fn handle_supervisor_msg(
             // A worker may have just pushed a branch / opened a PR — observe
             // now, not at the next 45s tick.
             pr_nudge.notify_one();
-            // A task worker finishing successfully completes its board task
-            // — the delegation loop closes without the lead's involvement. A
-            // failed or stopped worker leaves the task in progress: the
-            // board must not claim done what wasn't (the inbox notification
-            // names a failure; a stop was the user's own act).
-            if let Some(task_id) = lane.strip_prefix("sub:") {
-                let board = registry.task_board();
-                let items: Vec<TaskItem> = {
-                    let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
-                    if matches!(end, subsession::WorkerEnd::Done) {
-                        let _ = guard.set_status(task_id, stella_protocol::TaskStatus::Completed);
-                    }
-                    guard.items().to_vec()
-                };
-                let _ = in_tx.send(Inbound::Event {
-                    agent: LEAD.to_string(),
-                    event: AgentEvent::TaskUpdate {
-                        tasks: items.clone(),
-                    },
-                });
-                if let (Some(store), Some(exec)) = (store.as_ref(), execution_id) {
-                    let _ = store.record_task_board(exec, Some(session_id), &items, now_ms());
-                }
-            }
+            // The delegation loop closes against the task board — unless the
+            // worker predates a `/clear`, in which case there is no longer a
+            // board of its to close (#1692).
+            session_clear::settle_worker_task(
+                &lane,
+                generation,
+                &end,
+                subs,
+                registry,
+                session_clear::BoardMirror::of(store.as_ref(), session_id, execution_id),
+                in_tx,
+            );
             while subs.has_slot()
                 && let Some(request) = pending_spawns.pop_front()
             {
@@ -2909,7 +2833,7 @@ fn spawn_session_replay(
             let _ = in_tx.send(Inbound::Event {
                 agent: LEAD.to_string(),
                 event: AgentEvent::Text {
-                    delta: format!("session {id} is no longer in the registry"),
+                    text: format!("session {id} is no longer in the registry"),
                 },
             });
             return;
@@ -2922,9 +2846,9 @@ fn spawn_session_replay(
         let meta = AgentMeta::new(lane.clone(), format!("replay — {}", record.title), now_ms())
             .with_role("replay");
         let _ = in_tx.send(Inbound::Register(meta));
-        let lane_text = |delta: String| Inbound::Event {
+        let lane_text = |text: String| Inbound::Event {
             agent: lane.clone(),
-            event: AgentEvent::Text { delta },
+            event: AgentEvent::Text { text },
         };
         let Some(store) = agent::open_store(std::path::Path::new(&record.workspace)) else {
             let _ = in_tx.send(lane_text(format!(
@@ -4023,7 +3947,7 @@ async fn run_deck_command(
     let say = |text: String| {
         let _ = in_tx.send(Inbound::Event {
             agent: LEAD.to_string(),
-            event: AgentEvent::Text { delta: text },
+            event: AgentEvent::Text { text },
         });
     };
     match trimmed {
@@ -4285,7 +4209,7 @@ async fn run_lead_turn(
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall runs before this channel exists.
     recall_event: Option<AgentEvent>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -4405,10 +4329,9 @@ async fn run_lead_turn(
         }
     }
 
-    match outcome {
-        TurnOutcome::Completed { .. } => Ok(()),
-        TurnOutcome::Aborted { reason, .. } => Err(reason),
-    }
+    // The abort's typed kind rides through (#1862): the session-exit writer
+    // reads it off the same projection as every other terminal writer.
+    agent::outcome::turn_outcome_result(&outcome)
 }
 
 /// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
@@ -4453,7 +4376,7 @@ async fn run_lead_pipeline_turn(
     steering: &Arc<subsession::SteeringTap>,
     pause: &lead_control::LeadPause,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -4513,7 +4436,7 @@ async fn run_lead_pipeline_turn(
         let wiring = agent::resolve_engine_wiring(cfg, &model_ref, &configured);
         for notice in &wiring.notices {
             let _ = tx.send(AgentEvent::Text {
-                delta: format!("! {notice}\n"),
+                text: format!("! {notice}\n"),
             });
         }
         let resolver =
@@ -4574,9 +4497,9 @@ async fn run_lead_pipeline_turn(
             headless_bypass_scope_review: false,
             ..agent::apply_pipeline_tuning(cfg, PipelineConfig::default())
         };
-        // #1214's seam, now driven from the deck: the pipeline attaches the gate
-        // to every engine it builds and parks its management calls behind it.
-        let pipeline = Pipeline::new(ports, tx.clone(), config).with_turn_gate(pause.turn_gate());
+        // #1214's seam, driven from the deck — see `resume_frame::pipeline`.
+        let pipeline = crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), config)
+            .with_turn_gate(pause.turn_gate());
         pipeline.run(prompt, messages, budget).await
     };
     // Same settle window as `run_lead_turn` — see `SteeringTap::mark_settling`.
@@ -4612,14 +4535,10 @@ async fn run_lead_pipeline_turn(
     }
 
     match result {
-        Ok(outcome) => match outcome.status {
-            PipelineStatus::Completed => Ok(()),
-            PipelineStatus::VerificationFailed { verdict } => {
-                Err(format!("verification failed: {}", verdict.summary))
-            }
-            PipelineStatus::Aborted { reason, .. } => Err(reason),
-        },
-        Err(e) => Err(e.to_string()),
+        // The shared projection keeps the abort's typed kind (#1862) and the
+        // exact messages the string arms carried before.
+        Ok(outcome) => agent::outcome::pipeline_status_result(&outcome.status),
+        Err(e) => Err(crate::failure::CliFailure::error(e.to_string())),
     }
 }
 
@@ -4695,52 +4614,6 @@ impl AskUserIo for DeckAskUserIo {
             Some(i) => Ok((i + 1).to_string()),
             None => Ok(answer),
         }
-    }
-}
-
-/// Mirrors the task board into the event stream: after any `task_*` tool
-/// call the FULL board snapshot rides the turn's channel as
-/// `AgentEvent::TaskUpdate` — persisted by the forwarder, so replay shows
-/// the checklist exactly as it moved — and `task_assign`'s spawn requests
-/// are handed to the driver's supervisor channel. `supervisor: None` is the
-/// worker configuration (v1 delegation runs from the lead only; a worker's
-/// stranded requests are reported on its lane by `crate::subsession`).
-pub(crate) struct TaskTap<'a> {
-    pub(crate) inner: &'a dyn ToolExecutor,
-    pub(crate) events: UnboundedSender<AgentEvent>,
-    pub(crate) registry: &'a ToolRegistry,
-    pub(crate) supervisor: Option<UnboundedSender<SupervisorMsg>>,
-}
-
-#[async_trait]
-impl ToolExecutor for TaskTap<'_> {
-    fn schemas(&self) -> Vec<ToolSchema> {
-        self.inner.schemas()
-    }
-
-    async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        let output = self.inner.execute(name, input).await;
-        if name.starts_with("task_") {
-            let tasks: Vec<TaskItem> = {
-                let board = self.registry.task_board();
-                let guard = board.lock().unwrap_or_else(|p| p.into_inner());
-                guard.items().to_vec()
-            };
-            let _ = self.events.send(AgentEvent::TaskUpdate { tasks });
-            if let Some(sup) = &self.supervisor {
-                for request in self.registry.take_spawn_requests() {
-                    let _ = sup.send(SupervisorMsg::SpawnTask(request));
-                }
-            }
-        }
-        output
-    }
-
-    /// Forwarded: this is a decorator, and a decorator that let the default
-    /// `0.0` stand would silently drop sub-agent spend out of the parent's
-    /// budget (see the port's contract).
-    fn drain_sub_agent_spend_usd(&self) -> f64 {
-        self.inner.drain_sub_agent_spend_usd()
     }
 }
 

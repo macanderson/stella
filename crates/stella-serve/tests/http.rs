@@ -465,7 +465,7 @@ async fn provider_deltas_stream_onto_the_event_stream_over_http() {
             // Agent events ride nested under the `event` frame type.
             "event" if event["event"]["type"].as_str() == Some("text_delta") => {
                 text_deltas.push(
-                    event["event"]["text"]
+                    event["event"]["delta"]
                         .as_str()
                         .unwrap_or_default()
                         .to_string(),

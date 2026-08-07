@@ -528,6 +528,10 @@ pub enum SessionPhase {
     /// from) with work still pending; the first thing resume looks for.
     Paused,
     Cancelled,
+    /// Ended itself by policy (stuck-loop escalation, step cap, enforced
+    /// budget, ended scope review) — a deliberate ending beside `Cancelled`,
+    /// never an error (#1653).
+    Stopped,
     Complete,
     Archived,
     Error,
@@ -535,11 +539,12 @@ pub enum SessionPhase {
 
 impl SessionPhase {
     /// Display/grouping order: attention-worthy first.
-    pub const ALL: [SessionPhase; 7] = [
+    pub const ALL: [SessionPhase; 8] = [
         SessionPhase::InProgress,
         SessionPhase::NeedsInput,
         SessionPhase::Paused,
         SessionPhase::Cancelled,
+        SessionPhase::Stopped,
         SessionPhase::Complete,
         SessionPhase::Archived,
         SessionPhase::Error,
@@ -551,6 +556,7 @@ impl SessionPhase {
             SessionPhase::NeedsInput => "Needs Input",
             SessionPhase::Paused => "Paused",
             SessionPhase::Cancelled => "Cancelled",
+            SessionPhase::Stopped => "Stopped by policy",
             SessionPhase::Complete => "Complete",
             SessionPhase::Archived => "Archived",
             SessionPhase::Error => "Error",

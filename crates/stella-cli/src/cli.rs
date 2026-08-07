@@ -16,8 +16,8 @@ pub(crate) mod help;
 
 use crate::{
     OutputFormat, build_info, commands_cmd, context_cmd, contextgraph, dataset_cmd, fleet_verbs,
-    fullauto_cmd, ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, stats,
-    storage_cmd, tune_cmd, usage_cmd,
+    ingest_cmd, inspect, memory_cmd, proposals_cmd, query_format, scripts_cmd, self_driving_cmd,
+    stats, storage_cmd, tune_cmd, usage_cmd,
 };
 
 #[derive(Parser)]
@@ -319,15 +319,15 @@ pub(crate) enum DaemonCmd {
     /// already finished prints in full and exits. Detaching again (Ctrl-C)
     /// leaves the run alone — `stella daemon stop` is what stops it.
     Attach {
-        /// Run to attach to. A unique prefix of the id is enough. Omitted:
-        /// the most recently started supervised run.
+        /// Run to attach to. A unique prefix of the id, or the run's pid,
+        /// is enough. Omitted: the most recently started supervised run.
         id: Option<String>,
     },
 
     /// Print the tail of a supervised run's output and exit
     Logs {
-        /// Run to read. A unique prefix of the id is enough. Omitted: the
-        /// most recently started supervised run.
+        /// Run to read. A unique prefix of the id, or the run's pid, is
+        /// enough. Omitted: the most recently started supervised run.
         id: Option<String>,
 
         /// How many lines back to start from.
@@ -342,7 +342,8 @@ pub(crate) enum DaemonCmd {
     /// that has not stopped after the grace period is killed, and either way
     /// the stop is recorded as deliberate rather than left to read as a crash.
     Stop {
-        /// Run to stop. A unique prefix of the id is enough.
+        /// Run to stop. A unique prefix of the id, or the run's pid, is
+        /// enough.
         id: String,
     },
 
@@ -355,8 +356,8 @@ pub(crate) enum DaemonCmd {
     /// applied twice. A run that ended cleanly discarded its resume point on
     /// the way out, and resume says so instead of restarting it.
     Resume {
-        /// Run to resume. A unique prefix of the id is enough. Omitted: the
-        /// most recently started supervised run.
+        /// Run to resume. A unique prefix of the id, or the run's pid, is
+        /// enough. Omitted: the most recently started supervised run.
         id: Option<String>,
     },
 
@@ -369,11 +370,23 @@ pub(crate) enum DaemonCmd {
     /// touching a run that finished, was stopped, or was set aside. Each run
     /// gets at most three boot-time resumes before it is retired from the
     /// sweep and left for `stella daemon resume <id>` by hand.
+    ///
+    /// The sweep is sequential, so each resumed run is also bounded by a
+    /// wall-clock ceiling: a turn that never ends — a wedged tool, a provider
+    /// that never returns — is stopped gracefully at the ceiling (asked
+    /// first, killed only past the grace period, never mid-tool) so the runs
+    /// behind it still get their resume.
     ResumeAll {
         /// Print the decision for every run and exit without resuming
         /// anything — no process spawned, no budget spent.
         #[arg(long)]
         dry_run: bool,
+
+        /// Minutes one resumed run may take before the sweep stops it
+        /// gracefully and moves on. `stella daemon resume <id>` by hand has
+        /// no ceiling.
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
+        ceiling: u64,
     },
 
     /// Register a stella invocation with the OS's per-user service manager
@@ -545,18 +558,18 @@ pub(crate) enum Command {
 
     /// Drive the perpetual delivery loop: plan, cycle, audit, watch
     ///
-    /// The deterministic half of fullauto — the loop that fixes a batch of
+    /// The deterministic half of self-driving — the loop that fixes a batch of
     /// defects, audits what is left, files what it cannot fix, benchmarks,
     /// ships, and repeats. These verbs are the machine-decidable controls:
     /// the governor that sizes a cycle to this machine (plan), the ledger and
     /// its folds (state, metrics, run), the audit lens ladder and the dedup
     /// oracle that advance it (aperture, seen, cycle), and the low-duty
     /// sentinel (watch). The judgement half stays with the model driving the
-    /// loop; `scripts/fullauto.sh` delegates these verbs here. Offline except
+    /// loop; `scripts/self-driving.sh` delegates these verbs here. Offline except
     /// for `gh` reads of the defect queue; needs no API key.
-    Fullauto {
+    SelfDriving {
         #[command(subcommand)]
-        cmd: fullauto_cmd::FullautoCmd,
+        cmd: self_driving_cmd::SelfDrivingCmd,
     },
 
     /// Start an interactive session (the Command Deck)
@@ -818,7 +831,7 @@ pub(crate) enum Command {
         cmd: tune_cmd::TuneCmd,
     },
 
-    /// Curate a redacted training dataset from this workspace's receipts
+    /// Curate a redacted training dataset from workspace receipts
     ///
     /// Curate a redacted training dataset from this workspace's receipts
     /// (#872): one JSONL record per accepted turn — prompt, tool calls with

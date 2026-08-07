@@ -65,7 +65,6 @@ mod fleet_gc;
 mod fleet_spend;
 mod fleet_verbs;
 mod fleet_warmth;
-mod fullauto_cmd;
 mod ingest_cmd;
 mod init_fx;
 mod inspect;
@@ -79,6 +78,7 @@ mod memory_retire_cmd;
 mod model_catalog;
 mod paths;
 mod scoreboard_cmd;
+mod self_driving_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
 mod profile;
 // Phase 3 (#714): the adaptive-context proposal review surface.
@@ -189,7 +189,6 @@ pub(crate) mod test_env {
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
 
 use clap::{FromArgMatches, ValueEnum};
 use colored::Colorize;
@@ -222,10 +221,11 @@ pub(crate) fn note_json_summary_emitted() {
 
 /// The version of the `--output-format json|stream-json` summary envelope this
 /// build emits. Every summary object carries it — the pipeline summary, the raw
-/// step-loop summary, and the pre-flight error envelope — so a consumer can
-/// branch on the shape instead of sniffing for keys.
+/// step-loop summary, the pre-flight error envelope, and the detached-launch
+/// summary ([`crate::daemon::detach`]) — so a consumer can branch on the shape
+/// instead of sniffing for keys.
 ///
-/// All three envelopes are structs with the version declared first, so a derived
+/// All four envelopes are structs with the version declared first, so a derived
 /// `Serialize` heads the object — a courtesy, not a promise: key order stays
 /// outside the contract and consumers must read by key. Building any with
 /// `serde_json::json!` would undo that (a `json!` object is a sorted map that
@@ -529,20 +529,19 @@ fn main() -> ExitCode {
     // before that boundary would race the env mutations it fences — and
     // drained as this function's last act so the final lines land.
     //
-    // The guard rides a shared cell rather than a plain local: a panic hook
-    // (#1616) races this function's own end-of-main drain to restore the
-    // real console fds first, so a panic message — which `run` below can
-    // still produce, and which release builds' `panic = "abort"` gives no
-    // unwind back to this point to handle otherwise — lands in the console
-    // file instead of a pipe a pump thread may never get scheduled to empty.
+    // A panic would unwind (or, under the release profile's
+    // `panic = "abort"`, not unwind at all) past that last act and strand up
+    // to a pipe buffer — usually including the panic message itself — so
+    // `arm_panic_drain` chains a hook that performs the same idempotent
+    // drain (#1616). Whichever of the two arrives first does the one real
+    // drain; the other finds the streams already taken.
     let console = daemon::supervised_id().and_then(|id| {
         daemon::console::install_bounded(
             &stella_store::SessionRegistry::open_default().sidecar_dir(&id),
         )
     });
-    let console = console.map(|guard| Arc::new(Mutex::new(Some(guard))));
-    if let Some(cell) = &console {
-        daemon::console::install_panic_drain(cell.clone());
+    if let Some(guard) = &console {
+        daemon::console::arm_panic_drain(guard);
     }
 
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
@@ -555,7 +554,7 @@ fn main() -> ExitCode {
 
     let code = match run(cli, &loaded_env) {
         Ok(()) => {
-            daemon::record_outcome_if_supervised(None);
+            daemon::record_outcome_if_supervised(Ok(()));
             // A supervisor's own exit code says only whether it managed to
             // stream a log. What a script wrapping `stella run` is asking
             // about is the run, so the child's code is forwarded verbatim.
@@ -565,9 +564,9 @@ fn main() -> ExitCode {
             }
         }
         Err(e) => {
-            // The failure itself, not `false`: a deliberate stop is recorded
-            // as ended-on-purpose, never as a crash (#1653).
-            daemon::record_outcome_if_supervised(Some(&e));
+            // The failure itself, not a bool: a deliberate stop must reach
+            // the registry as a stop, not age into it as a crash (#1653).
+            daemon::record_outcome_if_supervised(Err(&e));
             eprintln!("{} {}", "stella:".red().bold(), e);
             emit_error_summary(output_format, e.message());
             // §7.4's second trigger, and the one that fires more often: most
@@ -597,8 +596,8 @@ fn main() -> ExitCode {
     // After the last print of every path above: restore the raw fds and join
     // the pumps, so the console files carry this process's final lines. A
     // no-op if the panic hook installed above already won that race.
-    if let Some(cell) = console {
-        daemon::console::ConsoleGuard::drain_shared(&cell);
+    if let Some(guard) = console {
+        guard.drain();
     }
     code
 }
@@ -802,10 +801,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // Reads .stella/private/store.db only.
             return scoreboard_cmd::run().map_err(failure::CliFailure::from);
         }
-        Some(Command::Fullauto { cmd }) => {
-            // Reads and writes ~/.stella/fullauto/<slug>/ (plus `gh` reads
+        Some(Command::SelfDriving { cmd }) => {
+            // Reads and writes ~/.stella/self-driving/<slug>/ (plus `gh` reads
             // of the defect queue) — works with zero API keys.
-            return fullauto_cmd::run(cmd).map_err(failure::CliFailure::from);
+            return self_driving_cmd::run(cmd).map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
@@ -930,15 +929,21 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 // provider resolution, its cwd already pinned to the
                 // record's workspace by the parent's launch.
                 DaemonCmd::Resume { id } if !cli.globals.foreground => {
-                    return daemon::resume_supervised(rt()?, id.as_deref())
+                    return daemon::resume_supervised(rt()?, id.as_deref(), None)
+                        .map(|_| ())
                         .map_err(failure::CliFailure::from);
                 }
                 DaemonCmd::Resume { .. } => {}
                 // The sweep is the parent half N times over — it resolves,
                 // spawns and streams each `daemon resume <id> --foreground`
                 // child — so it stays keyless here for the same reason.
-                DaemonCmd::ResumeAll { dry_run } => {
-                    return daemon::resume_all(*dry_run, rt).map_err(failure::CliFailure::from);
+                DaemonCmd::ResumeAll { dry_run, ceiling } => {
+                    return daemon::resume_all(
+                        *dry_run,
+                        std::time::Duration::from_secs(ceiling.saturating_mul(60)),
+                        rt,
+                    )
+                    .map_err(failure::CliFailure::from);
                 }
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
             }
@@ -1035,6 +1040,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &prompt),
                     prompt.as_bytes(),
                     posture,
+                    output_format,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1087,6 +1093,9 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &goal),
                     goal.as_bytes(),
                     posture,
+                    // `goal` declares no `--output-format`, so there is no
+                    // machine-readable stream to name the session on.
+                    OutputFormat::Text,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1127,6 +1136,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     ),
                     &[],
                     posture,
+                    output_format,
                 ).map_err(failure::CliFailure::from);
             }
             signals::block_on_interruptible(
@@ -1155,6 +1165,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &supervised_title(&cfg, &format!("monitor {target}")),
                     &[],
                     posture,
+                    // `monitor` declares no `--output-format` either.
+                    OutputFormat::Text,
                 ).map_err(failure::CliFailure::from);
             }
             // Monitoring IS a goal: the verifier (who can call ci_status
@@ -1271,7 +1283,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Cloud { .. }
         | Command::Telemetry { .. }
         | Command::Memory { .. }
-        | Command::Fullauto { .. }
+        | Command::SelfDriving { .. }
         | Command::Scoreboard
         | Command::Ingest(_)
         | Command::Mcp { .. }

@@ -5,6 +5,10 @@
 use super::*;
 use proptest::prelude::*;
 
+mod parse;
+mod uncollected;
+mod witness_strip;
+
 // FlipOracle transitions
 
 #[test]
@@ -299,9 +303,19 @@ fn a_red_test_outranks_blindness() {
     assert_eq!(ladder_decision(&inputs), LadderDecision::Revise);
 }
 
-/// The distinction the whole rung exists for: "I looked and saw nothing"
-/// (an available probe reporting a zero-line diff) is inconclusive and
-/// worth a verifier; "I could not look" is not.
+/// The distinction the whole blind rung exists for: "I looked and saw nothing"
+/// is not "I could not look", and a readable probe is never blindness however
+/// empty its answer.
+///
+/// The *decision* moved in #1701 while that property did not. A readable
+/// zero-line diff over dispatched mutating calls used to escalate, on the
+/// reading that an empty diff is merely inconclusive. It is not merely
+/// inconclusive: the verifier reached from here has no flip and no green test
+/// behind it, so a PASS it returns is restamped `Unverifiable` anyway
+/// (`verifier_pass_stands_alone`, #1295/#1540), and a FAIL is a model guessing
+/// from an empty record about a workspace this run never collected — the #973
+/// shape, which produced a confident false negative in the wild. So the ladder
+/// abstains here directly and spends nothing to do it.
 #[test]
 fn a_readable_empty_diff_is_not_blindness() {
     let inputs = LadderInputs {
@@ -314,8 +328,20 @@ fn a_readable_empty_diff_is_not_blindness() {
         mutating_actions: 1,
         ..Default::default()
     };
-    assert!(!inputs.evidence_is_blind());
-    assert_eq!(ladder_decision(&inputs), LadderDecision::ModelVerdict);
+    assert!(
+        !inputs.evidence_is_blind(),
+        "a probe that read the tree is not a probe that could not"
+    );
+    assert_eq!(ladder_decision(&inputs), LadderDecision::Unverifiable);
+    // The property the rung above still owns: a readable diff with content in
+    // it is genuinely inconclusive, and that is what a verifier is for.
+    assert_eq!(
+        ladder_decision(&LadderInputs {
+            diff_lines: 12,
+            ..inputs
+        }),
+        LadderDecision::ModelVerdict,
+    );
 }
 
 /// The `regex-log` Terminal-Bench 2.1 trial, reconstructed as ladder
@@ -483,7 +509,23 @@ fn the_verifier_prompt_forbids_reading_a_blind_probe_as_an_absence() {
         p.contains("could not read the working tree"),
         "the prompt must name the failure mode it is guarding against"
     );
-    assert!(p.contains("never on evidence you could not see"));
+    // The FULL clause, not a trailing fragment: a `judge → verifier` rename
+    // once mangled this sentence into "Verifier only what the evidence
+    // positively shows" and the fragment-level guard kept passing over it —
+    // the most load-bearing instruction in the prompt shipped ungrammatical
+    // for months.
+    assert!(
+        p.contains(
+            "Judge only what the evidence positively shows, and base a FAIL on a defect \
+             you can point to — never on evidence you could not see"
+        ),
+        "{p}"
+    );
+    // The evidence vocabulary the instructions define must match what the
+    // summary emits (`pipeline/evidence.rs`): `unobserved` and
+    // `mutating_actions` are both spelled in the fixed block.
+    assert!(p.contains("`touched_tests=unobserved`"), "{p}");
+    assert!(p.contains("`mutating_actions`"), "{p}");
 }
 
 const DIFF_PROBE_BLIND_SAMPLE: &str =
@@ -645,40 +687,7 @@ fn tests_indeterminate_escalates_to_verifier() {
     assert_eq!(decision, LadderDecision::ModelVerdict);
 }
 
-// verifier parsing + fallback
-
-#[test]
-fn parses_pass_and_fail_verdicts() {
-    assert_eq!(
-        parse_verifier_response("PASS — looks correct").map(|v| v.passed),
-        Some(true)
-    );
-    assert_eq!(
-        parse_verifier_response("FAIL: missing edge case").map(|v| v.passed),
-        Some(false)
-    );
-    assert_eq!(
-        parse_verifier_response("Verdict: approved").map(|v| v.passed),
-        Some(true)
-    );
-    // A PASS line whose reasoning contains "no" must not be flipped to
-    // FAIL by an over-eager "no" match.
-    assert_eq!(
-        parse_verifier_response("PASS — no obvious issues").map(|v| v.passed),
-        Some(true)
-    );
-    // Only the first non-empty line is authoritative.
-    assert_eq!(
-        parse_verifier_response("FAIL\nthe change looks fine otherwise").map(|v| v.passed),
-        Some(false)
-    );
-}
-
-#[test]
-fn unparseable_verifier_response_is_none() {
-    assert_eq!(parse_verifier_response("hmm, hard to say"), None);
-    assert_eq!(parse_verifier_response(""), None);
-}
+// verifier fallback (the response-parsing half lives in `parse`)
 
 #[test]
 fn heuristic_fallback_passes_only_on_confirmed_green_tests() {
@@ -694,9 +703,15 @@ fn heuristic_fallback_passes_only_on_confirmed_green_tests() {
     });
     assert!(green.passed);
 
+    // #1788: the flip rescues the fallback. A verifier OUTAGE is the absence
+    // of a checker, not a refutation, and the confirmed fail→pass flip is
+    // the strongest deterministic evidence the crate has — a provider being
+    // down must not convert it into VerificationFailed. (This inverts the
+    // earlier "even a flip doesn't rescue" pin, which treated the checker's
+    // absence as the work's failure.)
     for tests in [Some(false), None] {
         let v = heuristic_fallback(&LadderInputs {
-            flip_achieved: true, // even a flip doesn't rescue an unconfirmed suite
+            flip_achieved: true,
             touched_tests_passed: tests,
             diff_lines: 0,
             diff_budget: 100,
@@ -705,8 +720,25 @@ fn heuristic_fallback_passes_only_on_confirmed_green_tests() {
             mutating_actions: 1,
             ..Default::default()
         });
-        assert!(!v.passed, "unconfirmed tests must fall back to FAIL");
+        assert!(v.passed, "a confirmed flip must survive a verifier outage");
     }
+    // With NOTHING deterministic positive, the fallback still fails closed:
+    // the escalation existed because something was inconclusive, and a
+    // revision is the honest next move.
+    let v = heuristic_fallback(&LadderInputs {
+        flip_achieved: false,
+        touched_tests_passed: None,
+        diff_lines: 5,
+        diff_budget: 100,
+        diff_available: true,
+        file_change_events: 1,
+        mutating_actions: 1,
+        ..Default::default()
+    });
+    assert!(
+        !v.passed,
+        "no positive evidence must still fall back to FAIL"
+    );
 }
 
 #[test]
@@ -720,6 +752,7 @@ fn evidence_builders_tag_determinism_correctly() {
         passed: true,
         reasoning: "looks fine".into(),
         heuristic: false,
+        verifier_independent: None,
     });
     assert!(
         !model.deterministic,
@@ -1348,68 +1381,3 @@ fn an_evidence_demand_is_bounded_on_every_axis() {
 }
 
 // strip_witness_hunks
-
-/// The witness is grafted into the candidate tree, so the working-tree diff
-/// carries the verifier's own test. It must not ride into the verifier prompt
-/// as "worker-authored data" — drop its chunks, return its paths for the
-/// trusted evidence zone, and leave every worker chunk byte-intact.
-#[test]
-fn witness_chunks_are_stripped_and_named_never_billed() {
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n\
-                --- a/src/lib.rs\n\
-                +++ b/src/lib.rs\n\
-                @@ -1,2 +1,3 @@\n\
-                 fn f() {}\n\
-                +fn g() {}\n\
-                diff --git a/tests/witness_g.rs b/tests/witness_g.rs\n\
-                --- /dev/null\n\
-                +++ b/tests/witness_g.rs\n\
-                @@ -0,0 +1,2 @@\n\
-                +#[test]\n\
-                +fn g_works() { g(); }\n";
-    let stripped = strip_witness_hunks(diff, &["tests/witness_g.rs".to_string()]);
-    assert!(
-        stripped.diff.contains("+fn g() {}"),
-        "worker chunk survives:\n{}",
-        stripped.diff
-    );
-    assert!(
-        !stripped.diff.contains("witness_g"),
-        "witness chunk is gone:\n{}",
-        stripped.diff
-    );
-    assert_eq!(stripped.omitted, vec!["tests/witness_g.rs".to_string()]);
-}
-
-/// No witness, no change: the common test-command path must pass the diff
-/// through byte-identically.
-#[test]
-fn stripping_with_no_witness_paths_is_the_identity() {
-    let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n+x\n";
-    let stripped = strip_witness_hunks(diff, &[]);
-    assert_eq!(stripped.diff, diff);
-    assert!(stripped.omitted.is_empty());
-}
-
-/// Preamble lines before the first `diff --git` (the honest-diff banner, the
-/// untracked-change notes) belong to no file and always survive; and an added
-/// content line that happens to start with `+++ ` cannot hijack the chunk's
-/// path because only the FIRST `+++ ` per chunk is read.
-#[test]
-fn preamble_survives_and_content_cannot_hijack_the_chunk_path() {
-    let diff = "3 files changed but the probe saw an empty diff\n\
-                diff --git a/src/a.rs b/src/a.rs\n\
-                --- a/src/a.rs\n\
-                +++ b/src/a.rs\n\
-                @@ -1 +1,2 @@\n\
-                +++ b/tests/witness_g.rs\n\
-                +real added line\n";
-    let stripped = strip_witness_hunks(diff, &["tests/witness_g.rs".to_string()]);
-    assert!(stripped.diff.contains("empty diff"), "preamble survives");
-    assert!(
-        stripped.diff.contains("+real added line"),
-        "the chunk keyed on its real header (src/a.rs), not on forged content:\n{}",
-        stripped.diff
-    );
-    assert!(stripped.omitted.is_empty());
-}

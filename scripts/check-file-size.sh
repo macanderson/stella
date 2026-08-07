@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 #
-# Guard: no NEW Rust or Python file may exceed the 1500-line ratchet.
-# See #629 (Rust) and #825 (Python — an 8,166-line analysis module had slipped
-# through because the guard only looked at *.rs).
+# Guard: no NEW Rust, Python or shell file may exceed the 1500-line ratchet.
+# See #629 (Rust), #825 (Python — an 8,166-line analysis module had slipped
+# through because the guard only looked at *.rs) and #1563 (shell — the
+# delivery-loop driver reached ~1,900 lines while no gate could see it).
+#
+# The language list has now been widened twice for the same reason, which is
+# the argument for widening it eagerly rather than after the next incident: a
+# limit that watches one language is not a property of the repository, it is a
+# property of that language's files, and the growth simply moves to whatever is
+# unwatched. Shell was the last substantial unwatched surface here.
 #
 # Three fleet plans asserted this limit as a standard the tree follows
 # (docs/spec/serve-surface.fleet.toml, plus two since-deleted siblings), and
@@ -60,11 +67,30 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 0
 fi
 
-# Emit "<lines> <path>" for every tracked Rust or Python file, NUL-safe on the
-# git side. Python counts too (#825): the analyzer under bench/ grew to 8,166
-# lines while the guard watched only *.rs.
+# The pathspecs the ratchet watches. Defined once because they are used twice —
+# by current_sizes below and by the summary line at the end — and two copies of
+# a file selector is how a language gets silently dropped from a guard that
+# claims to cover it.
+#
+# An indexed array, and every element QUOTED at the point of use, because these
+# are globs for *git* to match against the index, not for the shell to expand
+# against the working directory. Unquoted they are expanded before git ever
+# sees them: at the repo root `*.sh` matches only `install.sh`, so the guard
+# would have watched exactly one of this tree's 63 shell files while reporting
+# that it covered shell. (An indexed array is bash 3.2 safe; the portability
+# note above rules out *associative* arrays, which is a different feature.)
+#
+# `.githooks/*` sits beside `*.sh` because the hook there carries no extension.
+# That is the set `make shellcheck` lints, deliberately: this repository
+# already treats everything under `.githooks/` as shell, so a non-shell file
+# appearing there would break that guard first.
+RATCHET_PATHSPECS=('*.rs' '*.py' '*.sh' '.githooks/*')
+
+# Emit "<lines> <path>" for every tracked file in scope, NUL-safe on the git
+# side. Python counts (#825): the analyzer under bench/ grew to 8,166 lines
+# while the guard watched only *.rs. Shell counts (#1563) for the same reason.
 current_sizes() {
-  git ls-files -z '*.rs' '*.py' | while IFS= read -r -d '' f; do
+  git ls-files -z "${RATCHET_PATHSPECS[@]}" | while IFS= read -r -d '' f; do
     printf '%s %s\n' "$(wc -l <"$f" | tr -d ' ')" "$f"
   done
 }
@@ -132,12 +158,24 @@ if [ -n "$report" ]; then
   echo "$report" | awk '
     /^NEWOVER$/  { print ""; print "These files crossed the limit and are NOT grandfathered — split them into"; print "submodules. Do not add a baseline entry: the baseline only covers files"; print "that predate the guard, and this is the rule that stops the tree getting"; print "worse."; next }
     /^GREW$/     { print ""; print "These grandfathered files grew past their recorded ceiling. If the growth is"; print "irreducible (a subcommand or module declaration in an already-oversized"; print "lib.rs/main.rs), run \"make file-size-update\" and commit the baseline diff so"; print "the increase is visible in review. If it is not irreducible, put the new code"; print "in its own module instead."; next }
-    /^OBSOLETE$/ { print ""; print "Obsolete baseline entries (the file is now under the limit). Run"; print "\"make file-size-update\" to retire them — an exemption must not outlive"; print "the problem it covered."; next }
+    /^OBSOLETE$/ { print ""; print "Obsolete baseline entries (the file is now under the limit). Run"; print "\"make file-size-update\" to retire them — an exemption must not outlive"; print "the problem it covered."; print ""; print "A file leaving the baseline also leaves the god-file list, so the same"; print "commit must drop it from the per-crate table in AGENTS.md AND from the"; print "\"God files\" section of that crate README, or \"make god-files\" fails"; print "next. All three copies are cross-checked, and the baseline wins."; next }
     /^STALE$/    { print ""; print "Stale baseline entries. Run \"make file-size-update\"."; next }
     { print }
   ' >&2
   exit 1
 fi
 
-tracked=$(git ls-files '*.rs' '*.py' | wc -l | tr -d ' ')
-echo "check-file-size: OK — $tracked Rust/Python files, none over $LIMIT lines except $(grep -cv '^#' "$baseline") grandfathered (none grew)."
+tracked=$(git ls-files "${RATCHET_PATHSPECS[@]}" | wc -l | tr -d ' ')
+# The verdict is already decided; the write is best-effort. SIGPIPE is ignored
+# and the write's failure discarded, so a reader that closed the pipe
+# (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
+# `|| true`: `grep -c` exits 1 when the count is ZERO, and this runs under
+# `set -e`. An empty baseline — every god file split, which is the goal — would
+# otherwise abort the guard here, AFTER the verdict was decided, printing
+# nothing and exiting non-zero. A clean tree reported as a failure with no
+# message is the worst reading of a green result, and it is why every case in
+# `scripts/test-file-size.sh` (which plants an empty baseline by design) was
+# red (#1800).
+grandfathered=$(grep -cv '^#' "$baseline" || true)
+trap '' PIPE
+echo "check-file-size: OK — $tracked Rust/Python/shell files, none over $LIMIT lines except $grandfathered grandfathered (none grew)." || true

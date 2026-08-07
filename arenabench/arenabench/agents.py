@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import harbor
 from .model import Contestant, Engine
 
 __all__ = [
@@ -265,10 +266,19 @@ def resolve_agent(slug: str) -> AgentSpec:
 
 
 def launch_flags(contestant: Contestant) -> list[str]:
-    """The ``harbor run`` flags that select this contestant's agent."""
+    """The ``harbor run`` flags that select this contestant's agent.
+
+    ``--agent-import-path`` was folded into ``--agent`` — which takes a
+    built-in name *or* a ``module:Class`` path — in a Harbor newer than 0.6.1.
+    Which flag to send is asked of the installed binary rather than derived
+    from its version number, so this keeps working across the fold in both
+    directions (:func:`arenabench.harbor.supports_agent_import_path`).
+    """
     spec = resolve_agent(contestant.agent)
     if spec.import_path:
-        return ["--agent-import-path", spec.import_path]
+        if harbor.supports_agent_import_path():
+            return ["--agent-import-path", spec.import_path]
+        return ["--agent", spec.import_path]
     if spec.harbor_agent:
         return ["--agent", spec.harbor_agent]
     raise ValueError(f"agent {spec.slug!r} declares no launch mechanism")
@@ -317,12 +327,18 @@ def missing_credentials(contestant: Contestant) -> list[str]:
     credentialled either way: ``ZAI_API_KEY`` is what the provider calls it
     and ``ANTHROPIC_AUTH_TOKEN`` is what Claude Code reads it from, and
     warning about the one an operator did not use would be noise.
+
+    A seat that *declared* its own list (``[contestant.env] required = [...]``)
+    is measured against that list alone — the declaration is the seat's whole
+    credential contract (#1777).
     """
-    spec = resolve_agent(contestant.agent)
-    candidates = list(credential_env_for(contestant.engine.api))
-    for name in spec.token_env + spec.alt_credential_env:
-        if name not in candidates:
-            candidates.append(name)
+    candidates = list(contestant.required_env)
+    if not candidates:
+        spec = resolve_agent(contestant.agent)
+        candidates = list(credential_env_for(contestant.engine.api))
+        for name in spec.token_env + spec.alt_credential_env:
+            if name not in candidates:
+                candidates.append(name)
     if not candidates:
         return []
     if any(contestant.env.get(name) for name in candidates):

@@ -408,7 +408,7 @@ mod tests {
 
         let event = serde_json::to_value(ServerFrame::Event {
             event: AgentEvent::Text {
-                delta: "hello".to_string(),
+                text: "hello".to_string(),
             },
         })
         .unwrap();

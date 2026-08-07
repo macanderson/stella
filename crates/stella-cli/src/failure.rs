@@ -65,6 +65,13 @@ impl CliFailure {
         }
     }
 
+    /// Whether this failure is a deliberate stop — the same bit
+    /// [`Self::exit_code`] reads, exposed so the session registry can record
+    /// a policy stop distinctly from a crash (#1653).
+    pub(crate) fn is_deliberate_stop(&self) -> bool {
+        self.deliberate_stop
+    }
+
     pub(crate) fn exit_code(&self) -> ExitCode {
         if self.deliberate_stop {
             ExitCode::from(DELIBERATE_STOP_EXIT_CODE)

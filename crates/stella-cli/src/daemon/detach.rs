@@ -48,6 +48,7 @@
 //! contradictory command line: the flag that asks for *less* machinery wins.
 
 use super::Supervised;
+use crate::OutputFormat;
 
 /// What this invocation does with the supervisor.
 ///
@@ -127,10 +128,16 @@ pub(crate) fn posture(
 /// The announcement is printed on **stderr** for the same reason the attached
 /// banner is: `--output-format json` writes the machine-readable answer to
 /// stdout, and a launcher that garnished it would break every script that
-/// pipes one.
-pub(crate) fn release(run: Supervised) -> Result<(), String> {
+/// pipes one. Under a machine-readable format stdout additionally carries one
+/// [`DetachedRunSummary`] — the id a script needs in order to do anything at
+/// all with the run it just started (#1688).
+pub(crate) fn release(run: Supervised, format: OutputFormat) -> Result<(), String> {
     use colored::Colorize;
 
+    if let Some(summary) = summary_json(format, &run.id) {
+        println!("{summary}");
+        crate::note_json_summary_emitted();
+    }
     eprintln!(
         "{} {} — running in the background",
         "▸ detached".green().bold(),
@@ -146,6 +153,71 @@ pub(crate) fn release(run: Supervised) -> Result<(), String> {
     );
     drop(run);
     Ok(())
+}
+
+/// The stdout envelope for a detached launch under `--output-format
+/// json|stream-json`.
+///
+/// A fourth member of the family in [`crate::SUMMARY_SCHEMA_VERSION`]'s doc,
+/// declared first for the same reason and built from a struct rather than
+/// `serde_json::json!` for the same one. Purely additive — a new envelope with
+/// a new `status`, no existing shape changed — so the version does **not**
+/// bump; that constant's rule reserves a bump for a change that could break a
+/// consumer written against the previous version.
+///
+/// # What it deliberately does not carry
+///
+/// The child's pid, which is right there on [`Supervised`] and would be the
+/// obvious thing to add. A pid answers "not yet reaped", which is a different
+/// question from "still running" — this module's own doc says the liveness
+/// lock is the only correct way to ask the latter. Publishing the pid in a
+/// machine-readable envelope is an invitation to answer the wrong question,
+/// and a contract is much harder to withdraw than to omit.
+#[derive(serde::Serialize)]
+struct DetachedRunSummary<'a> {
+    schema_version: u32,
+    status: &'static str,
+    /// The registry id — what `stella daemon attach|stop` takes, and the one
+    /// value a script cannot proceed without.
+    session_id: &'a str,
+    /// The commands the stderr banner shows, so a consumer reading only
+    /// stdout is not required to reconstruct them by string-building.
+    attach: String,
+    stop: String,
+}
+
+/// The machine-readable launch summary, or `None` for human output.
+///
+/// Pure over the two inputs that decide it so the contract is testable without
+/// spawning anything — the split this crate uses everywhere the orchestration
+/// half is the expensive part.
+fn summary_json(format: OutputFormat, id: &str) -> Option<String> {
+    let value = DetachedRunSummary {
+        schema_version: crate::SUMMARY_SCHEMA_VERSION,
+        status: "detached",
+        session_id: id,
+        attach: format!("stella daemon attach {id}"),
+        stop: format!("stella daemon stop {id}"),
+    };
+    // An integer and four strings cannot fail to serialize; the fallback keeps
+    // the contract rather than proving the point — the same posture as
+    // `crate::error_summary_json`.
+    let fallback = || {
+        format!(
+            r#"{{"schema_version":{},"status":"detached","session_id":"{id}"}}"#,
+            crate::SUMMARY_SCHEMA_VERSION
+        )
+    };
+    match format {
+        OutputFormat::Text => None,
+        OutputFormat::Json => {
+            Some(serde_json::to_string_pretty(&value).unwrap_or_else(|_| fallback()))
+        }
+        // Compact, so the line-delimited contract holds.
+        OutputFormat::StreamJson => {
+            Some(serde_json::to_string(&value).unwrap_or_else(|_| fallback()))
+        }
+    }
 }
 
 #[cfg(test)]

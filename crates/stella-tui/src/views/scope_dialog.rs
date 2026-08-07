@@ -82,6 +82,31 @@ pub(crate) fn pending<'m>(model: &'m WorkspaceModel, ui: &DeckUi) -> Option<&'m 
     entry.model.pending_scope_review.as_ref()
 }
 
+/// How many agents are waiting on an unanswered scope review, **anywhere**.
+///
+/// The sibling of [`pending`], and deliberately not a caller of it: that one
+/// answers "is the dialog up on this frame", which is tab-scoped and focused-
+/// agent-scoped by design. This one answers "is the session blocked on a
+/// human", which is true regardless of which tab is open or which lane is
+/// focused — the question the statline has to ask, because it is the one
+/// surface that renders on all nine tabs (#1679).
+///
+/// Scoping the dialog to SESSION was the right call (#1658): a modal you
+/// cannot see must not eat your keys, and the frame-sized overlay was blanking
+/// the very panels a reviewer opens in order to decide. But it left a halted
+/// run with no indication at all on six of nine tabs, so a reviewer who opened
+/// TRACES to answer "which auth guard did it read?" — exactly what the scoping
+/// exists to permit — just watched a stalled deck. This is the other half of
+/// that decision, filled on the statline rather than by re-widening the dialog.
+pub(crate) fn pending_anywhere(model: &WorkspaceModel, ui: &DeckUi) -> usize {
+    model
+        .agents
+        .iter()
+        .filter(|entry| !ui.scope_answered.contains(&entry.meta.id))
+        .filter(|entry| entry.model.pending_scope_review.is_some())
+        .count()
+}
+
 /// How many rows of a long refine note stay on screen. The note is the one
 /// part of this dialog the user is authoring, so it gets a real budget — but
 /// the plan is what the decision is *about*, so the note never crowds it out.

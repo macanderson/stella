@@ -216,8 +216,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         ev(
             lead,
             AgentEvent::Text {
-                delta: "Planning the automations cluster: list, editor, triggers, workflows."
-                    .into(),
+                text: "Planning the automations cluster: list, editor, triggers, workflows.".into(),
             },
         ),
         // The task board (`task_*` tools): a full snapshot per change, so the

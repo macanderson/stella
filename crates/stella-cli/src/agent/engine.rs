@@ -235,13 +235,14 @@ pub(crate) enum PipelineApprovalCapability {
 /// The one-shot approval gate for `capability`, honoring
 /// `agent_engine_config.approval_wait_secs` (#1616) — the sidecar gate's
 /// only caller-supplied tuning, so it lives beside the capability it gates
-/// rather than being computed inline at the call site.
+/// rather than being computed inline at the call site (which is in the
+/// `agent.rs` god file).
 pub(crate) fn approval_gate_for(
     cfg: &Config,
     capability: PipelineApprovalCapability,
 ) -> crate::daemon::approval::OneShotApprovalGate {
-    let approval_wait = cfg.engine_settings.as_ref().and_then(|e| e.approval_wait());
-    crate::daemon::approval::OneShotApprovalGate::select(capability, approval_wait)
+    let wait = cfg.engine_settings.as_ref().and_then(|e| e.approval_wait());
+    crate::daemon::approval::OneShotApprovalGate::select(capability, wait)
 }
 
 /// Which approval capability a one-shot host run can actually service, given
@@ -369,6 +370,13 @@ pub(crate) fn pipeline_config_for_approval_capability(
 /// governs whether unattended work may land unreviewed — there is no surface
 /// where honouring the user's setting is the unsafe choice.
 pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) -> PipelineConfig {
+    // The repair gate's run-scoped deadline (#1507). `--turn-budget` at this
+    // surface declares an EXTERNAL deadline for the invocation (a harness
+    // killing the trial on elapsed time), and one invocation drives one
+    // pipeline run — so the one declaration feeds both the engine's per-turn
+    // continuation allowance and the run deadline, and the two cannot drift.
+    // Absent stays absent: no flag, no clock axis.
+    config.run_budget = cfg.turn_budget;
     let Some(engine) = cfg.engine_settings.as_ref() else {
         return config;
     };
@@ -378,6 +386,10 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
     // #1291: the strict reading of an UNMEASURABLE overlap. A measured
     // non-overlap withholds the deterministic credit whatever this says.
     config.require_diff_coverage = engine.pipeline_require_diff_coverage_on();
+    // #1795: refuse a self-graded verdict where the operator said so. Absent
+    // is off — the single-provider seat keeps its soft path, and the verdict
+    // records grader independence on its snapshot either way.
+    config.require_independent_verifier = engine.pipeline_require_independent_verifier_on();
     if let Some(candidates) = engine.pipeline_candidates {
         // Stored as written, including `0`. `PipelineConfig::candidate_count`
         // floors at 1, so a zero reads as single-shot rather than as "run

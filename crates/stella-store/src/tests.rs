@@ -26,7 +26,7 @@ fn execution_lifecycle_events_and_telemetry_roundtrip() {
             id,
             1,
             &AgentEvent::Text {
-                delta: "done".into(),
+                text: "done".into(),
             },
         )
         .unwrap();
@@ -458,7 +458,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
             id,
             4,
             &AgentEvent::Text {
-                delta: "done".into(),
+                text: "done".into(),
             },
         )
         .unwrap();
@@ -868,20 +868,20 @@ fn session_events_keeps_unknown_variants_and_skips_only_corrupt_payloads() {
         )
         .unwrap();
     store
-        .record_event(turn_one, 1, &AgentEvent::Text { delta: "a".into() })
+        .record_event(turn_one, 1, &AgentEvent::Text { text: "a".into() })
         .unwrap();
     let turn_two = store
         .begin_execution("run", "two", "zai", "glm-5.2")
         .unwrap();
     store.set_execution_session(turn_two, "ses-j").unwrap();
     store
-        .record_event(turn_two, 0, &AgentEvent::Text { delta: "b".into() })
+        .record_event(turn_two, 0, &AgentEvent::Text { text: "b".into() })
         .unwrap();
     // Another session's execution stays out of this journal.
     let elsewhere = store.begin_execution("run", "x", "zai", "glm-5.2").unwrap();
     store.set_execution_session(elsewhere, "ses-other").unwrap();
     store
-        .record_event(elsewhere, 0, &AgentEvent::Text { delta: "z".into() })
+        .record_event(elsewhere, 0, &AgentEvent::Text { text: "z".into() })
         .unwrap();
     // A payload whose variant this build does not know — inserted raw,
     // exactly as a NEWER stella would have left it on disk. This is a version
@@ -1458,11 +1458,11 @@ fn fresh_database_is_created_at_the_latest_schema_version() {
     // of silently corrupting replay and double-counting cost.
     let id = store.begin_execution("run", "p", "zai", "glm-5.2").unwrap();
     store
-        .record_event(id, 0, &AgentEvent::Text { delta: "a".into() })
+        .record_event(id, 0, &AgentEvent::Text { text: "a".into() })
         .unwrap();
     assert!(
         store
-            .record_event(id, 0, &AgentEvent::Text { delta: "b".into() })
+            .record_event(id, 0, &AgentEvent::Text { text: "b".into() })
             .is_err(),
         "duplicate (execution_id, seq) must violate UNIQUE"
     );
@@ -1477,7 +1477,7 @@ fn fresh_database_is_created_at_the_latest_schema_version() {
     );
     // Distinct positions still insert freely.
     store
-        .record_event(id, 1, &AgentEvent::Text { delta: "c".into() })
+        .record_event(id, 1, &AgentEvent::Text { text: "c".into() })
         .unwrap();
     store
         .record_telemetry(id, &drift_row(1, "zai", "glm-5.2", 2_000, 2_900))
@@ -1570,7 +1570,7 @@ fn v1_migration_dedupes_a_v0_database_and_retrofits_the_unique_keys() {
                 1,
                 0,
                 &AgentEvent::Text {
-                    delta: "again".into()
+                    text: "again".into()
                 }
             )
             .is_err()
@@ -1582,13 +1582,7 @@ fn v1_migration_dedupes_a_v0_database_and_retrofits_the_unique_keys() {
     );
     // …while fresh positions and the normal readers keep working.
     store
-        .record_event(
-            1,
-            2,
-            &AgentEvent::Text {
-                delta: "new".into(),
-            },
-        )
+        .record_event(1, 2, &AgentEvent::Text { text: "new".into() })
         .unwrap();
     store
         .record_telemetry(1, &drift_row(2, "zai", "glm-5.2", 400, 500))
@@ -2245,17 +2239,17 @@ fn event_session_ids_lists_sessions_with_events_newest_first() {
     let older = store.begin_execution("run", "a", "zai", "glm-5.2").unwrap();
     store.set_execution_session(older, "ses-old").unwrap();
     store
-        .record_event(older, 0, &AgentEvent::Text { delta: "a".into() })
+        .record_event(older, 0, &AgentEvent::Text { text: "a".into() })
         .unwrap();
     let newer = store.begin_execution("run", "b", "zai", "glm-5.2").unwrap();
     store.set_execution_session(newer, "ses-new").unwrap();
     store
-        .record_event(newer, 0, &AgentEvent::Text { delta: "b".into() })
+        .record_event(newer, 0, &AgentEvent::Text { text: "b".into() })
         .unwrap();
     // An execution with events but NO session id must not appear.
     let orphan = store.begin_execution("run", "c", "zai", "glm-5.2").unwrap();
     store
-        .record_event(orphan, 0, &AgentEvent::Text { delta: "c".into() })
+        .record_event(orphan, 0, &AgentEvent::Text { text: "c".into() })
         .unwrap();
     // A session with an execution but no events must not appear either.
     let silent = store.begin_execution("run", "d", "zai", "glm-5.2").unwrap();

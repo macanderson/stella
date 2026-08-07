@@ -98,6 +98,40 @@
 //!   hand with `stella daemon resume <id>` — a human deciding to try again is
 //!   exactly what the bound exists to require.
 //!
+//! # What stops a stalled *sweep* — the per-run ceiling (#1921)
+//!
+//! The brakes above bound how many boots one run can spend; nothing in them
+//! bounds how long one run can hold *this* boot. The sweep is sequential and
+//! streams each resumed turn to completion, so any turn that never ends — a
+//! wedged tool, a provider that never returns, a model call retrying forever
+//! — used to stall every id after it, silently. (#1920 fixed the one such
+//! state visible on disk before spawning, a parked approval; the ceiling
+//! covers every way a turn fails to end that only running it reveals.)
+//!
+//! So each resumed run gets a wall-clock ceiling (`--ceiling`, minutes).
+//! Expiry never kills the child outright — a `SIGKILL` at the ceiling would
+//! land mid-edit, which is worse than the stall it fixes. It goes through the
+//! same graceful discipline as Ctrl-C and `stella daemon stop`: `SIGTERM`,
+//! then `STOP_GRACE` for the engine to abort at a safe boundary (invariant 6)
+//! and write its own terminal status, escalation only then. The two ways that
+//! ends compose with the brakes above rather than needing new ones:
+//!
+//! - A child that **responds** to the stop ends deliberately — checkpoint
+//!   discarded, `Cancelled` recorded, exactly as if an operator had stopped
+//!   it — so the next sweep skips it as ended and returns its attempts.
+//! - A child so wedged it had to be **killed** wrote nothing, keeps its
+//!   resume point, and is swept again next boot — where the attempt already
+//!   charged for this resume counts against `MAX_BOOT_ATTEMPTS`.
+//!
+//! That is also the answer to whether a timed-out run is **charged a boot
+//! attempt: yes**. The attempt was recorded before the spawn (as every
+//! attempt is), and it stays spent, because the only run still resumable
+//! after a timeout is the wedged one — the exact recurring failure the
+//! three-attempt bound exists to stop. A run that was merely slower than the
+//! ceiling ended deliberately at a safe boundary, and slower-than-the-ceiling
+//! by hand is what `stella daemon resume <id>` — which has no ceiling — is
+//! for.
+//!
 //! # What the operator sees
 //!
 //! Every candidate, continued or skipped, prints one line with its reason —
@@ -171,6 +205,14 @@ pub(super) struct BootCandidate {
     pub(super) has_resume_point: bool,
     /// Whether the workspace the turn must continue in still exists.
     pub(super) workspace_exists: bool,
+    /// Whether the run left an unanswered approval request in its sidecar
+    /// ([`stella_store::supervised::APPROVAL_REQUEST`]).
+    ///
+    /// Such a run does not fail on resume — it *parks*, waiting for a human
+    /// who is not there. The sweep resumes one run at a time and streams each
+    /// to completion, so a parked run never returns and every later id stays
+    /// unresumed with nothing said about why (#1698).
+    pub(super) parked: bool,
     /// Boot-time resumes already spent on this run.
     pub(super) attempts: u32,
 }
@@ -196,6 +238,9 @@ pub(super) enum SkipReason {
     NoResumePoint,
     /// The workspace is gone; a resumed turn must run where its work is.
     WorkspaceGone,
+    /// The run is waiting on an approval nobody is present to give. Resuming
+    /// it at boot would park it again and stall the whole sweep behind it.
+    NeedsInput,
     /// `MAX_BOOT_ATTEMPTS` boot-time resumes have already been spent.
     AttemptsExhausted,
 }
@@ -215,6 +260,9 @@ impl SkipReason {
                 .to_string(),
             Self::NoResumePoint => "no resume point".to_string(),
             Self::WorkspaceGone => "workspace no longer exists".to_string(),
+            Self::NeedsInput => "waiting on an approval — answer it with \
+                 `stella daemon attach <id>`, then `stella daemon resume <id>`"
+                .to_string(),
             Self::AttemptsExhausted => format!(
                 "retired after {MAX_BOOT_ATTEMPTS} boot-time resumes — \
                  `stella daemon resume <id>` tries again by hand"
@@ -267,6 +315,13 @@ pub(super) fn decide(candidate: &BootCandidate) -> BootDecision {
     }
     if !candidate.workspace_exists {
         return BootDecision::Skip(SkipReason::WorkspaceGone);
+    }
+    // Before the attempts brake, deliberately: a parked run has not failed at
+    // anything, so spending a boot attempt on it — and retiring it after
+    // `MAX_BOOT_ATTEMPTS` reboots — would punish it for waiting. It resumes
+    // the moment somebody answers.
+    if candidate.parked {
+        return BootDecision::Skip(SkipReason::NeedsInput);
     }
     if candidate.attempts >= MAX_BOOT_ATTEMPTS {
         return BootDecision::Skip(SkipReason::AttemptsExhausted);
@@ -375,16 +430,61 @@ fn candidate(
             .exists(),
         has_resume_point: super::has_resume_point(record),
         workspace_exists: Path::new(&record.workspace).is_dir(),
+        // The request file, not the answer: an answered request is removed by
+        // the child that consumed it, so a leftover request is exactly the
+        // "still waiting" state. Probing the filesystem here rather than in
+        // `decide` keeps that function pure over already-observed facts, like
+        // every other field on this struct.
+        parked: registry
+            .sidecar_dir(&record.id)
+            .join(stella_store::supervised::APPROVAL_REQUEST)
+            .exists(),
         attempts: ledger.attempts(&record.id),
     }
+}
+
+/// A ceiling for a console line: `--ceiling` speaks minutes, so the console
+/// does too whenever the value is whole minutes, and seconds otherwise (a
+/// sub-minute ceiling exists only in tests, but a line that printed `0m`
+/// there would be a lie).
+pub(super) fn describe_ceiling(ceiling: std::time::Duration) -> String {
+    let secs = ceiling.as_secs();
+    if secs >= 60 && secs.is_multiple_of(60) {
+        format!("{}-minute", secs / 60)
+    } else if secs > 0 {
+        format!("{secs}-second")
+    } else {
+        format!("{}-millisecond", ceiling.as_millis())
+    }
+}
+
+/// The one line the console gets when a resumed run outlived `ceiling` —
+/// pure, so the console contract is testable without a wedged run (#1921).
+///
+/// It states the honest ambiguity: from out here the sweep cannot tell a
+/// stop the child honoured (ended deliberately, nothing left to resume) from
+/// a kill it forced (resume point kept, swept again next boot), so the line
+/// names the one command that answers either way.
+pub(super) fn ceiling_report(ceiling: std::time::Duration) -> String {
+    format!(
+        "did not finish within the {} ceiling and was stopped at a safe boundary; \
+         the sweep continues with the runs behind it — `stella daemon list` shows \
+         where this one ended up",
+        describe_ceiling(ceiling)
+    )
 }
 
 /// `stella daemon resume-all` — the verb a registered service runs at boot.
 ///
 /// Sequential on purpose: N turns resumed at once is N models spending at once
 /// on a machine nobody is watching, and the runs were not concurrent when they
-/// were killed either.
-pub(super) fn resume_all<F>(dry_run: bool, mut runtime: F) -> Result<(), String>
+/// were killed either. `ceiling` bounds each of those turns by wall clock so
+/// one that never ends cannot stall the ids behind it — see the module docs.
+pub(super) fn resume_all<F>(
+    dry_run: bool,
+    ceiling: std::time::Duration,
+    mut runtime: F,
+) -> Result<(), String>
 where
     F: FnMut() -> Result<tokio::runtime::Runtime, String>,
 {
@@ -449,13 +549,18 @@ where
     for id in &to_continue {
         let spent = ledger.record_attempt(id);
         // Persisted before the spawn, so a resume that never returns is still
-        // counted against the bound.
+        // counted against the bound — and, for a run the ceiling below has to
+        // stop, deliberately never refunded (see the module docs).
         ledger.store(&path)?;
         println!("  boot-time resume {spent} of {MAX_BOOT_ATTEMPTS} for {id}");
-        if let Err(e) = super::resume_supervised(runtime()?, Some(id)) {
+        match super::resume_supervised(runtime()?, Some(id), Some(ceiling)) {
+            Ok(super::Watched::Finished) => {}
+            Ok(super::Watched::CeilingReached) => {
+                println!("{} {} — {}", "⚠".yellow(), id, ceiling_report(ceiling));
+            }
             // One failed resume must not strand the rest: the sweep's whole
             // job is the runs it can still continue.
-            eprintln!("{} could not resume {id}: {e}", "⚠".yellow());
+            Err(e) => eprintln!("{} could not resume {id}: {e}", "⚠".yellow()),
         }
     }
     Ok(())

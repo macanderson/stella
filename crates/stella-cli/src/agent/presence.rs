@@ -81,20 +81,30 @@ impl SessionPresence {
 
     /// The headless one-shot → `/inbox` notification decision, shared by the
     /// pipeline and raw (`--no-pipeline`) paths so the two cannot drift: a
-    /// failed run always lands a notification; a successful one only when it
-    /// ran long enough (60s) that the user has plausibly looked away.
+    /// run that did not complete always lands a notification, worded by how
+    /// it actually ended — a policy stop is deliberate, and "FAILED" for it
+    /// was the same dishonesty the registry status carried (#1826); a
+    /// successful one notifies only when it ran long enough (60s) that the
+    /// user has plausibly looked away.
     pub(crate) fn one_shot_notification(
         &self,
-        run_ok: bool,
+        status: stella_store::SessionStatus,
         run_secs: u64,
         prompt: &str,
     ) -> Option<(String, String)> {
-        let title = if !run_ok {
-            format!("{}: run FAILED", self.name())
-        } else if run_secs >= 60 {
-            format!("{}: run finished ({run_secs}s)", self.name())
-        } else {
-            return None;
+        let title = match status {
+            stella_store::SessionStatus::Complete if run_secs >= 60 => {
+                format!("{}: run finished ({run_secs}s)", self.name())
+            }
+            stella_store::SessionStatus::Complete => return None,
+            stella_store::SessionStatus::Stopped => {
+                format!("{}: run stopped by policy", self.name())
+            }
+            stella_store::SessionStatus::Cancelled => {
+                format!("{}: run cancelled", self.name())
+            }
+            // Anything else a terminal write carries is a genuine failure.
+            _ => format!("{}: run FAILED", self.name()),
         };
         Some((title, crate::command_deck::prompt_line(prompt, 160)))
     }
@@ -122,12 +132,19 @@ impl SessionPresence {
     /// notification linked to this session — the headless → `/inbox` flow:
     /// a finished `stella run` surfaces in every deck's inbox, and `Enter`
     /// replays it.
-    pub(crate) fn finish(&mut self, ok: bool, notify: Option<(String, String)>) {
-        self.record.status = if ok {
-            stella_store::SessionStatus::Complete
-        } else {
-            stella_store::SessionStatus::Error
-        };
+    ///
+    /// `status` is the caller's own terminal answer projected by
+    /// [`crate::daemon::outcome_status`] (or `super::outcome`'s pipeline
+    /// projection) — never a bool. The bool collapsed a deliberate stop into
+    /// `Error`, and on an unsupervised headless run no later supervised write
+    /// corrected it, so the SESSIONS overlay painted a policy stop as a crash
+    /// (#1826, the presence half of #1653).
+    pub(crate) fn finish(
+        &mut self,
+        status: stella_store::SessionStatus,
+        notify: Option<(String, String)>,
+    ) {
+        self.record.status = status;
         let _ = self.registry.upsert(&self.record);
         // The headless counterpart of the deck's exit compaction. A one-shot
         // run writes fewer objects than a long deck session, but it is also the

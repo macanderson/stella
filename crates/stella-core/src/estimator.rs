@@ -207,6 +207,29 @@ pub struct Calibration {
     estimated_total: u64,
     /// Sum of the provider-reported actuals behind `samples`, unclamped.
     actual_total: u64,
+    /// Exponentially-weighted least-squares accumulators over the same
+    /// `(estimated, actual)` pairs the EWMA sees (#1841).
+    ///
+    /// The ratio model above assumes the estimator's error is proportional.
+    /// A large part of it is not: the serialized tool schemas are a constant
+    /// ~6-9k tokens on every request, present in `actual` and invisible to
+    /// `estimate_conversation_tokens`. A constant term does not surface as a
+    /// stable ratio — with an 8k block a 5k-token conversation observes 2.6
+    /// and a 100k one observes 1.08 — so early small-conversation samples
+    /// drove the factor to its 2.0 clamp and halved the compaction budget
+    /// for the rest of the session, then seeded that into the next one.
+    ///
+    /// A line separates the two: `actual ≈ slope · estimated + intercept`,
+    /// where the intercept is the per-request overhead and the slope is the
+    /// estimator's genuine proportional error. Decayed by the same
+    /// [`CALIBRATION_ALPHA`] as the EWMA, so "most recent session weighted
+    /// highest" holds for both models and oldest-first replay still rebuilds
+    /// the state.
+    w: f64,
+    wx: f64,
+    wy: f64,
+    wxx: f64,
+    wxy: f64,
 }
 
 impl Default for Calibration {
@@ -223,6 +246,11 @@ impl Calibration {
             samples: 0,
             estimated_total: 0,
             actual_total: 0,
+            w: 0.0,
+            wx: 0.0,
+            wy: 0.0,
+            wxx: 0.0,
+            wxy: 0.0,
         }
     }
 
@@ -253,6 +281,44 @@ impl Calibration {
         // would make a catastrophic tokenizer mismatch read as a mild one.
         self.estimated_total = self.estimated_total.saturating_add(estimated);
         self.actual_total = self.actual_total.saturating_add(actual);
+        self.accumulate_fit(estimated as f64, actual as f64);
+    }
+
+    /// Fold one raw pair into the exponentially-weighted least-squares
+    /// accumulators (#1841). Raw, not the ratio-clamped value: the clamp above
+    /// exists to stop one absurd sample steering the EWMA, and the fit has its
+    /// own protection in the conditioning guard on [`Self::line`].
+    fn accumulate_fit(&mut self, x: f64, y: f64) {
+        let decay = 1.0 - CALIBRATION_ALPHA;
+        self.w = self.w * decay + CALIBRATION_ALPHA;
+        self.wx = self.wx * decay + CALIBRATION_ALPHA * x;
+        self.wy = self.wy * decay + CALIBRATION_ALPHA * y;
+        self.wxx = self.wxx * decay + CALIBRATION_ALPHA * x * x;
+        self.wxy = self.wxy * decay + CALIBRATION_ALPHA * x * y;
+    }
+
+    /// The fitted `(slope, intercept)`, or `None` when the samples carry no
+    /// slope to fit.
+    ///
+    /// The denominator is the weighted variance of `estimated`. A session
+    /// whose conversations were all about one size drives it to zero — and
+    /// that is not a numerical edge case to paper over, it is the honest
+    /// answer that one cluster of points determines no line. The caller falls
+    /// back to the ratio model, which is exactly what this state was before.
+    fn line(&self) -> Option<(f64, f64)> {
+        let denominator = self.w * self.wxx - self.wx * self.wx;
+        // Scale-relative, not an absolute epsilon: `estimated` is in tokens,
+        // so the variance is in tokens SQUARED and an absolute threshold
+        // would mean something different at 1k than at 100k.
+        if denominator <= f64::EPSILON * self.wxx.max(1.0) {
+            return None;
+        }
+        let slope = (self.w * self.wxy - self.wx * self.wy) / denominator;
+        let intercept = (self.wy - slope * self.wx) / self.w;
+        if !slope.is_finite() || !intercept.is_finite() || slope <= 0.0 {
+            return None;
+        }
+        Some((slope, intercept))
     }
 
     /// How many samples have been recorded.
@@ -297,7 +363,55 @@ impl Calibration {
             .clamp(CALIBRATION_MIN_FACTOR, CALIBRATION_MAX_FACTOR)
     }
 
+    /// The conversation size whose corrected estimate equals `budget`, plus
+    /// the factor that size implies — what compaction actually needs (#1841).
+    ///
+    /// The ratio model answers this as `budget / factor`, which is right only
+    /// while the correction is purely proportional. With the fitted line the
+    /// question is `slope · B + intercept = budget`, so:
+    ///
+    /// ```text
+    /// B = (budget − intercept) / slope
+    /// ```
+    ///
+    /// The per-request overhead is subtracted ONCE rather than scaling the
+    /// whole budget by a factor that absorbed it — which is the halving this
+    /// fixes.
+    ///
+    /// The returned factor is the *implied* one, `budget / B`, and it carries
+    /// the same `CALIBRATION_MIN_FACTOR`/`CALIBRATION_MAX_FACTOR` clamp the
+    /// scalar model had. That is deliberate: the lower bound is what stops
+    /// calibration spending the estimator's conservative bias, and the
+    /// argument for it does not change because the model underneath got a
+    /// second term.
+    pub fn effective_budget(&self, budget: u64) -> (u64, f64) {
+        if self.samples < CALIBRATION_MIN_SAMPLES {
+            return (budget, 1.0);
+        }
+        let budget_f = budget as f64;
+        let sized = match self.line() {
+            // An overhead at or above the whole budget leaves no room to
+            // solve for, and a non-positive size is not a conversation.
+            // Fall back rather than return a nonsense budget.
+            Some((slope, intercept)) if budget_f > intercept => {
+                Some((budget_f - intercept) / slope)
+            }
+            _ => None,
+        };
+        let Some(sized) = sized.filter(|b| *b > 0.0) else {
+            let factor = self.factor();
+            return ((budget_f / factor) as u64, factor);
+        };
+        let implied = (budget_f / sized).clamp(CALIBRATION_MIN_FACTOR, CALIBRATION_MAX_FACTOR);
+        ((budget_f / implied) as u64, implied)
+    }
+
     /// [`estimate_message_tokens`] corrected by the current factor.
+    ///
+    /// Slope-only by construction: the fitted intercept is a **per-request**
+    /// overhead, and adding it to each message would multiply it by the
+    /// message count. Nothing outside this module's own tests calls this
+    /// today, which is why the distinction costs nothing.
     pub fn calibrated_message_tokens(&self, message: &CompletionMessage) -> u64 {
         (estimate_message_tokens(message) as f64 * self.factor()).ceil() as u64
     }
@@ -363,6 +477,19 @@ impl CalibrationMap {
                 .unwrap_or(1.0),
             None => 1.0,
         }
+    }
+
+    /// [`Calibration::effective_budget`] for `model`, resolved by the same
+    /// rule as [`Self::factor`]. An unknown model is uncalibrated, so the
+    /// budget passes through untouched.
+    pub fn effective_budget(&self, model: Option<&str>, budget: u64) -> (u64, f64) {
+        let inner = self.lock();
+        let calibration = match model {
+            Some(model) => inner.get(model),
+            None if inner.len() == 1 => inner.values().next(),
+            None => None,
+        };
+        calibration.map_or((budget, 1.0), |c| c.effective_budget(budget))
     }
 
     /// Every model's observed drift, sorted by model id.
@@ -764,5 +891,119 @@ mod tests {
         let row = &map.report()[0];
         assert_eq!(row.samples, 0);
         assert_eq!(row.drift_ratio, 1.0, "…with no drift claimed from no data");
+    }
+
+    /// The per-request overhead, in tokens — a serialized tool-schema block.
+    const SCHEMA_OVERHEAD: u64 = 8_000;
+
+    /// Feed samples from an estimator that is perfectly accurate about
+    /// message content, against an actual that also carries a CONSTANT
+    /// per-request overhead. Any correction the calibration learns is
+    /// therefore attributable to the overhead alone.
+    fn with_constant_overhead(sizes: &[u64]) -> Calibration {
+        let mut calibration = Calibration::new();
+        for size in sizes {
+            calibration.record(*size, size + SCHEMA_OVERHEAD);
+        }
+        calibration
+    }
+
+    /// **Witness (#1841).** A constant per-request overhead must not be
+    /// modelled as a multiplicative factor.
+    ///
+    /// The tool schemas are ~6–9k tokens on every request, present in the
+    /// provider's `actual` and invisible to `estimate_conversation_tokens`.
+    /// A constant term does not "surface as a stable ratio": with an 8k block
+    /// a 5k conversation observes 2.6 and a 100k one observes 1.08. Averaged
+    /// into one ratio and clamped at 2.0, that halved the compaction budget
+    /// for the whole session — and `seed_calibration` carried it into the
+    /// next one.
+    #[test]
+    fn a_constant_overhead_does_not_halve_the_compaction_budget() {
+        let budget = 150_000;
+        let calibration = with_constant_overhead(&[4_000, 6_000, 5_000, 7_000]);
+
+        // The ratio model is what the samples look like to the old code, and
+        // it is pinned here so the witness states the defect rather than
+        // merely avoiding it.
+        assert_eq!(
+            calibration.factor(),
+            CALIBRATION_MAX_FACTOR,
+            "small conversations plus a constant overhead saturate the ratio clamp"
+        );
+        let ratio_budget = (budget as f64 / calibration.factor()) as u64;
+        assert_eq!(ratio_budget, 75_000, "which is the halving this fixes");
+
+        let (fitted, factor) = calibration.effective_budget(budget);
+        assert!(
+            fitted > 130_000,
+            "the overhead is additive: a 150k budget minus an 8k block leaves \
+             ~142k of conversation, not 75k — got {fitted} (factor {factor})"
+        );
+        assert!(
+            fitted <= budget,
+            "and never MORE than the budget, which would invite truncation: {fitted}"
+        );
+    }
+
+    /// The fit recovers the two terms it was given, rather than merely
+    /// producing a bigger number than the ratio model.
+    #[test]
+    fn the_fit_separates_the_overhead_from_the_proportional_error() {
+        let calibration = with_constant_overhead(&[4_000, 20_000, 60_000, 120_000]);
+        let (slope, intercept) = calibration.line().expect("four distinct sizes fit a line");
+        assert!(
+            (slope - 1.0).abs() < 0.05,
+            "the content estimator was exact here, so the slope is ~1: {slope}"
+        );
+        assert!(
+            (intercept - SCHEMA_OVERHEAD as f64).abs() < 500.0,
+            "and the whole error is the constant block: {intercept}"
+        );
+    }
+
+    /// One conversation size determines no line, and the honest answer is to
+    /// say so rather than divide by a variance of zero.
+    #[test]
+    fn samples_at_a_single_size_fall_back_to_the_ratio_model() {
+        let calibration = with_constant_overhead(&[5_000, 5_000, 5_000, 5_000]);
+        assert!(
+            calibration.line().is_none(),
+            "no spread in `estimated` means no slope to fit"
+        );
+        let (fitted, factor) = calibration.effective_budget(150_000);
+        assert_eq!(
+            (fitted, factor),
+            (75_000, CALIBRATION_MAX_FACTOR),
+            "which is exactly the previous behaviour — a fallback, not a crash"
+        );
+    }
+
+    /// Below the sample floor nothing is corrected, so a fresh session and a
+    /// seeded one that has not warmed up both budget at face value.
+    #[test]
+    fn an_unwarmed_calibration_leaves_the_budget_alone() {
+        assert_eq!(Calibration::new().effective_budget(150_000), (150_000, 1.0));
+        let barely = with_constant_overhead(&[4_000, 6_000]);
+        assert_eq!(barely.effective_budget(150_000), (150_000, 1.0));
+    }
+
+    /// An overhead that swallows the whole budget has no size to solve for.
+    /// The clamp is what keeps that from becoming a nonsense budget.
+    #[test]
+    fn an_overhead_larger_than_the_budget_degrades_rather_than_inverting() {
+        let mut calibration = Calibration::new();
+        for size in [1_000, 2_000, 3_000, 4_000] {
+            calibration.record(size, size + 200_000);
+        }
+        let (fitted, factor) = calibration.effective_budget(150_000);
+        assert!(
+            fitted > 0,
+            "a budget of zero would compact every turn forever"
+        );
+        assert!(
+            (CALIBRATION_MIN_FACTOR..=CALIBRATION_MAX_FACTOR).contains(&factor),
+            "the safety clamp still bounds the answer: {factor}"
+        );
     }
 }

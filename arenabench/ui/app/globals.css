@@ -159,7 +159,14 @@ code {
   .comet-trail { animation: trail-in 180ms var(--ease-arrive) both; }
   .comet-trail:nth-of-type(2) { animation-delay: 40ms; }
   .comet-trail:nth-of-type(3) { animation-delay: 80ms; }
-  .comet-star { animation: star-land 280ms var(--ease-pop) 120ms both; }
+  /* `transform-box: fill-box` is load-bearing: without it an SVG transform
+     scales about the SVG user-space origin (0,0), so the star flew in from
+     the frame's top-left corner instead of landing where it belongs. */
+  .comet-star {
+    animation: star-land 280ms var(--ease-pop) 120ms both;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
 }
 @keyframes trail-in { from { opacity: 0; transform: translateX(-6px); } }
 @keyframes star-land { from { opacity: 0; transform: scale(0.4); } }

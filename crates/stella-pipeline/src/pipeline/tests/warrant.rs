@@ -363,6 +363,164 @@ async fn a_blind_diff_probe_never_completes_as_nothing_changed() {
     );
 }
 
+/// #1701 — the sibling of the test above, with the *blindness removed*, which
+/// is the whole point: this diff probe worked perfectly.
+///
+/// The trace was a Terminal-Bench system-configuration task ("install and
+/// configure nginx on port 8080"). The worker did the work correctly and had no
+/// choice about where: `apt-get install nginx`, `/etc/nginx/nginx.conf`,
+/// `service nginx restart`, `curl localhost:8080` → 200. You cannot install
+/// nginx into `/tmp/stella_candidate_341_0/etc/nginx` and have the service read
+/// it, so the candidate root stayed empty and the empty diff was the *expected*
+/// outcome, not a fault. The run ended `passed: true, deterministic: true, rung:
+/// waived` over `mutating_actions: 10`.
+///
+/// Both guards `warrant` had were structurally incapable of catching it.
+/// `file_changes` is always zero inside a candidate (the engine emits no
+/// `FileChange` events there — `verify_probes::DIFF_PROBE_FAILED` documents
+/// why), and `diff.trim().is_empty()` was *true and correct*. The signal that
+/// was live — the pipeline's own count of the mutating calls it dispatched —
+/// was computed, threaded into `LadderInputs`, and never passed to `warrant`.
+///
+/// So the fixture is the assertion twice over. `ScriptedRunner::new(vec![], "")`
+/// is a probe that ran, succeeded, and read a genuinely unchanged tree —
+/// `diff_available: true`, which is exactly what distinguishes this from the
+/// blind sibling above and what made `NothingChanged` look defensible.
+/// `OneWritingTool` makes the worker dispatch a call able to write. And three
+/// provider calls means no verifier was bought: the ladder abstains here rather
+/// than escalating, because a revision cannot make an un-snapshot-able
+/// workspace observable, and the work may be entirely correct — merely
+/// uncollected.
+#[tokio::test]
+async fn a_readable_empty_diff_over_mutating_calls_is_never_a_deterministic_pass() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        writing_tool_result("configuring nginx on port 8080"),
+        text_result("nginx is installed and serving on 8080"),
+    ]);
+    let resolver = OneProvider(&provider);
+    // Exit 0, empty stdout: the probe LOOKED and the tree is unchanged.
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = OneWritingTool;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            // No independent witness author, as in the trace — the question
+            // under test is what the warrant and the ladder conclude, not what
+            // an author would have written.
+            witness_writer: false,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run(
+            "Install and configure nginx to serve on port 8080",
+            &mut messages,
+            &mut budget,
+        )
+        .await
+        .expect("run succeeds");
+
+    let verdict = outcome.verdict.expect("a reasoned verdict, not silence");
+    assert!(
+        !verdict.summary.contains("no files changed"),
+        "ten calls able to write landed somewhere; 'no files changed' asserts the \
+         opposite of the one thing this run actually knows: {}",
+        verdict.summary
+    );
+    assert!(
+        !verdict.deterministic,
+        "nothing deterministic was observed — an empty diff over dispatched \
+         mutating calls is the absence of evidence, not evidence of a clean pass"
+    );
+    assert!(
+        verdict.summary.starts_with("UNVERIFIABLE"),
+        "and the summary has to lead with it: {}",
+        verdict.summary
+    );
+    assert!(
+        !verdict.summary.contains("could not read the working tree"),
+        "the abstention must not invent a second lie to explain the first — this \
+         probe read the tree fine: {}",
+        verdict.summary
+    );
+    assert_eq!(
+        outcome.score,
+        Some(crate::candidate::CandidateScore::Unverified),
+        "and the score must agree, or a candidate nothing observed could tie a \
+         genuinely verified sibling in best-of-N and win the diff tiebreak"
+    );
+
+    let rung = verdict
+        .ladder
+        .as_deref()
+        .expect("the verdict carries its snapshot")
+        .rung
+        .expect("a rung is stamped");
+    assert_eq!(
+        rung,
+        stella_protocol::LadderRung::Unverifiable,
+        "`Waived` is the rung this shipped as, and it is the one that made the \
+         claim: waiving a witness asserts there was nothing to prove"
+    );
+    assert!(
+        matches!(
+            crate::reward::outcome_term(rung, verdict.passed, &Default::default()),
+            Err(crate::reward::DiscardReason::Abstained)
+        ),
+        "the consequence that makes the rung load-bearing: an uncollected \
+         trajectory is discarded, never trained on as a win"
+    );
+
+    let events = drain(&mut rx);
+    assert_eq!(
+        provider.prompts().len(),
+        3,
+        "triage and two worker turns — a fourth call would mean a verifier was \
+         asked to guess about a workspace nothing collected"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Proof {
+                step: stella_protocol::ProofStep::VerificationUnavailable { .. }
+            }
+        )),
+        "an abstention must reach the proof rail, not only the log"
+    );
+}
+
 /// The end of the wire the bug broke: what the recorder counted has to be what
 /// the verifier is told.
 ///

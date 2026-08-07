@@ -1,19 +1,24 @@
 name: ci
 
 on:
+  # Deliberately NO `paths-ignore` here (#1892). Both jobs below are required
+  # branch-protection contexts, and a workflow suppressed by a trigger-level
+  # path filter reports nothing at all — GitHub then waits forever for the
+  # missing contexts, and a docs-only PR is permanently BLOCKED with every
+  # reported check green (#1863). A job skipped by an `if:` DOES report (as
+  # `skipped`) and satisfies a required context, so the prose filter lives in
+  # the `changes` job below instead: same cost saving — a prose-only PR pays
+  # one diff, not an hour of Rust — but the contexts always report. bench.yml
+  # solved the same trap the same way for its required context (#659).
+  #
+  # Prose changes still can't break the Rust build, and nothing goes ungated:
+  # the site is built by docs.yml, and `docs-guards.yml` triggers on `docs/**`
+  # and `**/*.md` to run the prose guards. It is deliberately isolated from
+  # this workflow.
   pull_request:
-    # Prose-only changes can't break the Rust build — don't spend an hour of
-    # CI on them. Nothing here goes ungated: the site is built by docs.yml, and
-    # `docs-guards.yml` triggers on `docs/**` and `**/*.md` to run the two
-    # prose guards (doc citations resolve; the AGENTS.md invariant list has one
-    # copy). It is deliberately isolated from this workflow.
-    # (`*.md` matches the repo root only — GitHub's `*` stops at `/` — so a
-    # crate's own README still pays the gate, which is what we want.)
-    paths-ignore:
-      - "website/**"
-      - "docs/**"
-      - "*.md"
-      - ".github/ISSUE_TEMPLATE/**"
+  # A push to `main` is not gated by required contexts, so the trigger-level
+  # filter is still safe here — a docs-only merge does not start the Rust
+  # gate at all. Keep this list and the `changes` job's regex in agreement.
   push:
     branches: [main]
     paths-ignore:
@@ -25,10 +30,11 @@ on:
   # before it lands, so two individually-green PRs can't combine into a red
   # `main` (see #306). The queue evaluates the required checks on the
   # `merge_group` event, so `check` and `supply-chain` — the two required
-  # contexts — must both fire here or the queue can never go green. Note
-  # `merge_group` does NOT honor `paths-ignore`, so a docs-only PR that skips
-  # the Rust gate on `pull_request` still runs the full gate once queued; that
-  # is deliberate — the required check must report on the merged result.
+  # contexts — must both fire here or the queue can never go green. The
+  # `changes` job answers `rust=true` for every non-pull_request event, so a
+  # docs-only PR that skipped the Rust gate on `pull_request` still runs the
+  # full gate once queued; that is deliberate — the required check must report
+  # on the merged result.
   merge_group:
   workflow_dispatch:
 
@@ -50,15 +56,73 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Both jobs only check out, build, and test — nothing here writes to the repo.
+# Every job only checks out, builds, and tests — nothing here writes to the repo.
 # Without the key, GITHUB_TOKEN falls back to the repository default, which on
 # repos created before the 2023 default change is read/write on every scope.
 permissions:
   contents: read
 
 jobs:
+  # The prose filter that used to be a trigger-level `paths-ignore` (#1892).
+  # It has to be a job so that the two required jobs below can skip — and a
+  # skipped job still reports its context, which a path-suppressed workflow
+  # does not (see the trigger comment above).
+  changes:
+    name: is this diff prose-only?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+    steps:
+      # Full history, pull requests only: the scope check diffs against the PR
+      # base, and a shallow clone may not contain the merge base. Every other
+      # event runs the full gate without looking at the diff, so it needs no
+      # checkout at all.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+
+      - name: Does this diff reach past the prose paths?
+        id: scope
+        env:
+          # Via env rather than inlined into the shell, so a ref name can
+          # never be read as script (same shape as empty-diff.yml).
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Anything that is not a PR — a push to main, the merge queue, a
+          # manual dispatch — always runs the full gate: main and the queued
+          # merge result are what the green claim is about.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The prose paths, mirroring the push trigger's paths-ignore above:
+          # website/, docs/, .github/ISSUE_TEMPLATE/, and root-level *.md
+          # only (`[^/]+\.md$` stops at the first `/`, like the glob `*.md` —
+          # a crate's own README still pays the gate, which is what we want).
+          # `grep -v` inverts: any changed file OUTSIDE those paths means the
+          # gate runs. An empty diff runs nothing here — reporting that PR is
+          # empty-diff.yml's job.
+          if git diff --name-only "$BASE_SHA"...HEAD \
+            | grep -Evq '^(website/|docs/|\.github/ISSUE_TEMPLATE/)|^[^/]+\.md$'; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rust=false" >> "$GITHUB_OUTPUT"
+            echo "Prose-only diff — the Rust gate is skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "Both required contexts still report (as skipped), so the PR can merge." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   check:
     name: fmt + clippy + test
+    needs: changes
+    # Skip — never suppress — for a prose-only diff: a skipped job still
+    # reports its required context (#1892). `!= 'false'` rather than
+    # `== 'true'` so a failed `changes` job fails closed: no output reads as
+    # "run the gate". `!cancelled()` (not the implicit success()) is what
+    # lets this evaluate at all in that case.
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     # Bundled SQLite (stella-store, rusqlite) and tree-sitter grammars are
     # heavy C compiles on a cold cache; rust-cache keeps warm runs fast.
@@ -189,6 +253,26 @@ jobs:
       - name: role names agree across Rust, Python and JavaScript
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-role-names.sh
+
+      # Also toolchain-free, and the reason it must be: `dev_t` is signed on
+      # macOS and unsigned on Linux, so a raw `libc::stat` identity comparison
+      # compiles on the author's machine and fails on this runner — or the
+      # reverse. #1737 shipped that rewrite half-finished and `main` went red
+      # behind it for every open PR (#1752). Catching it in a guard costs
+      # milliseconds and runs on the author's own pre-push hook, which is an
+      # hour earlier than here (#1758).
+      - name: file identity goes through MetadataExt, not a raw libc::stat
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-stat-portability.sh
+
+      # Toolchain-free, and it has to be: the three gates that would normally
+      # catch a broken file all walk `mod` declarations from the crate root, so
+      # deleting one line hides a file from rustc, rustfmt and clippy at the
+      # same moment while `cargo test` still reports ok. #1739 lost 19 tests
+      # that way and only a reviewer reading the diff noticed (#1750).
+      - name: every src/ file is reachable from its crate root
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-module-reachability.py
 
       # Also toolchain-free. AGENTS.md requires that anything noticed and not
       # fixed becomes an issue written as a handoff; nothing checked it, and an
@@ -347,6 +431,10 @@ jobs:
     # mode with a different check. Do not rename without updating branch
     # protection (repo admin, out of band) in the same change.
     name: cargo deny + cargo audit
+    needs: changes
+    # Same skip discipline as `check` above: report the required context as
+    # skipped for a prose-only diff, and fail closed if `changes` failed.
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

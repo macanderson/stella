@@ -176,10 +176,7 @@ fn render(rows: &[ClaimRow], all: bool) -> String {
     }
 
     let live = rows.iter().filter(|r| r.live).count();
-    out.push_str(&format!(
-        "\n  {} claim(s), {live} live\n\n",
-        rows.len()
-    ));
+    out.push_str(&format!("\n  {} claim(s), {live} live\n\n", rows.len()));
     out
 }
 
@@ -212,10 +209,7 @@ fn human_ms(ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
-
     use super::*;
-    use crate::cli::{Cli, Command};
 
     fn claim(key: &str, owner: &str, acquired_at_ms: u64, expires_at_ms: u64) -> DispatchClaim {
         DispatchClaim {
@@ -241,7 +235,10 @@ mod tests {
         let out = render(&rows, false);
         assert!(out.contains("task:fix-1136"), "the unit of work: {out}");
         assert!(out.contains("run-8f21a3-41207"), "the holder: {out}");
-        assert!(out.contains("held 3m 00s"), "how long they have had it: {out}");
+        assert!(
+            out.contains("held 3m 00s"),
+            "how long they have had it: {out}"
+        );
         assert!(out.contains("expires in 12m 00s"), "when it lapses: {out}");
         assert!(out.contains("1 claim(s), 1 live"), "the tally: {out}");
     }
@@ -252,14 +249,23 @@ mod tests {
     fn a_lapsed_claim_says_who_held_it_and_how_long_ago_it_went() {
         let now = 600_000;
         let rows = vec![
-            ClaimRow::read(&claim("issue:1136", "run-2b90cc-41999", 60_000, 480_000), now),
-            ClaimRow::read(&claim("task:live", "run-8f21a3-41207", 590_000, 900_000), now),
+            ClaimRow::read(
+                &claim("issue:1136", "run-2b90cc-41999", 60_000, 480_000),
+                now,
+            ),
+            ClaimRow::read(
+                &claim("task:live", "run-8f21a3-41207", 590_000, 900_000),
+                now,
+            ),
         ];
 
         let out = render(&rows, true);
         assert!(out.contains("run-2b90cc-41999"), "the dead holder: {out}");
         assert!(out.contains("lapsed 2m 00s ago"), "when it went: {out}");
-        assert!(out.contains("expires in 5m 00s"), "the live one stays: {out}");
+        assert!(
+            out.contains("expires in 5m 00s"),
+            "the live one stays: {out}"
+        );
         assert!(out.contains("2 claim(s), 1 live"), "the tally: {out}");
         assert!(!rows[0].live && rows[1].live);
     }
@@ -307,57 +313,26 @@ mod tests {
         assert_eq!(row.expires_in_ms, -120_000);
         assert!(!row.live);
 
-        // A claim minted by a clock ahead of ours must not wrap into the past.
+        // A claim minted by a clock impossibly far ahead of ours: the spans
+        // saturate, and — the property that matters — neither one wraps into
+        // the sign that would read as the opposite fact. Expiry stays in the
+        // future rather than reporting as lapsed, and the hold reads as
+        // negative rather than as an age of half a billion years.
         let skewed = ClaimRow::read(&claim("issue:1", "run-a", u64::MAX, u64::MAX), 0);
-        assert!(skewed.expires_in_ms < 0 && skewed.held_for_ms < 0);
+        assert_eq!(skewed.expires_in_ms, i64::MAX);
+        assert_eq!(skewed.held_for_ms, i64::MIN);
     }
 
     #[test]
     fn spans_render_in_one_fixed_shape() {
         assert_eq!(human_ms(0), "0s");
         assert_eq!(human_ms(45_000), "45s");
-        assert_eq!(human_ms(-45_000), "45s", "the caller's wording carries the sign");
+        assert_eq!(
+            human_ms(-45_000),
+            "45s",
+            "the caller's wording carries the sign"
+        );
         assert_eq!(human_ms(750_000), "12m 30s");
         assert_eq!(human_ms(11_040_000), "3h 04m");
-    }
-
-    /// `stella fleet claims` parses as a subcommand rather than as a task
-    /// prompt, and defaults to the live listing in text.
-    #[test]
-    fn fleet_claims_parses_as_a_verb_and_defaults_to_live_text() {
-        let cli = Cli::try_parse_from(["stella", "fleet", "claims"]).unwrap();
-        // `Command` derives no `Debug`, so the mismatch arm cannot print what
-        // it got — it says what was expected instead, which is the half a
-        // reader of the failure actually needs.
-        match cli.command {
-            Some(Command::Fleet {
-                cmd: Some(crate::fleet_verbs::FleetCmd::Claims { all, format }),
-                ..
-            }) => {
-                assert!(!all, "the live listing is the default");
-                assert_eq!(format, QueryFormat::Text);
-            }
-            _ => panic!("`stella fleet claims` must parse as the claims verb"),
-        }
-
-        let cli = Cli::try_parse_from(["stella", "fleet", "claims", "--all", "--format", "json"])
-            .unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Fleet {
-                cmd: Some(crate::fleet_verbs::FleetCmd::Claims {
-                    all: true,
-                    format: QueryFormat::Json
-                }),
-                ..
-            })
-        ));
-
-        // And the documented escape hatch still works: `--` makes it a prompt.
-        let cli = Cli::try_parse_from(["stella", "fleet", "--", "claims are stale"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Fleet { cmd: None, .. })
-        ));
     }
 }

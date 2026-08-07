@@ -802,9 +802,7 @@ async fn run_task(
     let (summary, success, outcome_label, force_incomplete): (String, bool, &str, bool) =
         if use_pipeline {
             use stella_core::router::{CircuitBreaker, Router};
-            use stella_pipeline::{
-                NoContextRecall, Pipeline, PipelineConfig, PipelinePorts, PipelineStatus,
-            };
+            use stella_pipeline::{NoContextRecall, PipelineConfig, PipelinePorts, PipelineStatus};
             let model_ref = stella_protocol::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
             // Role wiring from `agent_engine_config` — fleet workers honor the
             // same worker/triage/verifier pins and per-role overrides as `stella run`.
@@ -879,7 +877,9 @@ async fn run_task(
             let _controls = registry.attach_turn_controls(
                 stella_core::ports::TurnControls::none().with_gate(gate.clone()),
             );
-            let pipeline = Pipeline::new(ports, tx.clone(), config).with_turn_gate(gate.as_ref());
+            let pipeline =
+                crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), config)
+                    .with_turn_gate(gate.as_ref());
             // The system prompt + task prompt are already in `messages`; the
             // pipeline appends its own volatile recall+goal message, so pass the
             // raw task prompt as the goal (the pipeline never re-reads `messages`
@@ -1099,15 +1099,11 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
         if !handle.outcome.summary.is_empty() {
             println!("      {}", handle.outcome.summary.dimmed());
         }
-        if let Some(error) = &handle.ledger_error {
-            // The result above is authoritative; what was lost is the durable
-            // row. Silent here would mean the only witness to an open
-            // attempts row is a future `stella doctor`.
-            println!(
-                "      {} attempt not recorded in the fleet ledger ({error}) — the row stays \
-                 open; `stella doctor` will report it",
-                "!".yellow()
-            );
+        // Durable-failure notices (a ledger close that failed after the
+        // worker settled, a dispatch lease lost mid-run) are composed in
+        // stella-fleet — this file is at its size ceiling (#1677).
+        for notice in stella_fleet::handle_notices(handle) {
+            println!("      {} {notice}", "!".yellow());
         }
     }
     for (task_id, reason) in &report.dispatch_failures {
@@ -1408,6 +1404,7 @@ mod tests {
             worktree: None,
             budget: BudgetOutcome::Continue,
             ledger_error: None,
+            lease_loss: None,
         }
     }
 

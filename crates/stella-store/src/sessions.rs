@@ -49,6 +49,12 @@ pub enum SessionStatus {
     /// Its counterpart [`SessionStatus::Error`] therefore means only "it fell
     /// over", which is the distinction a boot-time resume sweep reads.
     Cancelled,
+    /// The run ended itself by policy — a stuck-loop escalation, the step
+    /// cap, an enforced budget, a scope review the user ended. A deliberate
+    /// ending like [`SessionStatus::Cancelled`], only chosen by the engine
+    /// rather than the human; the CLI exits `3` for exactly this case, and
+    /// the registry keeps the same distinction (#1653).
+    Stopped,
     /// The session ended after finishing its work.
     Complete,
     /// Tucked away by the user from the SESSIONS view; kept until removed.
@@ -60,11 +66,12 @@ pub enum SessionStatus {
 
 impl SessionStatus {
     /// Grouping/order for the SESSIONS view: active work first.
-    pub const ALL: [SessionStatus; 7] = [
+    pub const ALL: [SessionStatus; 8] = [
         SessionStatus::InProgress,
         SessionStatus::NeedsInput,
         SessionStatus::Paused,
         SessionStatus::Cancelled,
+        SessionStatus::Stopped,
         SessionStatus::Complete,
         SessionStatus::Archived,
         SessionStatus::Error,
@@ -77,6 +84,7 @@ impl SessionStatus {
             SessionStatus::NeedsInput => "Needs Input",
             SessionStatus::Paused => "Paused",
             SessionStatus::Cancelled => "Cancelled",
+            SessionStatus::Stopped => "Stopped by policy",
             SessionStatus::Complete => "Complete",
             SessionStatus::Archived => "Archived",
             SessionStatus::Error => "Error",

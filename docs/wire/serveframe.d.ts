@@ -25,10 +25,10 @@ export type AgentEvent = {
   name: StageKind;
   type: "stage";
 } | {
-  delta: string;
+  text: string;
   type: "text";
 } | {
-  text: string;
+  delta: string;
   type: "text_delta";
 } | {
   delta: string;
@@ -1159,6 +1159,22 @@ export interface LadderSnapshot {
    * A flip was observed but its confirmation re-run did not pass (#859).
    */
   unstable_flip: boolean;
+  /**
+   * Whether the model that graded this verdict was independent of the
+   * worker that produced the work (#1795): `Some(false)` is a self-graded
+   * verdict — the verdict call resolved to the worker's own model — and
+   * `Some(true)` a distinct grader.
+   *
+   * A structured fact rather than the once-per-run prose caveat, because
+   * the caveat scrolls away while the verdict is stored: a reader of a
+   * stored verdict must be able to see the grader was not independent
+   * without the transcript. Absent when no model verdict was bought (the
+   * deterministic, waived, and abstaining rungs — nothing graded, so
+   * independence is not a fact about them), when the worker's own
+   * resolution failed (nothing to compare against), and on snapshots
+   * recorded before this existed.
+   */
+  verifier_independent?: boolean | null;
   /**
    * The witness-tamper check's result: `None` when no witness was armed,
    * `Some(true)` when every witness artifact matched its pinned identity.

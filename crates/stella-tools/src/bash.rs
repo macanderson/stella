@@ -45,13 +45,25 @@ use tokio::process::Command;
 use crate::registry::Tool;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
-/// Deliberately 3.3x `exec::MAX_OUTPUT_BYTES` (30k), ratified as-is (#616):
-/// the shell is the agent's primary sensory channel — one `bash` call renders
-/// a whole build or test run whose first error and final summary can sit
-/// 100 KB apart — while the `exec` budget bounds each incremental
+/// Byte cap on one `bash` result before head+tail elision
+/// ([`crate::exec::truncate_middle_capped`]). [`crate::custom`] aliases this
+/// constant, so the two shell-shaped surfaces cannot drift apart (#1889).
+///
+/// 64 KB ≈ 18k estimated tokens ≈ 12% of the 150k compaction budget — the
+/// point #1842 ratified for `read_file`, for the same reason: one large
+/// result does not trigger the compaction that would reclaim it
+/// (`compact_measured` returns early when the rest of the transcript is
+/// small), and the 8-step retention horizon then keeps it verbatim, so its
+/// real cost is eight times its size. The previous 100 KB (#616) put ~19% of
+/// the budget in a single result, ~224k input tokens over the horizon.
+///
+/// Still 2.2x `exec::MAX_OUTPUT_BYTES` (30k), preserving #616's ratio
+/// argument: the shell is the agent's primary sensory channel — one `bash`
+/// call renders a whole build or test run whose first error and final summary
+/// sit far apart — while the `exec` budget bounds each incremental
 /// `read_output` page of a *managed* process the agent polls repeatedly.
 /// Aligning them would either starve the shell or inflate every page read.
-const MAX_OUTPUT_BYTES: usize = 100_000;
+pub(crate) const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// grep-family commands whose first positional arg is a search pattern.
 const GREP_CMDS: &[&str] = &["grep", "egrep", "fgrep", "rg", "ripgrep", "ag"];
@@ -340,21 +352,12 @@ impl Tool for Bash {
         }
         combined.push_str(&format!("\n[exit code: {status}]"));
 
-        // Truncate from the middle if too long — keep head and tail. Slice
-        // only on char boundaries so multibyte UTF-8 output can't panic.
+        // Over the cap: keep head and tail, elide the middle loudly — the
+        // tail carries the part that usually matters (test summary, last
+        // error), and the marker names what fell out. One shared spelling
+        // for every shell-shaped surface (`crate::exec::truncate_middle_capped`).
         if combined.len() > MAX_OUTPUT_BYTES {
-            let mut head = MAX_OUTPUT_BYTES / 2;
-            while !combined.is_char_boundary(head) {
-                head -= 1;
-            }
-            let mut tail_start = combined.len() - MAX_OUTPUT_BYTES / 2;
-            while !combined.is_char_boundary(tail_start) {
-                tail_start += 1;
-            }
-            let truncated = tail_start - head;
-            let head_str = &combined[..head];
-            let tail_str = &combined[tail_start..];
-            combined = format!("{head_str}\n... [truncated {truncated} bytes] ...\n{tail_str}");
+            combined = crate::exec::truncate_middle_capped(&combined, MAX_OUTPUT_BYTES);
         }
 
         // Append after truncation so the steer is never the part that gets
@@ -534,6 +537,50 @@ mod tests {
             }
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
+    }
+
+    /// Witness for #1889: output just over the cap keeps BOTH its first and
+    /// last lines around an elision marker that names the cap. Sized from the
+    /// constant — the filler alone fills the cap, so the sentinels push it
+    /// over by a hair — which makes the test fail under any larger cap (the
+    /// old 100 KB left this size untouched) and under any head-only cut.
+    #[tokio::test]
+    async fn over_cap_output_keeps_first_and_last_lines_with_a_named_elision() {
+        let dir = std::env::temp_dir();
+        let command = format!(
+            "printf 'FIRST_SENTINEL_LINE\\n'; \
+             head -c {MAX_OUTPUT_BYTES} /dev/zero | tr '\\0' 'x'; \
+             printf '\\nLAST_SENTINEL_LINE\\n'"
+        );
+        let result = Bash
+            .execute(&serde_json::json!({ "command": command }), &dir)
+            .await;
+        let content = match result {
+            ToolOutput::Ok { content } => content,
+            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+        };
+        assert!(
+            content.contains("FIRST_SENTINEL_LINE"),
+            "the head survives elision"
+        );
+        assert!(
+            content.contains("LAST_SENTINEL_LINE"),
+            "the tail survives elision"
+        );
+        assert!(
+            content.contains(&format!("the {MAX_OUTPUT_BYTES}-byte cap")),
+            "the marker names the cap it enforced: {}",
+            &content[..200]
+        );
+        assert!(
+            content.contains("bytes truncated"),
+            "the marker names the elided byte count"
+        );
+        assert!(
+            content.len() <= MAX_OUTPUT_BYTES + 256,
+            "bounded by the cap plus the marker (got {} bytes)",
+            content.len()
+        );
     }
 
     #[tokio::test]

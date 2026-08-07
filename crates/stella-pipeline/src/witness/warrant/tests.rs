@@ -13,10 +13,20 @@ fn diff(paths: &[&str], body: &str) -> String {
     out
 }
 
+/// A turn that recorded `file_changes` touches and dispatched nothing else
+/// worth naming — the signals every path-rule case below wants, where the diff
+/// is the subject and the counts are scenery.
+fn observed(file_changes: u32) -> ChangeSignals {
+    ChangeSignals {
+        file_changes,
+        ..ChangeSignals::default()
+    }
+}
+
 #[test]
 fn a_question_that_touched_nothing_needs_no_test() {
     assert_eq!(
-        warrant("", 0),
+        warrant("", observed(0)),
         WitnessWarrant::NotRequired(NoWitnessReason::NothingChanged)
     );
 }
@@ -25,23 +35,142 @@ fn a_question_that_touched_nothing_needs_no_test() {
 fn a_turn_that_touched_files_invisibly_still_needs_one() {
     // The honesty guard: FileChange events fired but the diff is blind. This
     // must never read as "nothing happened".
-    assert_eq!(warrant("", 3), WitnessWarrant::Required);
+    assert_eq!(warrant("", observed(3)), WitnessWarrant::Required);
+}
+
+#[test]
+fn a_turn_that_dispatched_a_mutating_call_still_needs_one() {
+    // #1701. Both of the guards this module had say "clean": no FileChange
+    // events (structurally true of every candidate) and an empty diff that was
+    // read successfully (true, and correct — a system-configuration task lands
+    // its effects on `/etc`, not under the candidate root). Only the dispatch
+    // record disagrees, and it is the only one that cannot go dark.
+    assert_eq!(
+        warrant(
+            "",
+            ChangeSignals {
+                file_changes: 0,
+                mutating_actions: 10,
+                ..ChangeSignals::default()
+            }
+        ),
+        WitnessWarrant::Required,
+        "ten calls able to write the workspace is not 'there is no behavior to prove'"
+    );
+}
+
+#[test]
+fn only_a_turn_that_neither_touched_nor_tried_is_nothing_changed() {
+    // The other direction, which is the one that keeps the rule from being a
+    // blanket `Required`: a question or a lookup dispatched nothing able to
+    // write, and that is knowledge rather than an absence of it. This is the
+    // sole surviving route to `NothingChanged`.
+    for signals in [
+        ChangeSignals {
+            file_changes: 1,
+            ..ChangeSignals::default()
+        },
+        ChangeSignals {
+            mutating_actions: 1,
+            ..ChangeSignals::default()
+        },
+        ChangeSignals {
+            file_changes: 1,
+            mutating_actions: 1,
+            ..ChangeSignals::default()
+        },
+    ] {
+        assert_eq!(
+            warrant("", signals),
+            WitnessWarrant::Required,
+            "{signals:?} has a live signal and must not waive the witness"
+        );
+    }
+    assert_eq!(
+        warrant("", ChangeSignals::default()),
+        WitnessWarrant::NotRequired(NoWitnessReason::NothingChanged)
+    );
 }
 
 #[test]
 fn docs_only_needs_no_test() {
     let d = diff(&["README.md", "docs/spec/x.md"], "+Some new prose.\n");
     assert_eq!(
-        warrant(&d, 2),
+        warrant(&d, observed(2)),
         WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly)
     );
+}
+
+/// #1701's recurrence path. The empty-diff branch reads `mutating_actions`,
+/// but the same ten shell calls PLUS one README edit gave the diff a path —
+/// and the path rules never consulted the signals, so the change classified
+/// `DocsOnly` and completed waived (`passed: true, deterministic: true`)
+/// over effects that landed in `/etc`, exactly the outcome #1701 closed for
+/// the pathless shape. An opaque dispatched call voids the premise every
+/// path waiver rests on: that the diff IS the change.
+#[test]
+fn an_opaque_call_forfeits_every_path_waiver() {
+    let escaped = ChangeSignals {
+        mutating_actions: 10,
+        opaque_actions: 9,
+        ..ChangeSignals::default()
+    };
+    for (name, d) in [
+        ("docs", diff(&["README.md"], "+configure nginx on 8080\n")),
+        (
+            "tests",
+            diff(&["tests/x_test.py"], "+assert port == 8080\n"),
+        ),
+        ("config", diff(&["Cargo.toml"], "+serde = \"1\"\n")),
+        ("comments", diff(&["src/lib.rs"], "+// a comment\n")),
+        ("removal", diff(&["src/lib.rs"], "-let x = 1;\n")),
+    ] {
+        assert_eq!(
+            warrant(&d, escaped),
+            WitnessWarrant::Required,
+            "a {name}-shaped diff beside opaque calls must not waive the witness"
+        );
+    }
+    // The other direction keeps the warrant useful: an ordinary docs edit is
+    // made OF mutating calls (`edit_file` is not read-only), and every one of
+    // them is diff-accountable — the waiver stands.
+    let accounted = ChangeSignals {
+        mutating_actions: 3,
+        ..ChangeSignals::default()
+    };
+    assert_eq!(
+        warrant(&diff(&["README.md"], "+Some new prose.\n"), accounted),
+        WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly),
+        "file-tool mutations are what a docs edit is; they must not cost the waiver"
+    );
+}
+
+/// The classifier the tally rides on: only the file-CRUD and session-local
+/// bookkeeping tools are diff-accountable, and an unknown name fails closed
+/// as opaque.
+#[test]
+fn only_workspace_file_tools_are_diff_accountable() {
+    for accountable in ["write_file", "edit_file", "apply_edits", "delete_file"] {
+        assert!(diff_accountable_mutator(accountable), "{accountable}");
+    }
+    for opaque in [
+        "bash",
+        "run_tests",
+        "start_process",
+        "repo_push",
+        "web_download",
+        "mcp_anything",
+        "some_custom_tool",
+    ] {
+        assert!(!diff_accountable_mutator(opaque), "{opaque} must be opaque");
+    }
 }
 
 #[test]
 fn tests_only_needs_no_test() {
     let d = diff(&["stella-core/src/foo/tests.rs"], "+assert_eq!(1, 1);\n");
     assert_eq!(
-        warrant(&d, 1),
+        warrant(&d, observed(1)),
         WitnessWarrant::NotRequired(NoWitnessReason::TestsOnly)
     );
 }
@@ -57,7 +186,7 @@ fn config_only_needs_no_test() {
     ] {
         let d = diff(&[path], "+  timeout-minutes: 30\n");
         assert_eq!(
-            warrant(&d, 1),
+            warrant(&d, observed(1)),
             WitnessWarrant::NotRequired(NoWitnessReason::ConfigOnly),
             "{path} is a build/CI/dependency manifest"
         );
@@ -79,7 +208,7 @@ fn behavior_bearing_yaml_is_not_config() {
     ] {
         let d = diff(&[path], "+  replicas: 3\n");
         assert_eq!(
-            warrant(&d, 1),
+            warrant(&d, observed(1)),
             WitnessWarrant::Required,
             "{path} carries behavior and must keep its verification"
         );
@@ -93,7 +222,7 @@ fn comments_only_needs_no_test() {
         "-// old note\n+// a clearer note\n+\n",
     );
     assert_eq!(
-        warrant(&d, 1),
+        warrant(&d, observed(1)),
         WitnessWarrant::NotRequired(NoWitnessReason::CommentsOnly)
     );
 }
@@ -105,7 +234,7 @@ fn a_pure_removal_needs_no_test() {
         "-pub fn unused() -> u32 {\n-    7\n-}\n",
     );
     assert_eq!(
-        warrant(&d, 1),
+        warrant(&d, observed(1)),
         WitnessWarrant::NotRequired(NoWitnessReason::PureRemoval)
     );
 }
@@ -117,7 +246,7 @@ fn a_removal_that_leaves_a_note_is_still_a_removal() {
         "-pub fn unused() -> u32 {\n-    7\n-}\n+// removed: superseded by `live()`\n",
     );
     assert_eq!(
-        warrant(&d, 1),
+        warrant(&d, observed(1)),
         WitnessWarrant::NotRequired(NoWitnessReason::PureRemoval)
     );
 }
@@ -131,7 +260,7 @@ fn docs_plus_source_is_a_source_change() {
         "+let x = compute();\n",
     );
     assert_eq!(
-        warrant(&d, 2),
+        warrant(&d, observed(2)),
         WitnessWarrant::Required,
         "a source change that also updated its docs is still a source change"
     );
@@ -143,7 +272,7 @@ fn tests_plus_source_is_a_source_change() {
         &["tests/a.rs", "stella-core/src/driver.rs"],
         "+let x = compute();\n",
     );
-    assert_eq!(warrant(&d, 2), WitnessWarrant::Required);
+    assert_eq!(warrant(&d, observed(2)), WitnessWarrant::Required);
 }
 
 #[test]
@@ -153,7 +282,7 @@ fn a_removal_that_adds_real_code_is_a_rewrite() {
         "-pub fn old() -> u32 { 7 }\n+pub fn new() -> u32 { 8 }\n",
     );
     assert_eq!(
-        warrant(&d, 1),
+        warrant(&d, observed(1)),
         WitnessWarrant::Required,
         "replacing code is a behavior change, not a removal"
     );
@@ -168,7 +297,7 @@ fn a_rust_deref_assignment_is_code_not_a_comment() {
         "-    *counter = 0;\n+    *counter = 1;\n",
     );
     assert_eq!(
-        warrant(&d, 1),
+        warrant(&d, observed(1)),
         WitnessWarrant::Required,
         "a deref assignment is a behavior change, not a comment"
     );
@@ -180,12 +309,12 @@ fn a_js_private_field_and_c_preprocessor_are_code_not_comments() {
         &["ui/src/wallet.ts"],
         "-    #balance = 0;\n+    #balance = 100;\n",
     );
-    assert_eq!(warrant(&js, 1), WitnessWarrant::Required);
+    assert_eq!(warrant(&js, observed(1)), WitnessWarrant::Required);
     let c = diff(
         &["native/buffer.c"],
         "-#define BUFFER 256\n+#define BUFFER 512\n",
     );
-    assert_eq!(warrant(&c, 1), WitnessWarrant::Required);
+    assert_eq!(warrant(&c, observed(1)), WitnessWarrant::Required);
 }
 
 #[test]
@@ -194,7 +323,7 @@ fn a_decrement_is_code_not_a_sql_comment() {
         &["stella-core/src/driver.rs"],
         "-    --count;\n+    --count;\n+    step();\n",
     );
-    assert_eq!(warrant(&d, 1), WitnessWarrant::Required);
+    assert_eq!(warrant(&d, observed(1)), WitnessWarrant::Required);
 }
 
 #[test]
@@ -206,7 +335,7 @@ fn block_and_sql_comments_still_read_as_comments() {
         "+ * a doc line\n+ */\n+-- a note\n+# a python note\n",
     );
     assert_eq!(
-        warrant(&d, 1),
+        warrant(&d, observed(1)),
         WitnessWarrant::NotRequired(NoWitnessReason::CommentsOnly)
     );
 }
@@ -214,7 +343,7 @@ fn block_and_sql_comments_still_read_as_comments() {
 #[test]
 fn an_unrecognized_path_buys_the_test() {
     let d = diff(&["some/unknown/thing.zz"], "+data\n");
-    assert_eq!(warrant(&d, 1), WitnessWarrant::Required);
+    assert_eq!(warrant(&d, observed(1)), WitnessWarrant::Required);
 }
 
 #[test]
@@ -230,7 +359,7 @@ fn an_untracked_source_file_beside_a_docs_edit_is_a_source_change() {
         untracked_change_line("src/backdoor.rs", 42)
     );
     assert_eq!(
-        warrant(&d, 2),
+        warrant(&d, observed(2)),
         WitnessWarrant::Required,
         "an untracked source file must count as a source change"
     );
@@ -244,7 +373,7 @@ fn an_untracked_docs_file_beside_a_docs_edit_stays_docs_only() {
         untracked_change_line("docs/notes.md", 8)
     );
     assert_eq!(
-        warrant(&d, 2),
+        warrant(&d, observed(2)),
         WitnessWarrant::NotRequired(NoWitnessReason::DocsOnly)
     );
 }
@@ -257,7 +386,7 @@ fn an_untracked_only_change_still_buys_the_test() {
     for path in ["src/new_module.rs", "docs/new_page.md"] {
         let d = format!("{}\n", untracked_change_line(path, 12));
         assert_eq!(
-            warrant(&d, 1),
+            warrant(&d, observed(1)),
             WitnessWarrant::Required,
             "{path}: an untracked-only change is unreadable and must fail closed"
         );
@@ -268,7 +397,7 @@ fn an_untracked_only_change_still_buys_the_test() {
 fn a_source_file_under_a_docs_named_crate_is_not_docs() {
     // `stella-docs/src/lib.rs` is Rust, not prose.
     let d = diff(&["stella-docs/src/lib.rs"], "+pub fn render() {}\n");
-    assert_eq!(warrant(&d, 1), WitnessWarrant::Required);
+    assert_eq!(warrant(&d, observed(1)), WitnessWarrant::Required);
 }
 
 #[test]

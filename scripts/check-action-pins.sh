@@ -68,9 +68,14 @@ total="$(printf '%s\n' "$all_uses" | wc -l | tr -d '[:space:]')"
 
 # Not fatal: a missing tag comment is a readability problem, not a security one.
 no_comment="$(printf '%s\n' "$all_uses" | grep -vE '@[0-9a-f]{40}[[:space:]]*#' || true)"
+
+# The verdict is already decided; the writes below are best-effort. SIGPIPE is
+# ignored and each write's failure discarded, so a reader that closed the pipe
+# (`| head -1`, `| true`) cannot turn a green verdict into a failure (#1815).
+trap '' PIPE
 if [ -n "$no_comment" ]; then
-  echo "check-action-pins: pinned, but with no '# <tag>' comment to say what version this is:"
-  printf '%s\n' "$no_comment"
+  echo "check-action-pins: pinned, but with no '# <tag>' comment to say what version this is:" || true
+  printf '%s\n' "$no_comment" || true
 fi
 
-echo "check-action-pins: OK — all $total 'uses:' references are pinned to a commit SHA."
+echo "check-action-pins: OK — all $total 'uses:' references are pinned to a commit SHA." || true

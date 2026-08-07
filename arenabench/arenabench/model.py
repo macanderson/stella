@@ -38,6 +38,7 @@ __all__ = [
     "Engine",
     "MatchSpec",
     "RoleConfig",
+    "is_credential_name",
     "parse_dotenv",
     "screen_env",
     "slugify",
@@ -382,6 +383,16 @@ class Contestant:
     #: Names :func:`screen_env` refused to carry into the subprocess, kept so
     #: the seat can say what it dropped instead of dropping it in silence.
     ignored_env: tuple[str, ...] = ()
+    #: Credential names this seat *declared* it needs — a template's
+    #: ``[contestant.env] required = [...]`` list. Names only, never values;
+    #: alternatives, not a conjunction (any one credentials the seat). When
+    #: non-empty this is the seat's whole credential contract: declaring only
+    #: the subscription token is how a template keeps a metered key out of a
+    #: seat on purpose. Values are resolved at launch from the launching
+    #: process's environment or the saved credential set — and a seat still
+    #: holding none of them refuses to start rather than score a silent 0.0
+    #: (#1777).
+    required_env: tuple[str, ...] = ()
 
     @property
     def slug(self) -> str:
@@ -402,6 +413,7 @@ class Contestant:
             "engine_label": self.engine.label,
             "env_keys": sorted(self.env),
             "ignored_env_keys": list(self.ignored_env),
+            "required_env": list(self.required_env),
             "color": self.color,
         }
 
@@ -410,13 +422,32 @@ class Contestant:
         name = str(raw.get("name") or "").strip()
         agent = str(raw.get("agent") or "stella").strip()
         env = raw.get("env")
+        declared: list[str] = []
         if isinstance(env, str):
             env = parse_dotenv(env)
         elif isinstance(env, dict):
+            env = dict(env)
+            required = env.pop("required", None)
+            if isinstance(required, (list, tuple)):
+                # A template's `[contestant.env] required = [...]` arriving as
+                # JSON: a declaration of credential *names*, never a variable
+                # literally called "required" (#1777).
+                declared = [str(item) for item in required]
+            elif required is not None:
+                # A scalar really is somebody's variable; let screen_env rule.
+                env["required"] = required
             env = {str(k): str(v) for k, v in env.items()}
         else:
             env = {}
+        if not declared and isinstance(raw.get("required_env"), (list, tuple)):
+            declared = [str(item) for item in raw["required_env"]]
         env, ignored = screen_env(env)
+        # Declared names cross the same fence as pasted values: a declaration
+        # outside the credential shapes ("PATH") is reported, never resolved.
+        declared = list(dict.fromkeys(declared))
+        dropped = [item for item in declared if not is_credential_name(item)]
+        if dropped:
+            ignored = sorted({*ignored, *dropped})
         engine = Engine.from_json(raw.get("engine") or {})
         return cls(
             id=str(raw.get("id") or uuid.uuid4().hex[:12]),
@@ -426,6 +457,9 @@ class Contestant:
             env=env,
             color=str(raw.get("color") or ARENA_COLORS[seat % len(ARENA_COLORS)]),
             ignored_env=tuple(ignored),
+            required_env=tuple(
+                item for item in declared if is_credential_name(item)
+            ),
         )
 
 
@@ -568,6 +602,21 @@ _ENV_ALLOWED_SUFFIXES: tuple[str, ...] = (
     "_BASE_URL",
     "_API_BASE",
 )
+
+
+def is_credential_name(name: str) -> bool:
+    """Whether ``name`` could ever name a credential a seat may carry.
+
+    The same suffix fence :func:`screen_env` applies to pasted values, plus the
+    identifier shape :func:`parse_dotenv` requires of a key — applied to a
+    template's *declared* names (``required = [...]``) before anything resolves
+    them. A declaration is a promise to read that variable out of the launching
+    process's environment, so ``required = ["PATH"]`` must die in validation
+    rather than pull an arbitrary host variable into a seat's subprocess.
+    """
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)) and name.upper().endswith(
+        _ENV_ALLOWED_SUFFIXES
+    )
 
 
 def screen_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:

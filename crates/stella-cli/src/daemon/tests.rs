@@ -9,12 +9,13 @@
 //! What is NOT covered here, so the list is not mistaken for the whole
 //! surface: `Supervised::follow` and `interrupt_and_drain` write to this
 //! process's real stdout and stderr, which an in-process test cannot capture,
-//! so their streaming is exercised through [`Tail`] — which is where the
-//! truncation and lost-tail bugs actually live — rather than end to end. The
+//! so their streaming is exercised through [`console::Tail`] — which is where
+//! the truncation and lost-tail bugs actually live — rather than end to end. The
 //! end-to-end property (a `stella run` in a terminal survives that terminal's
 //! hangup) needs a pty and a live run; it is verified by hand, and the
 //! procedure is in the PR that added this module.
 
+use super::console::{PUMP_CHUNK, Tail};
 use super::*;
 
 /// An isolated registry per test. Not a shared temp dir: these tests spawn
@@ -126,7 +127,7 @@ fn a_supervised_child_leaves_this_process_session_and_group() {
 }
 
 /// The registry must name the process doing the work, not the one watching it
-/// — the third bug `scripts/fullauto.sh` paid for. Everything downstream reads
+/// — the third bug `scripts/self-driving.sh` paid for. Everything downstream reads
 /// this pid: the SESSIONS view's liveness, `daemon list`, and the signal
 /// `daemon stop` sends.
 #[test]
@@ -210,35 +211,20 @@ fn the_console_is_replayable_and_the_two_streams_stay_apart() {
 
 /// A stop must reach the whole tree, and must record what it did.
 ///
-/// Both halves are the bugs `scripts/fullauto.sh` paid for: a stop that
+/// Both halves are the bugs `scripts/self-driving.sh` paid for: a stop that
 /// signals only the leader leaves the tools it spawned running, and a stop
 /// that never writes a terminal status leaves a run the operator ended by hand
 /// to be presented, forever, as a crash.
-/// # Why the liveness lock is the probe, and `kill(-pgid, 0)` is not (#1609)
-///
-/// This asserted an empty process group, and failed deterministically on
-/// Actions while passing on every developer's machine. `kill(-pgid, 0)`
-/// answers "does this group have members", and a **zombie is a member**: it
-/// stays in its group until it is reaped. The group here is `sh` plus the
-/// `sleep` it spawned, and `sleep` is our *grand*child — when `sh` dies it is
-/// reparented to PID 1, so nothing in this test can reap it. A PID 1 that
-/// reaps promptly (a normal desktop init) hides the flaw; the Actions runner's
-/// does not, and the probe reports a group of one dead process as alive.
-///
-/// Reaping harder cannot fix it — the unreapable process is the one we do not
-/// own. The lock can: a zombie holds no file descriptors, because the kernel
-/// closes them at exit, so a free lock proves every holder genuinely *exited*.
-/// That is both the property this test wants and a strictly stronger one than
-/// the probe it replaces.
 #[test]
 fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     let (dir, registry) = temp_registry("stop");
     // A child with a child: `sh` waits on `sleep`, so a signal that reaches
-    // only `sh` leaves `sleep` behind. `sleep` inherits the liveness lock,
-    // which is what makes the assertion below a statement about the whole
-    // group rather than only its leader.
+    // only `sh` leaves `sleep` behind. `sleep` also inherits the liveness
+    // lock, which is what makes the lock assertion below a statement about
+    // the whole group rather than only its leader.
     let mut run = spawn_sh(&registry, "stop", "sleep 120 & wait");
     let sidecar = registry.sidecar_dir(&run.id);
+    let group = run.pgid;
 
     let id = run.id.clone();
     stop(&registry, &id).expect("stop");
@@ -246,21 +232,88 @@ fn stopping_ends_the_whole_group_and_records_it_as_deliberate() {
     assert_eq!(
         lock_is_held(&sidecar),
         Some(false),
-        "the run must actually be over"
+        "every holder of the lock — `sh` AND the `sleep` it spawned — must be gone"
     );
-    // No `kill(-pgid, 0)` probe beside it: the doc comment above explains why
-    // the lock is the assertion and the group probe was retired (#1609). A
-    // zombie is still a group member, so the probe reports a group of one dead
-    // process as alive — deterministically, on Actions.
 
-    // Reap our own child so the test leaves no zombie of its own behind.
+    // Reap the leader before probing the group: an exited-but-unreaped child
+    // is a zombie, and a zombie stays IN its process group until it is reaped
+    // — on Linux `kill(-pgid, 0)` on a group containing only a zombie returns
+    // success, so this assertion would fail there while passing on macOS,
+    // whose `killpg` skips zombies.
     let _ = run.child.wait();
+    // The orphaned `sleep` is init's to reap, not ours, so "gone" is
+    // eventually-true rather than instantly-true: launchd reaps before the
+    // next statement on a laptop; a CI container's init can lose that race,
+    // which is a fact about reap latency, not about `stop`.
+    assert!(
+        eventually(Duration::from_secs(10), || {
+            // SAFETY: probing a group with signal 0 sends nothing. The
+            // parentheses are load-bearing: a bare `unsafe { … }` opening a
+            // statement ends the statement at the block, orphaning the `!=`.
+            (unsafe { libc::kill(-group, 0) }) != 0
+        }),
+        "the whole process group must be gone"
+    );
 
     assert_eq!(
         registry.get(&id).map(|r| r.status),
         Some(SessionStatus::Cancelled),
         "a hand-stopped run must not age into the registry as a crash"
     );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #1653 witness: the terminal-status write distinguishes a deliberate stop
+/// from a crash. Before, both writers collapsed the outcome to a bool on the
+/// way into `outcome_status`, so a policy stop (stuck-loop escalation, step
+/// cap, enforced budget — the failures that exit `3`) and a genuine crash
+/// (exit `1`) both stored [`SessionStatus::Error`] — on the old signature
+/// this test does not even compile.
+///
+/// No signal is involved on this path, and no test in this binary ever calls
+/// `signals::note_interrupt`, so `interrupted_exit_code()` is reliably `None`
+/// here.
+#[test]
+fn a_deliberate_stop_records_a_status_distinct_from_a_crash() {
+    let stop = crate::failure::CliFailure::deliberate_stop(
+        "stuck-loop detected (persisted after a steering warning)",
+    );
+    let crash = crate::failure::CliFailure::error("model call failed: 500");
+
+    // Driven through the same registry write both real writers perform. The
+    // ids are re-minted by hand: two records minted in the same millisecond
+    // of the same process would otherwise share one `ses-<ms>-<pid>` id.
+    let (dir, registry) = temp_registry("deliberate-status");
+    let mut stopped = SessionRecord::new("/tmp/workspace", "stopped by policy");
+    let mut crashed = SessionRecord::new("/tmp/workspace", "fell over");
+    stopped.id.push_str("-stop");
+    crashed.id.push_str("-crash");
+    registry.upsert(&stopped).unwrap();
+    registry.upsert(&crashed).unwrap();
+    assert!(
+        registry
+            .set_status(&stopped.id, outcome_status(Err(&stop)))
+            .unwrap()
+    );
+    assert!(
+        registry
+            .set_status(&crashed.id, outcome_status(Err(&crash)))
+            .unwrap()
+    );
+
+    let stored_stop = registry.get(&stopped.id).map(|r| r.status);
+    let stored_crash = registry.get(&crashed.id).map(|r| r.status);
+    assert_eq!(
+        stored_stop,
+        Some(SessionStatus::Stopped),
+        "a run that ended itself by policy must not read as a crash"
+    );
+    assert_eq!(stored_crash, Some(SessionStatus::Error));
+    assert_ne!(stored_stop, stored_crash);
+
+    // The happy path is untouched by the widening.
+    assert_eq!(outcome_status(Ok(())), SessionStatus::Complete);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -350,6 +403,25 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     let sidecar = registry.sidecar_dir(&run.id);
     let id = run.id.clone();
 
+    // The precondition `stop` needs, and which nothing established before.
+    // `spawn` returns once the PARENT has forked; the liveness lock is taken by
+    // the CHILD, after its `exec`. So there is a window in which the run is
+    // registered but holds no lock — and `stop` reads exactly that lock to
+    // decide whether there is anything to stop:
+    //
+    //     if lock_is_held(&sidecar) != Some(true) { … "was already finished"; return }
+    //
+    // Entering that branch returns in microseconds, and the `took >= STOP_GRACE`
+    // assertion below then fails against a run that was never signalled at all.
+    // Under full-suite load, with ~1400 tests and several sibling cases
+    // spawning their own children, that window is exactly what widens (#1721).
+    assert!(
+        eventually(Duration::from_secs(10), || lock_is_held(&sidecar)
+            == Some(true)),
+        "precondition: the child must hold its liveness lock before stop can \
+         have anything to escalate against"
+    );
+
     let started = Instant::now();
     stop(&registry, &id).expect("stop");
     let took = started.elapsed();
@@ -358,9 +430,22 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
         took >= STOP_GRACE,
         "the child was killed after {took:?}, before its {STOP_GRACE:?} to shut down cleanly"
     );
-    assert_eq!(
-        lock_is_held(&sidecar),
-        Some(false),
+    // Bounded, because `stop` returns as soon as it has ISSUED the SIGKILL —
+    // unlike `Supervisor::interrupt_and_drain`, which reaps with `child.wait()`
+    // before returning. The kernel still has to schedule the target, terminate
+    // it, and release its flock, so "the lock is free" is not true at the
+    // instant `stop` returns and was never promised to be. Asserting it with no
+    // wait made this the one lock-released-by-a-dying-process check in the file
+    // without an `eventually` around it, and it lost the race under full-suite
+    // load while passing alone every time (#1721).
+    //
+    // This does not widen a bound that expired — there was no bound. The
+    // property under test is unchanged and still measured against a real child:
+    // a process that ignores TERM is gone after the grace period. Only the
+    // observation waits for the kernel to finish what SIGKILL started.
+    assert!(
+        eventually(Duration::from_secs(10), || lock_is_held(&sidecar)
+            == Some(false)),
         "a child that ignores TERM must still be gone"
     );
     assert_eq!(
@@ -370,6 +455,73 @@ fn a_run_that_ignores_term_is_killed_after_the_grace_period() {
     );
 
     let _ = run.child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #1921's witness: a run that outlives a watch's wall-clock ceiling is
+/// stopped and the watch RETURNS — the property the boot sweep rests on,
+/// because its sequential loop reaches the runs behind a wedged one only if
+/// this call comes back — and the stop is the graceful rung, `SIGTERM`
+/// first. A ceiling that reached straight for `SIGKILL` would land mid-tool,
+/// which invariant 6 exists to forbid.
+#[test]
+fn a_run_that_outlives_the_ceiling_is_stopped_gracefully_and_the_watch_returns() {
+    let (dir, registry) = temp_registry("ceiling");
+    let trap_ready = dir.join("trap-ready");
+    let saw_term = dir.join("saw-term");
+    // The group signal reaches `sleep`, which dies on it; `sh` then runs the
+    // trap and exits. The marker is proof the stop began as a request.
+    let run = spawn_sh(
+        &registry,
+        "ceiling",
+        // Quoted, because the registry dir's name embeds a `ThreadId(…)`
+        // whose parentheses are sh syntax bare.
+        &format!(
+            "trap 'touch \"{}\"' TERM; touch \"{}\"; sleep 120",
+            saw_term.display(),
+            trap_ready.display()
+        ),
+    );
+    let id = run.id.clone();
+    // Waited for BEFORE the bounded watch, or a loaded machine can fire the
+    // ceiling at a child that has not installed its trap yet — which dies on
+    // the default TERM disposition and reads as a kill (#1721's window, one
+    // rung up).
+    assert!(
+        eventually(Duration::from_secs(10), || trap_ready.is_file()),
+        "precondition: the child must be trapping TERM before the ceiling may fire"
+    );
+
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let watched = watch(rt, &registry, run, Some(Duration::from_millis(250))).expect("watch");
+
+    assert_eq!(
+        watched,
+        Watched::CeilingReached,
+        "a watch that outlives its ceiling must say so, or the sweep cannot report it"
+    );
+    assert!(
+        eventually(Duration::from_secs(10), || saw_term.is_file()),
+        "the ceiling must ask the run to stop before anything harder"
+    );
+    // Recorded as deliberate, exactly as a Ctrl-C or `daemon stop` is: a
+    // ceiling stop nobody watched must not age into the registry as a crash.
+    assert_eq!(
+        registry.get(&id).map(|r| r.status),
+        Some(SessionStatus::Cancelled)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The ceiling must not misfire: a run that ends on its own beats a ceiling
+/// it never reaches, and the watch reports it finished rather than stopped.
+#[test]
+fn a_run_that_finishes_under_the_ceiling_is_left_to_finish() {
+    let (dir, registry) = temp_registry("under-ceiling");
+    let run = spawn_sh(&registry, "quick", "true");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let watched = watch(rt, &registry, run, Some(Duration::from_secs(120))).expect("watch");
+    assert_eq!(watched, Watched::Finished);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -469,6 +621,57 @@ fn a_pid_resolves_to_its_run_and_an_ambiguous_one_is_refused() {
 }
 
 #[test]
+fn a_bare_pid_resolves_the_run_that_is_running_under_it() {
+    let (dir, registry) = temp_registry("resolve-pid");
+    let mut supervised = SessionRecord::new("/w", "supervised");
+    supervised.id = "ses-100-4242".into();
+    supervised.pid = 4242;
+    supervised.supervisor = Some(SupervisorInfo { pgid: 4242 });
+    let mut plain = SessionRecord::new("/w", "unsupervised");
+    plain.id = "ses-200-777".into();
+    plain.pid = 777;
+    for record in [&supervised, &plain] {
+        registry.upsert(record).unwrap();
+    }
+
+    // The address `ps`, Activity Monitor and an OOM-killer log hand you.
+    assert_eq!(resolve(&registry, Some("4242")).unwrap().id, supervised.id);
+
+    // A miss is reported in the address space the caller used: an id begins
+    // `ses-`, so "9999" was never a prefix anything could have matched.
+    let miss = resolve(&registry, Some("9999")).unwrap_err();
+    assert!(miss.contains("pid 9999"), "{miss}");
+
+    // Unsupervised sessions are not this command's subject by pid either.
+    assert!(resolve(&registry, Some("777")).is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_pid_two_runs_have_held_is_refused_rather_than_guessed() {
+    let (dir, registry) = temp_registry("resolve-pid-recycled");
+    // The kernel recycles pids and a finished run keeps the one it ran under,
+    // so two records sharing one is reachable, not hypothetical — and picking
+    // whichever the registry listed first would stop the wrong run.
+    for id in ["ses-100-4242", "ses-900-4242"] {
+        let mut record = SessionRecord::new("/w", id);
+        record.id = id.into();
+        record.pid = 4242;
+        record.supervisor = Some(SupervisorInfo { pgid: 4242 });
+        registry.upsert(&record).unwrap();
+    }
+
+    let ambiguous = resolve(&registry, Some("4242")).unwrap_err();
+    assert!(ambiguous.contains("ses-100-4242"), "{ambiguous}");
+    assert!(ambiguous.contains("ses-900-4242"), "{ambiguous}");
+    // "use more of the id" is useless advice for a pid: there is no more of it.
+    assert!(ambiguous.contains("use the id"), "{ambiguous}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn an_exit_code_is_forwarded_the_way_a_shell_reports_it() {
     let status = |script: &str| {
         std::process::Command::new("/bin/sh")
@@ -552,10 +755,7 @@ fn a_resumed_launch_keeps_the_record_and_the_crashed_console() {
         &registry,
         record,
         Path::new("/bin/sh"),
-        &[
-            std::ffi::OsString::from("-c"),
-            std::ffi::OsString::from("echo the resumed attempt"),
-        ],
+        &["-c".into(), "echo the resumed attempt".into()],
         b"",
         Console::Preserve,
         None,

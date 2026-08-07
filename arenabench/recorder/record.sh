@@ -6,12 +6,14 @@
 #
 #   Xvfb :99  ->  xterm running render.py  ->  ffmpeg -f x11grab -> H.264 MP4
 #
-# The only genuinely delicate part is shutdown. An MP4 needs its moov atom
-# written at the end, and a container stopped with SIGKILL leaves a truncated,
-# unplayable file. So ffmpeg is backgrounded, SIGTERM/SIGINT are trapped, and
-# the handler asks ffmpeg to finish cleanly (SIGINT, which ffmpeg treats as
-# "stop encoding and finalise") before this script exits. Docker's default
-# 10-second grace period is enough for that; the supervisor asks for more.
+# Shutdown used to be the delicate part: a plain MP4 needs its moov atom
+# written at the end, so a container stopped with SIGKILL left a file with
+# every frame in it and no index, which nothing can play. The output is now
+# a fragmented MP4 (see the ffmpeg invocation), so the file is playable at
+# every instant and a hard kill costs at most the final fragment. ffmpeg is
+# still backgrounded with SIGTERM/SIGINT trapped so the graceful path flushes
+# that last fragment; it is no longer the only thing standing between a run
+# and a watchable recording.
 set -eu
 
 WIDTH="${ARENA_WIDTH:-1440}"
@@ -21,6 +23,20 @@ FONT_SIZE="${ARENA_FONT_SIZE:-13}"
 EVENTS="${ARENA_EVENTS:-/logs/agent/stella-events.jsonl}"
 OUTPUT="${ARENA_OUTPUT:-/out/recording.mp4}"
 DISPLAY_NUM="${ARENA_DISPLAY:-:99}"
+
+# x264 sizes its thread pool from the number of CPUs it can SEE, which is the
+# host's core count -- `--cpus` is a scheduling quota and does not change it.
+# Each thread carries its own frame buffers, so on a big machine the encoder
+# alone outgrows the recorder's 512 MB cgroup: measured on a 32-vCPU bench rig,
+# x264 chose 28 threads and the container was OOM-killed within a second of
+# ffmpeg starting. The kill is SIGKILL, so nothing is logged and no fragment is
+# flushed -- every recording came out as a 28-byte `ftyp` stub and the run
+# looked like the renderer had silently done nothing.
+#
+# Pinning the pool makes the encoder's footprint a property of this file rather
+# than of whatever host it lands on. Two threads is ample for a 10 fps terminal
+# capture at `--cpus 0.5`, which cannot keep more than that busy anyway.
+THREADS="${ARENA_THREADS:-2}"
 
 mkdir -p "$(dirname "$OUTPUT")"
 
@@ -104,18 +120,35 @@ XTERM_PID=$!
 # open on an empty grey rectangle.
 sleep 0.6
 
+# Fragmented MP4, NOT +faststart.
+#
+# `+faststart` writes the index (`moov`) only when encoding *ends*. That makes
+# the graceful path below the single point of failure for the whole recording:
+# if this container is SIGKILLed rather than asked to stop -- the match process
+# tree is killed, the host reboots, Docker prunes -- the file is left as
+# `ftyp | free | mdat(size=0)`, every frame present and no index, which no
+# player on earth will open. Measured: 4 of 15 recordings from one head-to-head
+# died exactly this way, three of them 96MB of perfectly good video that had to
+# be rebuilt by hand.
+#
+# `+empty_moov` writes the index up front and `+frag_keyframe` closes a
+# fragment on every keyframe, so the file on disk is playable at every instant,
+# including while it is still being written. The graceful shutdown below is
+# still worth doing -- it flushes the final fragment -- but it is now an
+# optimisation rather than the difference between a video and 96MB of nothing.
 ffmpeg -nostdin -loglevel error \
   -f x11grab -video_size "${WIDTH}x${HEIGHT}" -framerate "$FPS" -i "$DISPLAY_NUM" \
   -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p \
-  -movflags +faststart \
+  -threads "$THREADS" \
+  -movflags +frag_keyframe+empty_moov+default_base_moof \
   -y "$OUTPUT" &
 FFMPEG_PID=$!
 log "recording -> $OUTPUT"
 
 finish() {
   # SIGINT, not SIGTERM: ffmpeg finalises the container on INT and dies
-  # abruptly on TERM. This is the difference between a playable file and a
-  # truncated one.
+  # abruptly on TERM. With fragmented output the file is already playable, so
+  # this now saves the last partial fragment rather than the whole recording.
   kill -INT "$FFMPEG_PID" 2>/dev/null || true
   wait "$FFMPEG_PID" 2>/dev/null || true
   kill "$XTERM_PID" "$XVFB_PID" 2>/dev/null || true

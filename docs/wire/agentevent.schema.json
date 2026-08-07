@@ -597,6 +597,13 @@
           "description": "A flip was observed but its confirmation re-run did not pass (#859).",
           "type": "boolean"
         },
+        "verifier_independent": {
+          "description": "Whether the model that graded this verdict was independent of the\nworker that produced the work (#1795): `Some(false)` is a self-graded\nverdict — the verdict call resolved to the worker's own model — and\n`Some(true)` a distinct grader.\n\nA structured fact rather than the once-per-run prose caveat, because\nthe caveat scrolls away while the verdict is stored: a reader of a\nstored verdict must be able to see the grader was not independent\nwithout the transcript. Absent when no model verdict was bought (the\ndeterministic, waived, and abstaining rungs — nothing graded, so\nindependence is not a fact about them), when the worker's own\nresolution failed (nothing to compare against), and on snapshots\nrecorded before this existed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "witness_intact": {
           "description": "The witness-tamper check's result: `None` when no witness was armed,\n`Some(true)` when every witness artifact matched its pinned identity.\n`Some(false)` never reaches a verdict — tampering aborts the\ncandidate — so its presence here is the *stated* proof the check ran.",
           "type": [
@@ -1281,7 +1288,7 @@
         },
         {
           "const": "witness",
-          "description": "Witness authoring: before the worker executes, an independent model\n(the verifier's resolution, never the worker's transcript) writes the\nwitness test — a test that FAILS on the current code and will pass\nonce the goal is met — arming the deterministic flip oracle (L-E11).\nThe witness is visible to the worker (iterating against a failing\ntest is where convergence comes from); integrity comes from tamper\nexclusion at verify time, not from hiding the test.",
+          "description": "Witness authoring: after the worker executes — once the warrant has\nread the diff and found something worth proving — an independent\nmodel (the verifier's resolution, never the worker's transcript)\nwrites the witness test in a pristine snapshot of the pre-execution\ntree: a test that FAILS there and will pass once the goal is met,\narming the deterministic flip oracle (L-E11). The witness is visible\nto the worker's revise turns (iterating against a failing test is\nwhere convergence comes from); integrity comes from tamper exclusion\nat verify time, not from hiding the test.",
           "type": "string"
         },
         {
@@ -1655,9 +1662,9 @@
       "type": "object"
     },
     {
-      "description": "The step's answer text, in full — the authoritative, durable record.\nThe field name `delta` is wire-frozen legacy and does NOT mean a\nfragment: the live fragments are [`AgentEvent::TextDelta`], which the\njournal deliberately drops. Consumers must REPLACE any accumulated\npreview with this value, never append it to one.",
+      "description": "The step's answer text, in full — the authoritative, durable record.\nNot a fragment, despite the live preview sibling\n[`AgentEvent::TextDelta`]: consumers must REPLACE any accumulated\npreview with this value, never append it to one.\n\nWire history (#1886): this field was spelled `delta` (and\n`text_delta`'s payload was spelled `text` — each variant carried the\nother's natural name). Serialization writes the self-describing name;\nthe alias keeps every recorded stream replaying. Raw-JSONL readers\nmust stay bilingual the same way: `text` first, legacy `delta` back.",
       "properties": {
-        "delta": {
+        "text": {
           "type": "string"
         },
         "type": {
@@ -1667,14 +1674,14 @@
       },
       "required": [
         "type",
-        "delta"
+        "text"
       ],
       "type": "object"
     },
     {
-      "description": "One in-order fragment of the answer text, emitted live while the\nmodel call streams. Strictly a best-effort preview: the step's\nfollowing `Text` event carries the full text and is authoritative —\nconsumers must REPLACE any accumulated deltas with it, never merge\n(a retried model call re-streams its deltas from the start, so the\naccumulation can be garbled; there is no reset marker). Additive to\nthe stream-json wire contract: consumers must tolerate `text_delta`\nlines appearing between events, and persistence layers may drop them\n(the `Text` event is the durable record).",
+      "description": "One in-order fragment of the answer text, emitted live while the\nmodel call streams. Strictly a best-effort preview: the step's\nfollowing `Text` event carries the full text and is authoritative —\nconsumers must REPLACE any accumulated deltas with it, never merge\n(a retried model call re-streams its deltas from the start, so the\naccumulation can be garbled; there is no reset marker). Additive to\nthe stream-json wire contract: consumers must tolerate `text_delta`\nlines appearing between events, and persistence layers may drop them\n(the `Text` event is the durable record). Wire history: `delta` was\nspelled `text` before #1886 — the alias accepts both; see [`AgentEvent::Text`].",
       "properties": {
-        "text": {
+        "delta": {
           "type": "string"
         },
         "type": {
@@ -1684,7 +1691,7 @@
       },
       "required": [
         "type",
-        "text"
+        "delta"
       ],
       "type": "object"
     },

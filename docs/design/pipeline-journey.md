@@ -217,8 +217,8 @@ witness test, and if not, why not":
   behavior.
 
 When a witness is required, the **witness author** — an independent model,
-resolved from the verifier's slot and refused if it would be the same model as
-the worker — writes a minimal *failing* test (`pipeline/witness_stage.rs`).
+resolved from the verifier's slot and skipped (the run degrades to an
+unauthored ladder) if it would be the same model as the worker — writes a minimal *failing* test (`pipeline/witness_stage.rs`).
 The author works in a **pristine snapshot of the pre-execution tree**, blind
 to the diff, so the test pins the *intended behavior* rather than restating
 the patch. The authored test must:
@@ -314,8 +314,9 @@ because `bench/evidence/` is frozen at the vocabulary each run was recorded in.
 
 A `Revise` decision (or a verifier `FAIL`) sends the evidence back into a fresh
 worker turn (`Pipeline::revise_candidate`), up to `max_revisions` times
-(default 2). On the **second consecutive** deterministic failure, the pipeline
-spends one verifier call on **distress guidance** (`verify::guidance_prompt`) —
+(default 2). On the **second** deterministic failure a candidate accumulates —
+consecutive or not (#868) — the pipeline spends one verifier call on
+**distress guidance** (`verify::guidance_prompt`) —
 a course-correction note that rides with the next revision prompt instead of
 letting the worker dig the same hole. Repeated identical failures also widen
 what the revision prompt discloses about the failure
@@ -374,7 +375,7 @@ Four roles, all configured through `agent_engine_config` (see the README's
 | **triage** | Stage 1 classification call | `pipeline_triage_model` → `default_model` |
 | **worker** | Execute turns, revise turns (plan and conversational ride this tier too) | `pipeline_worker_model` → `default_model` |
 | **verifier** | Verifier verdicts, distress guidance | `pipeline_verifier_model` → `default_model`; prefers a different model *family* than the worker |
-| **witness author** | Authors the failing witness test | Resolves from the verifier slot; **refused** if it would equal the worker's model — Stella will not let the worker write the test that proves the worker |
+| **witness author** | Authors the failing witness test | Resolves from the verifier slot; **degrades to no authored witness** if it would equal the worker's model (refused outright only under `require_independent_witness`) — Stella will not let the worker write the test that proves the worker |
 
 A configured role model whose provider has no resolvable key degrades softly
 to the worker with a notice — configuration can never turn a runnable

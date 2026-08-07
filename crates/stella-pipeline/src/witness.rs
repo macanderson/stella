@@ -9,9 +9,12 @@
 //!
 //! # Visible, not hidden — integrity by tamper exclusion
 //!
-//! The witness is deliberately **visible to the worker**: iterating against a
-//! failing test is where convergence comes from, and a test file on disk is
-//! discoverable by any worker with a shell anyway. Integrity comes instead
+//! The witness is deliberately **visible to the worker** once it exists:
+//! authoring runs after the execute turn (demand-driven, gated on the
+//! warrant), so the execute turn never sees it, but every revise turn
+//! iterates with the failing test on disk — which is where convergence comes
+//! from, and a test file is discoverable by any worker with a shell anyway.
+//! Integrity comes instead
 //! from *tamper exclusion* — the complete filesystem identity of the one test
 //! artifact the witness turn created is snapshotted. A flip is only credited
 //! when its bytes, type, mode, link count, and path remain unchanged at verify
@@ -71,6 +74,13 @@ pub enum WitnessArtifactError {
     /// Existing tracked content was changed or removed.
     #[error("witness author modified tracked file(s): {}", .0.join(", "))]
     TrackedMutation(Vec<String>),
+    /// The author emitted a `TEST_COMMAND` but never created any file at all.
+    /// Its own variant because the two failures deserve different fates: an
+    /// absent artifact is a *cannot-author* condition the pipeline degrades
+    /// past (the worker's change is real and already done), while a wrong or
+    /// multiple-file delta is an integrity violation that stays fail-closed.
+    #[error("witness author emitted a test command but created no file")]
+    NothingCreated,
     /// The untracked delta was not exactly one newly created test artifact.
     #[error("witness author must create exactly one new test file; changed: {}", .0.join(", "))]
     InvalidArtifact(Vec<String>),
@@ -261,6 +271,9 @@ pub fn validate_witness_artifact(
         return Err(WitnessArtifactError::TrackedMutation(tracked));
     }
     let changed = changed_paths(untracked_before, untracked_after);
+    if changed.is_empty() {
+        return Err(WitnessArtifactError::NothingCreated);
+    }
     let accepted = match changed.as_slice() {
         [path]
             if !untracked_before.contains_key(path)
@@ -486,18 +499,25 @@ fn dotnet_invocation_is_exact(path: &str, args: &[String]) -> bool {
 /// identity must have been observed at the accepted path itself — an
 /// observation the adapter attests was resolved elsewhere (or could not
 /// locate at all) is not the accepted artifact.
+///
+/// Returns the identity it accepted rather than `()`, so the caller that needs
+/// the pinned value gets it *from the proof* instead of re-unwrapping the same
+/// `Option` afterwards (#1789). The unwrap was locally sound and one line from
+/// what proved it, which is exactly how it survived review; making the
+/// signature carry the proof means no future edit between the two lines can
+/// make it unsound again.
 pub fn validate_witness_identity(
     path: &str,
     expected_fingerprint: &str,
-    identity: Option<&ArtifactIdentity>,
-) -> Result<(), WitnessArtifactError> {
+    identity: Option<ArtifactIdentity>,
+) -> Result<ArtifactIdentity, WitnessArtifactError> {
     match identity {
         Some(identity)
             if identity.is_regular_single_link()
                 && identity.path == path
                 && identity.fingerprint == expected_fingerprint =>
         {
-            Ok(())
+            Ok(identity)
         }
         _ => Err(WitnessArtifactError::InvalidIdentity(path.to_string())),
     }
@@ -559,6 +579,13 @@ pub struct Witness {
     /// Tracked edits, non-test files, and edits to pre-existing untracked
     /// files are rejected before candidate execution.
     pub files: HashMap<String, ArtifactIdentity>,
+    /// The accepted failing baseline run's combined output tail. Carried so
+    /// the transplanted observation arms the oracle through
+    /// [`crate::verify::FlipOracle::observe_run`] — which records the
+    /// baseline's failing test names and thereby arms the same-failure rule
+    /// (#867) — instead of the name-blind `observe`, which left that guard
+    /// inert for every authored witness.
+    pub baseline_output: String,
 }
 
 /// Whether the current no-follow filesystem observation is exactly the
@@ -607,11 +634,57 @@ pub fn runner_probe(program: &str) -> Option<TestInvocation> {
     })
 }
 
-/// The witness author's task prompt: split context exactly like the planner
-/// (goal + recall + repo structure, never the worker transcript — L-E6). The
-/// hard requirements — new file only, must fail now, no production edits,
-/// marker line — are the parts [`parse_witness_command`] and the pipeline's
-/// fail-check enforce mechanically; the prose is guidance.
+/// The witness author's fixed system prompt (#1786): the role and every hard
+/// requirement, byte-identical for the life of the process — the same
+/// contract as `VERIFIER_INSTRUCTIONS` (#1434). This block used to open the
+/// *user* message, ahead of the volatile sections, which re-billed the whole
+/// instruction set uncached on every author call, every repair call, and
+/// every tool round-trip inside them — the one verification role that runs a
+/// multi-step tool loop was the one paying full freight. As the system
+/// message it rides the cache-markable stable prefix (#1474); everything
+/// per-call stays in [`witness_prompt`].
+pub const WITNESS_SYSTEM_PROMPT: &str = "You are the WITNESS AUTHOR for a coding agent: a precise test author who writes a \
+     minimal test that FAILS on the current code and will PASS once the goal you are \
+     given is correctly accomplished. The fail→pass flip of your test is what verifies \
+     the work. You never modify production code and never fix the problem yourself.\n\n\
+     Hard requirements:\n\
+     - Create ONE NEW test file. Never modify existing files, and never touch \
+     production code — the implementation is someone else's job.\n\
+     - CHOOSE A RUNNER THIS REPOSITORY ALREADY USES. You cannot execute anything in \
+     this role, so you cannot discover a missing toolchain — and a command whose \
+     runner is not installed does not fail the test, it produces NO observation at \
+     all, which discards your witness and leaves the work unverified. Pick the \
+     ecosystem the repository listing evidences (a manifest such as \
+     `Cargo.toml`, `package.json`, `pyproject.toml`/`setup.py`, `go.mod`, or a \
+     `*.csproj`, plus existing tests written for it) and match the conventions of \
+     the tests already there. If the listing evidences no test runner at all, say \
+     so in prose and emit no TEST_COMMAND line rather than guessing one.\n\
+     - Put it where that runner collects it. Rust integration tests MUST \
+     live in `tests/` (cargo cannot run a test file under `src/`); Python, Vitest, Go \
+     and .NET may use their filename conventions.\n\
+     - The test must fail NOW for the RIGHT reason (it exercises the missing/broken \
+     behavior), not because of a typo, a missing import, or a harness error.\n\
+     - ASSERT on a value the goal decides. A test with no assertions, one comparing \
+     constants (`assert_eq!(2, 2)`), one comparing a value to itself, or a bare \
+     `#[should_panic]` / `raises(Exception)` is REFUSED at creation — each of those \
+     flips green without constraining the change. Name the expected panic if a panic \
+     is what you mean to prove.\n\
+     - Explore with `read_file` and `glob` (names only) to find the test directories \
+     and conventions; create with `create_witness_test`. No general write, edit, \
+     process, network, or external action is available in this role.\n\
+     - The command must directly name this artifact and an exact test: for Rust use \
+     `cargo test --test <file-stem> <selector> -- --exact`; for Python/Vitest name the \
+     file path; for Go/.NET include an exact test filter. Never run a whole suite.\n\
+     - End your reply with exactly one line:\n\
+     TEST_COMMAND: <the direct, artifact-specific test command>";
+
+/// The witness author's per-call user prompt: split context exactly like the
+/// planner (goal + recall + repo structure, never the worker transcript —
+/// L-E6). The fixed role and hard requirements ride separately as
+/// [`WITNESS_SYSTEM_PROMPT`]; the parts the prompt promises —
+/// new file only, must fail now, marker line — are what
+/// [`parse_witness_command`] and the pipeline's fail-check enforce
+/// mechanically, so the prose is guidance over an enforced contract.
 ///
 /// `available_runners` is the probed availability set (#1539): the runners
 /// the pipeline confirmed this workspace can actually spawn. The author's
@@ -622,68 +695,24 @@ pub fn witness_prompt(
     goal: &str,
     recall: &[RecalledFrame],
     repo_structure: &str,
-    project_test_command: Option<&str>,
     available_runners: &[String],
 ) -> String {
-    let mut s = String::from(
-        "You are the WITNESS AUTHOR for a coding agent. Write a witness test: a minimal \
-         test that FAILS on the current code and will PASS once the goal below is correctly \
-         accomplished. The fail→pass flip of your test is what verifies the work.\n\n\
-         Hard requirements:\n\
-         - Create ONE NEW test file. Never modify existing files, and never touch \
-         production code — the implementation is someone else's job.\n\
-         - CHOOSE A RUNNER THIS REPOSITORY ALREADY USES. You cannot execute anything in \
-         this role, so you cannot discover a missing toolchain — and a command whose \
-         runner is not installed does not fail the test, it produces NO observation at \
-         all, which discards your witness and leaves the work unverified. Pick the \
-         ecosystem the repository listing below evidences (a manifest such as \
-         `Cargo.toml`, `package.json`, `pyproject.toml`/`setup.py`, `go.mod`, or a \
-         `*.csproj`, plus existing tests written for it) and match the conventions of \
-         the tests already there. If the listing evidences no test runner at all, say \
-         so in prose and emit no TEST_COMMAND line rather than guessing one.\n\
-         - Put it where that runner collects it. Rust integration tests MUST \
-         live in `tests/` (cargo cannot run a test file under `src/`); Python, Vitest, Go \
-         and .NET may use their filename conventions.\n\
-         - The test must fail NOW for the RIGHT reason (it exercises the missing/broken \
-         behavior), not because of a typo, a missing import, or a harness error.\n\
-         - ASSERT on a value the goal decides. A test with no assertions, one comparing \
-         constants (`assert_eq!(2, 2)`), one comparing a value to itself, or a bare \
-         `#[should_panic]` / `raises(Exception)` is REFUSED at creation — each of those \
-         flips green without constraining the change. Name the expected panic if a panic \
-         is what you mean to prove.\n\
-         - Use `create_witness_test`; no general write, edit, process, network, or external \
-         action is available in this role.\n\
-         - The command must directly name this artifact and an exact test: for Rust use \
-         `cargo test --test <file-stem> <selector> -- --exact`; for Python/Vitest name the \
-         file path; for Go/.NET include an exact test filter. Never run a whole suite.\n\
-         - End your reply with exactly one line:\n\
-         TEST_COMMAND: <the direct, artifact-specific test command>\n",
-    );
-    if let Some(command) = project_test_command
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
-    {
-        // The strongest available evidence that a runner exists, and the only
-        // one that is a fact rather than an inference: this project names this
-        // command, so its toolchain is installed here. Given first, above the
-        // file listing, because it settles the choice the listing can only hint
-        // at.
-        s.push_str(&format!(
-            "\n## This project's own test command\n`{command}`\nIts runner is installed \
-             and working here. Author for that runner, and shape your TEST_COMMAND like \
-             this one — narrowed to your single new test.\n"
-        ));
-    }
+    let mut s = String::new();
     if !available_runners.is_empty() {
         // Probed fact, not inference (#1539): the pipeline spawned each
         // vocabulary runner's version probe in this very workspace. The
         // author's TEST_COMMAND is checked against this set, so naming a
-        // runner outside it discards the witness.
+        // runner outside it discards the witness. The wording stays honest
+        // about the probe's granularity: `npx --version` answering says
+        // nothing about `vitest` being installed, so the set is a ceiling
+        // on runner *programs*, never a warranty for their subcommands.
         s.push_str(&format!(
-            "\n## Test runners available in this workspace\n{}\nThese are the ONLY \
-             runners installed here — your TEST_COMMAND must use one of them. The \
-             repository listing below tells you which of them this project actually \
-             uses.\n",
+            "\n## Test runners available in this workspace\n{}\nEach of these answered a \
+             version probe here, and your TEST_COMMAND must use one of them — any other \
+             runner discards your witness. The probe is program-level only: it cannot \
+             vouch for a subcommand or a package the program would have to fetch (`cargo \
+             nextest`, `npx vitest`), so prefer an invocation the repository listing \
+             below evidences the project already using.\n",
             available_runners.join(", ")
         ));
     }
@@ -704,7 +733,9 @@ pub fn witness_prompt(
     }
     s.push_str("\n## Goal\n");
     s.push_str(goal.trim());
-    s
+    // The first section opens with its own separating newline; with the
+    // fixed block gone to the system message there is nothing above it.
+    s.trim_start().to_string()
 }
 
 /// The one bounded repair retry (the L-V2 pattern): the authored test passed
@@ -716,7 +747,9 @@ pub fn witness_repair_prompt(command: &str) -> String {
         "Your witness test PASSED on the current, unmodified code — it proves nothing, \
          because only a fail→pass flip counts as verification. Rewrite the test so it fails \
          NOW for the right reason (it must exercise the behavior the goal will add or fix). \
-         The command that just passed was:\n{command}\n\n\
+         Call `create_witness_test` again with the corrected file — it REPLACES your \
+         previous artifact, which is discarded. The command that just passed was:\n\
+         {command}\n\n\
          End your reply with the corrected `TEST_COMMAND:` line."
     )
 }
@@ -1003,6 +1036,23 @@ mod tests {
         }
     }
 
+    /// The absent-artifact case is its own variant so the stage can degrade
+    /// past it: an author that emitted a `TEST_COMMAND` but never created a
+    /// file is a cannot-author condition, and mapping it to the same
+    /// fail-closed rejection as an integrity violation discarded a completed
+    /// worker change for want of scaffolding.
+    #[test]
+    fn an_absent_artifact_is_nothing_created_not_an_integrity_violation() {
+        let error = validate_witness_artifact(
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(error, WitnessArtifactError::NothingCreated));
+    }
+
     #[test]
     fn witness_artifact_rejects_tracked_production_edits() {
         let error = validate_witness_artifact(
@@ -1171,7 +1221,7 @@ mod tests {
             validate_witness_identity(
                 "tests/authority_witness.rs",
                 "w1",
-                Some(&observed_at_accepted_path)
+                Some(observed_at_accepted_path)
             )
             .is_ok()
         );
@@ -1180,13 +1230,36 @@ mod tests {
             ..identity("w1")
         };
         assert!(
-            validate_witness_identity(
-                "tests/authority_witness.rs",
-                "w1",
-                Some(&observed_elsewhere)
-            )
-            .is_err(),
+            validate_witness_identity("tests/authority_witness.rs", "w1", Some(observed_elsewhere))
+                .is_err(),
             "an identity the adapter attests was resolved elsewhere is not the accepted artifact"
+        );
+    }
+
+    /// **Witness (#1789).** Acceptance hands back the identity it accepted.
+    ///
+    /// The witness stage pinned the grafted artifact by calling this and then
+    /// unwrapping the same `Option` again. That unwrap was sound — this
+    /// function rejects `None` — but soundness proved one line away is the
+    /// shape that decays: any edit between the check and the unwrap makes it a
+    /// panic in the one stage whose entire contract is to degrade rather than
+    /// discard a finished change. Returning the value removes the second read.
+    ///
+    /// Fails to compile on the old signature, which returned `()`.
+    #[test]
+    fn acceptance_yields_the_identity_it_pinned() {
+        let observed = identity("w1");
+        let pinned = validate_witness_identity("tests/authority_witness.rs", "w1", Some(observed))
+            .expect("the identity was observed at the accepted path");
+        assert_eq!(
+            pinned,
+            identity("w1"),
+            "the caller must pin the identity acceptance proved, never a second observation"
+        );
+        assert!(
+            validate_witness_identity("tests/authority_witness.rs", "w1", None).is_err(),
+            "an absent observation is a rejection, which is what makes the caller's \
+             re-unwrap removable rather than merely unlikely"
         );
     }
 
@@ -1251,17 +1324,37 @@ mod tests {
             id: None,
             content_digest: None,
         }];
-        let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", None, &[]);
-        assert!(p.contains("TEST_COMMAND:"));
+        let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", &[]);
         assert!(p.contains("fix the retry bug"));
         assert!(p.contains("src/"));
         assert!(p.contains("memory: retries"));
-        assert!(p.contains("ONE NEW test file"));
-        // The density screen refuses at creation (#863), so the prompt has to
-        // state the rule — a refusal the author could not have anticipated
-        // costs the same round trip the screen exists to save.
-        assert!(p.contains("assert_eq!(2, 2)"), "{p}");
-        assert!(p.contains("REFUSED"), "{p}");
+        // The fixed half rides the system message (#1786), never the
+        // volatile user prompt — repeating it here would re-bill it.
+        assert!(!p.contains("Hard requirements"), "{p}");
+        assert!(
+            p.trim_start().len() == p.len(),
+            "no dangling blank opening: {p:?}"
+        );
+    }
+
+    /// The fixed system block carries the whole enforced contract: the
+    /// marker line, the one-new-file rule, and the density-screen rule
+    /// (#863) — a refusal the author could not have anticipated costs the
+    /// same round trip the screen exists to save.
+    #[test]
+    fn the_system_prompt_carries_the_hard_requirements() {
+        for required in [
+            "TEST_COMMAND:",
+            "ONE NEW test file",
+            "assert_eq!(2, 2)",
+            "REFUSED",
+            "never modify production code",
+        ] {
+            assert!(
+                WITNESS_SYSTEM_PROMPT.contains(required),
+                "missing {required:?}"
+            );
+        }
     }
 
     /// The author has `read_file` and one create — no execution at all — so it
@@ -1271,43 +1364,21 @@ mod tests {
     /// that choosing a runner is a decision made from evidence, not a default.
     #[test]
     fn the_author_is_told_it_cannot_probe_and_must_pick_an_evidenced_runner() {
-        let p = witness_prompt("add a parser", &[], "go.mod\nmain.go", None, &[]);
         assert!(
-            p.contains("CHOOSE A RUNNER THIS REPOSITORY ALREADY USES"),
-            "{p}"
+            WITNESS_SYSTEM_PROMPT.contains("CHOOSE A RUNNER THIS REPOSITORY ALREADY USES"),
+            "{WITNESS_SYSTEM_PROMPT}"
         );
         assert!(
-            p.contains("cannot execute anything in this role"),
-            "the author must know its own blindness, not just the rule: {p}"
+            WITNESS_SYSTEM_PROMPT.contains("cannot execute anything in this role"),
+            "the author must know its own blindness, not just the rule"
         );
         assert!(
-            p.contains("NO observation at all"),
-            "the cost has to be named — a missing runner is not a failing test: {p}"
+            WITNESS_SYSTEM_PROMPT.contains("NO observation at all"),
+            "the cost has to be named — a missing runner is not a failing test"
         );
         assert!(
-            p.contains("emit no TEST_COMMAND line rather than guessing"),
-            "with no evidenced runner, abstaining beats a fabricated command: {p}"
-        );
-    }
-
-    /// The one anchor that is a fact rather than an inference: this project
-    /// names this command, so its runner is installed on this machine.
-    #[test]
-    fn a_configured_test_command_anchors_the_authors_runner_choice() {
-        let anchored = witness_prompt("add a parser", &[], "go.mod", Some("go test ./..."), &[]);
-        assert!(anchored.contains("`go test ./...`"), "{anchored}");
-        assert!(
-            anchored.contains("Its runner is installed and working here"),
-            "the whole value of the anchor is that it is observed, not guessed: {anchored}"
-        );
-
-        // Nothing to anchor on: the section must be absent rather than empty.
-        let bare = witness_prompt("add a parser", &[], "go.mod", None, &[]);
-        assert!(!bare.contains("This project's own test command"), "{bare}");
-        let blank = witness_prompt("add a parser", &[], "go.mod", Some("   "), &[]);
-        assert!(
-            !blank.contains("This project's own test command"),
-            "a whitespace command anchors nothing: {blank}"
+            WITNESS_SYSTEM_PROMPT.contains("emit no TEST_COMMAND line rather than guessing"),
+            "with no evidenced runner, abstaining beats a fabricated command"
         );
     }
 
@@ -1324,7 +1395,7 @@ mod tests {
     #[test]
     fn probed_runner_availability_reaches_the_author_as_a_constraint() {
         let available = vec!["cargo".to_string(), "pytest".to_string()];
-        let p = witness_prompt("add a parser", &[], "Cargo.toml", None, &available);
+        let p = witness_prompt("add a parser", &[], "Cargo.toml", &available);
         assert!(
             p.contains("Test runners available in this workspace"),
             "{p}"
@@ -1335,7 +1406,7 @@ mod tests {
             "a constraint, not a hint: {p}"
         );
 
-        let bare = witness_prompt("add a parser", &[], "Cargo.toml", None, &[]);
+        let bare = witness_prompt("add a parser", &[], "Cargo.toml", &[]);
         assert!(
             !bare.contains("Test runners available in this workspace"),
             "no probes, no section: {bare}"

@@ -74,7 +74,7 @@ PR must update AGENTS.md's workspace table and the root `Cargo.toml` members.
 
 The gate's `file-size` guard (`scripts/check-file-size.sh`) enforces a
 1500-line ratchet: a new file over the limit is a hard failure with no
-baseline escape, and the five files below are grandfathered at a recorded
+baseline escape, and the four files below are grandfathered at a recorded
 ceiling in `scripts/file-size-baseline.txt`. They are god files — already too
 big, closed to growth — and this crate hosts the workspace's single worst:
 the guard's own header cites [`src/deck_ui.rs`](src/deck_ui.rs), which had
@@ -89,7 +89,6 @@ key handling goes in a `src/deck_ui/` submodule the way
 split buys headroom, not immunity, so code you touch inside any of these
 files is a candidate to extract.
 
-- [`src/deck.rs`](src/deck.rs)
 - [`src/deck_render.rs`](src/deck_render.rs)
 - [`src/deck_ui.rs`](src/deck_ui.rs)
 - [`src/views/engine.rs`](src/views/engine.rs)

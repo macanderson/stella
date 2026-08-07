@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>A coding agent that doesn't lie to you</strong></p>
+<p align="center"><strong>Stop reading your PRs</strong></p>
 <p align="center">Open Source · Rust · BYOK · No Phone Home</p>
 
 <p align="center">
@@ -771,10 +771,11 @@ pnpm build       # production build (what docs.yml CI runs)
 ```
 
 Docs content is MDX under `website/content/docs/`. On a pull request a
-docs-only change runs the fast `docs` workflow instead of the Rust gate; the
-merge queue does not honor `paths-ignore`, so it still pays the full gate once
-queued — deliberately, since the required check has to report on the merged
-result.
+docs-only change runs the fast `docs` workflow, and `ci.yml`'s Rust jobs skip
+themselves after a cheap diff check — their required contexts still report, as
+`skipped`, so the PR can merge (#1892). Once queued or pushed to `main` the
+same jobs always run the full gate — deliberately, since the required check
+has to report on the merged result.
 
 To try your working copy against real projects before a release, install it as
 `stella-dev` — it lives side by side with the released `stella`:

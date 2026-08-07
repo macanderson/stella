@@ -32,6 +32,21 @@
 //! [`stella_core::MAX_SUB_AGENT_DEPTH`] remains the primitive's own cap for
 //! programmatic callers (the goal loop's verifier is one).
 //!
+//! # Sibling spawns run concurrently
+//!
+//! `read_only: false` used to also mean sibling `task` calls in one step
+//! were serialized — the engine's dispatch scheduler made every
+//! non-read-only call its own barrier, so the fan-out this dispatcher was
+//! built for (thread per child, snapshot-carve, delta settle) was
+//! unreachable from the model's side. The tool now declares
+//! [`crate::registry::Tool::parallel_safe`], the executor-level claim the
+//! scheduler unions with the read-only set: children mutate nothing (they
+//! run behind `ReadOnlyTools` with `write_access` hard-coded off), so
+//! sibling spawns have no observable ordering, and each child's budget is
+//! carved before it runs. The flag itself stays `false` — it is load-bearing
+//! for the nesting fence and for permission surfaces, which is exactly why
+//! concurrency needed its own claim.
+//!
 //! # Spend
 //!
 //! The dispatcher pushes each child's cost to the
@@ -145,12 +160,48 @@ const CHILD_SYSTEM_PROMPT: &str = "You are a research sub-agent. You have been g
 /// `task` — delegate a bounded research question to a read-only sub-agent.
 pub struct SpawnSubAgent {
     dispatcher: DispatcherSlot,
+    /// How many children this session has already minted per slug, so a
+    /// second child described the same way gets a distinct id (#1852).
+    ///
+    /// A counter rather than a random or time-based suffix: replay
+    /// determinism (invariant 7) means the same call order must produce the
+    /// same ids, and an id that changed between replays would make the
+    /// journal's `SubAgent` brackets unmatchable.
+    minted: std::sync::Mutex<std::collections::HashMap<String, u32>>,
 }
 
 impl SpawnSubAgent {
     #[must_use]
     pub fn new(dispatcher: DispatcherSlot) -> Self {
-        Self { dispatcher }
+        Self {
+            dispatcher,
+            minted: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// A session-unique agent id for `description`.
+    ///
+    /// `slug(description)` alone is a pure function of model-supplied text, so
+    /// two siblings described "research X" got the SAME id. Since sibling
+    /// `task` calls from one step run concurrently, their
+    /// `SubAgent::Started`/`Finished` brackets then interleave under one id on
+    /// the parent's stream: the deck renders indistinguishable rows and any
+    /// consumer that pairs by `agent_id` mis-correlates which child finished.
+    /// The child thread's name is derived from this too, so two threads shared
+    /// a name in every profiler and core dump as well.
+    ///
+    /// First use keeps the bare slug — the overwhelmingly common case reads
+    /// exactly as it did — and each repeat takes the next ordinal.
+    fn mint_agent_id(&self, description: &str) -> String {
+        let base = slug(description);
+        let mut minted = self.minted.lock().unwrap_or_else(|p| p.into_inner());
+        let seen = minted.entry(base.clone()).or_insert(0);
+        *seen += 1;
+        if *seen == 1 {
+            base
+        } else {
+            format!("{base}-{seen}")
+        }
     }
 }
 
@@ -165,7 +216,10 @@ impl Tool for SpawnSubAgent {
                  would otherwise mean reading many files you do not need to keep — 'which of \
                  these modules defines X', 'how is Y wired end to end', 'find every caller of \
                  Z and summarize the patterns'. Prefer it over running the same searches \
-                 yourself whenever the evidence is bulky and only the conclusion matters. Not \
+                 yourself whenever the evidence is bulky and only the conclusion matters. \
+                 Independent questions should be dispatched as SEVERAL task calls in the \
+                 same step — they run concurrently, so three parallel investigations cost \
+                 the wall-clock of the slowest, not the sum. Not \
                  for work that must edit files (the sub-agent cannot write), and not for a \
                  single lookup you already know the location of — one read_file is cheaper \
                  than a sub-agent."
@@ -195,6 +249,14 @@ impl Tool for SpawnSubAgent {
             read_only: false,
             speculation_safe: false,
         }
+    }
+
+    /// Sibling spawns are safe to dispatch concurrently: children mutate
+    /// nothing and the dispatcher carves budget per child — see the module
+    /// docs ("Sibling spawns run concurrently") for why this is a separate
+    /// claim from `read_only`.
+    fn parallel_safe(&self) -> bool {
+        true
     }
 
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
@@ -228,7 +290,7 @@ impl Tool for SpawnSubAgent {
         };
 
         let spec = SubAgentSpec {
-            agent_id: slug(description),
+            agent_id: self.mint_agent_id(description),
             system_prompt: Some(CHILD_SYSTEM_PROMPT.to_string()),
             instruction: prompt.to_string(),
             max_steps: MAX_STEPS,

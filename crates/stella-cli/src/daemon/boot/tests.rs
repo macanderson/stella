@@ -26,6 +26,7 @@ fn killed_mid_turn() -> BootCandidate {
         parked_on_approval: false,
         has_resume_point: true,
         workspace_exists: true,
+        parked: false,
         attempts: 0,
     }
 }
@@ -367,6 +368,44 @@ fn every_candidate_appears_in_the_plan_exactly_once_and_in_order() {
     assert!(matches!(planned[2].1, BootDecision::Skip(_)));
 }
 
+/// #1921: the console line for a run the per-run ceiling stopped — the
+/// reporting half of the contract, witnessed pure the way
+/// [`SkipReason::explain`] is. #1627 holds that a run silently resumed at
+/// boot is as bad as one silently lost; a run silently *stopped* at boot
+/// would be worse than either.
+#[test]
+fn a_ceiling_stop_names_the_ceiling_the_safe_stop_and_the_next_step() {
+    let line = ceiling_report(std::time::Duration::from_secs(30 * 60));
+    assert!(line.contains("30-minute ceiling"), "{line}");
+    assert!(
+        line.contains("safe boundary"),
+        "the line must say the stop was the graceful one: {line}"
+    );
+    assert!(
+        line.contains("the sweep continues"),
+        "the whole point of the ceiling is the runs behind this one: {line}"
+    );
+    assert!(
+        line.contains("stella daemon list"),
+        "an operator must be handed the command that answers what happened: {line}"
+    );
+    // The console speaks the flag's unit for whole minutes and falls back to
+    // seconds — or milliseconds — so a test ceiling is never rounded into a
+    // fiction like "0-second".
+    assert_eq!(
+        describe_ceiling(std::time::Duration::from_secs(90)),
+        "90-second"
+    );
+    assert_eq!(
+        describe_ceiling(std::time::Duration::from_secs(120)),
+        "2-minute"
+    );
+    assert_eq!(
+        describe_ceiling(std::time::Duration::from_millis(250)),
+        "250-millisecond"
+    );
+}
+
 /// Every skip reason is something an operator can act on — an empty or
 /// duplicated explanation would be a row in the boot console that says
 /// nothing.
@@ -378,6 +417,7 @@ fn every_skip_reason_explains_itself_distinctly() {
         SkipReason::EndedDeliberately,
         SkipReason::NoResumePoint,
         SkipReason::WorkspaceGone,
+        SkipReason::NeedsInput,
         SkipReason::AttemptsExhausted,
     ];
     let mut seen: Vec<String> = Vec::new();
@@ -387,4 +427,67 @@ fn every_skip_reason_explains_itself_distinctly() {
         assert!(!seen.contains(&text), "duplicate explanation: {text}");
         seen.push(text);
     }
+}
+
+/// **Witness (#1698).** A run parked on an approval does not stop the sweep
+/// from reaching the runs after it.
+///
+/// `resume_all` continues runs one at a time and streams each to completion.
+/// A resumed turn that hits a scope review does not fail — it *parks*, waiting
+/// for a human who at boot is not there (there is no terminal under launchd or
+/// systemd). So the sweep stopped at that id forever: every later interrupted
+/// run stayed unresumed, and the service console showed the parked run as
+/// continued and then went quiet. Silent, and it stranded work — the exact
+/// shape #1627 exists to prevent.
+#[test]
+fn a_run_parked_on_an_approval_is_skipped_and_the_sweep_continues_past_it() {
+    let parked = BootCandidate {
+        id: "ses-1754431200000-00001".to_string(),
+        parked: true,
+        ..killed_mid_turn()
+    };
+    assert_eq!(
+        decide(&parked),
+        BootDecision::Skip(SkipReason::NeedsInput),
+        "a run waiting on an answer nobody is there to give must not be resumed"
+    );
+
+    // The half that actually matters: everything AFTER it is still decided.
+    let later = BootCandidate {
+        id: "ses-1754431200000-00002".to_string(),
+        ..killed_mid_turn()
+    };
+    let decisions = plan(&[parked, later.clone()]);
+    assert_eq!(
+        decisions.len(),
+        2,
+        "the sweep must not stop at the parked run"
+    );
+    assert_eq!(
+        decisions[1].1,
+        BootDecision::Continue,
+        "the run behind a parked one is exactly the work #1698 was stranding"
+    );
+    assert_eq!(decisions[1].0.id, later.id);
+}
+
+/// Parking is not a failure, so it must not spend a boot attempt.
+///
+/// `parked` is checked *before* the `MAX_BOOT_ATTEMPTS` brake deliberately: a
+/// run that waits politely across three reboots has done nothing wrong, and
+/// retiring it would turn "needs an answer" into "gone, resume it by hand"
+/// without anyone having been asked anything.
+#[test]
+fn a_parked_run_is_reported_as_needing_input_rather_than_retired() {
+    let parked_and_old = BootCandidate {
+        parked: true,
+        attempts: MAX_BOOT_ATTEMPTS,
+        ..killed_mid_turn()
+    };
+    assert_eq!(
+        decide(&parked_and_old),
+        BootDecision::Skip(SkipReason::NeedsInput),
+        "the actionable reason wins: an operator can answer an approval, but \
+         cannot un-retire a run they were never asked about"
+    );
 }
