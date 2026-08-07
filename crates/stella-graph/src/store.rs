@@ -246,7 +246,45 @@ pub(crate) fn open_read(db_path: &Path) -> Result<Connection, GraphError> {
 /// the pre-write gate take a write lock on every proposed edit; and only the
 /// writer has just run [`MIGRATION`], which is what makes the store's shape
 /// provably match the version being stamped.
+///
+/// A store that fails to open because its disk image is damaged is not an
+/// error here: the graph is a cache, fully rebuildable from the tree, so the
+/// corrupt file is quarantined through
+/// [`stella_store::integrity::quarantine_corrupt_store`] (which salvages what
+/// is still readable) and a fresh store is opened in its place. Any OTHER
+/// failure — permissions, a future schema stamp — still propagates.
 pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
+    match open_migrated(db_path) {
+        Ok(conn) => Ok(conn),
+        Err(error) if is_corruption(&error) => {
+            let quarantine = stella_store::integrity::quarantine_corrupt_store(db_path)
+                .map_err(|quarantine_error| {
+                    GraphError::Sqlite(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+                        Some(format!(
+                            "{error} — and quarantining the damaged store failed: {quarantine_error}"
+                        )),
+                    ))
+                })?;
+            // `moved` always leads with the database itself, but the shape of
+            // another crate's return value is not something to `unwrap` on:
+            // a quarantine that moved nothing still leaves the rebuild valid,
+            // so the notice degrades rather than the open panicking.
+            match quarantine.moved.first() {
+                Some((_, quarantined)) => eprintln!(
+                    "code-graph store was corrupt; moved it aside to {} — rebuilding from scratch",
+                    quarantined.display()
+                ),
+                None => eprintln!("code-graph store was corrupt — rebuilding from scratch"),
+            }
+            open_migrated(db_path)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The unmolested open-and-migrate [`open`] retries after a quarantine.
+fn open_migrated(db_path: &Path) -> Result<Connection, GraphError> {
     let conn = open_read(db_path)?;
     conn.execute_batch(MIGRATION)?;
     stella_store::durable::ensure_converged_schema_version(
@@ -257,6 +295,24 @@ pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
     )
     .map_err(|error| GraphError::Schema(error.to_string()))?;
     Ok(conn)
+}
+
+/// Does this error mean the on-disk image is damaged — the one failure a
+/// rebuildable cache may answer by starting over? Matches the primary code
+/// (`SQLITE_CORRUPT`, `SQLITE_NOTADB`) or, failing that, the extended code,
+/// so a `SQLITE_IOERR_*` whose extended bits carry `CORRUPT` still counts
+/// while a plain I/O error never does.
+fn is_corruption(error: &GraphError) -> bool {
+    let GraphError::Sqlite(rusqlite::Error::SqliteFailure(code, _)) = error else {
+        return false;
+    };
+    matches!(
+        code.code,
+        rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+    ) || matches!(
+        code.extended_code & 0xff,
+        x if x == rusqlite::ffi::SQLITE_CORRUPT || x == rusqlite::ffi::SQLITE_NOTADB
+    )
 }
 
 /// Full incremental index of `root`: walk, re-parse only changed files

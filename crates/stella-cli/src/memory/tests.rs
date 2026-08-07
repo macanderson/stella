@@ -394,6 +394,34 @@ async fn ab_control_suppresses_skills_before_any_recall_section_is_built() {
     );
 }
 
+/// The usage report must mirror the injection channels it describes: a
+/// control turn injects no skills (the test above), so `selected_skills` —
+/// the source of every `skill_usage` telemetry row — must report none either,
+/// or the appraisal signal counts skills the model never saw.
+#[test]
+fn a_control_turn_reports_no_selected_skills() {
+    let dir = tempfile::tempdir().unwrap();
+    let skill_dir = dir.path().join(".stella/skills/reviewer");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: reviewer\ndescription: database review\n---\nALWAYS_REVIEW_DATABASES",
+    )
+    .unwrap();
+    let mut memory =
+        SessionMemory::open_with_workspace_skills(dir.path(), false, true).expect("session memory");
+    assert!(
+        !memory.selected_skills("review the database").is_empty(),
+        "the fixture skill is selected on an armed turn"
+    );
+
+    memory.ab_suppressed = true;
+    assert!(
+        memory.selected_skills("review the database").is_empty(),
+        "a control turn reports exactly what it injected: nothing"
+    );
+}
+
 /// The frames-free block for pipeline-driven turns: skills and the record
 /// channel ride, recalled frames do not — those are the pipeline recall
 /// port's job, and rendering them here too is the double-recall/double-bill
@@ -1254,4 +1282,70 @@ fn an_id_less_memory_frame_still_renders_and_does_not_promise_citability() {
         "{section}"
     );
     assert!(section.contains("cite_memory"), "{section}");
+}
+
+/// **Witness (#1846).** An A → B → A recall sequence must not re-append A.
+///
+/// The dedup compared only the MOST RECENT marker, so by the time A came
+/// round again B was the newest and A read as fresh. Recall content genuinely
+/// oscillates — it is a function of the prompt, so returning to an earlier
+/// subject returns to an earlier block — and each one is up to ~3k tokens
+/// that nothing can reclaim: these are User messages, and compaction passes
+/// 1–4 only rewrite tool results. A 30-turn session accumulated ~90k tokens
+/// of superseded blocks in the paid prefix.
+///
+/// Two markers is the correct answer, not one: A and B were each genuinely
+/// new when first shown, and removing either would rewrite history — the
+/// full-rate re-bill L-E8 exists to prevent.
+#[test]
+fn inject_does_not_re_append_a_block_the_history_already_holds() {
+    let a = format!("{RECALL_MARKER}\nsubject A");
+    let b = format!("{RECALL_MARKER}\nsubject B");
+    let mut messages = vec![msg(MessageRole::System, "sys")];
+
+    inject_recall_block(&mut messages, Some(a.clone()));
+    messages.push(msg(MessageRole::User, "turn 1"));
+    inject_recall_block(&mut messages, Some(b.clone()));
+    messages.push(msg(MessageRole::User, "turn 2"));
+    let before: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
+
+    inject_recall_block(&mut messages, Some(a));
+
+    let markers = messages
+        .iter()
+        .filter(|m| m.content.starts_with(RECALL_MARKER))
+        .count();
+    assert_eq!(
+        markers, 2,
+        "A returning must not add a third marker — it is already in history"
+    );
+    // And nothing was rewritten to achieve that: the prefix is untouched.
+    let after: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
+    assert_eq!(
+        before, after,
+        "the dedup must skip an append, never rewrite history (L-E8)"
+    );
+    assert!(
+        messages.iter().any(|m| m.content.contains("subject B")),
+        "B is still there — it was genuinely new when it was shown"
+    );
+}
+
+/// The dedup must still let genuinely new content through, or it would be a
+/// fix that simply stops recall working.
+#[test]
+fn inject_still_appends_content_the_history_has_never_held() {
+    let mut messages = vec![msg(MessageRole::System, "sys")];
+    for subject in ["A", "B", "C"] {
+        inject_recall_block(
+            &mut messages,
+            Some(format!("{RECALL_MARKER}\nsubject {subject}")),
+        );
+        messages.push(msg(MessageRole::User, "a turn"));
+    }
+    let markers = messages
+        .iter()
+        .filter(|m| m.content.starts_with(RECALL_MARKER))
+        .count();
+    assert_eq!(markers, 3, "three distinct blocks are three appends");
 }

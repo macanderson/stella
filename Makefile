@@ -32,7 +32,7 @@ CARGO_SCOPE ?= --workspace
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
-                    role-names
+                    role-names stat-portability module-reachability
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The whole gate, in order, as one name. `gate` below is defined *from* this
@@ -41,7 +41,7 @@ GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 # CONTRIBUTING.md to the real list instead of a hand-copied one. Both documents
 # had already re-rotted twice, in the same direction each time: a guard was
 # added here and the prose kept the old count (#1437).
-GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test
+GATE_STEPS := $(GATE_GUARDS) doc-warnings format-check lint test self-driving-test
 
 .PHONY: help
 help: ## Show this help
@@ -277,6 +277,18 @@ left-behind-update: ## Regenerate the left-behind baseline (it should stay empty
 role-names: ## Assert the agent-config role names match across Rust, Python and JS (#1449)
 	@./scripts/check-role-names.sh
 
+.PHONY: stat-portability
+stat-portability: ## Assert file identity is read through MetadataExt, not a raw libc::stat (#1758)
+	@./scripts/check-stat-portability.sh
+
+.PHONY: module-reachability
+module-reachability: ## Assert every .rs under a crate's src/ is reachable from its crate root (#1750)
+	@python3 ./scripts/check-module-reachability.py
+
+.PHONY: module-reachability-test
+module-reachability-test: ## Test the module-reachability walker (hermetic; not part of `gate`)
+	./scripts/test-module-reachability.sh
+
 .PHONY: god-files
 god-files: ## Assert AGENTS.md and the crate READMEs name the baselined god files (#1435)
 	@./scripts/check-god-files.sh
@@ -292,9 +304,45 @@ impacted: ## Print the cargo scope for a diff (RANGE=origin/main..HEAD)
 impacted-test: ## Test the gate-scoping script (hermetic; not part of `gate`)
 	./scripts/test-impacted-crates.sh
 
-.PHONY: fullauto-test
-fullauto-test: ## Test the fullauto control logic — digest, AIMD, aperture, run lifecycle (hermetic; not part of `gate`)
-	./scripts/test-fullauto.sh
+.PHONY: self-driving-test
+# Pins STELLA_BIN rather than letting the harness locate one. Its own
+# `locate_stella` prefers target/release over target/debug, so a stale release
+# build silently wins over the code under test — three cases went red against a
+# months-old binary that predated the command they exercised, and the harness
+# does not say which binary it measured (#1753). The gate must test what the
+# gate just built.
+self-driving-test: ## Test the self-driving control logic — digest, AIMD, aperture, run lifecycle (hermetic)
+	cargo build -q -p stella-cli --bin stella
+	STELLA_BIN="$(CURDIR)/target/debug/stella" ./scripts/test-self-driving.sh
+
+.PHONY: smoke-artifact-test
+smoke-artifact-test: ## Test the release-artifact smoke gate against synthetic broken artifacts (hermetic; not part of `gate`)
+	./scripts/test-smoke-artifact.sh
+
+.PHONY: automerge-nudge-test
+automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not part of `gate`)
+	./scripts/test-automerge-nudge.sh
+
+.PHONY: file-size-test
+file-size-test: ## Test which languages the file-size ratchet actually watches (hermetic; not part of `gate`)
+	./scripts/test-file-size.sh
+
+.PHONY: guard-sigpipe-test
+guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)
+	./scripts/test-guard-sigpipe.sh
+
+.PHONY: releases-published
+releases-published: ## Assert every v* tag older than the grace window has a published release (#1464)
+	@./scripts/check-releases-published.sh
+
+.PHONY: releases-baseline-update
+releases-baseline-update: ## Grandfather the tags that shipped nothing and never will (review the diff!)
+	@./scripts/check-releases-published.sh --update
+	@git --no-pager diff --stat -- scripts/unpublished-tags-baseline.txt || true
+
+.PHONY: releases-published-test
+releases-published-test: ## Test the tag/release reconciliation rule (hermetic; not part of `gate`)
+	./scripts/test-releases-published.sh
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)

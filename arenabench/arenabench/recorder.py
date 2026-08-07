@@ -49,12 +49,27 @@ __all__ = [
 
 log = logging.getLogger("arenabench.recorder")
 
-IMAGE_TAG = "arenabench/recorder:1"
+#: Bumped to :2 when the recorder switched to fragmented MP4. The tag is what
+#: `image_present()` checks, so a host that already built :1 would otherwise
+#: keep filming with the old `+faststart` script forever and keep producing
+#: unplayable files after a hard kill — a fix nobody receives.
+IMAGE_TAG = "arenabench/recorder:2"
 
 #: Give ffmpeg time to write the moov atom. Docker's default 10s stop timeout
 #: is usually enough, but a long recording on a loaded host is not, and the
 #: failure mode is a truncated unplayable file rather than a loud error.
 STOP_TIMEOUT_S = 30
+
+#: The recorder's memory ceiling. It films a terminal, so it has no business
+#: growing: Xvfb's framebuffer is a few MB and the encoder's pool is pinned in
+#: ``record.sh`` (``ARENA_THREADS``) precisely so this number can stay small on
+#: any host. Named here because the warning below cites it.
+MEMORY_LIMIT = "512m"
+
+#: Below this, the file cannot contain a playable frame. A fragmented MP4 that
+#: was killed before its first flush is 28 bytes of ``ftyp`` and nothing else,
+#: and it must not be reported as a recording — see ``_stop_container``.
+MIN_PLAYABLE_BYTES = 4096
 
 
 def docker_available() -> bool:
@@ -279,7 +294,7 @@ class RecorderSupervisor:
             "--name", name,
             # No network at all: the recorder reads a file and writes a file.
             "--network", "none",
-            "--memory", "512m",
+            "--memory", MEMORY_LIMIT,
             "--cpus", "0.5",
             "-v", f"{agent_dir}:/logs/agent:ro",
             "-v", f"{out_dir}:/out",
@@ -320,12 +335,29 @@ class RecorderSupervisor:
             log.warning("recorder stop failed for %s: %s", trial_dir.name, exc)
             return
         video = trial_dir / "arena" / "recording.mp4"
-        if video.exists() and video.stat().st_size > 0:
+        size = video.stat().st_size if video.exists() else 0
+        if size >= MIN_PLAYABLE_BYTES:
             log.info(
                 "recorded %s -> %s (%.1f MB)",
                 trial_dir.name,
                 video,
-                video.stat().st_size / 1e6,
+                size / 1e6,
+            )
+        elif size > 0:
+            # A file too small to hold a single frame is the signature of the
+            # encoder dying before it flushed anything -- overwhelmingly an OOM
+            # kill, which is SIGKILL and so leaves no message anywhere. Reported
+            # as a plain `> 0` success this reads as "recorded ... (0.0 MB)" and
+            # an operator has no reason to look, which is how a whole
+            # head-to-head can finish with twenty unplayable stubs.
+            log.warning(
+                "recorder produced only %d bytes for %s -- too small to play. "
+                "The encoder was almost certainly killed before it wrote a "
+                "frame; the usual cause is the container's %s memory limit "
+                "(check `docker inspect --format '{{.State.OOMKilled}}'`).",
+                size,
+                trial_dir.name,
+                MEMORY_LIMIT,
             )
         else:
             log.warning("recorder produced no video for %s", trial_dir.name)

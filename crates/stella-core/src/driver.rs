@@ -80,7 +80,6 @@ use futures_util::StreamExt;
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionRequest, CompletionRequestRef, FinishReason,
     MessageRole, Provider, ProviderError, ReasoningEffort, StageKind, ToolCall, ToolOutput,
-    ToolResult,
 };
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
@@ -125,9 +124,15 @@ use loop_evidence::recent_call_records;
 use crate::step::SUMMARIZER_FAILURE_LATCH;
 use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 use loop_evidence::{ResultIdentities, snapshot_result_identities};
+// Named only by tests that build literal tool results; the production path
+// constructs `ToolResult` in `driver/dispatch.rs`.
+#[cfg(test)]
+use stella_protocol::ToolResult;
 use tokio::sync::mpsc::UnboundedSender;
 
+mod dispatch;
 mod settlement;
+mod waiting;
 use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
 
 /// Everything about a turn's execution that isn't the provider/tools
@@ -154,9 +159,9 @@ pub struct EngineConfig {
     /// own observed tokens rather than raw heuristic tokens.
     pub compaction_budget_tokens: u64,
     /// Age-based tool-result retention (#1285): results older than this many
-    /// tool-bearing steps are middle-out aged on every step, batched so the
-    /// prompt-cache prefix is rewritten once per several steps rather than
-    /// per step (`compaction::RETENTION_MIN_BATCH`). This is what holds the
+    /// tool-bearing steps are middle-out aged on every step, gated so the
+    /// prompt-cache prefix is rewritten only when real bytes come back
+    /// (`compaction::RETENTION_MIN_RECLAIM_CHARS`). This is what holds the
     /// standing context roughly flat through a long turn — the budget above
     /// fires only near the context ceiling, which on a long trial is the very
     /// end of exactly the runs it should have shaped from the middle
@@ -526,27 +531,6 @@ pub fn step_cap_reason(max_steps: usize) -> String {
     )
 }
 
-/// The most recent non-empty assistant text in a turn's transcript.
-///
-/// Used only by the halt path ([`TurnHalt`]), which ends a turn at a step
-/// boundary and therefore has no "final" model text of its own to report. An
-/// assistant message that only made tool calls carries empty `content`, so
-/// this walks back to the last thing the model actually *said* rather than
-/// reporting a blank answer for a turn that did real work.
-///
-/// `None` when the model has said nothing yet — a turn halted after a first
-/// step of pure tool calls — which the caller renders as the halt reason.
-fn last_assistant_text(state: &crate::step::TurnState) -> Option<String> {
-    state
-        .messages
-        .iter()
-        .rev()
-        .find(|message| {
-            message.role == MessageRole::Assistant && !message.content.trim().is_empty()
-        })
-        .map(|message| message.content.clone())
-}
-
 /// Upper bound on tool calls from one step executing concurrently. Tools
 /// are I/O-bound (process spawns, file reads), so this caps descriptor and
 /// process pressure, not CPU.
@@ -896,7 +880,8 @@ impl<'a> Engine<'a> {
                 // predicate's reason when the final step was pure tool calls
                 // (an assistant message that only called tools has empty
                 // `content`), so the turn never reports an empty answer.
-                let text = last_assistant_text(&turn.state).unwrap_or_else(|| reason.clone());
+                let text =
+                    settlement::last_assistant_text(&turn.state).unwrap_or_else(|| reason.clone());
                 let outcome = TurnOutcome::Completed {
                     text,
                     cost_usd: turn.state.total_cost_usd,
@@ -1112,10 +1097,15 @@ impl<'a> Engine<'a> {
         // this very step (#554).
         let revision = state.memos.revision;
         snapshot_result_identities(&state.messages, &mut state.memos.identities, revision);
+        // Latched, not recomputed per step (#1841): compaction and the
+        // manifest below must compare against the same number, and a budget
+        // that moves mid-turn defeats compaction's own hysteresis.
+        let fresh = self.effective_compaction_budget(state.calibration_model.as_deref());
+        let sized = state.latch_effective_budget(fresh);
         let pass = self
             .run_compaction_pass(
                 &mut state.messages,
-                state.calibration_model.as_deref(),
+                sized,
                 &mut state.budget,
                 &mut state.memos.health,
                 state.step,
@@ -1126,13 +1116,10 @@ impl<'a> Engine<'a> {
         if pass.rewrote {
             state.mark_transcript_rewritten();
         }
-        // The manifest reports the budget compaction just compared against.
-        let (effective_budget, calibration_factor) =
-            self.effective_compaction_budget(state.calibration_model.as_deref());
-        state
-            .memos
-            .receipts
-            .set_effective_budget(effective_budget, calibration_factor);
+        // The manifest reports the budget compaction just compared against —
+        // now the same latched value, not a second computation that happened
+        // to agree.
+        state.memos.receipts.set_effective_budget(sized.0, sized.1);
         // Set immediately after the pass that may have rewritten the
         // transcript, so the ledger's digest memo cannot serve a stale block.
         let revision = state.memos.revision;
@@ -1258,6 +1245,13 @@ impl<'a> Engine<'a> {
             return completed.into();
         }
 
+        // A tool may have asked to park the turn (#1471, `driver::waiting`):
+        // the engine probes on its own clock and the model wakes to the
+        // delta. `Some` only when cancelled while parked.
+        if let Some(cancelled) = self.maybe_park(state, events).await {
+            return cancelled;
+        }
+
         // Advanced only by a step that committed and continued, so the index
         // a checkpoint carries is always "the step that runs next".
         state.step += 1;
@@ -1320,13 +1314,11 @@ impl<'a> Engine<'a> {
     /// bounds how far either way a noisy sample can move this.
     fn effective_compaction_budget(&self, calibration_model: Option<&str>) -> (u64, f64) {
         match self.calibration {
-            Some(calibration) => {
-                let factor = calibration.factor(calibration_model);
-                (
-                    (self.config.compaction_budget_tokens as f64 / factor) as u64,
-                    factor,
-                )
-            }
+            // Solves for the conversation size the budget allows, subtracting
+            // the fitted per-request overhead ONCE rather than folding it into
+            // a factor that then scales the whole budget (#1841).
+            Some(calibration) => calibration
+                .effective_budget(calibration_model, self.config.compaction_budget_tokens),
             None => (self.config.compaction_budget_tokens, 1.0),
         }
     }
@@ -1342,13 +1334,13 @@ impl<'a> Engine<'a> {
     async fn run_compaction_pass(
         &self,
         messages: &mut Vec<CompletionMessage>,
-        calibration_model: Option<&str>,
+        sized: (u64, f64),
         budget: &mut BudgetGuard,
         health: &mut SummarizerHealth,
         step: usize,
         events: &EventSender,
     ) -> CompactionPass {
-        let (compaction_budget, factor) = self.effective_compaction_budget(calibration_model);
+        let (compaction_budget, factor) = sized;
         // Whether anything was rewritten IN PLACE, decided at the mutation sites
         // below and reported through a `#[must_use]` return.
         let mut rewrote = false;
@@ -2120,7 +2112,7 @@ impl<'a> Engine<'a> {
         // answer and must not stream a blank `Text` event.
         if !result.text.trim().is_empty() {
             let _ = events.send(AgentEvent::Text {
-                delta: result.text.clone(),
+                text: result.text.clone(),
             });
         }
         messages.push(CompletionMessage {
@@ -2213,7 +2205,7 @@ impl<'a> Engine<'a> {
         // then abort as "no text" — events and history stay consistent.
         if !result.text.trim().is_empty() {
             let _ = events.send(AgentEvent::Text {
-                delta: result.text.clone(),
+                text: result.text.clone(),
             });
         }
 
@@ -2243,7 +2235,7 @@ impl<'a> Engine<'a> {
                     ContinuationPlan::Continue(plan) => {
                         *length_continuations += 1;
                         let (note, appended) = plan.into_parts();
-                        let _ = events.send(AgentEvent::Text { delta: note });
+                        let _ = events.send(AgentEvent::Text { text: note });
                         messages.extend(appended);
                         return None;
                     }
@@ -2281,7 +2273,7 @@ impl<'a> Engine<'a> {
             // success past this point.
             if result.finish_reason == Some(FinishReason::Length) {
                 let _ = events.send(AgentEvent::Text {
-                    delta: if out_of_time {
+                    text: if out_of_time {
                         // Names the deadline, not the token limit, because the
                         // token limit is what happened and the deadline is why
                         // nothing followed it. A reader who sees only "output
@@ -2353,8 +2345,22 @@ impl<'a> Engine<'a> {
             attachments: Vec::new(),
         });
 
+        // Dispatch grouping is wider than the read-only set: the executor may
+        // declare tools that run concurrently despite not being read-only
+        // (`ToolExecutor::parallel_safe_names` — the sub-agent spawn tool,
+        // whose children only read and whose dispatcher carves budget per
+        // child). The union is built HERE, at the one dispatch site, so the
+        // evidence-side consumers of `read_only_tools` above (confident_zero)
+        // and the speculation fence keep the narrower read-only semantics.
+        let mut dispatch_safe_tools = read_only_tools;
+        dispatch_safe_tools.extend(self.tools.parallel_safe_names());
         let tool_results = self
-            .execute_tool_calls(&result.tool_calls, &read_only_tools, speculation, events)
+            .execute_tool_calls(
+                &result.tool_calls,
+                &dispatch_safe_tools,
+                speculation,
+                events,
+            )
             .await;
 
         messages.push(CompletionMessage {
@@ -2366,133 +2372,6 @@ impl<'a> Engine<'a> {
         });
 
         None
-    }
-
-    /// Execute one step's tool calls, preserving sequential semantics for
-    /// anything that can mutate: consecutive read-only calls (per
-    /// `ToolSchema::read_only`) form a group executed concurrently (capped
-    /// at [`MAX_CONCURRENT_TOOL_CALLS`]); every mutating call is its own
-    /// barrier, executed alone, in call order. So `[read, read, edit,
-    /// read]` runs the two reads in parallel, then the edit alone, then the
-    /// final read — an observer of any *mutable* state cannot distinguish
-    /// this schedule from fully-sequential execution, while the common
-    /// "read five files" step gets real concurrency.
-    ///
-    /// `ToolStart` fires when a call actually starts; `ToolResult` fires as
-    /// each call completes (so results from one parallel group may
-    /// interleave — consumers correlate by `call_id`, which the TUI already
-    /// does). The returned `Vec<ToolResult>` is always in original call
-    /// order, so message history is deterministic regardless of completion
-    /// order.
-    ///
-    /// `speculation` holds this step's speculatively-executed read-only
-    /// calls (`crate::speculation`). A call is *harvested* — its recorded
-    /// output delivered without re-executing — only when the pool entry
-    /// matches the committed call exactly (id, name, AND input); any
-    /// mismatch falls through to normal execution and the stale entry is
-    /// discarded. Harvested calls emit `ToolStart` immediately followed by
-    /// `ToolResult { speculated: true }` carrying the real (overlapped)
-    /// execution duration.
-    ///
-    /// # A hard cancel here leaves `messages` mid-pair
-    ///
-    /// [`Self::dispatch_completion`] appends the assistant `tool_use` message
-    /// BEFORE awaiting this, and the answering `Tool` message only after. A
-    /// caller-side hard cancel (dropping the turn future) in that window
-    /// therefore leaves an unpaired `tool_use` in the borrowed history — the
-    /// same broken shape [`Self::handle_committed_result`] explicitly repairs
-    /// on the budget-abort path, and the one the next provider call rejects
-    /// outright. It is deliberately not repaired here: the contract is that a
-    /// hard cancel truncates the whole turn out of history caller-side (see
-    /// [`crate::ports::TurnSteering`], which contrasts exactly this against the
-    /// soft stop). A caller that KEEPS a hard-cancelled turn's messages must
-    /// close the pairing itself.
-    async fn execute_tool_calls(
-        &self,
-        calls: &[ToolCall],
-        read_only_tools: &HashSet<String>,
-        mut speculation: SpeculationPool,
-        events: &EventSender,
-    ) -> Vec<ToolResult> {
-        let mut indexed: Vec<(usize, ToolResult)> = Vec::with_capacity(calls.len());
-        let mut i = 0;
-        while i < calls.len() {
-            let group_end = if read_only_tools.contains(&calls[i].name) {
-                let mut end = i + 1;
-                while end < calls.len() && read_only_tools.contains(&calls[end].name) {
-                    end += 1;
-                }
-                end
-            } else {
-                i + 1
-            };
-
-            // Plain copy for the closures: borrowing the loop variable
-            // itself would conflict with advancing it below (E0506).
-            let group_start = i;
-            let speculation = &mut speculation;
-            let group_futures =
-                calls[group_start..group_end]
-                    .iter()
-                    .enumerate()
-                    .map(|(offset, call)| {
-                        let _ = events.send(AgentEvent::ToolStart { call: call.clone() });
-                        let index = group_start + offset;
-                        let harvested = match speculation.remove(&call.call_id) {
-                            Some(s) if s.name == call.name && s.input == call.input => Some(s),
-                            Some(stale) => {
-                                // The committed call diverged from what was
-                                // announced: reject the pooled result and
-                                // re-execute below. The speculative execution
-                                // still ran real I/O — record it (#370).
-                                let _ = events.send(AgentEvent::SpeculationDiscarded {
-                                    call_id: call.call_id.clone(),
-                                    name: stale.name,
-                                    reason: SPECULATION_DISCARD_HARVEST_MISMATCH.to_string(),
-                                });
-                                None
-                            }
-                            None => None,
-                        };
-                        async move {
-                            match harvested {
-                                Some(s) => (index, call, s.output, s.duration_ms, true),
-                                None => {
-                                    let started = std::time::Instant::now();
-                                    let output = self.execute_with_repair(call, Some(events)).await;
-                                    let duration_ms = started.elapsed().as_millis() as u64;
-                                    (index, call, output, duration_ms, false)
-                                }
-                            }
-                        }
-                    });
-            let mut in_flight = futures_util::stream::iter(group_futures)
-                .buffer_unordered(MAX_CONCURRENT_TOOL_CALLS);
-            while let Some((index, call, output, duration_ms, speculated)) = in_flight.next().await
-            {
-                let _ = events.send(AgentEvent::ToolResult {
-                    call_id: call.call_id.clone(),
-                    output: output.clone(),
-                    duration_ms,
-                    speculated,
-                });
-                indexed.push((
-                    index,
-                    ToolResult {
-                        call_id: call.call_id.clone(),
-                        output,
-                    },
-                ));
-            }
-            drop(in_flight);
-
-            i = group_end;
-        }
-        // Any pool entry no committed call ever claimed ran real I/O that
-        // never reached the transcript — account for it, don't drop it (#370).
-        self.discard_speculation_pool(speculation, SPECULATION_DISCARD_HARVEST_MISMATCH, events);
-        indexed.sort_by_key(|(index, _)| *index);
-        indexed.into_iter().map(|(_, result)| result).collect()
     }
 
     /// Execute one tool call, first checking for the malformed-input

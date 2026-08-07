@@ -115,7 +115,7 @@ impl Pipeline<'_> {
         state: &CandidateState,
         snapshot: &stella_protocol::LadderSnapshot,
     ) -> Option<VerdictEvidence> {
-        let reason = warrant(&state.diff_text, state.file_changes).reason()?;
+        let reason = warrant(&state.diff_text, state.signals).reason()?;
         if reason.warrants_independent_review() {
             return None;
         }
@@ -171,7 +171,7 @@ impl Pipeline<'_> {
     /// without a verifier). A behavioral diff, a deletion, or anything the diff
     /// machinery could not read keeps its reviewer, whatever triage guessed.
     pub(super) fn verifier_waiver_stands(state: &CandidateState) -> bool {
-        warrant(&state.diff_text, state.file_changes)
+        warrant(&state.diff_text, state.signals)
             .reason()
             .is_some_and(|reason| !reason.warrants_independent_review())
     }

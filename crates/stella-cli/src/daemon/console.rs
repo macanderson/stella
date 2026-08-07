@@ -56,10 +56,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Thread-name prefix for the pump threads (`console-pump-1`/`console-pump-2`,
-/// set at spawn in [`pump_fd`]). Shared with [`ConsoleGuard::drain_shared`],
-/// which must never try to join a pump thread from inside that very thread —
-/// a self-join deadlocks forever, the one failure mode worse than losing the
-/// panic message the drain exists to save (#1616).
+/// set at spawn in [`pump_fd`]). Diagnostic only: the drain's self-join guard
+/// compares [`std::thread::ThreadId`]s, which a name cannot be confused with
+/// (names are optional and need not be unique).
 const PUMP_THREAD_PREFIX: &str = "console-pump-";
 
 use stella_store::supervised;
@@ -523,45 +522,39 @@ impl Drainable {
             }
         }
     }
-
-    /// Drain whatever guard is still in `cell`, unless the CURRENT thread is
-    /// one of the pumps it owns — see [`PUMP_THREAD_PREFIX`]. Idempotent and
-    /// safe to call from both the normal end-of-`main` path and a panic hook:
-    /// the two race to be first, and whichever wins performs the one real
-    /// drain; the loser finds `None` and does nothing.
-    pub(crate) fn drain_shared(cell: &Mutex<Option<ConsoleGuard>>) {
-        if std::thread::current()
-            .name()
-            .is_some_and(|name| name.starts_with(PUMP_THREAD_PREFIX))
-        {
-            return;
-        }
-        let guard = cell.lock().unwrap_or_else(|p| p.into_inner()).take();
-        if let Some(guard) = guard {
-            guard.drain();
-        }
-    }
 }
 
-/// Install a panic hook that drains `cell`'s console guard — restoring the
-/// real console fds via `dup2` — BEFORE the previously installed hook (the
-/// diagnostics ring dump, and beneath that the default hook) prints the
-/// panic message (#1616).
+/// Drain the console when this process panics, before the panic message is
+/// lost (#1616).
 ///
-/// Release builds run with `panic = "abort"` (`Cargo.toml`), so this hook is
-/// the only cleanup this process ever gets on a panic — there is no unwind
-/// back to `main`'s own `drain_shared` call to fall back to. Without it, the
-/// default hook's message goes out fd 2 while it is still the pipe a pump
-/// thread reads asynchronously, and a process that aborts before the pump is
-/// next scheduled loses it — usually the one line a postmortem most wants.
-/// Restoring the fd first makes the same `eprintln!` land as an ordinary
-/// synchronous write to the console file instead.
-pub(crate) fn install_panic_drain(cell: Arc<Mutex<Option<ConsoleGuard>>>) {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        ConsoleGuard::drain_shared(&cell);
-        previous(info);
-    }));
+/// The pump made the console's tail lossy on a violent death: a panic unwinds
+/// past `main`'s orderly [`ConsoleGuard::drain`], the process exits without
+/// joining the pump threads, and up to a pipe buffer of output — the panic
+/// message itself, most of the time — dies in the pipe. That is the one
+/// artifact a postmortem of a supervised child actually wants. Release builds
+/// run with `panic = "abort"`, so this hook is the only cleanup such a process
+/// ever gets.
+///
+/// The hook chains rather than replaces: whatever hook is already installed
+/// (the diagnostics dump, or the default printer) runs FIRST, so its output
+/// goes down the pipe like everything else, and only then is the pipe drained
+/// into the file. Draining first would restore the fds and leave the panic
+/// message to land raw — readable, but ahead of the pump's own `Closed`
+/// marker and outside the bound. The drain is synchronous inside the hook
+/// either way, so nothing is lost to scheduling; what differs is where the
+/// bytes end up.
+pub(crate) fn arm_panic_drain(guard: &ConsoleGuard) {
+    #[cfg(not(unix))]
+    let _ = guard;
+    #[cfg(unix)]
+    {
+        let pumps = guard.pumps.clone();
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            previous(info);
+            pumps.drain();
+        }));
+    }
 }
 
 /// Interpose the bounded pumps on this process's stdout and stderr.
@@ -598,35 +591,6 @@ pub(crate) fn install_bounded(sidecar: &Path) -> Option<ConsoleGuard> {
                 streams: Mutex::new(streams),
             }),
         })
-    }
-}
-
-/// Drain the console when this process panics, before the panic message is
-/// lost (#1616).
-///
-/// The pump made the console's tail lossy on a violent death: a panic unwinds
-/// past `main`'s orderly [`ConsoleGuard::drain`], the process exits without
-/// joining the pump threads, and up to a pipe buffer of output — the panic
-/// message itself, most of the time — dies in the pipe. That is the one
-/// artifact a postmortem of a supervised child actually wants.
-///
-/// The hook chains rather than replaces: whatever hook is already installed
-/// (the diagnostics dump, or the default printer) runs FIRST, so its output
-/// goes down the pipe like everything else, and only then is the pipe drained
-/// into the file. Draining first would restore the fds and leave the panic
-/// message to land raw — readable, but ahead of the pump's own `Closed`
-/// marker and outside the bound.
-pub(crate) fn arm_panic_drain(guard: &ConsoleGuard) {
-    #[cfg(not(unix))]
-    let _ = guard;
-    #[cfg(unix)]
-    {
-        let pumps = guard.pumps.clone();
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            previous(info);
-            pumps.drain();
-        }));
     }
 }
 
@@ -711,10 +675,107 @@ fn pump_fd(
 
 // ── the read side ─────────────────────────────────────────────────────────
 
+/// A file being read forward as something else appends to it.
+///
+/// The raw rung of the read side — what every reader used before the index
+/// existed and still falls back to without one. Lived in the parent module
+/// until #1921; `pub(super)` because `daemon::logs` still tails a console
+/// directly.
+pub(super) struct Tail {
+    file: std::fs::File,
+    offset: u64,
+}
+
+impl Tail {
+    pub(super) fn open(path: &Path) -> Result<Self, String> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        Ok(Self { file, offset: 0 })
+    }
+
+    // There is deliberately no `seek_to_end` here, for the same reason
+    // [`Follower`] carries no `skip_to_now`: that pair was the only
+    // caller, and #1632 removed it as a defect — seeking past everything
+    // already written threw away the run's shutdown output, which on the
+    // Ctrl-C path is precisely what the person who pressed the key is
+    // waiting to read.
+
+    /// Start `lines` lines back from the end, or at the beginning if the file
+    /// is shorter than that.
+    ///
+    /// Reads the whole file rather than scanning backwards in blocks: a
+    /// console is bounded by one run's output, and a block-wise reverse scan
+    /// is three times the code for a saving nobody can perceive.
+    pub(super) fn seek_back_lines(&mut self, lines: usize) -> Result<(), String> {
+        let mut all = Vec::new();
+        self.file
+            .read_to_end(&mut all)
+            .map_err(|e| format!("cannot read the console: {e}"))?;
+        let start = all
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, byte)| **byte == b'\n')
+            // The trailing newline ends the last line rather than starting
+            // one, so it is not a boundary this may stop at.
+            .skip(usize::from(all.last() == Some(&b'\n')))
+            .nth(lines.saturating_sub(1))
+            .map(|(at, _)| at + 1)
+            .unwrap_or(0);
+        self.offset = start as u64;
+        Ok(())
+    }
+
+    /// Copy up to [`PUMP_CHUNK`] bytes appended since the last call to `out`,
+    /// and answer how many that was.
+    ///
+    /// Bounded rather than "everything to EOF": attaching to a run that has
+    /// been writing `stream-json` for a day would otherwise read a console of
+    /// arbitrary size into one allocation before printing a byte of it. The
+    /// callers all loop until a terminal condition, so a partial pump is a
+    /// smaller step, never a lost one — and a nonzero return already means
+    /// "come straight back", so a backlog drains at memory speed.
+    pub(super) fn pump(&mut self, out: &mut impl Write) -> Result<usize, String> {
+        self.file
+            .seek(SeekFrom::Start(self.offset))
+            .map_err(|e| format!("cannot seek the console: {e}"))?;
+        let mut buf = vec![0u8; PUMP_CHUNK];
+        let read = self
+            .file
+            .read(&mut buf)
+            .map_err(|e| format!("cannot read the console: {e}"))?;
+        if read > 0 {
+            // A closed pipe on the reading side is a routine way to stop
+            // watching (`stella daemon attach … | head`), not an error worth
+            // failing a run over.
+            let _ = out.write_all(&buf[..read]);
+            let _ = out.flush();
+            self.offset += read as u64;
+        }
+        Ok(read)
+    }
+
+    /// Copy everything appended so far, however many [`PUMP_CHUNK`]s that
+    /// takes.
+    ///
+    /// This is what every *terminal* read must use. A single bounded `pump`
+    /// where the run has just ended shows the first 64KiB of what is left and
+    /// silently drops the rest — and the rest, at that moment, is the run's
+    /// answer.
+    pub(super) fn drain(&mut self, out: &mut impl Write) -> Result<(), String> {
+        while self.pump(out)? > 0 {}
+        Ok(())
+    }
+}
+
+/// The most one [`Tail::pump`] moves. Large enough that a normal run is one
+/// read, small enough that a huge console cannot be a huge allocation.
+pub(super) const PUMP_CHUNK: usize = 64 * 1024;
+
 /// A reader's view of one stream: its geometry, how much of it it has
 /// relayed, and the raw fallback it uses until (and after) the index speaks.
 struct FollowedStream {
-    tail: super::Tail,
+    tail: Tail,
     geometry: Option<Geometry>,
     /// Cumulative bytes relayed. While raw, this equals the tail's offset —
     /// the head region is append-pure, so the two coordinate systems agree
@@ -746,7 +807,12 @@ impl Follower {
         })
     }
 
-    /// Relay everything new, in write order, and answer how many bytes moved.
+    /// Relay what is new, in write order, and answer how many bytes moved.
+    ///
+    /// One call is bounded — the raw path moves at most one [`Tail`]
+    /// chunk per stream — so a caller that must see everything loops until
+    /// this answers zero, and a live loop treats nonzero as "come straight
+    /// back".
     pub(crate) fn pump(
         &mut self,
         out: &mut impl Write,
@@ -798,11 +864,21 @@ impl Follower {
         Ok(moved)
     }
 
-    // There is deliberately no `skip_to_now` here. `interrupt_and_drain` was
-    // its only caller, and #1632 removed that call as a defect: seeking past
-    // everything already written threw away the run's shutdown output, which
-    // on the Ctrl-C path is precisely what the person who pressed the key is
-    // waiting to read.
+    /// Relay everything currently written, however many pumps that takes.
+    ///
+    /// This is what every *terminal* read must use — the raw-sweep half of
+    /// [`Self::pump`] is bounded by [`Tail::pump`]'s chunk, so a single
+    /// pump where the run has just ended can show the first chunk of what is
+    /// left and silently drop the rest. And the rest, at that moment, is the
+    /// run's answer.
+    pub(crate) fn drain(
+        &mut self,
+        out: &mut impl Write,
+        err: &mut impl Write,
+    ) -> Result<(), String> {
+        while self.pump(out, err)? > 0 {}
+        Ok(())
+    }
 
     fn stream_mut(&mut self, stream: Stream) -> &mut FollowedStream {
         match stream {
@@ -852,7 +928,7 @@ impl Follower {
 impl FollowedStream {
     fn open(path: PathBuf) -> Result<Self, String> {
         Ok(Self {
-            tail: super::Tail::open(&path)?,
+            tail: Tail::open(&path)?,
             geometry: None,
             consumed: 0,
             closed_at: None,
@@ -1008,13 +1084,8 @@ pub(crate) fn replay_logs(
     let mut ordered: Vec<(Stream, Vec<u8>)> = Vec::new();
     let mut marked: std::collections::HashMap<Stream, bool> = std::collections::HashMap::new();
     // Bytes written before the pump attached have no records; they are the
-    // front of the head region and replay first, per stream — in a fixed
-    // stream order, because they carry no chronology of their own and a
-    // HashMap walk would order them differently run to run.
-    for stream in [Stream::Stdout, Stream::Stderr] {
-        let Some(&(geometry, _total)) = streams.get(&stream) else {
-            continue;
-        };
+    // front of the head region and replay first, per stream.
+    for (&stream, &(geometry, _total)) in &streams {
         let Some(geometry) = geometry else { continue };
         let pre_pump = geometry.start.min(geometry.head);
         if pre_pump > 0 {
@@ -1058,26 +1129,26 @@ pub(crate) fn replay_logs(
         }
     }
 
-    // `-n`: each stream keeps its newest `lines` lines — computed per stream
-    // up front, then emitted in ONE pass over `ordered`. A stream-major pass
-    // here would regroup the output into the two monolithic blocks this whole
-    // function exists to avoid: the index order IS the chronology, and it
-    // must survive all the way to the sinks.
-    let skip_for = |stream: Stream| {
-        let total_lines: usize = ordered
+    // `-n`: each stream keeps its newest `lines` lines — computed per
+    // stream, but emitted in ONE pass over the index order, because that
+    // order is the point. A per-stream emit loop here would regroup the
+    // replay into the whole-stdout-then-whole-stderr shape the index exists
+    // to end.
+    let newest = |stream: Stream| -> usize {
+        ordered
             .iter()
             .filter(|(s, _)| *s == stream)
             .map(|(_, b)| bytecount_lines(b))
-            .sum();
-        total_lines.saturating_sub(lines)
+            .sum()
     };
-    let mut out_skip = skip_for(Stream::Stdout);
-    let mut err_skip = skip_for(Stream::Stderr);
+    let mut skip_out = newest(Stream::Stdout).saturating_sub(lines);
+    let mut skip_err = newest(Stream::Stderr).saturating_sub(lines);
     for (s, bytes) in &ordered {
-        match s {
-            Stream::Stdout => emit_after_skipping(bytes, &mut out_skip, &mut *out),
-            Stream::Stderr => emit_after_skipping(bytes, &mut err_skip, &mut *err),
-        }
+        let (sink, skip): (&mut dyn Write, &mut usize) = match s {
+            Stream::Stdout => (out, &mut skip_out),
+            Stream::Stderr => (err, &mut skip_err),
+        };
+        emit_after_skipping(bytes, skip, sink);
     }
     let _ = out.flush();
     let _ = err.flush();

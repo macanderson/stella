@@ -456,6 +456,20 @@ impl ToolExecutor for HunkGate<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.drain_wait_request()
+    }
+
+    /// Forwarded — letting the empty default stand would silently serialize
+    /// the inner executor's sibling spawns (see the port's contract); the
+    /// spawn tool is not in `GATED_TOOLS`, so the gate never reviews it.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.parallel_safe_names()
+    }
 }
 
 #[cfg(test)]
@@ -529,6 +543,20 @@ mod tests {
 
     fn edit(path: &str, old: &str, new: &str) -> Value {
         serde_json::json!({ "path": path, "old_string": old, "new_string": new })
+    }
+
+    /// The gate wraps the registry in every reviewed session, so one that
+    /// swallowed the claim (the default is empty) would serialize sibling
+    /// spawns exactly where review mode ships. Asserted over the real
+    /// registry, whose `task` tool is the one shipped claimant.
+    #[test]
+    fn the_gate_forwards_parallel_safe_names() {
+        let (dir, reg, _) = fixture();
+        let gate = HunkGate::new(&reg, None, dir.path().to_path_buf());
+        assert!(
+            gate.parallel_safe_names().contains("task"),
+            "the registry's concurrency claim must survive the gate"
+        );
     }
 
     /// The issue's acceptance criterion, end to end and through the real

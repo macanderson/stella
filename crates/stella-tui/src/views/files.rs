@@ -300,8 +300,24 @@ fn render_diff_pane(
     // footer could disagree about one file.
     let (added, removed) = record.map(|r| (r.added, r.removed)).unwrap_or((0, 0));
     match diff_text {
-        Some(text) if !text.is_empty() => {
-            let lines = diff::body_lines(text, record.map(|r| r.path.as_str()));
+        Some((text, current)) if !text.is_empty() => {
+            let mut lines = diff::body_lines(text, record.map(|r| r.path.as_str()));
+            // Say so when this is an EARLIER mutation's diff. The most recent
+            // mutation can legitimately arrive without one (the adoption
+            // re-emit attaches numstat and diff text in separate calls, either
+            // of which can fail), and showing the previous diff under the
+            // footer's cumulative counts without a word would be the same
+            // quiet mismatch this pane already has too much of (#1741, #1740).
+            if !current {
+                lines.insert(
+                    0,
+                    Line::from(Span::styled(
+                        "(an earlier change to this file — the latest one \
+                         reported no diff)",
+                        theme::muted(),
+                    )),
+                );
+            }
             let total = lines.len();
             ui.metrics.files_diff_total = total;
             ui.metrics.files_diff_height = inner_h;
@@ -327,10 +343,10 @@ fn render_diff_pane(
 /// `SessionModel::files[].latest_diff` (`deck.rs` L-T5) — never re-derived.
 /// Borrowed, not cloned: this runs on every ~30 fps frame the diff pane is
 /// open, and a single mutation's diff can be hundreds of KiB.
-fn find_diff<'a>(model: &'a WorkspaceModel, rec: &FileRecord) -> Option<&'a str> {
+fn find_diff<'a>(model: &'a WorkspaceModel, rec: &FileRecord) -> Option<(&'a str, bool)> {
     let agent = model.agents.iter().find(|a| a.meta.id == rec.agent)?;
     let file = agent.model.files.iter().find(|f| f.path == rec.path)?;
-    file.latest_diff.as_deref()
+    file.best_diff()
 }
 
 #[cfg(test)]
@@ -427,6 +443,151 @@ mod tests {
         assert!(ui.metrics.files_diff_height > 0, "inner height recorded");
         let text = buffer_text(&buf);
         assert!(text.contains("new"), "expected diff body content:\n{text}");
+    }
+
+    /// **Witness.** A later mutation that carries no diff must not destroy the
+    /// diff an earlier one delivered (#1741).
+    ///
+    /// This is the second, independent route to `(no diff captured)` for a
+    /// file that has a diff. `touch_file`'s mutation arm assigned
+    /// `latest_diff = diff.clone()` unconditionally, so a mutating
+    /// `FileChange` carrying `diff: None` erased it — while `remember_diff`
+    /// early-returns on `None`, leaving the good text in `recent_diffs` one
+    /// field away, which `find_diff` never read.
+    ///
+    /// That event shape is reachable, not theoretical: the pipeline's adoption
+    /// re-emit builds each change from `git diff --name-status` and then
+    /// attaches numstat and diff text in two independent calls. A path only
+    /// the numstat named keeps `diff: None` deliberately — `attach_diffs`
+    /// would rather report nothing than misattribute a patch. So counts
+    /// arrive without text, and if a tool had already edited that path in
+    /// session, the good diff was destroyed rather than merely absent.
+    ///
+    /// Both halves are asserted. Showing the older diff silently would trade
+    /// this defect for #1740's — an earlier change's text under the footer's
+    /// cumulative counts, with nothing on screen to say which mutation it is.
+    #[test]
+    fn a_later_mutation_without_a_diff_does_not_erase_the_one_before_it() {
+        let mut model = sample_model();
+        // The adoption shape: mutating, real counts, no text.
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::FileChange {
+                path: "src/existing.rs".into(),
+                kind: FileChangeKind::Modified,
+                added: 5,
+                removed: 2,
+                diff: None,
+            },
+        });
+
+        let mut ui = DeckUi::default();
+        ui.files_sel = 1; // "existing.rs"
+        ui.files_diff_open = true;
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+
+        assert!(
+            !text.contains("no diff captured"),
+            "the earlier mutation's diff is still remembered, so the pane must \
+             not claim nothing was captured:\n{text}"
+        );
+        assert!(
+            text.contains("new"),
+            "and it must be that diff's actual body:\n{text}"
+        );
+        assert!(
+            text.contains("earlier change"),
+            "shown, but labelled — an older diff under the footer's cumulative \
+             counts with no note is the mismatch #1740 is about:\n{text}"
+        );
+    }
+
+    /// **Witness.** A `/clear` mid-session must not turn every diff pane into
+    /// `(no diff captured)`.
+    ///
+    /// The tab reads two stores with different lifetimes: the row comes from
+    /// `WorkspaceModel::ledger`, which `Inbound::SessionReset` deliberately
+    /// leaves alone, and the diff text from the agent's `SessionModel` (L-T5).
+    /// Replacing that model wholesale cut the second and not the first, so
+    /// every row survived a clear with its counts intact and lost its diff —
+    /// the reported shape was `+64 -6` on the row, footer agreeing, and a pane
+    /// saying nothing had been captured. Both halves are asserted, because a
+    /// "fix" that dropped the rows too would satisfy a body-only assertion.
+    #[test]
+    fn a_session_reset_keeps_the_diff_the_surviving_ledger_row_renders() {
+        let mut model = sample_model();
+        model.apply_inbound(&Inbound::SessionReset {
+            agent: "lead".into(),
+        });
+
+        let mut ui = DeckUi::default();
+        ui.files_sel = 1; // "existing.rs" — the Modified record
+        ui.files_diff_open = true;
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+
+        assert!(
+            text.contains("existing.rs"),
+            "the ledger row itself survives a clear:\n{text}"
+        );
+        assert!(
+            !text.contains("no diff captured"),
+            "the row kept its +/- counts, so it must keep its diff too:\n{text}"
+        );
+        assert!(
+            text.contains("+another"),
+            "expected the diff body the pre-clear event carried:\n{text}"
+        );
+        assert!(
+            ui.metrics.files_diff_total > 0,
+            "a rendered diff records its line count"
+        );
+    }
+
+    /// The other half of the same reset: the conversation really is gone. A
+    /// reset that kept the file ledger by keeping *everything* would pass the
+    /// witness above and defeat `/clear`.
+    #[test]
+    fn a_session_reset_still_blanks_the_transcript() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Text {
+                text: "an answer the clear must remove".into(),
+            },
+        });
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::FileChange {
+                path: "src/kept.rs".into(),
+                kind: FileChangeKind::Modified,
+                added: 1,
+                removed: 0,
+                diff: Some("@@ -1,0 +1,1 @@\n+kept\n".into()),
+            },
+        });
+        model.apply_inbound(&Inbound::SessionReset {
+            agent: "lead".into(),
+        });
+
+        let session = &model.agents[0].model;
+        assert!(session.transcript.is_empty(), "the conversation is cleared");
+        assert!(session.streaming_text.is_empty());
+        assert_eq!(
+            session.files.len(),
+            1,
+            "what the session did to the tree is not conversation"
+        );
+        assert_eq!(
+            session.files[0].latest_diff.as_deref(),
+            Some("@@ -1,0 +1,1 @@\n+kept\n")
+        );
     }
 
     #[test]

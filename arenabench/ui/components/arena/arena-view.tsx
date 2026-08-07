@@ -8,10 +8,10 @@ import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import type { ConnState } from "@/components/topbar";
-import { Scoreboard } from "@/components/arena/scoreboard";
 import { Race } from "@/components/arena/race";
-import { TaskRail } from "@/components/arena/task-rail";
-import { Lane } from "@/components/arena/lane";
+import { StatStrip } from "@/components/arena/stat-strip";
+import { SeatNotices } from "@/components/arena/seat-notices";
+import { TaskTable } from "@/components/arena/task-table";
 
 export function ArenaView({
   matchId,
@@ -25,9 +25,6 @@ export function ArenaView({
   onMatchEnded: () => void;
 }) {
   const [snapshot, setSnapshot] = React.useState<Snapshot | null>(seedSnapshot);
-  const [activeTask, setActiveTask] = React.useState<string | null>(null);
-  const [follow, setFollow] = React.useState(true);
-  const [showReasoning, setShowReasoning] = React.useState(true);
   const [confirmStop, setConfirmStop] = React.useState(false);
   const [cancelError, setCancelError] = React.useState<string | null>(null);
 
@@ -66,10 +63,11 @@ export function ArenaView({
     return <div className="p-8 text-[13px] text-dim">connecting to the match…</div>;
   }
 
-  const activeRow = activeTask ? snapshot.rows.find((r) => r.task === activeTask) : null;
-
   return (
-    <div className="px-3.5 pb-5 pt-3">
+    /* The page gets real margins and a max width. Before this the arena ran
+       edge to edge at any window size, which is what made a dense table of
+       numbers read as clutter rather than as a table. */
+    <div className="mx-auto max-w-[1600px] px-5 pb-10 pt-4 sm:px-7">
       <section className="mb-5 flex items-center gap-6">
         <div>
           <h1 className="text-[22px]">{snapshot.match.name}</h1>
@@ -114,55 +112,26 @@ export function ArenaView({
         </div>
       )}
 
-      <Scoreboard snapshot={snapshot} />
-      <Race snapshot={snapshot} />
+      {/* Whole-match numbers, full width, before anything per-seat. */}
+      <StatStrip snapshot={snapshot} />
 
-      <section className="grid items-start gap-2.5 [grid-template-columns:216px_1fr] max-lg:[grid-template-columns:1fr]">
-        <TaskRail snapshot={snapshot} activeTask={activeTask} onSelect={setActiveTask} />
+      {/* Why a seat's numbers look the way they do — a credential it could
+          not find is the difference between "scored 0%" and "never ran". */}
+      <SeatNotices snapshot={snapshot} />
 
-        <section className="rounded-[10px] border border-line bg-panel">
-          {activeTask === null ? (
-            <div className="grid min-h-[180px] place-items-center p-5 text-center text-dim">
-              <div>
-                <div className="mb-1.5 text-[22px] text-line">◆</div>
-                <p>Select a task to watch its transcripts stream side by side.</p>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center gap-3.5 border-b border-line px-4 py-[13px]">
-                <h3 className="font-mono text-sm">{activeTask}</h3>
-                <div className="ml-auto flex gap-[7px]">
-                  <Button variant="ghost" size="sm" onClick={() => setShowReasoning((v) => !v)}>
-                    {showReasoning ? "hide reasoning" : "show reasoning"}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setFollow((v) => !v)}>
-                    {follow ? "following" : "paused"}
-                  </Button>
-                </div>
-              </div>
-              <div
-                className="grid gap-px bg-line"
-                style={{
-                  gridTemplateColumns: `repeat(${Math.min(snapshot.contestants.length, 3)}, minmax(0, 1fr))`,
-                }}
-              >
-                {snapshot.contestants.map((c) => (
-                  <Lane
-                    key={`${activeTask}:${c.id}`}
-                    matchId={matchId}
-                    contestant={c}
-                    task={activeTask}
-                    cell={activeRow?.cells[c.id]}
-                    follow={follow}
-                    showReasoning={showReasoning}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </section>
+      {/* The table carries the detail and gets three quarters; the race is a
+          glanceable summary and gets one. They stack on a narrow window
+          rather than squeezing the table into an unreadable column. */}
+      <section className="grid items-start gap-4 lg:[grid-template-columns:3fr_1fr]">
+        <TaskTable snapshot={snapshot} />
+        <aside className="min-w-0">
+          <div className="mb-1.5 px-1 text-[10px] lowercase tracking-[0.1em] text-dim">
+            head to head
+          </div>
+          <Race snapshot={snapshot} />
+        </aside>
       </section>
+
     </div>
   );
 }

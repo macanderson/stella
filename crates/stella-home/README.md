@@ -32,6 +32,17 @@ in `crates/stella-cli/src/paths.rs`. Even a new resolver has a bar to clear:
 both sides of the store/observatory divide must need the same answer — a
 helper only one consumer wants belongs in that consumer.
 
+`self_driving_root` / `legacy_self_driving_roots` are the worked example of a
+**feature-specific** path clearing that bar (#1755). They look like they belong
+in `stella-cli`, and would, but for the same reason the crate exists at all:
+`stella-cli` is the single writer of that directory and `stella-observatory`
+reads it back read-only, the two must not know each other, and a root spelled
+differently in one of them shows an operator an empty dashboard for a machine
+holding a full ledger. That is one answer needed on both sides of the divide,
+which is the test — not "is it about the home directory". They still answer
+"where" and never "make it so": the lazy migration those legacy roots exist for
+is I/O with failure modes, and it stays in the CLI.
+
 This crate is also the workspace's worked example of when a new crate is
 justified. The rule: a new crate is warranted only when functionality (a) sits
 behind a port/trait and would otherwise drag heavy dependencies into a crate

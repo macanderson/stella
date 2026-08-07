@@ -25,7 +25,6 @@ import contextlib
 import json
 import logging
 import os
-import shutil
 import subprocess
 import threading
 import time
@@ -33,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import harbor, provenance
 from .agents import (
     credential_env_for,
     launch_flags,
@@ -41,6 +41,7 @@ from .agents import (
     resolve_agent,
     routes_directly,
 )
+from .artifacts import mp4_is_finalized
 from .harbor_agent import ARENA_ENGINE_ENV
 from .model import DIMENSIONS, Contestant, MatchSpec, screen_env
 from .monitor import Detection, MatchWatcher
@@ -103,6 +104,34 @@ def _base_environment() -> dict[str, str]:
     return env
 
 
+def _provenance_for(match: Match) -> provenance.Provenance:
+    """The apparatus this match is about to run on.
+
+    Harbor is asked for its version here rather than trusted from config: the
+    binary on PATH can change between one match and the next, and the record
+    has to say what actually graded *these* trials.
+    """
+    from . import __version__
+
+    try:
+        version: str | None = harbor.harbor_version()
+        binary = harbor.harbor_bin()
+    except harbor.HarborUnavailableError:
+        # The launch below will fail and say so properly. The record still
+        # gets written, unknown rather than absent, so a half-started match
+        # is not mistaken later for one that ran on the current Harbor.
+        version, binary = None, ""
+    return provenance.Provenance(
+        dataset_key=match.spec.dataset,
+        dataset_ref=match.dataset.harbor_id,
+        dataset_digest=match.dataset.digest,
+        harbor_version=version,
+        harbor_bin=binary,
+        arenabench_version=__version__,
+        source=provenance.SOURCE_RECORDED,
+    )
+
+
 @dataclass
 class ContestantRun:
     """One contestant's Harbor process and everything read back from it."""
@@ -129,7 +158,10 @@ class ContestantRun:
         if self.error:
             return "error"
         if self.process is None:
-            return "pending"
+            # No process and a finish stamp is a run restored from disk after
+            # a server restart (#1885) — history, not a seat that never
+            # launched.
+            return "done" if self.finished_at is not None else "pending"
         if self.process.poll() is None:
             return "running"
         return "done" if self.exit_code in (0, None) else "failed"
@@ -148,6 +180,9 @@ class Match:
         self.started_at: float | None = None
         self.finished_at: float | None = None
         self.status = "created"  # created | running | finished | cancelled | failed
+        #: What this match's numbers were measured with. Set at `start`, and
+        #: read back from disk for a match reconstructed after the fact.
+        self.provenance: provenance.Provenance | None = None
         self.runs: dict[str, ContestantRun] = {}
         self.recorder: RecorderSupervisor | None = None
         self.snapshots: SnapshotSupervisor | None = None
@@ -228,6 +263,9 @@ class Match:
         return {
             "match": self.spec.to_json(),
             "dataset": self.dataset.to_json(),
+            # Rides every snapshot so a viewer can never read a number without
+            # the apparatus that produced it being one field away.
+            "provenance": self.provenance.to_json() if self.provenance else None,
             "status": self.status,
             "note": self.note,
             "created_at": self.created_at,
@@ -301,8 +339,113 @@ class Match:
         trial = self.trial_dirs(contestant_id).get(task)
         if trial is None:
             return None
+        # Only a finalised recording is served. A file that exists but has no
+        # `moov` yet cannot be played, and handing one to a browser produces a
+        # broken player rather than an honest "not ready".
         video = trial / "arena" / "recording.mp4"
-        return video if video.exists() else None
+        return video if mp4_is_finalized(video) else None
+
+    def trial_dir_for(self, contestant_id: str, task: str) -> Path | None:
+        """The trial directory itself, for browsing everything it produced."""
+        return self.trial_dirs(contestant_id).get(task)
+
+
+def _no_trial_ever_ran(match: Match) -> bool:
+    """True when every seat died without producing a single trial directory.
+
+    Both halves are required. A seat that exits nonzero after real trials
+    (Harbor can fail late) still leaves a contest worth reading, and a seat
+    that succeeded at all makes the match a contest by definition — neither
+    is a failed match, however the other seat fared.
+    """
+    if not match.runs:
+        return True
+    every_seat_died = all(
+        run.state in ("error", "failed") for run in match.runs.values()
+    )
+    return every_seat_died and not any(
+        match.trial_dirs(contestant.id) for contestant in match.spec.contestants
+    )
+
+
+def _seat_failure_reason(run: ContestantRun) -> str:
+    """The most specific one-line account of why a seat produced nothing."""
+    if run.error:
+        return run.error
+    try:
+        lines = run.log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    # The last non-empty line: a traceback ends with its exception, and a
+    # one-line refusal ("Docker daemon is not running…") is its own last line.
+    for line in reversed(lines):
+        if line.strip():
+            return line.strip()[:300]
+    return f"exited with code {run.exit_code} and wrote nothing to its log"
+
+
+def _failure_note(match: Match) -> str:
+    """Why the match failed, phrased for the operator, not the seat logs."""
+    reasons = {
+        run.contestant.name: _seat_failure_reason(run)
+        for run in match.runs.values()
+    }
+    unique = sorted(set(reasons.values()))
+    if len(unique) == 1:
+        return f"no trial ever ran — every seat failed: {unique[0]}"
+    per_seat = "; ".join(f"{name}: {reason}" for name, reason in reasons.items())
+    return f"no trial ever ran — {per_seat}"
+
+
+def _synthesize_spec(match_id: str, match_dir: Path) -> MatchSpec | None:
+    """A spec rebuilt from what a finished match left behind.
+
+    Matches created before ``spec.json`` existed (#1885) still restore: the
+    seat manifests carry each seat's engine and agent, the job directories
+    carry the slugs and the tasks, and provenance carries the dataset. Good
+    enough to read history by — never to launch, which a restored match
+    never does.
+    """
+    jobs_root = match_dir / "jobs"
+    contestants: list[dict[str, Any]] = []
+    tasks: set[str] = set()
+    for job_dir in sorted(p for p in jobs_root.iterdir() if p.is_dir()):
+        slug = job_dir.name.removeprefix(f"{match_id}-")
+        raw: dict[str, Any] = {}
+        manifest = seat_manifest_path(job_dir)
+        if manifest.is_file():
+            try:
+                parsed = json.loads(manifest.read_text(encoding="utf-8"))
+                raw = parsed if isinstance(parsed, dict) else {}
+            except ValueError:
+                raw = {}
+        contestants.append(
+            {
+                "id": raw.get("contestant") or slug,
+                "name": slug.replace("-", " "),
+                "agent": raw.get("agent") or "stella",
+                "engine": {
+                    "api": raw.get("api") or "openrouter",
+                    "model": raw.get("model") or "",
+                    "base_url": raw.get("base_url"),
+                },
+            }
+        )
+        for trial in job_dir.iterdir():
+            if trial.is_dir():
+                tasks.add(trial.name.rsplit("__", 1)[0])
+    if not contestants:
+        return None
+    record = provenance.read_match(match_dir)
+    return MatchSpec.from_json(
+        {
+            "id": match_id,
+            "name": match_id,
+            "dataset": record.dataset_key if record else "",
+            "tasks": sorted(tasks),
+            "contestants": contestants,
+        }
+    )
 
 
 class MatchRunner:
@@ -314,6 +457,91 @@ class MatchRunner:
         self.matches: dict[str, Match] = {}
         self._lock = threading.Lock()
 
+    # -- restoring --------------------------------------------------------
+
+    def restore_from_disk(self) -> int:
+        """Re-list finished matches from the workspace, after a restart.
+
+        The runner's live state is memory-only, so before this every restart
+        silently erased the UI's history while the artifacts sat intact on
+        disk (#1885). A restored match is history: no process, no supervisor,
+        no recorder — every reader (snapshot, metrics, transcripts, files)
+        already works straight off the job directories.
+        """
+        root = self.workspace / "matches"
+        if not root.is_dir():
+            return 0
+        restored = 0
+        for match_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            match_id = match_dir.name
+            if match_id in self.matches or not (match_dir / "jobs").is_dir():
+                continue
+            try:
+                match = self._restore_one(match_id, match_dir)
+            except Exception:  # one unreadable match must not hide the rest
+                log.exception("could not restore match %s", match_id)
+                continue
+            if match is None:
+                continue
+            with self._lock:
+                self.matches.setdefault(match_id, match)
+            restored += 1
+        if restored:
+            log.info("restored %d finished match(es) from disk", restored)
+        return restored
+
+    def _restore_one(self, match_id: str, match_dir: Path) -> Match | None:
+        spec: MatchSpec | None = None
+        spec_path = match_dir / "spec.json"
+        if spec_path.is_file():
+            try:
+                spec = MatchSpec.from_json(
+                    json.loads(spec_path.read_text(encoding="utf-8"))
+                )
+            except (ValueError, TypeError, KeyError):
+                spec = None  # fall through to the synthesized shape
+        if spec is None:
+            spec = _synthesize_spec(match_id, match_dir)
+        if spec is None or not spec.contestants:
+            return None
+
+        # An unknown dataset key must not hide the match: any registry entry
+        # lets the snapshot render, and the provenance record beside the
+        # trials keeps saying what actually graded them.
+        dataset = self.registry.get(spec.dataset) or next(
+            iter(self.registry.datasets.values()), None
+        )
+        if dataset is None:
+            return None
+
+        match = Match(spec, dataset, match_dir)
+        record_path = match_dir / "provenance.json"
+        started = (
+            record_path.stat().st_mtime
+            if record_path.is_file()
+            else match_dir.stat().st_mtime
+        )
+        finished = started
+        for result in match_dir.glob("jobs/*/*/result.json"):
+            finished = max(finished, result.stat().st_mtime)
+        match.created_at = match.started_at = min(started, finished)
+        match.finished_at = finished
+        match.status = "finished"
+        match.provenance = provenance.read_match(match_dir)
+        match.note = "restored from artifacts on disk after a server restart"
+        for contestant in spec.contestants:
+            job_name = f"{match_id}-{contestant.slug}"
+            run = ContestantRun(
+                contestant=contestant,
+                job_name=job_name,
+                job_dir=match.jobs_root / job_name,
+                log_path=match_dir / f"{contestant.slug}.log",
+            )
+            run.started_at = match.started_at
+            run.finished_at = finished
+            match.runs[contestant.id] = run
+        return match
+
     # -- launching --------------------------------------------------------
 
     def create(self, spec: MatchSpec) -> Match:
@@ -324,6 +552,17 @@ class MatchRunner:
         if dataset is None:
             raise ValueError(f"unknown dataset: {spec.dataset}")
         match = Match(spec, dataset, self.workspace / "matches" / spec.id)
+        # The spec is what a restart cannot rebuild from job directories alone
+        # (names, colors, task order). `to_json` serializes seats through
+        # `redacted()`, so credential values never touch disk. Best-effort: a
+        # match that cannot write its spec still runs, and restores later
+        # through the synthesized path.
+        try:
+            (match.workspace / "spec.json").write_text(
+                json.dumps(spec.to_json(), indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError:
+            log.warning("could not persist spec.json for match %s", spec.id)
         with self._lock:
             self.matches[spec.id] = match
         return match
@@ -333,6 +572,13 @@ class MatchRunner:
             return
         match.status = "running"
         match.started_at = time.time()
+
+        # Record the apparatus before the first trial, not after the last one:
+        # a match that is killed mid-run still produced trials, and a trial
+        # whose grading stack is unrecorded cannot be compared to anything
+        # later (see `arenabench.provenance`).
+        match.provenance = _provenance_for(match)
+        provenance.write_match(match.workspace, match.provenance)
 
         for contestant in match.spec.contestants:
             try:
@@ -395,11 +641,13 @@ class MatchRunner:
         for knob in spec.unhonoured(contestant.engine):
             run.warnings.append(f"{spec.title} ignores {knob}")
 
-        if shutil.which("harbor") is None:
-            raise RuntimeError(
-                "`harbor` is not on PATH. Install it, or point ArenaBench at a "
-                "virtualenv that has it."
-            )
+        # Resolve Harbor and check it is new enough to grade THIS dataset
+        # before anything is launched. A Harbor that predates a task setting
+        # discards it and produces a complete run with a wrong score, so this
+        # is a refusal, not a warning (see `arenabench.harbor`).
+        harbor_exe = harbor.harbor_bin()
+        harbor.require_for_dataset(match.dataset.min_harbor, match.dataset.title)
+        run.notes.append(f"harbor {harbor.harbor_version()} ({harbor_exe})")
 
         # Prefer an offline export. Given a registry ref, Harbor resolves
         # every task against its backend at run time, and one failed lookup
@@ -420,7 +668,7 @@ class MatchRunner:
             )
 
         command = [
-            "harbor", "run",
+            harbor_exe, "run",
             "--env", "docker",
             *source,
             *launch_flags(contestant),
@@ -604,8 +852,18 @@ class MatchRunner:
 
         match.finished_at = time.time()
         if match.status != "cancelled":
-            match.status = "finished"
-        log.info("match %s finished", match.spec.id)
+            # "finished" is a claim that a contest happened. A match whose
+            # every seat died without producing a single trial — Docker down,
+            # a bad Harbor, a refused launch — proved nothing, and stamping it
+            # finished puts a green pill over 0/0 trials two seconds in. That
+            # match failed, and the note says why so the operator does not
+            # have to open the seat logs to learn it.
+            if _no_trial_ever_ran(match):
+                match.status = "failed"
+                match.note = _failure_note(match)
+            else:
+                match.status = "finished"
+        log.info("match %s %s", match.spec.id, match.status)
 
     def cancel(self, match: Match) -> None:
         match.status = "cancelled"

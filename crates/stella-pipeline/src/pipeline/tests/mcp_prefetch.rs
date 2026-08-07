@@ -1,7 +1,9 @@
 //! The orchestrator MCP pre-fetch hook (issue #248): [`McpPrefetchPort::prefetch`]
 //! is consulted once at the top of `run_best_of_n`, and its result — when
 //! `Some` — rides in every candidate's shared message history rather than
-//! each candidate independently paying to look it up.
+//! each candidate independently paying to look it up. The sweep is
+//! goal-blind by contract (#1779): `prefetch` takes no arguments, so no
+//! double here can even observe what goal the run carries.
 
 use super::*;
 
@@ -12,7 +14,7 @@ struct FixedPrefetch(&'static str);
 
 #[async_trait]
 impl McpPrefetchPort for FixedPrefetch {
-    async fn prefetch(&self, _goal: &str) -> Option<String> {
+    async fn prefetch(&self) -> Option<String> {
         Some(self.0.to_string())
     }
 }
@@ -83,12 +85,12 @@ async fn an_oversized_prefetch_is_clamped_with_a_visible_marker() {
     struct OwnedPrefetch(String);
     #[async_trait]
     impl McpPrefetchPort for OwnedPrefetch {
-        async fn prefetch(&self, _goal: &str) -> Option<String> {
+        async fn prefetch(&self) -> Option<String> {
             Some(self.0.clone())
         }
     }
     let port = OwnedPrefetch("x".repeat(60_000));
-    let folded = crate::mcp_prefetch::fold(Some(&port), "goal", 2, &[])
+    let folded = crate::mcp_prefetch::fold(Some(&port), 2, &[])
         .await
         .expect("a hit folds a message");
     let msg = &folded.last().expect("one folded message").content;
@@ -106,7 +108,7 @@ async fn a_prefetch_miss_never_aborts_the_run() {
     struct EmptyPrefetch;
     #[async_trait]
     impl McpPrefetchPort for EmptyPrefetch {
-        async fn prefetch(&self, _goal: &str) -> Option<String> {
+        async fn prefetch(&self) -> Option<String> {
             None
         }
     }

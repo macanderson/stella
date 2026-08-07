@@ -179,8 +179,9 @@ fi
 # would open a hole. `make guards` includes `wire-schema`, which runs the two
 # schema exporters — a cargo build. For a website-only push that is pure waste:
 # the diff cannot have touched the wire contract. But `docs/wire/` is *generated
-# and committed*, and ci.yml carries `paths-ignore: docs/**`, so a hand-edit
-# confined to `docs/wire/` is invisible to the required check. That is why
+# and committed*, and ci.yml skips its Rust jobs for a diff confined to
+# `docs/**` (a job-level prose filter since #1892), so a hand-edit confined to
+# `docs/wire/` is invisible to the required check. That is why
 # wire-schema was put in `guards` in the first place, and why the fix here is to
 # make it conditional rather than to drop it: run the dear rung only when the
 # pushed diff can actually have invalidated the artifacts. The server-side half

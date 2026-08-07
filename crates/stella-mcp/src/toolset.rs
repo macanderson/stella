@@ -64,6 +64,27 @@ const NS_SEP: &str = "__";
 /// Default per-call (and per-connect) timeout when the caller does not set one.
 pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Byte budget for ONE server's contribution to the advertised toolset.
+///
+/// Ingest already caps each tool individually — `MAX_TOOLS_PER_SERVER` (256),
+/// `MAX_TOOL_DESCRIPTION_CHARS` (2,000) and a per-tool `inputSchema` budget in
+/// `crate::client::ingest`. What none of them bounds is the **aggregate**:
+/// 256 tools times a 2,000-character description is ~512 KB of third-party
+/// prose from a single server, at position 0 of every request, before its
+/// schemas are counted (#1856).
+///
+/// Every per-tool cap can hold and the block still exceed the whole
+/// recall+memory+rules budget combined, because the caps are per-item and the
+/// cost is the sum. 32 KB is roughly 9k tokens: generous for the servers
+/// people actually run (a handful of tools each), and a wall for the one that
+/// advertises a catalogue.
+///
+/// Applied to the SORTED segment, so which tools survive is a deterministic
+/// function of their names rather than of client order — the byte-stability
+/// contract in [`McpToolSet::schemas`] would be worthless if the truncation
+/// point moved between processes.
+pub const MAX_SERVER_SCHEMA_BYTES: usize = 32 * 1024;
+
 /// What a connected server said about itself during the `initialize`
 /// handshake — its own name (which need not match the local alias), version,
 /// display title, and free-prose `instructions`.
@@ -483,14 +504,97 @@ impl McpToolSet {
     }
 }
 
-#[async_trait]
-impl ToolExecutor for McpToolSet {
-    fn schemas(&self) -> Vec<ToolSchema> {
-        let mut schemas = Vec::new();
-        // Native tools first — they are the base layer the MCP set augments.
-        if let Some(native) = &self.native {
-            schemas.extend(native.schemas());
+/// Which server a namespaced tool belongs to — `mcp__<server>__<tool>`.
+///
+/// Server names are guaranteed free of the `__` separator (`is_namespaceable`
+/// rejects the rest at connect), so the segment between the prefix and the
+/// first separator is unambiguous.
+fn server_of(namespaced: &str) -> &str {
+    namespaced
+        .strip_prefix(NS_PREFIX)
+        .and_then(|rest| rest.split_once(NS_SEP))
+        .map_or("", |(server, _)| server)
+}
+
+/// Roughly what one schema costs in the serialized tools block: its name, its
+/// description, and its `inputSchema`.
+///
+/// Approximate on purpose — the exact cost depends on the provider's own JSON
+/// envelope, which this crate does not model. A budget is a bound, not an
+/// accounting, and being a few bytes out either way changes nothing about
+/// whether a 512 KB catalogue is refused.
+fn schema_cost(schema: &ToolSchema) -> usize {
+    schema.name.len()
+        + schema.description.len()
+        + serde_json::to_string(&schema.input_schema).map_or(0, |s| s.len())
+}
+
+/// Hold each server's contribution to a SORTED MCP segment under
+/// [`MAX_SERVER_SCHEMA_BYTES`], returning what survives and, per server, how
+/// many tools the budget cut.
+///
+/// One function with two callers ([`McpToolSet::schemas`] takes the schemas,
+/// [`McpToolSet::over_budget_servers`] takes the counts) rather than a second
+/// copy of the rule for reporting — two implementations of one fold is exactly
+/// the drift #1613 was filed for.
+///
+/// The input is already sorted by namespaced name, which groups each server's
+/// tools into a contiguous run (the server name is the prefix) AND fixes the
+/// order within it. So the truncation point is a deterministic function of the
+/// tool names, not of client order or connection timing — without that, the
+/// byte-stability contract above would survive the sort and then be lost here.
+fn budget_segment(sorted: Vec<ToolSchema>) -> (Vec<ToolSchema>, Vec<(String, usize)>) {
+    let mut kept = Vec::with_capacity(sorted.len());
+    let mut elided: Vec<(String, usize)> = Vec::new();
+    let mut current = String::new();
+    let mut spent = 0usize;
+
+    for schema in sorted {
+        let server = server_of(&schema.name);
+        if server != current {
+            current = server.to_string();
+            spent = 0;
         }
+        let cost = schema_cost(&schema);
+        // The first tool of a server is always admitted, however large: a
+        // server whose single tool exceeds the budget should advertise that
+        // one tool, not vanish. Ingest's per-tool caps already bound it.
+        if spent > 0 && spent + cost > MAX_SERVER_SCHEMA_BYTES {
+            match elided.last_mut() {
+                Some((name, count)) if *name == current => *count += 1,
+                _ => elided.push((current.clone(), 1)),
+            }
+            continue;
+        }
+        spent += cost;
+        kept.push(schema);
+    }
+    (kept, elided)
+}
+
+impl McpToolSet {
+    /// Servers whose advertised tools were trimmed to fit
+    /// [`MAX_SERVER_SCHEMA_BYTES`], as `(server, tools dropped)`.
+    ///
+    /// Deliberately separate from [`Self::over_advertising_servers`], which
+    /// reports the per-tool COUNT cap applied at ingest. These are two
+    /// different walls and a reader needs to know which one it hit: 300 tools
+    /// trips the first, twelve verbose ones trip this. Empty for every server
+    /// that fits, which is nearly all of them.
+    #[must_use]
+    pub fn over_budget_servers(&self) -> Vec<(String, usize)> {
+        budget_segment(self.mcp_segment()).1
+    }
+
+    /// This set's MCP tools, namespaced and sorted, before the byte budget.
+    ///
+    /// The one place the segment is built. [`ToolExecutor::schemas`] budgets it
+    /// and returns the schemas; [`Self::over_budget_servers`] budgets it and
+    /// returns the counts. Deriving the counts from the already-budgeted list
+    /// would report zero every time — the honest input to both questions is
+    /// what the servers advertised, not what survived.
+    fn mcp_segment(&self) -> Vec<ToolSchema> {
+        let mut mcp = Vec::new();
         for (idx, client) in self.clients.iter().enumerate() {
             // A disabled server advertises nothing this session — the engine
             // re-reads schemas each model call, so the model stops seeing its
@@ -503,7 +607,7 @@ impl ToolExecutor for McpToolSet {
                 // Only advertise tools that actually route back to this client
                 // (defends against any skipped/collided entry).
                 if self.routes.get(&namespaced).map(|(i, _)| *i) == Some(idx) {
-                    schemas.push(ToolSchema {
+                    mcp.push(ToolSchema {
                         name: namespaced,
                         description: tool.description.clone(),
                         input_schema: tool.input_schema.clone(),
@@ -517,6 +621,39 @@ impl ToolExecutor for McpToolSet {
                 }
             }
         }
+        // Namespaced names are unique by construction (`routes` is keyed on
+        // them), so this is a total order — no tie for the sort to resolve
+        // arbitrarily and reintroduce the nondeterminism.
+        mcp.sort_by(|a, b| a.name.cmp(&b.name));
+        mcp
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for McpToolSet {
+    /// The advertised toolset, as two segments in a fixed order: the native
+    /// tools, then this set's MCP tools.
+    ///
+    /// **Both the segment order and the order within each segment are a
+    /// cross-process contract, not a presentation choice.** This list is
+    /// serialized verbatim at position 0 of the prompt prefix, and prompt
+    /// caching is a byte-level prefix match — so two stella processes in the
+    /// same workspace inside the cache TTL share the tools+system entry only
+    /// if they emit the same bytes. `ToolRegistry::schemas` sorts the native
+    /// segment for exactly that reason; this decorator used to concatenate
+    /// after it without re-sorting, which put the whole guarantee back at the
+    /// mercy of `self.clients` order and of which server finished connecting
+    /// first (#1848).
+    ///
+    /// Sorting the MCP segment by its namespaced name — rather than trusting
+    /// client order — is what makes the answer independent of both.
+    fn schemas(&self) -> Vec<ToolSchema> {
+        let mut schemas = Vec::new();
+        // Native tools first — they are the base layer the MCP set augments.
+        if let Some(native) = &self.native {
+            schemas.extend(native.schemas());
+        }
+        schemas.extend(budget_segment(self.mcp_segment()).0);
         schemas
     }
 
@@ -559,6 +696,25 @@ impl ToolExecutor for McpToolSet {
         self.native
             .as_ref()
             .map_or(0.0, |native| native.drain_sub_agent_spend_usd())
+    }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.native
+            .as_ref()
+            .and_then(|native| native.drain_wait_request())
+    }
+
+    /// Forwarded from the native layer: letting the empty default stand would
+    /// silently serialize its sibling spawns (see the port's contract).
+    /// External MCP tools never carry this claim — the port pins their
+    /// concurrency to `read_only`, which they are advertised without.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.native
+            .as_ref()
+            .map_or_else(Default::default, |native| native.parallel_safe_names())
     }
 }
 
@@ -613,6 +769,21 @@ impl ToolExecutor for CandidateMcpView {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded so a swallowed wait request cannot turn parked waits
+    /// (#1471) back into model-step polling — to `native`, not `inner`:
+    /// remote MCP tools never deposit wait requests, and the native layer
+    /// this view executes (`ci_status` included) is the only depositor.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.native.drain_wait_request()
+    }
+
+    /// Forwarded from the candidate's own `native` layer — the executor every
+    /// non-`mcp__` name routes to in `execute` above. `inner`'s set would name
+    /// tools this view never runs, and MCP tools never carry the claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.native.parallel_safe_names()
+    }
 }
 
 /// Compose the namespaced tool name for a server/tool pair.
@@ -638,784 +809,4 @@ fn is_namespaceable(name: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::client::MAX_TOOLS_PER_SERVER;
-    use crate::client::ingest::{
-        MAX_TOOL_DESCRIPTION_CHARS, MAX_TOOL_RESULT_BYTES, MAX_TOOL_SCHEMA_BYTES,
-    };
-    use crate::error::McpError;
-    use crate::protocol::PREFERRED_PROTOCOL_VERSION;
-    use crate::transport::Transport;
-    use crate::transport::testkit::ScriptedTransport;
-
-    /// A fake native executor advertising one tool, `bash`.
-    struct FakeNative;
-    #[async_trait]
-    impl ToolExecutor for FakeNative {
-        fn schemas(&self) -> Vec<ToolSchema> {
-            vec![ToolSchema {
-                name: "bash".into(),
-                description: "run a command".into(),
-                input_schema: serde_json::json!({ "type": "object" }),
-                read_only: false,
-                speculation_safe: false,
-            }]
-        }
-        async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
-            ToolOutput::Ok {
-                content: format!("native ran {name}"),
-            }
-        }
-    }
-
-    /// A transport that never answers `tools/call` — used to prove the
-    /// per-call timeout fires and names the server.
-    struct HangingTransport;
-    #[async_trait]
-    impl Transport for HangingTransport {
-        async fn request(&self, method: &str, _params: Value) -> Result<Value, McpError> {
-            if method == "tools/call" {
-                // Never resolves within the test's short call timeout.
-                std::future::pending::<()>().await;
-                unreachable!()
-            }
-            // Handshake methods answer instantly.
-            match method {
-                "initialize" => {
-                    Ok(serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }))
-                }
-                "tools/list" => Ok(serde_json::json!({
-                    "tools": [{ "name": "slow", "inputSchema": { "type": "object" } }]
-                })),
-                _ => Ok(Value::Null),
-            }
-        }
-        async fn notify(&self, _method: &str, _params: Value) -> Result<(), McpError> {
-            Ok(())
-        }
-        async fn close(&self) -> Result<(), McpError> {
-            Ok(())
-        }
-    }
-
-    async fn connected_client(name: &str, tool: &str) -> McpClient {
-        connected_client_with_schema(name, tool, serde_json::json!({ "type": "object" })).await
-    }
-
-    /// Like [`connected_client`], with a caller-chosen `inputSchema` — for
-    /// proving [`McpToolSet::prefetch_candidate_context`]'s zero-required-input
-    /// filter against a tool that DOES require one.
-    async fn connected_client_with_schema(
-        name: &str,
-        tool: &str,
-        input_schema: Value,
-    ) -> McpClient {
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok(
-            "tools/list",
-            serde_json::json!({ "tools": [{ "name": tool, "inputSchema": input_schema }] }),
-        );
-        // Pre-queue a successful call for the routing test.
-        transport.push_ok(
-            "tools/call",
-            serde_json::json!({ "content": [{ "type": "text", "text": "mcp ran" }] }),
-        );
-        let mut client = McpClient::new(name, Box::new(transport));
-        client.initialize().await.unwrap();
-        client
-    }
-
-    #[tokio::test]
-    async fn connected_names_lists_live_servers_in_order() {
-        let a = connected_client("files", "read").await;
-        let b = connected_client("search", "grep").await;
-        let set = McpToolSet::from_clients(vec![a, b]);
-        assert_eq!(set.connected_names(), vec!["files", "search"]);
-        assert!(set.failed_servers().is_empty());
-    }
-
-    #[tokio::test]
-    async fn schemas_namespace_mcp_tools_and_include_native() {
-        let client = connected_client("files", "read").await;
-        let set = McpToolSet::from_clients(vec![client]).wrapping(Arc::new(FakeNative));
-
-        let names: HashSet<String> = set.schemas().into_iter().map(|s| s.name).collect();
-        assert!(names.contains("mcp__files__read"), "namespaced MCP tool");
-        assert!(names.contains("bash"), "native tool passes through");
-        assert_eq!(names.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn execute_routes_by_prefix_and_falls_through_to_native() {
-        let client = connected_client("files", "read").await;
-        let set = McpToolSet::from_clients(vec![client]).wrapping(Arc::new(FakeNative));
-
-        // Routes to the MCP server.
-        let mcp = set
-            .execute("mcp__files__read", &serde_json::json!({ "path": "x" }))
-            .await;
-        assert_eq!(
-            mcp,
-            ToolOutput::Ok {
-                content: "mcp ran".into()
-            }
-        );
-
-        // Falls through to native.
-        let native = set.execute("bash", &serde_json::json!({})).await;
-        assert_eq!(
-            native,
-            ToolOutput::Ok {
-                content: "native ran bash".into()
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn unknown_mcp_tool_is_an_error_not_a_fallthrough() {
-        let client = connected_client("files", "read").await;
-        let set = McpToolSet::from_clients(vec![client]).wrapping(Arc::new(FakeNative));
-        let out = set.execute("mcp__files__missing", &Value::Null).await;
-        match out {
-            ToolOutput::Error { message } => assert!(message.contains("unknown MCP tool")),
-            other => panic!("expected an error, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn unknown_native_tool_errors_when_no_native_configured() {
-        let client = connected_client("files", "read").await;
-        let set = McpToolSet::from_clients(vec![client]);
-        let out = set.execute("bash", &Value::Null).await;
-        assert!(out.is_error());
-    }
-
-    #[tokio::test]
-    async fn a_hung_server_times_out_naming_the_server_without_poisoning_native() {
-        let mut client = McpClient::new("slowsrv", Box::new(HangingTransport));
-        client.initialize().await.unwrap();
-        let set = McpToolSet::from_clients(vec![client])
-            .wrapping(Arc::new(FakeNative))
-            .with_call_timeout(Duration::from_millis(50));
-
-        // The hung MCP call times out with a server-named error…
-        let hung = set.execute("mcp__slowsrv__slow", &Value::Null).await;
-        match hung {
-            ToolOutput::Error { message } => {
-                assert!(message.contains("slowsrv"), "names the server: {message}");
-                assert!(message.contains("timed out"));
-            }
-            other => panic!("expected a timeout error, got {other:?}"),
-        }
-
-        // …and the native tool still works — the dead server didn't poison it.
-        let native = set.execute("bash", &Value::Null).await;
-        assert_eq!(
-            native,
-            ToolOutput::Ok {
-                content: "native ran bash".into()
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn duplicate_tool_names_from_one_server_are_advertised_once_first_wins() {
-        // One server advertising the same name twice. Both occurrences map to
-        // the single `mcp__files__read` route, so without ingest dedupe the
-        // second entry's only effect was a duplicate `ToolSchema` in every
-        // model request.
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok(
-            "tools/list",
-            serde_json::json!({ "tools": [
-                { "name": "read", "description": "the first read",
-                  "inputSchema": { "type": "object" } },
-                { "name": "read", "description": "a re-advertised impostor",
-                  "inputSchema": { "type": "object" } },
-                { "name": "write", "inputSchema": { "type": "object" } },
-            ] }),
-        );
-        transport.push_ok(
-            "tools/call",
-            serde_json::json!({ "content": [{ "type": "text", "text": "routed" }] }),
-        );
-        let mut client = McpClient::new("files", Box::new(transport));
-        client.initialize().await.unwrap();
-        // Deduped at ingest — the client never holds the second entry, so
-        // routing, schemas, and retry-safety lookups all agree on one tool…
-        assert_eq!(client.tools().len(), 2);
-
-        let set = McpToolSet::from_clients(vec![client]);
-        let schemas = set.schemas();
-        assert_eq!(schemas.len(), 2);
-        let read: Vec<_> = schemas
-            .iter()
-            .filter(|s| s.name == "mcp__files__read")
-            .collect();
-        assert_eq!(read.len(), 1, "one schema per advertised name");
-        assert_eq!(
-            read[0].description, "the first read",
-            "the FIRST occurrence wins — same policy as duplicate server names"
-        );
-
-        // …and the kept entry still routes normally.
-        assert_eq!(
-            set.execute("mcp__files__read", &Value::Null).await,
-            ToolOutput::Ok {
-                content: "routed".into()
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn duplicate_and_invalid_server_names_are_recorded_not_advertised() {
-        let a = connected_client("dup", "x").await;
-        let b = connected_client("dup", "y").await;
-        let bad = connected_client("has__sep", "z").await;
-        let set = McpToolSet::from_clients(vec![a, b, bad]);
-
-        assert_eq!(set.connected_count(), 1, "only the first `dup` is kept");
-        let reasons: Vec<&str> = set
-            .failed_servers()
-            .iter()
-            .map(|(_, r)| r.as_str())
-            .collect();
-        assert!(reasons.iter().any(|r| r.contains("duplicate")));
-        assert!(reasons.iter().any(|r| r.contains("reserved")));
-    }
-
-    #[tokio::test]
-    async fn usage_ledger_records_a_successful_call_with_server_tool_and_reason() {
-        let client = connected_client("files", "read").await;
-        let ledger: McpUsageLedger = Arc::default();
-        let set = McpToolSet::from_clients(vec![client]).with_usage_ledger(ledger.clone());
-
-        let out = set
-            .execute(
-                "mcp__files__read",
-                &serde_json::json!({ "reason": "inspect config" }),
-            )
-            .await;
-        assert!(!out.is_error());
-
-        let drained = stella_core::mcp_usage::drain_usage(&ledger);
-        assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].server, "files");
-        assert_eq!(drained[0].tool, "read");
-        assert_eq!(drained[0].reason, "inspect config");
-        assert!(drained[0].called_at_ms > 0);
-    }
-
-    #[tokio::test]
-    async fn disabled_server_is_hidden_from_schemas_and_errors_on_execute() {
-        let client = connected_client("files", "read").await;
-        let disabled: DisabledServers = Arc::new(Mutex::new(HashSet::new()));
-        disabled.lock().unwrap().insert("files".to_string());
-        let set = McpToolSet::from_clients(vec![client]).with_disabled_servers(disabled.clone());
-
-        // Hidden from the advertised schema while disabled.
-        assert!(
-            set.schemas().iter().all(|s| s.name != "mcp__files__read"),
-            "disabled server's tool must not be advertised"
-        );
-        // And a direct call errors, naming the disabled server.
-        match set.execute("mcp__files__read", &Value::Null).await {
-            ToolOutput::Error { message } => assert!(message.contains("disabled")),
-            other => panic!("expected a disabled error, got {other:?}"),
-        }
-
-        // Re-enabling (clearing the set) makes the tool visible again — live,
-        // no reconnect.
-        disabled.lock().unwrap().clear();
-        assert!(
-            set.schemas().iter().any(|s| s.name == "mcp__files__read"),
-            "re-enabled server's tool must reappear"
-        );
-    }
-
-    // for_candidates / CandidateMcpView (issue #248 Phase 1)
-
-    #[tokio::test]
-    async fn candidate_view_advertises_only_allowlisted_mcp_tools_plus_native() {
-        let docs = connected_client("docs", "search").await;
-        let fs = connected_client("fs", "write").await;
-        let set = Arc::new(
-            McpToolSet::from_clients(vec![docs, fs]).with_candidate_safe_servers(["docs"]),
-        );
-        let view = set.for_candidates(Arc::new(FakeNative));
-
-        let names: HashSet<String> = view.schemas().into_iter().map(|s| s.name).collect();
-        assert!(names.contains("mcp__docs__search"), "allowlisted server");
-        assert!(names.contains("bash"), "candidate's own native tool");
-        assert!(
-            !names.contains("mcp__fs__write"),
-            "non-candidate_safe server must not be advertised: {names:?}"
-        );
-        assert_eq!(names.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn candidate_view_executes_an_allowlisted_tool_and_falls_through_to_native() {
-        let docs = connected_client("docs", "search").await;
-        let set =
-            Arc::new(McpToolSet::from_clients(vec![docs]).with_candidate_safe_servers(["docs"]));
-        let view = set.for_candidates(Arc::new(FakeNative));
-
-        let mcp_out = view.execute("mcp__docs__search", &Value::Null).await;
-        assert_eq!(
-            mcp_out,
-            ToolOutput::Ok {
-                content: "mcp ran".into()
-            }
-        );
-        let native_out = view.execute("bash", &Value::Null).await;
-        assert_eq!(
-            native_out,
-            ToolOutput::Ok {
-                content: "native ran bash".into()
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn candidate_view_denies_a_non_allowlisted_mcp_tool_with_a_named_error() {
-        let fs = connected_client("fs", "write").await;
-        // No `with_candidate_safe_servers` call — nothing is allowlisted.
-        let set = Arc::new(McpToolSet::from_clients(vec![fs]));
-        let view = set.for_candidates(Arc::new(FakeNative));
-
-        match view.execute("mcp__fs__write", &Value::Null).await {
-            ToolOutput::Error { message } => {
-                assert!(message.contains("mcp__fs__write"), "{message}");
-                assert!(message.contains("candidate_safe"), "{message}");
-            }
-            other => panic!("expected a withheld error, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn candidate_view_respects_the_session_disabled_set() {
-        // A server can be candidate_safe AND toggled off mid-session — the
-        // candidate view must honor the live disable, same as the main set.
-        let docs = connected_client("docs", "search").await;
-        let disabled: DisabledServers = Arc::new(Mutex::new(HashSet::new()));
-        disabled.lock().unwrap().insert("docs".to_string());
-        let set = Arc::new(
-            McpToolSet::from_clients(vec![docs])
-                .with_candidate_safe_servers(["docs"])
-                .with_disabled_servers(disabled),
-        );
-        let view = set.for_candidates(Arc::new(FakeNative));
-
-        assert!(
-            view.schemas().iter().all(|s| s.name != "mcp__docs__search"),
-            "disabled server must not be advertised even if candidate_safe"
-        );
-        assert!(
-            view.execute("mcp__docs__search", &Value::Null)
-                .await
-                .is_error()
-        );
-    }
-
-    // prefetch_candidate_context (issue #248 Phase 1)
-
-    #[tokio::test]
-    async fn prefetch_calls_only_candidate_safe_zero_arg_tools() {
-        let docs = connected_client("docs", "search").await; // {} schema
-        let ticket = connected_client_with_schema(
-            "ticket",
-            "get",
-            serde_json::json!({ "type": "object", "required": ["id"] }),
-        )
-        .await;
-        let fs = connected_client("fs", "write").await; // zero-arg, but NOT allowlisted
-        let set = McpToolSet::from_clients(vec![docs, ticket, fs])
-            .with_candidate_safe_servers(["docs", "ticket"]);
-
-        let context = set
-            .prefetch_candidate_context()
-            .await
-            .expect("docs has a zero-arg candidate_safe tool");
-        assert!(context.contains("mcp__docs__search"), "{context}");
-        assert!(
-            !context.contains("mcp__ticket__get"),
-            "a tool requiring input must never be called blind: {context}"
-        );
-        assert!(
-            !context.contains("mcp__fs__write"),
-            "a non-candidate_safe server must not be prefetched: {context}"
-        );
-    }
-
-    #[tokio::test]
-    async fn prefetch_returns_none_when_nothing_is_safe_to_call() {
-        let fs = connected_client("fs", "write").await;
-        // No `with_candidate_safe_servers` call — nothing is allowlisted.
-        let set = McpToolSet::from_clients(vec![fs]);
-        assert!(set.prefetch_candidate_context().await.is_none());
-    }
-
-    // Context budgets (#551) — nothing an untrusted server pushes at the model
-    // may be unbounded. These drive the real `McpClient` state machine through
-    // the public `McpToolSet` surface, so they witness the cap *and* that the
-    // server keeps working with it applied.
-
-    /// A connected client whose single `tools/call` answers with `text`.
-    async fn client_answering(name: &str, tool: &str, text: &str) -> McpClient {
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok(
-            "tools/list",
-            serde_json::json!({ "tools": [{ "name": tool, "inputSchema": { "type": "object" } }] }),
-        );
-        transport.push_ok(
-            "tools/call",
-            serde_json::json!({ "content": [{ "type": "text", "text": text }] }),
-        );
-        let mut client = McpClient::new(name, Box::new(transport));
-        client.initialize().await.unwrap();
-        client
-    }
-
-    #[tokio::test]
-    async fn an_oversized_tool_result_is_capped_middle_out_with_a_marker() {
-        let flood = format!("HEAD{}TAIL", "x".repeat(MAX_TOOL_RESULT_BYTES * 3));
-        let set = McpToolSet::from_clients(vec![client_answering("flood", "dump", &flood).await]);
-
-        let out = set.execute("mcp__flood__dump", &Value::Null).await;
-        let ToolOutput::Ok { content } = out else {
-            panic!("expected a successful call, got {out:?}");
-        };
-        assert!(
-            content.len() < MAX_TOOL_RESULT_BYTES + 128,
-            "a {} byte result must not reach the model whole (got {})",
-            flood.len(),
-            content.len()
-        );
-        assert!(content.starts_with("HEAD"), "the head survives");
-        assert!(content.ends_with("TAIL"), "the tail survives (L-S3)");
-        assert!(
-            content.contains("... [truncated ") && content.contains(" bytes] ..."),
-            "the elision is explicit and counted"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_oversized_error_result_is_capped_too() {
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok(
-            "tools/list",
-            serde_json::json!({ "tools": [{ "name": "boom", "inputSchema": { "type": "object" } }] }),
-        );
-        transport.push_ok(
-            "tools/call",
-            serde_json::json!({
-                "content": [{ "type": "text", "text": "e".repeat(MAX_TOOL_RESULT_BYTES * 2) }],
-                "isError": true,
-            }),
-        );
-        let mut client = McpClient::new("flood", Box::new(transport));
-        client.initialize().await.unwrap();
-        let set = McpToolSet::from_clients(vec![client]);
-
-        match set.execute("mcp__flood__boom", &Value::Null).await {
-            ToolOutput::Error { message } => assert!(
-                message.len() < MAX_TOOL_RESULT_BYTES + 128,
-                "an error message is model context too: {} bytes",
-                message.len()
-            ),
-            other => panic!("expected a tool error, got {other:?}"),
-        }
-    }
-
-    /// Witness for the hole PR #586 left in #551's context bound. The result
-    /// cap lives in `decode_call_result`, which a JSON-RPC **error object**
-    /// never reaches: the request fails first, and `execute_mcp`'s `Err` arm
-    /// used to interpolate the server's `error.message` verbatim. That is the
-    /// cheapest possible hostile payload — no content array, no `isError`,
-    /// just a huge string in the error field — and it landed in model context
-    /// whole. Distinct from `an_oversized_error_result_is_capped_too` above,
-    /// which exercises the `isError: true` *content* route.
-    #[tokio::test]
-    async fn an_oversized_json_rpc_error_message_is_capped_before_the_model() {
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok(
-            "tools/list",
-            serde_json::json!({ "tools": [{ "name": "boom", "inputSchema": { "type": "object" } }] }),
-        );
-        transport.push_err(
-            "tools/call",
-            McpError::JsonRpc {
-                code: -32000,
-                message: "Z".repeat(MAX_TOOL_RESULT_BYTES * 10),
-                data: None,
-            },
-        );
-        let mut client = McpClient::new("flood", Box::new(transport));
-        client.initialize().await.unwrap();
-        let set = McpToolSet::from_clients(vec![client]);
-
-        match set.execute("mcp__flood__boom", &Value::Null).await {
-            ToolOutput::Error { message } => {
-                assert!(
-                    message.len() < MAX_TOOL_RESULT_BYTES + 256,
-                    "a {}-byte server-chosen error message must not reach the model whole \
-                     (got {} bytes)",
-                    MAX_TOOL_RESULT_BYTES * 10,
-                    message.len()
-                );
-                assert!(
-                    message.contains("mcp server `flood` failed calling `boom`"),
-                    "the server is still named"
-                );
-                assert!(
-                    message.contains("... [truncated ") && message.contains(" bytes] ..."),
-                    "the elision is explicit and counted"
-                );
-            }
-            other => panic!("expected a tool error, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn an_under_budget_json_rpc_error_message_is_passed_through_verbatim() {
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok(
-            "tools/list",
-            serde_json::json!({ "tools": [{ "name": "boom", "inputSchema": { "type": "object" } }] }),
-        );
-        transport.push_err(
-            "tools/call",
-            McpError::JsonRpc {
-                code: -32602,
-                message: "unknown argument `pth`".into(),
-                data: None,
-            },
-        );
-        let mut client = McpClient::new("files", Box::new(transport));
-        client.initialize().await.unwrap();
-        let set = McpToolSet::from_clients(vec![client]);
-
-        assert_eq!(
-            set.execute("mcp__files__boom", &Value::Null).await,
-            ToolOutput::Error {
-                message: "mcp server `files` failed calling `boom`: json-rpc error -32602: \
-                          unknown argument `pth`"
-                    .into()
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn an_under_budget_result_is_byte_identical() {
-        let set = McpToolSet::from_clients(vec![
-            client_answering("files", "read", "small, exact, unmodified").await,
-        ]);
-        assert_eq!(
-            set.execute("mcp__files__read", &Value::Null).await,
-            ToolOutput::Ok {
-                content: "small, exact, unmodified".into()
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn a_multibyte_result_is_capped_without_slicing_a_codepoint() {
-        // Every candidate cut point falls mid-codepoint for a 3-byte char.
-        let flood = "漢".repeat(MAX_TOOL_RESULT_BYTES);
-        let set = McpToolSet::from_clients(vec![client_answering("cjk", "dump", &flood).await]);
-
-        let ToolOutput::Ok { content } = set.execute("mcp__cjk__dump", &Value::Null).await else {
-            panic!("expected a successful call");
-        };
-        assert!(content.len() < MAX_TOOL_RESULT_BYTES + 128);
-        assert!(
-            content.chars().all(|c| c == '漢' || c.is_ascii()),
-            "no codepoint may be sliced apart"
-        );
-    }
-
-    #[tokio::test]
-    async fn tools_past_the_per_server_cap_are_dropped_recorded_and_the_server_still_works() {
-        let overflow = 7;
-        let advertised: Vec<Value> = (0..MAX_TOOLS_PER_SERVER + overflow)
-            .map(|i| serde_json::json!({ "name": format!("t{i}"), "inputSchema": { "type": "object" } }))
-            .collect();
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok("tools/list", serde_json::json!({ "tools": advertised }));
-        transport.push_ok(
-            "tools/call",
-            serde_json::json!({ "content": [{ "type": "text", "text": "still routing" }] }),
-        );
-        let mut client = McpClient::new("greedy", Box::new(transport));
-        client.initialize().await.unwrap();
-        assert_eq!(client.tools().len(), MAX_TOOLS_PER_SERVER);
-        assert_eq!(client.dropped_tool_count(), overflow);
-
-        let set = McpToolSet::from_clients(vec![client]);
-        // The overflow is a diagnostic of its own — NOT `failed_servers`,
-        // which callers render as "server unavailable".
-        assert!(set.failed_servers().is_empty());
-        assert_eq!(set.over_advertising_servers(), vec![("greedy", overflow)]);
-
-        // Routes and schemas agree with the truncated tool list…
-        assert_eq!(
-            set.schemas()
-                .iter()
-                .filter(|s| s.name.starts_with("mcp__greedy__"))
-                .count(),
-            MAX_TOOLS_PER_SERVER
-        );
-        // A tool the server DID advertise, past the cap, is neither advertised
-        // nor callable.
-        let dropped = format!("mcp__greedy__t{}", MAX_TOOLS_PER_SERVER + 1);
-        assert!(
-            set.execute(&dropped, &Value::Null).await.is_error(),
-            "a dropped tool is not callable"
-        );
-        // …and a kept tool still calls through normally.
-        assert_eq!(
-            set.execute("mcp__greedy__t0", &Value::Null).await,
-            ToolOutput::Ok {
-                content: "still routing".into()
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn a_well_behaved_server_records_no_overflow() {
-        let set = McpToolSet::from_clients(vec![connected_client("files", "read").await]);
-        assert!(set.over_advertising_servers().is_empty());
-        assert_eq!(set.dropped_tool_count(), 0);
-    }
-
-    /// A connected client that advertised `overflow` tools past the cap.
-    async fn over_advertising_client(name: &str, overflow: usize) -> McpClient {
-        let advertised: Vec<Value> = (0..MAX_TOOLS_PER_SERVER + overflow)
-            .map(|i| serde_json::json!({ "name": format!("t{i}"), "inputSchema": { "type": "object" } }))
-            .collect();
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok("tools/list", serde_json::json!({ "tools": advertised }));
-        let mut client = McpClient::new(name, Box::new(transport));
-        client.initialize().await.unwrap();
-        client
-    }
-
-    /// #638: the truncation has to be legible to an operator, which means one
-    /// number for the session and one record per server — never folded into
-    /// `failed_servers`, which is rendered as "server unavailable" and would be
-    /// a lie about a server that is up and answering.
-    #[tokio::test]
-    async fn truncation_is_reported_per_server_and_as_a_session_total() {
-        let set = McpToolSet::from_clients(vec![
-            over_advertising_client("greedy", 7).await,
-            connected_client("files", "read").await,
-            over_advertising_client("greedier", 40).await,
-        ]);
-
-        assert_eq!(
-            set.over_advertising_servers(),
-            vec![("greedy", 7), ("greedier", 40)],
-            "the bounded record names only the servers that truncated"
-        );
-        assert_eq!(
-            set.dropped_tool_count(),
-            47,
-            "…and the total is the one number a status line can carry"
-        );
-        assert!(
-            set.failed_servers().is_empty(),
-            "a chatty server is NOT an unavailable one"
-        );
-        assert_eq!(
-            set.connected_count(),
-            3,
-            "every server, truncated or not, is connected and routing"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_oversized_description_and_schema_are_bounded_at_ingest() {
-        // One tool with a ~1 MB description, one with a ~1 MB schema.
-        let fat_schema = serde_json::json!({
-            "type": "object",
-            "properties": { "blob": { "type": "string", "description": "y".repeat(MAX_TOOL_SCHEMA_BYTES * 64) } },
-        });
-        let transport = ScriptedTransport::new();
-        transport.push_ok(
-            "initialize",
-            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
-        );
-        transport.push_ok(
-            "tools/list",
-            serde_json::json!({ "tools": [
-                { "name": "wordy", "description": "z".repeat(1_000_000),
-                  "inputSchema": { "type": "object" } },
-                { "name": "fat", "description": "short", "inputSchema": fat_schema },
-            ] }),
-        );
-        let mut client = McpClient::new("verbose", Box::new(transport));
-        client.initialize().await.unwrap();
-        let set = McpToolSet::from_clients(vec![client]);
-
-        let schemas = set.schemas();
-        let wordy = schemas
-            .iter()
-            .find(|s| s.name == "mcp__verbose__wordy")
-            .expect("wordy is advertised");
-        assert!(
-            wordy.description.chars().count() <= MAX_TOOL_DESCRIPTION_CHARS + 1,
-            "a megabyte description must not reach the model: {} chars",
-            wordy.description.chars().count()
-        );
-
-        let fat = schemas
-            .iter()
-            .find(|s| s.name == "mcp__verbose__fat")
-            .expect("fat is advertised");
-        assert!(
-            serde_json::to_vec(&fat.input_schema).unwrap().len() <= MAX_TOOL_SCHEMA_BYTES,
-            "an over-budget schema must be bounded"
-        );
-        // Bounded *and still valid JSON Schema* — a chopped string would not be.
-        assert_eq!(fat.input_schema, serde_json::json!({ "type": "object" }));
-        assert!(
-            fat.description.contains("permissive"),
-            "the model is told its schema was replaced: {}",
-            fat.description
-        );
-    }
-}
+mod tests;

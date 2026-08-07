@@ -254,6 +254,72 @@ fn a_pending_plan_review_is_modal_over_the_session_tab_only() {
     );
 }
 
+/// **Witness (#1679).** A halted run says so on **every** tab, not just the
+/// two that happen to show it.
+///
+/// Scoping the dialog to SESSION (#1658) was right — a modal you cannot see
+/// must not eat your keys — but it left six of nine tabs with no indication at
+/// all that the session was blocked on a human. A reviewer who opened TRACES
+/// to answer "which auth guard did it read?", which is exactly what the
+/// scoping exists to permit, watched a stalled deck with nothing telling them
+/// where to go.
+///
+/// The statline is the surface because it renders on all nine, and the
+/// indicator names the ACTION: `⇥ SESSION`, not merely that something pends.
+#[test]
+fn a_pending_plan_review_is_announced_on_every_tab() {
+    let model = folded_model();
+    assert!(
+        model
+            .agents
+            .iter()
+            .any(|entry| entry.model.pending_scope_review.is_some()),
+        "the demo scenario must reach a pending plan review, or this test \
+         asserts nothing"
+    );
+
+    // Wide enough that the statline's lowest-priority cells still fit — this
+    // is about presence, not about the clipping order.
+    let render_pending = |tab: DeckTab| {
+        let mut ui = DeckUi::default();
+        ui.splash.skip();
+        ui.tab = tab;
+        let mut terminal = Terminal::new(TestBackend::new(240, 20)).unwrap();
+        terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+        buffer_text(terminal.backend().buffer())
+    };
+
+    for tab in DeckTab::ALL {
+        let frame = render_pending(tab);
+        assert!(
+            frame.contains("REVIEW"),
+            "the {} tab gives a reviewer no sign the run is halted on them:\n{frame}",
+            tab.title()
+        );
+        assert!(
+            frame.contains("SESSION"),
+            "the {} tab says a review pends but not where to answer it — the \
+             state without the action is what left reviewers watching a \
+             stalled deck:\n{frame}",
+            tab.title()
+        );
+    }
+
+    // And it is gone once answered: an indicator that outlives its cause
+    // teaches reviewers to ignore it.
+    let mut answered = answered_ui(&model);
+    answered.tab = DeckTab::Traces;
+    let mut terminal = Terminal::new(TestBackend::new(240, 20)).unwrap();
+    terminal
+        .draw(|f| render_deck(&model, &mut answered, f))
+        .unwrap();
+    let frame = buffer_text(terminal.backend().buffer());
+    assert!(
+        !frame.contains("REVIEW"),
+        "the indicator must clear the moment the gate is answered:\n{frame}"
+    );
+}
+
 #[test]
 fn agents_dashboard_shows_status_and_spend_columns() {
     let model = folded_model();

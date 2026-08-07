@@ -3,9 +3,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_protocol::CompletionUsage;
-use stella_protocol::ToolSchema;
 use stella_protocol::event::BudgetMode;
+use stella_protocol::{CompletionUsage, ToolSchema};
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
@@ -711,7 +710,7 @@ async fn text_deltas_precede_the_authoritative_text_and_concatenate_to_it() {
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
-            AgentEvent::TextDelta { text } => Some((i, text.as_str())),
+            AgentEvent::TextDelta { delta: text } => Some((i, text.as_str())),
             _ => None,
         })
         .collect();
@@ -722,7 +721,7 @@ async fn text_deltas_precede_the_authoritative_text_and_concatenate_to_it() {
     );
     let concatenated: String = deltas.iter().map(|(_, t)| *t).collect();
     match &events[text_idx] {
-        AgentEvent::Text { delta } => assert_eq!(
+        AgentEvent::Text { text: delta } => assert_eq!(
             &concatenated, delta,
             "on a clean run the preview equals the committed text"
         ),
@@ -1622,7 +1621,7 @@ async fn length_continuations_are_bounded_per_turn() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            AgentEvent::Text { delta } if delta.contains("Response was truncated")
+            AgentEvent::Text { text: delta } if delta.contains("Response was truncated")
         )),
         "the exhausted turn still carries the truncation warning"
     );
@@ -2008,6 +2007,7 @@ async fn period_three_cycle_with_no_progress_steers_then_aborts() {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 2,
             stagnation_threshold: 0, // disabled: this test isolates the cycle check
+            interleaved_repeat_threshold: 0, // likewise (#1851)
         },
         ..EngineConfig::default()
     };
@@ -3377,6 +3377,7 @@ mod compute_passes;
 mod context_efficiency;
 mod lifecycle_bus;
 mod loop_abort;
+mod parked_wait;
 mod steer_midturn;
 mod usage_completeness;
 mod zero_copy_request;

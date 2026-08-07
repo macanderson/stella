@@ -15,6 +15,7 @@ use super::term_policy::{
 };
 use super::{
     AuthCmd, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd, error_summary_json, fleet_verbs,
+    query_format,
 };
 
 /// `-V` stays one greppable line; `--version` answers the two questions a bug
@@ -446,6 +447,55 @@ fn fleet_clean_parses_as_a_subcommand_and_a_prompt_survives_after_dashdash() {
         Some(Command::Fleet { cmd, tasks, .. }) => {
             assert!(cmd.is_none(), "`--` must not select a subcommand");
             assert_eq!(tasks, vec!["clean up the dead code".to_string()]);
+        }
+        _ => panic!("expected the fleet subcommand"),
+    }
+}
+
+/// The witness for #1675's read surface: `stella fleet claims` reaches a verb
+/// rather than being read as a task prompt, defaults to the live listing in
+/// text, and takes the shared query `--format` rather than a `--json` boolean.
+///
+/// The second verb also re-tests the collision the first one documented — a
+/// prompt whose first word is a subcommand name — because that hazard grows
+/// with every verb added, and `claims` is a far more likely opening word for
+/// a real task prompt than `clean`.
+#[test]
+fn fleet_claims_parses_as_a_verb_and_defaults_to_the_live_listing() {
+    let cli = Cli::try_parse_from(["stella", "fleet", "claims"])
+        .expect("`fleet claims` must parse with no task prompts");
+    match cli.command {
+        Some(Command::Fleet {
+            cmd: Some(fleet_verbs::FleetCmd::Claims { all, format }),
+            tasks,
+            ..
+        }) => {
+            assert!(!all, "the live listing is the default");
+            assert_eq!(format, query_format::QueryFormat::Text);
+            assert!(tasks.is_empty());
+        }
+        _ => panic!("expected `fleet claims`"),
+    }
+
+    let cli = Cli::try_parse_from(["stella", "fleet", "claims", "--all", "--format", "json"])
+        .expect("`--all --format json` must parse");
+    assert!(matches!(
+        cli.command,
+        Some(Command::Fleet {
+            cmd: Some(fleet_verbs::FleetCmd::Claims {
+                all: true,
+                format: query_format::QueryFormat::Json,
+            }),
+            ..
+        })
+    ));
+
+    let cli = Cli::try_parse_from(["stella", "fleet", "--", "claims are stale, audit them"])
+        .expect("a prompt after `--` must stay a prompt");
+    match cli.command {
+        Some(Command::Fleet { cmd, tasks, .. }) => {
+            assert!(cmd.is_none(), "`--` must not select a subcommand");
+            assert_eq!(tasks, vec!["claims are stale, audit them".to_string()]);
         }
         _ => panic!("expected the fleet subcommand"),
     }

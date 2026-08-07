@@ -19,6 +19,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from . import provenance
 from .agents import AGENTS
 from .recorder import IMAGE_TAG, build_image, docker_available, image_present
 from .registry import DEFAULT_REGISTRY, export_root, sample_tasks
@@ -238,6 +239,66 @@ def _cmd_datasets(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_provenance(args: argparse.Namespace) -> int:
+    """Show — and with ``--migrate``, backfill — what each match was measured with.
+
+    The listing groups by comparability key rather than by date, because the
+    question this answers is never "what ran when": it is "which of these
+    numbers may I put in the same table". Matches sharing a key may be
+    compared; matches with different keys are different experiments that
+    happen to live in the same directory.
+    """
+    root = Path(args.workspace).expanduser() / "matches"
+    if not root.is_dir():
+        print(f"no matches under {root}")
+        return 0
+
+    rows: list[tuple[str, str, str]] = []
+    backfilled = 0
+    for match_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        record = provenance.read_match(match_dir)
+        state = "recorded"
+        if record is None:
+            rebuilt = provenance.backfill_match(match_dir)
+            if rebuilt is None:
+                rows.append((match_dir.name, "—", "no jobs on disk"))
+                continue
+            if args.migrate:
+                provenance.write_match(match_dir, rebuilt)
+                backfilled += 1
+                state = "backfilled"
+            else:
+                state = "would backfill"
+            record = rebuilt
+        elif record.source == provenance.SOURCE_BACKFILLED:
+            state = "backfilled"
+        rows.append((match_dir.name, record.comparability_key, state))
+
+    width = max((len(key) for _, key, _ in rows), default=20)
+    for name, key, state in rows:
+        print(f"{name:14} {key:<{width}}  {state}")
+
+    # The headline: how many distinct experiments are sitting in here. One key
+    # means everything is comparable; more than one means a table built from
+    # all of it would be mixing apparatus, which is the thing worth saying out
+    # loud rather than leaving to be noticed.
+    keys = {key for _, key, _ in rows if key != "—"}
+    print()
+    if len(keys) <= 1:
+        print(f"{len(rows)} matches, one comparability key — safe to compare.")
+    else:
+        print(f"{len(rows)} matches across {len(keys)} comparability keys:")
+        for key in sorted(keys):
+            count = sum(1 for _, k, _ in rows if k == key)
+            print(f"  {count:>3}  {key}")
+        print("Numbers from different keys are different experiments. Label, never sum.")
+    if args.migrate and backfilled:
+        print(f"\nbackfilled {backfilled} match(es).")
+    elif not args.migrate and any(state == "would backfill" for _, _, state in rows):
+        print("\nre-run with --migrate to write the reconstructed records.")
+    return 0
+
+
 def _cmd_tasks(args: argparse.Namespace) -> int:
     tasks = DEFAULT_REGISTRY.tasks(args.dataset)
     if not tasks:
@@ -385,7 +446,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     """Tail a match's artifacts and emit one line per detection.
 
     The supervising process is the customer: CI greps text lines and acts on
-    the exit code; a subscriber (the fullauto loop, a ``Monitor``) reads
+    the exit code; a subscriber (the self-driving loop, a ``Monitor``) reads
     ``--format jsonl`` — agent monitor protocol events, one per line — and
     reacts while the match is still running. Read-only with respect to the
     run, like everything else in the arena: a watched contestant's number
@@ -528,6 +589,21 @@ def main(argv: list[str] | None = None) -> int:
 
     datasets_parser = subparsers.add_parser("datasets", help="list registered datasets")
     datasets_parser.set_defaults(func=_cmd_datasets)
+
+    provenance_parser = subparsers.add_parser(
+        "provenance",
+        help="what each match was measured with, grouped by comparability key",
+    )
+    provenance_parser.add_argument("--workspace", default=str(default_workspace()))
+    provenance_parser.add_argument(
+        "--migrate",
+        action="store_true",
+        help="write reconstructed records for matches that recorded none. The "
+             "Harbor version is not recoverable and is never invented — a "
+             "backfilled record says 'unknown, older than X' and is marked as "
+             "reconstructed rather than measured.",
+    )
+    provenance_parser.set_defaults(func=_cmd_provenance)
 
     tasks_parser = subparsers.add_parser("tasks", help="list a dataset's tasks")
     tasks_parser.add_argument("dataset", default="terminal-bench-2.1", nargs="?")

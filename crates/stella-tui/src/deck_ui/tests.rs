@@ -215,7 +215,7 @@ fn ctrl_o_on_a_non_expandable_selection_is_a_no_op() {
     model.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
         event: AgentEvent::Text {
-            delta: "hello".into(),
+            text: "hello".into(),
         },
     });
     let mut ui = ready_ui();
@@ -854,7 +854,7 @@ fn running_model() -> WorkspaceModel {
     m.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
         event: AgentEvent::Text {
-            delta: "working".into(),
+            text: "working".into(),
         },
     });
     m
@@ -1020,7 +1020,7 @@ fn an_esc_claimed_by_the_queue_editor_breaks_the_pair_too() {
     let mut model = model_with_queue(&["one"]);
     model.apply_inbound(&Inbound::Event {
         agent: "lead".into(),
-        event: AgentEvent::Text { delta: "hi".into() },
+        event: AgentEvent::Text { text: "hi".into() },
     });
     let mut ui = ready_ui();
     ui.queue_open = true;

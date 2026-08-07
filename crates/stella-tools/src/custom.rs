@@ -107,9 +107,10 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// Hard ceiling on `timeout_ms`; a manifest cannot ask for more. Public so
 /// [`crate::validate`] can warn about the clamp it mirrors.
 pub const MAX_TIMEOUT_MS: u64 = 600_000;
-/// Byte cap on captured stdout/stderr before middle-out truncation kicks in.
-/// Matches [`crate::bash`] so custom and native exec behave the same.
-const MAX_OUTPUT_BYTES: usize = 100_000;
+/// Byte cap on captured stdout/stderr before head+tail elision. An alias for
+/// [`crate::bash`]'s constant — not a copy — so custom and native shell
+/// output budgets cannot drift apart (#1889): same mechanism, same number.
+pub(crate) use crate::bash::MAX_OUTPUT_BYTES;
 
 /// A parsed, validated custom tool ready to advertise and execute.
 #[derive(Debug, Clone)]
@@ -462,44 +463,6 @@ fn scalar_env_value(value: &Value) -> Option<String> {
     }
 }
 
-/// Middle-out truncation on a char boundary: keeps a head and a (larger) tail
-/// with an explicit elision marker. Per lesson L-S3 the tail budget is ≥ the
-/// head budget, because a failing command's signal is usually in its tail.
-fn truncate_middle_out(s: &str, max_bytes: usize) -> String {
-    if s.len() <= max_bytes {
-        return s.to_string();
-    }
-    let head_budget = max_bytes * 2 / 5; // 40% head …
-    let tail_budget = max_bytes - head_budget; // … 60% tail (≥ head, L-S3)
-    let head_end = floor_boundary(s, head_budget);
-    let tail_start = ceil_boundary(s, s.len().saturating_sub(tail_budget));
-    let elided = tail_start.saturating_sub(head_end);
-    format!(
-        "{}\n... [truncated {elided} bytes] ...\n{}",
-        &s[..head_end],
-        &s[tail_start..]
-    )
-}
-
-/// Largest char boundary `<= i`.
-fn floor_boundary(s: &str, mut i: usize) -> usize {
-    if i >= s.len() {
-        return s.len();
-    }
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
-/// Smallest char boundary `>= i`.
-fn ceil_boundary(s: &str, mut i: usize) -> usize {
-    while i < s.len() && !s.is_char_boundary(i) {
-        i += 1;
-    }
-    i
-}
-
 /// Spawn `cmd`, retrying briefly while the kernel refuses with `ETXTBSY`.
 ///
 /// `ETXTBSY` means the executable is still open for writing somewhere — for a
@@ -667,7 +630,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
         ToolOutput::Ok {
-            content: truncate_middle_out(&stdout, MAX_OUTPUT_BYTES),
+            content: crate::exec::truncate_middle_capped(&stdout, MAX_OUTPUT_BYTES),
         }
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -676,7 +639,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             .code()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "signal".to_string());
-        let tail = truncate_middle_out(&stderr, MAX_OUTPUT_BYTES);
+        let tail = crate::exec::truncate_middle_capped(&stderr, MAX_OUTPUT_BYTES);
         ToolOutput::Error {
             message: format!(
                 "custom tool `{}` exited with code {code}\n[stderr]\n{tail}",
@@ -767,6 +730,20 @@ impl ToolExecutor for CustomToolSet<'_> {
     /// budget (see the port's contract).
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.get().drain_sub_agent_spend_usd()
+    }
+
+    /// Forwarded for the same reason as the spend drain above: a swallowed
+    /// wait request silently turns parked waits (#1471) back into
+    /// model-step polling.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        self.inner.get().drain_wait_request()
+    }
+
+    /// Forwarded: letting the empty default stand would silently serialize the
+    /// inner executor's sibling spawns (see the port's contract). Custom
+    /// script tools spawn workspace subprocesses and make no such claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        self.inner.get().parallel_safe_names()
     }
 }
 
@@ -1349,7 +1326,7 @@ command = []"#;
     }
 
     #[tokio::test]
-    async fn oversized_output_is_truncated_middle_out() {
+    async fn oversized_output_is_elided_middle_out() {
         let dir = tempfile::tempdir().unwrap();
         // Emit ~200k bytes of 'X' (well past MAX_OUTPUT_BYTES).
         let tool = script_tool(
@@ -1370,6 +1347,47 @@ command = []"#;
             }
             ToolOutput::Error { message } => panic!("expected ok: {message}"),
         }
+    }
+
+    /// Witness for #1889, mirroring `crate::bash`'s: over-cap stdout keeps
+    /// BOTH its first and last lines around a marker naming the cap. Sized
+    /// from the shared constant so the old 100 KB cap (which left this size
+    /// untouched) and any head-only cut both fail it — custom follows bash
+    /// exactly, same mechanism, same number.
+    #[tokio::test]
+    async fn over_cap_output_keeps_first_and_last_lines_with_a_named_elision() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = script_tool(
+            dir.path(),
+            "big-ends.sh",
+            &format!(
+                "#!/bin/sh\necho FIRST_SENTINEL_LINE\n\
+                 head -c {MAX_OUTPUT_BYTES} /dev/zero | tr '\\0' 'x'\necho\n\
+                 echo LAST_SENTINEL_LINE\n"
+            ),
+            5000,
+        );
+        let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+        let content = match out {
+            ToolOutput::Ok { content } => content,
+            ToolOutput::Error { message } => panic!("expected ok: {message}"),
+        };
+        assert!(
+            content.contains("FIRST_SENTINEL_LINE"),
+            "the head survives elision"
+        );
+        assert!(
+            content.contains("LAST_SENTINEL_LINE"),
+            "the tail survives elision"
+        );
+        assert!(
+            content.contains(&format!("the {MAX_OUTPUT_BYTES}-byte cap")),
+            "the marker names the cap it enforced"
+        );
+        assert!(
+            content.contains("bytes truncated"),
+            "the marker names the elided byte count"
+        );
     }
 
     #[tokio::test]

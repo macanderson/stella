@@ -23,7 +23,6 @@ pub mod driver;
 pub mod estimator;
 pub mod event_sender;
 pub mod extensions;
-pub mod fullauto;
 mod glob;
 pub mod goal;
 pub mod hooks;
@@ -40,6 +39,7 @@ pub mod retry;
 pub mod router;
 pub mod rules;
 pub mod scoreboard;
+pub mod self_driving;
 pub mod self_tuning;
 pub mod skills;
 pub(crate) mod speculation;
@@ -48,6 +48,7 @@ pub mod subagent;
 mod summarize;
 pub mod tasks;
 pub mod tool_foundry;
+pub mod waiting;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
 // `bus::HookEvent` (the extension-bus envelope) stays module-qualified: the
@@ -68,7 +69,7 @@ pub use extensions::{
 };
 pub use goal::{GoalConfig, GoalOutcome, GoalVerifierVerdict};
 pub use hooks::{HookEvent, HookPayload, HookRunOutcome, HookRunner, Hooks, run_hooks};
-pub use loop_detect::{CallRecord, LoopDetectionConfig, LoopVerdict, detect_loop};
+pub use loop_detect::{CallRecord, LoopDetectionConfig, LoopIdentity, LoopVerdict, detect_loop};
 pub use mcp_usage::{McpUsageLedger, McpUsageRecord, drain_usage, push_usage};
 pub use ports::{Clock, ToolExecutor};
 pub use repair::{RepairCost, RepairHeadroom, RepairPlan, RepairRefusal, plan_repair};
@@ -104,3 +105,4 @@ pub use tasks::{SpawnRequest, TaskBoard, TaskBoardError};
 pub use tool_foundry::{
     GapDetectionConfig, ParamKind, ProposedTool, ShellInvocation, ToolParameter, detect_tool_gaps,
 };
+pub use waiting::{WaitCall, WaitRequest};

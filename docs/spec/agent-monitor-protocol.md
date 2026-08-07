@@ -25,7 +25,7 @@ ArenaBench, benchmarks, or Stella: the subject is "an agent run" in the
 broadest sense — a benchmark arm, a fleet worker, a CI-driven session, a
 pipeline stage — and the emitter is whichever plugin or tool can see that
 run's artifacts. ArenaBench's `arenabench watch` is the first emitter; the
-fullauto loop and CI are the first consumers. Other plugins are expected to
+self-driving loop and CI are the first consumers. Other plugins are expected to
 offer subscriptions by emitting exactly this, and nothing here requires them
 to know ArenaBench exists.
 
@@ -42,7 +42,7 @@ to know ArenaBench exists.
 
 There is no handshake, no acknowledgement, and no control channel. A
 subscription is "run the emitter and read", which is what lets a shell pipe,
-a CI step, a `Monitor`, and the fullauto loop all be consumers without any of
+a CI step, a `Monitor`, and the self-driving loop all be consumers without any of
 them linking anything.
 
 ## Transport and framing
@@ -112,7 +112,7 @@ without reading a line.
 ## The rule registry
 
 A rule named here means the same thing from **every** emitter — that is the
-point of a registry: `fullauto` reacts to `zero-token` identically whether
+point of a registry: `self-driving` reacts to `zero-token` identically whether
 ArenaBench or a fleet watcher emitted it. An emitter adding a rule with
 emitter-specific semantics must pick a name not listed here, and should
 propose it for this table the moment a second emitter could want it.
@@ -154,6 +154,6 @@ never allowed to be strict.
 |---|---|---|
 | `arenabench watch <match> --format jsonl [--follow]` | one ArenaBench match: every arm, every trial | #1480 |
 
-Consumers known to act on the stream: the fullauto bench phase (voids an arm
+Consumers known to act on the stream: the self-driving bench phase (voids an arm
 on `zero-token` instead of publishing an inverted scoreboard), CI (fails the
 publish step on exit 3).

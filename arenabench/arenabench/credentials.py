@@ -23,6 +23,13 @@ ordering is what lets an operator override one key for one match (testing a
 second account, routing around a rate limit) without touching the saved file,
 and it is why :func:`apply_saved_credentials` only ever fills gaps, never
 overwrites.
+
+This module also owns the launch-time half of a template's credential
+*declaration*: :func:`apply_ambient_credentials` resolves the names a seat
+declared (``[contestant.env] required = [...]``) from the launching process's
+environment, and :func:`missing_required_credentials` names the seats that
+still hold none of theirs — so a caller can refuse to launch an
+unauthenticated arm instead of scoring a silent ``0.0`` (#1777).
 """
 
 from __future__ import annotations
@@ -34,7 +41,13 @@ from pathlib import Path
 from .config import required_env
 from .model import Contestant, MatchSpec, parse_dotenv, screen_env
 
-__all__ = ["apply_saved_credentials", "credentials_path", "load_credentials"]
+__all__ = [
+    "apply_ambient_credentials",
+    "apply_saved_credentials",
+    "credentials_path",
+    "load_credentials",
+    "missing_required_credentials",
+]
 
 
 def credentials_path() -> Path:
@@ -96,3 +109,51 @@ def apply_saved_credentials(spec: MatchSpec) -> MatchSpec:
         return replace(contestant, env={**fallback, **contestant.env})
 
     return replace(spec, contestants=tuple(seeded(c) for c in spec.contestants))
+
+
+def apply_ambient_credentials(
+    spec: MatchSpec, environ: dict[str, str] | None = None
+) -> MatchSpec:
+    """Resolve each seat's *declared* credential names from the environment.
+
+    Only names a template declared (``[contestant.env] required = [...]``) are
+    read: a declaration is the committed, reviewed statement that this seat
+    means to be credentialled from the launching process, so honouring it is
+    what makes "names only, never values" a contract rather than a comment
+    (#1777). Seats that declared nothing get nothing here — on the server path
+    the ambient environment is otherwise deliberately kept away from seats
+    (see the scrub in :func:`.runner._base_environment`), and this is the one
+    explicit, per-seat exception. Whatever the seat already carries wins;
+    like :func:`apply_saved_credentials`, this only ever fills gaps.
+    """
+    source = os.environ if environ is None else environ
+
+    def seeded(contestant: Contestant) -> Contestant:
+        fallback = {
+            name: source[name] for name in contestant.required_env if source.get(name)
+        }
+        if not fallback:
+            return contestant
+        return replace(contestant, env={**fallback, **contestant.env})
+
+    contestants = tuple(seeded(c) for c in spec.contestants)
+    if all(new is old for new, old in zip(contestants, spec.contestants)):
+        return spec
+    return replace(spec, contestants=contestants)
+
+
+def missing_required_credentials(spec: MatchSpec) -> dict[str, list[str]]:
+    """Seats that declared required credentials and hold none of them.
+
+    The declared names are alternatives, not a conjunction: a seat carrying
+    any one of them is credentialled. An entry here means the seat would
+    launch unauthenticated and score a ``0.0`` indistinguishable from a real
+    loss on the scoreboard — the caller's job is to refuse to start it, loudly
+    (#1777).
+    """
+    out: dict[str, list[str]] = {}
+    for contestant in spec.contestants:
+        names = contestant.required_env
+        if names and not any(contestant.env.get(name) for name in names):
+            out[contestant.name] = list(names)
+    return out

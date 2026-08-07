@@ -15,7 +15,7 @@ import { Tip } from "@/components/ui/tooltip";
 export function Race({ snapshot }: { snapshot: Snapshot }) {
   const leaders = snapshot.leaders || {};
   return (
-    <section className="mb-2 rounded-[10px] border border-line bg-panel px-3 py-2">
+    <section className="rounded-[10px] border border-line bg-panel px-3 py-2">
       {snapshot.dimensions.map((dim) => {
         // A dimension nobody has a number for has nothing to race: wasted
         // time without a single `arenabench flip` replay, cost without a
@@ -30,12 +30,12 @@ export function Race({ snapshot }: { snapshot: Snapshot }) {
         const arrow = dim.direction === "higher" ? "↑" : dim.direction === "lower" ? "↓" : "·";
 
         return (
-          <div
-            key={dim.key}
-            className="grid items-center gap-3.5 py-1.5 [grid-template-columns:116px_1fr]"
-          >
+          /* Stacked, not two columns: this now lives in a quarter-width rail,
+             where a fixed 116px label gutter left the bars too short to read
+             a ratio off. The label sits above its own bars instead. */
+          <div key={dim.key} className="py-1.5">
             <Tip content={dim.blurb}>
-              <div className="text-[10.5px] lowercase tracking-[0.07em] text-dim">
+              <div className="mb-1 text-[10.5px] lowercase tracking-[0.07em] text-dim">
                 {dim.label} <i className="not-italic text-line">{arrow}</i>
               </div>
             </Tip>
@@ -56,7 +56,7 @@ export function Race({ snapshot }: { snapshot: Snapshot }) {
                   <div
                     key={c.id}
                     style={seatStyle(c.color)}
-                    className="grid items-center gap-2.5 [grid-template-columns:1fr_78px]"
+                    className="grid items-center gap-2 [grid-template-columns:1fr_64px]"
                   >
                     <div className="h-[9px] overflow-hidden rounded-[3px] bg-line-soft">
                       <i
@@ -73,7 +73,13 @@ export function Race({ snapshot }: { snapshot: Snapshot }) {
                         isBest ? "text-(--seat-fg)" : "text-muted",
                       )}
                     >
-                      {fmtDim(dim.key, value)}
+                      {/* The RAW value, not the coerced one (#1599): `values`
+                          exists for the bar arithmetic, where an absence
+                          legitimately draws as zero. Formatting from it
+                          renders a seat nobody priced as `$0.0000` — a
+                          fabricated number in the one column the pricing path
+                          exists to keep honest. Missing beats wrong. */}
+                      {fmtDim(dim.key, raw[index])}
                     </div>
                   </div>
                 );

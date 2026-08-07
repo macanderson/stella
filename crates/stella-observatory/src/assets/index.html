@@ -208,7 +208,7 @@ tr.click:hover td,tr.drill:hover td,tr.click:focus-visible td,tr.drill:focus-vis
 .badge.warn{color:var(--warn);border-color:rgba(234,179,8,.42)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline-strong)}
 .badge.accent{color:var(--gold);border-color:var(--accent-edge)}
-/* fullauto: the run list is a control, so it says so on hover and keeps a
+/* self-driving: the run list is a control, so it says so on hover and keeps a
    visible selection — the detail panes beside it are meaningless without
    knowing which row produced them. */
 #fa-runs tbody tr{cursor:pointer}
@@ -357,13 +357,14 @@ footer b{color:var(--text-2);font-weight:600}
   <nav class="bar" aria-label="Dashboard">
     <div class="tabs" id="tabs" role="tablist" aria-label="Sections">
       <button role="tab" id="tab-overview" aria-controls="panel-overview" data-tab="overview">Overview</button>
+      <button role="tab" id="tab-sessions" aria-controls="panel-sessions" data-tab="sessions">Sessions</button>
       <button role="tab" id="tab-activity" aria-controls="panel-activity" data-tab="activity">Activity</button>
       <button role="tab" id="tab-graph" aria-controls="panel-graph" data-tab="graph">Code graph</button>
       <button role="tab" id="tab-skills" aria-controls="panel-skills" data-tab="skills">Skills</button>
       <button role="tab" id="tab-mcp" aria-controls="panel-mcp" data-tab="mcp">MCP</button>
       <button role="tab" id="tab-memory" aria-controls="panel-memory" data-tab="memory">Memory &amp; rules</button>
       <button role="tab" id="tab-improve" aria-controls="panel-improve" data-tab="improve">Self-improve</button>
-      <button role="tab" id="tab-fullauto" aria-controls="panel-fullauto" data-tab="fullauto">Fullauto</button>
+      <button role="tab" id="tab-self-driving" aria-controls="panel-self-driving" data-tab="self-driving">Self-Driving</button>
       <button role="tab" id="tab-hub" aria-controls="panel-hub" data-tab="hub">Org / hub</button>
       <button role="tab" id="tab-config" aria-controls="panel-config" data-tab="config">Config</button>
     </div>
@@ -380,6 +381,47 @@ footer b{color:var(--text-2);font-weight:600}
 
   <main id="main" tabindex="-1">
   <div class="err" id="err" role="alert" hidden></div>
+
+  <!-- ══ SESSIONS ══════════════════════════════════════════════════════ -->
+  <section data-tab="sessions" id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0">
+    <div class="grid kpis" id="ses-kpis"></div>
+    <div class="card section-gap">
+      <div class="kick">Every session of this workspace · registry + store · select one</div>
+      <h2>Sessions</h2>
+      <div class="scroll-x" id="ses-list"></div>
+    </div>
+    <div class="card section-gap" id="ses-detail-card" hidden>
+      <div class="kick" id="ses-detail-kick">Nothing selected</div>
+      <h2 id="ses-detail-title">Session replay</h2>
+      <div id="ses-summary"></div>
+      <div class="kick" style="margin-top:12px">Turn by turn · oldest first · select a turn to replay it</div>
+      <div class="scroll-x" id="ses-turns"></div>
+    </div>
+    <div class="grid cols-2" id="ses-panels" hidden>
+      <div class="card">
+        <div class="kick">Skills applied &amp; subagents dispatched</div>
+        <h2>Skills &amp; agents</h2>
+        <div class="scroll-y" id="ses-skills"></div>
+      </div>
+      <div class="card">
+        <div class="kick">External tool servers · per (server, tool)</div>
+        <h2>MCP traffic</h2>
+        <div class="scroll-y" id="ses-mcp"></div>
+      </div>
+    </div>
+    <div class="grid cols-2" id="ses-panels2" hidden>
+      <div class="card">
+        <div class="kick">Lessons mined · memories kept · context cited</div>
+        <h2>Self-improvement</h2>
+        <div class="scroll-y" id="ses-improve"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Task board &amp; pull requests</div>
+        <h2>Outcomes</h2>
+        <div class="scroll-y" id="ses-outcomes"></div>
+      </div>
+    </div>
+  </section>
 
   <!-- ══ ORG / HUB ═════════════════════════════════════════════════════ -->
   <section data-tab="hub" id="panel-hub" role="tabpanel" aria-labelledby="tab-hub" tabindex="0">
@@ -603,8 +645,8 @@ footer b{color:var(--text-2);font-weight:600}
   </section>
 
   <!-- ══ CONFIG ════════════════════════════════════════════════════════ -->
-  <!-- ══ FULLAUTO ══════════════════════════════════════════════════════ -->
-  <section data-tab="fullauto" id="panel-fullauto" role="tabpanel" aria-labelledby="tab-fullauto" tabindex="0">
+  <!-- ══ SELF_DRIVING ══════════════════════════════════════════════════════ -->
+  <section data-tab="self-driving" id="panel-self-driving" role="tabpanel" aria-labelledby="tab-self-driving" tabindex="0">
     <div class="grid kpis" id="fa-kpis"></div>
     <div class="grid cols-2">
       <div class="card">
@@ -736,10 +778,10 @@ function showTip(ev, html) {
 function hideTip() { tip.style.display = "none"; }
 
 /* ── state ───────────────────────────────────────────────────────────── */
-// `faRun` is the fullauto run currently drilled into; it survives the 5s
+// `sdRun` is the self-driving run currently drilled into; it survives the 5s
 // refresh so a live run's detail does not jump back to the top of the list
 // underneath the reader every five seconds.
-const state = { project: "", tf: "all", tab: "overview", faRun: null };
+const state = { project: "", tf: "all", tab: "overview", sdRun: null };
 // Hub drill scope: null = not selected. `(local)` selects the NULL/unregistered
 // bucket the backend understands. Deepest set field picks the drill level.
 const hub = { org: null, workspace: null, repo: null };
@@ -1043,7 +1085,8 @@ function renderTools(rows) {
     const r = top[i];
     el.addEventListener("mousemove", ev => showTip(ev,
       `<b>${esc(r.name)}</b>${fmtInt(r.calls)} calls · ${fmtInt(r.errors)} errors<br>` +
-      `p50 ${fmtMs(r.p50_ms)} · max ${fmtMs(r.max_ms)} · ${fmtTok(r.bytes_out)}B returned`));
+      `p50 ${fmtMs(r.p50_ms)} · p90 ${fmtMs(r.p90_ms)} · p99 ${fmtMs(r.p99_ms)} · ` +
+      `max ${fmtMs(r.max_ms)} · ${fmtTok(r.bytes_out)}B returned`));
     el.addEventListener("mouseleave", hideTip);
   });
 }
@@ -1230,6 +1273,11 @@ async function openDrawer(id, full = false) {
      prompt, so it loads on demand when a row is drilled into. */
   let cx = null;
   try { cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`); } catch { cx = null; }
+  /* The behavioural tendencies fold: retries, loop detections, compactions,
+     policy verdicts — the "how it went" beside the transcript's "what it
+     did". All-zero payloads render no section at all. */
+  let td = null;
+  try { td = await api(`/api/execution-tendencies?id=${encodeURIComponent(id)}`); } catch { td = null; }
   const entries = Array.isArray(j) ? j : [];
   const jrnl = entries.map(journalEntryHtml).join("");
   // Rendered even with zero entries while the run is still going: the
@@ -1284,6 +1332,7 @@ async function openDrawer(id, full = false) {
     ${steps ? `<div class="sect"><div class="kick">Per-step tokens and latency</div>${steps}</div>`
             : `<div class="sect"><div class="kick">Per-step tokens and latency</div>
                <div class="empty">No steps recorded for this run.</div></div>`}
+    ${tendenciesSectionHtml(td)}
     ${sentContextSectionHtml(cx)}
     ${jrnlSect}
     ${tools ? `<div class="sect"><div class="kick">Tool calls</div>${tools}</div>` : ""}
@@ -1294,6 +1343,10 @@ async function openDrawer(id, full = false) {
   for (const b of $("drawer").querySelectorAll(".ctx-call")) {
     b.addEventListener("click", () =>
       loadSentContext(id, +b.dataset.turn, +b.dataset.step, +b.dataset.seq));
+  }
+  for (const b of $("drawer").querySelectorAll(".ctx-diff")) {
+    b.addEventListener("click", () =>
+      loadContextDiff(id, +b.dataset.turn, +b.dataset.step, +b.dataset.seq));
   }
   drawerState = {
     id,
@@ -1338,6 +1391,36 @@ async function refreshDrawerJournal() {
   }
   drawerState.lastSeq = entries[entries.length - 1].seq;
 }
+/* One execution's behavioural-tendency strip: badges for every nonzero
+   counter the journal fold reported. All-zero (or unreachable) payloads
+   render nothing — an uneventful run should not grow a section saying so.
+   Loop kinds and policy verdicts are maps whose keys come from the journal;
+   they are workspace-derived strings and go through esc() like the rest. */
+function tendenciesSectionHtml(td) {
+  if (!td) return "";
+  const chips = [];
+  const chip = (n, label, cls) => {
+    if (num(n) > 0) chips.push(`<span class="badge ${cls}">${fmtInt(n)} ${esc(label)}</span>`);
+  };
+  chip(td.retries, "retries", "warn");
+  chip(td.retries_exhausted, "retries exhausted", "bad");
+  for (const [kind, n] of Object.entries(td.loops ?? {}))
+    chip(n, `loop: ${kind}`, "warn");
+  chip(td.loop_aborts, "loop aborts", "bad");
+  chip(td.budget_denied, "budget denied", "bad");
+  chip(td.compactions, "compactions", "dim");
+  if (num(td.tokens_reclaimed) > 0)
+    chips.push(`<span class="badge dim">${fmtTok(td.tokens_reclaimed)} tok reclaimed</span>`);
+  for (const [kind, n] of Object.entries(td.policy ?? {}))
+    chip(n, `policy: ${kind}`, kind === "blocked" || kind === "secret_detected" ? "bad" : "dim");
+  chip(td.speculation_discarded, "speculation discarded", "dim");
+  chip(td.steered, "steered", "warn");
+  chip(td.provider_fallback, "provider fallback", "warn");
+  chip(td.usage_incomplete, "usage incomplete", "warn");
+  if (!chips.length) return "";
+  return `<div class="sect"><div class="kick">Tendencies</div>
+    <p style="margin:6px 0 0;display:flex;flex-wrap:wrap;gap:6px">${chips.join(" ")}</p></div>`;
+}
 /* ── sent context (#1475) ────────────────────────────────────────────────
    What a model call was *given*, as opposed to what the run did: the
    message array rebuilt server-side from that call's context receipt, the
@@ -1362,7 +1445,11 @@ function sentContextSectionHtml(cx) {
         num(c.turn) || num(c.call_seq) ? ` · turn ${fmtInt(c.turn)} seq ${fmtInt(c.call_seq)}` : ""}</span>
       <span><button type="button" class="jrnl-full ctx-call" data-turn="${esc(String(c.turn))}"
         data-step="${esc(String(c.step))}" data-seq="${esc(String(c.call_seq))}"
-        >context sent</button></span>
+        >context sent</button>
+      <button type="button" class="jrnl-full ctx-diff" data-turn="${esc(String(c.turn))}"
+        data-step="${esc(String(c.step))}" data-seq="${esc(String(c.call_seq))}"
+        title="unified diff against the previous call of this role"
+        >what changed</button></span>
     </div>`).join("");
   return `<div class="sect"><div class="kick">Context sent</div>${rows}
     <div id="ctx-body"></div></div>`;
@@ -1416,6 +1503,50 @@ async function loadSentContext(id, turn, step, callSeq, full = false) {
       ? `<button type="button" class="jrnl-full" id="ctx-full">show full bodies</button>` : ""}`;
   const btn = $("ctx-full");
   if (btn) btn.addEventListener("click", () => loadSentContext(id, turn, step, callSeq, true));
+}
+/* What changed since the previous call of this role (#1511): the served
+   `stella inspect --diff`. Hunks arrive in git's exact shape; add/remove
+   coloring mirrors the terminal's. The resolved base is reported, not the
+   requested one — `prev` on a role's first call resolves to `prompt` — and a
+   coarse (non-minimal) diff says so instead of posing as a precise answer. */
+async function loadContextDiff(id, turn, step, callSeq, only = "all") {
+  const body = $("ctx-body");
+  if (!body) return;
+  let d = null;
+  try {
+    d = await api(`/api/execution-context-diff?id=${encodeURIComponent(id)}`
+      + `&turn=${encodeURIComponent(turn)}&step=${encodeURIComponent(step)}`
+      + `&call_seq=${encodeURIComponent(callSeq)}&base=prev&only=${encodeURIComponent(only)}`);
+  } catch { d = null; }
+  if (!d || !d.found) {
+    body.innerHTML = `<div class="empty">${
+      esc((d && d.note) || "That call has no recorded receipt to diff.")}</div>`;
+    return;
+  }
+  const scopeBtn = `<button type="button" class="jrnl-full" id="ctx-diff-scope">${
+    only === "all" ? "system only" : "all roles"}</button>`;
+  if (!d.changed) {
+    body.innerHTML = `<div class="kick">--- ${esc(d.base_label)} · +++ ${esc(d.target_label)}</div>
+      <div class="empty">no change: the ${esc(d.scope)} are byte-identical to ${esc(d.base_label)}.</div>
+      ${scopeBtn}`;
+  } else {
+    const hunks = (d.hunks ?? []).map(h => `<pre class="jrnl-body">${
+      esc(`@@ -${num(h.old_start)},${num(h.old_count)} +${num(h.new_start)},${num(h.new_count)} @@`)}
+${(h.lines ?? []).map(l => {
+        const sigil = l.op === "add" ? "+" : l.op === "remove" ? "−" : " ";
+        const color = l.op === "add" ? "var(--ok)" : l.op === "remove" ? "var(--bad)" : "inherit";
+        return `<span style="color:${color}">${esc(sigil + l.text)}</span>`;
+      }).join("\n")}</pre>`).join("");
+    body.innerHTML = `<div class="kick">--- ${esc(d.base_label)} · +++ ${esc(d.target_label)}</div>
+      <div class="kick"><span style="color:var(--ok)">+${fmtInt(d.added)}</span> ·
+        <span style="color:var(--bad)">−${fmtInt(d.removed)}</span> (${esc(d.scope)}${
+        d.minimal ? "" : ` · <span style="color:var(--warn)">coarse: input too large for an exact diff</span>`}${
+        d.base === "prompt" ? " · baseline: prompt as submitted" : ""})</div>
+      ${hunks}${scopeBtn}`;
+  }
+  const scope = $("ctx-diff-scope");
+  if (scope) scope.addEventListener("click", () =>
+    loadContextDiff(id, turn, step, callSeq, only === "all" ? "system" : "all"));
 }
 /* The main poll already re-fetches `/api/executions` (with `finished_at`)
    on every cursor move — reuse that instead of a dedicated per-tick
@@ -2157,7 +2288,7 @@ function renderHub(d) {
   const titles = { org: "By org", workspace: "By workspace", repo: "By repo", project: "By project" };
   $("hubDrillTitle").textContent = pick(titles, level, "Breakdown");
   $("hubDrillKick").textContent = level === "project"
-    ? "Select a project to open its dashboard" : "Select a row to drill in";
+    ? "Select a project to open its sessions" : "Select a row to drill in";
   const rows = d.drill?.rows ?? [];
   hubDrillRows = rows; hubDrillLevel = level;
   if (!rows.length) {
@@ -2233,10 +2364,13 @@ $("hubDrill").addEventListener("click", (ev) => {
   if (level === "org") { hub.org = r.key == null ? "(local)" : r.key; hubReload(); }
   else if (level === "workspace") { hub.workspace = r.key == null ? "(local)" : r.key; hubReload(); }
   else if (level === "repo") { hub.repo = r.key === "" ? "(local)" : r.key; hubReload(); }
-  else if (level === "project") { state.project = r.key; renderProjects(D.projects); switchTab("overview"); }
+  // The end of the hub's descent: org → workspace → repo → project lands on
+  // the project's *sessions*, so the drill continues seamlessly down through
+  // session → turn → step → tool call instead of dead-ending at tiles.
+  else if (level === "project") { state.project = r.key; renderProjects(D.projects); switchTab("sessions"); }
 });
 
-/* ── fullauto: the perpetual delivery loop ───────────────────────────── */
+/* ── self-driving: the perpetual delivery loop ───────────────────────────── */
 /* A run has four states and they are not interchangeable. `crashed` is never
    written by the loop — it is resolved by the reader when a run that claims to
    be running has no live heartbeat, because the process that would have
@@ -2253,7 +2387,7 @@ const faBadge = (s) => {
 };
 const faDash = (v) => (v === "" || v == null ? "—" : esc(v));
 
-function renderFullauto(d) {
+function renderSelfDriving(d) {
   const runs = d?.runs ?? [], loops = d?.loops ?? [], t = d?.totals ?? {};
   const cycles = loops.reduce((a, l) => a + num(l.total_cycles), 0);
   const fixed = runs.reduce((a, r) => a + num(r.fixed), 0);
@@ -2281,8 +2415,8 @@ function renderFullauto(d) {
       <td class="num">${fmtInt(r.new_findings)}</td>
       <td>${agoUnix(r.started_unix)}</td></tr>`).join("")}
     </tbody></table>`
-    : `<div class="empty">No fullauto runs on this machine yet.<br>
-       Start one with <code>scripts/fullauto.sh daemon start</code>.</div>`;
+    : `<div class="empty">No self-driving runs on this machine yet.<br>
+       Start one with <code>scripts/self-driving.sh daemon start</code>.</div>`;
 
   $("fa-loops").innerHTML = loops.length ? `<table><thead><tr>
       <th>Loop</th><th>Aperture</th><th class="num">Cycles</th><th class="num">Seen</th>
@@ -2299,20 +2433,20 @@ function renderFullauto(d) {
 
   // Keep the selection across refreshes; a run that has since disappeared
   // clears it rather than leaving stale detail beside a list that lost it.
-  if (state.faRun && runs.some(r => r.run_id === state.faRun)) {
-    openFullautoRun(state.faRun, true);
+  if (state.sdRun && runs.some(r => r.run_id === state.sdRun)) {
+    openSelfDrivingRun(state.sdRun, true);
   } else if (runs.length) {
-    openFullautoRun(runs[0].run_id);
+    openSelfDrivingRun(runs[0].run_id);
   }
 }
 
-async function openFullautoRun(id, quiet) {
-  state.faRun = id;
+async function openSelfDrivingRun(id, quiet) {
+  state.sdRun = id;
   [...document.querySelectorAll("#fa-runs tbody tr")].forEach(tr =>
     tr.classList.toggle("sel", tr.dataset.run === id));
   let d;
   try {
-    d = await api("/api/fullauto-run?id=" + encodeURIComponent(id));
+    d = await api("/api/self-driving-run?id=" + encodeURIComponent(id));
   } catch (e) {
     if (!quiet) fail("Could not load that run.", e);
     return;
@@ -2379,12 +2513,191 @@ async function openFullautoRun(id, quiet) {
     ${sigs.length
       ? sigs.map(s => `<div class="fa-sig"><b>${esc(s.code)}</b> — ${esc(s.text)}</div>`).join("")
       : `<div class="fa-sig">No pathologies detected — nothing for
-         <code>/fullauto:evolve</code> to act on.</div>`}`;
+         <code>/self-driving:evolve</code> to act on.</div>`}`;
 }
 
 $("fa-runs").addEventListener("click", (ev) => {
   const tr = ev.target.closest("tr[data-run]");
-  if (tr) openFullautoRun(tr.dataset.run);
+  if (tr) openSelfDrivingRun(tr.dataset.run);
+});
+
+/* ── sessions: list, replay drill, self-improvement residue ──────────────
+   The session list merges two sources the server keeps honest about
+   (`registry: false` marks a session the registry has pruned but the store
+   still remembers). Drilling a session lists its turns oldest-first; drilling
+   a turn opens the same execution drawer the Overview uses — transcript,
+   sent context, tendencies — so the replay path is one continuous descent:
+   session → turn → step → call → block/tool. Every workspace- or
+   model-derived string routes through esc(). */
+function sesBadge(s, crashed) {
+  if (crashed) return `<span class="badge bad">crashed</span>`;
+  const cls = pick({
+    in_progress: "ok", needs_input: "warn", paused: "dim", cancelled: "dim",
+    complete: "ok", archived: "dim", error: "bad",
+  }, s, "dim");
+  const label = pick({
+    in_progress: "live", needs_input: "needs input", paused: "paused",
+    cancelled: "cancelled", complete: "complete", archived: "archived",
+    error: "error",
+  }, s, s ? String(s) : "pruned");
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+function cachePct(read, miss) {
+  const t = num(read) + num(miss);
+  return t ? (100 * num(read) / t).toFixed(0) + "%" : "—";
+}
+function renderSessions(d) {
+  const rows = d?.sessions ?? [];
+  const live = rows.filter(r => r.live).length;
+  const turns = rows.reduce((a, r) => a + num(r.turns), 0);
+  const spend = rows.reduce((a, r) => a + num(r.cost_usd), 0);
+  $("ses-kpis").innerHTML =
+    tile("Sessions", fmtInt(rows.length), fmtInt(live) + " live now", live > 0) +
+    tile("Turns", fmtInt(turns), "across every listed session") +
+    tile("Spend", fmtUsd(spend), "sum of listed sessions") +
+    tile("Tool calls", fmtInt(rows.reduce((a, r) => a + num(r.tool_calls), 0)),
+      fmtInt(rows.reduce((a, r) => a + num(r.tool_errors), 0)) + " errored");
+  $("ses-list").innerHTML = rows.length ? `<table><thead><tr>
+      <th>Session</th><th>Status</th><th class="num">Turns</th>
+      <th class="num">Tools</th><th class="num">Files</th><th class="num">Tokens</th>
+      <th class="num">Cache</th><th class="num">Skills</th><th class="num">MCP</th>
+      <th class="num">Cost</th><th>Updated</th></tr></thead><tbody>
+    ${rows.map(r => `<tr data-ses="${esc(r.id)}">
+      <td><span class="name" title="${esc(r.id)}">${esc(clip(r.title || r.summary || r.id, 64))}</span>${
+        r.supervised ? ` <span class="badge dim">supervised</span>` : ""}${
+        r.registry ? "" : ` <span class="badge dim">store only</span>`}</td>
+      <td>${sesBadge(r.status, r.crashed)}</td>
+      <td class="num">${fmtInt(r.turns)}</td>
+      <td class="num">${fmtInt(r.tool_calls)}${num(r.tool_errors)
+        ? ` <span style="color:var(--bad)">✕${fmtInt(r.tool_errors)}</span>` : ""}</td>
+      <td class="num">${fmtInt(r.files_touched)}</td>
+      <td class="num">${fmtTok(num(r.input_tokens) + num(r.output_tokens))}</td>
+      <td class="num">${cachePct(r.cache_read_tokens, r.cache_miss_tokens)}</td>
+      <td class="num">${fmtInt(r.skill_uses)}</td>
+      <td class="num">${fmtInt(r.mcp_calls)}</td>
+      <td class="num">${fmtUsd(r.cost_usd)}</td>
+      <td>${r.updated_at_ms ? agoMs(r.updated_at_ms) : "—"}</td></tr>`).join("")}
+    </tbody></table>`
+    : `<div class="empty">No sessions recorded yet. Run <code>stella</code> in this
+       workspace and the session appears here as it works.</div>`;
+  if (state.session && rows.some(r => r.id === state.session)) {
+    openSession(state.session, true);
+  } else if (rows.length) {
+    openSession(rows[0].id, true);
+  }
+}
+function turnRowHtml(t, i) {
+  const rating = t.reflection && t.reflection.self_rating != null
+    ? `${fmtInt(t.reflection.self_rating)}/10` : "—";
+  return `<tr data-exec="${fmtInt(t.id)}">
+    <td class="num">${fmtInt(i + 1)}</td>
+    <td><span class="name" title="execution ${fmtInt(t.id)}">${esc(clip(t.prompt ?? "", 80))}</span>${
+      (t.skills ?? []).map(s => ` <span class="badge accent">${esc(s)}</span>`).join("")}${
+      (t.mcp_servers ?? []).map(s => ` <span class="badge dim">${esc(s)}</span>`).join("")}</td>
+    <td>${badge(t.outcome)}</td>
+    <td class="num">${fmtInt(t.steps)}</td>
+    <td class="num">${fmtInt(t.tool_calls)}${num(t.tool_errors)
+      ? ` <span style="color:var(--bad)">✕${fmtInt(t.tool_errors)}</span>` : ""}</td>
+    <td class="num">${fmtInt(t.files_touched)}
+      <span style="color:var(--ok)">+${fmtInt(t.lines_added)}</span>
+      <span style="color:var(--bad)">−${fmtInt(t.lines_removed)}</span></td>
+    <td class="num">${fmtTok(t.input_tokens)}·${fmtTok(t.output_tokens)}</td>
+    <td class="num">${cachePct(t.cache_read_tokens, t.cache_miss_tokens)}</td>
+    <td class="num">${num(t.retries) ? `<span style="color:var(--warn)">${fmtInt(t.retries)}</span>` : "0"}</td>
+    <td class="num">${fmtUsd(t.cost_usd)}</td>
+    <td class="num">${rating}</td>
+    <td class="num">${num(t.receipts) ? "✓" : "—"}</td></tr>`;
+}
+async function openSession(id, quiet) {
+  state.session = id;
+  [...document.querySelectorAll("#ses-list tbody tr")].forEach(tr =>
+    tr.classList.toggle("sel", tr.dataset.ses === id));
+  let d;
+  try {
+    d = await api("/api/session?id=" + encodeURIComponent(id));
+  } catch (e) {
+    if (!quiet) fail("Could not load that session.", e);
+    return;
+  }
+  $("ses-detail-card").hidden = false;
+  $("ses-panels").hidden = false;
+  $("ses-panels2").hidden = false;
+  const reg = d?.registry;
+  const turns = d?.turns ?? [];
+  $("ses-detail-kick").textContent = id;
+  $("ses-detail-title").innerHTML = `${esc(clip(reg?.title || turns[0]?.prompt || id, 90))} ${
+    sesBadge(reg?.status, reg?.crashed)}`;
+  const retries = turns.reduce((a, t) => a + num(t.retries), 0);
+  const calls = turns.reduce((a, t) => a + num(t.tool_calls), 0);
+  const errs = turns.reduce((a, t) => a + num(t.tool_errors), 0);
+  const read = turns.reduce((a, t) => a + num(t.cache_read_tokens), 0);
+  const miss = turns.reduce((a, t) => a + num(t.cache_miss_tokens), 0);
+  const rated = turns.filter(t => t.reflection && t.reflection.self_rating != null);
+  const avgRating = rated.length
+    ? (rated.reduce((a, t) => a + num(t.reflection.self_rating), 0) / rated.length).toFixed(1)
+    : null;
+  $("ses-summary").innerHTML = `
+    ${reg?.summary ? `<div class="feed-item"><b>Now</b> — ${esc(reg.summary)}</div>` : ""}
+    <div class="feed-item"><b>Tendencies</b> —
+      ${fmtInt(retries)} retries ·
+      ${calls ? (100 * errs / calls).toFixed(0) : 0}% tool errors ·
+      ${cachePct(read, miss)} cache hits${
+      avgRating ? ` · self-rated ${esc(avgRating)}/10 over ${fmtInt(rated.length)} turns` : ""}</div>
+    ${reg?.exploring?.length ? `<div class="feed-item"><b>Exploring</b> — ${
+      reg.exploring.map(esc).join(", ")}</div>` : ""}
+    ${d?.turns_truncated ? `<div class="feed-item"><b>Note</b> — showing the newest
+      turns only; older turns were clipped from this view.</div>` : ""}`;
+  $("ses-turns").innerHTML = turns.length ? `<table><thead><tr>
+      <th class="num">#</th><th>Turn</th><th>Outcome</th><th class="num">Steps</th>
+      <th class="num">Tools</th><th class="num">Files</th><th class="num">Tok in·out</th>
+      <th class="num">Cache</th><th class="num">Retries</th><th class="num">Cost</th>
+      <th class="num">Rated</th><th class="num">Receipts</th></tr></thead><tbody>
+    ${turns.map(turnRowHtml).join("")}</tbody></table>`
+    : `<div class="empty">No turns stamped for this session yet${
+       reg ? " — it may not have completed a turn" : ""}.</div>`;
+  const skills = d?.skills ?? [], agents = d?.agents ?? [];
+  $("ses-skills").innerHTML = (skills.length || agents.length) ? `
+    ${skills.map(s => `<div class="feed-item"><b>${esc(s.skill)}</b> —
+      ${fmtInt(s.uses)} use(s), v${fmtInt(s.version)}</div>`).join("")}
+    ${agents.map(a => `<div class="feed-item"><b>${esc(a.agent)}</b>
+      <span class="badge dim">agent</span> — ${fmtInt(a.uses)} dispatch(es)</div>`).join("")}`
+    : `<div class="empty">No skills applied or subagents dispatched.</div>`;
+  const mcp = d?.mcp ?? [];
+  $("ses-mcp").innerHTML = mcp.length ? `<table><thead><tr>
+      <th>Server</th><th>Tool</th><th class="num">Calls</th><th>Last</th></tr></thead><tbody>
+    ${mcp.map(m => `<tr><td>${esc(m.server)}</td><td>${esc(m.tool)}</td>
+      <td class="num">${fmtInt(m.calls)}</td>
+      <td>${m.last_called_at_ms ? agoMs(m.last_called_at_ms) : "—"}</td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">No MCP calls in this session.</div>`;
+  const lessons = d?.lessons ?? [], writes = d?.memory_writes ?? [], cites = d?.memory ?? [];
+  $("ses-improve").innerHTML = (lessons.length || writes.length || cites.length) ? `
+    ${lessons.map(l => `<div class="feed-item"><b>lesson</b>
+      <span class="badge dim">${esc(l.kind)}</span> — ${esc(clip(l.content, 200))}</div>`).join("")}
+    ${writes.map(w => `<div class="feed-item"><b>memory kept</b> —
+      ${esc(w.slug || "(unnamed)")}${w.ok ? "" : ` <span class="badge bad">failed</span>`}
+      <span class="when">turn ${fmtInt(w.execution_id)}</span></div>`).join("")}
+    ${cites.map(c => `<div class="feed-item"><b>cited</b> — ${esc(c.memory_id)} ·
+      ${fmtInt(c.citations)}×${c.avg_useful_score != null
+        ? ` · useful ${num(c.avg_useful_score).toFixed(1)}` : ""}${
+      num(c.untruthful) ? ` · <span style="color:var(--bad)">${fmtInt(c.untruthful)} untruthful</span>` : ""}</div>`).join("")}`
+    : `<div class="empty">This session has not left self-improvement residue yet.</div>`;
+  const tasks = d?.tasks ?? [], prs = d?.pull_requests ?? [];
+  $("ses-outcomes").innerHTML = (tasks.length || prs.length) ? `
+    ${tasks.map(t => `<div class="feed-item"><b>#${esc(t.task_id)}</b>
+      ${badge(t.status)} — ${esc(clip(t.subject, 120))}${
+      t.owner ? ` <span class="when">${esc(t.owner)}</span>` : ""}</div>`).join("")}
+    ${prs.map(p => `<div class="feed-item"><b>PR ${p.number ? "#" + fmtInt(p.number) : ""}</b>
+      ${badge(p.status)}${p.ci_status ? ` · CI ${esc(p.ci_status)}` : ""} —
+      <span class="name" title="${esc(p.url)}">${esc(clip(p.url, 80))}</span></div>`).join("")}`
+    : `<div class="empty">No task board or pull requests recorded.</div>`;
+}
+$("ses-list").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-ses]");
+  if (tr) openSession(tr.dataset.ses);
+});
+$("ses-turns").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-exec]");
+  if (tr) openDrawer(+tr.dataset.exec);
 });
 
 /* ── tabs, lazy loads, refresh loop ──────────────────────────────────── */
@@ -2416,11 +2729,16 @@ async function loadTab(tab, force) {
       lazyCache[`skills:${state.project}`] = data;
       lazyCache[key] = data;
       renderImprove(data ?? []);
-    } else if (tab === "fullauto") {
+    } else if (tab === "sessions") {
+      // Never cached, same reasoning as self-driving: a session's liveness
+      // (live / needs-input / crashed) is the point of the list, and the
+      // pid-derived downgrade only happens server-side at read time.
+      renderSessions(await api("/api/sessions") ?? {});
+    } else if (tab === "self-driving") {
       // Never cached: a running loop's phase and heartbeat are the point, and a
       // cached "● running, 3s ago" that is actually twenty minutes old would be
       // worse than no panel at all.
-      renderFullauto(await api("/api/fullauto") ?? {});
+      renderSelfDriving(await api("/api/self-driving") ?? {});
     } else if (tab === "config") {
       const data = cached ?? await api("/api/config");
       lazyCache[key] = data;
@@ -2546,9 +2864,9 @@ async function refresh() {
     renderFiles(files ?? []); renderMemory(memory ?? {}); renderFleetMcp(fleet ?? [], mcp ?? []);
     renderExecutions(); renderActivity();
     if (state.tab === "improve") renderImprove(lazyCache[`skills:${state.project}`] ?? []);
-    // A live cycle moves between phases in seconds; the fullauto tab is only
+    // A live cycle moves between phases in seconds; the self-driving tab is only
     // honest if it re-reads on the same cadence as everything else.
-    if (state.tab === "fullauto") loadTab("fullauto", true);
+    if (state.tab === "self-driving") loadTab("self-driving", true);
     if (state.tab === "mcp") loadTab("mcp", false);
     ok();
   } catch (e) {
@@ -2595,6 +2913,9 @@ async function pollOnce() {
       await refresh();
       await refreshDrawerJournal();
       checkDrawerFinished();
+      // The sessions tab is lazy-loaded and never cached; while it is the one
+      // on screen, a moved cursor means its liveness column is stale too.
+      if (state.tab === "sessions") loadTab("sessions", true);
     }
     $("live").classList.remove("paused");
   } catch {
@@ -2675,6 +2996,7 @@ function connectLive() {
     if (payload.changed) {
       refresh().then(checkDrawerFinished);
       refreshDrawerJournal();
+      if (state.tab === "sessions") loadTab("sessions", true);
     }
   });
   source.onerror = () => {

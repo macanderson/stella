@@ -279,7 +279,9 @@ class Renderer:
             self.state = "running"
 
         if kind in ("text", "reasoning"):
-            fragment = str(event.get("delta") or "")
+            # `text` spells its body `text` since #1886, `delta` before;
+            # `reasoning` still spells it `delta`. Read both.
+            fragment = str(event.get("delta") or event.get("text") or "")
             if fragment:
                 self.stream("reasoning" if kind == "reasoning" else "text", fragment)
             return

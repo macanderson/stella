@@ -18,6 +18,7 @@ use crate::file_touch::{
 };
 
 mod belief;
+mod classify;
 mod process_tools;
 mod turn_probe;
 
@@ -45,6 +46,28 @@ pub trait Tool: Send + Sync {
     /// returns `None` and stays ungated for that call, returning its own
     /// named error at execute time — `run_script`'s shipped posture.
     async fn command_for_gate(&self, _input: &Value, _root: &std::path::Path) -> Option<String> {
+        None
+    }
+
+    /// Whether sibling calls to this tool (and to read-only tools) in one
+    /// step may be dispatched concurrently despite the schema not claiming
+    /// `read_only`. The registry aggregates this into
+    /// `ToolExecutor::parallel_safe_names` for the engine's dispatch
+    /// grouping. Defaults to false — the safe direction. Override only when
+    /// the tool mutates no workspace state AND its own machinery is built
+    /// for concurrent siblings; the shipped case is the sub-agent spawn
+    /// tool (`crate::subagent`), whose children are read-only by
+    /// construction and whose dispatcher carves budget per child.
+    fn parallel_safe(&self) -> bool {
+        false
+    }
+
+    /// The parked-wait request this tool deposited during its last
+    /// `execute`, taken destructively — the registry aggregates it into
+    /// `ToolExecutor::drain_wait_request` and the engine parks the turn on
+    /// it at the next step boundary (#1471, `stella_core::waiting`).
+    /// Defaults to `None`: almost no tool waits on external state.
+    fn take_wait_request(&self) -> Option<stella_core::WaitRequest> {
         None
     }
 }
@@ -322,6 +345,10 @@ pub struct StorageIndex {
 /// once above the whole session tool stack.
 #[derive(Clone, Default)]
 pub struct RegistryOptions {
+    /// Where the issue backend comes from. Defaults to
+    /// [`crate::IssueBackendSource::None`], so construction spawns no process
+    /// and reads no environment until a caller opts in (#1596).
+    pub issue_backend: crate::IssueBackendSource,
     pub media_spend_gate: Option<Arc<dyn stella_media::MediaSpendGate>>,
     pub media_operation_ids: Option<Arc<dyn crate::media::MediaOperationIdSource>>,
     pub media_operation_journal: Option<Arc<dyn stella_media::MediaOperationJournal>>,
@@ -330,13 +357,11 @@ pub struct RegistryOptions {
 }
 
 impl ToolRegistry {
-    /// Construct with auto-detected optional backends.
+    /// Construct with the issue backend `options` declares (or probes for)
+    /// and an auto-detected media backend.
     pub fn new(root: PathBuf, options: RegistryOptions) -> Self {
-        let issue_backend = if crate::media::process_free(options.media_host_data_isolation) {
-            None
-        } else {
-            crate::issues::detect_issue_backend()
-        };
+        let process_free = crate::media::process_free(options.media_host_data_isolation);
+        let issue_backend = options.issue_backend.resolve(process_free);
         Self::with_backends_and_options(
             root,
             issue_backend,
@@ -345,15 +370,12 @@ impl ToolRegistry {
         )
     }
 
-    /// [`ToolRegistry::new`] with the process-spawning issue-backend probe
+    /// [`ToolRegistry::new`] with any process-spawning issue-backend probe
     /// routed through the blocking pool (#64) — the constructor every async
     /// session driver uses.
     pub async fn new_detected(root: PathBuf, options: RegistryOptions) -> Self {
-        let issue_backend = if crate::media::process_free(options.media_host_data_isolation) {
-            None
-        } else {
-            crate::issues::detect_issue_backend_async().await
-        };
+        let process_free = crate::media::process_free(options.media_host_data_isolation);
+        let issue_backend = options.issue_backend.resolve_async(process_free).await;
         Self::with_backends_and_options(
             root,
             issue_backend,
@@ -1243,7 +1265,7 @@ impl ToolRegistry {
                 let mut hits: Vec<String> = coverage
                     .by_path
                     .iter()
-                    .filter(|(path, _)| mentions_path(&haystack, path))
+                    .filter(|(path, _)| crate::exploration::mentions_path(&haystack, path))
                     .flat_map(|(_, slices)| slices.iter().cloned())
                     .filter(|slice| !coverage.hinted.contains(slice))
                     .collect();
@@ -1590,72 +1612,6 @@ impl ToolRegistry {
             // or a tool that runs no command) stays ungated.
             _ => resolved_command.map(str::to_string),
         }
-    }
-
-    /// [`Self::classify_file_op`] generalized to tools that touch several
-    /// files in one call: `apply_edits` yields one Update per distinct file
-    /// in its batch (a dry run yields none — nothing is written), everything
-    /// else defers to the single-path classification.
-    fn classify_file_ops(&self, tool: &str, input: &Value) -> Vec<PendingTouch> {
-        if tool != "apply_edits" {
-            return self.classify_file_op(tool, input).into_iter().collect();
-        }
-        if input
-            .get("dry_run")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
-            return Vec::new();
-        }
-        let Some(edits) = input.get("edits").and_then(|v| v.as_array()) else {
-            return Vec::new();
-        };
-        let mut seen = std::collections::HashSet::new();
-        let mut ops = Vec::new();
-        for edit in edits {
-            let Some(raw) = edit.get("path").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let Some(path) = normalize_workspace_path(&self.root, raw) else {
-                continue;
-            };
-            if seen.insert(path.clone()) {
-                ops.push(PendingTouch {
-                    path,
-                    op: FileOp::Update,
-                });
-            }
-        }
-        ops
-    }
-
-    /// `[C|R|U|D]`-classify a single-path call: reads → R, writes → C (new) or
-    /// U (existing), edits → U, deletes → D. The path is normalized to its
-    /// workspace-relative POSIX form here, so equivalent spellings
-    /// (`src/./a.rs`, `src/../src/a.rs`) aggregate into one ledger record;
-    /// escaping paths classify as `None` (the tool rejects them anyway).
-    /// `bash` is opaque — file ops done through the shell aren't
-    /// attributable, which is why the CRUD tools exist and the prompt steers
-    /// agents toward them.
-    fn classify_file_op(&self, tool: &str, input: &Value) -> Option<PendingTouch> {
-        let raw = input.get("path").and_then(|v| v.as_str())?;
-        let path = normalize_workspace_path(&self.root, raw)?;
-        let op = match tool {
-            "read_file" => FileOp::Read,
-            "edit_file" => FileOp::Update,
-            "delete_file" => FileOp::Delete,
-            // `web_download` lands a file exactly like `write_file`, so it
-            // takes the same ledger classification and hook gating.
-            "write_file" | "web_download" => {
-                if crate::rootfd::exists_confined(&self.root, &path) {
-                    FileOp::Update
-                } else {
-                    FileOp::Create
-                }
-            }
-            _ => return None,
-        };
-        Some(PendingTouch { path, op })
     }
 
     /// This session's staleness map as JSON, for a durable host to persist.
@@ -2160,35 +2116,6 @@ impl ToolRegistry {
     }
 }
 
-/// True when `haystack` mentions `path` as a whole path token: the hit may
-/// not extend into path characters on either side, so a map covering
-/// `lib.rs` never fires on `mylib.rs` or `graphlib.rs` — a false positive
-/// would permanently consume that map's once-per-session coverage hint.
-fn mentions_path(haystack: &str, path: &str) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-    let is_path_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/');
-    let mut from = 0;
-    while let Some(pos) = haystack[from..].find(path) {
-        let start = from + pos;
-        let end = start + path.len();
-        // A preceding `/` is a component boundary, not an embedding: search
-        // results routinely print the workspace-relative map path with an
-        // absolute prefix (`/tmp/ws/covered.rs` covers `covered.rs`).
-        let clear_before = !haystack[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|c| is_path_char(c) && c != '/');
-        let clear_after = !haystack[end..].chars().next().is_some_and(is_path_char);
-        if clear_before && clear_after {
-            return true;
-        }
-        from = end;
-    }
-    false
-}
-
 /// `ToolRegistry` is the production implementation of `stella-core`'s
 /// `ToolExecutor` port — the engine drives every tool call through this
 /// impl, never through `stella-tools` types directly.
@@ -2207,6 +2134,46 @@ impl ToolExecutor for ToolRegistry {
     /// whatever this returns, so reporting twice would bill twice.
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         stella_core::subagent::drain_sub_agent_spend(&self.sub_agent_spend)
+    }
+
+    /// Collect the parked-wait request a tool deposited this step, if any
+    /// (#1471). Consults the primary map and the late-enabled overlay — the
+    /// same two sources every other read path reads. First hit wins: a step
+    /// dispatches at most a handful of calls, and `Tool::take_wait_request`
+    /// is destructive, so at most one request exists per boundary.
+    fn drain_wait_request(&self) -> Option<stella_core::WaitRequest> {
+        let from_primary = self
+            .tools
+            .values()
+            .find_map(|tool| tool.take_wait_request());
+        from_primary.or_else(|| {
+            self.late_tools
+                .read()
+                .ok()
+                .and_then(|late| late.values().find_map(|tool| tool.take_wait_request()))
+        })
+    }
+
+    /// Aggregate each registered tool's [`Tool::parallel_safe`] claim for the
+    /// engine's dispatch grouping. Consults the primary map and the
+    /// late-enabled overlay — the same two sources every other read path
+    /// (`schemas`, dispatch) reads, so a late-enabled tool's claim cannot be
+    /// lost.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        let mut names: std::collections::HashSet<String> = self
+            .tools
+            .iter()
+            .filter(|(_, tool)| tool.parallel_safe())
+            .map(|(name, _)| name.clone())
+            .collect();
+        // Poison-tolerant like every sibling `late_tools` read path.
+        let late = self.late_tools.read().unwrap_or_else(|p| p.into_inner());
+        names.extend(
+            late.iter()
+                .filter(|(_, tool)| tool.parallel_safe())
+                .map(|(name, _)| name.clone()),
+        );
+        names
     }
 }
 

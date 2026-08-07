@@ -53,6 +53,22 @@ export function AppShell() {
     setSeedSnapshot(seed ?? null);
     setMatchId(id);
     setView("arena");
+    // A match becomes a URL you can bookmark, reload and send to someone.
+    // Replay of a finished run is only useful if you can get back to the
+    // exact run; before this the only route to a match was clicking it in a
+    // list that itself only existed for the life of the server process.
+    const url = new URL(window.location.href);
+    url.searchParams.set("match", id);
+    window.history.replaceState(null, "", url);
+  }, []);
+
+  // Restore the match named in the URL on first paint.
+  React.useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("match");
+    if (id) {
+      setMatchId(id);
+      setView("arena");
+    }
   }, []);
 
   return (

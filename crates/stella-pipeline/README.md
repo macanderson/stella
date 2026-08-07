@@ -157,10 +157,10 @@ red → `Revise` (a red test is already deterministic; never pay a verifier to c
 `ModelVerifier`. `touched_tests_passed: None` means "couldn't run" — inconclusive, never a
 pass. Linters and typecheckers are never fed to `FlipOracle::observe`. A verifier call that
 fails or returns unparseable text falls back to `heuristic_fallback`, which passes only on
-observed-green tests, so an outage never degrades to a blanket pass. On the second
-consecutive deterministic failure, `distress_guidance` buys one verifier call for
-course-correction that rides with the next revision prompt — event-triggered, never a fixed
-mid-run checkpoint. When the verifier PASSES on nothing but its own opinion,
+observed-green tests, so an outage never degrades to a blanket pass. On a candidate's
+second deterministic failure — cumulative, not necessarily consecutive (#868) —
+`distress_guidance` buys one verifier call for course-correction that rides with the next
+revision prompt — event-triggered, never a fixed mid-run checkpoint. When the verifier PASSES on nothing but its own opinion,
 `verifier_evidence_demand` buys one revision asking the worker for corroboration instead —
 once per candidate, and only where a tracked command exists to answer it, because with none
 resolved neither a flip nor a green touched test is reachable and the ask would be pure
@@ -223,9 +223,12 @@ ran. Execution aborts (budget, loop, step-cap) keep their stop — the worker di
   an already-satisfied test into the project's real suite. Withholding cannot move the
   verdict: by adoption time the witness has already armed the oracle and the flip has been
   observed. `keep_witness: true` (CLI `--keep-witness`) is the explicit promotion step.
-- **The flip baseline is re-run per candidate**, even though the witness stage already saw
-  the command fail once — the observation must come from *that candidate's* surface, and a
-  seeded one would be fabricated.
+- **The flip baseline is a real observation from this candidate's own pre-execution
+  snapshot**, transplanted into the candidate's oracle (`observe_run`, which also carries
+  the failing output so the same-failure rule #867 is armed). It is never seeded from
+  another candidate's surface or assumed — the authoring snapshot was created from this
+  candidate's own untouched tree, so the observation describes code this candidate
+  actually started from.
 - **An empty diff is never reported as "nothing changed" when `FileChange` events fired.**
   `verification_honest_diff` substitutes an explicit "the change is real; the diff is blind
   to it" note, because a verifier reading a bare empty string concludes the agent did nothing —

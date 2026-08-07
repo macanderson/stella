@@ -132,6 +132,39 @@ impl FileState {
     fn remembered_at(&self, seq: u32) -> Option<&RememberedDiff> {
         self.recent_diffs.iter().find(|d| d.seq == seq)
     }
+
+    /// The best diff this path can show, and whether it describes the path's
+    /// CURRENT state.
+    ///
+    /// `Some((text, true))` is [`Self::latest_diff`] — the most recent
+    /// mutation's own diff. `Some((text, false))` is the newest diff still
+    /// remembered, from an EARLIER mutation, and a caller that renders it owes
+    /// the reader that distinction.
+    ///
+    /// The fallback exists because a mutating `FileChange` may legitimately
+    /// carry `diff: None` while carrying counts: the pipeline's adoption
+    /// re-emit builds each change from `git diff --name-status`, then attaches
+    /// numstat and diff text in two independent calls, either of which can
+    /// fail. A path only the numstat named keeps `diff: None` on purpose
+    /// (`attach_diffs` would rather report nothing than misattribute a patch).
+    ///
+    /// Without this, such an event left the pane claiming `(no diff captured)`
+    /// for a file whose diff was sitting one field away in `recent_diffs`
+    /// (#1741). `latest_diff` keeps its documented meaning — the diff OF the
+    /// most recent mutation, `None` when that mutation brought none — rather
+    /// than being quietly widened to "the last diff we saw", which would have
+    /// put an older change's text under a newer change's counts with nothing
+    /// on screen to say so.
+    #[must_use]
+    pub fn best_diff(&self) -> Option<(&str, bool)> {
+        if let Some(current) = self.latest_diff.as_deref() {
+            return Some((current, true));
+        }
+        self.recent_diffs
+            .back()
+            .map(|d| (d.text.as_str(), false))
+            .filter(|(text, _)| !text.is_empty())
+    }
 }
 
 #[cfg(test)]
@@ -139,6 +172,53 @@ mod tests {
     use super::*;
     use crate::model::SessionModel;
     use stella_protocol::AgentEvent;
+
+    /// The model half of #1741: a mutation carrying no diff must not destroy
+    /// the one before it, and `best_diff` must say which mutation it is
+    /// handing back.
+    ///
+    /// `latest_diff` keeps its documented meaning — the diff OF the most
+    /// recent mutation, `None` when that mutation brought none. Widening it to
+    /// "the last diff we saw" would have fixed the blank pane by making the
+    /// field lie, which is how the pane ends up showing an older change's text
+    /// under a newer change's counts with nothing to mark it.
+    #[test]
+    fn a_diffless_mutation_leaves_the_previous_diff_reachable_and_marked_stale() {
+        let mut model = SessionModel::new();
+        let mutate = |diff: Option<String>, added: u32| AgentEvent::FileChange {
+            path: "src/a.rs".into(),
+            kind: FileChangeKind::Modified,
+            added,
+            removed: 0,
+            diff,
+        };
+
+        model.apply(&mutate(Some("@@\n+first".into()), 1));
+        let file = model.files.iter().find(|f| f.path == "src/a.rs").unwrap();
+        assert_eq!(
+            file.best_diff(),
+            Some(("@@\n+first", true)),
+            "the only mutation's own diff is current"
+        );
+
+        // The adoption shape: mutating, real counts, no text.
+        model.apply(&mutate(None, 5));
+        let file = model.files.iter().find(|f| f.path == "src/a.rs").unwrap();
+        assert_eq!(
+            file.latest_diff, None,
+            "the field stays honest — this mutation really brought no diff"
+        );
+        assert_eq!(
+            file.best_diff(),
+            Some(("@@\n+first", false)),
+            "but the earlier diff is still reachable, and flagged as earlier"
+        );
+        assert_eq!(
+            (file.added, file.removed),
+            (6, 0),
+            "counts stay cumulative and transported, never recounted from text"
+        );
+    }
 
     /// #803: the ledger holds at [`MAX_TRACKED_FILES`], evicting by recency
     /// (not insertion order) and counting what it dropped so the files panel
@@ -172,6 +252,42 @@ mod tests {
         assert!(
             !model.files.iter().any(|f| f.path == "src/f1.rs"),
             "the least-recently-touched path was evicted"
+        );
+    }
+
+    /// `/clear` keeps the file ledger, so it must also keep the counter that
+    /// stamps [`FileState::touched_seq`] — the recency key this eviction orders
+    /// by. Restarting it at 0 under retained files ranks every surviving path
+    /// above every new one, and the cap then evicts newest-first: the path the
+    /// agent is working on right now is the one that disappears.
+    #[test]
+    fn a_conversation_reset_keeps_the_recency_key_so_eviction_stays_oldest_first() {
+        let mut model = SessionModel::new();
+        let change = |path: String| AgentEvent::FileChange {
+            path,
+            kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
+            diff: Some("@@\n+x".into()),
+        };
+        for i in 0..MAX_TRACKED_FILES {
+            model.apply(&change(format!("src/f{i}.rs")));
+        }
+
+        model.reset_conversation();
+
+        // The first post-clear touch admits a new path at the cap: the victim
+        // must be the oldest pre-clear file, never this arrival.
+        model.apply(&change("src/after_clear.rs".into()));
+
+        assert_eq!(model.files.len(), MAX_TRACKED_FILES, "cap holds");
+        assert!(
+            model.files.iter().any(|f| f.path == "src/after_clear.rs"),
+            "the newly touched path must not be its own eviction victim"
+        );
+        assert!(
+            !model.files.iter().any(|f| f.path == "src/f0.rs"),
+            "the oldest pre-clear path is the victim"
         );
     }
 }

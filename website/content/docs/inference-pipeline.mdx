@@ -37,7 +37,8 @@ in stages:
 <PipelineFlowDiagram />
 
 In full: triage → recall → plan → scope review → execute → witness → verify
-→ verifier, with a bounded revise loop. Recall runs concurrently with triage
+→ verdict, with a bounded revise loop, then reflection and context
+write-back after the verdict settles. Recall runs concurrently with triage
 but emits after it; plan, scope review, and witness are conditional — a
 simple lookup skips them, scope review fires only above thresholds, and the
 witness is authored only without `--test-command`, on demand *after*
@@ -122,6 +123,36 @@ that merely restates the patch; its test must fail there first, and its
 command then arms the flip oracle. Witness files are watched for tampering:
 a worker that edits the witness test doesn't get credit for "passing" it.
 
+**What the author can actually do.** The witness author is the most
+capability-restricted role in the pipeline, and the restriction is enforced
+by its executor, not by prompt. It gets exactly three tools: `read_file`
+and `glob` (both confined to the candidate root, with credential and
+private-state paths excluded from reads and from discovery results), and
+`create_witness_test` — an atomic, exclusive, symlink-refusing create that
+holds a single-artifact claim: at most one witness file ever exists, and a
+repeat create replaces the author's own previous artifact (which is what
+lets the one bounded repair turn genuinely rewrite a test that passed too
+early). Every other tool name — the shell, writes, network, MCP — returns
+an error. The accepted artifact's full filesystem identity is pinned where
+it was written, grafted into the executed candidate as a byte copy, and
+re-pinned there; that second pin is what tamper exclusion checks for the
+rest of the run.
+
+**Why a warranted witness can still be missing.** Authoring can decline
+without failing the run — the change is already done by the time this
+stage runs, so a witness that cannot be *produced* degrades to an honest
+`Unverified` with a stated reason, while a witness that cannot be
+*trusted* (a tracked-file edit, a wrong or multiple-file artifact, an
+identity mismatch) still stops the candidate. The degradable reasons you
+will see in a transcript: no supported test runner answered its version
+probe (the pipeline probes the runner vocabulary before spending an
+author call, and enforces the probed set against the authored command);
+the author produced no `TEST_COMMAND` line or an unusable one; the
+authored test was refused at creation for asserting nothing the goal
+decides (the assertion-density screen — no assertions, constant
+comparisons, and bare catch-all panic checks never reach disk); or the
+test still passed on the unmodified code after the one repair.
+
 The witness is scaffolding for one run, not a test you inherit. It is written
 to *fail* — it encodes a moment ("this code doesn't do X yet"), not an
 invariant, which is the opposite of what a durable regression test encodes. So
@@ -203,11 +234,18 @@ the diff, and the evidence summary, and answers with a leading `PASS` or
 changed. If the verifier call fails, stella falls back to a conservative
 heuristic verdict rather than hanging or guessing.
 
+One wire-level note for stream consumers: the distress-guidance call —
+the course-correction a stuck worker gets after repeated deterministic
+failures — is served by the verifier role and emits under the same
+`verdict` stage name, though it is advice rather than a verdict. Filter on
+the call's role (`distress_guidance`) if the distinction matters to you.
+
 ### 8. Revise
 
 A failed verification sends the worker back with the failure evidence — up to
-a bounded number of revision turns (2 by default). Once a revision has
-deterministically failed, stella spends one verifier call on **distress guidance**:
+a bounded number of revision turns (2 by default). Once a candidate has
+deterministically failed twice — consecutive or not — stella spends one
+verifier call on **distress guidance**:
 a course-correction note that rides with the next revision prompt instead of
 letting the worker keep digging the same hole.
 
@@ -300,7 +338,7 @@ that resolves each role also carries reliability machinery:
   a provider's breaker; routing skips it and reports the fallback visibly —
   never a silent mid-turn switch. After a cooldown, one trial call decides
   whether the breaker closes.
-- **Cross-family judging.** The verifier prefers a healthy provider whose model
+- **Cross-family verification.** The verifier prefers a healthy provider whose model
   *family* differs from the worker's (Claude judging GLM's work, GPT judging
   Claude's). With only one family configured, the verifier degrades to the same
   family — with a visible caveat, never an error.

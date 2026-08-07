@@ -49,6 +49,56 @@ pub trait ToolExecutor: Send + Sync {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         0.0
     }
+
+    /// The parked-wait request a tool deposited during its last `execute`,
+    /// **taken** (not peeked) — the engine consumes it at the next step
+    /// boundary and parks the turn on the engine's own clock instead of
+    /// letting the model poll (#1471, `crate::waiting`).
+    ///
+    /// The same "written by one object, drained by another" seam as
+    /// [`Self::drain_sub_agent_spend_usd`], for the same structural reason:
+    /// a tool returns only a `ToolOutput`, and by the time the engine is at
+    /// a boundary where parking is safe (invariant 6 — between model calls,
+    /// never mid-tool) the tool call is long finished.
+    ///
+    /// # Decorators MUST forward this
+    ///
+    /// The default returns `None`, which reads as "no tool of mine ever
+    /// asks to wait" — correct for a leaf, and **wrong for a wrapper**. A
+    /// decorator that forgets to forward silently turns parked waits off
+    /// for every surface composed through it, and the model falls back to
+    /// burning steps on polling — the exact regression #1471 removes. The
+    /// shipped composition is pinned by `stella-cli`'s
+    /// `the_production_tool_stack_forwards_wait_requests`.
+    ///
+    /// Destructive by contract: two drains of one request would park twice.
+    fn drain_wait_request(&self) -> Option<crate::waiting::WaitRequest> {
+        None
+    }
+
+    /// Names of tools that are safe to run **concurrently with each other and
+    /// with read-only calls** despite not declaring `read_only` — the
+    /// executor-level claim behind the driver's dispatch grouping. The
+    /// shipped case is the sub-agent spawn tool: its children only ever read
+    /// (they run behind [`ReadOnlyTools`]) and the dispatcher carves budget
+    /// per child, so sibling spawns in one step have no ordering an observer
+    /// of mutable state could distinguish — yet the tool is honestly not
+    /// `read_only` (that flag also fences children out of it, and gates
+    /// permission surfaces on spend).
+    ///
+    /// Deliberately an executor method rather than a third `ToolSchema`
+    /// claim: dispatch grouping is a scheduling fact about *this* executor's
+    /// composition, not a wire-level property an external (MCP) tool may
+    /// self-declare — an external tool that wants concurrency claims
+    /// `read_only`, which is already the grouping key. Defaults to empty, the
+    /// safe direction. This set widens ONLY dispatch grouping: speculation
+    /// keeps its `read_only && speculation_safe` conjunction, and the
+    /// evidence-side consumers of the read-only set (`confident_zero`, the
+    /// mutating-action counts) are untouched — "runs concurrently" is not an
+    /// artifact claim.
+    fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
+        std::collections::HashSet::new()
+    }
 }
 
 /// A read-only view over another executor: advertises only the schemas
@@ -116,6 +166,19 @@ impl ToolExecutor for ReadOnlyTools<'_> {
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
     }
+
+    /// Forwarded: a verifier legitimately waits on external state (CI is the
+    /// canonical read-only evidence source), and its probe replays through
+    /// this same view — so the read-only restriction holds while parked too.
+    fn drain_wait_request(&self) -> Option<crate::waiting::WaitRequest> {
+        self.inner.drain_wait_request()
+    }
+
+    // `parallel_safe_names` deliberately keeps the empty default rather than
+    // forwarding (contrast with the spend drain above): the one shipped
+    // parallel-safe tool is the sub-agent spawn, and this view exists to
+    // strip exactly that from a child — advertising a name whose execution
+    // the same view refuses would be an empty promise.
 }
 
 /// Time source, injectable for deterministic tests. Only the trait lives

@@ -14,7 +14,7 @@ stella daemon attach [id]
 stella daemon logs [id] [-n LINES]
 stella daemon stop <id>
 stella daemon resume [id]
-stella daemon resume-all [--dry-run]
+stella daemon resume-all [--dry-run] [--ceiling MINUTES]
 stella daemon install [--label NAME] [--keep-alive] -- <stella args…>
 stella daemon install --resume-all [--label NAME]
 stella daemon uninstall <label>
@@ -80,6 +80,28 @@ Two differences from an attached launch, both deliberate:
 
 - **A terminal is not required.** Plain supervision declines without one, since a run with no terminal to lose is already immune to the hangup. "Return now" is wanted from a pipe, a container, a `cron` job and a shell script exactly as much as from a terminal, so the flag forces supervision rather than merely permitting it.
 - **The exit code is the launch's, not the run's.** `stella run --detach; echo $?` answers "did the launch succeed". The run's own answer arrives in `stella daemon list`.
+
+### Detaching from a script
+
+The banner above is on **stderr**, so it never garnishes a pipe. Under `--output-format json` or `stream-json`, stdout carries one launch summary naming the session — the id a script needs before it can do anything at all with the run it just started:
+
+```bash
+$ stella run "migrate the config loader to serde" --detach --output-format json
+{
+  "schema_version": 1,
+  "status": "detached",
+  "session_id": "ses-1785956826121-25167",
+  "attach": "stella daemon attach ses-1785956826121-25167",
+  "stop": "stella daemon stop ses-1785956826121-25167"
+}
+```
+
+```bash
+id=$(stella run "…" --detach --output-format json | jq -r .session_id)
+stella daemon stop "$id"
+```
+
+`stream-json` gets the same object compact on one line, so the line-delimited contract holds. `status` is `detached` rather than `ok`: the launch succeeded, and the run's own verdict is a later, separate question — see [scripting](/docs/scripting) for the envelope family this joins.
 
 It applies to every supervised verb — `run`, `goal`, `monitor`, `fleet` — and `STELLA_DETACH=1` sets it for a whole shell. `--foreground` wins if both are given: the flag that asks for less machinery is the safer reading of a contradictory command line, and a declared conflict would break the supervised child, which re-parses its parent's argv (`--detach` included) with `STELLA_FOREGROUND=1` in its environment.
 
@@ -169,7 +191,23 @@ It prints one line per supervised run, continued or skipped, with the reason:
 
 **What it continues.** Exactly the rows `list` paints `Crashed ↩`: a supervised run whose recorded status is still live while its liveness lock is gone, whose workspace still exists, and which left a resume point. A run that finished, was stopped, was set aside, or recorded an error is never resumed — every deliberate ending writes a status on the way out, and a process the kernel took writes nothing, so a live status with a dead lock is the signature of interruption and of nothing else. The rule is deliberately conservative on the one ambiguous case: work you ended on purpose is never resumed behind your back, at the cost of not resuming a crash that managed to record itself.
 
+**What it skips because nobody is there.** A run that was waiting on a plan review when the machine went down is *not* resumed at boot. Resuming it would not fail — it would park again, waiting for an answer, and because the sweep streams one run at a time to completion it would sit there forever with every later run behind it unresumed. So the sweep names it and moves on:
+
+```text
+▸ skipping    ses-1785956700221 — waiting on an approval — answer it with `stella daemon attach <id>`, then `stella daemon resume <id>`
+```
+
+Waiting is not failing, so it does not spend one of the three attempts below: a run can wait across any number of reboots and still be resumable the moment you answer it.
+
 **What bounds it.** Each run gets at most **three** boot-time resumes. The count is durable (`~/.stella/services/resume-boot.json`) and is written *before* the resume is spawned, so a run that takes the machine down with it is still charged for the attempt. Past three, the run is retired from the sweep and left for `stella daemon resume <id>` by hand — a human deciding to try again is what the bound exists to require. Runs are resumed one at a time; several turns resuming at once is several models spending at once on a machine nobody is watching.
+
+**What bounds each resume.** The attempt count bounds how many *boots* a run can spend; it does not stop one resumed turn from holding *this* boot forever — a wedged tool, a provider that never returns, a model call retrying without end. So each resumed run also gets a wall-clock ceiling, **30 minutes** unless `--ceiling MINUTES` says otherwise. A run that reaches it is never killed outright — a kill at the ceiling would land mid-edit, which is worse than the stall it fixes. It is stopped exactly the way `stella daemon stop` stops one: asked with `SIGTERM`, given the grace period to abort at a safe boundary and record its own ending, killed only if it ignores that. Then the sweep says so and moves to the next run:
+
+```text
+⚠ ses-1785956826121 — did not finish within the 30-minute ceiling and was stopped at a safe boundary; the sweep continues with the runs behind it — `stella daemon list` shows where this one ended up
+```
+
+The two ways that ends need no new rules. A run that honoured the stop ended deliberately — same as a Ctrl-C — so the next sweep skips it and returns its attempts; it was merely slower than the ceiling, and `stella daemon resume <id>` by hand has no ceiling. A run so wedged it had to be killed keeps its resume point and is swept again next boot — and the attempt it was already charged (a timed-out resume **does** spend one) is exactly what retires it after three, because a run that hits the ceiling every boot is the recurring failure the attempt bound exists to stop.
 
 Everything `resume` says about a resumed turn applies here, including the honest limits above: a turn interrupted mid-pipeline resumes as a plain engine turn and says which stages it is not restoring — into the service console rather than a terminal.
 

@@ -175,7 +175,7 @@ impl ToolCallObserver for SpeculationGate {
         // A send after the renderer hung up is fine — previews are lossy by
         // contract.
         let _ = self.events.send(AgentEvent::TextDelta {
-            text: delta.to_string(),
+            delta: delta.to_string(),
         });
     }
 
@@ -311,7 +311,7 @@ mod tests {
 
         let forwarded: Vec<String> = std::iter::from_fn(|| events_rx.try_recv().ok())
             .map(|e| match e {
-                AgentEvent::TextDelta { text } => text,
+                AgentEvent::TextDelta { delta } => delta,
                 other => panic!("unexpected event: {other:?}"),
             })
             .collect();

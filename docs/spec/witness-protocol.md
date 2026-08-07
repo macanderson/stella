@@ -45,13 +45,18 @@ Anything below that would weaken these is out of scope by construction.
 
 ## 2. The defects this document fixes
 
-Each is present in the shipping code, and each is already named in
-[`ROADMAP.md`](../../ROADMAP.md).
+Each was present in the shipping code when this document was approved, and
+each is named in [`ROADMAP.md`](../../ROADMAP.md).
 
-**D1 and D3 are fixed by §4 of this document.** D2, D4, and D5 are recorded
-here because they are real and because the airlock's machinery makes two of
-them cheap to reach later — but they are separate changes and do not land
-together. One logical change per PR.
+**Status.** D1 and D3 are fixed by §4 of this document. D4 and D5 have since
+been fixed in code: verdicts carry their `LadderSnapshot` (the `ladder` field
+on `VerdictEvidence`, #865/#1043) so a pass can be replayed to its inputs,
+and `verifier_prompt` frames the diff as delimited worker-authored data
+placed last in the message (`UNTRUSTED_DIFF_PREAMBLE`, #1206/#1214/#1240) so
+a comment addressed to the reviewer arrives inside the declared-data region.
+D2 remains open by decision — §4.2 records why the fingerprint deliberately
+does not tighten the flip oracle yet, and the narrower same-failure rule
+(#867) covers the disappearing-test shape in the meantime.
 
 **D1 — The failure channel leaks the detector.** On a deterministic failure the
 worker receives `"touched tests failed after execution: {tail}"` — the raw
@@ -253,6 +258,22 @@ phrasing changes what the diff is. The recognized reasons are `NothingChanged`,
 machinery falls through to "witness required". An unnecessary witness costs one
 model call; a missing one ships unverified behavior. Where the warrant is
 unsure, it buys the test.
+
+**An empty diff is not a clean turn.** `NothingChanged` is the one reason that
+rests on an *absence*, so it is the one that needs a signal which cannot go
+dark. A probe reporting nothing may have been unable to look — or may have
+looked at the wrong place: a system-configuration task installs into `/etc`,
+because that is where the service will read, and the candidate root it was
+handed stays empty by construction. Both of the warrant's original guards said
+"clean" for that shape, and the run completed `deterministic: true` over ten
+mutating calls. So the warrant also reads `mutating_actions` — the pipeline's
+tally of the calls it dispatched itself, not a probe into the world — and
+waives the witness only when nothing changed *and nothing tried*. The ladder
+carries the same rule one rung further: dispatched mutating calls plus a
+readable, empty diff and no other observation resolves to `Unverifiable`, an
+abstention, never a pass. It is deliberately not a failure — the work may be
+entirely correct and merely uncollected, and no revision can make an
+un-snapshot-able workspace observable.
 
 **No test needed is not the same as no review needed.** A removal's proof is
 its diff, but deleting the *wrong* thing is a real mistake a reader catches and

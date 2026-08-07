@@ -400,7 +400,7 @@ pub fn render_event(event: &AgentEvent) {
             // Complete-stage and ToolStart/ToolResult: handled inline at the
             // call site or by a more specific event (see the module doc).
         }
-        AgentEvent::Text { delta } => assistant_response(delta),
+        AgentEvent::Text { text } => assistant_response(text),
         AgentEvent::Reasoning { .. } => {}
         AgentEvent::BudgetTick {
             mode: BudgetMode::Off,

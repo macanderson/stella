@@ -38,6 +38,7 @@ fn with_ambient_search(mut names: Vec<&'static str>) -> Vec<&'static str> {
 /// once-per-session hint on a file it doesn't cover.
 #[test]
 fn mentions_path_requires_token_boundaries() {
+    use crate::exploration::mentions_path;
     assert!(mentions_path("src/lib.rs:12: pub fn x()", "src/lib.rs"));
     assert!(mentions_path("lib.rs", "lib.rs"));
     // An absolute spelling of a covered relative path still matches.
@@ -613,6 +614,7 @@ fn video_tools_register_only_with_a_video_capable_media_backend() {
         )),
         media_requires_host_approval: true,
         media_host_data_isolation: Some(crate::media::HostDataIsolation::ProcessFree),
+        ..Default::default()
     };
     let names = |backend, options: RegistryOptions| {
         let root = tempfile::tempdir().unwrap();
@@ -1419,5 +1421,66 @@ fn a_beliefs_coverage_survives_the_snapshot_round_trip() {
         observed.get("windowed.rs").map(String::as_str),
         Some("partial:bbb"),
         "a partial belief is still partial after a resume"
+    );
+}
+
+/// A minimal parallel-safe tool for the late-enabled overlay.
+struct LateSpawn;
+
+#[async_trait]
+impl Tool for LateSpawn {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "late_spawn".into(),
+            description: "late-enabled spawn stand-in".into(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            read_only: false,
+            speculation_safe: false,
+        }
+    }
+    fn parallel_safe(&self) -> bool {
+        true
+    }
+    async fn execute(&self, _input: &Value, _root: &std::path::Path) -> ToolOutput {
+        ToolOutput::Ok {
+            content: String::new(),
+        }
+    }
+}
+
+/// The witness for the poisoned-lock repair in
+/// `ToolExecutor::parallel_safe_names`: every sibling `late_tools` read path
+/// tolerates poison (`unwrap_or_else(|p| p.into_inner())`), but this one used
+/// `if let Ok(..)` — after a panic elsewhere it silently dropped every
+/// late-enabled claim while `schemas` kept advertising the tool, serializing
+/// dispatch with nothing to say so.
+#[test]
+fn parallel_safe_names_survive_a_poisoned_late_overlay() {
+    let (_root, reg) = bare_registry(None);
+    reg.late_tools
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert("late_spawn".to_string(), Arc::new(LateSpawn));
+
+    // Poison the lock the only way it happens in production: a panic while
+    // the guard is held.
+    let _ = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let _guard = reg.late_tools.write().unwrap();
+                panic!("poison the overlay");
+            })
+            .join()
+    });
+    assert!(reg.late_tools.is_poisoned(), "the setup really poisoned it");
+
+    let names = stella_core::ports::ToolExecutor::parallel_safe_names(&reg);
+    assert!(
+        names.contains("late_spawn"),
+        "a poisoned overlay must not silently shrink the claim set"
+    );
+    assert!(
+        names.contains("task"),
+        "and the primary map's claims are untouched"
     );
 }

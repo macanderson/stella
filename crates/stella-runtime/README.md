@@ -44,6 +44,17 @@ process — the thing a server needs and a CLI never did. The rule is enforced
 executably by `tests/no_ambient_reads.rs`, not just asserted; extending this
 crate means keeping that test green without an allowlist entry.
 
+**The rule binds what this crate *builds*, not only what it spells.** A
+textual scan of these sources cannot see a constructor one call below that
+reads the environment for us, and for a long time one did: the tool registry
+probed `gh auth status` and `LINEAR_API_KEY` from inside `new_detected`, so
+building a `SessionRuntime` read ambient state no `RuntimeSpec` field
+mentioned (#1596). That probe is now a port declared on
+`RegistryOptions::issue_backend` and defaults to consulting nothing, which
+makes it one more thing the caller fills in. `tests/registry_probe_is_declared.rs`
+holds the behavioural half — it drives the real construction path and counts
+how many times the host is asked — because the scan is structurally unable to.
+
 ## God files — do not add lines
 
 This crate has no god files: no file exceeds the gate's 1500-line ratchet

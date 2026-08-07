@@ -8,10 +8,11 @@ Most of what gets called agent "self-improvement" is recall: a note file the age
 This track is the other thing. Each component below changes what stella can do, not just what it remembers, and each one carries a **success metric and a guardrail** so that "improvement" is something proven rather than asserted.
 
 <Callout type="warn">
-**This page describes a direction, most of which is not built.** One first slice has shipped
-([`stella tune`](/docs/commands/tune)). Everything else is a design under active discussion in the
-issue tracker, and the details will change. Read it as a map of where stella is heading, and check
-the linked issue for the current state of any one component.
+**This page describes a direction, much of which is not built.** Four slices have shipped —
+[`stella tune`](/docs/commands/tune), `stella dataset export`, the Tool Foundry, and the nightly
+loop-bench gate. Everything else is a design under active discussion in the issue tracker, and the
+details will change. Read it as a map of where stella is heading, and check the linked issue for
+the current state of any one component.
 </Callout>
 
 ## The shape of the problem
@@ -103,35 +104,30 @@ The load-bearing edge is **dataset → eval**. #836's own stated first slice is 
   </SpecCard>
   <SpecCard title="Partly there — mining without the gate">
     A rules miner ships and writes mined rules to `.stella/rules/`, and reflections are mined
-    into skills. Both promote on **frequency and recurrence**, not on measured lift. Adding
-    that gate is precisely what #833 is.
+    into skills. Both still promote on **frequency and recurrence**, not on measured lift. The
+    appraisal that would judge lift exists (`stella-core`'s `skills::appraisal`, which scores a
+    skill as helping, harming, or guard-blocked); what has not landed is the evaluation *run*
+    that feeds it. Closing that loop is precisely what #833 is.
   </SpecCard>
-  <SpecCard title="Exists, not wired — loop-bench">
-    `bench/loop-bench` works from the command line and is what `stella tune` scores. It does
-    **not** run in CI — the bench workflow runs the Python analysis tooling's pytest suite and
-    never runs stella against a task. That gap is #873.
+  <SpecCard title="Shipped — the nightly loop-bench gate">
+    #873. `.github/workflows/nightly-bench.yml` runs `loop-bench` on a cron schedule against a
+    fixed task pool on a flash-tier model, so stella is now run against real tasks in CI rather
+    than only the analysis tooling's pytest suite.
   </SpecCard>
-  <SpecCard title="Not built — the dataset">
-    There is no `stella dataset export`. `stella export` dumps raw, unredacted session
-    telemetry for debugging, which is not a training-ready trajectory set. That is #872.
+  <SpecCard title="Shipped — the dataset">
+    #872. [`stella dataset export`](/docs/commands/dataset) writes one JSONL record per accepted
+    turn plus a `manifest.json` describing the filter that selected them — `--since` / `--until`
+    / `--require-verdict`, every string through the secret redactor, written owner-only.
   </SpecCard>
-</CardGrid>
-
-Nothing in #830, #832, #834, #835, or #836 is implemented.
-
-### The two first slices in flight
-
-<CardGrid size="sm">
-  <SpecCard title="#872 — stella dataset export">
-    One JSONL record per accepted turn — prompt, tool calls, accepted diff — scrubbed through
-    the existing redaction path, provenance stamped, with a manifest describing the extraction
-    filter so the dataset is reproducible and auditable.
-  </SpecCard>
-  <SpecCard title="#873 — nightly loop-bench gate">
-    A scheduled CI run of loop-bench against a fixed task pool on the cheapest model, failing
-    when the pass rate drops below a floor, with the report uploaded for trend tracking.
+  <SpecCard title="Shipped in slices — the Tool Foundry">
+    #830. The capability-gap detector is `stella-core`'s `tool_foundry`; authoring, the witness,
+    and the adoption gate are `stella-tools`' `foundry_author` / `foundry_witness` /
+    `foundry_gate`, driven by `stella tools --author`, `--adopt` and `--enable`. A proposed tool
+    is inert until it is **both** adopted and enabled.
   </SpecCard>
 </CardGrid>
+
+Nothing in #832, #834, #835, or #836 is implemented.
 
 ## Guardrails
 
@@ -184,7 +180,7 @@ Each component has an issue carrying its vision, grounded mechanism, success met
 - [#835 — Capability curriculum](https://github.com/macanderson/stella/issues/835)
 - [#836 — Weight-space adapters](https://github.com/macanderson/stella/issues/836)
 
-First slices: [#872 — dataset export](https://github.com/macanderson/stella/issues/872), [#873 — nightly loop-bench gate](https://github.com/macanderson/stella/issues/873).
+The two first slices, [#872 — dataset export](https://github.com/macanderson/stella/issues/872) and [#873 — nightly loop-bench gate](https://github.com/macanderson/stella/issues/873), have both shipped; see "What is actually built today" above.
 
 ## See also
 

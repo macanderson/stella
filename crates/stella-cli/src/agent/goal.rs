@@ -182,8 +182,11 @@ pub(crate) async fn run_raw_one_shot(
     // `SessionPresence::one_shot_notification`, shared with the pipeline path).
     let run_secs =
         u64::try_from(crate::memory::unix_now_secs().saturating_sub(started_unix)).unwrap_or(0);
-    let notify = presence.one_shot_notification(outcome.is_ok(), run_secs, prompt);
-    presence.finish(outcome.is_ok(), notify);
+    // The failure itself, not a bool: an unsupervised deliberate stop must
+    // reach the registry as `Stopped`, never age into it as a crash (#1826).
+    let status = crate::daemon::outcome_status(outcome.as_ref().map(|_| ()));
+    let notify = presence.one_shot_notification(status, run_secs, prompt);
+    presence.finish(status, notify);
     outcome
 }
 
@@ -205,7 +208,7 @@ pub async fn run_goal_cmd(
     goal: &str,
     budget_limit: Option<f64>,
     use_pipeline: bool,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
@@ -367,13 +370,19 @@ pub async fn run_goal_cmd(
     // Goal runs are long by construction — always land the inbox
     // notification (Enter on it replays this session's journal).
     let goal_secs = crate::memory::unix_now_secs().saturating_sub(started_unix);
-    let notify = if outcome.is_ok() {
-        format!("{}: goal met ({goal_secs}s)", presence.name())
-    } else {
-        format!("{}: goal run FAILED", presence.name())
+    let notify = match &outcome {
+        Ok(()) => format!("{}: goal met ({goal_secs}s)", presence.name()),
+        Err(failure) if failure.is_deliberate_stop() => {
+            format!("{}: goal run stopped by policy", presence.name())
+        }
+        Err(_) => format!("{}: goal run FAILED", presence.name()),
     };
+    // The typed abort survives to this terminal write (#1862): the same
+    // decider as every other registry writer projects a deliberate stop as
+    // `Stopped`, a user interrupt as `Cancelled`, and a crash as `Error`
+    // (#1653, #1826).
     presence.finish(
-        outcome.is_ok(),
+        crate::daemon::outcome_status(outcome.as_ref().map(|_| ())),
         Some((notify, crate::command_deck::prompt_line(goal, 160))),
     );
     outcome
@@ -409,16 +418,15 @@ pub(crate) async fn run_goal_turn(
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
     // because recall necessarily precedes the channel it would be emitted on.
     recall_event: Option<AgentEvent>,
-    // The caller's session memory, so this round's execution id is stamped
-    // before the turn runs — reflection stores the self-review 1:1 with an
-    // execution, and an unstamped round files an id-less row.
+    // The caller's session memory, so the execution seam can stamp this
+    // round's execution id and record its skill-version usage before the turn
+    // runs — reflection stores the self-review 1:1 with an execution, and an
+    // unstamped round files an id-less row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
-        m.set_execution_id(*id);
-    }
+    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root);
     let files_before = registry.files_touched().len();
 
     // Route the VERIFIER role. `Some` only when a distinct-family verifier was
@@ -533,13 +541,16 @@ pub(crate) async fn run_goal_turn(
             rounds,
             reason,
             cost_usd,
+            kind,
         } => {
             tui::cost_summary(
                 cost_usd,
                 &format!("{}/{}", cfg.provider.id, cfg.model_id),
                 turn_start.elapsed(),
             );
-            Err(format!("goal not met after {rounds} round(s): {reason}"))
+            // The typed kind survives the loop (#1862): a working turn's
+            // deliberate stop exits `3` and records `Stopped`.
+            Err(outcome::goal_unmet_failure(rounds, &reason, kind))
         }
     }
 }
@@ -552,7 +563,7 @@ pub(crate) async fn run_goal_turn(
 /// `Engine::run_turn`.
 ///
 /// The goal-loop verifier is distinct from the pipeline's verify verifier: the verify
-/// verifier (inside [`Pipeline::run`]) answers "did this change pass its tests?",
+/// verifier (inside [`stella_pipeline::Pipeline::run`]) answers "did this change pass its tests?",
 /// while the goal verifier here answers "does the whole effort meet the goal?".
 /// Both are independent of the worker model.
 #[allow(clippy::too_many_arguments)]
@@ -573,18 +584,22 @@ async fn run_goal_pipeline_turn(
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
     // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller.
     recall_event: Option<AgentEvent>,
-    // Same contract as `run_goal_turn`: stamp the execution id into the
-    // caller's memory before the turn runs, so reflection can name its row.
+    // Same contract as `run_goal_turn`: the execution seam stamps the id into
+    // the caller's memory and records this round's skill-version usage before
+    // the turn runs, so reflection can name its row.
     session_memory: Option<&mut crate::memory::SessionMemory>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
-    // Rebound mutable and NOT consumed by the id stamp, so the same memory
-    // can double as the pipeline's recall port below.
+    // Rebound mutable and NOT consumed by the seam, so the same memory can
+    // double as the pipeline's recall port below.
     let mut session_memory = session_memory;
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory.as_deref_mut()) {
-        m.set_execution_id(*id);
-    }
+    stamp_and_record_skill_usage(
+        &execution,
+        session_memory.as_deref_mut(),
+        goal,
+        &cfg.workspace_root,
+    );
     let files_before = registry.files_touched().len();
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 
@@ -694,7 +709,8 @@ async fn run_goal_pipeline_turn(
         // the read-only tool view, the verifier tuning, and the session
         // calibration (keyed per model, so a cross-family verifier learns its
         // own drift) into each assessment.
-        let read_only = stella_core::ports::ReadOnlyTools::new(&tools);
+        let scoped = VerifierScopedTools::new(&tools);
+        let read_only = stella_core::ports::ReadOnlyTools::new(&scoped);
         let verifier_engine = Engine::with_sleeper(
             verifier,
             &read_only,
@@ -704,7 +720,7 @@ async fn run_goal_pipeline_turn(
         .with_calibration(calibration);
 
         let mut total_cost_usd = 0.0f64;
-        let mut result: Option<Result<(), String>> = None;
+        let mut result: Option<Result<(), crate::failure::CliFailure>> = None;
         let mut goal_met = false;
 
         for round in 1..=goal_config.max_rounds {
@@ -753,32 +769,25 @@ async fn run_goal_pipeline_turn(
                 // Goal pipeline rounds run without an interactive steer tap.
                 steering: None,
             };
-            let pipeline = Pipeline::new(ports, tx.clone(), pipeline_config);
+            let pipeline =
+                crate::resume_frame::pipeline(&cfg.durability, ports, tx.clone(), pipeline_config);
             // The same kickoff wording as the raw goal loop and the served
             // one — `stella_core::goal` owns the bytes for all three.
             let round_goal = stella_core::goal::goal_kickoff_text(goal);
             match pipeline.run(&round_goal, messages, budget).await {
                 Ok(outcome) => {
                     total_cost_usd += outcome.total_cost_usd;
-                    match outcome.status {
-                        PipelineStatus::Completed => {}
-                        PipelineStatus::VerificationFailed { verdict } => {
-                            result = Some(Err(format!(
-                                "goal not met: verification failed: {}",
-                                verdict.summary
-                            )));
-                            break;
-                        }
-                        PipelineStatus::Aborted { reason, .. } => {
-                            result = Some(Err(format!(
-                                "goal not met: working round aborted: {reason}"
-                            )));
-                            break;
-                        }
+                    // The fold keeps the abort's typed kind (#1862), so the
+                    // terminal registry write can tell a policy stop from a
+                    // crash. A completed round is no break at all — the loop
+                    // goes on to its verifier assessment below.
+                    if let Some(failure) = outcome::goal_round_break(&outcome.status) {
+                        result = Some(Err(failure));
+                        break;
                     }
                 }
                 Err(e) => {
-                    result = Some(Err(e.to_string()));
+                    result = Some(Err(crate::failure::CliFailure::error(e.to_string())));
                     break;
                 }
             }
@@ -794,7 +803,9 @@ async fn run_goal_pipeline_turn(
             {
                 Ok(pair) => pair,
                 Err(reason) => {
-                    result = Some(Err(format!("goal not met: verifier unavailable: {reason}")));
+                    result = Some(Err(crate::failure::CliFailure::error(format!(
+                        "goal not met: verifier unavailable: {reason}"
+                    ))));
                     break;
                 }
             };
@@ -840,10 +851,10 @@ async fn run_goal_pipeline_turn(
                     &format!("{}/{}", cfg.provider.id, cfg.model_id),
                     turn_start.elapsed(),
                 );
-                Err(format!(
+                Err(crate::failure::CliFailure::error(format!(
                     "goal not met after {} round(s): round cap reached without a passing verdict",
                     goal_config.max_rounds
-                ))
+                )))
             }
         }
     };
@@ -875,4 +886,138 @@ async fn run_goal_pipeline_turn(
     }
     tui::files_touched_panel(&files);
     goal_result
+}
+
+/// The six tools the goal verifier's system prompt promises
+/// (`stella_core::goal::VERIFIER_SYSTEM_PROMPT`), and the only ones it is
+/// offered. Pinned against the prompt by a test below so the two cannot
+/// drift.
+const VERIFIER_TOOL_ALLOWLIST: &[&str] = &[
+    "read_file",
+    "grep",
+    "glob",
+    "explorations",
+    "ci_status",
+    "search_issues",
+];
+
+/// The goal verifier's tool surface (#1783): the session stack narrowed to
+/// [`VERIFIER_TOOL_ALLOWLIST`] BEFORE the read-only view applies. The bare
+/// `ReadOnlyTools` wrap admitted every schema claiming `read_only: true` —
+/// ~25 tools including `web_fetch`/`web_search` (outbound HTTP from a role
+/// that reads worker-influenced content: a prompt-injection egress channel)
+/// and any MCP/custom tool that self-declares read-only. The pipeline's
+/// verdict call carries zero tools; this is the goal loop's equivalent
+/// posture: exactly what the prompt names, enforced at execution rather
+/// than by prompt.
+struct VerifierScopedTools<'a> {
+    inner: &'a dyn stella_core::ToolExecutor,
+}
+
+impl<'a> VerifierScopedTools<'a> {
+    fn new(inner: &'a dyn stella_core::ToolExecutor) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
+    fn schemas(&self) -> Vec<stella_protocol::ToolSchema> {
+        self.inner
+            .schemas()
+            .into_iter()
+            .filter(|schema| VERIFIER_TOOL_ALLOWLIST.contains(&schema.name.as_str()))
+            .collect()
+    }
+
+    async fn execute(&self, name: &str, input: &serde_json::Value) -> stella_protocol::ToolOutput {
+        if !VERIFIER_TOOL_ALLOWLIST.contains(&name) {
+            return stella_protocol::ToolOutput::Error {
+                message: format!(
+                    "`{name}` is not available to the goal verifier: only the tools its \
+                     instructions name ({}) may be called",
+                    VERIFIER_TOOL_ALLOWLIST.join(", ")
+                ),
+            };
+        }
+        self.inner.execute(name, input).await
+    }
+
+    // Forwarded, not zeroed (the trait doc's decorator rule): nothing on the
+    // allowlist dispatches sub-agents today, but a wrapper that drops spend
+    // is wrong the day that changes.
+    fn drain_sub_agent_spend_usd(&self) -> f64 {
+        self.inner.drain_sub_agent_spend_usd()
+    }
+}
+
+#[cfg(test)]
+mod verifier_tools_tests {
+    use super::*;
+    use stella_protocol::{ToolOutput, ToolSchema};
+
+    struct FakeStack;
+    #[async_trait::async_trait]
+    impl stella_core::ToolExecutor for FakeStack {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            ["read_file", "grep", "web_fetch", "mcp__srv__read", "bash"]
+                .into_iter()
+                .map(|name| ToolSchema {
+                    name: name.into(),
+                    description: String::new(),
+                    input_schema: serde_json::json!({}),
+                    // Everything claims read-only — the exact shape a
+                    // self-declaring MCP tool or the web group presents.
+                    read_only: true,
+                    speculation_safe: false,
+                })
+                .collect()
+        }
+        async fn execute(&self, name: &str, _input: &serde_json::Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: format!("ran {name}"),
+            }
+        }
+    }
+
+    /// #1783's witness: the goal verifier is offered exactly what its
+    /// prompt names — a read-only claim alone (web egress, a self-declared
+    /// MCP read) no longer admits a tool, and execution is enforced, not
+    /// prompted.
+    #[tokio::test]
+    async fn the_goal_verifier_gets_only_the_tools_its_prompt_names() {
+        let stack = FakeStack;
+        let scoped = VerifierScopedTools::new(&stack);
+        let names: Vec<_> = scoped
+            .schemas()
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+        assert_eq!(names, vec!["read_file", "grep"]);
+        for denied in ["web_fetch", "mcp__srv__read", "bash", "web_search"] {
+            assert!(
+                scoped
+                    .execute(denied, &serde_json::json!({}))
+                    .await
+                    .is_error(),
+                "{denied} must be refused at execution"
+            );
+        }
+        assert!(matches!(
+            scoped.execute("read_file", &serde_json::json!({})).await,
+            ToolOutput::Ok { .. }
+        ));
+    }
+
+    /// The allowlist and the prompt must name the same six tools — the
+    /// drift this pins is exactly how the surface grew to ~25 unnoticed.
+    #[test]
+    fn the_allowlist_matches_what_the_prompt_promises() {
+        for name in VERIFIER_TOOL_ALLOWLIST {
+            assert!(
+                stella_core::goal::VERIFIER_SYSTEM_PROMPT.contains(name),
+                "allowlisted `{name}` is not named by the verifier prompt"
+            );
+        }
+    }
 }

@@ -1,4 +1,4 @@
-use stella_protocol::AgentEvent;
+use stella_protocol::{AgentEvent, MessageRole};
 
 use super::TurnOutcome;
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome, DeadlineOutcome};
@@ -196,4 +196,25 @@ fn check_budget(
         kind: AbortKind::DeliberateStop,
         cost_usd: total_cost_usd,
     })
+}
+
+/// The most recent non-empty assistant text in a turn's transcript.
+///
+/// Used only by the halt path (`TurnHalt`), which ends a turn at a step
+/// boundary and therefore has no "final" model text of its own to report. An
+/// assistant message that only made tool calls carries empty `content`, so
+/// this walks back to the last thing the model actually *said* rather than
+/// reporting a blank answer for a turn that did real work.
+///
+/// `None` when the model has said nothing yet — a turn halted after a first
+/// step of pure tool calls — which the caller renders as the halt reason.
+pub(super) fn last_assistant_text(state: &crate::step::TurnState) -> Option<String> {
+    state
+        .messages
+        .iter()
+        .rev()
+        .find(|message| {
+            message.role == MessageRole::Assistant && !message.content.trim().is_empty()
+        })
+        .map(|message| message.content.clone())
 }

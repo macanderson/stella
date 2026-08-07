@@ -3,6 +3,7 @@
 //! private surface (`CandidateSurface`, `Pipeline::gather_diff`, ...)
 //! stays reachable via `super::*`.
 
+mod conversational_window;
 mod management_accounting;
 mod telemetry;
 
@@ -1196,7 +1197,7 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            AgentEvent::Text { delta } if delta == "Hi! How can I help with your codebase?"
+            AgentEvent::Text { text: delta } if delta == "Hi! How can I help with your codebase?"
         )),
         "the conversational reply is emitted as text"
     );
@@ -1888,7 +1889,7 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
         matches!(
             event,
             AgentEvent::Error { message, retryable: true }
-                if message.contains("no author independent of the worker")
+                if message.contains("no model independent of the worker")
         )
     });
     assert!(warned, "the degradation is announced: {events:?}");
@@ -1897,7 +1898,7 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
             event,
             AgentEvent::Proof {
                 step: stella_protocol::ProofStep::WitnessUnavailable { reason }
-            } if reason.contains("no author independent of the worker")
+            } if reason.contains("no model independent of the worker")
         )
     });
     assert!(
@@ -1988,7 +1989,7 @@ async fn a_witness_that_never_fails_finishes_the_run_without_re_executing_it() {
 /// evidence alone; the SECOND spends one verifier call whose course-correction
 /// rides with the next revision prompt.
 #[tokio::test]
-async fn second_consecutive_red_verification_gets_verifier_guidance() {
+async fn second_deterministic_red_verification_gets_verifier_guidance() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("done"),      // worker
@@ -2366,9 +2367,13 @@ mod golden;
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
 /// `super::*`.
 mod mcp_prefetch;
+/// The plan-step walk and its early close-out (#1702). A child module, so it
+/// reaches the scripted ports above via `super::*`.
+mod plan_walk;
 mod scope_gate_interactive;
 mod shared_worktree;
 mod terminal_outcomes;
+mod triage_context;
 mod usage;
 /// Bounded repair after a refuted success claim (#1479).
 mod verdict_repair;
@@ -2378,6 +2383,10 @@ mod verification_hardening;
 /// declining to ask where no tracked command could ever answer. A child
 /// module, so it reaches the scripted ports above via `super::*`.
 mod verifier_evidence_demand;
+/// Verifier != worker for the verdict call (#1795): the opt-in refusal and
+/// the structured grader-independence fact on the snapshot. A child module,
+/// so it reaches the scripted ports above via `super::*`.
+mod verifier_independence;
 /// Proportionate verification: changes with nothing to prove complete with a
 /// stated reason rather than escalating. A child module, so it reaches the
 /// scripted ports above via `super::*`.

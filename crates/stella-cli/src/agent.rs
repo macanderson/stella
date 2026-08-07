@@ -22,7 +22,7 @@ use stella_mcp::{McpConfig, McpServerConfig, McpToolSet};
 use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
 use stella_pipeline::{
-    AlwaysAbortGate, CmdOutcome, ContextRecallPort, McpPrefetchPort, NoContextRecall, Pipeline,
+    AlwaysAbortGate, CmdOutcome, ContextRecallPort, McpPrefetchPort, NoContextRecall,
     PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStatusPort,
     RepoStructurePort,
 };
@@ -43,19 +43,20 @@ use crate::memory::{
 };
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
-use crate::{OutputFormat, config::Config};
+use crate::{OutputFormat, config::Config, resume_frame};
 use stella_context::EpisodeOutcome;
 
 mod coverage;
 mod engine;
 mod goal;
 mod graph;
-mod outcome;
+pub(crate) mod outcome;
 mod output;
 mod persistence;
 mod presence;
 mod prompt;
 pub(crate) mod resume;
+mod skill_usage;
 mod tools;
 
 pub(crate) use engine::*;
@@ -65,8 +66,8 @@ pub(crate) use graph::spawn_session_graph;
 #[cfg(test)]
 use graph::{GraphSummary, format_graph_stats, index_workspace_graph_blocking};
 use outcome::{
-    pipeline_episode_outcome, pipeline_failure_reason, pipeline_status_label,
-    pipeline_status_result,
+    pipeline_episode_outcome, pipeline_failure_reason, pipeline_session_status,
+    pipeline_status_label, pipeline_status_result,
 };
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
@@ -76,6 +77,7 @@ pub(crate) use persistence::{
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
+pub(crate) use skill_usage::stamp_and_record_skill_usage;
 // `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
 // session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".
 pub(crate) use crate::tool_policy::PolicyToolSet;
@@ -331,20 +333,16 @@ async fn run_pipeline_one_shot(
         // is refused with a reason (#453).
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
-        // Tell memory which execution this run reflects on, before the turn
-        // runs — the post-turn self-review is stored 1:1 with an execution,
-        // so a path that skips this files id-less reflection rows (NULL
-        // `self_rating`), which is exactly what happened on this, the primary
-        // headless surface, while only the deck was wired.
-        if let Some((_, id)) = &execution {
-            m.set_execution_id(*id);
-        }
         // The A/B control, armed before anything recalls (#1221): a control
         // turn leaves BOTH the block below and the pipeline's own recall port
         // frameless, and the durable schedule is what lets a
         // one-turn-per-process surface produce an arm at all.
         m.arm_recall_control();
     }
+    // The shared seam (#1872): stamp the execution onto memory and record the
+    // skills the block below will inject — after the arm above, so a control
+    // turn that injects nothing records nothing.
+    stamp_and_record_skill_usage(&execution, memory.as_mut(), prompt, &cfg.workspace_root);
     if let Some(m) = &memory {
         // Frames ride the pipeline's own recall port below (`recall:` in the
         // ports), which recalls once, renders them into the goal message, and
@@ -454,8 +452,8 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
-        crate::resume_frame::declare(&cfg.durability, &pipeline_config);
-        let pipeline = Pipeline::new(ports, pipeline_event_sender(&tx, format), pipeline_config);
+        let events = pipeline_event_sender(&tx, format);
+        let pipeline = resume_frame::pipeline(&cfg.durability, ports, events, pipeline_config);
         pipeline.run(prompt, &mut messages, &mut budget).await
     };
 
@@ -605,10 +603,10 @@ async fn run_pipeline_one_shot(
     // always lands a notification; a successful one only when it ran long
     // enough that the user has plausibly looked away. `Enter` on the
     // notification (or the SESSIONS overlay) replays the journal.
-    let run_ok = matches!(&result, Ok(o) if matches!(o.status, PipelineStatus::Completed));
+    let session_status = pipeline_session_status(&result);
     let run_secs = turn_start.elapsed().as_secs();
-    let notify = presence.one_shot_notification(run_ok, run_secs, prompt);
-    presence.finish(run_ok, notify);
+    let notify = presence.one_shot_notification(session_status, run_secs, prompt);
+    presence.finish(session_status, notify);
 
     match &result {
         Ok(outcome) => {
@@ -1122,7 +1120,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     if let Some(set) = &mcp {
         set.close_all().await;
     }
-    presence.finish(true, None);
+    presence.finish(stella_store::SessionStatus::Complete, None);
     println!("\n  {}", "Goodbye! ✦".magenta());
     Ok(())
 }
@@ -1700,7 +1698,7 @@ pub fn run_tools_listing() -> Result<(), String> {
     let policy = settings.tool_policy();
     let registry = ToolRegistry::new(
         workspace_root.clone(),
-        stella_tools::RegistryOptions::default(),
+        stella_tools::RegistryOptions::ambient(),
     );
     println!("  {}", "built-in:".dimmed());
     let mut native: Vec<String> = stella_core::ports::ToolExecutor::schemas(&registry)
@@ -2059,17 +2057,16 @@ async fn run_turn(
     // would double the retrieval cost of every interactive turn.
     recall_event: Option<AgentEvent>,
     // The caller's session memory, borrowed for the duration of the turn so
-    // this execution's id can be stamped before the turn runs — the caller
-    // reflects with the same memory afterwards, and a reflection that cannot
-    // name its execution files an id-less row (NULL `self_rating`).
+    // the execution seam can stamp this execution's id and record its
+    // skill-version usage before the turn runs — the caller reflects with the
+    // same memory afterwards, and a reflection that cannot name its execution
+    // files an id-less row (NULL `self_rating`).
     session_memory: Option<&mut SessionMemory>,
 ) -> Result<(), CliFailure> {
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
-    if let (Some((_, id)), Some(m)) = (&execution, session_memory) {
-        m.set_execution_id(*id);
-    }
+    stamp_and_record_skill_usage(&execution, session_memory, prompt, &cfg.workspace_root);
     let files_before = registry.files_touched().len();
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();

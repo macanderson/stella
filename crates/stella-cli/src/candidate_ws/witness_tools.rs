@@ -10,7 +10,9 @@ use stella_pipeline::ports::WorkspaceError;
 use stella_protocol::{ToolOutput, ToolSchema};
 
 /// Candidate-root executor built specifically for witness authoring. Reads
-/// stay in the snapshot; the sole mutation atomically creates one new test.
+/// stay in the snapshot; the sole mutation atomically creates one new test,
+/// and a repeat create replaces the previous artifact so at most one witness
+/// file ever exists (the repair turn's "rewrite the test" depends on this).
 pub(super) struct WitnessToolExecutor {
     root: PathBuf,
     reads: Arc<dyn ToolExecutor>,
@@ -71,12 +73,27 @@ impl WitnessToolExecutor {
             .created_path
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if claimed.is_some() {
-            return Self::denied("create_witness_test", "only one create attempt may succeed");
-        }
         let Ok(root) = self.root.canonicalize() else {
             return Self::denied("create_witness_test", "the candidate root is unavailable");
         };
+        // Replace-your-own-artifact, never accumulate: at most one witness
+        // file exists at any moment, and a second create deletes the first
+        // before writing. This is what makes the bounded repair turn able to
+        // act at all — its instruction is "rewrite the test", and a claim
+        // that never resets turned every repair into a paid model call whose
+        // only legal move was narrowing the command against an unchanged
+        // file. The single-artifact invariant the claim exists for is
+        // preserved: acceptance still requires exactly one new file.
+        if let Some(previous) = claimed.take() {
+            let prior = root.join(&previous);
+            if let Err(error) = std::fs::remove_file(&prior) {
+                *claimed = Some(previous);
+                return Self::denied(
+                    "create_witness_test",
+                    format!("replacing the previous witness artifact failed: {error}"),
+                );
+            }
+        }
         let joined = root.join(&path);
         let Some(parent) = joined.parent() else {
             return Self::denied(
@@ -138,11 +155,11 @@ impl ToolExecutor for WitnessToolExecutor {
             .reads
             .schemas()
             .into_iter()
-            .filter(|schema| schema.name == "read_file")
+            .filter(|schema| schema.name == "read_file" || schema.name == "glob")
             .collect();
         schemas.push(ToolSchema {
             name: "create_witness_test".into(),
-            description: "Atomically create one previously absent test file inside the candidate. Existing files and additional creations are refused.".into(),
+            description: "Atomically create one previously absent test file inside the candidate. Existing files are refused; calling again replaces your previous artifact.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -171,6 +188,38 @@ impl ToolExecutor for WitnessToolExecutor {
                 }
                 self.reads.execute(name, input).await
             }
+            // Discovery for the blind author (#1792): the repo listing in the
+            // prompt is truncated to its first 200 sorted paths, and an
+            // author that cannot see any `tests/` directory there had no
+            // legal move — `read_file` needs a path it can already name, and
+            // `create_witness_test` requires the parent to exist. `glob` is
+            // names-only, root-confined by the tool itself, and its results
+            // pass the same credential exclusion the read path enforces.
+            "glob" => {
+                // The root itself is spelled `.` or `""` — the `glob` tool
+                // defaults its `path` to `.` and resolves both to the root —
+                // and it is the blind author's whole opening move, so it must
+                // pass. `normalized_candidate_path` answers `None` for them
+                // because it was written for `read_file`, where a path that
+                // names no file is a different question; reusing that answer
+                // here denied the one call #1792 exists to enable.
+                if let Some(raw_path) = input.get("path").and_then(serde_json::Value::as_str)
+                    && !names_candidate_root(raw_path)
+                    && normalized_candidate_path(raw_path).is_none()
+                {
+                    return Self::denied(name, "the path must stay within the candidate root");
+                }
+                match self.reads.execute(name, input).await {
+                    ToolOutput::Ok { content } => ToolOutput::Ok {
+                        content: content
+                            .lines()
+                            .filter(|line| !is_credential_path(line.trim()))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    },
+                    error => error,
+                }
+            }
             "create_witness_test" => self.create_test(input),
             _ => Self::denied(
                 name,
@@ -178,6 +227,24 @@ impl ToolExecutor for WitnessToolExecutor {
             ),
         }
     }
+}
+
+/// Does this `path` name the candidate root itself?
+///
+/// Separate from [`normalized_candidate_path`] rather than folded into it: that
+/// function normalizes to a non-empty *relative* path, and the root does not
+/// have one, so `None` there means both "escapes the root" and "is the root".
+/// Only the listing tools can act on the second, and conflating them is what
+/// made `glob` refuse its own default argument.
+///
+/// Absolute and drive-qualified spellings are excluded first, so `/` — which
+/// would otherwise trim to the empty string — stays an escape.
+fn names_candidate_root(raw: &str) -> bool {
+    let slash = raw.replace('\\', "/");
+    if Path::new(&slash).is_absolute() || slash.as_bytes().get(1) == Some(&b':') {
+        return false;
+    }
+    matches!(slash.trim_end_matches('/'), "" | ".")
 }
 
 pub(super) fn normalized_candidate_path(raw: &str) -> Option<String> {
@@ -368,7 +435,7 @@ mod tests {
             .into_iter()
             .map(|schema| schema.name)
             .collect();
-        assert_eq!(names, vec!["read_file", "create_witness_test"]);
+        assert_eq!(names, vec!["glob", "read_file", "create_witness_test"]);
         for denied in [
             "write_file",
             "edit_file",
@@ -436,16 +503,29 @@ mod tests {
             std::fs::read_to_string(root.path().join("tests/new_witness.rs")).unwrap(),
             witness_body(2)
         );
+        // A further create is the repair turn's rewrite: it REPLACES the
+        // previous artifact rather than being refused, and at most one
+        // witness file exists afterwards. Before this contract, the repair
+        // turn's "rewrite the test" instruction was structurally impossible —
+        // the claim never reset, so every repair-turn create was denied.
+        let output = tools
+            .execute(
+                "create_witness_test",
+                &serde_json::json!({"path": "tests/second.rs", "content": witness_body(3)}),
+            )
+            .await;
         assert!(
-            tools
-                .execute(
-                    "create_witness_test",
-                    &serde_json::json!({"path": "tests/second.rs", "content": witness_body(3)}),
-                )
-                .await
-                .is_error()
+            matches!(output, ToolOutput::Ok { .. }),
+            "a repeat create must replace the author's own artifact: {output:?}"
         );
-        assert!(!root.path().join("tests/second.rs").exists());
+        assert!(
+            !root.path().join("tests/new_witness.rs").exists(),
+            "the replaced artifact must be discarded"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("tests/second.rs")).unwrap(),
+            witness_body(3)
+        );
     }
 
     /// #863 at the boundary that owns it: a vacuous witness never reaches
@@ -513,6 +593,128 @@ mod tests {
         assert!(root.path().join("tests/real_witness.rs").exists());
     }
 
+    /// #1792's witness: the blind author can discover the tree by name —
+    /// `glob` is offered and executes root-confined, and its results pass
+    /// the same credential exclusion as the read path, so discovery never
+    /// becomes a map of the workspace's secrets.
+    #[tokio::test]
+    async fn glob_lets_the_author_discover_tests_without_leaking_credentials() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("tests")).unwrap();
+        std::fs::write(root.path().join("tests/existing.rs"), "#[test] fn t() {}").unwrap();
+        std::fs::write(root.path().join(".env.local"), "secret").unwrap();
+        let tools = witness_executor(root.path()).await;
+
+        let output = tools
+            .execute("glob", &serde_json::json!({"pattern": "**/*"}))
+            .await;
+        let ToolOutput::Ok { content } = output else {
+            panic!("glob must be available to the witness author: {output:?}");
+        };
+        assert!(
+            content.contains("tests/existing.rs"),
+            "discovery must surface the test directory: {content}"
+        );
+        assert!(
+            !content.contains(".env.local"),
+            "credential paths must not appear in discovery output: {content}"
+        );
+
+        let escaped = tools
+            .execute(
+                "glob",
+                &serde_json::json!({"pattern": "*", "path": "../.."}),
+            )
+            .await;
+        assert!(
+            escaped.is_error(),
+            "an escaping search path must be refused"
+        );
+    }
+
+    /// Naming the root explicitly is the same call as omitting `path`.
+    ///
+    /// The `glob` tool documents `path` as "Subdirectory to search (default:
+    /// workspace root)" and resolves `.` and `""` to the root, so a model that
+    /// spells the default out loud — which they routinely do — must not be
+    /// refused. The guard reused `normalized_candidate_path`, whose `None`
+    /// means "no relative path" and therefore covers both "escapes the root"
+    /// and "*is* the root"; only the second is legal, and collapsing them shut
+    /// the door on the blind author's opening move (#1792).
+    #[tokio::test]
+    async fn glob_accepts_the_root_spelled_out_as_well_as_omitted() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("tests")).unwrap();
+        std::fs::write(root.path().join("tests/existing.rs"), "#[test] fn t() {}").unwrap();
+        let tools = witness_executor(root.path()).await;
+
+        for path in [".", "", "./"] {
+            let output = tools
+                .execute(
+                    "glob",
+                    &serde_json::json!({"pattern": "**/*", "path": path}),
+                )
+                .await;
+            let ToolOutput::Ok { content } = output else {
+                panic!("`path: {path:?}` names the root and must be allowed: {output:?}");
+            };
+            assert!(
+                content.contains("tests/existing.rs"),
+                "`path: {path:?}` must search the root: {content}"
+            );
+        }
+
+        // The root spellings are the only ones that gain entry: `/` trims to
+        // the empty string but is absolute, and must stay an escape.
+        for path in ["/", "..", "../..", "/etc"] {
+            assert!(
+                tools
+                    .execute("glob", &serde_json::json!({"pattern": "*", "path": path}))
+                    .await
+                    .is_error(),
+                "`path: {path:?}` leaves the candidate root and must be refused"
+            );
+        }
+    }
+
+    /// #1784's witness: the operator's tool policy governs the witness
+    /// author's reads exactly as it governs the worker's. The executor takes
+    /// whatever read surface it is handed — the candidate workspace hands it
+    /// the policy-wrapped one — so a `read_file: off` switch removes both
+    /// the schema and the dispatch here, not just on the worker path.
+    #[tokio::test]
+    async fn the_tool_policy_reaches_the_witness_authors_reads() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("tests")).unwrap();
+        std::fs::write(root.path().join("src.rs"), "source").unwrap();
+        let registry: Arc<dyn ToolExecutor> = Arc::new(
+            ToolRegistry::new_detected(root.path().to_path_buf(), RegistryOptions::default()).await,
+        );
+        let policied: Arc<dyn ToolExecutor> = Arc::new(crate::agent::PolicyToolSet::new_owned(
+            registry,
+            stella_tools::policy::ToolPolicy::from_switches([("read_file".to_string(), false)]),
+        ));
+        let tools = WitnessToolExecutor::new(root.path().to_path_buf(), policied);
+
+        let names: Vec<_> = tools
+            .schemas()
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec!["glob", "create_witness_test"],
+            "a switched-off read_file must not be offered to the author (glob stays)"
+        );
+        assert!(
+            tools
+                .execute("read_file", &serde_json::json!({"path": "src.rs"}))
+                .await
+                .is_error(),
+            "and must not execute either"
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn refuses_a_terminal_symlink() {
@@ -569,8 +771,12 @@ mod tests {
         );
     }
 
+    /// The claim's invariant under concurrency is *at most one artifact on
+    /// disk*, not *at most one successful call*: a later create replaces the
+    /// earlier artifact (the repair turn's rewrite), and the mutex serializes
+    /// the replacement so no interleaving can leave two files behind.
     #[tokio::test]
-    async fn one_executor_allows_only_one_concurrent_creation() {
+    async fn one_executor_holds_at_most_one_artifact_under_concurrency() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tests")).unwrap();
         let tools = Arc::new(witness_executor(root.path()).await);
@@ -593,15 +799,16 @@ mod tests {
         });
 
         let (left, right) = tokio::join!(left, right);
-        let outputs = [left.unwrap(), right.unwrap()];
-        assert_eq!(
-            outputs.iter().filter(|output| !output.is_error()).count(),
-            1
-        );
+        for output in [left.unwrap(), right.unwrap()] {
+            assert!(
+                !output.is_error(),
+                "serialized creates each succeed; the later one replaces: {output:?}"
+            );
+        }
         let created = ["tests/left.rs", "tests/right.rs"]
             .iter()
             .filter(|path| root.path().join(path).exists())
             .count();
-        assert_eq!(created, 1);
+        assert_eq!(created, 1, "the replaced artifact must not survive");
     }
 }

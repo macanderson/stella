@@ -170,7 +170,7 @@ fn call_context(
 /// A `LEFT JOIN`, deliberately: a manifest citing a block that was never
 /// registered must come back as an entry with no `kind` — an unresolved block
 /// the reader is told about — rather than vanish from the wire order.
-fn manifest_entries(
+pub(crate) fn manifest_entries(
     conn: &Connection,
     id: i64,
     turn: i64,
@@ -217,7 +217,7 @@ fn manifest_entries(
 /// The third sanctioned read of `events`, on the same bargain as the other
 /// two: `execution_id`-first, which the store's `UNIQUE (execution_id, seq)`
 /// index serves directly, and only on a per-execution detail route.
-fn journal_payloads(conn: &Connection, id: i64) -> Result<Vec<String>, DbError> {
+pub(crate) fn journal_payloads(conn: &Connection, id: i64) -> Result<Vec<String>, DbError> {
     let sql = "SELECT payload FROM events
                WHERE execution_id = ?1
                  AND event_type IN ('tool_start', 'tool_result', 'text')
@@ -312,9 +312,11 @@ impl Preimages {
                     }
                 }
                 "text" => {
-                    if let Some(delta) = event["delta"].as_str() {
+                    // Spelled `delta` in journals written before #1886.
+                    let body = event["text"].as_str().or_else(|| event["delta"].as_str());
+                    if let Some(text) = body {
                         out.text_by_digest
-                            .insert(format!("sha256:{}", sha256_hex(delta)), delta.to_owned());
+                            .insert(format!("sha256:{}", sha256_hex(text)), text.to_owned());
                     }
                 }
                 _ => {}
@@ -596,6 +598,26 @@ mod tests {
             content_digest: Some(format!("sha256:{}", sha256_hex(content))),
             content: Some(content.to_owned()),
             ..entry(block_id, kind, message_index)
+        }
+    }
+
+    #[test]
+    fn text_preimages_index_under_both_wire_spellings() {
+        // `text` spelled its body `delta` before #1886; a journal can hold
+        // either generation and both must resolve as digest preimages.
+        let payloads = vec![
+            r#"{"type":"text","delta":"old body"}"#.to_owned(),
+            r#"{"type":"text","text":"new body"}"#.to_owned(),
+        ];
+        let preimages = Preimages::index(&payloads);
+        for body in ["old body", "new body"] {
+            assert_eq!(
+                preimages
+                    .text_by_digest
+                    .get(&format!("sha256:{}", sha256_hex(body)))
+                    .map(String::as_str),
+                Some(body),
+            );
         }
     }
 

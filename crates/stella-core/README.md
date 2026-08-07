@@ -101,6 +101,7 @@ lib.rs), never as a planning assumption.
 | [`src/lib.rs`](src/lib.rs) | Module list and the crate's re-export surface. Read the `pub use` block to see what callers are meant to touch. |
 | [`src/driver.rs`](src/driver.rs) | `Engine`, `EngineConfig`, `TurnOutcome`, `run_turn`. The one file that sequences every other module against real I/O. Start here. |
 | [`src/driver/settlement.rs`](src/driver/settlement.rs) | The between-steps budget check and `BudgetTick`/warning emission, split out of the step loop. |
+| [`src/waiting.rs`](src/waiting.rs) + [`src/driver/waiting.rs`](src/driver/waiting.rs) | Parked waits (#1471): the pure change/deadline decision logic and `WaitRequest` types, and the driver's park loop that probes through the existing ports with zero model calls. |
 | [`src/ports.rs`](src/ports.rs) | The port boundary: `ToolExecutor`, `ReadOnlyTools`, `Clock`, `TurnGate`, `TurnSteering`. |
 | [`src/budget.rs`](src/budget.rs) | `BudgetGuard` — USD spend against a turn and/or session cap. Returns `BudgetOutcome`; aborts nothing itself. |
 | [`src/compaction.rs`](src/compaction.rs) | `compact()` — dedup, supersession, aging, eviction. Open when the conversation is being rewritten wrongly. |
@@ -134,9 +135,10 @@ lib.rs), never as a planning assumption.
 and each step runs the same phases in the same order: pause gate → drain
 steering / check soft stop → budget check → snapshot tool-result identities →
 compaction pass → loop detection → model call (wrapped in retry+backoff) →
-committed-step bookkeeping → dispatch. Each phase is one sub-method
-(`run_compaction_pass`, `check_loop_detection`, `run_model_call`,
-`dispatch_completion`). The order is load-bearing, not stylistic: identities are
+committed-step bookkeeping → dispatch → parked wait (when a tool deposited
+one). Each phase is one sub-method (`run_compaction_pass`,
+`check_loop_detection`, `run_model_call`, `dispatch_completion`,
+`maybe_park`). The order is load-bearing, not stylistic: identities are
 snapshotted *before* compaction because the compaction pass rewrites tool
 results in place and loop detection then runs on the rewritten history in that
 same step (#554). The engine holds no conversation state — `messages` is

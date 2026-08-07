@@ -94,7 +94,15 @@ class TestSeatEnvironmentIsScreened:
     def test_nothing_rejected_reaches_the_subprocess(self, tmp_path: Path, monkeypatch):
         """The screen at the launch line, not only at the parser: a seat built
         by any other path must not be able to hand `Popen` a `PATH`."""
-        monkeypatch.setattr("arenabench.runner.shutil.which", lambda _: "/usr/bin/harbor")
+        # Stubbed at the `arenabench.harbor` seam: `_launch` resolves the
+        # binary and asks it for a version and a flag list before building
+        # argv, and a real lookup here would let the machine's Harbor (or its
+        # absence) decide whether this security assertion runs at all.
+        monkeypatch.setattr("arenabench.harbor.harbor_bin", lambda: "/usr/bin/harbor")
+        monkeypatch.setattr("arenabench.harbor.harbor_version", lambda: "0.20.0")
+        monkeypatch.setattr(
+            "arenabench.harbor.supports_agent_import_path", lambda: False
+        )
         seen: dict = {}
 
         class _Fake:

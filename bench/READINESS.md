@@ -248,23 +248,34 @@ whole launcher suite failed on that guard: **57 failed / 169 passed**.
 
 **The gate fired. The PR merged anyway.** `bench.yml` ran on #659 and reported
 `harbor_adapter + analyzer pytest` → **FAILURE**; it was merged 12 minutes later.
-Nothing malfunctioned. `main`'s protection requires exactly two contexts —
+Nothing malfunctioned. `main`'s protection at the time required exactly two
+contexts —
 
 ```
 "fmt + clippy + test"
 "cargo deny + cargo audit"
 ```
 
-— and the bench suite is not one of them, so a red bench check does not block a
-merge. It is decoration.
+— and the bench suite was not one of them, so a red bench check did not block a
+merge. It was decoration.
 
 Pin restored → adapter **226 passed**, analyzer **240 passed**.
 `dependabot.yml` now excludes the package in both bench ecosystems.
 
-**Recommended, and owner-only:** add `harbor_adapter + analyzer pytest` to
-`main`'s required contexts. Until then this recurs by construction — the next
-bot bump will also go red and also merge. (Not done here: changing branch
-protection is a repository-settings decision, not a code change.)
+**Resolved (#1287).** `harbor_adapter + analyzer pytest` is now a required
+context on `main`, alongside the two above. `bench.yml` is wired to survive
+being required: the job triggers on every `pull_request` with **no** `paths:`
+filter on the trigger, because a required context that never reports blocks a
+PR forever — the path filter lives in a step instead, so the job always runs
+and always reports, and only the expensive part is conditional.
+
+Two caveats a reader should carry away rather than assume away:
+
+* `enforce_admins` is **false**, so a required context stops an ordinary merge,
+  not an admin one. "Required" here means "required of the normal path".
+* The gate is required but has not been *exercised* — no deliberately-failing
+  bench test has been shown to block a merge. That is the open half of #1287,
+  and by the first lesson below it is the half that matters.
 
 Two lessons, and the second is the expensive one:
 

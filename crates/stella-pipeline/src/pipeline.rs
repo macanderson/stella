@@ -100,7 +100,7 @@ use crate::verify::{
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
 };
-use crate::witness::warrant::warrant;
+use crate::witness::warrant::{ChangeSignals, warrant};
 use crate::witness::{
     Witness, parse_test_invocation, parse_witness_command, validate_witness_artifact,
     validate_witness_identity, validate_witness_invocation, witness_identity_matches,
@@ -109,12 +109,15 @@ use crate::witness::{
 mod authored;
 mod candidate_result;
 mod disclosure;
+mod evidence;
 mod fanout_stage;
+mod plan_steps;
 mod raw_usage;
 mod repair_gate;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
+mod task_frame;
 mod verifier_stage;
 mod verify_probes;
 use verify_probes::DiffProbe;
@@ -124,7 +127,8 @@ use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
 pub use run_error::{PipelineError, PipelineRunError};
 use run_error::{RoleResolveError, WitnessAuthorIndependence};
-use stage_budget::{PipelineBudgetAbort, budget_abort};
+use stage_budget::{PipelineBudgetAbort, Spend, budget_abort};
+use task_frame::TaskFrame;
 use witness_stage::{BoundHookRunner, WitnessAuthoring};
 /// Make a diff that verification hands downstream *incapable of lying*.
 ///
@@ -153,15 +157,54 @@ const DEFAULT_SYSTEM_PROMPT: &str =
 /// The system prompt for the conversational fast path. Swapped in for
 /// [`DEFAULT_SYSTEM_PROMPT`] when triage classified the input as chat so the
 /// reply reads as a normal, brief conversational turn rather than a work plan.
+/// How many trailing messages the conversational reply is given, beyond the
+/// leading system message.
+///
+/// Chat needs the thread of the conversation, not the engineering transcript
+/// under it. Twelve messages is roughly the last half-dozen exchanges — enough
+/// that "and the other one?" still resolves, and enough that a follow-up reads
+/// as continuous.
+const CONVERSATIONAL_HISTORY_MESSAGES: usize = 12;
+
+/// The messages a conversational reply is dispatched with: the leading system
+/// message, then the last [`CONVERSATIONAL_HISTORY_MESSAGES`].
+///
+/// Unbounded, this call re-billed the whole running transcript at the full
+/// input rate for a two-sentence answer. It dispatches with `tools:
+/// Vec::new()` and a replaced system message, so not one byte of the prefix
+/// matches the worker's cached one — a 90k-token session where the user types
+/// "thanks" paid for all 90k plus the 1.25x cache-write premium, and every
+/// chat interjection in a long session paid it again (#1840).
+///
+/// Bounding the input is the fix that holds regardless of caching. The
+/// issue's other option — keep the worker's system message so the prefix
+/// matches — cannot deliver a hit on its own while the tool array is empty:
+/// the tools block is part of the same cached prefix, so a matching system
+/// message with no tools still misses. That half is worth doing, and needs
+/// adapter-level work to verify rather than assume.
+///
+/// The system message is kept because the caller's first message may not be
+/// one (`run` seeds it when history is empty, but nothing enforces it for a
+/// caller that seeded its own); dropping a non-system first message here
+/// would silently destroy context the window is meant to preserve.
+fn conversational_window(messages: &[CompletionMessage]) -> Vec<CompletionMessage> {
+    let leads_with_system = messages
+        .first()
+        .is_some_and(|message| matches!(message.role, MessageRole::System));
+    let (head, rest) = if leads_with_system {
+        messages.split_at(1)
+    } else {
+        messages.split_at(0)
+    };
+    let tail = rest.len().saturating_sub(CONVERSATIONAL_HISTORY_MESSAGES);
+    head.iter().chain(&rest[tail..]).cloned().collect()
+}
+
 const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful software engineering agent. The user's latest \
      message is a greeting, small talk, or a question about you — not a coding \
      task. Reply briefly and warmly in plain prose: no tools, no code, no plan, \
      no test. Do not invent a task. If it fits, add one short line inviting \
      them to describe a change, bug, or question about their codebase.";
-
-/// Small fixed system prompt for the independent witness author.
-const WITNESS_SYSTEM_PROMPT: &str = "You are a precise test author. You write minimal failing tests that pin down intended \
-     behavior. You never modify production code and never fix the problem yourself.";
 
 /// Per-role request overrides for the pipeline's raw completion calls
 /// (triage / verifier / guidance), resolved by the caller from
@@ -181,10 +224,13 @@ pub struct RoleCallOverrides {
     pub params: Option<stella_protocol::GenerationParams>,
 }
 
-/// The pipeline's per-role override set. Worker (and plan/witness, which
-/// ride the worker's tier) is configured through
-/// [`PipelineConfig::engine`] directly; only the two roles with their own
-/// models get their own request shaping.
+/// The pipeline's per-role override set. Worker (and plan, which rides the
+/// worker's tier) is configured through [`PipelineConfig::engine`] directly;
+/// only the two roles with their own models get their own request shaping.
+/// The witness author/repair engines ride the verifier's model, so they take
+/// the `verifier` row's shaping too (#1785) — everything except `prompt`,
+/// which stays scoped to the raw verdict/guidance calls
+/// (`Pipeline::witness_engine_config` says why).
 #[derive(Debug, Clone, Default)]
 pub struct PipelineRoleOverrides {
     pub triage: RoleCallOverrides,
@@ -196,6 +242,18 @@ pub struct PipelineRoleOverrides {
 pub struct PipelineConfig {
     /// Passed to `stella-core::Engine` for every execute turn.
     pub engine: EngineConfig,
+    /// Wall clock this whole pipeline RUN may spend, measured from
+    /// [`Pipeline::new`] — the repair gate's clock axis (#1479, #1507).
+    ///
+    /// Deliberately not [`EngineConfig::turn_budget`], whose contract is one
+    /// engine turn: a multi-step plan runs one engine turn per step plus the
+    /// witness author's and every revision's, so metering the run's elapsed
+    /// time against a per-turn allowance under-reported the remaining clock
+    /// and refused repairs a long run could still afford (#1507). Like
+    /// `turn_budget` it enforces nothing — no future is cancelled when it
+    /// elapses — and `None` means "nobody is measuring": the clock axis
+    /// abstains rather than inventing a deadline the caller never declared.
+    pub run_budget: Option<Duration>,
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
     pub role_overrides: PipelineRoleOverrides,
@@ -269,12 +327,12 @@ pub struct PipelineConfig {
     /// unchanged either way, since the witness has already done its job by
     /// the time adoption happens.
     pub keep_witness: bool,
-    /// Distress-triggered course-correction: on the *second consecutive*
-    /// deterministic verification failure, spend one verifier call for guidance
-    /// that rides with the next revision prompt ([`crate::verify::guidance_prompt`]).
-    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded
-    /// by `max_revisions` (at most `max_revisions - 1` guidance calls per
-    /// candidate).
+    /// Distress-triggered course-correction: on a candidate's *second*
+    /// deterministic verification failure — cumulative, not necessarily
+    /// consecutive (#868) — spend one verifier call for guidance that rides
+    /// with the next revision prompt ([`crate::verify::guidance_prompt`]).
+    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded by
+    /// `max_revisions` (at most `max_revisions - 1` guidance calls per candidate).
     pub distress_guidance: bool,
     /// The closed diagnostic that reports what the turn changed. `None`
     /// disables diff-size and zero-diff inspection.
@@ -334,8 +392,10 @@ pub struct PipelineConfig {
     /// deterministic stands behind it (#1295): spend one revision demanding
     /// the evidence instead of recording the pass as UNVERIFIED on the spot.
     ///
-    /// Bounded to **one** demand per candidate, drawn from the same
-    /// `max_revisions` budget a real failure spends, and — the part that
+    /// Bounded to **one** demand per candidate, spending a revision turn the
+    /// repair gate does NOT count against `max_revisions` (#1509 — the demand
+    /// corroborates a passing verdict; a repair fixes a refuted one, and the
+    /// two are not substitutes), and — the part that
     /// decides whether this is worth having at all — only raised when
     /// `Pipeline::effective_test_command` resolved to something. Without a
     /// tracked command the ladder has no channel that can *ever* answer the
@@ -363,6 +423,18 @@ pub struct PipelineConfig {
     /// number at all: the arm's own digest describes a configuration the run
     /// did not have (#1147).
     pub require_independent_witness: bool,
+    /// Refuse the run when the VERDICT call would resolve to the worker's own
+    /// model (#1795) — the "independent code reviewer" grading the code it
+    /// wrote — instead of proceeding with the once-per-run prose caveat.
+    ///
+    /// Off by default for the same reason its witness sibling above is: a
+    /// single-provider BYOK seat is the common case and must keep working.
+    /// On or off, the verdict's ladder snapshot records grader independence
+    /// as a structured fact (`LadderSnapshot::verifier_independent`), so a
+    /// stored verdict states it without the transcript. Checked before spend,
+    /// like the witness gate: a refusal after the trajectory is bought is a
+    /// trajectory the caller must throw away.
+    pub require_independent_verifier: bool,
     /// Best-of-N (L-E7). `None` or `Some(1)` is single-shot (the default);
     /// `Some(n)` generates n candidate executions — each in an isolated
     /// snapshot of the current tree state when a
@@ -404,6 +476,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             engine: EngineConfig::default(),
+            run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
             triage_latency_ceiling: Duration::from_secs(10),
             // Half the triage ceiling, and recall runs concurrently with
@@ -433,6 +506,7 @@ impl Default for PipelineConfig {
             // evidence-demand-1295/README.md` for the measurement.
             verifier_evidence_demand: true,
             require_independent_witness: false,
+            require_independent_verifier: false,
             candidates: None,
             candidate_concurrency: None,
             create_worktrees: crate::ports::WorktreePolicy::default(),
@@ -611,15 +685,13 @@ struct ResolvedRole<'a> {
 struct CandidateState {
     messages: Vec<CompletionMessage>,
     final_text: String,
-    /// `FileChange` events observed across this candidate's engine turns —
-    /// one half of the zero-diff guard's "touched files" signal (L-E2).
-    file_changes: u32,
-    /// Tool calls this candidate dispatched whose tool is not advertised
-    /// `read_only` — the ladder's only evidence-of-absence channel
-    /// ([`crate::verify::LadderInputs::mutating_actions`]). Counted off the
-    /// engine's own `ToolStart` stream rather than probed for, which is what
-    /// lets `0` mean "never tried" instead of "could not tell".
-    mutating_actions: u32,
+    /// What this candidate's engine turns did, accumulated in the exact form
+    /// [`warrant`] and the ladder read it — each field's meaning is documented
+    /// on [`ChangeSignals`] itself. One typed field rather than three loose
+    /// `u32`s so the counts can never be transposed on their way to the
+    /// warrant (the #1701 recurrence a projection method used to guard
+    /// against by hand).
+    signals: ChangeSignals,
     /// Ends the execute turn as soon as the tracked test goes fail→pass.
     ///
     /// `None` whenever there is nothing to watch: no configured test command,
@@ -666,6 +738,12 @@ struct CandidateState {
     /// the audit runs and wherever it cannot be made — the two are the same
     /// claim, which is none.
     diff_coverage: DiffCoverage,
+    /// How the authored witness's arming failure presented (#1790): the
+    /// airlock's symptom class of the failing baseline run, recorded only
+    /// when it was a build failure — a flip armed by a compile error is
+    /// legitimate for a missing-API goal but weaker evidence than an
+    /// assertion failure, and the verifier deserves to see which it was.
+    witness_baseline_symptom: Option<&'static str>,
     revisions: u32,
     /// How many of those revisions were spent asking for corroboration of a
     /// standalone verifier pass rather than fixing a failure (#1295). Capped at
@@ -909,6 +987,19 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
+        // Same probe, second consequence (#1795): the VERDICT grader must be
+        // independent too when the caller says so. The probe compares the
+        // worker's and verifier's resolved model refs, which is exactly
+        // "would the verdict resolve to the worker's model".
+        if self.config.require_independent_verifier
+            && let WitnessAuthorIndependence::Unavailable(reason) =
+                self.witness_author_independence()
+        {
+            return Err(PipelineRunError::new(
+                PipelineError::VerifierNotIndependent(reason),
+                total_cost,
+            ));
+        }
         if messages.is_empty() {
             messages.push(CompletionMessage::system(DEFAULT_SYSTEM_PROMPT));
         }
@@ -1034,6 +1125,15 @@ impl<'a> Pipeline<'a> {
         // --- 5. Witness + execute + verify (single-shot or best-of-N). ------
         let n = self.config.candidate_count();
         let base_messages = messages.clone();
+        // The one frame every candidate stage below reads (#1809). Built here
+        // because this is where its last field settles: nothing after this
+        // point changes the goal, the staged prefix, the plan, or the class.
+        let frame = TaskFrame {
+            goal,
+            base_messages: &base_messages,
+            plan: plan.as_deref(),
+            assessment,
+        };
         // Decided above, before the user message was assembled (the worker's
         // test-first contract keys off it) and before this single-shot/
         // best-of-N split, because an authored witness is the *only* reason a
@@ -1081,14 +1181,13 @@ impl<'a> Pipeline<'a> {
             let worker_model_label = worker.model_ref.to_string();
             let mut single = self
                 .run_shared_candidates(
-                    goal,
-                    &base_messages,
-                    plan.as_deref(),
-                    assessment,
+                    frame,
                     &worker,
                     1,
-                    budget,
-                    &mut total_cost,
+                    &mut Spend {
+                        budget: &mut *budget,
+                        total: &mut total_cost,
+                    },
                 )
                 .await;
             let ran = executed_count(&single);
@@ -1099,15 +1198,14 @@ impl<'a> Pipeline<'a> {
         } else {
             match self
                 .run_best_of_n(
-                    goal,
-                    &base_messages,
-                    plan.as_deref(),
-                    assessment,
+                    frame,
                     n,
                     &frames,
                     authored_witness,
-                    budget,
-                    &mut total_cost,
+                    &mut Spend {
+                        budget: &mut *budget,
+                        total: &mut total_cost,
+                    },
                 )
                 .await
             {
@@ -1127,12 +1225,11 @@ impl<'a> Pipeline<'a> {
         let (best, candidates_run) = if best.aborted.is_some() && best.degradable {
             match self
                 .degrade_to_bare_execution(
-                    goal,
-                    &base_messages,
-                    plan.as_deref(),
-                    assessment,
-                    budget,
-                    &mut total_cost,
+                    frame,
+                    &mut Spend {
+                        budget: &mut *budget,
+                        total: &mut total_cost,
+                    },
                 )
                 .await
             {
@@ -1276,7 +1373,8 @@ impl<'a> Pipeline<'a> {
                 RawCall {
                     role: ModelCallRole::Triage,
                     resolved: &resolved,
-                    messages: triage_prompt(goal).into_messages(),
+                    messages: triage_prompt(goal, &self.repo.structure_summary().await)
+                        .into_messages(),
                     policy: RetryPolicy::deterministic(),
                     overrides: &self.config.role_overrides.triage,
                     timeout: Some(self.config.triage_latency_ceiling),
@@ -1389,7 +1487,7 @@ impl<'a> Pipeline<'a> {
         // silently destroyed — prepend in front of it instead. The swap is
         // local to `convo`, so the caller's own prefix — and its prompt-cache
         // hits, L-E8 — survive the turn untouched.
-        let mut convo = messages.clone();
+        let mut convo = conversational_window(messages);
         let leads_with_system = convo
             .first()
             .is_some_and(|message| matches!(message.role, MessageRole::System));
@@ -1441,7 +1539,7 @@ impl<'a> Pipeline<'a> {
         // keeps context.
         messages.push(CompletionMessage::assistant(reply.clone()));
         self.emit(AgentEvent::Text {
-            delta: reply.clone(),
+            text: reply.clone(),
         });
         self.emit(AgentEvent::Stage {
             name: StageKind::Complete,
@@ -1555,15 +1653,10 @@ impl<'a> Pipeline<'a> {
     /// work. Returns `None` only when there is no resolvable worker provider
     /// (a true impossibility, not a degradable setup failure), in which case
     /// the caller keeps the original setup abort.
-    #[allow(clippy::too_many_arguments)]
     async fn degrade_to_bare_execution(
         &self,
-        goal: &str,
-        base_messages: &[CompletionMessage],
-        plan: Option<&[PlanStep]>,
-        assessment: TaskAssessment,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        frame: TaskFrame<'_>,
+        spend: &mut Spend<'_>,
     ) -> Option<CandidateResult> {
         let worker = self.resolve_provider(Role::Worker).ok()?;
         if let Some(fallback) = &worker.fallback {
@@ -1574,34 +1667,20 @@ impl<'a> Pipeline<'a> {
              working tree so the turn still does the work it was asked to"
                 .to_string(),
         );
-        self.run_shared_candidates(
-            goal,
-            base_messages,
-            plan,
-            assessment,
-            &worker,
-            1,
-            budget,
-            total,
-        )
-        .await
-        .pop()
+        self.run_shared_candidates(frame, &worker, 1, spend)
+            .await
+            .pop()
     }
 
     /// Run `n` candidates sequentially over the session ports (the real
     /// working tree): the single-shot path, and the shared-tree degradation
     /// of best-of-N when no [`CandidateWorkspacePort`] is wired.
-    #[allow(clippy::too_many_arguments)]
     async fn run_shared_candidates(
         &self,
-        goal: &str,
-        base_messages: &[CompletionMessage],
-        plan: Option<&[PlanStep]>,
-        assessment: TaskAssessment,
+        frame: TaskFrame<'_>,
         worker: &ResolvedRole<'a>,
         n: u32,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Vec<CandidateResult> {
         let surface = CandidateSurface {
             diagnostics: self.diagnostics,
@@ -1638,18 +1717,11 @@ impl<'a> Pipeline<'a> {
             }
             results.push(
                 self.run_candidate(
-                    goal,
-                    base_messages,
-                    plan,
-                    assessment,
+                    frame,
                     // A shared-tree run has no workspace to graft into and no
                     // pristine snapshot to author blind in, so it never buys a
                     // witness — exactly as before, when it was passed `None`.
-                    None,
-                    &engine,
-                    surface,
-                    budget,
-                    total,
+                    None, &engine, surface, spend,
                 )
                 .await,
             );
@@ -1664,27 +1736,25 @@ impl<'a> Pipeline<'a> {
     /// unconditional (success or failure) with one deliberate exception: a
     /// winner whose adoption failed keeps its workspace, named in the error,
     /// so completed work is never destroyed.
-    #[allow(clippy::too_many_arguments)]
     async fn run_best_of_n(
         &self,
-        goal: &str,
-        base_messages: &[CompletionMessage],
-        plan: Option<&[PlanStep]>,
-        assessment: TaskAssessment,
+        frame: TaskFrame<'_>,
         n: u32,
         frames: &[RecalledFrame],
         author_witness: bool,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<(CandidateResult, Option<String>, u32), PipelineError> {
         // Orchestrator pre-fetch (issue #248) — see `crate::mcp_prefetch::fold`.
-        let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, goal, n, base_messages).await;
-        let base_messages: &[CompletionMessage] = prefetched.as_deref().unwrap_or(base_messages);
+        let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, n, frame.base_messages).await;
+        let frame = TaskFrame {
+            base_messages: prefetched.as_deref().unwrap_or(frame.base_messages),
+            ..frame
+        };
         let Some(port) = self.candidate_workspaces else {
             if author_witness {
                 return Ok((
                     CandidateResult::setup_aborted(
-                        base_messages.to_vec(),
+                        frame.base_messages.to_vec(),
                         "authored witness requires candidate isolation, but no candidate \
                          workspace port is available"
                             .to_string(),
@@ -1711,18 +1781,7 @@ impl<'a> Pipeline<'a> {
                 self.emit_fallback(fallback);
             }
             let label = worker.model_ref.to_string();
-            let candidates = self
-                .run_shared_candidates(
-                    goal,
-                    base_messages,
-                    plan,
-                    assessment,
-                    &worker,
-                    n,
-                    budget,
-                    total,
-                )
-                .await;
+            let candidates = self.run_shared_candidates(frame, &worker, n, spend).await;
             let best_idx = best_index(&candidates);
             let ran = executed_count(&candidates);
             self.emit_text(candidate_winner_notice(best_idx, n, ran));
@@ -1808,18 +1867,7 @@ impl<'a> Pipeline<'a> {
             frames,
         });
         let candidates = self
-            .dispatch_isolated_candidates(
-                goal,
-                base_messages,
-                plan,
-                assessment,
-                &worker,
-                authoring,
-                &workspaces,
-                width,
-                budget,
-                total,
-            )
+            .dispatch_isolated_candidates(frame, &worker, authoring, &workspaces, width, spend)
             .await;
 
         let best_idx = best_index(&candidates);
@@ -1914,18 +1962,13 @@ impl<'a> Pipeline<'a> {
 
     // Stages: execute + verify + revise (one candidate)
 
-    #[allow(clippy::too_many_arguments)]
     async fn run_candidate(
         &self,
-        goal: &str,
-        base_messages: &[CompletionMessage],
-        plan: Option<&[PlanStep]>,
-        assessment: TaskAssessment,
+        frame: TaskFrame<'_>,
         authoring: Option<WitnessAuthoring<'_>>,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> CandidateResult {
         // Flip oracle: for classes we always verify, take a pre-execute
         // baseline of the test command so a later pass counts as a genuine
@@ -1946,7 +1989,7 @@ impl<'a> Pipeline<'a> {
         // that was already green cannot flip, so arming on it would hand the
         // engine a stop signal for work the turn never did.
         let mut flip_halt: Option<Arc<FlipHalt>> = None;
-        if assessment.class.verifies_unconditionally()
+        if frame.assessment.class.verifies_unconditionally()
             && let Some(cmd) = self.effective_test_command(None)
         {
             let pre = self.run_test_observed(surface.tests, cmd.invocation).await;
@@ -1988,7 +2031,7 @@ impl<'a> Pipeline<'a> {
         // classes that verify: a fast-submit needs a flip, so where no flip
         // is possible the snapshot would be spend without a consumer.
         let lint_baseline = if surface.workspace.is_none()
-            && assessment.class.verifies_unconditionally()
+            && frame.assessment.class.verifies_unconditionally()
             && (self.effective_test_command(None).is_some() || self.config.witness_writer)
         {
             match surface.lint {
@@ -2007,10 +2050,12 @@ impl<'a> Pipeline<'a> {
         let untracked_before = surface.repo_status.untracked_fingerprints().await;
 
         let mut state = CandidateState {
-            messages: candidate_narration::messages_rooted_at(base_messages, surface.workspace),
+            messages: candidate_narration::messages_rooted_at(
+                frame.base_messages,
+                surface.workspace,
+            ),
             final_text: String::new(),
-            file_changes: 0,
-            mutating_actions: 0,
+            signals: ChangeSignals::default(),
             flip_halt,
             oracle,
             oracle_trace,
@@ -2030,13 +2075,14 @@ impl<'a> Pipeline<'a> {
             revisions: 0,
             evidence_demands: 0,
             witness_paths: Vec::new(),
+            witness_baseline_symptom: None,
             failures: Vec::new(),
             last_verdict: None,
             last_verdict_diff: None,
         };
 
         if let Err(abort) = self
-            .execute_plan(plan, engine, budget, total, &mut state)
+            .execute_plan(frame.plan, engine, spend, &mut state)
             .await
         {
             return CandidateResult::turn_aborted(state.messages, abort);
@@ -2055,10 +2101,10 @@ impl<'a> Pipeline<'a> {
         // over someone else's edit.
         let probe = self.gather_diff(surface, &state.untracked_before).await;
         self.absorb_probe(&mut state, probe);
-        let files_touched = state.file_changes > 0
-            || (state.mutating_actions > 0 && !state.diff_text.trim().is_empty());
-        let should_verify = assessment.class.verifies_unconditionally()
-            || (assessment.class == TaskClass::SimpleLookup && files_touched);
+        let files_touched = state.signals.file_changes > 0
+            || (state.signals.mutating_actions > 0 && !state.diff_text.trim().is_empty());
+        let should_verify = frame.assessment.class.verifies_unconditionally()
+            || (frame.assessment.class == TaskClass::SimpleLookup && files_touched);
         if !should_verify {
             // A clean lookup: nothing to verify.
             return state.into_unverified();
@@ -2072,7 +2118,7 @@ impl<'a> Pipeline<'a> {
         // early when a test IS required. Emitting from either would make the
         // rail's first row appear only on some runs, which is the failure this
         // whole surface exists to end.
-        let warrant = warrant(&state.diff_text, state.file_changes);
+        let warrant = warrant(&state.diff_text, state.signals);
         self.emit_proof(ProofStep::Warrant {
             required: warrant.is_required(),
             reason: warrant.reason().map(|r| r.sentence().to_string()),
@@ -2083,7 +2129,7 @@ impl<'a> Pipeline<'a> {
         // already happened, so the diff is evidence rather than a prediction —
         // which is the whole reason authoring waits until here.
         let witness = match self
-            .witness_on_demand(goal, authoring, surface, &mut state, budget, total)
+            .witness_on_demand(frame.goal, authoring, surface, &mut state, spend)
             .await
         {
             Ok(witness) => witness,
@@ -2094,17 +2140,8 @@ impl<'a> Pipeline<'a> {
             }
         };
 
-        self.verify_candidate(
-            goal,
-            assessment,
-            witness.as_ref(),
-            engine,
-            surface,
-            budget,
-            total,
-            state,
-        )
-        .await
+        self.verify_candidate(frame, witness.as_ref(), engine, surface, spend, state)
+            .await
     }
 
     /// Execute stage: one turn for simple/single-task; one turn per plan step
@@ -2115,8 +2152,7 @@ impl<'a> Pipeline<'a> {
         &self,
         plan: Option<&[PlanStep]>,
         engine: &Engine<'_>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
         self.emit(AgentEvent::Stage {
@@ -2130,56 +2166,63 @@ impl<'a> Pipeline<'a> {
                 .run_engine_turn(
                     engine,
                     &mut state.messages,
-                    budget,
-                    &mut state.file_changes,
-                    &mut state.mutating_actions,
+                    spend.budget,
+                    &mut state.signals,
                     state.flip_halt.clone(),
                 )
                 .await
             {
                 TurnOutcome::Completed { text, cost_usd } => {
                     state.final_text = text;
-                    *total += cost_usd;
+                    *spend.total += cost_usd;
                 }
                 TurnOutcome::Aborted {
                     reason,
                     kind,
                     cost_usd,
                 } => {
-                    *total += cost_usd;
+                    *spend.total += cost_usd;
                     return Err(TurnAbort { reason, kind });
                 }
             }
         } else {
             let n = steps.len();
             for (i, step) in steps.iter().enumerate() {
-                state.messages.push(CompletionMessage::user(format!(
-                    "Step {}/{}: {}",
-                    i + 1,
-                    n,
-                    step.description
-                )));
+                state
+                    .messages
+                    .push(CompletionMessage::user(plan_steps::step_prompt(
+                        i,
+                        n,
+                        &step.description,
+                    )));
                 match self
                     .run_engine_turn(
                         engine,
                         &mut state.messages,
-                        budget,
-                        &mut state.file_changes,
-                        &mut state.mutating_actions,
+                        spend.budget,
+                        &mut state.signals,
                         state.flip_halt.clone(),
                     )
                     .await
                 {
                     TurnOutcome::Completed { text, cost_usd } => {
+                        *spend.total += cost_usd;
+                        // #1702: a worker that declares the whole goal done
+                        // ends the walk — the remaining steps could only
+                        // re-confirm finished work, and a false declaration
+                        // is the verify stage's to refute, not this loop's.
+                        let closed_out = plan_steps::goal_declared_complete(&text);
                         state.final_text = text;
-                        *total += cost_usd;
+                        if closed_out {
+                            break;
+                        }
                     }
                     TurnOutcome::Aborted {
                         reason,
                         kind,
                         cost_usd,
                     } => {
-                        *total += cost_usd;
+                        *spend.total += cost_usd;
                         return Err(TurnAbort { reason, kind });
                     }
                 }
@@ -2193,16 +2236,13 @@ impl<'a> Pipeline<'a> {
     /// finish with a verdict, escalate to the model verifier, or spend one of
     /// `max_revisions` on a revise pass and re-observe. Owns `state` because
     /// every exit moves it into the returned [`CandidateResult`].
-    #[allow(clippy::too_many_arguments)]
     async fn verify_candidate(
         &self,
-        goal: &str,
-        assessment: TaskAssessment,
+        frame: TaskFrame<'_>,
         witness: Option<&Witness>,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
         mut state: CandidateState,
     ) -> CandidateResult {
         self.emit(AgentEvent::Stage {
@@ -2210,7 +2250,7 @@ impl<'a> Pipeline<'a> {
         });
         let effective_cmd = self.effective_test_command(witness);
         let witness_paths = Self::witness_paths(witness);
-        let meter = repair_gate::RepairMeter::start(*total);
+        let meter = repair_gate::RepairMeter::start(*spend.total);
         loop {
             if let Some(workspace) = surface.workspace {
                 if let Err(error) = workspace.seal().await {
@@ -2284,8 +2324,8 @@ impl<'a> Pipeline<'a> {
                 diff_lines: state.diff_lines,
                 diff_budget: self.config.diff_budget_lines,
                 diff_available: state.diff_available,
-                file_change_events: state.file_changes,
-                mutating_actions: state.mutating_actions,
+                file_change_events: state.signals.file_changes,
+                mutating_actions: state.signals.mutating_actions,
                 // Filled by the pre-submit audit below (#861, #870, #1291) —
                 // the lint, coverage and mutation probes only run when a
                 // fast-submit is imminent.
@@ -2502,7 +2542,7 @@ impl<'a> Pipeline<'a> {
                         passed: false,
                         evidence: evidence.clone(),
                     });
-                    if !self.affords_repair(&state, &meter, *total, budget) {
+                    if !self.affords_repair(&state, &meter, *spend.total, spend.budget) {
                         return state.into_verified(
                             false,
                             &evidence,
@@ -2513,9 +2553,8 @@ impl<'a> Pipeline<'a> {
                         .revise_candidate(
                             engine,
                             surface,
-                            budget,
                             NOTHING_ATTEMPTED_NUDGE,
-                            total,
+                            spend,
                             &mut state,
                         )
                         .await
@@ -2524,9 +2563,11 @@ impl<'a> Pipeline<'a> {
                     }
                 }
                 LadderDecision::Unverifiable => {
-                    // Every channel was blind. The verifier is not asked, because
-                    // the only thing it could do is guess from an empty record
-                    // — which in the wild it did, returning `FAIL … the file
+                    // The turn went unobserved — every channel blind, or every
+                    // channel clear-eyed and empty over dispatched mutating
+                    // calls (#1701). The verifier is not asked, because the
+                    // only thing it could do is guess from an empty record —
+                    // which in the wild it did, returning `FAIL … the file
                     // likely does not exist` about a file that was in the
                     // container (#973).
                     //
@@ -2539,15 +2580,13 @@ impl<'a> Pipeline<'a> {
                     // best-of-N and then win the smaller-diff tiebreak.
                     //
                     // The arm above is what makes this defensible. Reaching
-                    // here now means the turn *did* dispatch mutating calls and
-                    // no channel could see their effect — the state the abstain
-                    // rung was built for, and a real one: a Terminal-Bench
+                    // here means the turn *did* dispatch mutating calls and no
+                    // channel saw their effect — a real state: a Terminal-Bench
                     // trial that wrote its answer through shell redirects
                     // recorded no touch, could not be diffed, landed here, and
                     // scored 1.0 against its verifier. Failing that closed
-                    // would report a correct run as broken, and no revision
-                    // could ever clear it, because nothing about that workspace
-                    // will ever become observable.
+                    // would report a correct run as broken, and no revision can
+                    // clear it — that workspace never becomes observable.
                     let mut evidence = unverifiable_evidence(&inputs);
                     evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.unverifiable(&evidence.summary);
@@ -2571,23 +2610,23 @@ impl<'a> Pipeline<'a> {
                         passed: false,
                         evidence: evidence.clone(),
                     });
-                    if !self.affords_repair(&state, &meter, *total, budget) {
+                    if !self.affords_repair(&state, &meter, *spend.total, spend.budget) {
                         return state.into_verified(
                             false,
                             &evidence,
                             score_from_verification(false, Some(false)),
                         );
                     }
-                    // Distress trigger: a SECOND consecutive deterministic
-                    // failure means the evidence alone didn't steer the
-                    // worker — spend one verifier call on course-correction
+                    // Distress trigger: a SECOND deterministic failure of this
+                    // candidate — the ledger is cumulative, so the two need not
+                    // be consecutive (#868) — means the evidence alone didn't
+                    // steer the worker: spend one verifier call on course-correction
                     // (event-triggered, never a fixed midpoint checkpoint).
-                    // Counted from the deterministic-failure ledger
-                    // (`deterministic_disclosure` just recorded this round's
-                    // fingerprint), not from `revisions`: a prior model-verifier
-                    // FAIL also increments `revisions`, and gating on it paid
-                    // a guidance call on the FIRST deterministic red while
-                    // telling the verifier the agent had "failed twice in a row".
+                    // Counted from that ledger (`deterministic_disclosure` just
+                    // recorded this round's fingerprint), not from `revisions`:
+                    // a prior model-verifier FAIL also increments `revisions`,
+                    // and gating on it paid a guidance call on the FIRST deterministic
+                    // red while telling the verifier the agent had "failed twice in a row".
                     let mut reason = brief.message();
                     if self.config.distress_guidance && state.failures.len() >= 2 {
                         // Same witness exclusion as the verdict call (#1433):
@@ -2596,7 +2635,7 @@ impl<'a> Pipeline<'a> {
                         let stripped =
                             crate::verify::strip_witness_hunks(&state.diff_text, &witness_paths);
                         let prompt = guidance_prompt(
-                            goal,
+                            frame.goal,
                             &stripped.diff,
                             &evidence.summary,
                             // Guidance never carries a delta baseline: its
@@ -2608,7 +2647,10 @@ impl<'a> Pipeline<'a> {
                                 previous: None,
                             },
                         );
-                        match self.verifier_guidance(prompt, budget, total).await {
+                        match self
+                            .verifier_guidance(prompt, spend.budget, spend.total)
+                            .await
+                        {
                             Ok(Some(guidance)) => {
                                 if let Some(text) =
                                     self.airlock_forward(&guidance, "distress_guidance", &sealed)
@@ -2629,7 +2671,7 @@ impl<'a> Pipeline<'a> {
                         }
                     }
                     if let Err(abort) = self
-                        .revise_candidate(engine, surface, budget, &reason, total, &mut state)
+                        .revise_candidate(engine, surface, &reason, spend, &mut state)
                         .await
                     {
                         return CandidateResult::turn_aborted(state.messages, abort);
@@ -2644,7 +2686,8 @@ impl<'a> Pipeline<'a> {
                 // from a behavioral change nothing proved (§7.1:
                 // predict-then-commit is the bug).
                 LadderDecision::ModelVerdict
-                    if !assessment.wants_verifier() && Self::verifier_waiver_stands(&state) =>
+                    if !frame.assessment.wants_verifier()
+                        && Self::verifier_waiver_stands(&state) =>
                 {
                     let evidence = self.waived_completion(&snapshot);
                     return state.into_verified(
@@ -2670,107 +2713,17 @@ impl<'a> Pipeline<'a> {
                     }
                     // Inconclusive — escalate to the model verifier (verifier ≠
                     // worker; a verifier-call failure falls back to a heuristic).
-                    let mut evidence_summary = format!(
-                        "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {}); \
-                         file_change_events={}",
-                        inputs.flip_achieved,
-                        inputs.touched_tests_passed,
-                        state.diff_lines,
-                        self.config.diff_budget_lines,
-                        state.file_changes,
+                    // The summary and the witness-stripped diff are assembled
+                    // together (`pipeline/evidence.rs`) so the reuse digest
+                    // below hashes exactly what the prompt carries.
+                    let (evidence_summary, stripped) = Self::verifier_evidence_summary(
+                        &state,
+                        &inputs,
+                        &snapshot,
+                        test_infra,
+                        &lint_sample,
+                        &witness_paths,
                     );
-                    if let Some(label) = test_infra {
-                        // #860: the run ended without observing an assertion.
-                        // Named so the verifier reads "the suite timed out", not
-                        // "the suite failed".
-                        evidence_summary
-                            .push_str(&format!("; test_run={label} (no assertion observed)"));
-                    }
-                    if state.oracle.is_unstable() {
-                        // #859: a fail→pass flip WAS observed but could not
-                        // be reproduced on the same tree — a different fact
-                        // from "the test never passed", and one the verifier
-                        // should weigh explicitly.
-                        evidence_summary.push_str(
-                            "; unstable_flip=true (the flip's confirmation re-run did not pass)",
-                        );
-                    }
-                    if inputs.diff_coverage != DiffCoverage::Unmeasured {
-                        // #1291: stated only when it was actually measured.
-                        // An `unmeasured` line here would be pure noise in a
-                        // verifier prompt — the ladder already escalated for some
-                        // other reason, and "nobody looked" adds nothing to
-                        // reason from. It stays on the snapshot either way.
-                        evidence_summary.push_str("; ");
-                        evidence_summary.push_str(inputs.diff_coverage.explain());
-                    }
-                    if state.witness_mutation == Some(false) {
-                        // #870: the witness reacted to the change without
-                        // constraining it — it stayed green while the
-                        // changed lines were deliberately broken.
-                        evidence_summary.push_str(
-                            "; witness_tautological=true (the witness stayed green under every \
-                             trivial mutation of the changed lines)",
-                        );
-                    }
-                    if state.oracle.refused_different_failure() {
-                        // #867: the suite passed, but its own complete test
-                        // listing did not contain the baseline's failing
-                        // tests — the observed failure was not fixed, it
-                        // disappeared. The verifier should treat the passing
-                        // exit code accordingly.
-                        evidence_summary.push_str(
-                            "; flip_refused=the passing run's test listing does not contain \
-                             the test(s) that failed on the baseline (fixed a different \
-                             failure, or the failing test was removed)",
-                        );
-                    }
-                    if inputs.new_diag_errors > 0 || inputs.new_diag_warnings > 0 {
-                        // #861: the regression the veto saw, capped to a
-                        // 3-line sample so the verifier reads the delta, not
-                        // the linter's whole opinion.
-                        evidence_summary.push_str(&format!(
-                            "; new_diagnostics={} error(s), {} warning(s) vs baseline",
-                            inputs.new_diag_errors, inputs.new_diag_warnings
-                        ));
-                        if !lint_sample.is_empty() {
-                            evidence_summary.push('\n');
-                            evidence_summary.push_str(lint_sample.trim_end());
-                        }
-                    }
-                    if !snapshot.oracle_trace.is_empty() {
-                        // #864: the oracle trace, rendered compactly. The
-                        // verifier sees WHY the ladder was inconclusive — which
-                        // runs happened, in order, and what each observed —
-                        // instead of a diff cold.
-                        evidence_summary.push_str(&format!(
-                            "; oracle_trace=[{}]",
-                            crate::replay::render_oracle_trace(&snapshot.oracle_trace)
-                        ));
-                    }
-                    if snapshot.witness_intact == Some(true) {
-                        // #864: the tamper-exclusion result, stated. A
-                        // tampered witness never reaches a verifier, so what the
-                        // verifier learns here is that the check RAN and the
-                        // witness it is weighing is the authored one.
-                        evidence_summary.push_str("; witness_tamper_check=intact");
-                    }
-                    // The witness's own chunks never ride into the paid prompt
-                    // as "worker-authored data" (#1433): they are the
-                    // verifier's own artifact, and everything the verdict needs
-                    // to know about the witness is already in the trusted
-                    // evidence above. The omission is named HERE — the trusted
-                    // zone — never in-band in the diff, where the framing says
-                    // every byte is forgeable worker data.
-                    let stripped =
-                        crate::verify::strip_witness_hunks(&state.diff_text, &witness_paths);
-                    if !stripped.omitted.is_empty() {
-                        evidence_summary.push_str(&format!(
-                            "; witness_files_omitted_from_diff=[{}] (verifier-authored test, \
-                             not part of the change under review)",
-                            stripped.omitted.join(", ")
-                        ));
-                    }
                     // Reuse before re-buying (#1431): a revision that changed
                     // nothing the verdict depends on — same goal, same diff,
                     // same evidence, byte for byte — would re-ask the same
@@ -2779,7 +2732,7 @@ impl<'a> Pipeline<'a> {
                     // appended note steers the worker better than a fresh
                     // reading of an unchanged tree ever did.
                     let inputs_digest =
-                        verdict_inputs_digest(goal, &stripped.diff, &evidence_summary);
+                        verdict_inputs_digest(frame.goal, &stripped.diff, &evidence_summary);
                     let cached = state
                         .last_verdict
                         .as_ref()
@@ -2801,7 +2754,7 @@ impl<'a> Pipeline<'a> {
                             // the text a verdict actually read — so both
                             // sides of the comparison are the same shape.
                             let prompt = verifier_prompt(
-                                goal,
+                                frame.goal,
                                 &stripped.diff,
                                 &evidence_summary,
                                 &DiffContext {
@@ -2809,7 +2762,10 @@ impl<'a> Pipeline<'a> {
                                     previous: state.last_verdict_diff.as_deref(),
                                 },
                             );
-                            match self.verifier(prompt, &inputs, budget, total).await {
+                            match self
+                                .verifier(prompt, &inputs, spend.budget, spend.total)
+                                .await
+                            {
                                 Ok(verdict) => {
                                     // Only pin a real model verdict for reuse. A
                                     // heuristic fallback is a transient-outage
@@ -2846,7 +2802,11 @@ impl<'a> Pipeline<'a> {
                         state.last_verdict_diff = Some(stripped.diff.clone());
                     }
                     let mut evidence = model_verdict_evidence(&verdict);
-                    evidence.ladder = Some(Box::new(snapshot.with_rung(verdict.rung())));
+                    evidence.ladder = Some(Box::new(
+                        snapshot
+                            .with_rung(verdict.rung())
+                            .with_verifier_independence(verdict.verifier_independent),
+                    ));
                     self.emit(AgentEvent::Verdict {
                         passed: verdict.passed,
                         evidence: evidence.clone(),
@@ -2879,9 +2839,7 @@ impl<'a> Pipeline<'a> {
                                 state.evidence_demands += 1;
                                 let ask = crate::verify::evidence_demand_prompt(cmd.command);
                                 if let Err(abort) = self
-                                    .revise_candidate(
-                                        engine, surface, budget, &ask, total, &mut state,
-                                    )
+                                    .revise_candidate(engine, surface, &ask, spend, &mut state)
                                     .await
                                 {
                                     return CandidateResult::turn_aborted(state.messages, abort);
@@ -2913,7 +2871,7 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(true)),
                         );
                     }
-                    if !self.affords_repair(&state, &meter, *total, budget) {
+                    if !self.affords_repair(&state, &meter, *spend.total, spend.budget) {
                         return state.into_verified(
                             false,
                             &evidence,
@@ -2926,9 +2884,10 @@ impl<'a> Pipeline<'a> {
                     // than being forwarded (§4.3).
                     let feedback = self
                         .airlock_forward(&verdict.reasoning, "verifier_reasoning", &sealed)
+                        .map(|text| crate::verify::bound_forwarded_reasoning(&text))
                         .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
                     if let Err(abort) = self
-                        .revise_candidate(engine, surface, budget, &feedback, total, &mut state)
+                        .revise_candidate(engine, surface, &feedback, spend, &mut state)
                         .await
                     {
                         return CandidateResult::turn_aborted(state.messages, abort);
@@ -2965,24 +2924,12 @@ impl<'a> Pipeline<'a> {
         &self,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
-        budget: &mut BudgetGuard,
         reason: &str,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
         state: &mut CandidateState,
     ) -> Result<(), TurnAbort> {
         let probe = self
-            .revise_turn(
-                engine,
-                surface,
-                &mut state.messages,
-                budget,
-                reason,
-                &mut state.file_changes,
-                &mut state.mutating_actions,
-                &mut state.final_text,
-                total,
-                &state.untracked_before,
-            )
+            .revise_turn(engine, surface, reason, spend, state)
             .await?;
         self.absorb_probe(state, probe);
         state.revisions += 1;
@@ -2993,49 +2940,44 @@ impl<'a> Pipeline<'a> {
     /// and re-gather the diff. Emits the `Execute`/`Verify` stage bookends so
     /// the stream shows the revise loop. Returns the fresh `(diff_lines,
     /// diff_text)` on success, or the typed abort on a budget/loop abort.
-    #[allow(clippy::too_many_arguments)]
     async fn revise_turn(
         &self,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
-        messages: &mut Vec<CompletionMessage>,
-        budget: &mut BudgetGuard,
         reason: &str,
-        file_changes: &mut u32,
-        mutating_actions: &mut u32,
-        final_text: &mut String,
-        total: &mut f64,
-        untracked_before: &HashMap<String, String>,
+        spend: &mut Spend<'_>,
+        state: &mut CandidateState,
     ) -> Result<DiffProbe, TurnAbort> {
-        messages.push(CompletionMessage::user(revision_prompt(reason)));
+        state
+            .messages
+            .push(CompletionMessage::user(revision_prompt(reason)));
         self.emit(AgentEvent::Stage {
             name: StageKind::Execute,
         });
         match self
             .run_engine_turn(
                 engine,
-                messages,
-                budget,
-                file_changes,
-                mutating_actions,
+                &mut state.messages,
+                spend.budget,
+                &mut state.signals,
                 None,
             )
             .await
         {
             TurnOutcome::Completed { text, cost_usd } => {
-                *final_text = text;
-                *total += cost_usd;
+                state.final_text = text;
+                *spend.total += cost_usd;
             }
             TurnOutcome::Aborted {
                 reason,
                 kind,
                 cost_usd,
             } => {
-                *total += cost_usd;
+                *spend.total += cost_usd;
                 return Err(TurnAbort { reason, kind });
             }
         }
-        let probe = self.gather_diff(surface, untracked_before).await;
+        let probe = self.gather_diff(surface, &state.untracked_before).await;
         self.emit(AgentEvent::Stage {
             name: StageKind::Verify,
         });
@@ -3069,11 +3011,11 @@ impl<'a> Pipeline<'a> {
     /// (a concurrent drain task, not a post-hoc flush — an execute turn can
     /// run tool loops for minutes, and buffering froze the renderer for the
     /// whole turn) **except** the engine's `Stage`/`Complete` (the pipeline
-    /// owns those), tallying `FileChange`s into `file_changes` for the
-    /// zero-diff guard and mutating-capable `ToolStart`s into
-    /// `mutating_actions` for the ladder's no-op rung.
+    /// owns those), tallying `FileChange`s into `signals.file_changes` for
+    /// the zero-diff guard and mutating-capable `ToolStart`s into
+    /// `signals.mutating_actions` for the ladder's no-op rung.
     ///
-    /// The two tallies are deliberately independent. `file_changes` answers
+    /// The tallies are deliberately independent. `file_changes` answers
     /// "did the recorder see the tree change", which a shell redirect defeats;
     /// `mutating_actions` answers "was anything even asked to change", which
     /// nothing can defeat, because it is counted off the calls this pipeline
@@ -3083,8 +3025,7 @@ impl<'a> Pipeline<'a> {
         engine: &Engine<'_>,
         messages: &mut Vec<CompletionMessage>,
         budget: &mut BudgetGuard,
-        file_changes: &mut u32,
-        mutating_actions: &mut u32,
+        signals: &mut ChangeSignals,
         flip_halt: Option<Arc<FlipHalt>>,
     ) -> TurnOutcome {
         // The filtered sender is SYNCHRONOUS on purpose: when the outer
@@ -3096,6 +3037,8 @@ impl<'a> Pipeline<'a> {
         let count = seen_file_changes.clone();
         let seen_mutating = Arc::new(AtomicU32::new(0));
         let mutating = seen_mutating.clone();
+        let seen_opaque = Arc::new(AtomicU32::new(0));
+        let opaque = seen_opaque.clone();
         let read_only = self.read_only_tool_names();
         let consumer = self.events.clone();
         // Correlate a shell call's command line (carried on `ToolStart`) with
@@ -3142,6 +3085,13 @@ impl<'a> Pipeline<'a> {
                     // registry positively advertises as read-only is excluded.
                     if !read_only.contains(&call.name) {
                         mutating.fetch_add(1, Ordering::Relaxed);
+                        // The warrant's premise check: a mutating call whose
+                        // effects the diff cannot fully account for (the
+                        // shell, processes, MCP, anything unrecognized)
+                        // forfeits every path-classified waiver (#1701).
+                        if !crate::witness::warrant::diff_accountable_mutator(&call.name) {
+                            opaque.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                     // Remember the command line so its result can be scored
                     // against the tracked test. Only when a halt is armed —
@@ -3198,8 +3148,9 @@ impl<'a> Pipeline<'a> {
         let outcome = engine
             .run_turn_with_sender(messages, budget, &filtered)
             .await;
-        *file_changes += seen_file_changes.load(Ordering::Relaxed);
-        *mutating_actions += seen_mutating.load(Ordering::Relaxed);
+        signals.file_changes += seen_file_changes.load(Ordering::Relaxed);
+        signals.mutating_actions += seen_mutating.load(Ordering::Relaxed);
+        signals.opaque_actions += seen_opaque.load(Ordering::Relaxed);
         outcome
     }
 
@@ -3256,12 +3207,18 @@ impl<'a> Pipeline<'a> {
             Ok(verifier) if verifier.model_ref != worker.model_ref => {
                 WitnessAuthorIndependence::Independent
             }
+            // Role-neutral wording on purpose (#1795): the same finding is
+            // framed by two different refusals (witness author, verdict
+            // grader) and one degradation notice, and each supplies its own
+            // role — a reason that named one would misname the others.
             Ok(_) => WitnessAuthorIndependence::Unavailable(format!(
-                "no author independent of the worker (verifier and worker both resolved to `{}`)",
+                "no model independent of the worker resolves (verifier and worker both \
+                 resolved to `{}`)",
                 worker.model_ref
             )),
             Err(_) => WitnessAuthorIndependence::Unavailable(
-                "no author independent of the worker (the verifier role is unresolvable)"
+                "no model independent of the worker resolves (the verifier role is \
+                 unresolvable)"
                     .to_string(),
             ),
         }
@@ -3357,8 +3314,8 @@ impl<'a> Pipeline<'a> {
     /// Emit a narration line when there is one — see `candidate_narration`,
     /// which returns `None` for a single-candidate run.
     fn emit_text(&self, notice: Option<String>) {
-        if let Some(delta) = notice {
-            self.emit(AgentEvent::Text { delta });
+        if let Some(text) = notice {
+            self.emit(AgentEvent::Text { text });
         }
     }
 

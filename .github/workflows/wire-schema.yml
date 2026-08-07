@@ -5,8 +5,10 @@ name: wire-schema
 # `docs/wire/` is generated from the types and committed, and
 # `scripts/check-wire-schema.sh` is what makes committing it worth anything: it
 # regenerates into a temp directory and fails on any difference. That guard runs
-# in ci.yml -- but ci.yml carries `paths-ignore: docs/**`, so a pull request
-# that touches *only* `docs/wire/` never starts it. Nothing else covered the
+# in ci.yml -- but ci.yml skips its Rust jobs for a diff confined to `docs/**`
+# (a job-level prose filter since #1892; a trigger-level `paths-ignore` before
+# that), so a pull request that touches *only* `docs/wire/` never runs it.
+# Nothing else covered the
 # gap: docs-guards.yml is deliberately toolchain-free (four shell/python guards,
 # five-minute timeout) and adding a Rust build to it would cost every prose PR a
 # toolchain it has no use for.
