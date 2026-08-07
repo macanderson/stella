@@ -321,6 +321,23 @@ only. A native macOS build will be uploaded happily and then fail to exec
 inside the container, which Harbor records as an agent crash rather than a
 build mistake.
 
+`STELLA_BINARY` is only the fallback for a match with **no SUT pin**. A pinned
+match resolves its `sut_ref` to a commit and runs the binary built from that
+commit, ignoring this variable entirely — which is how a result records which
+Stella produced it.
+
+Clearing the pin opts out of *pinning*, not out of every check. An unpinned
+match asks for whatever is current, so the arena reads the commit stamped into
+`STELLA_BINARY` itself and refuses to launch when that commit is more than
+`MAX_BEHIND_UNPINNED` commits behind `origin/main`. This is not hypothetical:
+the path the launch scripts name sat 291 commits behind `main` for three days,
+carrying a `sut_commit.txt` that correctly named its own ancient commit, and
+every match against it produced perfectly scoreable numbers attributed to code
+that had been rewritten underneath them. To measure older code deliberately,
+pin `sut_ref` to it — pinning is what puts the answer in the result. An
+ordinary `cargo build --release` carries no commit stamp, cannot be dated, and
+is never blocked; those runs stay labelled unverified as before.
+
 ---
 
 ## Recording

@@ -59,6 +59,9 @@ def repo(tmp_path: Path, monkeypatch) -> Path:
 
     monkeypatch.setenv(sut.STELLA_REPO_ENV, str(work))
     monkeypatch.setenv("ARENABENCH_HOME", str(tmp_path / "home"))
+    # An unpinned seat runs whatever STELLA_BINARY names, so a developer whose
+    # shell exports it would otherwise be running a different test than CI.
+    monkeypatch.delenv(sut.STELLA_BINARY_ENV, raising=False)
     return work
 
 
@@ -215,7 +218,8 @@ class TestLaunchRefusal:
         """A Claude-Code-vs-Codex contest runs no SUT of ours."""
         assert sut.sut_problem_for(self._spec(agent="claude-code")) is None
 
-    def test_the_empty_ref_is_an_explicit_opt_out(self, repo: Path):
+    def test_the_empty_ref_opts_out_of_pinning_with_nothing_staged(self, repo: Path):
+        """With no STELLA_BINARY there is nothing to be stale, so nothing to say."""
         assert sut.sut_problem_for(self._spec(ref="")) is None
 
     def test_a_spec_written_before_this_field_defaults_to_main_not_unpinned(self):
@@ -226,6 +230,170 @@ class TestLaunchRefusal:
         visible.
         """
         assert MatchSpec.from_json({"name": "m", "dataset": "d"}).sut_ref == "main"
+
+
+def _stamped(path: Path, commit: str | None) -> Path:
+    """A stand-in Stella binary carrying the compile-time stamp `build.rs` emits.
+
+    NUL-delimited on both sides, exactly as ``build_info.rs`` lays it out — that
+    delimiting is what makes the commit readable out of the file, and a fixture
+    that omitted it would be testing a shape the real artifact does not have.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = b"\x7fELF" + b"\x00" * 64
+    if commit is not None:
+        body += b"\x000.6.132-dev." + commit.encode("ascii") + b"\x00"
+    path.write_bytes(body)
+    return path
+
+
+class TestAnUnpinnedMatchStillRefusesStaleCode:
+    """Clearing the pin says "run whatever is current", not "run anything".
+
+    The witness for #2032. The operator runbook launches with
+    ``STELLA_BINARY=~/.arenabench/sut/stella``, and that path sat 291 commits
+    behind ``main`` for three days while producing perfectly scoreable trials.
+    The commit pinning added in #2016/#2020 did not catch it, because the stale
+    binary *was* pinned — to a commit from three days earlier. Pinning answers
+    which code; only a distance answers whether it is the code anyone meant.
+    """
+
+    #: Deeper than `MAX_BEHIND_UNPINNED`, so "behind" and "too far behind" are
+    #: distinguishable rather than coincidentally the same assertion.
+    DEPTH = sut.MAX_BEHIND_UNPINNED * 2
+
+    @pytest.fixture
+    def deep_repo(self, tmp_path: Path, monkeypatch) -> Path:
+        origin = tmp_path / "deep-origin"
+        origin.mkdir()
+        _git(origin, "init", "-q", "--initial-branch=main")
+        _git(origin, "config", "user.email", "t@example.com")
+        _git(origin, "config", "user.name", "t")
+        _git(origin, "commit", "-q", "--allow-empty", "-m", "base")
+        work = tmp_path / "deep-work"
+        _git(tmp_path, "clone", "-q", str(origin), str(work))
+        for index in range(self.DEPTH):
+            _git(origin, "commit", "-q", "--allow-empty", "-m", f"c{index}")
+        _git(work, "fetch", "-q", "origin")
+        monkeypatch.setenv(sut.STELLA_REPO_ENV, str(work))
+        monkeypatch.delenv(sut.STELLA_BINARY_ENV, raising=False)
+        return work
+
+    def _unpinned_stella_spec(self) -> MatchSpec:
+        return MatchSpec.from_json(
+            {
+                "name": "m",
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["fix-git"],
+                "sut_ref": "",
+                "contestants": [
+                    {
+                        "name": "seat",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "m"},
+                    }
+                ],
+            }
+        )
+
+    def test_the_stale_runbook_binary_now_blocks_the_launch(
+        self, deep_repo: Path, tmp_path: Path, monkeypatch
+    ):
+        """The exact scenario in the issue: unpinned seat, ancient STELLA_BINARY."""
+        old = _git(deep_repo, "rev-list", "--max-parents=0", "origin/main")
+        binary = _stamped(tmp_path / "sut" / "stella", old)
+        monkeypatch.setenv(sut.STELLA_BINARY_ENV, str(binary))
+
+        problem = sut.sut_problem_for(self._unpinned_stella_spec())
+        assert problem is not None, (
+            "an unpinned match asks for current code; this binary is not it"
+        )
+        assert old[:8] in problem, "the refusal must name the commit"
+        assert f"{self.DEPTH} commit(s) behind" in problem, (
+            "the refusal must name the distance, not merely that there is one"
+        )
+
+    def test_a_symlinked_runbook_path_is_followed_to_its_target(
+        self, deep_repo: Path, tmp_path: Path, monkeypatch
+    ):
+        """The rig's mitigation is a symlink; the guard must see through it.
+
+        A guard that read the link's own directory would report whatever
+        `sut_commit.txt` was last left beside the legacy path — which is the
+        stale claim, not the binary that would actually run.
+        """
+        head = _git(deep_repo, "rev-parse", "origin/main")
+        target = _stamped(tmp_path / "sut" / head / "stella", head)
+        old = _git(deep_repo, "rev-list", "--max-parents=0", "origin/main")
+        (tmp_path / "sut" / "sut_commit.txt").write_text(old)
+        link = tmp_path / "sut" / "stella"
+        link.symlink_to(target)
+        monkeypatch.setenv(sut.STELLA_BINARY_ENV, str(link))
+
+        assert sut.ambient_sut().commit == head
+        assert sut.sut_problem_for(self._unpinned_stella_spec()) is None
+
+    def test_a_binary_within_the_limit_still_launches(
+        self, deep_repo: Path, tmp_path: Path, monkeypatch
+    ):
+        """`main` moves under every run; the limit exists so that is not fatal."""
+        near = _git(
+            deep_repo, "rev-parse", f"origin/main~{sut.MAX_BEHIND_UNPINNED}"
+        )
+        monkeypatch.setenv(
+            sut.STELLA_BINARY_ENV, str(_stamped(tmp_path / "stella", near))
+        )
+        assert sut.sut_problem_for(self._unpinned_stella_spec()) is None
+
+    def test_an_unstamped_development_build_is_not_blocked(
+        self, deep_repo: Path, tmp_path: Path, monkeypatch
+    ):
+        """`cargo build --release` carries no stamp and cannot be dated.
+
+        Refusing it would block the local loop this tool exists to serve. The
+        arena refuses only on positive evidence of staleness; the Terminal-Bench
+        evidence runbook fails closed instead, because it publishes numbers.
+        """
+        monkeypatch.setenv(
+            sut.STELLA_BINARY_ENV, str(_stamped(tmp_path / "stella", None))
+        )
+        assert sut.sut_problem_for(self._unpinned_stella_spec()) is None
+
+    def test_a_non_stella_contest_is_never_blocked(
+        self, deep_repo: Path, tmp_path: Path, monkeypatch
+    ):
+        old = _git(deep_repo, "rev-list", "--max-parents=0", "origin/main")
+        monkeypatch.setenv(
+            sut.STELLA_BINARY_ENV, str(_stamped(tmp_path / "stella", old))
+        )
+        spec = MatchSpec.from_json(
+            {
+                "name": "m",
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["fix-git"],
+                "sut_ref": "",
+                "contestants": [
+                    {
+                        "name": "seat",
+                        "agent": "claude-code",
+                        "engine": {"api": "anthropic", "model": "m"},
+                    }
+                ],
+            }
+        )
+        assert sut.sut_problem_for(spec) is None
+
+    def test_two_stamps_name_no_commit_and_do_not_block(
+        self, deep_repo: Path, tmp_path: Path, monkeypatch
+    ):
+        """Two stamps is not one build; guessing which is the point of failure."""
+        path = tmp_path / "stella"
+        path.write_bytes(
+            b"\x000.6.1-dev." + b"a" * 40 + b"\x00\x000.6.1-dev." + b"b" * 40 + b"\x00"
+        )
+        monkeypatch.setenv(sut.STELLA_BINARY_ENV, str(path))
+        assert sut.embedded_commit(path) == ""
+        assert sut.sut_problem_for(self._unpinned_stella_spec()) is None
 
 
 class TestACommitPinSurvivesAMovingBranch:

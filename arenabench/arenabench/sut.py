@@ -52,13 +52,17 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "MAX_BEHIND_UNPINNED",
+    "STELLA_BINARY_ENV",
     "STELLA_REPO_ENV",
     "Branch",
     "Drift",
     "StagedSut",
     "SutUnavailableError",
+    "ambient_sut",
     "binary_for",
     "drift_between",
+    "embedded_commit",
     "list_branches",
     "resolve_ref",
     "staged_for",
@@ -70,6 +74,30 @@ __all__ = [
 
 #: Points the arena at the Stella checkout it resolves refs and builds from.
 STELLA_REPO_ENV = "ARENABENCH_STELLA_REPO"
+
+#: The binary a match runs when it is not pinned to a commit.
+STELLA_BINARY_ENV = "STELLA_BINARY"
+
+#: How far behind the default branch an *unpinned* binary may be.
+#:
+#: An unpinned match is asking for "whatever is current", so a binary that is
+#: measurably not current contradicts the request rather than opting out of it.
+#: Measuring older code on purpose is still available and is spelled the
+#: supported way — pin ``sut_ref`` to that commit, which records in the result
+#: what was measured instead of leaving it to the state of one path on one
+#: machine. The number matches the checker the Terminal-Bench runbook uses
+#: (``bench/harbor_adapter/stella_harbor/freshness.py``): about six hours of
+#: this repository's ``main``, which moved 654 commits in the seven days to
+#: 2026-08-07.
+MAX_BEHIND_UNPINNED = 25
+
+#: The compile-time ``-dev.<sha>`` marker Stella's ``build.rs`` stamps into the
+#: binary. ``crates/stella-cli/src/build_info.rs`` deliberately delimits it with
+#: NUL bytes so LLVM's string pooling cannot adjoin identifier characters to it,
+#: which is what makes the identity readable without executing the artifact —
+#: necessary here, because the SUT is a linux/amd64 cross-build and the arena
+#: routinely runs on a macOS host that cannot exec it.
+_VERSION_COMMIT_BYTES = re.compile(rb"-dev\.([0-9A-Fa-f]{40})(?=[^0-9A-Fa-f])")
 
 #: A full 40-hex commit id — the only ref shape ever passed to git unvalidated.
 _FULL_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
@@ -383,6 +411,76 @@ def legacy_staged() -> StagedSut | None:
     return _staged_at(sut_root())
 
 
+def embedded_commit(path: Path) -> str:
+    """The commit stamped into a Stella binary at compile time, or ``""``.
+
+    This is the artifact's *intrinsic* identity: it travels inside the file, so
+    no rename, copy, or symlink can separate the two. ``sut_commit.txt`` beside
+    a binary is a *claim about* the file, and a claim is what went wrong — the
+    stale binary had one, correctly naming a commit from three days earlier, and
+    so passed for pinned.
+
+    Read in chunks with an overlap, because a marker split across two reads
+    would otherwise be missed and silently downgrade the answer to the sidecar.
+    Any read error yields ``""``: this reports identity, and "cannot tell" is a
+    state its callers already handle as unknown rather than as current.
+    """
+    found: list[str] = []
+    tail = b""
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                window = tail + chunk
+                found.extend(
+                    match.decode("ascii").lower()
+                    for match in _VERSION_COMMIT_BYTES.findall(window)
+                )
+                tail = window[-64:]
+    except OSError:
+        return ""
+    at_eof = re.search(rb"-dev\.([0-9A-Fa-f]{40})\Z", tail)
+    if at_eof is not None:
+        found.append(at_eof.group(1).decode("ascii").lower())
+    unique = set(found)
+    # More than one stamp is not one build, and naming either would be a guess.
+    return unique.pop() if len(unique) == 1 else ""
+
+
+def ambient_sut() -> StagedSut | None:
+    """The binary ``STELLA_BINARY`` names, with whatever identity it carries.
+
+    This is what an unpinned match runs, and it is the path the operator runbook
+    hands to `arenabench serve` — so it is the one binary nothing was checking.
+    Symlinks are followed before the sidecar is read: the mitigation applied on
+    the rig for this defect is a symlink at the legacy location, and reading the
+    commit file next to the *link* rather than next to the *target* would report
+    the identity of whatever used to be there.
+    """
+    raw = os.environ.get(STELLA_BINARY_ENV)
+    if not raw:
+        return None
+    try:
+        resolved = Path(raw).expanduser().resolve(strict=True)
+    except OSError:
+        return None
+    if not resolved.is_file():
+        return None
+    # Read the sidecars directly rather than through `_staged_at`, which finds
+    # them only beside a file literally named `stella`. STELLA_BINARY may name
+    # anything, and this must report on the binary it was actually handed.
+    intrinsic = embedded_commit(resolved)
+    try:
+        built_at = resolved.stat().st_mtime
+    except OSError:
+        built_at = 0.0
+    return StagedSut(
+        path=resolved,
+        commit=intrinsic or _read(resolved.parent / "sut_commit.txt"),
+        sha256=_read(resolved.parent / "binary_sha256.txt"),
+        built_at=built_at,
+    )
+
+
 def binary_for(commit: str) -> StagedSut | None:
     """The binary a match pinned to ``commit`` should run, or ``None``.
 
@@ -427,6 +525,48 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def unpinned_problem() -> str | None:
+    """Why an *unpinned* Stella match must not launch, or ``None``.
+
+    Clearing the pin says "run whatever is current", so the one thing that can
+    still be wrong is the binary not being current. That is not hypothetical:
+    the path the operator runbook hands to ``arenabench serve`` was 291 commits
+    behind ``main`` for three days, carrying a ``sut_commit.txt`` that named its
+    own ancient commit, and every unpinned match against it produced perfectly
+    scoreable trials attributed to code that had been rewritten underneath them.
+
+    **Refuses only on positive evidence of staleness.** An ordinary
+    ``cargo build --release`` carries no compile-time stamp and cannot be dated,
+    and refusing it would block the local development loop this tool exists to
+    serve; those runs keep the existing "unverified" label and warning. The
+    Terminal-Bench evidence runbook takes the opposite posture and fails closed
+    on an unidentifiable binary, because it publishes numbers — the difference
+    is deliberate and follows from who reads the result, not from a disagreement
+    about what is safe.
+    """
+    ambient = ambient_sut()
+    if ambient is None or not ambient.commit:
+        return None
+    try:
+        target = resolve_ref("main")
+    except SutUnavailableError:
+        # No checkout to compare against. Nothing is proven either way, and an
+        # arena that cannot see a repository still has to run matches.
+        return None
+    drift = drift_between(ambient.commit, target)
+    if not drift.comparable or drift.behind <= MAX_BEHIND_UNPINNED:
+        return None
+    return (
+        f"the Stella seat is unpinned, so it runs {STELLA_BINARY_ENV}="
+        f"{ambient.path} — and {drift.summary()}, past the "
+        f"{MAX_BEHIND_UNPINNED}-commit limit. An unpinned match asks for "
+        "whatever is current, and this binary is not. Rebuild it "
+        "(`bench/evidence/run/build_sut.sh`), or pin the SUT to the commit you "
+        "actually mean to measure — pinning is how the result records which "
+        "Stella it was."
+    )
+
+
 def sut_problem_for(spec: Any) -> str | None:
     """Why this match must not launch, as far as the SUT is concerned.
 
@@ -435,13 +575,13 @@ def sut_problem_for(spec: Any) -> str | None:
 
     Only matches carrying a Stella seat are checked — a Claude-Code-vs-Codex
     contest has no system under test of ours and must not be blocked by the
-    state of a binary it never runs. An empty ``sut_ref`` is the deliberate
-    opt-out and always passes; the run is labelled unverified instead.
+    state of a binary it never runs. An empty ``sut_ref`` opts out of *pinning*,
+    not out of every check: see :func:`unpinned_problem`.
     """
-    if not getattr(spec, "sut_ref", ""):
-        return None
     if not any(c.agent == "stella" for c in spec.contestants):
         return None
+    if not getattr(spec, "sut_ref", ""):
+        return unpinned_problem()
     status = sut_status(spec.sut_ref)
     if status["ready"]:
         return None

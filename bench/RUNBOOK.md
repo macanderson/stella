@@ -78,6 +78,12 @@ export STELLA_BINARY="$claim_repo/target/x86_64-unknown-linux-gnu/release/stella
 export STELLA_SOURCE_COMMIT="$claim_sha"
 file "$STELLA_BINARY"                    # ELF ... x86-64 ... GNU/Linux 2.0.0
 sha256sum "$STELLA_BINARY"               # record this — the run manifest freezes it
+
+# Which commit is this, really, and how far is it from what the number will be
+# read as measuring? Answered from the binary's own compile-time bytes, so a
+# path repointed by hand or a refreshed sut_commit.txt cannot make it look new.
+python3 "$claim_repo/bench/harbor_adapter/stella_harbor/freshness.py" \
+  "$STELLA_BINARY" --repo "$claim_repo"
 ```
 
 > The binary SHA is host-specific (it embeds the builder's rustup/cargo paths) —
@@ -220,6 +226,10 @@ test -d "$claim_jobs" && test ! -L "$claim_jobs"
 test "$(command -v harbor)" = "$claim_venv/bin/harbor"
 test "$(harbor --version)" = 0.6.1
 test -x "$STELLA_BINARY"; test "${#STELLA_SOURCE_COMMIT}" = 40
+# Pinned is not the same as current: on 2026-08-07 the path the launch scripts
+# name was 291 commits behind main and carried a sut_commit.txt saying so.
+python3 "$claim_repo/bench/harbor_adapter/stella_harbor/freshness.py" \
+  "$STELLA_BINARY" --repo "$claim_repo"
 umask 077
 claim_adapter_root="$claim_repo/bench/harbor_adapter"
 claim_site_root="$claim_venv/lib/python3.13/site-packages"

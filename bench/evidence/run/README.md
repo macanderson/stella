@@ -28,7 +28,13 @@ export TB_REPO="$(git rev-parse --show-toplevel)"
 
 # 1. Freeze and build the SUT. Refuses if anything that feeds the compiler
 #    differs from origin/main, so the binary's provenance is checkable.
-bench/evidence/run/build_sut.sh
+#    Pass a commit to build exactly that revision and skip the fetch — do this
+#    from any wrapper that already fetched and checked out, because otherwise
+#    this script re-fetches and can resolve a *different* origin/main than the
+#    one you prepared against. That race's symptom is a drift list naming files
+#    nobody touched; unargued, the script now detects it and says so rather
+#    than sending you hunting for local edits that do not exist.
+bench/evidence/run/build_sut.sh [<commit>]
 
 # 2. Fetch the pinned 89-task dataset and classify tasks by resource class.
 bench/evidence/run/fetch_dataset.sh
@@ -108,6 +114,35 @@ To inspect a binary directly:
 ```bash
 python3 bench/harbor_adapter/stella_harbor/portability.py "$STELLA_BINARY" --json
 ```
+
+### The binary ran, and it was the wrong code
+
+Portability asks "can this run"; the SHA-256 comparison asks "did it arrive
+intact"; `STELLA_SOURCE_COMMIT` asks "which commit is it". None of them asks
+whether that commit is anywhere near the one a reader will assume was measured.
+On 2026-08-07 the path every launch script names as `STELLA_BINARY` was **291
+commits and three days behind `origin/main`** — and it carried its own
+`sut_commit.txt` naming that ancient commit, so it looked pinned and passed
+everything. Pinning and freshness are different properties.
+
+`preflight` now also refuses a binary too far behind the reference. The commit
+is read from the artifact's own compile-time bytes — `build.rs` stamps
+`STELLA_BUILD_GIT_SHA` into a NUL-delimited literal precisely so the identity
+can be recovered without executing a cross-compiled binary — so a repointed
+path or a hand-refreshed sidecar cannot make an old build look new, and a
+sidecar that disagrees with the binary is itself a refusal.
+
+```bash
+python3 bench/harbor_adapter/stella_harbor/freshness.py "$STELLA_BINARY" --json
+```
+
+Exit status is `0` fresh, `1` stale, `2` undeterminable — and preflight treats
+every nonzero status as fatal, because a binary not shown to be near the
+reference has not been shown to be near it. `--max-behind` measures older code
+on purpose, which puts the distance in the launch command instead of a default
+nobody reads. `build_sut.sh` uses the same checker against the commit it just
+resolved (`--max-behind 0`) to assert the artifact carries the stamp it asked
+for.
 
 ### Is a musl build needed as well? No.
 

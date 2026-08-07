@@ -8,7 +8,7 @@
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
 2199 bench/harbor_adapter/stella_harbor/__init__.py
-4293 bench/harbor_adapter/stella_harbor/secure_launcher.py
+4294 bench/harbor_adapter/stella_harbor/secure_launcher.py
 2335 bench/harbor_adapter/tests/test_adapter.py
 3360 bench/harbor_adapter/tests/test_secure_launcher.py
 8272 bench/terminal_bench_analysis/tb21_analysis.py
