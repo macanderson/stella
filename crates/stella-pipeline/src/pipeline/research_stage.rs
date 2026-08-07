@@ -27,7 +27,6 @@
 use super::*;
 
 use stella_core::subagent::{SubAgentHost, SubAgentOutcome, SubAgentSpec};
-use stella_protocol::{SubAgentPhase, SubAgentStatus};
 
 use crate::candidate_fanout::FanOutBudget;
 use crate::research::{
@@ -119,10 +118,13 @@ impl Pipeline<'_> {
                 };
                 // The ceiling is per child, INSIDE the future, so a timed-out
                 // child settles its spend through the sub-agent primitive's
-                // drop guard and the stage still returns — research degrading
+                // drop guards and the stage still returns — research degrading
                 // to fewer findings must never wedge the turn. The dropped
-                // child's `Finished` bracket is emitted here, because the
-                // cancelled future can no longer balance its own `Started`.
+                // child's stream stays whole without help here (#1954): the
+                // primitive's `CancelBracket` closes the `Started`/`Finished`
+                // bracket with the committed step count and cost, and the
+                // engine's own cancel guard emits the abandoned call's
+                // `UsageIncomplete { Cancelled }` envelope.
                 let outcome = tokio::time::timeout(
                     ceiling,
                     engine.run_sub_agent_with_sender(
@@ -140,28 +142,10 @@ impl Pipeline<'_> {
                             answer: report.summary,
                         })
                     }
-                    // Refusals, aborts, and empty answers are missing
-                    // findings, not errors — partial work is not evidence
-                    // worth planning on.
-                    Ok(_) => None,
-                    Err(_elapsed) => {
-                        self.emit(AgentEvent::SubAgent {
-                            phase: SubAgentPhase::Finished {
-                                agent_id: spec.agent_id.clone(),
-                                status: SubAgentStatus::Incomplete,
-                                summary: String::new(),
-                                truncated: false,
-                                cost_usd: child_budget.session_spent_usd(),
-                                steps: 0,
-                                absorbed_messages: 0,
-                                reason: Some(format!(
-                                    "research latency ceiling ({}s) elapsed",
-                                    ceiling.as_secs()
-                                )),
-                            },
-                        });
-                        None
-                    }
+                    // Refusals, aborts, empty answers, and a child past the
+                    // ceiling are missing findings, not errors — partial work
+                    // is not evidence worth planning on.
+                    Ok(_) | Err(_) => None,
                 };
                 fan.settle(&child_budget);
                 (finding, child_budget.session_spent_usd())
