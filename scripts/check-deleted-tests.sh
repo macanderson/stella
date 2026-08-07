@@ -75,6 +75,20 @@
 # general-purpose assumption, and a tree full of `fn test_1` would need the
 # qualified key and the move-detection cost that comes with it.
 #
+# The second known miss is the mirror of the one documented in
+# scripts/check-left-behind.sh: a `#[test]` inside a STRING LITERAL is counted.
+# Two lines in the tree manage it (crates/stella-pipeline/src/witness/density.rs
+# and crates/stella-cli/src/candidate_ws/witness_tools.rs — both code that
+# analyses test code, whose fixtures put `#[test]` at the start of a Rust
+# line-continuation inside a literal). A shell script cannot reliably tell
+# whether a `#[test]` is inside a string, and this one does not try, for the
+# reason that script gives: a guard that guesses wrong cries wolf.
+#
+# It costs nothing here, because this is a DIFFERENCE detector and the noise is
+# symmetric — a fixture present in both trees cancels. It can only speak up if
+# such a fixture is edited, and that lands in the acknowledge path, which is the
+# benign direction.
+#
 # ── Deliberately NOT in `make gate` ──────────────────────────────────────────
 #
 # This is inherently a two-branch question, so there is nothing for it to
