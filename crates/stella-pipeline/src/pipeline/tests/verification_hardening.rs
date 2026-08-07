@@ -7,16 +7,11 @@
 use super::*;
 use crate::LineMutation;
 
-/// The mid-turn flip halt's arming witnesses (#1793) — a child rather than a
-/// sibling module so it reaches this file's shared fakes through `use super::*`,
-/// and so the already-oversized `tests.rs` does not grow another module
-/// declaration.
-///
-/// Its two *shell* doubles are deliberately not shared from here. They live
-/// beside the witnesses that use them, so a wholesale rewrite of this file
-/// collides with them instead of silently deleting the tests underneath — the
-/// clobber that cost a #1793 witness once already (#1971, #1997). That file's
-/// own module doc is the normative statement of the rule.
+/// The authored-witness arming of the mid-turn flip halt (#1793) — a child
+/// rather than a sibling module so it reaches the shared fakes through this
+/// file's own `use super::*`, and so the already-oversized `tests.rs` does
+/// not grow another module declaration. The shell doubles the halt needs live
+/// in that module, beside the only tests that script them.
 mod flip_halt_arming;
 
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,

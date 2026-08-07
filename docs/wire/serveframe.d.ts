@@ -217,8 +217,7 @@ export type AgentEvent = {
    * The replacement bytes each in-place rewrite left behind, one entry
    * per digest — what lets reconstruction resolve a compacted block to
    * the bytes the model received rather than the pre-compaction output
-   * under the same `call_id` (#1667); see
-   * [`CompactionRewrite`](crate::CompactionRewrite).
+   * under the same `call_id` (#1667); see `CompactionRewrite`.
    * `serde(default)` — absent on journals written before rewrites were
    * journaled, whose compacted blocks surface as digest mismatches.
    */
