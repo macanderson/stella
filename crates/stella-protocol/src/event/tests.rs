@@ -83,6 +83,45 @@ fn speculation_discarded_roundtrips_and_names_the_reason() {
     }
 }
 
+/// Invariant 4 witness for the parked-wait span (#1857): both events
+/// round-trip byte-faithfully, under the tags a consumer keys on.
+#[test]
+fn parked_wait_events_roundtrip_under_their_own_tags() {
+    let parked = AgentEvent::TurnParked {
+        description: "CI for branch main settles".into(),
+        poll_interval_secs: 5,
+        deadline_secs: 600,
+    };
+    let json = serde_json::to_string(&parked).unwrap();
+    assert!(json.contains("\"type\":\"turn_parked\""), "{json}");
+    match serde_json::from_str::<AgentEvent>(&json).unwrap() {
+        AgentEvent::TurnParked {
+            description,
+            poll_interval_secs,
+            deadline_secs,
+        } => {
+            assert_eq!(description, "CI for branch main settles");
+            assert_eq!(poll_interval_secs, 5);
+            assert_eq!(deadline_secs, 600);
+        }
+        other => panic!("unexpected variant: {other:?}"),
+    }
+
+    let woken = AgentEvent::TurnWoken {
+        reason: "deadline_expired".into(),
+        polls_used: 4,
+    };
+    let json = serde_json::to_string(&woken).unwrap();
+    assert!(json.contains("\"type\":\"turn_woken\""), "{json}");
+    match serde_json::from_str::<AgentEvent>(&json).unwrap() {
+        AgentEvent::TurnWoken { reason, polls_used } => {
+            assert_eq!(reason, "deadline_expired");
+            assert_eq!(polls_used, 4);
+        }
+        other => panic!("unexpected variant: {other:?}"),
+    }
+}
+
 #[test]
 fn budget_tick_roundtrips_with_session_axis() {
     let event = AgentEvent::BudgetTick {
@@ -148,6 +187,7 @@ fn compaction_event_carries_counts_and_block_identities() {
         // Fewer identities than the `summarized` count: the summary folded
         // three messages but only two were identity-bearing tool results.
         summarized_blocks: vec!["blk_sum1".into(), "blk_sum2".into()],
+        rewrites: vec![],
         effective_budget_tokens: 136_363,
         calibration_factor: 1.1,
     };
@@ -1445,3 +1485,5 @@ fn a_known_event_wire_format_is_unchanged_by_the_fallback() {
     let back: AgentEvent = serde_json::from_str(r#"{"type":"text","text":"hello"}"#).unwrap();
     assert!(matches!(back, AgentEvent::Text { text } if text == "hello"));
 }
+
+mod tag_table;

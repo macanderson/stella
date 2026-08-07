@@ -139,6 +139,22 @@ pub(crate) fn tool_result_block_id(output: &ToolOutput) -> String {
     )
 }
 
+/// The journal record of one in-place rewrite (#1667): the post-rewrite block
+/// id, content digest, and canonical serialized bytes of `output`, in the
+/// shape `AgentEvent::Compaction`'s `rewrites` field carries. Hashes the same
+/// canonical content as [`tool_result_block_id`] and the same digest scheme as
+/// [`BlockDigestCache::digests`]'s registry rows, so the entry's
+/// `content_digest` is exactly the key the next step's manifest records for
+/// this block — which is what lets reconstruction resolve it by digest.
+pub(crate) fn tool_result_rewrite(output: &ToolOutput) -> stella_protocol::CompactionRewrite {
+    let content = serde_json::to_string(output).unwrap_or_default();
+    stella_protocol::CompactionRewrite {
+        block_id: block_id(BlockKind::ToolResult, &content),
+        content_digest: format!("sha256:{}", sha256_hex(&content)),
+        content,
+    }
+}
+
 /// The stable snake_case tag for a block kind — kept in lockstep with the
 /// protocol enum's `rename_all = "snake_case"` so a block's id and its stored
 /// `kind` string agree.

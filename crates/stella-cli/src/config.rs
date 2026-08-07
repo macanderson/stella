@@ -131,6 +131,7 @@ fn interactive_allowed() -> bool {
 }
 
 mod aux;
+mod listing;
 mod providers;
 mod reload;
 
@@ -455,6 +456,17 @@ pub struct Config {
     /// provider. See `config::aux` for which credential sources are
     /// supported and which are deliberately excluded.
     pub aux_credentials: AuxCredentials,
+    /// The prompt-cache window this session's providers request (#1839).
+    /// `Some` when `providers.<id>.cache_ttl` pinned it in settings; `None`
+    /// leaves the choice to the session surface — the interactive entry
+    /// points (deck/REPL, where human-paced gaps routinely outlive the
+    /// 5-minute window) stamp the 1-hour window via
+    /// [`Config::adopt_interactive_cache_ttl`], and every headless path keeps
+    /// the 5-minute provider default (seconds-long gaps would pay the 2x
+    /// write premium for nothing). Read through
+    /// [`Config::effective_cache_ttl`]; honored on the wire by the Anthropic
+    /// adapter only (`stella_model::provider_honors_cache_ttl`).
+    pub cache_ttl: Option<stella_model::CacheTtl>,
 }
 
 impl Config {
@@ -617,6 +629,13 @@ impl Config {
         cfg.trace_capture = settings.trace_capture_enabled();
         cfg.reward_policy = settings.reward_policy()?;
         cfg.create_worktrees = settings.create_worktrees();
+        // Keyed off the provider actually picked, like the engine baseline
+        // above — a `providers.anthropic.cache_ttl` pin must not leak onto a
+        // session that resolved to a different provider.
+        cfg.cache_ttl = settings
+            .providers
+            .get(cfg.provider.id)
+            .and_then(|entry| entry.cache_ttl);
         Ok(cfg)
     }
 
@@ -770,6 +789,7 @@ impl Config {
                     // `local` speaks the OpenAI-compatible dialect; nothing to
                     // resolve beyond the (optional) bearer token above.
                     aux_credentials: AuxCredentials::new(),
+                    cache_ttl: None,
                 });
             }
 
@@ -985,7 +1005,31 @@ impl Config {
             // process (which was handed an empty in-memory file) cannot pick
             // up a Bedrock secret from a task image's credentials.toml.
             aux_credentials: provider_aux(provider, credentials_file),
+            // Stamped by `load_with_settings` from the provider's settings
+            // entry, once the provider is known.
+            cache_ttl: None,
         })
+    }
+
+    /// The prompt-cache window this session actually requests: the settings
+    /// pin when one exists, the 5-minute provider default otherwise. Entry
+    /// points that widened the default first (see
+    /// [`Config::adopt_interactive_cache_ttl`]) read their stamp back here.
+    pub fn effective_cache_ttl(&self) -> stella_model::CacheTtl {
+        self.cache_ttl.unwrap_or_default()
+    }
+
+    /// Adopt the interactive-surface cache default (#1839): the 1-hour window,
+    /// unless settings pinned a choice. Called by the deck/REPL entry points
+    /// only — an interactive user thinks and types between turns, and any gap
+    /// past 5 minutes evicts the whole prefix, re-billing it at the write rate
+    /// on the next turn. Headless runs never call this: their inter-call gaps
+    /// are seconds, so the 1-hour window's 2x write premium (vs 1.25x) would
+    /// buy nothing.
+    pub fn adopt_interactive_cache_ttl(&mut self) {
+        if self.cache_ttl.is_none() {
+            self.cache_ttl = Some(stella_model::CacheTtl::OneHour);
+        }
     }
 
     /// Print the provider/model table for an interactive session. The listing
@@ -1061,224 +1105,6 @@ impl Config {
         for line in render(&wiring) {
             println!("    {line}");
         }
-    }
-}
-
-impl Config {
-    /// The credentials file to check provider status against, degrading to
-    /// an empty in-memory one (rather than aborting the whole listing) on a
-    /// read/parse failure — the listing commands must still show the
-    /// built-ins even when `~/.stella/credentials.toml` is malformed.
-    /// Returns the degradation warning line, if any, alongside the file.
-    fn credentials_file_for_listing() -> (CredentialsFile, Option<String>) {
-        match CredentialsFile::load_default() {
-            Ok(f) => (f, None),
-            Err(e) => (
-                CredentialsFile::empty(),
-                Some(format!("~/.stella/credentials.toml could not be read: {e}")),
-            ),
-        }
-    }
-
-    /// The provider/model table as plain text (no ANSI): the built-in
-    /// providers with their key status, then any config-defined providers
-    /// from `.stella/settings.json` — the same two sections the ANSI
-    /// `print_available_models` renders, so `/models` in the deck lists
-    /// exactly what `stella models` does. The Command Deck renders this into
-    /// the transcript; stdout printing would corrupt the alternate screen, so
-    /// the deck needs a string, not a print. `loaded_env`: see
-    /// [`Config::print_config`]'s doc — `None` at call sites that don't have
-    /// the startup dotenv record handy (the deck, the REPL fallback).
-    pub fn available_models_plain(loaded_env: Option<&crate::env_files::Loaded>) -> String {
-        // Surface a settings load/parse failure rather than silently reporting
-        // built-in defaults (which would hide a malformed config and wrong key
-        // status), then continue with defaults so the listing still renders.
-        let (settings, load_error) = match env::current_dir()
-            .map_err(|e| e.to_string())
-            .and_then(|ws| crate::settings::Settings::load(&ws))
-        {
-            Ok(s) => (s, None),
-            Err(e) => (crate::settings::Settings::default(), Some(e)),
-        };
-        let (credentials_file, credentials_error) = Self::credentials_file_for_listing();
-        let mut lines = vec!["Available providers & models:".to_string()];
-        if let Some(e) = &load_error {
-            lines.push(format!("  ! settings could not be read: {e}"));
-        }
-        if let Some(e) = &credentials_error {
-            lines.push(format!("  ! {e}"));
-        }
-        for p in PROVIDERS {
-            let p = effective_builtin(p, &settings);
-            let settings_key = crate::credential_status::settings_literal_key(&p, &settings);
-            let status = crate::credential_status::status_for(
-                &p,
-                settings_key.as_deref(),
-                &credentials_file,
-                loaded_env,
-            );
-            lines.push(format!(
-                "  {} {}/{}  {}{}",
-                if status.configured { "✓" } else { "✗" },
-                p.id,
-                p.default_model,
-                p.display_name,
-                status
-                    .source_label
-                    .map(|s| format!("  [{s}]"))
-                    .unwrap_or_default(),
-            ));
-        }
-        // Config-defined (non-built-in) providers, mirroring the ANSI table.
-        let mut printed_header = false;
-        for (id, entry) in &settings.providers {
-            if PROVIDERS.iter().any(|p| p.id == id.as_str()) || id == LOCAL_PROVIDER.id {
-                continue;
-            }
-            // A malformed provider entry surfaces as a warning line rather than
-            // silently vanishing — the ANSI renderer warns here too, and a
-            // deck user needs to see that their settings.json is broken.
-            let p = match custom_provider(id, entry) {
-                Ok(p) => p,
-                Err(e) => {
-                    lines.push(format!("  ! provider `{id}` is misconfigured: {e}"));
-                    continue;
-                }
-            };
-            if !printed_header {
-                lines.push("Config-defined providers (settings.json):".to_string());
-                printed_header = true;
-            }
-            let settings_key = entry.api_key.clone();
-            let status = crate::credential_status::status_for(
-                &p,
-                settings_key.as_deref(),
-                &credentials_file,
-                loaded_env,
-            );
-            lines.push(format!(
-                "  {} {}/{}  {}{}",
-                if status.configured { "✓" } else { "✗" },
-                p.id,
-                if p.default_model.is_empty() {
-                    "<model>"
-                } else {
-                    p.default_model
-                },
-                p.display_name,
-                status
-                    .source_label
-                    .map(|s| format!("  [{s}]"))
-                    .unwrap_or_default(),
-            ));
-        }
-        lines.push("Pin one with --model provider/model_id on the next launch.".to_string());
-        lines.join("\n")
-    }
-
-    /// Print all available providers/models without needing a resolved
-    /// config: the built-in table (with any settings.json overrides
-    /// applied), then the config-defined providers. A malformed settings or
-    /// credentials file degrades to a warning here — a listing command
-    /// should still list the built-ins. `loaded_env`: see
-    /// [`Config::print_config`]'s doc.
-    pub fn print_available_models(loaded_env: Option<&crate::env_files::Loaded>) {
-        let settings = match env::current_dir()
-            .map_err(|e| e.to_string())
-            .and_then(|ws| crate::settings::Settings::load(&ws))
-        {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("  {} {e}", "warning:".yellow());
-                crate::settings::Settings::default()
-            }
-        };
-        let (credentials_file, credentials_error) = Self::credentials_file_for_listing();
-        if let Some(e) = &credentials_error {
-            eprintln!("  {} {e}", "warning:".yellow());
-        }
-        println!(
-            "{}\n",
-            "Stella — Available Providers & Models".bright_cyan().bold()
-        );
-        let key_status = |status: &crate::credential_status::CredentialStatus| {
-            if status.configured {
-                "✓ configured".green()
-            } else {
-                "✗ no key".dimmed()
-            }
-        };
-        let source_suffix = |status: &crate::credential_status::CredentialStatus| {
-            status
-                .source_label
-                .as_ref()
-                .map(|s| format!(" ({s})").dimmed().to_string())
-                .unwrap_or_default()
-        };
-        for p in PROVIDERS {
-            let p = effective_builtin(p, &settings);
-            let settings_key = crate::credential_status::settings_literal_key(&p, &settings);
-            let status = crate::credential_status::status_for(
-                &p,
-                settings_key.as_deref(),
-                &credentials_file,
-                loaded_env,
-            );
-            println!(
-                "  {} {}/{}  {}  [{}]{}",
-                key_status(&status),
-                p.id.bright_magenta(),
-                p.default_model.bright_white(),
-                p.display_name,
-                p.base_url.dimmed(),
-                source_suffix(&status),
-            );
-        }
-        let mut printed_header = false;
-        for (id, entry) in &settings.providers {
-            if PROVIDERS.iter().any(|p| p.id == id.as_str()) || id == LOCAL_PROVIDER.id {
-                continue;
-            }
-            let p = match custom_provider(id, entry) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("  {} {e}", "warning:".yellow());
-                    continue;
-                }
-            };
-            if !printed_header {
-                println!("\n  {}", "Config-defined providers (settings.json):".bold());
-                printed_header = true;
-            }
-            let settings_key = entry.api_key.clone();
-            let status = crate::credential_status::status_for(
-                &p,
-                settings_key.as_deref(),
-                &credentials_file,
-                loaded_env,
-            );
-            println!(
-                "  {} {}/{}  {}  [{}] ({}){}",
-                key_status(&status),
-                p.id.bright_magenta(),
-                if p.default_model.is_empty() {
-                    "<model>"
-                } else {
-                    p.default_model
-                }
-                .bright_white(),
-                p.display_name,
-                p.base_url.dimmed(),
-                p.dialect.label().dimmed(),
-                source_suffix(&status),
-            );
-        }
-        println!("\n  Use --model provider/model_id to pin a specific model.");
-        println!("  Example: stella --model zai/glm-5.2 run 'fix the failing test'");
-        println!(
-            "  Local endpoints (Ollama, vLLM, LM Studio): stella --model local/<model> \
-             --base-url http://localhost:11434/v1"
-        );
     }
 }
 

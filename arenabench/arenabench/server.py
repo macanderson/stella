@@ -60,8 +60,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .agents import AGENTS
+from .agents import AGENTS, dead_seat_reason
 from .artifacts import MAX_TEXT_BYTES, preview_kind, resolve_within, tree
+from .claude_oauth import apply_local_claude_login
 from .config import MatchTemplateError, dump_match, match_from_toml, required_env
 from .credentials import (
     apply_ambient_credentials,
@@ -70,6 +71,7 @@ from .credentials import (
     missing_required_credentials,
 )
 from .model import EFFORTS, ROLES, MatchSpec
+from .presets import preset_listing
 from .recorder import preflight as recorder_preflight
 from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
 from .runner import MatchRunner
@@ -222,16 +224,23 @@ class ArenaServer:
             "roles": list(ROLES),
         }
 
+    def presets(self) -> Any:
+        return {"presets": preset_listing()}
+
     def create_match(self, payload: dict[str, Any]) -> Any:
         payload = dict(payload)
         payload.setdefault("id", uuid.uuid4().hex[:12])
         spec = MatchSpec.from_json(payload)
         # A seat's declared credential names resolve from the arena's own
-        # environment first, then the saved credential set fills whatever is
-        # still unset. Both fill gaps only: a seat's own pasted `.env` always
-        # wins — see `apply_saved_credentials`.
+        # environment first, then the saved credential set, then — for a seat
+        # that declared the Claude subscription token — this machine's own
+        # Claude Code login, read fresh because the CLI rotates (and revokes)
+        # that token underneath any saved copy. Every layer fills gaps only:
+        # a seat's own pasted `.env` always wins — see
+        # `apply_saved_credentials`.
         spec = apply_ambient_credentials(spec)
         spec = apply_saved_credentials(spec)
+        spec, oauth_notes = apply_local_claude_login(spec)
         missing = missing_required_credentials(spec)
         if missing:
             # Refuse rather than launch: an unauthenticated arm scores a 0.0
@@ -244,7 +253,21 @@ class ArenaServer:
                 f"required credentials are not set: {lines} — export them in "
                 f"the arena's environment or save them at {credentials_path()}"
             )
+        dead = {
+            contestant.name: reason
+            for contestant in spec.contestants
+            if (reason := dead_seat_reason(contestant))
+        }
+        if dead:
+            # Same refusal philosophy, one step deeper: these seats *have* a
+            # credential, just not one their CLI can read from where it is
+            # seated — measured to die at turn one of every trial (#1777).
+            raise ValueError(
+                "; ".join(f"{name}: {reason}" for name, reason in dead.items())
+            )
         match = self.runner.create(spec)
+        for note in oauth_notes:
+            match.note = f"{match.note}; {note}" if match.note else note
         if spec.record_video:
             ok, reason = recorder_preflight()
             self.recorder_status = (ok, reason)
@@ -707,6 +730,8 @@ def _handler_factory(
                     )
                 case ["agents"]:
                     self._json(arena.agents())
+                case ["presets"]:
+                    self._json(arena.presets())
                 case ["matches"]:
                     self._json(arena.list_matches())
                 case ["matches", match_id]:

@@ -230,6 +230,7 @@ fn config_debug_never_leaks_the_api_key() {
         credential_source: Some(stella_model::credential::CredentialSource::EnvVar),
         credential_advisories: Vec::new(),
         aux_credentials: Default::default(),
+        cache_ttl: None,
     };
     let dbg = format!("{cfg:?}");
     assert!(!dbg.contains(secret), "Config Debug leaked the key: {dbg}");
@@ -264,34 +265,26 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
     assert_eq!(cfg.authority, authority);
 }
 
-/// Witness for `/reload` (`Config::reload_from_disk`): a settings edit made
-/// *after* the session's `Config` was resolved is re-applied to the live
-/// value — the fields the scope chain derives (the recap toggle, the tool
-/// switches) flip without a restart. Fails to compile on a build without
-/// `reload_from_disk`.
-#[test]
-fn reload_from_disk_reapplies_the_settings_scope_chain() {
-    // `reload_from_disk` reads the process-wide trusted-engine-config env
-    // var, so hold the binary env lock — read-only, exactly as
-    // `resolved_config_carries_the_authority_computed_during_settings_load`
-    // does: a concurrent test setting that var malformed would otherwise make
-    // this load fail.
-    let _env = crate::test_env::lock();
-    // The user scope is redirected with the thread-local paths seam (#1139),
-    // NOT by setting `$HOME`: no environment mutation, no `unsafe`, and no
-    // race with a test on another thread. Without it `UserPaths::test_default`
-    // keeps the developer's real home and this test reads their actual
-    // `~/.stella/settings.json`.
-    let home = std::env::temp_dir().join(format!(
-        "stella-test-reload-from-disk-{}",
-        std::process::id()
-    ));
+/// A redirected user home plus a `Config` whose reloadable fields all sit at
+/// their defaults, so any one of them moving is visible to a witness.
+///
+/// The user scope is redirected with the thread-local paths seam (#1139), NOT
+/// by setting `$HOME`: no environment mutation, no `unsafe`, and no race with
+/// a test on another thread. Without it `UserPaths::test_default` keeps the
+/// developer's real home and the test reads their actual
+/// `~/.stella/settings.json`.
+///
+/// `tag` keeps concurrent tests off each other's directory. The returned guard
+/// must be held for as long as the `Config` is used — dropping it restores the
+/// real home mid-test.
+fn reload_fixture(tag: &str) -> (std::path::PathBuf, crate::paths::TestPathsGuard, Config) {
+    let home = std::env::temp_dir().join(format!("stella-test-{tag}-{}", std::process::id()));
     let workspace = home.join("ws");
     std::fs::create_dir_all(home.join(".stella")).unwrap();
     std::fs::create_dir_all(&workspace).unwrap();
-    let _paths = crate::paths::test_user_home(home.clone());
+    let paths = crate::paths::test_user_home(home.clone());
 
-    let mut cfg = Config {
+    let cfg = Config {
         provider: PROVIDERS[0].clone(),
         model_id: "glm-5.2".to_string(),
         turn_budget: None,
@@ -303,6 +296,7 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
         api_key: ApiKey::new("k"),
         workspace_root: workspace,
         base_url_override: None,
+        cache_ttl: None,
         hooks: None,
         engine_settings: None,
         engine_settings_trusted: false,
@@ -319,6 +313,24 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
         cfg.tool_policy.allows("bash"),
         "premise: the default policy allows bash"
     );
+    assert!(!cfg.enable_recap, "premise: recap starts off");
+    (home, paths, cfg)
+}
+
+/// Witness for `/reload` (`Config::reload_from_disk`): a settings edit made
+/// *after* the session's `Config` was resolved is re-applied to the live
+/// value — the fields the scope chain derives (the recap toggle, the tool
+/// switches) flip without a restart. Fails to compile on a build without
+/// `reload_from_disk`.
+#[test]
+fn reload_from_disk_reapplies_the_settings_scope_chain() {
+    // `reload_from_disk` reads the process-wide trusted-engine-config env
+    // var, so hold the binary env lock — read-only, exactly as
+    // `resolved_config_carries_the_authority_computed_during_settings_load`
+    // does: a concurrent test setting that var malformed would otherwise make
+    // this load fail.
+    let _env = crate::test_env::lock();
+    let (home, _paths, mut cfg) = reload_fixture("reload-from-disk");
 
     // The edit a running session would previously only see after a restart.
     std::fs::write(
@@ -341,11 +353,97 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+/// Witness for the all-or-nothing half of `Config::reload_from_disk`: a scope
+/// chain that loads but does not *resolve* leaves the live `Config` exactly as
+/// it was.
+///
+/// The settings file below is well-formed — it parses, and every switch in it
+/// is individually legal — but `verifier_weight: 2.0` puts the judged weight
+/// above the deterministic one, which `reward_policy()` refuses by name rather
+/// than clamping. That is the only fallible step downstream of the load, so it
+/// is the lever that separates "derive, then commit" from "assign as you go":
+/// with the assignments interleaved, `enable_recap` and the `bash` switch are
+/// already written by the time the reward weights are rejected, and the
+/// session runs its next turn on a posture no scope chain ever produced —
+/// while both callers in `command_deck::settings_io` tell the user the reload
+/// failed and the previous values were kept.
+#[test]
+fn a_failed_reload_leaves_every_field_untouched() {
+    let _env = crate::test_env::lock();
+    let (home, _paths, mut cfg) = reload_fixture("reload-atomicity");
+
+    std::fs::write(
+        home.join(".stella").join("settings.json"),
+        r#"{"enable_recap": "on", "tools": {"bash": "off"}, "reward": {"verifier_weight": 2.0}}"#,
+    )
+    .unwrap();
+
+    let error = cfg
+        .reload_from_disk()
+        .expect_err("a verifier outranking a test must not resolve");
+    assert!(error.contains("verifier_weight"), "{error}");
+
+    assert!(
+        !cfg.enable_recap,
+        "a failed reload must not leave the recap toggle applied — the callers \
+         report the previous values were kept"
+    );
+    assert!(
+        cfg.tool_policy.allows("bash"),
+        "a failed reload must not leave the tool switches applied — a turn \
+         would run under a policy the operator was told was not adopted"
+    );
+
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 /// Helper: a Settings value parsed from JSON, as the scope-merge would
 /// produce it — the seam for exercising resolution without touching
 /// `$HOME`, `/etc`, or a real workspace.
 fn settings_from(json: &str) -> crate::settings::Settings {
     serde_json::from_str(json).expect("test settings JSON must parse")
+}
+
+/// **Witness (#1839).** `providers.<id>.cache_ttl` reaches the resolved
+/// config, a pin outranks the interactive-surface stamp, and an unpinned
+/// config widens to the 1-hour window only when a surface asks.
+#[test]
+fn cache_ttl_pin_resolves_and_the_interactive_default_never_overrides_it() {
+    use stella_model::CacheTtl;
+    let _env = crate::test_env::lock();
+    let settings = settings_from(r#"{"providers": {"local": {"cache_ttl": "5m"}}}"#);
+    let mut pinned = Config::load_with_settings(
+        Some("local/test-model"),
+        None,
+        Some("http://localhost:11434/v1"),
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .unwrap();
+    assert_eq!(pinned.cache_ttl, Some(CacheTtl::FiveMinutes));
+    pinned.adopt_interactive_cache_ttl();
+    assert_eq!(
+        pinned.effective_cache_ttl(),
+        CacheTtl::FiveMinutes,
+        "a settings pin outranks the surface default"
+    );
+
+    let mut unpinned = Config::load_with_settings(
+        Some("local/test-model"),
+        None,
+        Some("http://localhost:11434/v1"),
+        &crate::settings::Settings::default(),
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .unwrap();
+    assert_eq!(unpinned.cache_ttl, None);
+    assert_eq!(
+        unpinned.effective_cache_ttl(),
+        CacheTtl::FiveMinutes,
+        "headless paths never widen the provider default"
+    );
+    unpinned.adopt_interactive_cache_ttl();
+    assert_eq!(unpinned.effective_cache_ttl(), CacheTtl::OneHour);
 }
 
 #[test]

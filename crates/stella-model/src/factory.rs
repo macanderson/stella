@@ -101,6 +101,14 @@ pub struct ProviderSpec<'a> {
     /// for `local` and settings.json-defined providers, whose models are
     /// whatever the user's endpoint actually serves.
     pub seeded: bool,
+    /// The prompt-cache window the session asks for (#1839). Consumed by the
+    /// Anthropic arm ([`crate::anthropic::AnthropicProvider::with_cache_ttl`]);
+    /// inert for every other dialect today — see
+    /// [`crate::cache_economics::provider_honors_cache_ttl`], which is the
+    /// predicate consumers branch on so extending support stays a one-line
+    /// change there. `CacheTtl::default()` (5 minutes) is the provider
+    /// default and changes nothing on the wire.
+    pub cache_ttl: crate::cache_economics::CacheTtl,
 }
 
 /// The provider id whose models are whatever the user pulled into their local
@@ -168,7 +176,8 @@ pub fn build_provider(
         }
         Dialect::Anthropic => {
             let provider = crate::anthropic::AnthropicProvider::new(api_key, model_id.to_string())
-                .with_base_url(effective_base_url);
+                .with_base_url(effective_base_url)
+                .with_cache_ttl(spec.cache_ttl);
             Ok(Box::new(provider))
         }
         Dialect::Gemini => {
@@ -257,6 +266,7 @@ mod tests {
             display_name: id,
             dialect,
             seeded,
+            cache_ttl: crate::cache_economics::CacheTtl::default(),
         }
     }
 

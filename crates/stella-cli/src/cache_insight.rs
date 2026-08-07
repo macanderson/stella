@@ -18,17 +18,38 @@
 //! require an explicit cache marker.
 
 use stella_model::provider_parity::{CachePosture, cache_posture};
-use stella_model::{Catalog, provider_cache_ttl_secs};
+use stella_model::{CacheTtl, Catalog, configured_cache_ttl_secs};
 use stella_protocol::{AgentEvent, CompletionUsage};
 use stella_tui::Inbound;
+
+/// The session facts the forwarder needs to derive a `CacheInsight`: the
+/// provider id it already carried, plus the configured prompt-cache window
+/// (#1839) — the deck's warmth countdown and SAVED cell must reflect the
+/// window the session actually asked for, not assert the 5-minute default.
+/// One struct rather than a second `spawn_forwarder` parameter so the deck's
+/// call sites (in a file closed to growth) stay one argument wide.
+#[derive(Clone)]
+pub(crate) struct InsightScope {
+    pub(crate) provider_id: String,
+    pub(crate) cache_ttl: CacheTtl,
+}
+
+impl InsightScope {
+    pub(crate) fn from_config(cfg: &crate::config::Config) -> Self {
+        Self {
+            provider_id: cfg.provider.id.to_string(),
+            cache_ttl: cfg.effective_cache_ttl(),
+        }
+    }
+}
 
 /// `None` for every event variant but `StepUsage`. An unresolvable
 /// `(provider, model)` — a retired or custom catalog entry — reports `0.0`
 /// savings rather than dropping the insight: the TTL half (from the
-/// provider id alone) still stands, and a silent $0 delta is honest where a
-/// missing warmth countdown would not be.
+/// provider id and configured window alone) still stands, and a silent $0
+/// delta is honest where a missing warmth countdown would not be.
 pub(crate) fn cache_insight_for(
-    provider_id: &str,
+    scope: &InsightScope,
     lane: &str,
     event: &AgentEvent,
 ) -> Option<Inbound> {
@@ -57,15 +78,20 @@ pub(crate) fn cache_insight_for(
         // observed a reasoning breakdown.
         reasoning_tokens: None,
     };
+    let provider_id = scope.provider_id.as_str();
     let savings_usd_delta = Catalog::current()
         .resolve_for(provider_id, model)
-        .map(|entry| entry.pricing.cache_savings_usd_for(provider_id, &usage))
+        .map(|entry| {
+            entry
+                .pricing
+                .cache_savings_usd_configured(provider_id, &usage, scope.cache_ttl)
+        })
         .unwrap_or(0.0);
     let is_opt_in_provider = matches!(cache_posture(provider_id), Some(CachePosture::OptIn { .. }));
     Some(Inbound::CacheInsight {
         agent: lane.to_string(),
         savings_usd_delta,
-        ttl_secs: provider_cache_ttl_secs(provider_id).unwrap_or(0),
+        ttl_secs: configured_cache_ttl_secs(provider_id, scope.cache_ttl).unwrap_or(0),
         is_opt_in_provider,
     })
 }
@@ -73,6 +99,14 @@ pub(crate) fn cache_insight_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The default-window scope most tests observe through.
+    fn scope(provider_id: &str) -> InsightScope {
+        InsightScope {
+            provider_id: provider_id.to_string(),
+            cache_ttl: CacheTtl::FiveMinutes,
+        }
+    }
 
     fn step_usage(model: &str, input: u64, cached: u64, write: u64) -> AgentEvent {
         AgentEvent::StepUsage {
@@ -99,7 +133,7 @@ mod tests {
     #[test]
     fn ignores_every_non_step_usage_event() {
         let text = AgentEvent::Text { text: "hi".into() };
-        assert!(cache_insight_for("anthropic", "lead", &text).is_none());
+        assert!(cache_insight_for(&scope("anthropic"), "lead", &text).is_none());
     }
 
     #[test]
@@ -134,8 +168,8 @@ mod tests {
             expected > 0.0,
             "the fixture must exercise a model whose cache actually pays"
         );
-        let insight =
-            cache_insight_for("anthropic", "lead", &event).expect("StepUsage yields an insight");
+        let insight = cache_insight_for(&scope("anthropic"), "lead", &event)
+            .expect("StepUsage yields an insight");
         match insight {
             Inbound::CacheInsight {
                 agent,
@@ -157,13 +191,59 @@ mod tests {
         }
     }
 
+    /// **Witness (#1839).** A session that configured the 1-hour window must
+    /// see it in the insight — the warmth countdown counts down 3600s, and
+    /// the SAVED figure charges the 2x write premium instead of the catalog
+    /// row's 5-minute rate. Before the knob existed this seam asserted 300s
+    /// unconditionally.
+    #[test]
+    fn a_configured_one_hour_window_reaches_ttl_and_savings() {
+        let one_hour = InsightScope {
+            provider_id: "anthropic".to_string(),
+            cache_ttl: CacheTtl::OneHour,
+        };
+        let event = step_usage("claude-fable-5", 1_000_000, 400_000, 100_000);
+        let pricing = Catalog::current()
+            .resolve_for("anthropic", "claude-fable-5")
+            .expect("the seed catalog carries this model")
+            .pricing;
+        let expected = pricing.cache_savings_usd(
+            &CompletionUsage {
+                reasoning_tokens: None,
+                reported: true,
+                input_tokens: 1_000_000,
+                output_tokens: 0,
+                cached_input_tokens: 400_000,
+                cache_write_tokens: 100_000,
+            },
+            // 1-hour writes bill 2x input: the premium over base is 1x.
+            pricing.input_usd_per_mtok,
+        );
+        let insight =
+            cache_insight_for(&one_hour, "lead", &event).expect("StepUsage yields an insight");
+        match insight {
+            Inbound::CacheInsight {
+                savings_usd_delta,
+                ttl_secs,
+                ..
+            } => {
+                assert_eq!(ttl_secs, 3_600, "the configured window, not the default");
+                assert!(
+                    (savings_usd_delta - expected).abs() < 1e-9,
+                    "got {savings_usd_delta}, want the 2x-write-premium figure {expected}"
+                );
+            }
+            other => panic!("expected CacheInsight, got {other:?}"),
+        }
+    }
+
     #[test]
     fn implicit_provider_is_not_marked_opt_in() {
         // zai auto-caches with no marker — the opt-in-never-engaged diagnosis
         // must never fire for it, however low the hit rate runs.
         let event = step_usage("glm-5.2", 1_000_000, 0, 0);
         let insight =
-            cache_insight_for("zai", "lead", &event).expect("StepUsage yields an insight");
+            cache_insight_for(&scope("zai"), "lead", &event).expect("StepUsage yields an insight");
         match insight {
             Inbound::CacheInsight {
                 is_opt_in_provider, ..
@@ -178,8 +258,8 @@ mod tests {
         // honest $0 (never a guess), but the TTL still resolves from the
         // provider id alone, so the warmth countdown does not go dark too.
         let event = step_usage("made-up-model-9000", 1_000_000, 400_000, 100_000);
-        let insight =
-            cache_insight_for("anthropic", "lead", &event).expect("StepUsage yields an insight");
+        let insight = cache_insight_for(&scope("anthropic"), "lead", &event)
+            .expect("StepUsage yields an insight");
         match insight {
             Inbound::CacheInsight {
                 savings_usd_delta,
@@ -197,7 +277,7 @@ mod tests {
     fn ttl_is_zero_for_a_provider_with_no_documented_cache_window() {
         let event = step_usage("glm-5.2", 1_000_000, 400_000, 0);
         let insight =
-            cache_insight_for("zai", "lead", &event).expect("StepUsage yields an insight");
+            cache_insight_for(&scope("zai"), "lead", &event).expect("StepUsage yields an insight");
         match insight {
             Inbound::CacheInsight { ttl_secs, .. } => assert_eq!(ttl_secs, 0),
             other => panic!("expected CacheInsight, got {other:?}"),

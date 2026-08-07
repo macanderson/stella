@@ -10,7 +10,7 @@ use stella_tui::Inbound;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent;
-use crate::cache_insight::cache_insight_for;
+use crate::cache_insight::{InsightScope, cache_insight_for};
 
 /// Warn that execution closeout could not write its audit record (files
 /// touched / memory citations / outcome).
@@ -57,7 +57,7 @@ pub(crate) fn warn_audit_record_incomplete(
 pub(crate) fn spawn_forwarder(
     mut rx: UnboundedReceiver<AgentEvent>,
     execution: Option<(Arc<Store>, i64)>,
-    provider_id: String,
+    scope: InsightScope,
     inbound: UnboundedSender<Inbound>,
     lane: String,
     plan_board: Option<stella_tools::tasks::TaskBoardHandle>,
@@ -94,7 +94,8 @@ pub(crate) fn spawn_forwarder(
                 guard.seed_from_plan(&proposal.steps);
             }
             if let Some((store, id)) = &execution {
-                let outcome = agent::persist_event_detailed(store, *id, seq, &event, &provider_id);
+                let outcome =
+                    agent::persist_event_detailed(store, *id, seq, &event, &scope.provider_id);
                 if !outcome.is_complete() {
                     persistence_complete = false;
                     // One warning per condition per turn, each naming what
@@ -132,7 +133,7 @@ pub(crate) fn spawn_forwarder(
             // emitted AFTER it: the insight annotates the usage the event
             // carries, so the deck must fold the event first or the annotation
             // lands on a lane state that does not yet know about it.
-            let cache_insight = cache_insight_for(&provider_id, &lane, &event);
+            let cache_insight = cache_insight_for(&scope, &lane, &event);
             let _ = inbound.send(Inbound::Event {
                 agent: lane.clone(),
                 event,

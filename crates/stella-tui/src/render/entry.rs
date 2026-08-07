@@ -460,6 +460,51 @@ fn entry_body(
                 out,
             );
         }
+        TranscriptEntry::Parked {
+            description,
+            poll_interval_secs,
+            deadline_secs,
+        } => {
+            push_note(
+                "⏳ parked",
+                loud(theme::ACCENT),
+                vec![
+                    Span::styled(format!("until {description} "), value()),
+                    Span::styled(
+                        format!(
+                            "· every {poll_interval_secs}s, up to {deadline_secs}s, no model calls"
+                        ),
+                        quiet(),
+                    ),
+                ],
+                width,
+                out,
+            );
+        }
+        TranscriptEntry::Woken { reason, polls_used } => {
+            push_note(
+                "▶ woke",
+                loud(theme::ACCENT),
+                vec![
+                    Span::styled(
+                        format!("after {} ", plural(*polls_used, "probe", "probes")),
+                        value(),
+                    ),
+                    Span::styled(
+                        match reason.as_str() {
+                            "changed" => "· the watched state changed".to_string(),
+                            "deadline_expired" => {
+                                "· the deadline expired with no change".to_string()
+                            }
+                            other => format!("· {other}"),
+                        },
+                        quiet(),
+                    ),
+                ],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::Compaction {
             before_tokens,
             after_tokens,

@@ -1227,6 +1227,9 @@ fn event_intensity(ev: &AgentEvent) -> u8 {
         // metering tick). Cool-but-present is the honest reading, and it keeps
         // a burst of future events from impersonating heavy edit activity.
         AgentEvent::Unknown { .. } => 60,
+        // A park is the turn deliberately idling — the coolest honest signal,
+        // pitched with the metering ticks so a long wait never reads as work.
+        AgentEvent::TurnParked { .. } | AgentEvent::TurnWoken { .. } => 60,
         _ => 110,
     }
 }
@@ -1256,7 +1259,13 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
         // rather than falling through to "no lifecycle change". Explicit
         // because the wildcard below would otherwise let a long child run —
         // whose own narration is filtered out — read as an idle agent.
-        | AgentEvent::SubAgent { .. } => Some(AgentStatus::Running),
+        | AgentEvent::SubAgent { .. }
+        // A parked turn is the engine actively probing on its own clock —
+        // alive, not waiting on the user — and the wake precedes the next
+        // model call. Explicit for the same reason as `SubAgent`: a long
+        // park emits nothing else, and the lane must not read as dead.
+        | AgentEvent::TurnParked { .. }
+        | AgentEvent::TurnWoken { .. } => Some(AgentStatus::Running),
         _ => None,
     }
 }
@@ -1421,6 +1430,21 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::Steered { text } => (
             TraceKind::Other,
             format!("steer: {}", text.chars().take(40).collect::<String>()),
+        ),
+        AgentEvent::TurnParked {
+            description,
+            poll_interval_secs,
+            deadline_secs,
+        } => (
+            TraceKind::Other,
+            format!(
+                "parked: {} (every {poll_interval_secs}s, up to {deadline_secs}s)",
+                description.chars().take(40).collect::<String>()
+            ),
+        ),
+        AgentEvent::TurnWoken { reason, polls_used } => (
+            TraceKind::Other,
+            format!("woke: {reason} after {polls_used} probes"),
         ),
         AgentEvent::Compaction {
             before_tokens,

@@ -88,6 +88,23 @@ pub struct RecalledFrame {
     pub content_digest: Option<String>,
 }
 
+/// Where the pipeline reports the resume-relevant facts it learns mid-run
+/// (#1671) — triage's class, the plan, the execute cursor, the test
+/// baseline — so a host can store them beside the engine checkpoint and hand
+/// them back to [`crate::Pipeline::resume`] after a crash.
+///
+/// Mirrors [`stella_core::step::CheckpointSink`]'s posture: synchronous,
+/// infallible, best-effort. A record that cannot be stored costs the run its
+/// resumability, never its correctness — refusing to run would trade a
+/// working turn for none. The pipeline owns this port (not `stella-core`)
+/// because the frame is a pipeline shape and the engine must never learn
+/// those (invariant 1).
+pub trait ResumeFrameSink: Send + Sync {
+    /// Store `progress` — the complete record so far, not a delta — beside
+    /// the session's checkpoint.
+    fn record(&self, progress: &crate::pipeline::FrameProgress);
+}
+
 /// Context recall at turn start (L-E8): a *live provider query*, never a
 /// cached prompt block. The recalled frames ride as a volatile message
 /// **after** the byte-stable system prefix so prompt-cache hits on that
@@ -786,6 +803,25 @@ pub trait CandidateWorkspace: Send + Sync {
     fn omitted_paths(&self) -> &[String] {
         &[]
     }
+    /// Hand this candidate the approved plan's steps for its own private
+    /// task board, and whether that board's activity may be announced on the
+    /// turn's event channel.
+    ///
+    /// The pipeline calls this once per workspace, right after `create` and
+    /// before any dispatch (#1719). `steps` are the approval gate's rendered
+    /// plan steps in gate order, so the ordinal ids the worker was shown
+    /// (`task_start "3"`) resolve against this candidate's board exactly as
+    /// they do against the session's; empty when the run planned nothing.
+    /// `announce` is true only when this candidate is alone in the fan-out —
+    /// a full-board `TaskUpdate` snapshot carries no candidate tag, so
+    /// several private boards reporting onto one channel would splice into a
+    /// checklist that is nobody's (the same reasoning that mutes `TextDelta`
+    /// on a shared event lane). Boards stay per-candidate at every width:
+    /// a step is completable exactly once per board, and the second sibling
+    /// to finish it must not be told its work already happened.
+    ///
+    /// Default: no-op — a substrate with no task board has nothing to seed.
+    fn seed_task_board(&self, _steps: &[String], _announce: bool) {}
     /// Commit the current candidate bytes into its private immutable history
     /// immediately before a final verification observation.
     async fn seal(&self) -> Result<(), WorkspaceError>;

@@ -111,6 +111,15 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             attempt: 1,
             reason: "rate limit".into(),
         },
+        TranscriptEntry::Parked {
+            description: "CI for branch main settles".into(),
+            poll_interval_secs: 5,
+            deadline_secs: 600,
+        },
+        TranscriptEntry::Woken {
+            reason: "changed".into(),
+            polls_used: 3,
+        },
         TranscriptEntry::Compaction {
             before_tokens: 10,
             after_tokens: 5,
