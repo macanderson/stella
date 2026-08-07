@@ -299,19 +299,11 @@ class TestWorkerEffortAndTriageArms:
             worker_effort="high",
             triage_model="openrouter/anthropic/claude-haiku-4.5",
         )
-        allowed_roots = {
-            "default_model",
-            "pipeline_verifier_model",
-            "pipeline_worker_model",
-            "pipeline_triage_model",
-            "allowed_models",
-            "auto_mode",
-            "effort_auto",
-            "reasoning_auto",
-            "headless_scope_bypass",
-            "agents",
-        }
-        assert set(posture) <= allowed_roots
+        # The vocabulary is PARSED from the launcher's own `unknown.rs`
+        # (#2033), never hand-copied: the copy this replaced listed 10 of the
+        # authority's 20 keys, failing a legitimate `model_timeout_secs`
+        # posture while claiming the launcher would refuse it.
+        assert set(posture) <= _engine_root_fields()
         assert set(posture["agents"]) <= {"default", "worker", "verifier", "triage"}
         # Every pinned role is in the whitelist, or it cannot be resolved.
         for role_key in ("pipeline_verifier_model", "pipeline_triage_model"):
@@ -1018,6 +1010,46 @@ class TestWitnessArmEndToEnd:
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CATALOG_RS = _REPO_ROOT / "crates" / "stella-model" / "src" / "catalog.rs"
 _BENCH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "bench.yml"
+_UNKNOWN_RS = _REPO_ROOT / "crates" / "stella-cli" / "src" / "settings" / "unknown.rs"
+
+
+def _parse_rust_str_slice(source: str, const_name: str) -> frozenset[str]:
+    """Every string literal in a ``const NAME: &[&str] = &[ ... ];`` table."""
+    match = re.search(
+        rf"const {const_name}: &\[&str\] = &\[(.*?)\];", source, re.DOTALL
+    )
+    assert match is not None, (
+        f"could not find `{const_name}` in {_UNKNOWN_RS} — the constant moved "
+        "or was renamed; `_parse_rust_str_slice`'s caller in this file is the "
+        "adapter's reader of the launcher vocabulary and must be repointed"
+    )
+    return frozenset(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def _engine_root_fields() -> frozenset[str]:
+    """`ENGINE_ROOT_FIELDS` out of `unknown.rs` — the launcher's fail-closed
+    root-key vocabulary (#2033).
+
+    Parsed rather than duplicated, for the same reason `_CATALOG_RS` is: the
+    hand-copy this replaces listed 10 of the authority's 20 keys, which
+    failed a legitimate posture (`model_timeout_secs`) while promising the
+    launcher would refuse it — and had a key been *removed* from the Rust
+    side, the copy would have kept passing while every run refused at the
+    seam. Same brittleness note as the catalog: the path is a literal here,
+    and a crate move is fixed here.
+    """
+    try:
+        source = _UNKNOWN_RS.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AssertionError(
+            f"cannot read the launcher vocabulary at {_UNKNOWN_RS}: "
+            f"{exc.strerror}. That path is a literal in this file, not a "
+            "resolved crate location — if the crate moved, update "
+            "`_UNKNOWN_RS` to match."
+        ) from exc
+    fields = _parse_rust_str_slice(source, "ENGINE_ROOT_FIELDS")
+    assert fields, "ENGINE_ROOT_FIELDS parsed to zero entries"
+    return fields
 
 
 def _parse_output_ceilings(source: str) -> dict[str, int]:
@@ -1337,3 +1369,52 @@ class TestOutputCeilingParity:
                     "itself away from the comparator by accident."
                 )
         assert checked, "no bookable model was checked — the loop is inert"
+
+
+class TestLauncherVocabularyParity:
+    """#2033: the launcher's root-key vocabulary, read from the authority.
+
+    The same defect class `TestOutputCeilingParity` guards for ceilings: a
+    constant living in two places drifts. The hand-copy this replaced was
+    too NARROW (10 of 20 keys — a legitimate `model_timeout_secs` posture
+    failed the suite while the launcher would have accepted it, costing ten
+    minutes of wrong conclusion while investigating #2021), and nothing
+    prevented it going too WIDE (a key removed from Rust would leave a green
+    suite promising a posture shape every run then refuses at the seam).
+    There is no second copy any more — the parsed set IS the expectation —
+    so the two failure directions collapse into one check: every key a
+    posture emits is in the parsed vocabulary.
+    """
+
+    def test_the_vocabulary_is_readable_and_carries_the_anchors(self) -> None:
+        fields = _engine_root_fields()
+        # Two keys that can never leave: the digest anchor and the roles map.
+        assert "default_model" in fields
+        assert "agents" in fields
+
+    def test_the_parser_reads_literals_not_prose(self) -> None:
+        synthetic = (
+            "/// docs mentioning \"decoy\"\n"
+            'pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[\n'
+            '    "alpha",\n'
+            '    "beta",\n'
+            "];\n"
+        )
+        assert _parse_rust_str_slice(synthetic, "ENGINE_ROOT_FIELDS") == {
+            "alpha",
+            "beta",
+        }
+
+    def test_the_timeout_posture_is_inside_the_launcher_vocabulary(self) -> None:
+        """The witness for the too-wide direction: this posture emits
+        `model_timeout_secs` (the Fable row), so deleting that key from
+        `ENGINE_ROOT_FIELDS` in `unknown.rs` turns this red — where the old
+        hand-copy stayed green while every run refused at the launcher."""
+        posture, _normalized, _digest = _benchmark_engine_posture(
+            "openrouter/anthropic/claude-fable-5"
+        )
+        assert "model_timeout_secs" in posture, (
+            "the Fable posture no longer emits a timeout — this witness needs "
+            "a posture that exercises a key beyond the old 10-key copy"
+        )
+        assert set(posture) <= _engine_root_fields()
