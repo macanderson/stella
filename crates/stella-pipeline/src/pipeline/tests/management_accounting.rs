@@ -88,7 +88,7 @@ async fn late_triage_is_abandoned_and_reported_incomplete() {
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None);
     let mut total = 0.0;
 
-    let class = pipeline
+    let (class, _research) = pipeline
         .triage("What is two plus two?", &mut budget, &mut total)
         .await
         .expect("a missed triage deadline is never a run-ending failure");
@@ -449,6 +449,7 @@ async fn a_late_plan_is_abandoned_and_falls_back_to_the_single_step_plan() {
     let steps = pipeline
         .plan_stage(
             "make the parser stop panicking",
+            &[],
             &[],
             "",
             None,

@@ -588,7 +588,7 @@ export type MediaKind = "image" | "svg" | "video";
  * one-directional change in a way adding an [`AgentEvent`] variant no longer
  * is.
  */
-export type ModelCallRole = "unknown" | "triage" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "verdict" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
+export type ModelCallRole = "unknown" | "triage" | "research" | "plan" | "plan_repair" | "witness_author" | "witness_repair" | "worker" | "distress_guidance" | "verdict" | "agent_author" | "skill_author" | "domain_inference" | "reflection" | "summarization";
 
 /**
  * One flip-oracle observation, in the order the pipeline made it — together
@@ -855,7 +855,7 @@ export interface ScopeProposal {
  * exists in this workspace — never duplicated per-crate (the TS-era
  * `StageKind` duplication this structurally forbids, L-E1).
  */
-export type StageKind = "triage" | "context_recall" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
+export type StageKind = "triage" | "context_recall" | "research" | "plan" | "scope_review" | "witness" | "execute" | "verify" | "verdict" | "reflect" | "context_write" | "complete";
 
 /**
  * One point in a sub-agent's lifecycle. Exactly one `Started` and exactly

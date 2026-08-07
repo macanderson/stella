@@ -2346,6 +2346,11 @@
           "type": "string"
         },
         {
+          "const": "research",
+          "description": "A read-only research sub-agent answering one of triage's pre-plan\nquestions (#1778).",
+          "type": "string"
+        },
+        {
           "const": "plan",
           "description": "Authoring the ordered plan.",
           "type": "string"
@@ -2900,6 +2905,11 @@
         {
           "const": "context_recall",
           "description": "Context recall: the frames the context plane put in front of the model\nbefore it planned anything.",
+          "type": "string"
+        },
+        {
+          "const": "research",
+          "description": "Pre-plan research: triage named questions, and parallel read-only\nsub-agents answer them so the planner names files it has evidence for\nrather than guesses (#1778). Skipped whenever triage named none.",
           "type": "string"
         },
         {

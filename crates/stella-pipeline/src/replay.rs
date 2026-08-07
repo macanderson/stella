@@ -509,20 +509,24 @@ fn stage_rank(stage: StageKind) -> u8 {
     match stage {
         StageKind::Triage => 0,
         StageKind::ContextRecall => 1,
-        StageKind::Plan => 2,
-        StageKind::ScopeReview => 3,
-        StageKind::Execute => 4,
+        // Research is demand-driven pre-plan evidence (#1778): triage names
+        // the questions, so it can only follow triage, and its findings feed
+        // the planner, so it must precede Plan.
+        StageKind::Research => 2,
+        StageKind::Plan => 3,
+        StageKind::ScopeReview => 4,
+        StageKind::Execute => 5,
         // Witness authoring is demand-driven: it runs AFTER execution, once
         // the warrant has read the executed diff and found something to prove
         // (L-E11 front half). The revise back-edges land on Execute below it —
         // re-execution never re-authors.
-        StageKind::Witness => 5,
-        StageKind::Verify => 6,
-        StageKind::Verdict => 7,
+        StageKind::Witness => 6,
+        StageKind::Verify => 7,
+        StageKind::Verdict => 8,
         // Reflect is post-verdict self-reflection, before context write-back.
-        StageKind::Reflect => 8,
-        StageKind::ContextWrite => 9,
-        StageKind::Complete => 10,
+        StageKind::Reflect => 9,
+        StageKind::ContextWrite => 10,
+        StageKind::Complete => 11,
     }
 }
 

@@ -75,6 +75,7 @@ use crate::ports::{
     RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner,
     WorkspaceError,
 };
+use crate::research::ResearchFinding;
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
     needs_scope_review,
@@ -114,10 +115,12 @@ mod fanout_stage;
 mod plan_steps;
 mod raw_usage;
 mod repair_gate;
+mod research_stage;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
 mod task_frame;
+mod triage_stage;
 mod verifier_stage;
 mod verify_probes;
 use verify_probes::DiffProbe;
@@ -272,6 +275,13 @@ pub struct PipelineConfig {
     /// `Stage { ContextRecall }` to say why. Past this, recall degrades to
     /// [`crate::ports::Recall::default`] (no frames) and the turn proceeds.
     pub recall_latency_ceiling: Duration,
+    /// Latency ceiling on each pre-plan research sub-agent (#1778) — the same
+    /// never-wedge contract as [`Self::triage_latency_ceiling`], sized for a
+    /// bounded multi-step read rather than one completion. Children run
+    /// concurrently, so the stage's wall-clock is bounded by one ceiling, not
+    /// one per question; a child past it is cancelled and degrades to a
+    /// missing finding.
+    pub research_latency_ceiling: Duration,
     /// Thresholds above which a plan triggers interactive scope review (L-E5).
     pub scope_thresholds: crate::scope::ScopeThresholds,
     /// Whether this run is headless (no interactive approver available).
@@ -486,6 +496,11 @@ impl Default for PipelineConfig {
             // trip is 100-500ms and the local path is single-digit ms, so
             // this is an order of magnitude above the realistic worst case.
             recall_latency_ceiling: Duration::from_secs(5),
+            // Wider than triage's because a research child is a bounded
+            // multi-step read (up to RESEARCH_MAX_STEPS tool round-trips),
+            // not one completion — but still a hard wall: research past it
+            // degrades to a missing finding, never a wedged turn.
+            research_latency_ceiling: Duration::from_secs(45),
             scope_thresholds: crate::scope::ScopeThresholds::default(),
             headless: false,
             headless_bypass_scope_review: false,
@@ -1023,7 +1038,7 @@ impl<'a> Pipeline<'a> {
                 .await
                 .unwrap_or_default()
         };
-        let (assessment, mut recalled) =
+        let (triaged, mut recalled) =
             tokio::join!(self.triage(goal, budget, &mut total_cost), recall_future);
         // Bounded at the source (#616), so every consumer — the user message,
         // the planner prompt, the witness prompt — inherits one budget, and
@@ -1032,8 +1047,8 @@ impl<'a> Pipeline<'a> {
         // subsequent turn (N candidates × every revision) past the window.
         let frames = bound_recalled_frames(std::mem::take(&mut recalled.frames));
         self.emit_context_recall(&frames, &recalled);
-        let assessment = match assessment {
-            Ok(assessment) => assessment,
+        let (assessment, research_questions) = match triaged {
+            Ok(triaged) => triaged,
             Err(abort) => {
                 return Ok(self.aborted_before_execute(
                     resolve_task_class(None, goal),
@@ -1097,11 +1112,18 @@ impl<'a> Pipeline<'a> {
                 .await;
         }
 
+        // --- 2b. Pre-plan research (#1778): triage named questions, so
+        // parallel read-only sub-agents answer them before the planner runs.
+        // Empty questions skip the stage byte-for-byte (L-E2).
+        let research = self
+            .research_stage(goal, &research_questions, budget, &mut total_cost)
+            .await;
+
         // --- 3+4. Plan, then scope review — one phase, because a reviewer who
         // asks for a different scope sends us back to the planner. -----------
         let plan: Option<Vec<PlanStep>> = if task_class.plans() {
             match self
-                .plan_with_review(goal, &frames, budget, &mut total_cost)
+                .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
                 .await
             {
                 Ok(PlannedScope::Steps(steps)) => Some(steps),
@@ -1319,136 +1341,6 @@ impl<'a> Pipeline<'a> {
         })
     }
 
-    // Stage: triage
-
-    async fn triage(
-        &self,
-        goal: &str,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
-    ) -> Result<TaskAssessment, PipelineBudgetAbort> {
-        self.emit(AgentEvent::Stage {
-            name: StageKind::Triage,
-        });
-        // Deterministic short-circuit, BEFORE the paid call.
-        //
-        // `resolve_conversational` is a disjunction whose first term ignores
-        // the model entirely, so a `true` here with `model_says_chat = false`
-        // means the greeting arm fired — and no triage answer could change the
-        // outcome. Classifying `hi` used to cost a full round-trip plus, on a
-        // wedged provider, up to `triage_latency_ceiling` of dead air, for a
-        // route the module docs already describe as never depending on a model
-        // answer. This is the same assessment the resolution-failure arm below
-        // builds; it just stops paying for it first.
-        if resolve_conversational(false, goal) {
-            return Ok(TaskAssessment {
-                conversational: true,
-                ..TaskAssessment::from_class(resolve_task_class(None, goal))
-            });
-        }
-        let resolved = match self.resolve_provider(Role::Triage) {
-            Ok(r) => r,
-            // Triage resolution failure is soft: fall through to the full path
-            // via the deterministic floor. Never fail the run on triage.
-            // The conversational route is still resolved deterministically here
-            // (`resolve_conversational(false, goal)`) — a bare greeting must
-            // route to chat even when the triage provider can't be resolved,
-            // since it never depends on a model answer.
-            Err(_) => {
-                return Ok(TaskAssessment {
-                    conversational: resolve_conversational(false, goal),
-                    ..TaskAssessment::from_class(resolve_task_class(None, goal))
-                });
-            }
-        };
-        if let Some(fb) = &resolved.fallback {
-            self.emit_fallback(fb);
-        }
-
-        let assessment = match self
-            .metered_raw_call(
-                RawCall {
-                    role: ModelCallRole::Triage,
-                    resolved: &resolved,
-                    messages: triage_prompt(goal, &self.repo.structure_summary().await)
-                        .into_messages(),
-                    policy: RetryPolicy::deterministic(),
-                    overrides: &self.config.role_overrides.triage,
-                    timeout: Some(self.config.triage_latency_ceiling),
-                },
-                budget,
-                total,
-            )
-            .await
-        {
-            Ok(result) => parse_triage_response(&result.text),
-            Err(RawCallError::Budget(abort)) => return Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => None,
-        };
-        // The class still goes through `resolve_task_class` so a failed or
-        // unparseable triage lands on the deterministic floor exactly as
-        // before; a real assessment keeps its own assurance flags.
-        // Resolve the conversational route once, up front: it must hold even
-        // when the triage model call failed/was unparseable (the `None` arm),
-        // because a bare greeting is deterministic and should never depend on a
-        // model answer. `resolve_conversational` also applies the floor veto to
-        // an over-eager model `chat` — a goal with real task signal is work.
-        //
-        // A headless run never routes to chat on the model's opinion: its goal
-        // arrived from a script, a CI job, or a benchmark harness, so there is
-        // nobody chatting, and the chat path is terminal no-work — a misroute
-        // there silently drops the task with no revision possible. The
-        // deterministic greeting arm above stays (`stella run "thanks"` is
-        // still not a task); only the model's say is withheld.
-        let model_says_chat =
-            !self.config.headless && assessment.map(|a| a.conversational).unwrap_or(false);
-        let conversational = resolve_conversational(model_says_chat, goal);
-        // The witness decision is resolved here for the same reason as the
-        // conversational one: it must hold even when the triage call failed or
-        // was unparseable. `resolve_witness` is the deterministic *ceiling* —
-        // the mirror of the floor above, and the only thing allowed to move
-        // assurance down. It fires on one shape (a bare deletion of a named
-        // artifact) where an authored witness has nothing to fail against and
-        // the author can only invent something vacuous.
-        let resolved = match assessment {
-            Some(assessment) => {
-                let class = resolve_task_class(Some(assessment.class), goal);
-                TaskAssessment {
-                    class,
-                    conversational,
-                    require_witness: Some(resolve_witness(assessment.require_witness, class, goal)),
-                    ..assessment
-                }
-            }
-            None => {
-                let class = resolve_task_class(None, goal);
-                TaskAssessment {
-                    conversational,
-                    require_witness: Some(resolve_witness(None, class, goal)),
-                    ..TaskAssessment::from_class(class)
-                }
-            }
-        };
-        // The turn's assurance PLAN, published the moment it is decided and
-        // before any later stage can fail, abort, or decline to run.
-        //
-        // Every other proof step reports something that happened, so the most
-        // common outcome by far — triage deciding this change does not warrant
-        // a test — used to produce no steps at all and leave the surface with
-        // nothing to say about the thing it exists to say. A declared plan
-        // makes "we chose not to" a statement rather than an absence.
-        //
-        // Not emitted for a conversational turn: there is no work, so there is
-        // no assurance question, and answering an unasked one is noise.
-        if !resolved.conversational {
-            self.emit_proof(ProofStep::Assurance {
-                witness: resolved.wants_witness(),
-                verifier: resolved.wants_verifier(),
-            });
-        }
-        Ok(resolved)
-    }
-
     // Conversational fast path
 
     /// Answer a non-task (greeting / small talk / meta question) in a single
@@ -1567,6 +1459,7 @@ impl<'a> Pipeline<'a> {
         &self,
         goal: &str,
         recall: &[RecalledFrame],
+        research: &[ResearchFinding],
         repo_structure: &str,
         revision: Option<&str>,
         budget: &mut BudgetGuard,
@@ -1585,7 +1478,7 @@ impl<'a> Pipeline<'a> {
             self.emit_fallback(fb);
         }
 
-        let prompt = build_planner_prompt(goal, recall, repo_structure, revision);
+        let prompt = build_planner_prompt(goal, recall, research, repo_structure, revision);
         // Plan rides the worker's settings (same router tier, same tuning).
         let worker_overrides = RoleCallOverrides::default();
         let result = match self
