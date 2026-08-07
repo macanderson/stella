@@ -296,9 +296,7 @@ impl<'a> Pipeline<'a> {
             self.sleeper,
         )
         .with_call_role(stella_protocol::ModelCallRole::WitnessAuthor);
-        if let Some(gate) = self.turn_gate {
-            engine = engine.with_gate(gate);
-        }
+        engine = self.attach(engine);
 
         let mut messages = vec![
             CompletionMessage::system(WITNESS_SYSTEM_PROMPT),
@@ -412,9 +410,7 @@ impl<'a> Pipeline<'a> {
                 self.sleeper,
             )
             .with_call_role(stella_protocol::ModelCallRole::WitnessRepair);
-            if let Some(gate) = self.turn_gate {
-                repair_engine = repair_engine.with_gate(gate);
-            }
+            repair_engine = self.attach(repair_engine);
             let repaired = match self
                 .run_engine_turn(
                     &repair_engine,
@@ -661,6 +657,14 @@ impl<'a> Pipeline<'a> {
         state
             .oracle
             .observe_run(&witness.command, false, &witness.baseline_output);
+        // Same observed fact, second consumer (#1793). `run_candidate` arms the
+        // mid-turn halt from a configured command whose baseline FAILED; an
+        // authored witness reaches that same precondition here instead, because
+        // it does not exist until after execution. Arming was missing on this
+        // path entirely, so every later revise turn ran to its step/loop caps
+        // even once the witness had flipped — the wall-clock burn
+        // [`crate::flip_halt`]'s module doc measured on Terminal-Bench.
+        state.flip_halt = Some(Arc::new(FlipHalt::new(&witness.command)));
         // The graft added an untracked file after the pre-execution snapshot
         // was taken. Enrolling it as pre-existing keeps every later diff
         // gather (each revision re-gathers) from reading the scaffolding as
