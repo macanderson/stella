@@ -929,15 +929,21 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 // provider resolution, its cwd already pinned to the
                 // record's workspace by the parent's launch.
                 DaemonCmd::Resume { id } if !cli.globals.foreground => {
-                    return daemon::resume_supervised(rt()?, id.as_deref())
+                    return daemon::resume_supervised(rt()?, id.as_deref(), None)
+                        .map(|_| ())
                         .map_err(failure::CliFailure::from);
                 }
                 DaemonCmd::Resume { .. } => {}
                 // The sweep is the parent half N times over — it resolves,
                 // spawns and streams each `daemon resume <id> --foreground`
                 // child — so it stays keyless here for the same reason.
-                DaemonCmd::ResumeAll { dry_run } => {
-                    return daemon::resume_all(*dry_run, rt).map_err(failure::CliFailure::from);
+                DaemonCmd::ResumeAll { dry_run, ceiling } => {
+                    return daemon::resume_all(
+                        *dry_run,
+                        std::time::Duration::from_secs(ceiling.saturating_mul(60)),
+                        rt,
+                    )
+                    .map_err(failure::CliFailure::from);
                 }
                 _ => return daemon::run(cmd).map_err(failure::CliFailure::from),
             }

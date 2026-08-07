@@ -370,11 +370,23 @@ pub(crate) enum DaemonCmd {
     /// touching a run that finished, was stopped, or was set aside. Each run
     /// gets at most three boot-time resumes before it is retired from the
     /// sweep and left for `stella daemon resume <id>` by hand.
+    ///
+    /// The sweep is sequential, so each resumed run is also bounded by a
+    /// wall-clock ceiling: a turn that never ends — a wedged tool, a provider
+    /// that never returns — is stopped gracefully at the ceiling (asked
+    /// first, killed only past the grace period, never mid-tool) so the runs
+    /// behind it still get their resume.
     ResumeAll {
         /// Print the decision for every run and exit without resuming
         /// anything — no process spawned, no budget spent.
         #[arg(long)]
         dry_run: bool,
+
+        /// Minutes one resumed run may take before the sweep stops it
+        /// gracefully and moves on. `stella daemon resume <id>` by hand has
+        /// no ceiling.
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
+        ceiling: u64,
     },
 
     /// Register a stella invocation with the OS's per-user service manager

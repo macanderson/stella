@@ -14,7 +14,7 @@ stella daemon attach [id]
 stella daemon logs [id] [-n LINES]
 stella daemon stop <id>
 stella daemon resume [id]
-stella daemon resume-all [--dry-run]
+stella daemon resume-all [--dry-run] [--ceiling MINUTES]
 stella daemon install [--label NAME] [--keep-alive] -- <stella args…>
 stella daemon install --resume-all [--label NAME]
 stella daemon uninstall <label>
@@ -200,6 +200,14 @@ It prints one line per supervised run, continued or skipped, with the reason:
 Waiting is not failing, so it does not spend one of the three attempts below: a run can wait across any number of reboots and still be resumable the moment you answer it.
 
 **What bounds it.** Each run gets at most **three** boot-time resumes. The count is durable (`~/.stella/services/resume-boot.json`) and is written *before* the resume is spawned, so a run that takes the machine down with it is still charged for the attempt. Past three, the run is retired from the sweep and left for `stella daemon resume <id>` by hand — a human deciding to try again is what the bound exists to require. Runs are resumed one at a time; several turns resuming at once is several models spending at once on a machine nobody is watching.
+
+**What bounds each resume.** The attempt count bounds how many *boots* a run can spend; it does not stop one resumed turn from holding *this* boot forever — a wedged tool, a provider that never returns, a model call retrying without end. So each resumed run also gets a wall-clock ceiling, **30 minutes** unless `--ceiling MINUTES` says otherwise. A run that reaches it is never killed outright — a kill at the ceiling would land mid-edit, which is worse than the stall it fixes. It is stopped exactly the way `stella daemon stop` stops one: asked with `SIGTERM`, given the grace period to abort at a safe boundary and record its own ending, killed only if it ignores that. Then the sweep says so and moves to the next run:
+
+```text
+⚠ ses-1785956826121 — did not finish within the 30-minute ceiling and was stopped at a safe boundary; the sweep continues with the runs behind it — `stella daemon list` shows where this one ended up
+```
+
+The two ways that ends need no new rules. A run that honoured the stop ended deliberately — same as a Ctrl-C — so the next sweep skips it and returns its attempts; it was merely slower than the ceiling, and `stella daemon resume <id>` by hand has no ceiling. A run so wedged it had to be killed keeps its resume point and is swept again next boot — and the attempt it was already charged (a timed-out resume **does** spend one) is exactly what retires it after three, because a run that hits the ceiling every boot is the recurring failure the attempt bound exists to stop.
 
 Everything `resume` says about a resumed turn applies here, including the honest limits above: a turn interrupted mid-pipeline resumes as a plain engine turn and says which stages it is not restoring — into the service console rather than a terminal.
 
