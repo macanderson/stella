@@ -140,9 +140,17 @@ they mean very different things:
     speculation, attachments. The rest of the transcript is still faithful.
   </OptionCard>
   <OptionCard name="!! N block(s) did NOT re-hash">
-    The journal is torn or was altered. Treat the reconstruction as untrustworthy.
+    Nothing routine accounts for these bytes. Treat the reconstruction as untrustworthy.
+  </OptionCard>
+  <OptionCard name="! N block(s) did NOT re-hash … as a matter of course">
+    An older journal, where compaction rewrote a tool result in place without
+    recording the replacement. Ordinary, not a signal.
   </OptionCard>
 </CardGrid>
+
+The last two are the same failure on different journals, and the era each execution
+was written in is recorded rather than guessed — see
+[`stella inspect`](/docs/commands/inspect#reading-the-verification-banner).
 
 ## 5. What changed since the previous call — `--diff`
 
@@ -226,7 +234,7 @@ stella inspect 42 --step 0 --diff --only system --format json |
 
 # Is the reconstruction trustworthy at all?
 stella inspect 42 --step 3 --format json |
-  jq '{verified, unresolved, digest_mismatches}'
+  jq '{verified, unresolved, digest_mismatches, digest_mismatch_severity}'
 ```
 
 ## The other cost question: was it worth it?

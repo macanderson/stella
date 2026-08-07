@@ -115,7 +115,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 
 [`ddl.rs`](src/ddl.rs) says what the shape *is*; [`migrations.rs`](src/migrations.rs)
 says how an existing file *gets there*. A fresh database gets `create_latest_schema`
-in one shot and is stamped at `SCHEMA_VERSION` (`= MIGRATIONS.len()`, 15 today);
+in one shot and is stamped at `SCHEMA_VERSION` (`= MIGRATIONS.len()`, 22 today);
 an existing one runs each pending step. `PRAGMA user_version` 0 is ambiguous — it
 is both "fresh empty file" and "legacy pre-versioning file" — so `Store::migrate`
 disambiguates by probing `TABLES` via `any_store_table_exists`. A file stamped

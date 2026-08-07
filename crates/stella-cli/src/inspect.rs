@@ -1039,6 +1039,81 @@ fn floor_char_boundary(s: &str, limit: usize) -> usize {
 mod tests {
     use super::*;
 
+    /// A reconstruction with one mismatched block, written in the given era.
+    fn mismatched(journal_era: JournalEra) -> Reconstruction {
+        Reconstruction {
+            messages: Vec::new(),
+            unresolved: Vec::new(),
+            digest_mismatches: vec!["blk_res".into()],
+            journal_era,
+        }
+    }
+
+    #[test]
+    fn the_mismatch_banner_reads_differently_in_each_journal_era() {
+        // The CLI half of #1981. Before it, both of these printed the same
+        // benign line — correct for the first, a missed integrity signal for
+        // the second.
+        let legacy = digest_mismatch_line(&mismatched(JournalEra::CompactionUnjournaled))
+            .expect("a mismatch is always reported");
+        let current = digest_mismatch_line(&mismatched(JournalEra::CompactionJournaled))
+            .expect("a mismatch is always reported");
+        assert_ne!(legacy, current);
+        assert!(legacy.starts_with("!  "), "still a warning: {legacy}");
+        assert!(current.starts_with("!! "), "an alarm: {current}");
+        assert!(
+            legacy.contains("as a matter of course"),
+            "the legacy line names compaction as the routine cause: {legacy}"
+        );
+        assert!(
+            current.contains("untrustworthy"),
+            "the current-era line says what to do about it: {current}"
+        );
+        // Both name the block, because a verdict with no subject is not one.
+        assert!(legacy.contains("blk_res") && current.contains("blk_res"));
+    }
+
+    #[test]
+    fn a_clean_reconstruction_prints_no_mismatch_line_in_either_era() {
+        for era in [
+            JournalEra::CompactionUnjournaled,
+            JournalEra::CompactionJournaled,
+        ] {
+            let clean = Reconstruction {
+                messages: Vec::new(),
+                unresolved: Vec::new(),
+                digest_mismatches: Vec::new(),
+                journal_era: era,
+            };
+            assert!(digest_mismatch_line(&clean).is_none());
+            assert_eq!(severity_tag(clean.mismatch_severity()), "none");
+        }
+    }
+
+    #[test]
+    fn the_json_verdict_words_match_the_observatorys() {
+        // The dashboard emits these same three words for the same payload and
+        // links no store crate, so the two spellings are pinned by a test on
+        // each side (`crates/stella-observatory/tests/journal_era.rs`) rather
+        // than by a shared type. If one moves, one of the two fails.
+        assert_eq!(
+            severity_tag(mismatched(JournalEra::CompactionUnjournaled).mismatch_severity()),
+            "compaction"
+        );
+        assert_eq!(
+            severity_tag(mismatched(JournalEra::CompactionJournaled).mismatch_severity()),
+            "integrity"
+        );
+        assert_eq!(
+            era_tag(JournalEra::CompactionUnjournaled),
+            "compaction_unjournaled"
+        );
+        assert_eq!(
+            era_tag(JournalEra::CompactionJournaled),
+            "compaction_journaled"
+        );
+    }
+
     #[test]
     fn truncate_counts_characters_not_bytes() {
         assert_eq!(truncate("abc", 8), "abc");
