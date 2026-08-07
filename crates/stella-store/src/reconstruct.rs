@@ -14,9 +14,13 @@
 //!
 //! A mismatch is a statement about *these bytes*, not about anyone's motives.
 //! The common cause is mundane: compaction rewrites tool results in place, and
-//! until a rewrite is journaled the only preimage under that `call_id` is the
-//! pre-compaction one, so replay recovers a real output that is simply not the
-//! one this step sent. Reporting that as tampering would be both wrong and
+//! on a journal written before rewrites were journaled (#1667) the only
+//! preimage under that `call_id` is the pre-compaction one, so replay recovers
+//! a real output that is simply not the one this step sent. Journals written
+//! since carry each replacement on the `Compaction` event, and a compacted
+//! block resolves by digest to the exact bytes — so on a current journal a
+//! mismatch is back to meaning something is genuinely unaccounted for.
+//! Reporting the legacy case as tampering would be both wrong and
 //! self-defeating — an alarm that fires on routine housekeeping is an alarm
 //! nobody reads.
 //!
@@ -90,6 +94,11 @@ pub(crate) struct JournalPreimages {
     tool_outputs: HashMap<String, ToolOutput>,
     /// `content_digest` ("sha256:<hex>") → the assistant text bytes.
     text_by_digest: HashMap<String, String>,
+    /// `content_digest` ("sha256:<hex>") → the serialized post-rewrite tool
+    /// output a compaction pass journaled (#1667). Consulted before the
+    /// `call_id` fallback: a compacted block's digest resolves here exactly,
+    /// where the `call_id` route can only reach the pre-compaction bytes.
+    rewrites_by_digest: HashMap<String, String>,
 }
 
 impl Store {
@@ -185,7 +194,8 @@ pub(crate) fn journal_preimages(
     let payloads: Vec<String> = {
         let mut stmt = conn.prepare(
             "SELECT payload FROM events \
-             WHERE execution_id = ?1 AND event_type IN ('tool_start', 'tool_result', 'text') \
+             WHERE execution_id = ?1 \
+               AND event_type IN ('tool_start', 'tool_result', 'text', 'compaction') \
              ORDER BY seq ASC",
         )?;
         let rows = stmt.query_map(params![execution_id], |row| row.get::<_, String>(0))?;
@@ -208,6 +218,12 @@ pub(crate) fn journal_preimages(
             AgentEvent::Text { text } => {
                 out.text_by_digest
                     .insert(format!("sha256:{}", sha256_hex(&text)), text);
+            }
+            AgentEvent::Compaction { rewrites, .. } => {
+                for rewrite in rewrites {
+                    out.rewrites_by_digest
+                        .insert(rewrite.content_digest, rewrite.content);
+                }
             }
             _ => {}
         }
@@ -257,6 +273,14 @@ pub(crate) fn resolve_content(
     }
     match block.kind.as_str() {
         "tool_result" => {
+            // Digest-keyed first (#1667): a compacted block's journaled
+            // replacement is the exact preimage, while the `call_id` route
+            // below reaches only the original `tool_result` event — the right
+            // bytes for an untouched block, the pre-compaction bytes (a digest
+            // mismatch) for a rewritten one.
+            if let Some(content) = preimages.rewrites_by_digest.get(&block.content_digest) {
+                return Some(content.clone());
+            }
             let call_id = block.call_id.as_ref()?;
             let output = preimages.tool_outputs.get(call_id)?;
             serde_json::to_string(output).ok()
@@ -530,6 +554,101 @@ mod tests {
         );
         // Byte-exact via PartialEq (order-independent for ToolCall.input Value).
         assert_eq!(recon.messages, original);
+    }
+
+    #[test]
+    fn a_compacted_result_reconstructs_to_the_bytes_the_model_received() {
+        // The witness for #1667. A tool result was journaled, then compaction
+        // rewrote it in place and journaled the replacement on its Compaction
+        // event. A step AFTER the rewrite cites the post-compaction block, so
+        // its reconstruction must show the stub the model actually received —
+        // resolved by digest and verified — not the pre-compaction output the
+        // `call_id` route reaches (which is what the pre-#1667 fallback
+        // produced, as a digest mismatch).
+        let original = ToolOutput::Ok {
+            content: "a".repeat(4_000),
+        };
+        let stubbed = ToolOutput::Ok {
+            content: "[tool output evicted to fit context]".into(),
+        };
+        let stubbed_json = serde_json::to_string(&stubbed).unwrap();
+
+        let store = Store::in_memory().unwrap();
+        let id = store.begin_execution("run", "p", "z", "m").unwrap();
+        store
+            .record_event(
+                id,
+                0,
+                &AgentEvent::ToolResult {
+                    call_id: "c1".into(),
+                    output: original,
+                    duration_ms: 5,
+                    speculated: false,
+                },
+            )
+            .unwrap();
+        store
+            .record_event(
+                id,
+                1,
+                &AgentEvent::Compaction {
+                    before_tokens: 1_200,
+                    after_tokens: 40,
+                    evicted: 1,
+                    deduped: 0,
+                    superseded: 0,
+                    aged: 0,
+                    summarized: 0,
+                    evicted_blocks: vec!["blk_pre".into()],
+                    deduped_blocks: vec![],
+                    superseded_blocks: vec![],
+                    aged_blocks: vec![],
+                    summarized_blocks: vec![],
+                    rewrites: vec![stella_protocol::CompactionRewrite {
+                        block_id: "blk_post".into(),
+                        content_digest: digest(&stubbed_json),
+                        content: stubbed_json.clone(),
+                    }],
+                    effective_budget_tokens: 100,
+                    calibration_factor: 1.0,
+                },
+            )
+            .unwrap();
+        store
+            .record_context_block(
+                id,
+                &journal("blk_post", "tool_result", Some("c1"), &stubbed_json),
+            )
+            .unwrap();
+        store
+            .record_step_manifest(
+                id,
+                &StepManifestRow {
+                    turn_instance: 0,
+                    step: 2,
+                    call_seq: 0,
+                    provider: "z".into(),
+                    model: "m".into(),
+                    call_role: "worker".into(),
+                    effective_budget_tokens: 100,
+                    calibration_factor: 1.0,
+                    estimated_input_tokens: 10,
+                    compiled_frame_id: None,
+                    frame_hash: None,
+                    blocks: vec![entry("blk_post", 0)],
+                },
+            )
+            .unwrap();
+
+        let recon = store.reconstruct_worker_step(id, 0, 2).unwrap();
+        assert!(
+            recon.is_verified(),
+            "the journaled rewrite must resolve by digest: unresolved={:?} mismatches={:?}",
+            recon.unresolved,
+            recon.digest_mismatches
+        );
+        assert_eq!(recon.messages.len(), 1);
+        assert_eq!(recon.messages[0].tool_results[0].output, stubbed);
     }
 
     #[test]

@@ -296,9 +296,7 @@ impl<'a> Pipeline<'a> {
             self.sleeper,
         )
         .with_call_role(stella_protocol::ModelCallRole::WitnessAuthor);
-        if let Some(gate) = self.turn_gate {
-            engine = engine.with_gate(gate);
-        }
+        engine = self.attach(engine);
 
         let mut messages = vec![
             CompletionMessage::system(WITNESS_SYSTEM_PROMPT),
@@ -412,9 +410,7 @@ impl<'a> Pipeline<'a> {
                 self.sleeper,
             )
             .with_call_role(stella_protocol::ModelCallRole::WitnessRepair);
-            if let Some(gate) = self.turn_gate {
-                repair_engine = repair_engine.with_gate(gate);
-            }
+            repair_engine = self.attach(repair_engine);
             let repaired = match self
                 .run_engine_turn(
                     &repair_engine,

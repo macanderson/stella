@@ -965,6 +965,7 @@ mod tests {
                 superseded_blocks: vec![],
                 aged_blocks: vec![],
                 summarized_blocks: vec![],
+                rewrites: vec![],
                 effective_budget_tokens: 0,
                 calibration_factor: 0.0,
             },

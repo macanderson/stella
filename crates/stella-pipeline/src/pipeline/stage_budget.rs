@@ -16,6 +16,11 @@ use crate::triage::TaskClass;
 /// mutation must land there — an owned copy would need a write-back on each
 /// of `run`'s early returns, and one missed return is a silently vanished
 /// spend.
+///
+/// A signature still threading the loose pair adopts this the next time it
+/// gains an input: `plan_stage` did so when #1778's `research` argument pushed
+/// the loose form past clippy's arity limit. The bundle is the fix rather than
+/// an `#[allow]` precisely because the pair was never two things.
 pub(super) struct Spend<'a> {
     /// Gates each paid call; consulted between model calls only (invariant #6).
     pub(super) budget: &'a mut BudgetGuard,
