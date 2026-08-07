@@ -228,6 +228,62 @@ class TestLaunchRefusal:
         assert MatchSpec.from_json({"name": "m", "dataset": "d"}).sut_ref == "main"
 
 
+class TestACommitPinSurvivesAMovingBranch:
+    """Why a finished build pins its own commit rather than the branch.
+
+    Observed while building this: a release cross-compile of Stella took 40
+    minutes, and ``origin/main`` moved 10 commits while it ran. On a repo that
+    active, "the binary must equal origin/main" is unsatisfiable by
+    construction — the build is slower than the interval between merges.
+
+    The fix is emphatically *not* to loosen the check; a tolerance is how the
+    291-commit drift survived in the first place. It is that a branch is how
+    you reach for something fresh, and the commit it resolved to is what you
+    actually ran and must record.
+    """
+
+    def _stage(self, commit: str) -> None:
+        directory = sut.sut_root() / commit
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "stella").write_text("#!/bin/sh\n")
+        (directory / "sut_commit.txt").write_text(commit)
+        (directory / "binary_sha256.txt").write_text("deadbeef")
+
+    def test_a_commit_pin_stays_ready_when_the_branch_moves_on(self, repo: Path):
+        built = _git(repo, "rev-parse", "origin/main")
+        self._stage(built)
+        assert sut.sut_status(built)["ready"]
+
+        # The branch advances, exactly as it does mid-build.
+        origin = repo.parent / "origin"
+        (origin / "a.txt").write_text("four")
+        _git(origin, "commit", "-qam", "fourth")
+        _git(repo, "fetch", "-q", "origin")
+
+        assert sut.sut_status(built)["ready"], (
+            "a commit pin names a fixed artifact; a branch moving cannot "
+            "invalidate what was already built and measured"
+        )
+        assert not sut.sut_status("main")["ready"], (
+            "the branch pin must go unready, or the guard would be tolerating "
+            "exactly the drift it exists to catch"
+        )
+
+    def test_a_commit_pin_is_recorded_verbatim(self, repo: Path):
+        built = _git(repo, "rev-parse", "origin/main")
+        spec = MatchSpec.from_json(
+            {
+                "name": "m",
+                "dataset": "d",
+                "sut_ref": built,
+                "contestants": [
+                    {"name": "s", "agent": "stella", "engine": {"model": "m"}}
+                ],
+            }
+        )
+        assert spec.sut_ref == built
+
+
 class TestProvenanceRecordsTheSut:
     """A result set that cannot name its SUT is not comparable to another."""
 

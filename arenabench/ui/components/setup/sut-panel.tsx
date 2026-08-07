@@ -69,14 +69,20 @@ export function SutPanel({
         setBuild(next);
         if (next.done) {
           setBusy(false);
-          if (next.status === "done") refresh(sutRef);
+          // Pin the commit that was *built*, not the branch it came from.
+          // A release cross-compile takes longer than the interval between
+          // merges on an active repo — measured here, `origin/main` moved 10
+          // commits during a 40-minute build — so a match that re-resolved
+          // the branch at launch could never be satisfied. Branch is how you
+          // reach for something fresh; the commit is what you actually ran.
+          if (next.status === "done" && next.commit) onChangeRef(next.commit);
         }
       } catch {
         /* a dropped poll is not a failed build; the next tick retries */
       }
     }, 3000);
     return () => clearInterval(timer);
-  }, [build, sutRef, refresh]);
+  }, [build, onChangeRef]);
 
   const startBuild = React.useCallback(async () => {
     setError(null);
@@ -86,16 +92,20 @@ export function SutPanel({
       setBuild(started);
       if (started.done) {
         setBusy(false);
-        if (started.status === "done") refresh(sutRef);
+        if (started.status === "done" && started.commit) onChangeRef(started.commit);
       }
     } catch (err) {
       setError(String(err));
       setBusy(false);
     }
-  }, [sutRef, refresh]);
+  }, [sutRef, onChangeRef]);
 
   const pinned = sutRef !== "";
   const ready = pinned && !!status?.ready;
+  /** A pin that is an exact commit rather than a branch name. */
+  const pinnedCommit = /^[0-9a-f]{40}$/.test(sutRef);
+  /** Which branch the pinned commit was built from, when this session built it. */
+  const buildRef = build?.commit === sutRef ? build?.ref : "";
 
   return (
     <div className="flex flex-col gap-3">
@@ -109,6 +119,16 @@ export function SutPanel({
           onChange={(event) => onChangeRef(event.target.value)}
           className="min-w-[240px] rounded-[7px] border border-line bg-panel px-2 py-1.5 font-mono text-[12px]"
         >
+          {/* A pin can be an exact commit rather than a branch — that is what
+              a finished build leaves behind. Without an option carrying that
+              value the select renders blank and looks unset, which is the one
+              thing this panel must never do. */}
+          {pinnedCommit && (
+            <option value={sutRef}>
+              commit {sutRef.slice(0, 8)}
+              {buildRef ? ` (built from ${buildRef})` : ""}
+            </option>
+          )}
           {branches.map((branch) => (
             <option key={branch.ref} value={branch.name}>
               {branch.name}
