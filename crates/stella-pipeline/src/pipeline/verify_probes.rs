@@ -544,3 +544,66 @@ fn patch_body(raw: &str) -> String {
         .unwrap_or_default()
         .to_string()
 }
+
+#[cfg(test)]
+mod patch_body_tests {
+    use super::patch_body;
+
+    /// Exactly what `git diff --no-index -- /dev/null <path>` prints for a
+    /// newly created text file.
+    const CREATED: &str = "diff --git a/dev/null b/regex.txt\n\
+                           new file mode 100644\n\
+                           index 0000000..9f2c1d3\n\
+                           --- /dev/null\n\
+                           +++ b/regex.txt\n\
+                           @@ -0,0 +1,2 @@\n\
+                           +^\\d{4}-\\d{2}-\\d{2}$\n\
+                           +second line\n";
+
+    #[test]
+    fn the_content_survives() {
+        let body = patch_body(CREATED);
+        assert!(body.starts_with("@@ -0,0 +1,2 @@"), "{body}");
+        assert!(body.contains("+^\\d{4}-\\d{2}-\\d{2}$"), "{body}");
+        assert!(body.contains("+second line"), "{body}");
+    }
+
+    /// The restriction that keeps this change from also relaxing the warrant:
+    /// no `+++ `/`--- ` line may survive, because
+    /// [`crate::witness::warrant::changed_paths`] reads those as the set of
+    /// paths a change touched, and the marker line already names this one.
+    #[test]
+    fn no_header_survives_for_changed_paths_to_read() {
+        let body = patch_body(CREATED);
+        assert!(
+            crate::witness::warrant::changed_paths(&body).is_empty(),
+            "the body named a path to the warrant: {body}"
+        );
+        for line in body.lines() {
+            assert!(!line.starts_with("+++ "), "{line}");
+            assert!(!line.starts_with("--- "), "{line}");
+            assert!(!line.starts_with("diff --git"), "{line}");
+        }
+    }
+
+    /// A database sidecar is the case that must never spill bytes into a
+    /// prompt — git says so itself, and that sentence is the evidence.
+    #[test]
+    fn binary_content_is_reported_but_never_rendered() {
+        let raw = "diff --git a/dev/null b/.stella/private/store.db\n\
+                   Binary files /dev/null and b/.stella/private/store.db differ\n";
+        assert_eq!(
+            patch_body(raw),
+            "Binary files /dev/null and b/.stella/private/store.db differ"
+        );
+    }
+
+    /// A probe that failed, or a host with no patch channel, contributes
+    /// nothing rather than a fragment. The marker line above it still states
+    /// the file changed.
+    #[test]
+    fn an_unreadable_probe_contributes_nothing() {
+        assert_eq!(patch_body(""), "");
+        assert_eq!(patch_body("fatal: not a git repository\n"), "");
+    }
+}

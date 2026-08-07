@@ -328,10 +328,6 @@ pub(super) struct ScriptedRunner {
     pub(super) diff: String,
     /// Untracked files this workspace reports, as `(path, added_lines)`.
     untracked: Vec<(String, u32)>,
-    /// Content the `UntrackedPatch` probe serves, as `(path, file_body)`. A
-    /// path absent here answers with an empty probe, which is the shape a
-    /// host with no patch channel produces.
-    untracked_content: Vec<(String, String)>,
     /// What a failing run prints. Configurable so a test can plant a
     /// distinctive token and assert on where it does — and does not — travel.
     failure_tail: String,
@@ -369,7 +365,6 @@ impl ScriptedRunner {
             test_runs: std::sync::atomic::AtomicU32::new(0),
             diff: diff.to_string(),
             untracked: Vec::new(),
-            untracked_content: Vec::new(),
             failure_tail: "test failed".to_string(),
             diff_exit_code: 0,
             diff_stderr: String::new(),
@@ -406,17 +401,6 @@ impl ScriptedRunner {
             .collect();
         self
     }
-    /// Script what the `UntrackedPatch` probe reads back for these paths, as
-    /// `(path, file_body)`. The runner wraps each body in the same header
-    /// preamble real `git diff --no-index` emits, so a test exercises the
-    /// stripping too rather than a pre-cleaned string.
-    pub(super) fn with_untracked_content(mut self, content: Vec<(&str, &str)>) -> Self {
-        self.untracked_content = content
-            .into_iter()
-            .map(|(p, body)| (p.to_string(), body.to_string()))
-            .collect();
-        self
-    }
     /// #1539: script the availability probe — only these programs report
     /// usable. An empty vec models a workspace with no toolchain at all.
     pub(super) fn with_available_runners(mut self, programs: Vec<&str>) -> Self {
@@ -427,31 +411,6 @@ impl ScriptedRunner {
 #[async_trait]
 impl DiagnosticRunner for ScriptedRunner {
     async fn run_diagnostic(&self, invocation: &DiagnosticInvocation) -> CmdOutcome {
-        if let DiagnosticInvocation::UntrackedPatch { path } = invocation {
-            // Real `git diff --no-index -- /dev/null <path>` output: the
-            // header preamble the pipeline must strip, then the hunk.
-            let patch = self
-                .untracked_content
-                .iter()
-                .find(|(candidate, _)| candidate == path)
-                .map(|(p, body)| {
-                    let lines = body.lines().count();
-                    let added: String =
-                        body.lines().map(|l| format!("+{l}\n")).collect::<String>();
-                    format!(
-                        "diff --git a/dev/null b/{p}\nnew file mode 100644\n\
-                         index 0000000..1111111\n--- /dev/null\n+++ b/{p}\n\
-                         @@ -0,0 +1,{lines} @@\n{added}"
-                    )
-                })
-                .unwrap_or_default();
-            return CmdOutcome {
-                exit_code: if patch.is_empty() { 0 } else { 1 },
-                stdout_tail: patch,
-                stderr_tail: String::new(),
-                kind: CmdKind::Completed,
-            };
-        }
         if let DiagnosticInvocation::UntrackedNumstat { path } = invocation {
             let numstat = self
                 .untracked

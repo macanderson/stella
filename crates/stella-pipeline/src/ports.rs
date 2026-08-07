@@ -554,7 +554,9 @@ impl CmdOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagnosticInvocation {
     GitDiff,
-    UntrackedNumstat { path: String },
+    UntrackedNumstat {
+        path: String,
+    },
     /// The full patch for one untracked file — its *content*, not just its
     /// shape.
     ///
@@ -570,7 +572,9 @@ pub enum DiagnosticInvocation {
     /// Git renders binary content as `Binary files ... differ`, so the bytes
     /// of a database sidecar or a compiled artifact can never reach a prompt
     /// through here.
-    UntrackedPatch { path: String },
+    UntrackedPatch {
+        path: String,
+    },
 }
 
 #[async_trait]
