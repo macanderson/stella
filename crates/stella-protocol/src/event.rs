@@ -206,60 +206,9 @@ pub enum PolicyKind {
     SecretDetected,
 }
 
-/// Concrete purpose of one provider call. This is more precise than the
-/// router's tier role: repair and guidance calls must remain distinguishable
-/// in the paid-call ledger even when they share a provider/model.
-///
-/// This vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]
-/// is the `serde(default)` for an *absent* `role`, not a `serde(other)`
-/// catch-all for an unrecognized one. A role token this build has never seen
-/// fails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —
-/// because a known `"type"` with a body that does not fit stays a hard error by
-/// design (see the module docs). Adding a variant here is therefore a
-/// one-directional change in a way adding an [`AgentEvent`] variant no longer
-/// is.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum ModelCallRole {
-    /// Legacy events written before call-role attribution existed. The default
-    /// for an absent `role` field only — an unrecognized one is an error.
-    #[default]
-    Unknown,
-    /// Prompt classification and tier routing.
-    Triage,
-    /// A read-only research sub-agent answering one of triage's pre-plan
-    /// questions (#1778).
-    Research,
-    /// Authoring the ordered plan.
-    Plan,
-    /// Re-authoring a plan the parser or the scope gate rejected.
-    PlanRepair,
-    /// Writing the witness test that arms the flip oracle.
-    WitnessAuthor,
-    /// Fixing a witness that did not fail on the current code.
-    WitnessRepair,
-    /// The tool-calling loop that actually changes the workspace.
-    Worker,
-    /// Course-correction handed to a worker that is looping or stuck.
-    DistressGuidance,
-    /// The verifier's verdict call, on inconclusive deterministic evidence.
-    ///
-    /// Aliased: this call role shipped as `judge`, so every recorded model
-    /// call in every stored session names it that way.
-    #[serde(alias = "judge")]
-    Verdict,
-    /// Generating an agent definition.
-    AgentAuthor,
-    /// Generating a skill definition.
-    SkillAuthor,
-    /// Inferring the workspace's domains, for memory tagging and recall.
-    DomainInference,
-    /// Post-turn self-reflection writing improvement memories.
-    Reflection,
-    /// The overflow summarizer that replaces a history span with a summary.
-    Summarization,
-}
+mod call_role;
+
+pub use call_role::ModelCallRole;
 
 /// Content-free reason a provider attempt cannot contribute a truthful usage
 /// envelope. Error bodies and prompts are deliberately unrepresentable.

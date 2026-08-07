@@ -32,28 +32,6 @@ use crate::verify::{guidance_prompt, verifier_prompt};
 /// refuses any role that does not open with it.
 const SHARED_MANAGEMENT_PREAMBLE: &str = "";
 
-/// Every [`ModelCallRole`] the crate can dispatch, for enumerating the
-/// family. Completeness is not compiler-checked here — that job belongs to
-/// the exhaustive match in [`management_system_block`], which forces a new
-/// variant to declare its prefix posture before this array matters.
-const ALL_ROLES: [ModelCallRole; 15] = [
-    ModelCallRole::Unknown,
-    ModelCallRole::Triage,
-    ModelCallRole::Plan,
-    ModelCallRole::PlanRepair,
-    ModelCallRole::WitnessAuthor,
-    ModelCallRole::WitnessRepair,
-    ModelCallRole::Worker,
-    ModelCallRole::DistressGuidance,
-    ModelCallRole::Verdict,
-    ModelCallRole::AgentAuthor,
-    ModelCallRole::SkillAuthor,
-    ModelCallRole::DomainInference,
-    ModelCallRole::Reflection,
-    ModelCallRole::Summarization,
-    ModelCallRole::Research,
-];
-
 /// The system block a role dispatches through the management chokepoint
 /// (`metered_raw_call`), or `None` where the role sends no system message.
 ///
@@ -99,9 +77,15 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
 }
 
 /// The `(role, system block)` pairs for every role that carries one.
+///
+/// Enumerates [`ModelCallRole::ALL`] rather than a local array: the family
+/// this witness claims to cover is the enum's, and a hand-listed copy that
+/// silently missed a variant would make the parity check below pass while
+/// testing fewer roles than it names (#1977).
 fn management_system_blocks() -> Vec<(ModelCallRole, String)> {
-    ALL_ROLES
-        .into_iter()
+    ModelCallRole::ALL
+        .iter()
+        .copied()
         .filter_map(|role| management_system_block(role).map(|block| (role, block)))
         .collect()
 }
