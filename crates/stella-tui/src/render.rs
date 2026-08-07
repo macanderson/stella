@@ -25,7 +25,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use crate::composer::SlashMenu;
-use crate::model::{AskUserPrompt, FileState, Hud, InlineDiffRef};
+use crate::model::{AskUserPrompt, FileState, Hud, InlineDiffRef, OpenPark};
 use crate::textline::{self, budget_mode_label, stage_label};
 
 mod entry;
@@ -69,7 +69,21 @@ pub(crate) const HUD_H: u16 = 3;
 /// statline's own meter row, not here. They were briefly duplicated in this
 /// box as a second set of gauges; two renderings of the same four numbers, in
 /// two different bar glyphs, on one frame is worse than either alone.
-pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
+///
+/// `parked` is the live parked-wait chip (#2007): the open wait and how long
+/// it has been running, from [`crate::deck::AgentEntry::live_park`]. It belongs
+/// on this box rather than in the transcript because it is *current state*, and
+/// a transcript is a log of things that happened — the ⏳ row already written
+/// to scrollback must keep reading as history after the wake, not freeze
+/// holding a counter that stopped. The elapsed arrives as a plain number so
+/// this stays a pure function of its arguments: it reads no clock, which is
+/// also what lets a golden frame pin it.
+pub(crate) fn render_hud(
+    hud: &Hud,
+    parked: Option<(&OpenPark, u64)>,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     let label = Style::new().fg(theme::TEXT_TERTIARY);
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled("stage ", label),
@@ -105,6 +119,29 @@ pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
             Style::new().fg(theme::OK).add_modifier(Modifier::BOLD),
         ));
     }
+    // The live park, when there is one. Elapsed against the deadline is the
+    // whole point: the transcript row states the *budget* ("up to 1800s") and
+    // then sits motionless for half an hour, so a park that started ten
+    // seconds ago and one twenty-nine minutes into its deadline used to read
+    // identically — and a genuinely wedged engine read like both.
+    if let Some((park, elapsed_ms)) = parked {
+        spans.push(Span::styled(
+            "   ⏳ parked ",
+            Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(
+                "{} / {}",
+                clock_ms(elapsed_ms),
+                clock_ms(park.deadline_secs.saturating_mul(1000))
+            ),
+            Style::new().fg(theme::ACCENT),
+        ));
+        spans.push(Span::styled(
+            format!(" · {}", park_subject(&park.description)),
+            label,
+        ));
+    }
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::rule())
@@ -112,6 +149,39 @@ pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
     Paragraph::new(Line::from(spans))
         .block(block)
         .render(area, buf);
+}
+
+/// `M:SS`, minutes growing past two digits, rolling to `H:MM:SS` past an hour
+/// — the parked-wait chip's clock.
+///
+/// Both halves of the chip render through this so elapsed and deadline are
+/// always comparable at a glance; a `4:12 / 30:00` where the two sides used
+/// different units would be worse than no countdown at all.
+fn clock_ms(ms: u64) -> String {
+    let secs = ms / 1000;
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// The park's subject, capped for a single-line stat box.
+///
+/// The full description already sits one row away in the transcript's ⏳ entry,
+/// so this only has to say *which* wait is running; a tool free to write a
+/// paragraph must not be able to push the clock off the box.
+fn park_subject(description: &str) -> String {
+    const MAX: usize = 40;
+    let flat = description.replace(['\n', '\r'], " ");
+    let flat = flat.trim();
+    if flat.chars().count() <= MAX {
+        flat.to_string()
+    } else {
+        let head: String = flat.chars().take(MAX - 1).collect();
+        format!("{head}…")
+    }
 }
 
 /// [`render_transcript`] for a caller that already materialized just the

@@ -555,11 +555,69 @@ pub struct TurnTally {
     /// operator can tell "the client is gone" from "the turn was quiet".
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub frames_dropped: u64,
+
+    /// Parked waits this turn opened (`AgentEvent::TurnParked`, #1471/#1857).
+    ///
+    /// This is the field that keeps [`Self::stages`] honest. A parked turn
+    /// stops advancing stages **on purpose** — it is probing external state on
+    /// the engine's own clock, with zero model calls, until the state changes
+    /// or the deadline expires. Without this count a host reading a
+    /// stages-stall cannot tell a deliberate wait from a hang, which is the
+    /// one question the tally exists to answer (#2006).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub parked_spans: u32,
+    /// Parked waits that closed with an `AgentEvent::TurnWoken`.
+    ///
+    /// Deliberately counted apart from [`Self::parked_spans`] rather than
+    /// assumed equal to it: the engine's park loop returns early — without a
+    /// wake — when the turn is cancelled or a soft stop is latched
+    /// (`stella-core::driver::waiting`). So a turn can settle with a span
+    /// still open, and "ended while parked" is a different diagnosis from
+    /// "parked and resumed". See [`Self::ended_parked`].
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub parked_spans_woken: u32,
+    /// Engine-side probes spent while parked, summed from
+    /// `AgentEvent::TurnWoken.polls_used`.
+    ///
+    /// The park's own progress axis — the direct analogue of [`Self::stages`]
+    /// for a turn that is deliberately making no stage progress. A park whose
+    /// probes are climbing is working; one at zero probes woke immediately.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub parked_polls: u64,
+    /// Seconds this turn was *licensed* to sit still — the sum of every
+    /// span's `AgentEvent::TurnParked.deadline_secs`.
+    ///
+    /// The duration half of the wedged-versus-waiting question, and the only
+    /// honest one this fold can produce: it counts, it does not read a clock,
+    /// so elapsed park time is not available here. A 30-minute stall under a
+    /// 1800s licence is the wait working as designed; the same stall with
+    /// this at zero is a hang.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub parked_deadline_secs: u64,
+}
+
+impl TurnTally {
+    /// Whether the turn settled with a parked wait still open — a span that
+    /// never saw its `TurnWoken` because the turn was cancelled or soft-stopped
+    /// out of the park.
+    ///
+    /// The distinction a host wants when `stages` has not moved: `true` means
+    /// the turn ended *in* the wait, `false` with [`Self::parked_spans`]
+    /// non-zero means it waited and came back.
+    pub fn ended_parked(&self) -> bool {
+        self.parked_spans > self.parked_spans_woken
+    }
 }
 
 /// `skip_serializing_if` for a counter that is zero on every healthy turn —
 /// keeps the common record byte-identical to before this field existed.
 fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
+}
+
+/// [`is_zero_u64`]'s twin for the `u32` counters — same contract: a turn that
+/// never parked serializes exactly as it did before park accounting existed.
+fn is_zero_u32(n: &u32) -> bool {
     *n == 0
 }
 
@@ -902,6 +960,13 @@ mod tests {
                     speculation_discarded: 1,
                     loop_detections: 0,
                     frames_dropped: 0,
+                    // Non-zero so the round trip actually exercises the park
+                    // counters: their `skip_serializing_if` means a zeroed
+                    // tally would prove nothing about them.
+                    parked_spans: 2,
+                    parked_spans_woken: 1,
+                    parked_polls: 37,
+                    parked_deadline_secs: 2400,
                 },
             },
         ];
