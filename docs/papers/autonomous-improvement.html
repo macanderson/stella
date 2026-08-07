@@ -1,0 +1,1332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stella — autonomous improvement · the model refinery</title>
+<style>
+  /* ── stella brand tokens (docs/brand/css/tokens.css, inlined) ─────────── */
+  :root{
+    --gold:#FFB000; --gold-deep:#A37200; --gold-300:#FCD07D; --gold-900:#523900; --gold-950:#2E1F00;
+    --ink:#0B0B0C; --panel:#131214; --panel-2:#18161A; --line:#2C2A2E; --line-soft:#232125;
+    --paper:#F4F1EA; --mut:#A29F98; --dim:#736C68; --red:#E5484D;
+    --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --track:0.14em;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--ink); color:var(--paper); font-family:var(--mono);
+    font-size:15px; line-height:1.68; -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(1200px 600px at 80% -10%, rgba(255,176,0,0.05), transparent 60%),
+      repeating-linear-gradient(0deg, rgba(244,241,234,0.018) 0 1px, transparent 1px 44px),
+      repeating-linear-gradient(90deg, rgba(244,241,234,0.018) 0 1px, transparent 1px 44px);
+  }
+  .wrap{max-width:960px;margin:0 auto;padding:0 28px}
+  a{color:var(--gold-300);text-decoration:none;border-bottom:1px solid rgba(252,208,125,.3)}
+  a:hover{color:var(--gold)}
+  p{margin:0 0 1.05em}
+  strong{color:#fff;font-weight:700}
+  em{font-style:italic;color:var(--gold-300)}
+  code{font-family:var(--mono);font-size:.9em;background:var(--panel-2);border:1px solid var(--line-soft);
+       border-radius:4px;padding:.08em .38em;color:var(--gold-300);white-space:nowrap}
+  ul,ol{margin:0 0 1.05em 1.35em}
+  li{margin:.3em 0}
+  li::marker{color:var(--gold-deep)}
+
+  /* ── masthead ── */
+  header{padding:84px 0 30px;border-bottom:1px solid var(--line)}
+  .overline{color:var(--gold);letter-spacing:var(--track);text-transform:uppercase;
+            font-size:12px;font-weight:500;margin-bottom:18px}
+  .overline .dim{color:var(--dim)}
+  h1{font-size:clamp(34px,6vw,52px);line-height:1.08;letter-spacing:-0.02em;font-weight:800;margin:0 0 14px}
+  h1 .gold{color:var(--gold)}
+  .sub{color:var(--mut);font-size:16px;max-width:62ch;margin-bottom:26px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:11.5px;letter-spacing:.06em;color:var(--mut);border:1px solid var(--line);
+        border-radius:999px;padding:4px 12px;background:rgba(19,18,20,.7)}
+  .chip b{color:var(--gold-300);font-weight:500}
+
+  /* ── sections ── */
+  section{padding:54px 0 10px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:20px}
+  .sec-num{color:var(--gold);font-size:12px;letter-spacing:var(--track);font-weight:500;white-space:nowrap}
+  h2{font-size:clamp(21px,3.4vw,27px);letter-spacing:-0.015em;font-weight:700;line-height:1.2}
+  h3{font-size:16px;font-weight:700;margin:1.9em 0 .65em;color:#fff}
+  h3 .tick{color:var(--gold);margin-right:.5em}
+  h4{font-size:13.5px;font-weight:700;margin:1.5em 0 .5em;color:var(--gold-300);
+     letter-spacing:.04em;text-transform:uppercase}
+  .lede{font-size:16px;color:var(--paper)}
+  .muted{color:var(--mut)}
+  .small{font-size:13px;color:var(--mut)}
+  .hr{border:0;border-top:1px solid var(--line);margin:44px 0 0}
+
+  /* ── callouts ── */
+  .principle{border-left:3px solid var(--gold);background:linear-gradient(90deg,rgba(255,176,0,.07),rgba(255,176,0,0) 70%);
+             padding:14px 20px;margin:1.4em 0;border-radius:0 8px 8px 0}
+  .principle .k{color:var(--gold);font-size:11.5px;letter-spacing:var(--track);text-transform:uppercase;
+                display:block;margin-bottom:6px;font-weight:500}
+  .principle p{margin:0;color:#fff}
+  .warn{border-left:3px solid var(--red)}
+  .warn .k{color:var(--red)}
+
+  /* ── cards ── */
+  .grid{display:grid;gap:14px;margin:1.4em 0}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .g4{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 20px 16px}
+  .card .tag{font-size:11px;letter-spacing:var(--track);text-transform:uppercase;color:var(--gold);
+             font-weight:500;display:block;margin-bottom:8px}
+  .card h5{font-size:16px;font-weight:700;margin-bottom:8px;color:#fff}
+  .card p{font-size:13.5px;color:var(--mut);margin-bottom:.6em}
+  .card .q{color:var(--gold-300);font-size:13px;font-style:italic}
+  .kv{display:flex;gap:10px;font-size:12.5px;margin-top:10px;flex-wrap:wrap}
+  .kv span{border:1px solid var(--line-soft);border-radius:5px;padding:2px 8px;color:var(--mut)}
+  .kv span b{color:var(--paper);font-weight:500}
+
+  /* ── tables ── */
+  table{width:100%;border-collapse:collapse;margin:1.3em 0;font-size:13.5px}
+  th{color:var(--gold);text-align:left;font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;
+     font-weight:500;padding:9px 12px;border-bottom:1px solid var(--line)}
+  td{padding:10px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--paper)}
+  td.m{color:var(--mut)}
+  tr:hover td{background:rgba(255,176,0,.025)}
+  .tbl{overflow-x:auto;margin:1.3em 0}
+  .tbl table{margin:0;min-width:640px}
+
+  /* ── diagrams ── */
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+           padding:22px 18px;margin:1.6em 0;overflow-x:auto}
+  .diagram figcaption{font-size:12px;color:var(--dim);margin-top:12px;padding:0 6px}
+  svg{display:block;min-width:640px;width:100%;height:auto}
+  svg text{font-family:var(--mono)}
+
+  /* ── golden path steps ── */
+  .steps{counter-reset:step;margin:1.4em 0}
+  .step{display:grid;grid-template-columns:52px 1fr;gap:16px;padding:18px 0;border-bottom:1px solid var(--line-soft)}
+  .step:last-child{border-bottom:0}
+  .step .n{counter-increment:step;color:var(--gold);font-weight:800;font-size:22px}
+  .step .n::before{content:"0" counter(step)}
+  .step h5{font-size:15px;font-weight:700;margin-bottom:5px;color:#fff}
+  .step p{font-size:13.5px;color:var(--mut);margin:0 0 .4em}
+  .step .under{font-size:12.5px;color:var(--dim)}
+  .step .under b{color:var(--gold-deep);font-weight:500}
+
+  /* ── delta card mock ── */
+  .term{background:#0E0D0F;border:1px solid var(--line);border-radius:12px;margin:1.5em 0;overflow:hidden}
+  .term-bar{display:flex;gap:6px;align-items:center;background:var(--panel-2);
+            border-bottom:1px solid var(--line-soft);padding:9px 14px;font-size:11.5px;color:var(--dim);
+            letter-spacing:.08em;text-transform:uppercase}
+  .term-bar i{width:9px;height:9px;border-radius:50%;background:var(--line);display:inline-block}
+  .term-bar i.g{background:var(--gold)}
+  .term-body{padding:18px 20px;font-size:13px;line-height:1.75;color:var(--paper);white-space:pre-wrap}
+  .term-body .c{color:var(--dim)} .term-body .g{color:var(--gold)} .term-body .ok{color:var(--gold-300)}
+  .term-body .r{color:var(--red)}
+
+  /* ── req list ── */
+  .req{display:grid;grid-template-columns:64px 1fr;gap:14px;padding:16px 0;border-bottom:1px solid var(--line-soft)}
+  .req:last-child{border-bottom:0}
+  .req .id{color:var(--gold);font-weight:700;font-size:14px}
+  .req h5{font-size:14.5px;font-weight:700;color:#fff;margin-bottom:4px}
+  .req p{font-size:13.5px;color:var(--mut);margin:0 0 .35em}
+  .req .acc{font-size:12.5px;color:var(--dim)}
+  .req .acc b{color:var(--gold-deep);font-weight:500}
+
+  /* ── toc ── */
+  nav.toc{margin:34px 0 8px;columns:2;column-gap:40px;font-size:13px}
+  nav.toc a{display:block;color:var(--mut);border-bottom:0;padding:3.5px 0}
+  nav.toc a:hover{color:var(--gold)}
+  nav.toc a b{color:var(--gold-deep);font-weight:500;margin-right:9px}
+  @media (max-width:640px){nav.toc{columns:1}}
+
+  footer{padding:56px 0 80px;color:var(--dim);font-size:12.5px}
+  footer .star{color:var(--gold)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="overline">oxagen × stella <span class="dim">· design document · draft 0.1 · 2026-08-07</span></div>
+    <h1>Autonomous<br>Improvement <span class="gold">★</span></h1>
+    <p class="sub">The Model Refinery: an always-on training loop that turns an organization's own
+    Stella traces into a private model that gets measurably better at that organization's work —
+    proven by benchmark before a single session sees it.</p>
+    <div class="chips">
+      <span class="chip">mandate <b>build-training-data-loop-from-stella-traces</b></span>
+      <span class="chip">pillar <b>Model Refinery</b> · 1 of 4</span>
+      <span class="chip">status <b>proposal — not yet an issue set</b></span>
+    </div>
+
+    <nav class="toc">
+      <a href="#thesis"><b>§00</b> Thesis</a>
+      <a href="#language"><b>§01</b> The language of self-improvement</a>
+      <a href="#tenancy"><b>§02</b> Org, workspace, workspace group</a>
+      <a href="#reqs"><b>§03</b> Requirements</a>
+      <a href="#arch"><b>§04</b> Architecture — one loop, six planes</a>
+      <a href="#traces"><b>§05</b> The trace pipeline</a>
+      <a href="#refinery"><b>§06</b> The Refinery — training design</a>
+      <a href="#proving"><b>§07</b> The Proving Ground</a>
+      <a href="#shipping"><b>§08</b> Shipping weights</a>
+      <a href="#golden"><b>§09</b> The golden path</a>
+      <a href="#governance"><b>§10</b> Governance &amp; the zero-egress contract</a>
+      <a href="#felt"><b>§11</b> Felt improvement</a>
+      <a href="#clocks"><b>§12</b> Two clocks — how “never again” really works</a>
+      <a href="#risks"><b>§13</b> Risks &amp; open questions</a>
+      <a href="#phasing"><b>§14</b> Phasing</a>
+      <a href="#appendix"><b>§15</b> Appendix — naming &amp; brief notes</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ═══════════════════════════ §00 THESIS ═══════════════════════════ -->
+<section id="thesis"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 00</span><h2>Thesis</h2></div>
+
+  <p class="lede">Stella already refuses to call a task done without a witness — a test that fails
+  on the old code and passes on the new. <strong>Autonomous Improvement extends that contract from
+  the code Stella writes to Stella itself.</strong> The agent gets better at your work,
+  continuously and unattended, and every claim of improvement is backed by a benchmark run you can
+  replay.</p>
+
+  <div class="principle">
+    <span class="k">The contract, one level up</span>
+    <p>Verified improved, not claimed improved. New weights ship only after they survive a
+    gauntlet the incumbent already survived — and every production failure becomes a permanent
+    fixture the next model must pass.</p>
+  </div>
+
+  <p>The user experience has to be brutally simple, and everything in this document is subordinate
+  to that:</p>
+
+  <div class="principle">
+    <span class="k">The golden path</span>
+    <p>Log in to Oxagen. Pick a workspace. Download Stella. Work. No terminal, no config, no
+    copy-paste — and from that point forward the model behind the agent is being trained on that
+    workspace group's own traces, proven against its own benchmarks, and shipped back without
+    anyone operating anything.</p>
+  </div>
+
+  <p><strong>Scope.</strong> This paper covers one pillar of the self-improvement story: the
+  <em>Model Refinery</em> — org-scoped model training from Stella traces. The Skill Academy, the
+  Tool Foundry, the Memory Distillery, and the knowledge graph (the Atlas) complete the story and
+  are treated here only where they interlock with training (§01, §12). Each deserves its own
+  paper of this depth.</p>
+
+  <p><strong>Posture.</strong> Stella stays free, AGPL, and fully functional with no Oxagen
+  anywhere in sight. Everything Oxagen-facing in this design is an adapter behind a port and an
+  open, published protocol — the same discipline as invariant #1 (<em>ports, not concretions</em>).
+  Oxagen Cloud and Oxagen Enterprise are two deployments of the same server-side planes; the
+  client cannot tell them apart.</p>
+</div></section>
+
+<!-- ═══════════════════════════ §01 LANGUAGE ═══════════════════════════ -->
+<section id="language"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 01</span><h2>The language of self-improvement</h2></div>
+
+  <p class="lede">An agent improves along four distinct axes, and conflating them is how
+  self-improvement stories turn to mush. Give each axis a name, a product, a clock, and a verb —
+  then never let one borrow another's claims.</p>
+
+  <div class="grid g4">
+    <div class="card">
+      <span class="tag">pillar 1</span>
+      <h5>Skill Academy</h5>
+      <p>Learns <strong>method</strong> — the procedures that work here. Recurring lessons from
+      reflection graduate into skills: codified, reviewable curriculum.</p>
+      <p class="q">“How is this done here?”</p>
+      <div class="kv"><span>asset <b>skills</b></span><span>clock <b>hours–days</b></span><span>verb <b>teach</b></span></div>
+    </div>
+    <div class="card">
+      <span class="tag">pillar 2</span>
+      <h5>Tool Foundry</h5>
+      <p>Learns <strong>capability</strong> — what the agent can reach for. Awkward, repeated
+      workflows get forged into new tools: authored, tested, registered.</p>
+      <p class="q">“What can I reach for?”</p>
+      <div class="kv"><span>asset <b>tools</b></span><span>clock <b>days</b></span><span>verb <b>forge</b></span></div>
+    </div>
+    <div class="card">
+      <span class="tag">pillar 3 · this paper</span>
+      <h5>Model Refinery</h5>
+      <p>Learns <strong>judgment</strong> — what the agent reaches for first, without being told.
+      The group's traces are refined into weights: instinct, versioned and provable.</p>
+      <p class="q">“What do I reach for first?”</p>
+      <div class="kv"><span>asset <b>weights</b></span><span>clock <b>continuous</b></span><span>verb <b>refine</b></span></div>
+    </div>
+    <div class="card">
+      <span class="tag">pillar 4</span>
+      <h5>Memory Distillery</h5>
+      <p>Learns <strong>doctrine</strong> — what is true and required here. Raw episodic memory is
+      mined, distilled, and promoted into standing directives and facts.</p>
+      <p class="q">“What is true and required here?”</p>
+      <div class="kv"><span>asset <b>directives</b></span><span>clock <b>minutes</b></span><span>verb <b>distill</b></span></div>
+    </div>
+  </div>
+
+  <p>On your naming question: keep <strong>memory mining</strong> as the verb for the first stage —
+  it is exactly right for extraction — and name the pillar the <strong>Memory Distillery</strong>.
+  The pipeline reads naturally: <em>memories are mined, lessons are distilled, directives are
+  promoted</em>. The product of the pillar is <strong>doctrine</strong> — the standing rules and
+  facts a session loads before it starts. “Directive building” is the promotion step, not the
+  pillar.</p>
+
+  <p>Likewise, <strong>Model Tuning</strong> undersells the pillar — tuning is a knob; this is a
+  refinery. <strong>Model Refinery</strong> keeps the industrial register of Foundry and
+  Distillery: crude traces in, refined weights out, continuously. (Alternatives considered in
+  §15.)</p>
+
+  <h3><span class="tick">▸</span>What the pillars stand on</h3>
+
+  <p>Four pillars are not the whole language. Three more names complete it — and two of them
+  answer your “am I missing anything?” directly:</p>
+
+  <div class="grid g2">
+    <div class="card">
+      <span class="tag">the foundation</span>
+      <h5>The Proving Ground</h5>
+      <p>Benchmarks, scars, and proof gates — Harbor tasks, workspace-authored datasets, and every
+      regression fixture a failure ever left behind. <strong>Nothing any pillar produces ships on a
+      claim; it ships on an assay run here.</strong> This is the missing fifth element in most
+      pillar lists, and it is the one that makes the other four honest.</p>
+    </div>
+    <div class="card">
+      <span class="tag">the substrate</span>
+      <h5>The Trace Lake</h5>
+      <p>The org-scoped store of consented execution traces — the ore every pillar refines.
+      One substrate, four refinements: the Academy reads it for method, the Foundry for friction,
+      the Refinery for judgment, the Distillery for doctrine.</p>
+    </div>
+    <div class="card">
+      <span class="tag">the map</span>
+      <h5>The Atlas</h5>
+      <p>Each workspace's code graph and ontology — the model of the product its repositories
+      represent. You said the knowledge graph “completes the story”: give it this seat and this
+      name. Pillars learn <em>from experience</em>; the Atlas orients that learning
+      <em>in the territory</em>.</p>
+    </div>
+    <div class="card">
+      <span class="tag">the summary</span>
+      <h5>One sentence</h5>
+      <p class="q">“Traces are the ore. Four pillars refine it — method, capability, judgment,
+      doctrine. The Atlas is the map. The Proving Ground is where every refinement is assayed
+      before it ships.”</p>
+    </div>
+  </div>
+
+  <h3><span class="tick">▸</span>What else you're missing — the disciplines</h3>
+
+  <p>Pillars are <em>what learns</em>. Around them sit four disciplines — <em>what keeps learning
+  honest</em>. None of these is in your list yet, and each one is a real product surface:</p>
+
+  <div class="tbl"><table>
+    <tr><th>Discipline</th><th>The question</th><th>Without it</th></tr>
+    <tr><td><strong>Orchestration</strong></td>
+        <td class="m">Which learned asset answers, when? Which pipeline roles run the custom model,
+        which skills load, which directives apply?</td>
+        <td class="m">Pillars compete; a directive contradicts a skill; the tuned model grades its
+        own homework (§06).</td></tr>
+    <tr><td><strong>Pruning</strong></td>
+        <td class="m">How do stale skills, dead directives, and drifted weights get retired?</td>
+        <td class="m">A system that never forgets accumulates contradictions — doctrine bloats, the
+        prompt prefix grows, cache stability dies.</td></tr>
+    <tr><td><strong>Attribution</strong></td>
+        <td class="m">When weights, skills, and doctrine all changed this week, which one earned
+        the delta? (The Improvement Ledger + ablation runs, §11.)</td>
+        <td class="m">You can't tell the Refinery from placebo — and you'll fund the wrong
+        pillar.</td></tr>
+    <tr><td><strong>Governance</strong></td>
+        <td class="m">Who consented to what leaving which machine, and who can revoke it? (The
+        Trace Charter, §10.)</td>
+        <td class="m">The whole flywheel is one privacy incident away from shutdown.</td></tr>
+  </table></div>
+
+  <div class="principle">
+    <span class="k">The full lexicon in one line</span>
+    <p>Four pillars (Academy · Foundry · Refinery · Distillery), one foundation (the Proving
+    Ground), one substrate (the Trace Lake), one map (the Atlas), four disciplines
+    (orchestration · pruning · attribution · governance). One loop.</p>
+  </div>
+
+  <h3><span class="tick">▸</span>Working vocabulary</h3>
+  <div class="tbl"><table>
+    <tr><th>Term</th><th>Meaning</th></tr>
+    <tr><td><code>trace</code></td><td class="m">The full journal of one execution at
+      <code>stella-events.jsonl</code> fidelity — prompts, tool calls, outcomes, cost. Ground
+      truth, never a projection.</td></tr>
+    <tr><td><code>workspace group</code></td><td class="m">A curated list of workspaces whose
+      traces pool into one training corpus. <strong>A group produces a model.</strong></td></tr>
+    <tr><td><code>candidate / incumbent</code></td><td class="m">Weights under test / weights in
+      service for a group.</td></tr>
+    <tr><td><code>gauntlet</code></td><td class="m">The full benchmark battery a candidate must
+      survive: scar suite + workspace suite + general suite.</td></tr>
+    <tr><td><code>scar</code></td><td class="m">A permanent regression fixture distilled from a
+      production failure. Scars never expire; rollbacks don't remove them.</td></tr>
+    <tr><td><code>proof gate</code></td><td class="m">The promotion rule: scars 100%, workspace
+      suite improved with confidence, general suite held.</td></tr>
+    <tr><td><code>promotion</code></td><td class="m">Flipping a group's serving alias to a
+      candidate that passed its gates.</td></tr>
+    <tr><td><code>Trace Charter</code></td><td class="m">The signed org document that authorizes
+      trace export — scoped, revocable, visible in-product (§10).</td></tr>
+    <tr><td><code>Uplink</code></td><td class="m">The open-source companion process installed with
+      Stella that enrolls the device, syncs managed config, and ships consented traces.</td></tr>
+    <tr><td><code>managed pack</code></td><td class="m">A versioned, schema'd configuration bundle
+      Oxagen ships per client — the home of every per-client toggle.</td></tr>
+    <tr><td><code>delta card</code></td><td class="m">The human-readable record of one promotion:
+      what changed, what it proved, how to feel it (§11).</td></tr>
+  </table></div>
+</div></section>
+
+<!-- ═══════════════════════════ §02 TENANCY ═══════════════════════════ -->
+<section id="tenancy"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 02</span><h2>Org, workspace, workspace group</h2></div>
+
+  <p class="lede">A workspace grows a graph. A workspace group grows a model.</p>
+
+  <div class="tbl"><table>
+    <tr><th>Entity</th><th>Owns</th><th>Boundary it draws</th></tr>
+    <tr><td><strong>Org</strong></td>
+        <td class="m">Identity, billing, governance, the Trace Charter.</td>
+        <td class="m">The tenancy wall. <strong>Nothing crosses it — no traces, no weights, no
+        pooling, ever.</strong> One org's experience never trains another org's model.</td></tr>
+    <tr><td><strong>Workspace</strong></td>
+        <td class="m">The Atlas (code graph + ontology) for one product surface; its repositories;
+        its benchmark datasets; its enrolled devices.</td>
+        <td class="m">What a Stella client connects to. The unit of consent scoping and of
+        benchmark authorship.</td></tr>
+    <tr><td><strong>Workspace group</strong></td>
+        <td class="m">The training corpus (union of member workspaces' consented traces), the
+        model lineage, the serving alias, the gauntlet history.</td>
+        <td class="m">The unit of model identity. Models are addressed
+        <code>oxagen/&lt;org&gt;/&lt;group&gt;@&lt;channel&gt;</code>.</td></tr>
+  </table></div>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 920 320" role="img" aria-label="Org contains workspaces; groups pool workspaces into models">
+      <!-- org box -->
+      <rect x="10" y="14" width="620" height="292" rx="14" fill="none" stroke="#2C2A2E"/>
+      <text x="34" y="44" fill="#736C68" font-size="12" letter-spacing="3">ORG · ACME</text>
+      <!-- workspaces -->
+      <g>
+        <rect x="40" y="66" width="170" height="104" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="56" y="94" fill="#F4F1EA" font-size="13" font-weight="700">workspace</text>
+        <text x="56" y="112" fill="#A29F98" font-size="12">payments</text>
+        <text x="56" y="146" fill="#A37200" font-size="11">⬡ atlas · repos · benches</text>
+      </g>
+      <g>
+        <rect x="240" y="66" width="170" height="104" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="256" y="94" fill="#F4F1EA" font-size="13" font-weight="700">workspace</text>
+        <text x="256" y="112" fill="#A29F98" font-size="12">ledger</text>
+        <text x="256" y="146" fill="#A37200" font-size="11">⬡ atlas · repos · benches</text>
+      </g>
+      <g>
+        <rect x="440" y="66" width="170" height="104" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="456" y="94" fill="#F4F1EA" font-size="13" font-weight="700">workspace</text>
+        <text x="456" y="112" fill="#A29F98" font-size="12">mobile-app</text>
+        <text x="456" y="146" fill="#A37200" font-size="11">⬡ atlas · repos · benches</text>
+      </g>
+      <!-- group brackets -->
+      <path d="M40 196 h370" stroke="#FFB000" stroke-width="1.5"/>
+      <path d="M40 196 v-10 M410 196 v-10" stroke="#FFB000" stroke-width="1.5"/>
+      <text x="46" y="218" fill="#FFB000" font-size="12" letter-spacing="2">GROUP · FINTECH-CORE</text>
+      <path d="M440 236 h170" stroke="#FCD07D" stroke-width="1.5"/>
+      <path d="M440 236 v-50 M610 236 v-50" stroke="#FCD07D" stroke-width="1.5" fill="none"/>
+      <text x="446" y="258" fill="#FCD07D" font-size="12" letter-spacing="2">GROUP · CLIENT-APPS</text>
+      <!-- models -->
+      <g>
+        <path d="M416 214 h190" stroke="#FFB000" stroke-width="1.5" marker-end="url(#arr)"/>
+        <rect x="660" y="176" width="236" height="62" rx="10" fill="#18161A" stroke="#FFB000"/>
+        <text x="678" y="202" fill="#FFB000" font-size="13" font-weight="700">acme/fintech-core@stable</text>
+        <text x="678" y="222" fill="#A29F98" font-size="11.5">one corpus → one model</text>
+      </g>
+      <g>
+        <path d="M616 254 h56 v14" stroke="#FCD07D" stroke-width="1.5" fill="none" marker-end="url(#arr2)"/>
+        <rect x="660" y="262" width="236" height="44" rx="10" fill="#18161A" stroke="#FCD07D"/>
+        <text x="678" y="289" fill="#FCD07D" font-size="13" font-weight="700">acme/client-apps@stable</text>
+      </g>
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#FFB000"/></marker>
+        <marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#FCD07D"/></marker>
+      </defs>
+    </svg>
+    <figcaption>A workspace group is just a list of workspaces — but it is the corpus boundary,
+    the model identity, and the privacy zone, all at once.</figcaption>
+  </figure>
+
+  <h3><span class="tick">▸</span>Why groups, and the rules that keep them simple</h3>
+  <ul>
+    <li><strong>Why not per-org models?</strong> An org may want separate models per product
+    family — different domains, different vocabularies, different privacy zones. Pooling a fintech
+    backend with a marketing site pollutes both.</li>
+    <li><strong>Why not per-workspace models?</strong> A single workspace rarely generates enough
+    trace volume to train on. Groups pool related work until the corpus clears the volume floor
+    (§06).</li>
+    <li><strong>Membership rules.</strong> A workspace may <em>feed</em> many groups (its traces
+    can join several corpora), but each workspace names exactly <strong>one serving group</strong>
+    — the model its enrolled clients resolve. One knob, no routing table.</li>
+    <li><strong>Groups are org-internal only.</strong> There is no cross-org group. A future
+    opt-in “commons” corpus is explicitly out of scope for this design.</li>
+  </ul>
+</div></section>
+
+<!-- ═══════════════════════════ §03 REQUIREMENTS ═══════════════════════════ -->
+<section id="reqs"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 03</span><h2>Requirements, restated</h2></div>
+
+  <p class="lede">Your must-haves, proof-read and sharpened into testable commitments. Each one
+  names its acceptance criterion — the witness-test habit, applied to a product brief.</p>
+
+  <div class="req"><div class="id">R1</div><div>
+    <h5>Free and open, no strings</h5>
+    <p>Stella ships free under AGPL-3.0 with no build-time or runtime dependency on proprietary
+    software. Every Oxagen touchpoint is an open protocol behind a port; the Uplink is an
+    open-source crate in this repository.</p>
+    <p class="acc"><b>accept:</b> the community build compiles, runs, and passes its gate with
+    every Oxagen endpoint absent; <code>deny.toml</code> unchanged.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R2</div><div>
+    <h5>Authenticated trace export to a shared workspace</h5>
+    <p>An enrolled Stella authenticates itself (device identity, not pasted keys) and streams its
+    execution traces to the workspace it belongs to — durably, with a per-device cursor, surviving
+    offline gaps.</p>
+    <p class="acc"><b>accept:</b> pull the network mid-session; traces arrive complete after
+    reconnect, exactly once.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R3</div><div>
+    <h5>Zero-terminal onboarding</h5>
+    <p>Anyone who can log into an Oxagen workspace can download an install package that connects
+    Stella back to that workspace — no terminal opened, no config copied, ever (§09).</p>
+    <p class="acc"><b>accept:</b> a fresh laptop reaches a working custom-model session with zero
+    shell commands and zero pasted strings.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R4</div><div>
+    <h5>Managed third-party configuration</h5>
+    <p>Oxagen ships per-client configuration packs — schema'd, versioned, editable client by
+    client in the workspace UI (the “collect traces from this client” checkbox lives here) — and
+    Stella applies them through its existing org-managed settings scope (§10).</p>
+    <p class="acc"><b>accept:</b> flipping a pack field in the UI changes enrolled clients'
+    behavior on their next session, with no client-side action.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R5</div><div>
+    <h5>Custom models from Oxagen Cloud or Enterprise</h5>
+    <p>Stella runs group models served by Oxagen Cloud or an on-prem Oxagen Enterprise
+    identically — <code>oxagen</code> is one more provider adapter with declared cache and
+    reasoning postures and named witness tests, per invariant #8.</p>
+    <p class="acc"><b>accept:</b> the parity matrix has an <code>oxagen</code> row on every axis;
+    swapping Cloud for Enterprise is a base-URL change in a managed pack.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R6</div><div>
+    <h5>Self-clone benchmarking</h5>
+    <p>Stella clones itself into hermetic sandboxes and runs the gauntlet against candidate
+    weights — fleet fan-out, repeats per task, trace-level adjudication (§07).</p>
+    <p class="acc"><b>accept:</b> a gauntlet verdict is reproducible from its stored traces alone;
+    surface signals are never the evidence.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R7</div><div>
+    <h5>Workspace-defined benchmarks</h5>
+    <p>Benchmark tasks come from Harbor <em>and</em> from datasets any customer curates inside
+    their workspace. Whatever benchmarks the connected workspace holds, Stella can run.</p>
+    <p class="acc"><b>accept:</b> a task authored in the workspace UI appears in the next
+    gauntlet with no release of anything.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R8</div><div>
+    <h5>Always-on training, disruption-free deploys</h5>
+    <p>The training pipeline never stops. Candidates that clear their proof gates deploy
+    seamlessly: sessions pin weights at start, new sessions get the new model, nothing restarts
+    (§08).</p>
+    <p class="acc"><b>accept:</b> a promotion during an active session changes nothing in that
+    session and everything in the next.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R9</div><div>
+    <h5>Never again</h5>
+    <p>A procedure that fails once must not fail the same way twice. Where the world makes
+    error-free repetition impossible, a marked, measured improvement must be demonstrated
+    instead. Delivered as a layered guarantee: doctrine today, scar immediately, weights within
+    days (§12).</p>
+    <p class="acc"><b>accept:</b> every production failure has a scar within one day, and no
+    candidate that fails a scar ever ships.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R10</div><div>
+    <h5>Versioned, roll-backable models</h5>
+    <p>Every model version records its full lineage — base, adapter, dataset snapshot hash,
+    recipe, gauntlet report, parent. Rollback is an alias flip, instant and boring.</p>
+    <p class="acc"><b>accept:</b> rollback completes in seconds, and the scars stay.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R11</div><div>
+    <h5>Autonomous operation</h5>
+    <p>No human in the loop to <em>operate</em> — training, proving, promotion, canary, and
+    rollback all run themselves. Autonomy is graduated, not assumed: the human promotion gate
+    retires only after the proof gates have caught every bad candidate for a defined streak
+    (§14).</p>
+    <p class="acc"><b>accept:</b> thirty unattended days with promotions occurring and zero human
+    interventions.</p>
+  </div></div>
+
+  <div class="req"><div class="id">R12</div><div>
+    <h5>Felt improvement</h5>
+    <p>Improvement must be provable with benchmark data and telemetry — and legible enough to be
+    <em>felt</em>. Every promotion publishes a delta card a developer actually reads (§11).</p>
+    <p class="acc"><b>accept:</b> a developer can answer “what got better this month, and how do
+    you know?” from the feed alone.</p>
+  </div></div>
+</div></section>
+
+<!-- ═══════════════════════════ §04 ARCHITECTURE ═══════════════════════════ -->
+<section id="arch"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 04</span><h2>Architecture — one loop, six planes</h2></div>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 920 230" role="img" aria-label="The improvement loop: work, trace, curate, train, prove, ship, back to work">
+      <defs>
+        <marker id="fa" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#736C68"/></marker>
+        <marker id="fg" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#FFB000"/></marker>
+      </defs>
+      <!-- nodes -->
+      <g font-size="13" font-weight="700">
+        <rect x="14"  y="60" width="128" height="66" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="36" y="88" fill="#F4F1EA">WORK</text>
+        <text x="36" y="108" fill="#736C68" font-size="10.5" font-weight="400">every session</text>
+
+        <rect x="168" y="60" width="128" height="66" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="190" y="88" fill="#F4F1EA">TRACE</text>
+        <text x="190" y="108" fill="#736C68" font-size="10.5" font-weight="400">consent · redact</text>
+
+        <rect x="322" y="60" width="128" height="66" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="344" y="88" fill="#F4F1EA">CURATE</text>
+        <text x="344" y="108" fill="#736C68" font-size="10.5" font-weight="400">label · snapshot</text>
+
+        <rect x="476" y="60" width="128" height="66" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="498" y="88" fill="#F4F1EA">TRAIN</text>
+        <text x="498" y="108" fill="#736C68" font-size="10.5" font-weight="400">always on</text>
+
+        <rect x="630" y="60" width="128" height="66" rx="10" fill="#18161A" stroke="#FFB000" stroke-width="1.5"/>
+        <text x="652" y="88" fill="#FFB000">PROVE</text>
+        <text x="652" y="108" fill="#A37200" font-size="10.5" font-weight="400">the gauntlet</text>
+
+        <rect x="784" y="60" width="122" height="66" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="806" y="88" fill="#F4F1EA">SHIP</text>
+        <text x="806" y="108" fill="#736C68" font-size="10.5" font-weight="400">alias flip</text>
+      </g>
+      <!-- forward arrows -->
+      <g stroke="#736C68" stroke-width="1.5">
+        <path d="M142 93 h20" marker-end="url(#fa)"/>
+        <path d="M296 93 h20" marker-end="url(#fa)"/>
+        <path d="M450 93 h20" marker-end="url(#fa)"/>
+        <path d="M604 93 h20" marker-end="url(#fa)"/>
+        <path d="M758 93 h20" marker-end="url(#fa)"/>
+      </g>
+      <!-- return arc -->
+      <path d="M845 126 v46 a10 10 0 0 1 -10 10 H88 a10 10 0 0 1 -10 -10 v-40"
+            fill="none" stroke="#FFB000" stroke-width="1.5" marker-end="url(#fg)"/>
+      <text x="330" y="204" fill="#FFB000" font-size="11.5" letter-spacing="2">NEXT SESSION RUNS ON BETTER WEIGHTS</text>
+      <!-- fail edge -->
+      <path d="M694 126 v28" stroke="#E5484D" stroke-width="1.2" stroke-dasharray="4 3"/>
+      <text x="640" y="170" fill="#E5484D" font-size="10.5">fails a gate → rejected, ledgered</text>
+    </svg>
+    <figcaption>The flywheel. Every station is autonomous; the only human verbs anywhere are
+    “log in”, “download”, and “work”.</figcaption>
+  </figure>
+
+  <h3><span class="tick">▸</span>Six planes</h3>
+  <div class="tbl"><table>
+    <tr><th>Plane</th><th>Lives</th><th>Contents</th></tr>
+    <tr><td><strong>Client</strong></td><td class="m">developer machine · AGPL</td>
+        <td class="m">Stella + the <strong>Uplink</strong>, a small companion process (launchd /
+        systemd user agent) installed by the workspace package. It enrolls the device, refreshes
+        managed config, and ships consented traces. Stella sees it only through ports:
+        <code>TraceExporter</code>, <code>ManagedConfigSource</code>, and the standard
+        <code>Provider</code> trait.</td></tr>
+    <tr><td><strong>Consent</strong></td><td class="m">org-controlled</td>
+        <td class="m">The Trace Charter and managed packs — every bit of egress and every
+        per-client toggle, signed, versioned, revocable (§10).</td></tr>
+    <tr><td><strong>Data</strong></td><td class="m">Oxagen Cloud / Enterprise</td>
+        <td class="m">The Trace Lake (org-scoped, workspace-keyed) and the Dataset Builder —
+        dedup, redaction verification, outcome labeling, content-addressed dataset snapshots.</td></tr>
+    <tr><td><strong>Training</strong></td><td class="m">Oxagen Cloud / Enterprise</td>
+        <td class="m">The Refinery: always-on adapter training per group over a pinned open-weight
+        base (§06).</td></tr>
+    <tr><td><strong>Proving</strong></td><td class="m">Oxagen Cloud / Enterprise</td>
+        <td class="m">The Proving Ground: Harbor suites, workspace datasets, the scar suite, and
+        the fleet-driven self-clone gauntlet (§07).</td></tr>
+    <tr><td><strong>Serving</strong></td><td class="m">Oxagen Cloud / Enterprise</td>
+        <td class="m">The model registry, per-group endpoints, alias channels, canary routing,
+        adapter hot-swap (§08).</td></tr>
+  </table></div>
+
+  <div class="principle">
+    <span class="k">Enterprise is not a fork</span>
+    <p>Oxagen Enterprise is the same six planes deployed on-prem. The client is byte-identical;
+    the only difference an enrolled Stella can observe is the base URL in its managed pack. Air-gapped
+    installs run the whole loop — lake, refinery, proving ground, registry — inside the customer's
+    wall.</p>
+  </div>
+</div></section>
+
+<!-- ═══════════════════════════ §05 TRACES ═══════════════════════════ -->
+<section id="traces"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 05</span><h2>The trace pipeline</h2></div>
+
+  <p class="lede">Stella already writes the ground truth this pipeline needs: the session journal
+  (<code>stella-events.jsonl</code> fidelity — every prompt, tool call, result, verdict, and cost,
+  with turn/step structure). The pipeline's job is to move it with consent, label it with
+  outcomes, and never let a projection stand in for it.</p>
+
+  <h3><span class="tick">▸</span>Five stages, client to corpus</h3>
+  <ol>
+    <li><strong>Capture</strong> — the journal the engine already emits. No new instrumentation;
+    the trace <em>is</em> the session.</li>
+    <li><strong>Consent check</strong> — the Uplink exports nothing unless a valid, unexpired
+    Trace Charter covers this workspace <em>and</em> the client's managed pack has collection
+    enabled. Two keys, both org-held.</li>
+    <li><strong>Redact</strong> — client-side, before anything leaves: secret scanning, credential
+    pattern kills, configurable path and content denylists from the managed pack. Redaction runs
+    on the developer's machine so unredacted content never exists server-side.</li>
+    <li><strong>Export</strong> — durable, cursor-based streaming (the same discipline as
+    <code>stella usage sync</code>): at-least-once upload, exactly-once ingest, offline-tolerant.</li>
+    <li><strong>Curate</strong> — server-side: dedup, quality gates, outcome labeling, and
+    assembly into content-addressed dataset snapshots so every training run names exactly the
+    bytes it learned from.</li>
+  </ol>
+
+  <h3><span class="tick">▸</span>Labels the traces already contain</h3>
+  <p>The reason Stella traces are unusually good training ore: the agent's own contract generates
+  outcome labels no human ever has to write.</p>
+
+  <div class="tbl"><table>
+    <tr><th>Signal in the trace</th><th>Becomes</th></tr>
+    <tr><td>Witness flip (fail→pass) with tamper exclusion</td>
+        <td class="m">Strongest positive label — this trajectory <em>provably</em> did the job.</td></tr>
+    <tr><td>Pipeline verdicts (triage → … → verdict stage outcomes)</td>
+        <td class="m">Graded outcome labels per stage, per role.</td></tr>
+    <tr><td>Revise back-edges — a failed execution and its successful revision of the
+        <em>same task</em></td>
+        <td class="m">Natural preference pairs. The pipeline manufactures DPO data as a
+        side effect of doing its job.</td></tr>
+    <tr><td>Kept vs. reverted edits; interrupted or abandoned runs</td>
+        <td class="m">Human acceptance labels, harvested without asking anyone anything.</td></tr>
+    <tr><td>Loop-detector hits, distress signals, budget burn, retry storms</td>
+        <td class="m">Negative process labels — trajectories to train away from.</td></tr>
+    <tr><td>Reflection lessons and their recurrence</td>
+        <td class="m">Curriculum tags shared with the Academy and the Distillery.</td></tr>
+  </table></div>
+
+  <div class="principle">
+    <span class="k">One substrate, four refinements</span>
+    <p>The same Trace Lake feeds all four pillars. The Refinery consumes trajectories and
+    preference pairs; the Distillery consumes lessons; the Academy consumes recurring method; the
+    Foundry consumes friction. Collect once, learn four ways.</p>
+  </div>
+</div></section>
+
+<!-- ═══════════════════════════ §06 REFINERY ═══════════════════════════ -->
+<section id="refinery"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 06</span><h2>The Refinery — training design</h2></div>
+
+  <h3><span class="tick">▸</span>Base + adapters, not monoliths</h3>
+  <p>Each workspace group's model is a <strong>lightweight adapter (LoRA-class) over a pinned
+  open-weight base</strong>. This one decision buys most of the product:</p>
+  <ul>
+    <li><strong>Per-customer economics.</strong> Training an adapter is hours on modest hardware,
+    not a pretraining bill. A thousand groups are a thousand adapters on a handful of shared base
+    deployments.</li>
+    <li><strong>Instant deploys and rollbacks.</strong> Adapter hot-swap on the serving plane is a
+    routing change — no model reload, no disruption (R8, R10).</li>
+    <li><strong>Drift containment.</strong> A small adapter physically cannot wander far from the
+    base — the first line of defense against catastrophic forgetting, before the Harbor gate even
+    runs (§07).</li>
+    <li><strong>Enterprise fits on-prem.</strong> The training-plane hardware profile is a fine-tuning
+    rig, not a datacenter.</li>
+  </ul>
+  <p class="small">Base uplifts (moving a group to a newer base model) are their own gated event:
+  retrain the adapter on the new base, run the full gauntlet, promote like any candidate. The base
+  version is part of the lineage record.</p>
+
+  <h3><span class="tick">▸</span>Recipe</h3>
+  <ul>
+    <li><strong>SFT</strong> on accepted, witness-proven trajectories — teach the shape of work
+    that verifiably lands.</li>
+    <li><strong>Preference optimization (DPO-class)</strong> on revise pairs and kept/reverted
+    edits — teach the difference between the attempt that failed and the revision that didn't.</li>
+    <li><strong>Optional RFT</strong> against workspace benchmarks in sandboxed clones, where task
+    volume justifies it — the gauntlet infrastructure doubles as the reward environment.</li>
+  </ul>
+
+  <h3><span class="tick">▸</span>Cadence — always on means three triggers</h3>
+  <div class="tbl"><table>
+    <tr><th>Trigger</th><th>Fires when</th><th>Produces</th></tr>
+    <tr><td><strong>Rolling</strong></td><td class="m">On schedule (e.g. nightly), if the corpus
+        moved.</td><td class="m">The steady-state candidate stream.</td></tr>
+    <tr><td><strong>Volume</strong></td><td class="m">New labeled trajectories cross a
+        threshold.</td><td class="m">Early candidates for young, busy groups.</td></tr>
+    <tr><td><strong>Scar hotfix</strong></td><td class="m">A new scar lands (§07).</td>
+        <td class="m">A targeted run whose explicit goal is to pass the new scar without
+        regressing the rest — the slow-clock half of “never again” (§12).</td></tr>
+  </table></div>
+
+  <h3><span class="tick">▸</span>Role routing — the anti-collusion rule</h3>
+  <div class="principle warn">
+    <span class="k">The tuned model never grades its own homework</span>
+    <p>The group model serves the <em>worker</em> (and may serve triage and planning). The
+    verifier and witness-author roles run a frozen, independent model — the same separation
+    Stella's pipeline already enforces between worker and verifier. Break this and the flywheel
+    Goodharts itself: a model trained on labels it also assigns will learn to please its own
+    judge, and every metric will improve while the product gets worse.</p>
+  </div>
+  <p>Consequences: verifier-role traces are excluded from the group corpus, and the gauntlet's
+  adjudication model is pinned per gauntlet run so candidate comparisons stay like-for-like.</p>
+
+  <h3><span class="tick">▸</span>Cold start</h3>
+  <p>Below the volume floor, a group serves the plain base model plus the fast-clock pillars
+  (doctrine and skills carry the early wins). The Improvement Feed says so honestly —
+  <em>“collecting: 1,204 of ~5,000 trajectories before first training run”</em> — which turns the
+  wait into visible progress instead of silent nothing.</p>
+</div></section>
+
+<!-- ═══════════════════════════ §07 PROVING GROUND ═══════════════════════════ -->
+<section id="proving"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 07</span><h2>The Proving Ground</h2></div>
+
+  <p class="lede">Three suites, three different questions. A candidate answers all three or it
+  does not ship.</p>
+
+  <div class="grid g2">
+    <div class="card">
+      <span class="tag">suite 1 · hard gate</span>
+      <h5>The scar suite</h5>
+      <p>Every regression fixture a production failure ever left behind. <strong>Pass bar:
+      100%.</strong> Not statistical — absolute. A candidate that reopens any scar is rejected, no
+      matter how good its other numbers are.</p>
+    </div>
+    <div class="card">
+      <span class="tag">suite 2 · the point</span>
+      <h5>The workspace suite</h5>
+      <p>Harbor-format tasks the customer curates in their own workspace (R7), drawn from their
+      real work. <strong>Pass bar: improvement over the incumbent with statistical confidence</strong>
+      — repeats per task, confidence intervals, never a single-run delta.</p>
+    </div>
+    <div class="card">
+      <span class="tag">suite 3 · the guard</span>
+      <h5>The general suite</h5>
+      <p>Harbor's standard battery. <strong>Pass bar: non-inferiority.</strong> The specialist must
+      not forget how to be a generalist — this is the catastrophic-forgetting tripwire the adapter
+      architecture backstops.</p>
+    </div>
+    <div class="card">
+      <span class="tag">mechanism</span>
+      <h5>The self-clone gauntlet</h5>
+      <p>Stella runs the gauntlet by cloning itself (R6): fleet fan-out into hermetic sandboxes,
+      one clone on candidate weights, one on incumbent, same tasks, same tools, N repeats.
+      The agent is its own test harness.</p>
+    </div>
+  </div>
+
+  <h3><span class="tick">▸</span>The scar lifecycle</h3>
+  <ol>
+    <li><strong>Failure.</strong> A production session fails a procedure — wrong flag, mangled
+    migration, misread convention. The trace holds the whole anatomy.</li>
+    <li><strong>Authoring.</strong> A scar-author (independent model, verifier-side) distills the
+    trace into a Harbor-format fixture: environment setup, the task, and an assertion that fails
+    exactly the way production did.</li>
+    <li><strong>Validation.</strong> The fixture must <em>reproduce</em> — fail against the
+    incumbent under the traced conditions. A scar that can't reproduce its own failure is a false
+    proof and is discarded. (Witness discipline: a fixture that never failed proves nothing.)</li>
+    <li><strong>Permanence.</strong> The scar joins the suite forever. Rollbacks don't remove it.
+    Base uplifts don't remove it. Nothing does.</li>
+  </ol>
+
+  <div class="principle">
+    <span class="k">The emotional line, made mechanical</span>
+    <p>Stella is allowed to fail a new way. It is never allowed to fail the same way twice —
+    because the second time is a gauntlet rejection, not a production incident.</p>
+  </div>
+
+  <h3><span class="tick">▸</span>Measurement honesty</h3>
+  <p>The gauntlet inherits this repo's bench discipline wholesale, as product rules:</p>
+  <ul>
+    <li><strong>Conclusions come from traces, never surface signals.</strong> Every gauntlet
+    verdict is re-derivable from stored run traces; the summary layer is a projection and is
+    treated as one.</li>
+    <li><strong>Operational aborts are named and excluded</strong> — an auth failure or a quota
+    exhaustion is not a model loss, and silently counting it as one corrupts the gate in whichever
+    direction is convenient.</li>
+    <li><strong>Like-for-like or reported as confounded.</strong> Candidate vs. incumbent differ
+    by exactly one thing: the adapter. Same base, same tools, same tasks, same repeats, pinned
+    adjudicator.</li>
+    <li><strong>Small panels resolve only catastrophes.</strong> Promotion thresholds are sized to
+    the suite: a five-task workspace suite gates on regressions, not on decimals. The feed reports
+    the unflattering number when it is the true one.</li>
+  </ul>
+</div></section>
+
+<!-- ═══════════════════════════ §08 SHIPPING ═══════════════════════════ -->
+<section id="shipping"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 08</span><h2>Shipping weights</h2></div>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 920 250" role="img" aria-label="Promotion pipeline: candidate through three gates to canary and stable, with rollback">
+      <defs>
+        <marker id="sa" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#736C68"/></marker>
+        <marker id="sg" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#FFB000"/></marker>
+        <marker id="sr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0 0 L8 4 L0 8 z" fill="#E5484D"/></marker>
+      </defs>
+      <g font-size="12.5" font-weight="700">
+        <rect x="10" y="52" width="128" height="60" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="26" y="78" fill="#F4F1EA">candidate</text>
+        <text x="26" y="96" fill="#736C68" font-size="10" font-weight="400">v…-rc from refinery</text>
+
+        <rect x="170" y="52" width="140" height="60" rx="10" fill="#18161A" stroke="#FFB000"/>
+        <text x="186" y="78" fill="#FFB000">gate · scars</text>
+        <text x="186" y="96" fill="#A37200" font-size="10" font-weight="400">100% or reject</text>
+
+        <rect x="342" y="52" width="140" height="60" rx="10" fill="#18161A" stroke="#FFB000"/>
+        <text x="358" y="78" fill="#FFB000">gate · workspace</text>
+        <text x="358" y="96" fill="#A37200" font-size="10" font-weight="400">improve w/ CI</text>
+
+        <rect x="514" y="52" width="140" height="60" rx="10" fill="#18161A" stroke="#FFB000"/>
+        <text x="530" y="78" fill="#FFB000">gate · general</text>
+        <text x="530" y="96" fill="#A37200" font-size="10" font-weight="400">non-inferior</text>
+
+        <rect x="686" y="52" width="100" height="60" rx="10" fill="#131214" stroke="#2C2A2E"/>
+        <text x="702" y="78" fill="#F4F1EA">canary</text>
+        <text x="702" y="96" fill="#736C68" font-size="10" font-weight="400">% new sessions</text>
+
+        <rect x="818" y="52" width="92" height="60" rx="10" fill="#131214" stroke="#FCD07D"/>
+        <text x="834" y="78" fill="#FCD07D">@stable</text>
+        <text x="834" y="96" fill="#736C68" font-size="10" font-weight="400">alias flip</text>
+      </g>
+      <g stroke="#736C68" stroke-width="1.5">
+        <path d="M138 82 h24" marker-end="url(#sa)"/>
+        <path d="M310 82 h24" marker-end="url(#sa)"/>
+        <path d="M482 82 h24" marker-end="url(#sa)"/>
+        <path d="M654 82 h24" marker-end="url(#sa)"/>
+        <path d="M786 82 h24" marker-end="url(#sa)"/>
+      </g>
+      <!-- reject edges -->
+      <g stroke="#E5484D" stroke-width="1.2" stroke-dasharray="4 3">
+        <path d="M240 112 v40" marker-end="url(#sr)"/>
+        <path d="M412 112 v40" marker-end="url(#sr)"/>
+        <path d="M584 112 v40" marker-end="url(#sr)"/>
+      </g>
+      <rect x="200" y="160" width="440" height="40" rx="8" fill="none" stroke="#E5484D" stroke-dasharray="4 3"/>
+      <text x="222" y="185" fill="#E5484D" font-size="11.5">rejected — full gauntlet report ledgered, corpus and recipe adjusted, next candidate</text>
+      <!-- rollback -->
+      <path d="M864 112 v72 h-120" fill="none" stroke="#FFB000" stroke-width="1.2" marker-end="url(#sg)"/>
+      <text x="672" y="222" fill="#FFB000" font-size="11">rollback = alias flip to parent · scars remain</text>
+    </svg>
+    <figcaption>Promotion is an alias flip after three gates; rejection is a ledger entry, not a
+    failure of the system — the gate refusing a bad candidate <em>is</em> the system working.</figcaption>
+  </figure>
+
+  <h3><span class="tick">▸</span>Registry and versioning (R10)</h3>
+  <p>Every version is a complete, immutable lineage record: base model and revision, adapter
+  weights, dataset snapshot hash, training recipe, full gauntlet report, parent version, and the
+  promotion (or rejection) decision. The lineage is a DAG — base uplifts and rollbacks are edges,
+  not erasures. Addressing:</p>
+  <ul>
+    <li><code>oxagen/acme/fintech-core@stable</code> — what enrolled clients resolve by default.</li>
+    <li><code>oxagen/acme/fintech-core@canary</code> — the fraction under live evaluation.</li>
+    <li><code>oxagen/acme/fintech-core@v2026.08.07-2</code> — any pinned version, forever.</li>
+  </ul>
+
+  <h3><span class="tick">▸</span>Seamless, precisely defined (R8)</h3>
+  <ul>
+    <li><strong>Sessions pin weights at start.</strong> A session resolves <code>@stable</code>
+    once and keeps that version to its end — mid-session behavior never shifts under the
+    developer, and the prompt cache stays coherent (byte-stable prompts are an invariant, and a
+    silent weight swap is a behavioral cache-buster even when the bytes hold).</li>
+    <li><strong>Promotion touches only the alias.</strong> Serving hot-swaps adapters; nothing
+    restarts; in-flight sessions are untouched. The next session is simply better.</li>
+    <li><strong>Canary is a routing fraction over new sessions</strong>, with live telemetry
+    guards (loop-rate, verdict-rate, budget burn vs. incumbent baseline). A canary breach
+    auto-rolls the alias back and files the incident delta card.</li>
+  </ul>
+</div></section>
+
+<!-- ═══════════════════════════ §09 GOLDEN PATH ═══════════════════════════ -->
+<section id="golden"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 09</span><h2>The golden path — zero-terminal onboarding</h2></div>
+
+  <p class="lede">R3 is the whole product compressed into ninety seconds. Every step below names
+  what the user does and, underneath, what the system does so they never have to.</p>
+
+  <div class="steps">
+    <div class="step"><div class="n"></div><div>
+      <h5>Log in to Oxagen, open a workspace</h5>
+      <p>The workspace page shows its repos, its Atlas, its benchmarks — and one button:
+      <strong>Download Stella for this workspace</strong>.</p>
+      <p class="under"><b>underneath:</b> nothing yet. The button is the API.</p>
+    </div></div>
+    <div class="step"><div class="n"></div><div>
+      <h5>Download the stamped installer</h5>
+      <p>A signed, notarized package for the user's platform, built per-download.</p>
+      <p class="under"><b>underneath:</b> the package is stamped with a <b>single-use, short-lived
+      enrollment token</b> bound to this workspace and this user — a claim ticket, not a
+      credential. Leaking the installer after expiry leaks nothing.</p>
+    </div></div>
+    <div class="step"><div class="n"></div><div>
+      <h5>Run the installer</h5>
+      <p>Installs Stella and the Uplink. No prompts beyond the OS's own.</p>
+      <p class="under"><b>underneath:</b> the Uplink redeems the token exactly once, mints a
+      device keypair, receives workspace identity, and stores credentials in the OS keychain.
+      The token is now dead.</p>
+    </div></div>
+    <div class="step"><div class="n"></div><div>
+      <h5>The workspace configures the client</h5>
+      <p>Nothing to do — this step is invisible.</p>
+      <p class="under"><b>underneath:</b> the Uplink materializes the org-managed settings
+      document (the scope Stella's 3-way merge already honors): the <code>oxagen</code> provider
+      entry pointing at the group's serving endpoint, the Trace Charter state, and every managed
+      pack — including the trace-collection checkbox (R4).</p>
+    </div></div>
+    <div class="step"><div class="n"></div><div>
+      <h5>Work</h5>
+      <p>Open Stella. It is already authenticated, already on
+      <code>oxagen/&lt;org&gt;/&lt;group&gt;@stable</code>, already sending consented traces. The
+      deck shows the connection honestly: <code>workspace: acme/payments · traces: on ·
+      model: fintech-core@stable</code>.</p>
+      <p class="under"><b>underneath:</b> the first trace lands in the lake; the flywheel is
+      turning for this org from minute one.</p>
+    </div></div>
+    <div class="step"><div class="n"></div><div>
+      <h5>Manage (or revoke) from the workspace</h5>
+      <p>The workspace lists enrolled devices. Revoking one is a click.</p>
+      <p class="under"><b>underneath:</b> a revoked Uplink drops the client to community posture —
+      zero egress, group model access off, local Stella fully functional. Enrollment is a lease,
+      never a lock-in.</p>
+    </div></div>
+  </div>
+</div></section>
+
+<!-- ═══════════════════════════ §10 GOVERNANCE ═══════════════════════════ -->
+<section id="governance"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 10</span><h2>Governance &amp; the zero-egress contract</h2></div>
+
+  <p class="lede">This section exists because the honest version of this design collides with
+  Stella's own law, and the collision must be resolved in the open, not around it.</p>
+
+  <p>Stella's invariant #3 today: <strong>zero telemetry egress by default</strong>, and even the
+  enrolled Enterprise managed mode may export only a content-free operational rollup — prompts,
+  paths, tool payloads, reasoning, and errors are <em>never exportable</em>, enforced by a
+  reviewed allowlist and a sentinel harness every egress encoder must register with. Training
+  needs the opposite: full-fidelity content. There is no clever encoding that squares that circle,
+  so the design doesn't pretend to — it adds a second, separate, stricter consent channel:</p>
+
+  <div class="principle">
+    <span class="k">The Trace Charter</span>
+    <p>A signed org-managed document that authorizes full-fidelity trace export — naming the exact
+    sink, the covered workspaces, and the retention terms. Scoped, revocable, versioned, and
+    <strong>visible in-product for as long as it is active</strong>: an enrolled deck always shows
+    where traces are going. No charter, no bytes — and the community default remains bit-for-bit
+    zero egress.</p>
+  </div>
+
+  <ul>
+    <li><strong>Two keys, both org-held.</strong> Export requires a valid charter <em>and</em> the
+    per-client managed-pack toggle. Either one off, the Uplink ships nothing.</li>
+    <li><strong>Client-side redaction before egress</strong> (§05) — unredacted content never
+    exists on the server side. Redaction rules are themselves managed-pack content, auditable per
+    client.</li>
+    <li><strong>Audit trail.</strong> Every export batch is logged locally and server-side —
+    device, charter version, byte counts, cursor range. “What left this machine, and under what
+    authority” is always answerable.</li>
+    <li><strong>Same enforcement teeth.</strong> The charter path lands as an appended amendment
+    to invariant #3 (append, never renumber) and extends the existing sentinel-harness pattern: a
+    <code>TraceExportEncoder</code> registered in the same reviewed registry, so adding an
+    exportable field fails the gate until a human answers “is this consented content?”.</li>
+  </ul>
+
+  <div class="principle warn">
+    <span class="k">Called out loud</span>
+    <p>Amending invariant #3 is the single most consequential change this design asks of Stella.
+    It must ship as its own reviewed PR with its own witness tests — never smuggled in as a side
+    effect of the feature work. If the maintainer rejects the amendment, this design has no
+    fallback and says so.</p>
+  </div>
+
+  <h3><span class="tick">▸</span>Managed packs — per-client configuration as a product (R4)</h3>
+  <p>The existing three-scope merge (user → org-managed → project, per-field) already has the
+  right seam: the Uplink simply becomes a <em>remote materializer</em> of the org-managed scope.
+  On top of it, <strong>managed packs</strong> make that scope a product surface:</p>
+  <ul>
+    <li>A pack is a <strong>schema'd, versioned bundle</strong> of settings — Oxagen ships pack
+    definitions; workspace admins edit instances per client in the UI (the trace-collection
+    checkbox is one boolean field in the <code>telemetry</code> pack).</li>
+    <li>Packs are <strong>signed and pulled</strong>, not pushed — the Uplink refreshes on a
+    cadence and at session start, applies atomically, and logs every transition.</li>
+    <li>The mechanism is <strong>open and third-party</strong>: any vendor can define a pack
+    schema against the published protocol. Oxagen is the first consumer, not a privileged one —
+    that keeps R1 honest.</li>
+  </ul>
+</div></section>
+
+<!-- ═══════════════════════════ §11 FELT ═══════════════════════════ -->
+<section id="felt"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 11</span><h2>Felt improvement</h2></div>
+
+  <p class="lede">Improvement that is real but invisible doesn't retain customers, and improvement
+  that is visible but unproven shouldn't. The product ships proof with feelings attached.</p>
+
+  <h3><span class="tick">▸</span>The delta card</h3>
+  <p>Every promotion publishes one — in the workspace feed and in the deck:</p>
+
+  <div class="term">
+    <div class="term-bar"><i class="g"></i><i></i><i></i>&nbsp;improvement feed · acme/fintech-core</div>
+    <div class="term-body"><span class="g">★ promoted</span>  fintech-core <span class="c">v2026.08.05-1 →</span> <span class="ok">v2026.08.07-2</span>
+
+<span class="c">learned from</span>   412 new trajectories · 9 developers · 6 repos
+<span class="c">scars healed</span>   3 — including <span class="ok">“migration runner drops FK ordering”</span> (failed 2026-08-02, never again)
+<span class="c">workspace</span>      71% → <span class="ok">78%</span> solve rate · 24 tasks × 5 repeats · CI [+2.1, +11.8]
+<span class="c">general</span>        held · Harbor Δ +0.4 (n.s.) — no forgetting
+<span class="c">rejected first</span> v2026.08.06-1 <span class="r">reopened scar #114</span> — gate refused it, corpus adjusted
+<span class="c">rollback</span>       one click → v2026.08.05-1 · scars stay regardless
+</div>
+  </div>
+
+  <p>Three properties make the card work: it is written in the customer's own task names, every
+  number links to the gauntlet traces that produced it (replayable, per §07's honesty rules), and
+  it reports the rejection that preceded the promotion — the gate visibly doing its job is what
+  makes the passing number believable.</p>
+
+  <h3><span class="tick">▸</span>Before / after replay</h3>
+  <p>Any scar or workspace task can be replayed side by side: incumbent's trace against the new
+  version's trace, diffed at the tool-call level. Watching last Tuesday's pit get sidestepped —
+  with the scar that guarantees it stays sidestepped linked underneath — is the moment this
+  product sells itself.</p>
+
+  <h3><span class="tick">▸</span>The Improvement Ledger</h3>
+  <p>The attribution discipline (§01) made concrete: an append-only record of every learned-asset
+  change — weights, skills, directives, tools — interleaved with every gauntlet result. When the
+  monthly digest says “merge-conflict tasks stopped failing,” the ledger can say <em>which
+  pillar's change</em> did it, and scheduled ablation runs (candidate weights with and without the
+  quarter's new skills) keep that answer honest.</p>
+</div></section>
+
+<!-- ═══════════════════════════ §12 TWO CLOCKS ═══════════════════════════ -->
+<section id="clocks"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 12</span><h2>Two clocks — how “never again” really works</h2></div>
+
+  <p class="lede">The brief demands near-real-time learning: a procedure that fails once must
+  never fail the same way again. Weight training alone cannot honestly promise that — its clock is
+  hours to days, and gradient descent generalizes rather than memorizes. The system delivers the
+  promise anyway, as a layered response with two clocks.</p>
+
+  <div class="tbl"><table>
+    <tr><th>T +</th><th>What fires</th><th>Pillar</th><th>What the developer experiences</th></tr>
+    <tr><td><strong>minutes</strong></td>
+        <td class="m">The failure's lesson is mined and distilled; a directive is promoted into
+        doctrine. The very next session loads it.</td>
+        <td class="m">Distillery</td>
+        <td class="m"><strong>The bleeding stops today.</strong> Stella states the rule it
+        learned before repeating the procedure.</td></tr>
+    <tr><td><strong>hours</strong></td>
+        <td class="m">A scar is authored from the trace and validated — it reproduces the failure
+        against the incumbent (§07).</td>
+        <td class="m">Proving Ground</td>
+        <td class="m"><strong>The proof exists before the fix.</strong> No future model can ship
+        with this failure mode.</td></tr>
+    <tr><td><strong>days</strong></td>
+        <td class="m">A scar-hotfix training run produces a candidate that passes the new scar;
+        the gauntlet promotes it (§06, §08).</td>
+        <td class="m">Refinery</td>
+        <td class="m"><strong>The lesson becomes instinct</strong> — and generalizes to the
+        failure's neighbors, which a directive never could.</td></tr>
+    <tr><td><strong>after</strong></td>
+        <td class="m">The now-redundant directive is pruned; doctrine stays small; the scar stays
+        forever.</td>
+        <td class="m">Pruning</td>
+        <td class="m">No prompt bloat, no contradiction debt — the fast fix retires when the slow
+        fix lands.</td></tr>
+  </table></div>
+
+  <div class="principle">
+    <span class="k">The honest sentence</span>
+    <p>The directive stops the bleeding today; the scar makes relapse impossible to ship; the
+    weights close the wound for good. Where the world makes error-free repetition impossible —
+    flaky infrastructure, moving targets — the scar's bar is a measured improvement threshold
+    rather than perfection, and the delta card reports it as exactly that.</p>
+  </div>
+
+  <p>This is also why the Refinery must not be designed alone (your brief's closing note, made
+  structural): sold as “the model learns in real time,” the pillar over-promises. Sold as one
+  clock of a two-clock system, every claim in it is true.</p>
+</div></section>
+
+<!-- ═══════════════════════════ §13 RISKS ═══════════════════════════ -->
+<section id="risks"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 13</span><h2>Risks &amp; open questions</h2></div>
+
+  <div class="tbl"><table>
+    <tr><th>Risk</th><th>Shape</th><th>Containment</th></tr>
+    <tr><td><strong>Reward hacking</strong></td>
+        <td class="m">The tuned model learns to please the grader, not do the work.</td>
+        <td class="m">Frozen independent verifier (§06); held-out suites never trained against;
+        scars authored verifier-side; periodic human spot-audit sampled under the charter.</td></tr>
+    <tr><td><strong>Catastrophic forgetting</strong></td>
+        <td class="m">The specialist forgets general competence.</td>
+        <td class="m">Adapter-bounded drift + the general suite as a hard non-inferiority gate.</td></tr>
+    <tr><td><strong>Corpus poisoning</strong></td>
+        <td class="m">One chaotic repo in a group degrades the whole model — or an adversarial
+        contributor plants trajectories.</td>
+        <td class="m">Per-workspace contribution weighting, curation quality gates, and the
+        gauntlet as the final filter — a poisoned candidate still has to beat the incumbent.</td></tr>
+    <tr><td><strong>Redaction residue</strong></td>
+        <td class="m">Client-side scrubbing is best-effort; a secret slips through.</td>
+        <td class="m">Layered patterns + entropy scanning, charter-scoped retention, server-side
+        re-scan on ingest, deletion propagation into future dataset snapshots. Named honestly:
+        residual risk is nonzero, and the charter says so.</td></tr>
+    <tr><td><strong>Benchmark overfitting</strong></td>
+        <td class="m">Training toward the workspace suite inflates its numbers.</td>
+        <td class="m">Scars are exact regressions — overfitting them is the point. The workspace
+        suite rotates a held-out split; RFT (when used) trains only on the training split.</td></tr>
+    <tr><td><strong>Statistical power</strong></td>
+        <td class="m">Small suites can't resolve small deltas; noise promotes or blocks.</td>
+        <td class="m">Repeats per task, CIs on every reported delta, suite-sized thresholds
+        (§07); a five-task panel gates on catastrophe only.</td></tr>
+    <tr><td><strong>Compute economics</strong></td>
+        <td class="m">Always-on training per group at fleet scale.</td>
+        <td class="m">Adapters over shared bases, trigger-driven runs instead of busy-looping,
+        gauntlet tiering (scar suite is cheap and runs first, rejecting early).</td></tr>
+    <tr><td><strong>Attribution ambiguity</strong></td>
+        <td class="m">Weights, skills, and doctrine improve simultaneously; credit is unclear.</td>
+        <td class="m">The Improvement Ledger + scheduled ablation gauntlets (§11).</td></tr>
+  </table></div>
+
+  <h3><span class="tick">▸</span>Open questions (each becomes an issue at adoption)</h3>
+  <ul>
+    <li>Which pipeline roles beyond the worker get the group model first — triage? plan? — and on
+    what evidence does a role graduate?</li>
+    <li>Base-model policy: one blessed base per Oxagen release, or per-group base choice? Who
+    approves an uplift, given it invalidates cross-version comparisons?</li>
+    <li>Charter granularity: is per-workspace scoping enough, or do customers need per-repo /
+    per-path carve-outs on day one?</li>
+    <li>Does the Uplink live in this workspace as a crate (<code>stella-uplink</code>) with the
+    protocol spec under <code>docs/wire/</code>, or in a sibling repo like CGP? (The
+    parity-witness obligations of invariant #8 argue for in-tree.)</li>
+    <li>Canary telemetry guards: which live metrics are trustworthy enough to auto-rollback on,
+    given the same measurement-honesty caveats the bench rules exist for?</li>
+    <li>Enterprise hardware floor: what is the minimum on-prem training rig that keeps the
+    scar-hotfix clock inside “days”?</li>
+  </ul>
+</div></section>
+
+<!-- ═══════════════════════════ §14 PHASING ═══════════════════════════ -->
+<section id="phasing"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 14</span><h2>Phasing</h2></div>
+
+  <p class="lede">Five phases, each with a definition of done a fresh agent could verify. Autonomy
+  is earned in P4, not assumed in P0.</p>
+
+  <div class="tbl"><table>
+    <tr><th>Phase</th><th>Ships</th><th>Done when</th></tr>
+    <tr><td><strong>P0 · Consent &amp; corpus</strong></td>
+        <td class="m">Workspace groups modeled in Oxagen; Trace Charter; invariant #3 amendment
+        PR; Uplink export path; Trace Lake.</td>
+        <td class="m">An enrolled client's traces land org-scoped and workspace-keyed; revoking
+        the charter stops egress at the next session boundary; community build byte-identical in
+        behavior.</td></tr>
+    <tr><td><strong>P1 · Golden path</strong></td>
+        <td class="m">Stamped installers; Uplink enrollment; managed packs; <code>oxagen</code>
+        provider adapter with parity rows and witness tests.</td>
+        <td class="m">Fresh laptop → working custom-model session, zero terminal, zero
+        copy-paste (R3's acceptance, demonstrated on video).</td></tr>
+    <tr><td><strong>P2 · First weights</strong></td>
+        <td class="m">Dataset Builder; first adapter training; model registry; human-approved
+        promotion; rollback.</td>
+        <td class="m">One group model beats its base on the workspace suite, is promoted, rolled
+        back, and re-promoted — all three transitions clean.</td></tr>
+    <tr><td><strong>P3 · Proving Ground</strong></td>
+        <td class="m">Harbor integration; workspace benchmark datasets; scar pipeline; fleet
+        self-clone gauntlet; measurement-honesty rules as code.</td>
+        <td class="m">A deliberately injected failure becomes a validated scar within a day and
+        automatically blocks a candidate built to reopen it.</td></tr>
+    <tr><td><strong>P4 · Autonomy</strong></td>
+        <td class="m">Continuous training triggers; autonomous promotion; canary + auto-rollback;
+        Improvement Feed and delta cards; ablation cadence.</td>
+        <td class="m">Thirty unattended days: promotions occurred, zero human interventions, zero
+        scar regressions in production, and the feed explains itself.</td></tr>
+  </table></div>
+
+  <div class="principle">
+    <span class="k">The graduation rule</span>
+    <p>The human promotion gate in P2–P3 is scaffolding, and its removal has a witness: it retires
+    only after the proof gates have independently rejected every bad candidate the humans also
+    rejected, for a defined consecutive streak. Autonomy is demonstrated, then granted — never
+    granted, then hoped for.</p>
+  </div>
+</div></section>
+
+<!-- ═══════════════════════════ §15 APPENDIX ═══════════════════════════ -->
+<section id="appendix"><div class="wrap">
+  <div class="sec-head"><span class="sec-num">§ 15</span><h2>Appendix — naming &amp; notes on the brief</h2></div>
+
+  <h3><span class="tick">▸</span>A · Names considered</h3>
+  <div class="tbl"><table>
+    <tr><th>Concept</th><th>Recommended</th><th>Also considered</th></tr>
+    <tr><td>Model pillar</td><td><strong>Model Refinery</strong></td>
+        <td class="m">Model Forge (collides with Foundry), Weight Works, Gymnasium (collides with
+        Academy's register), “Model Tuning” (undersells — a knob, not a loop).</td></tr>
+    <tr><td>Memory pillar</td><td><strong>Memory Distillery</strong> → doctrine</td>
+        <td class="m">Memory Mining (keep as the stage-one verb), Directive Distillery, Memory
+        Mint, The Archive (too passive — this pillar transforms, it doesn't store).</td></tr>
+    <tr><td>Failure fixture</td><td><strong>scar</strong></td>
+        <td class="m">engram (too clinical), regression fixture (true but cold), lesson (collides
+        with reflection vocabulary). “Scar” carries permanence and earned history in one
+        syllable.</td></tr>
+    <tr><td>Companion process</td><td><strong>Uplink</strong></td>
+        <td class="m">Beacon (implies broadcast), Link (too generic), Agent (fatally overloaded).
+        Uplink is evocative and honest about being the egress path.</td></tr>
+    <tr><td>Knowledge graph</td><td><strong>the Atlas</strong></td>
+        <td class="m">Cartography, the Map. ⚠ check the collision: “atlas” already names an Oxagen
+        web property — either unify the concepts deliberately or pick “the Survey”.</td></tr>
+    <tr><td>Benchmark substrate</td><td><strong>the Proving Ground</strong></td>
+        <td class="m">The Gauntlet (kept for the <em>run</em>, not the place), The Crucible
+        (over-dramatic next to Harbor's plain register).</td></tr>
+  </table></div>
+
+  <h3><span class="tick">▸</span>B · Proof-reading notes on the original brief</h3>
+  <ul>
+    <li>Typos corrected throughout: “without every having manually copy/paste” → “without ever
+    having to copy or paste”; “KNOWLEDGE GRAPG” → “knowledge graph”; “run on the custom weight
+    model built unique for” → “run on the custom model built uniquely for”.</li>
+    <li>“Near real-time self improvement … must not be experienced ever again” — restated as the
+    two-clock layered guarantee (§12). The original sentence promises something weight training
+    alone cannot deliver; the restatement promises the same outcome through the mechanism that
+    can.</li>
+    <li>“No human in the loop requirement to operate” — restated as <em>graduated</em> autonomy
+    (§14): the end state is fully autonomous; the path there keeps a human gate exactly until the
+    proof gates demonstrate they don't need it.</li>
+    <li>The all-caps closing paragraph is distilled into the golden path (§00) and R12 — the
+    emotional demand (“felt and proven”) is now a numbered requirement with an acceptance
+    criterion, which is the strongest form a demand can take in this repository.</li>
+    <li>“A workspace creates a code graph and ontology around the product the code represents” —
+    kept verbatim in spirit as the Atlas definition (§01, §02); it is the best sentence in the
+    brief.</li>
+  </ul>
+</div></section>
+
+<footer><div class="wrap">
+  <p><span class="star">★</span> stella × oxagen — autonomous improvement · draft 0.1 ·
+  2026-08-07 · mandate <code>build-training-data-loop-from-stella-traces</code></p>
+  <p>Companion papers (to be written): the Skill Academy · the Tool Foundry · the Memory
+  Distillery · the Atlas. This paper is the Model Refinery.</p>
+</div></footer>
+
+</body>
+</html>
