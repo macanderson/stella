@@ -186,7 +186,9 @@ It prints one line per supervised run, continued or skipped, with the reason:
   boot-time resume 1 of 3 for ses-1785956826121
 ```
 
-**What it continues.** Exactly the rows `list` paints `Crashed ↩`: a supervised run whose recorded status is still live while its liveness lock is gone, whose workspace still exists, and which left a resume point. A run that finished, was stopped, was set aside, or recorded an error is never resumed — every deliberate ending writes a status on the way out, and a process the kernel took writes nothing, so a live status with a dead lock is the signature of interruption and of nothing else. The rule is deliberately conservative on the one ambiguous case: work you ended on purpose is never resumed behind your back, at the cost of not resuming a crash that managed to record itself.
+**What it continues.** A supervised run that was interrupted — its liveness lock gone, its workspace still there, and a resume point left behind. That is the rows `list` paints `Crashed ↩`, and now also a run that fell over having lived just long enough to record the error: both are work that stopped without meaning to.
+
+A run that finished, was stopped, was set aside, or **stopped itself by policy** — a stuck loop escalated past its warning, the step cap, an enforced budget, a scope review you ended — is never resumed. Every one of those writes a status on the way out saying the work was *ended* rather than broken, and every one of them retracts its resume point as it goes, so the rule holds twice over. Work you ended on purpose is never resumed behind your back.
 
 **What it skips because nobody is there.** A run that was waiting on a plan review when the machine went down is *not* resumed at boot. Resuming it would not fail — it would park again, waiting for an answer, and because the sweep streams one run at a time to completion it would sit there forever with every later run behind it unresumed. So the sweep names it and moves on:
 

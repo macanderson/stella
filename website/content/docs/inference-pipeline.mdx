@@ -36,11 +36,13 @@ in stages:
 
 <PipelineFlowDiagram />
 
-In full: triage → recall → plan → scope review → execute → witness → verify
-→ verdict, with a bounded revise loop, then reflection and context
+In full: triage → recall → research → plan → scope review → execute → witness
+→ verify → verdict, with a bounded revise loop, then reflection and context
 write-back after the verdict settles. Recall runs concurrently with triage
-but emits after it; plan, scope review, and witness are conditional — a
-simple lookup skips them, scope review fires only above thresholds, and the
+but emits after it; research, plan, scope review, and witness are conditional
+— a simple lookup skips them, research runs only when triage names questions
+for a multi-step task (parallel read-only sub-agents answer them before the
+planner runs), scope review fires only above thresholds, and the
 witness is authored only without `--test-command`, on demand *after*
 execution, once the warrant has read the diff and confirmed the change
 needs a test at all.

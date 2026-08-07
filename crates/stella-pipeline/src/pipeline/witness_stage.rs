@@ -661,6 +661,18 @@ impl<'a> Pipeline<'a> {
         state
             .oracle
             .observe_run(&witness.command, false, &witness.baseline_output);
+        // Arm the mid-turn early stop for the revise loop (#1793). The same
+        // rule as the configured-command arming — only a baseline observed
+        // FAILING may arm, and the observation above is exactly that (the
+        // stage cannot return an artifact whose baseline passed). Nothing can
+        // already hold this slot: authoring is only reachable when no test
+        // command is configured, and the configured-command path is the only
+        // other writer. The execute turn has already run by now, so this
+        // reaches only the revisions — which receive it through
+        // [`crate::flip_halt::FlipHalt::unfired`].
+        state.flip_halt = Some(std::sync::Arc::new(crate::flip_halt::FlipHalt::new(
+            &witness.command,
+        )));
         // The graft added an untracked file after the pre-execution snapshot
         // was taken. Enrolling it as pre-existing keeps every later diff
         // gather (each revision re-gathers) from reading the scaffolding as

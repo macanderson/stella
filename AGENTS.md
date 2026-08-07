@@ -306,7 +306,7 @@ tracks its fail→pass flip in the flip oracle, and refuses to credit the flip i
 the worker modified the witness files (tamper exclusion). Authoring is
 **demand-driven and runs after execution** — once the warrant has read the
 executed diff and found something worth proving — so the stage order is
-triage → recall → plan → scope → **execute → witness** → verify → verdict
+triage → recall → research → plan → scope → **execute → witness** → verify → verdict
 (`stage_rank` in `crates/stella-pipeline/src/replay.rs` is the canonical
 ordering; the revise back-edges land on execute, so re-execution never
 re-authors). The witness

@@ -659,6 +659,7 @@ pub fn stage_label(stage: StageKind) -> &'static str {
     match stage {
         StageKind::Triage => "triage",
         StageKind::ContextRecall => "context recall",
+        StageKind::Research => "research",
         StageKind::Plan => "plan",
         StageKind::ScopeReview => "scope review",
         StageKind::Witness => "witness",

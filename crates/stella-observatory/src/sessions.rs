@@ -28,7 +28,7 @@
 //! session-wide transcript query would be exactly the cross-execution `WHERE`
 //! the journal rule forbids (see `crate::db::Observatory::execution_journal`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
@@ -435,6 +435,36 @@ pub(crate) fn sessions(conn: Option<&Connection>, workspace_root: &Path) -> Resu
 /// per-execution drawer — plus the session-scoped surfaces the turn view
 /// can't show: skills and MCP traffic aggregated, memory citations, the task
 /// board, and pull requests.
+/// Stamp each turn with the work journal's turn ordinal when a diff was
+/// recorded for it (#1870). `session_turn_diffs.execution_id` is the only
+/// persisted correspondence between the store's turn identity
+/// (`executions.id`) and the journal's `refs/stella/<session>/turn/<n>`
+/// namespace, so "show me what this turn changed on disk" can only be
+/// offered through this join. A store older than v21 degrades to no stamps,
+/// and the page simply offers no diff.
+fn attach_journal_turns(conn: &Connection, id: &str, turns: &mut [Value]) -> Result<(), DbError> {
+    let mut stmt = match conn.prepare(
+        "SELECT execution_id, turn FROM session_turn_diffs
+         WHERE session_id = ?1 AND execution_id IS NOT NULL",
+    ) {
+        Ok(stmt) => stmt,
+        Err(e) if is_missing_schema(&e) => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let mapped = stmt.query_map([id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+    let mut by_execution: HashMap<i64, i64> = HashMap::new();
+    for row in mapped {
+        let (execution_id, journal_turn) = row?;
+        by_execution.insert(execution_id, journal_turn);
+    }
+    for turn in turns.iter_mut() {
+        if let Some(journal_turn) = turn["id"].as_i64().and_then(|e| by_execution.get(&e)) {
+            turn["journal_turn"] = json!(journal_turn);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn session_detail(
     conn: Option<&Connection>,
     _workspace_root: &Path,
@@ -482,6 +512,7 @@ pub(crate) fn session_detail(
     // because that is the order the session happened in.
     turns.reverse();
     fold_turn_extras(conn, id, &mut turns)?;
+    attach_journal_turns(conn, id, &mut turns)?;
     out["found"] = json!(out["registry"] != Value::Null || !turns.is_empty());
     out["turns"] = Value::Array(turns);
     out["turns_truncated"] = json!(truncated);

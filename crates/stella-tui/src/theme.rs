@@ -813,7 +813,7 @@ pub fn status_color(status: AgentStatus) -> Color {
 pub fn stage_color(stage: stella_protocol::StageKind) -> Color {
     use stella_protocol::StageKind as S;
     match stage {
-        S::Triage | S::ContextRecall | S::Plan | S::ScopeReview | S::Witness => RUN,
+        S::Triage | S::ContextRecall | S::Research | S::Plan | S::ScopeReview | S::Witness => RUN,
         S::Execute => ACCENT,
         S::Verify | S::Verdict => TEAL,
         S::Reflect | S::ContextWrite => MUTED,
