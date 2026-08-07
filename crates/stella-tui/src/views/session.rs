@@ -408,7 +408,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if subs_h > 0 {
         crate::views::subagents::render(model, ui, bands[1], buf);
     }
-    render_hud(&sm.hud, bands[2], buf);
+    render_hud(&sm.hud, agent.live_park(model.now_ms), bands[2], buf);
     if let Some(prompt) = &sm.pending_ask_user {
         let answered = ui.ask_answered.contains(&agent.meta.id);
         render_ask_user(prompt, answered, bands[3], buf);

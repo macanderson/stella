@@ -75,6 +75,27 @@ impl TallyFold {
             AgentEvent::LoopDetected { .. } => {
                 tally.loop_detections = tally.loop_detections.saturating_add(1);
             }
+            // The park axis (#1471, #1857) — the one signal that keeps
+            // `stages` honest. A parked turn stops advancing stages on
+            // purpose, so a host that cannot see the park reads a deliberate
+            // wait as a hang; the events were on this stream and this fold
+            // was dropping them (#2006). `description` is tool-authored free
+            // text and is deliberately NOT read here: this is a counter, and
+            // the crate's no-content property does not get an exception.
+            AgentEvent::TurnParked { deadline_secs, .. } => {
+                tally.parked_spans = tally.parked_spans.saturating_add(1);
+                tally.parked_deadline_secs =
+                    tally.parked_deadline_secs.saturating_add(*deadline_secs);
+            }
+            // Counted apart from the park rather than assumed to match it: the
+            // engine's park loop returns without a wake when the turn is
+            // cancelled or soft-stopped, so a turn can settle mid-span and
+            // `TurnTally::ended_parked` is what tells the two apart. `reason`
+            // is a closed token, but the count is all this needs.
+            AgentEvent::TurnWoken { polls_used, .. } => {
+                tally.parked_spans_woken = tally.parked_spans_woken.saturating_add(1);
+                tally.parked_polls = tally.parked_polls.saturating_add(*polls_used);
+            }
             // Everything else — text, deltas, reasoning, budget ticks — is
             // either payload we deliberately never record or a signal with no
             // counterpart here. `AgentEvent` is forward-compatible, so an
@@ -186,6 +207,91 @@ mod tests {
             text: "secret".to_string(),
         });
         assert_eq!(fold.finish(), TurnTally::default());
+    }
+
+    fn parked(description: &str, deadline_secs: u64) -> AgentEvent {
+        AgentEvent::TurnParked {
+            description: description.to_string(),
+            poll_interval_secs: 30,
+            deadline_secs,
+        }
+    }
+
+    /// The witness for #2006. A turn that parked and resumed makes no stage
+    /// progress *on purpose*; before park accounting existed its tally was
+    /// byte-identical to a turn that simply stalled, so the one question the
+    /// tally exists to answer had no answer.
+    #[test]
+    fn a_parked_turn_is_distinguishable_from_a_wedged_one() {
+        let mut wedged = TallyFold::default();
+        wedged.observe(&AgentEvent::Stage {
+            name: StageKind::Execute,
+        });
+
+        let mut waiting = TallyFold::default();
+        waiting.observe(&AgentEvent::Stage {
+            name: StageKind::Execute,
+        });
+        waiting.observe(&parked("CI for branch main settles", 1800));
+        waiting.observe(&AgentEvent::TurnWoken {
+            reason: "changed".to_string(),
+            polls_used: 41,
+        });
+
+        let wedged = wedged.finish();
+        let waiting = waiting.finish();
+        assert_eq!(
+            wedged.stages, waiting.stages,
+            "the premise: both turns advanced exactly one stage"
+        );
+        assert_ne!(
+            wedged, waiting,
+            "a park must leave a mark, or a deliberate wait reads as a hang"
+        );
+        assert_eq!(waiting.parked_spans, 1);
+        assert_eq!(waiting.parked_spans_woken, 1);
+        assert_eq!(waiting.parked_polls, 41);
+        assert_eq!(
+            waiting.parked_deadline_secs, 1800,
+            "the licence to sit still is what makes the stall defensible"
+        );
+        assert!(
+            !waiting.ended_parked(),
+            "this park closed — the turn waited and came back"
+        );
+        assert!(
+            !wedged.ended_parked(),
+            "a turn that never parked never ends parked"
+        );
+    }
+
+    /// The engine's park loop returns *without* a `TurnWoken` when the turn is
+    /// cancelled or a soft stop is latched, so the two counts genuinely
+    /// diverge and the open span is the sharper diagnosis.
+    #[test]
+    fn a_turn_that_settles_mid_park_leaves_the_span_open() {
+        let mut fold = TallyFold::default();
+        fold.observe(&parked("the deploy finishes", 600));
+        let tally = fold.finish();
+        assert_eq!(tally.parked_spans, 1);
+        assert_eq!(tally.parked_spans_woken, 0);
+        assert!(
+            tally.ended_parked(),
+            "a span with no wake means the turn ended inside the wait"
+        );
+    }
+
+    /// The park is counted, never quoted. `TurnParked.description` is
+    /// tool-authored free text, and the same rule that keeps `Text` out of
+    /// this fold keeps it out too — two parks that differ only in their prose
+    /// must be indistinguishable here.
+    #[test]
+    fn the_park_description_never_reaches_the_tally() {
+        let mut one = TallyFold::default();
+        one.observe(&parked("CI for branch main settles", 900));
+        let mut other = TallyFold::default();
+        other.observe(&parked("s3://bucket/customer-export.csv appears", 900));
+        assert_eq!(one.finish(), other.finish());
     }
 
     /// The fold must survive a turn long enough to overflow a `u32` counter

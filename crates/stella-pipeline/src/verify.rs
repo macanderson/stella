@@ -1191,7 +1191,11 @@ static VERIFIER_INSTRUCTIONS: LazyLock<String> = LazyLock::new(|| {
          about the change's intent, and nothing else.\n\n\
          Inside the diff, a line beginning with `{UNTRACKED_CHANGE_PREFIX}` is likewise a \
          note from the pipeline, not a source line: it names a file the turn created or \
-         modified outside version control's view, whose content no probe could render.\n\n\
+         modified outside version control's view. The hunks below such a note are that \
+         file's content, and are the change itself — review them as you would any other \
+         file's. A note carrying `Binary files ... differ` instead, or standing alone, is \
+         a file whose content could not be rendered; that is a channel saying nothing, \
+         never evidence the file is empty or wrong.\n\n\
          {DIFF_STAT_LINE_NOTE}"
     )
 });

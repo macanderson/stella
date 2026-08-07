@@ -836,6 +836,18 @@ fn sent_context_reconstructs_a_real_stores_receipt_and_verifies_it() {
          stella_protocol's own serializer produced — a wire shape moved under \
          the observatory's hand-built preimage: {v}"
     );
+    // The era stamp is read from the real column the real writer set (#1981).
+    // This is the drift half of that signal: rename `executions.journal_era` in
+    // stella-store and the dashboard would quietly fall back to the legacy era
+    // for every execution, under-reporting a genuine integrity failure with no
+    // test saying a word. `tests/journal_era.rs` pins what the two eras mean;
+    // this pins that the column is still there to read.
+    assert_eq!(
+        context["journal_era"], "compaction_journaled",
+        "an execution this build's Store began must be stamped as journaling \
+         its compaction rewrites: {v}"
+    );
+    assert_eq!(context["digest_mismatch_severity"], "none", "{v}");
 }
 
 /// **The other half of the drift problem, and the one that actually bit.**

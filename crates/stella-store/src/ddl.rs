@@ -64,6 +64,16 @@ pub(crate) const TABLES: [&str; 21] = [
 /// holds only the open rows — usually zero, at most a handful — so the
 /// question costs an empty index probe instead of a scan over every
 /// execution the workspace has ever run.
+///
+/// `journal_era` (v22) records which compaction-journaling era wrote this
+/// execution's events — see [`JournalEra`](crate::JournalEra). It is stamped
+/// by the writer at [`Store::begin_execution`](crate::Store::begin_execution)
+/// rather than inferred at read time, because the reader cannot tell "this
+/// build journaled no rewrites" from "this build could not" by looking at the
+/// events. The `DEFAULT 0` is what every row written before v22 backfills to,
+/// and it is deliberately the benign reading: a code this build does not know
+/// is treated as the oldest era, so an unfamiliar stamp can only ever
+/// under-alarm, never raise a false one.
 pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
        id INTEGER PRIMARY KEY AUTOINCREMENT,
        kind TEXT NOT NULL,
@@ -77,7 +87,8 @@ pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
        session_id TEXT,
        usage_complete INTEGER NOT NULL DEFAULT 0 CHECK(usage_complete IN (0, 1)),
        usage_status TEXT NOT NULL DEFAULT 'pending'
-         CHECK(usage_status IN ('pending', 'complete', 'incomplete'))
+         CHECK(usage_status IN ('pending', 'complete', 'incomplete')),
+       journal_era INTEGER NOT NULL DEFAULT 0
      );
      CREATE INDEX IF NOT EXISTS executions_by_session
        ON executions(session_id, id);

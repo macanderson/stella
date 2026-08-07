@@ -88,7 +88,8 @@ leaving `main` red for everyone (#1883).
 CI enforces the same steps split across three workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`
 and `doc-links`, and adds a `Cargo.lock` sync check, the prompt-cache golden
-fixtures, `stella context validate`, and a release smoke build (thin LTO);
+fixtures, `stella context validate`, a release smoke build (thin LTO), and the
+deleted-test guard (`scripts/check-deleted-tests.sh`);
 `docs-guards.yml` runs those two plus a second run of `command-docs`, because
 all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
@@ -315,6 +316,18 @@ discarded with it, so an already-satisfied test is never left behind in the
 project's test tree. `stella run --keep-witness` promotes it instead. See
 `website/content/docs/inference-pipeline.mdx` for the full stage flow, the distress-triggered guidance
 loop, and the `/pipeline` deck toggle.
+
+**A witness that no longer exists cannot fail.** Three times a PR has landed
+that silently deleted a test another PR added to the same file hours earlier —
+both branches green, the merge textually clean, git with no conflict to report
+because one side simply does not contain the other's lines (#1976, and the same
+shape in #1860). `check-deleted-tests` runs in CI on `pull_request` only,
+because it is the one question here about *two* trees: it compares the base
+branch tip against the merge result and names any `#[test]`/`#[tokio::test]`
+that did not survive. Deleting a test is not forbidden — renames and deliberate
+removals are ordinary — it just has to be **named in the PR description**, which
+turns an invisible deletion into a sentence a reviewer reads. It is deliberately
+not a `make gate` step: locally there is no second tree to compare.
 
 ---
 

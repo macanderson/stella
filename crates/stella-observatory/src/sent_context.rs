@@ -160,7 +160,8 @@ fn call_context(
         return Ok(out);
     }
     let preimages = Preimages::index(&journal_payloads(conn, id)?);
-    crate::db::merge(&mut out, reconstruct(&entries, &preimages, full));
+    let era = journal_era(conn, id);
+    crate::db::merge(&mut out, reconstruct(&entries, &preimages, era, full));
     Ok(out)
 }
 
@@ -382,6 +383,57 @@ fn sha256_hex(s: &str) -> String {
         .collect()
 }
 
+/// Which compaction-journaling era wrote an execution's events — an
+/// acknowledged mirror of `stella_store::JournalEra`, on the same bargain as
+/// the rest of this module (this crate links no store; see the module docs).
+///
+/// The point of the stamp is that it is *recorded*, not inferred: a compacted
+/// block on a pre-#1667 journal mismatches as a matter of course, and styling
+/// that as tampering is a false alarm on ordinary housekeeping. The dashboard
+/// used to do exactly that for every era at once (#1981).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum JournalEra {
+    /// Compaction rewrote tool results in place and journaled nothing about
+    /// it. The default, and what a store too old to carry the column reads as:
+    /// nothing known must never be rendered as an integrity failure.
+    #[default]
+    CompactionUnjournaled,
+    /// Every compaction rewrite is journaled (#1667), so a mismatch has no
+    /// routine explanation left.
+    CompactionJournaled,
+}
+
+impl JournalEra {
+    /// The wire spelling, shared by convention with `stella inspect --format
+    /// json`'s `journal_era` — the two are pinned by a test on each side
+    /// rather than by linkage.
+    fn tag(self) -> &'static str {
+        match self {
+            Self::CompactionUnjournaled => "compaction_unjournaled",
+            Self::CompactionJournaled => "compaction_journaled",
+        }
+    }
+}
+
+/// The era stamped on an execution row (`executions.journal_era`, schema v22).
+///
+/// Every failure reads as [`JournalEra::CompactionUnjournaled`], and they are
+/// all ordinary: a store written before v22 has no such column, and an
+/// execution the dashboard was pointed at may not exist. Neither is a state in
+/// which this crate may claim an integrity failure on a user's telemetry, so
+/// the unknown answer is the quiet one.
+pub(crate) fn journal_era(conn: &Connection, id: i64) -> JournalEra {
+    let code: Result<i64, _> = conn.query_row(
+        "SELECT journal_era FROM executions WHERE id = ?1",
+        [id],
+        |r| r.get(0),
+    );
+    match code {
+        Ok(1) => JournalEra::CompactionJournaled,
+        _ => JournalEra::CompactionUnjournaled,
+    }
+}
+
 /// One message under construction — the regrouping target for every block
 /// sharing a `message_index`.
 struct Message {
@@ -396,7 +448,12 @@ struct Message {
 /// `full` lifts the per-body clip, exactly as it does on the transcript route:
 /// both go through `set_journal_body`, so the two views can never disagree
 /// about what "clipped" means.
-pub(crate) fn reconstruct(entries: &[ManifestEntry], preimages: &Preimages, full: bool) -> Value {
+pub(crate) fn reconstruct(
+    entries: &[ManifestEntry],
+    preimages: &Preimages,
+    era: JournalEra,
+    full: bool,
+) -> Value {
     let mut messages: Vec<Message> = Vec::new();
     let mut unresolved: Vec<String> = Vec::new();
     let mut mismatches: Vec<String> = Vec::new();
@@ -461,10 +518,24 @@ pub(crate) fn reconstruct(entries: &[ManifestEntry], preimages: &Preimages, full
         })
         .collect();
 
+    // `verified` stays era-blind: a mismatch happened or it did not. The era
+    // decides only how loudly it is reported, which is what
+    // `digest_mismatch_severity` carries — the same three words `stella
+    // inspect --format json` emits, so the dashboard and the CLI cannot come
+    // to different conclusions about one execution (#1981).
+    let severity = if mismatches.is_empty() {
+        "none"
+    } else if era == JournalEra::CompactionJournaled {
+        "integrity"
+    } else {
+        "compaction"
+    };
     json!({
         "verified": unresolved.is_empty() && mismatches.is_empty(),
         "unresolved": unresolved,
         "digest_mismatches": mismatches,
+        "journal_era": era.tag(),
+        "digest_mismatch_severity": severity,
         "messages": rendered,
     })
 }
@@ -664,7 +735,7 @@ mod tests {
             },
         ];
 
-        let out = reconstruct(&entries, &preimages, false);
+        let out = reconstruct(&entries, &preimages, JournalEra::CompactionJournaled, false);
         assert_eq!(out["verified"], true, "{out}");
         assert_eq!(out["messages"][0]["role"], "system");
         assert_eq!(out["messages"][0]["body"], "you are careful");
@@ -690,7 +761,7 @@ mod tests {
             birth_call_id: Some("missing".to_owned()),
             ..entry("blk_orphan", "tool_result", 0)
         }];
-        let out = reconstruct(&entries, &preimages, false);
+        let out = reconstruct(&entries, &preimages, JournalEra::CompactionJournaled, false);
         assert_eq!(out["verified"], false);
         assert_eq!(out["unresolved"], json!(["blk_orphan"]));
         assert_eq!(out["messages"], json!([]));
@@ -708,7 +779,7 @@ mod tests {
             ..entry("blk_text", "assistant_text", 0)
         }];
         // Nothing resolves at all when the digest is the lookup key…
-        let out = reconstruct(&entries, &preimages, false);
+        let out = reconstruct(&entries, &preimages, JournalEra::CompactionJournaled, false);
         assert_eq!(out["unresolved"], json!(["blk_text"]));
 
         // …so stage the mismatch through a kind that resolves by call id.
@@ -722,7 +793,7 @@ mod tests {
             birth_call_id: Some("c1".to_owned()),
             ..entry("blk_res", "tool_result", 0)
         }];
-        let out = reconstruct(&entries, &preimages, false);
+        let out = reconstruct(&entries, &preimages, JournalEra::CompactionJournaled, false);
         assert_eq!(out["verified"], false);
         assert_eq!(out["digest_mismatches"], json!(["blk_res"]));
         assert_eq!(out["messages"][0]["blocks"][0]["digest_verified"], false);
@@ -756,7 +827,7 @@ mod tests {
             birth_call_id: Some("e1".to_owned()),
             ..entry("blk_err", "tool_result", 0)
         }];
-        let out = reconstruct(&entries, &preimages, false);
+        let out = reconstruct(&entries, &preimages, JournalEra::CompactionJournaled, false);
         assert_eq!(out["verified"], true, "{out}");
         assert_eq!(
             out["messages"][0]["body"],

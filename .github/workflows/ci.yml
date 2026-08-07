@@ -156,6 +156,14 @@ jobs:
     steps:
       - id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Two, not one: on a `pull_request` event this checks out
+          # `refs/pull/N/merge`, and the deleted-test guard below reads that
+          # merge commit's first parent (the base branch tip) to ask what the
+          # merge dropped. It compares two TREES, not two histories, so one
+          # extra commit is the whole cost — a full-depth clone would buy
+          # nothing and slow every run.
+          fetch-depth: 2
 
       # Cheap and toolchain-free, so it runs before the Rust setup: a tracked
       # file that matches .gitignore means agent scratch reached the remote
@@ -283,6 +291,22 @@ jobs:
       - name: every deferral marker names a tracking issue
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-left-behind.sh
+
+      # Also toolchain-free, and the only gate here that is a question about
+      # TWO trees rather than one — which is why it has no `make gate` step to
+      # match. Three times a PR has landed that silently deleted a test another
+      # PR added to the same file hours earlier: both sides green, the merge
+      # textually clean, and a witness quietly gone from the tree (#1976). It
+      # compares the base branch tip against the merge result, so it is quiet
+      # on a merely stale branch, and it asks for an acknowledgement rather
+      # than forbidding deletion — naming the test in this PR's description
+      # passes it. `pull_request` only: on a squash-merged push to `main` there
+      # is no merge to inspect and the report would arrive too late anyway.
+      - name: no test disappears in the merge unacknowledged
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && github.event_name == 'pull_request' }}
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: ./scripts/check-deleted-tests.sh
 
       # Also toolchain-free. AGENTS.md and CONTRIBUTING.md each restate what
       # `make gate` runs, and both had drifted twice — each time by omitting a

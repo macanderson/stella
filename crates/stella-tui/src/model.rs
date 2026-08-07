@@ -149,6 +149,35 @@ pub struct SessionModel {
     /// `OUTPUT_BUDGET` so an unbounded stream can't grow per-frame render
     /// cost; the authoritative `Text` entry is never capped by this.
     pub streaming_text: String,
+    /// The parked wait currently open (#1471, #2007), or `None` when the turn
+    /// is not parked. Set by `TurnParked`, cleared by `TurnWoken` and by the
+    /// turn ending — a park that is cancelled or soft-stopped out of never
+    /// gets its wake, so `Complete`/`Error` have to close the span too.
+    ///
+    /// The *what* of a live park; deliberately not the *when*. A park lasts up
+    /// to its deadline with the engine emitting nothing at all, so the deck's
+    /// countdown needs a clock — and reading one here would break the property
+    /// this whole fold rests on (`replay(&log) == replay(&log)`, L-T1). The
+    /// timestamp is stamped outside, from the deck's injected clock
+    /// (`deck::AgentEntry::parked_since_ms`), exactly as `turn_started_ms` is.
+    pub parked: Option<OpenPark>,
+}
+
+/// A parked wait that has not woken yet — the live half of the ⏳ chip.
+///
+/// Carries the park's own parameters rather than a reference into the
+/// transcript, because the row and the chip answer different questions: the
+/// transcript row is the log of a thing that happened, this is current state,
+/// and the settled row must keep reading as history once the wake lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenPark {
+    /// What the wait is for, as the tool described it.
+    pub description: String,
+    /// Seconds between engine-side probes of the watched state.
+    pub poll_interval_secs: u64,
+    /// Seconds the park may last before it wakes with a timeout — the
+    /// denominator of the countdown.
+    pub deadline_secs: u64,
 }
 
 /// A pending `ask_user` question. The renderer contract is binding: present
@@ -663,12 +692,20 @@ impl SessionModel {
                     poll_interval_secs: *poll_interval_secs,
                     deadline_secs: *deadline_secs,
                 });
+                // …and the live state the row cannot carry: the transcript is
+                // a log, and a countdown is not a thing that happened (#2007).
+                self.parked = Some(OpenPark {
+                    description: description.clone(),
+                    poll_interval_secs: *poll_interval_secs,
+                    deadline_secs: *deadline_secs,
+                });
             }
             AgentEvent::TurnWoken { reason, polls_used } => {
                 self.transcript.push(TranscriptEntry::Woken {
                     reason: reason.clone(),
                     polls_used: *polls_used,
                 });
+                self.parked = None;
             }
             AgentEvent::Compaction {
                 before_tokens,
@@ -936,6 +973,12 @@ impl SessionModel {
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
                 self.pending_hunk_review = None;
+                // A park that the turn was cancelled or soft-stopped out of
+                // never gets its `TurnWoken`, so the span has to close here or
+                // the ⏳ chip counts up forever on a dead turn (#2007).
+                if !*retryable {
+                    self.parked = None;
+                }
                 // An aborted model call never commits its text — without
                 // this the un-committed preview would linger indefinitely.
                 self.streaming_text.clear();
@@ -962,6 +1005,9 @@ impl SessionModel {
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
                 self.pending_hunk_review = None;
+                // The turn is over; a span still open here was one the turn
+                // never woke from (#2007).
+                self.parked = None;
                 self.streaming_text.clear();
                 self.transcript.push(TranscriptEntry::Complete {
                     model: model.clone(),

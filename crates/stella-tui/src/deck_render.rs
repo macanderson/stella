@@ -768,9 +768,8 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             theme::muted(),
         )));
         // Never merged: unresolved is a coverage gap, a mismatch means the
-        // recovered bytes are not this block's. Neither is phrased as tampering
-        // — the common cause is a compaction rewrite the journal was never told
-        // about, and an alarm that fires on housekeeping is one nobody reads.
+        // recovered bytes are not this block's. The gap is never phrased as
+        // tampering — it is a documented coverage boundary, not a signal.
         if view.unresolved > 0 {
             lines.push(Line::from(Span::styled(
                 format!(
@@ -781,14 +780,13 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
                 Style::default().fg(theme::WARN),
             )));
         }
-        if view.digest_mismatches > 0 {
-            // Kept short enough to survive the overlay's clip: the cause is the
-            // whole point of the line, so it must not fall off the right edge.
-            let n = view.digest_mismatches;
-            lines.push(Line::from(Span::styled(
-                format!("  ! {n} block(s) did not re-hash — showing closest preimage, likely a compaction rewrite"),
-                Style::default().fg(theme::WARN),
-            )));
+        // A mismatch means one of two things depending on who wrote the
+        // journal, and `InspectView` (not this renderer) holds that verdict —
+        // see `envelope::InspectView::digest_mismatch_line`, which also keeps
+        // both variants short enough to survive this overlay's clip (#1981).
+        if let Some((text, alarm)) = view.digest_mismatch_line() {
+            let tone = if alarm { theme::DANGER } else { theme::WARN };
+            lines.push(Line::from(Span::styled(text, Style::default().fg(tone))));
         }
         if view.verified {
             lines.push(Line::from(Span::styled(

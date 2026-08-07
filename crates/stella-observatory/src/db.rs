@@ -223,7 +223,7 @@ impl Observatory {
                 Ok(json!({
                     "id": r.get::<_, i64>(0)?,
                     "kind": r.get::<_, String>(1)?,
-                    "prompt": truncate(r.get::<_, String>(2)?, 160),
+                    "prompt": truncate(&r.get::<_, String>(2)?, 160),
                     "provider": r.get::<_, String>(3)?,
                     "model": r.get::<_, String>(4)?,
                     "outcome": r.get::<_, Option<String>>(5)?,
@@ -920,12 +920,12 @@ impl Observatory {
                     "kind": r.get::<_, Option<String>>(1)?,
                     "outcome": r.get::<_, Option<String>>(2)?,
                     "model": r.get::<_, Option<String>>(3)?,
-                    "prompt": truncate(r.get::<_, Option<String>>(4)?.unwrap_or_default(), 140),
+                    "prompt": truncate(&r.get::<_, Option<String>>(4)?.unwrap_or_default(), 140),
                     "delivered": r.get::<_, Option<i64>>(5)?,
                     "self_rating": r.get::<_, Option<i64>>(6)?,
-                    "what_went_well": truncate(r.get::<_, String>(7)?, 280),
-                    "what_to_improve": truncate(r.get::<_, String>(8)?, 280),
-                    "critique": truncate(r.get::<_, String>(9)?, 280),
+                    "what_went_well": truncate(&r.get::<_, String>(7)?, 280),
+                    "what_to_improve": truncate(&r.get::<_, String>(8)?, 280),
+                    "critique": truncate(&r.get::<_, String>(9)?, 280),
                     "recorded_at": r.get::<_, String>(10)?,
                 }))
             },
@@ -1060,7 +1060,7 @@ impl Observatory {
                 Ok(json!({
                     "id": r.get::<_, i64>(0)?,
                     "kind": r.get::<_, String>(1)?,
-                    "prompt": truncate(r.get::<_, String>(2)?, 160),
+                    "prompt": truncate(&r.get::<_, String>(2)?, 160),
                     "provider": r.get::<_, String>(3)?,
                     "model": r.get::<_, String>(4)?,
                     "started_at": r.get::<_, String>(5)?,
@@ -1256,7 +1256,7 @@ fn journal_entry(row: Value, full: bool) -> Value {
 pub(crate) fn set_journal_body(entry: &mut Value, body: &str, full: bool) {
     let clipped = !full && body.chars().count() > JOURNAL_BODY_CLIP;
     entry["body"] = if clipped {
-        json!(truncate(body.to_owned(), JOURNAL_BODY_CLIP))
+        json!(truncate(body, JOURNAL_BODY_CLIP))
     } else {
         json!(body)
     };
@@ -1273,7 +1273,7 @@ fn rules_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
         |r| {
             Ok(json!({
                 "rule_id": r.get::<_, String>(0)?,
-                "contents": truncate(r.get::<_, String>(1)?, 240),
+                "contents": truncate(&r.get::<_, String>(1)?, 240),
                 "source": r.get::<_, String>(2)?,
                 "created_at": r.get::<_, String>(3)?,
             }))
@@ -1410,9 +1410,9 @@ pub(crate) fn merge(base: &mut Value, extra: Value) {
 }
 
 /// Cap a string at `max` chars on a char boundary, appending an ellipsis.
-fn truncate(s: String, max: usize) -> String {
+pub(crate) fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
-        return s;
+        return s.to_owned();
     }
     let mut out: String = s.chars().take(max).collect();
     out.push('…');

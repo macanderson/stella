@@ -24,6 +24,16 @@
 //! self-defeating — an alarm that fires on routine housekeeping is an alarm
 //! nobody reads.
 //!
+//! Which of those two a mismatch is therefore depends on *who wrote the
+//! journal*, and that is recorded rather than inferred: [`JournalEra`] is
+//! stamped on the execution row when the run begins, and
+//! [`Reconstruction::mismatch_severity`] is the one place the two eras are
+//! told apart. Every surface that renders a mismatch — `stella inspect`,
+//! `stella trace`, the deck's INSPECT overlay, the observatory — reads that
+//! verdict rather than deciding for itself, because #1668 had to correct all
+//! of them at once and a surface that reasons on its own is the one that will
+//! be missed next time.
+//!
 //! # Reconstructable boundary (clean path only)
 //!
 //! Byte-exact reconstruction holds for the ordinary turn: system prompt, user
@@ -36,13 +46,89 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use stella_protocol::{
     AgentEvent, CompletionMessage, MessageRole, ToolCall, ToolOutput, ToolResult,
 };
 
 use crate::{Result, Store};
+
+/// Which compaction-journaling era wrote an execution's events — the signal
+/// that decides whether a digest mismatch is routine housekeeping or a real
+/// integrity failure.
+///
+/// This is **stamped, not inferred**. The tempting cheap test — "did any
+/// `Compaction` event in this execution carry rewrites?" — reads the absence
+/// of a record as a statement about the writer, and it is wrong in a case that
+/// really happens: an overflow-summary splice
+/// (`stella_core::driver::apply_overflow_summary`) compacts and legitimately
+/// journals no rewrites at all, so a current-era execution would be read as
+/// legacy and a genuine integrity signal would be styled as housekeeping. The
+/// column costs a migration; guessing costs the alarm.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum JournalEra {
+    /// Compaction rewrote tool results in place and told the journal nothing
+    /// about it (every journal written before #1667/PR #1979). A compacted
+    /// block can only resolve through the `call_id` fallback, which reaches
+    /// the pre-compaction bytes — so it mismatches, benignly and forever.
+    ///
+    /// The default, and what every row written before schema v22 backfills to:
+    /// an era this build does not recognise reads as this one, so an
+    /// unfamiliar stamp can only under-alarm.
+    #[default]
+    CompactionUnjournaled,
+    /// Every compaction pass journals its replacement bytes on the
+    /// `Compaction` event (#1667), so a compacted block resolves by digest to
+    /// exactly what the step sent. A mismatch here has no housekeeping
+    /// explanation left.
+    CompactionJournaled,
+}
+
+impl JournalEra {
+    /// The era this build writes. Stamped by
+    /// [`Store::begin_execution`](crate::Store::begin_execution) onto every
+    /// execution it opens — a statement about the *writer's* capability, which
+    /// is the one thing no later reader can recover from the events alone.
+    pub const CURRENT: Self = Self::CompactionJournaled;
+
+    /// The `executions.journal_era` code for this era.
+    pub fn code(self) -> i64 {
+        match self {
+            Self::CompactionUnjournaled => 0,
+            Self::CompactionJournaled => 1,
+        }
+    }
+
+    /// The era a stored code names. An unrecognised code — a row written by a
+    /// *newer* build, read here after a downgrade — reads as
+    /// [`Self::CompactionUnjournaled`], the benign direction: this build does
+    /// not know what that journal guarantees, so it must not claim an
+    /// integrity failure on its behalf.
+    pub fn from_code(code: i64) -> Self {
+        match code {
+            1 => Self::CompactionJournaled,
+            _ => Self::CompactionUnjournaled,
+        }
+    }
+}
+
+/// What a digest mismatch on one reconstruction actually means — the verdict
+/// every rendering surface styles from, so none of them has to re-derive it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MismatchSeverity {
+    /// No block mismatched. Nothing to report.
+    None,
+    /// The journal predates compaction journaling its rewrites, so the
+    /// mismatched bytes are the pre-compaction output of a result that was
+    /// rewritten in place. Routine; renders as a warning that names compaction
+    /// as the cause, never as tampering.
+    Compaction,
+    /// The journal records every compaction rewrite, so compaction is no
+    /// longer an available explanation: these bytes are unaccounted for.
+    /// Renders as a real integrity signal.
+    Integrity,
+}
 
 /// The outcome of reconstructing one step: the rebuilt messages plus the honest
 /// accounting of anything the fold could not fully vouch for.
@@ -60,13 +146,34 @@ pub struct Reconstruction {
     /// compaction rewrite the journal was never told about. Empty on the clean
     /// path.
     pub digest_mismatches: Vec<String>,
+    /// Which compaction-journaling era wrote this execution's journal, read
+    /// from its `executions` row. Decides what
+    /// [`Self::digest_mismatches`] *means* — see [`Self::mismatch_severity`].
+    pub journal_era: JournalEra,
 }
 
 impl Reconstruction {
     /// Whether every block resolved and every journal-resolved digest matched —
     /// the step is a faithful, verified reconstruction of what the model saw.
+    ///
+    /// Deliberately era-blind: a mismatch is a mismatch, and a reconstruction
+    /// with one is not something to vouch for whoever wrote it. The era
+    /// changes how loudly it is *reported*, never whether it happened.
     pub fn is_verified(&self) -> bool {
         self.unresolved.is_empty() && self.digest_mismatches.is_empty()
+    }
+
+    /// What this reconstruction's digest mismatches mean, given who wrote the
+    /// journal. **The single place the two eras are told apart** — every
+    /// surface styles from this rather than reasoning about the era itself.
+    pub fn mismatch_severity(&self) -> MismatchSeverity {
+        if self.digest_mismatches.is_empty() {
+            return MismatchSeverity::None;
+        }
+        match self.journal_era {
+            JournalEra::CompactionUnjournaled => MismatchSeverity::Compaction,
+            JournalEra::CompactionJournaled => MismatchSeverity::Integrity,
+        }
     }
 }
 
@@ -175,6 +282,7 @@ impl Store {
             messages,
             unresolved,
             digest_mismatches,
+            journal_era: self.journal_era(execution_id)?,
         })
     }
 
@@ -182,6 +290,22 @@ impl Store {
     /// preimage lookup. Mirrors [`Store::materialize_tool_calls`]'s read shape.
     fn journal_preimages(&self, execution_id: i64) -> Result<JournalPreimages> {
         journal_preimages(&self.lock(), execution_id)
+    }
+
+    /// The era stamped on an execution row. An execution that is not there at
+    /// all reads as [`JournalEra::CompactionUnjournaled`] for the same reason
+    /// an unknown code does: nothing is known about that journal, and "nothing
+    /// known" must never be rendered as an integrity failure.
+    fn journal_era(&self, execution_id: i64) -> Result<JournalEra> {
+        let code: Option<i64> = self
+            .lock()
+            .query_row(
+                "SELECT journal_era FROM executions WHERE id = ?1",
+                params![execution_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(code.map_or(JournalEra::default(), JournalEra::from_code))
     }
 }
 
@@ -649,6 +773,169 @@ mod tests {
         );
         assert_eq!(recon.messages.len(), 1);
         assert_eq!(recon.messages[0].tool_results[0].output, stubbed);
+    }
+
+    /// Seed one execution whose single manifest block resolves through the
+    /// `call_id` fallback to bytes that are NOT its recorded digest — the
+    /// shape a compaction rewrite leaves behind. Returns its id.
+    ///
+    /// Both eras of the witness below share it verbatim, because the whole
+    /// claim is that *the same unresolvable block* reads differently depending
+    /// only on who wrote the journal.
+    fn seed_mismatching_block(store: &Store) -> i64 {
+        let journaled = ToolOutput::Ok {
+            content: "the original tool output".into(),
+        };
+        let sent = ToolOutput::Ok {
+            content: "[tool output evicted to fit context]".into(),
+        };
+        let sent_json = serde_json::to_string(&sent).unwrap();
+
+        let id = store.begin_execution("run", "p", "z", "m").unwrap();
+        store
+            .record_event(
+                id,
+                0,
+                &AgentEvent::ToolResult {
+                    call_id: "c1".into(),
+                    output: journaled,
+                    duration_ms: 5,
+                    speculated: false,
+                },
+            )
+            .unwrap();
+        // No Compaction event carrying the replacement: the block's digest is
+        // over `sent`, and the only preimage the journal holds under `c1` is
+        // the pre-compaction output.
+        store
+            .record_context_block(
+                id,
+                &journal("blk_post", "tool_result", Some("c1"), &sent_json),
+            )
+            .unwrap();
+        store
+            .record_step_manifest(
+                id,
+                &StepManifestRow {
+                    turn_instance: 0,
+                    step: 1,
+                    call_seq: 0,
+                    provider: "z".into(),
+                    model: "m".into(),
+                    call_role: "worker".into(),
+                    effective_budget_tokens: 100,
+                    calibration_factor: 1.0,
+                    estimated_input_tokens: 10,
+                    compiled_frame_id: None,
+                    frame_hash: None,
+                    blocks: vec![entry("blk_post", 0)],
+                },
+            )
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn the_same_mismatch_is_housekeeping_on_a_legacy_journal_and_an_alarm_on_a_current_one() {
+        // The witness for #1981. #1668 downgraded the mismatch surface to a
+        // benign warning because a mismatch was ROUTINE: compaction rewrote
+        // tool results in place and journaled nothing, so every compacted
+        // block mismatched forever. #1667/PR #1979 closed that — a current
+        // journal carries the replacement bytes — which makes a mismatch there
+        // mean something again. Both readings are correct, for different
+        // journals, so the surface has to tell the two apart. Before this
+        // change it could not: there was no era signal at all, and both of
+        // these reconstructions rendered as the same warning.
+        let store = Store::in_memory().unwrap();
+
+        let current = seed_mismatching_block(&store);
+        let legacy = seed_mismatching_block(&store);
+        // What a row written before schema v22 looks like after the migration
+        // backfills it: era 0, because the build that wrote it could not have
+        // journaled a rewrite.
+        store
+            .lock()
+            .execute(
+                "UPDATE executions SET journal_era = 0 WHERE id = ?1",
+                params![legacy],
+            )
+            .unwrap();
+
+        let legacy_recon = store.reconstruct_worker_step(legacy, 0, 1).unwrap();
+        let current_recon = store.reconstruct_worker_step(current, 0, 1).unwrap();
+
+        // Same block, same bytes, same failure — the reconstructions differ in
+        // nothing except who wrote the journal.
+        assert_eq!(legacy_recon.digest_mismatches, vec!["blk_post".to_string()]);
+        assert_eq!(
+            current_recon.digest_mismatches,
+            legacy_recon.digest_mismatches
+        );
+        assert_eq!(legacy_recon.messages, current_recon.messages);
+        assert!(!legacy_recon.is_verified() && !current_recon.is_verified());
+
+        // ...and yet they must not read the same.
+        assert_eq!(
+            legacy_recon.mismatch_severity(),
+            MismatchSeverity::Compaction,
+            "a pre-#1667 journal mismatches on ordinary compaction; calling that \
+             an integrity failure is the false alarm #1668 removed"
+        );
+        assert_eq!(
+            current_recon.mismatch_severity(),
+            MismatchSeverity::Integrity,
+            "this journal records every compaction rewrite, so compaction is not \
+             an available explanation for these bytes"
+        );
+        assert_ne!(
+            legacy_recon.mismatch_severity(),
+            current_recon.mismatch_severity()
+        );
+    }
+
+    #[test]
+    fn a_clean_reconstruction_has_no_severity_to_report_in_either_era() {
+        // Severity is about mismatches, not about the era: a current-era
+        // journal with nothing wrong must not acquire an alarm just by being
+        // current.
+        let recon = Reconstruction {
+            messages: Vec::new(),
+            unresolved: vec!["blk_gap".into()],
+            digest_mismatches: Vec::new(),
+            journal_era: JournalEra::CompactionJournaled,
+        };
+        assert_eq!(recon.mismatch_severity(), MismatchSeverity::None);
+        assert!(!recon.is_verified(), "an unresolved block is still a gap");
+    }
+
+    #[test]
+    fn an_unrecognised_era_code_reads_as_the_oldest_one() {
+        // A row written by a NEWER build, read here after a downgrade. This
+        // build cannot know what that journal guarantees, and the honest
+        // failure direction is to under-alarm rather than to accuse.
+        assert_eq!(JournalEra::from_code(7), JournalEra::CompactionUnjournaled);
+        assert_eq!(JournalEra::from_code(0), JournalEra::CompactionUnjournaled);
+        assert_eq!(JournalEra::from_code(1), JournalEra::CompactionJournaled);
+        assert_eq!(JournalEra::CURRENT.code(), 1);
+        assert_eq!(JournalEra::default(), JournalEra::CompactionUnjournaled);
+    }
+
+    #[test]
+    fn a_run_this_build_started_is_stamped_as_journaling_its_rewrites() {
+        // The writer-side half of the era signal: the stamp has to be made
+        // while this binary is the one talking, because nothing downstream can
+        // recover it from the events.
+        let store = Store::in_memory().unwrap();
+        let id = store.begin_execution("run", "p", "z", "m").unwrap();
+        let stamped: i64 = store
+            .lock()
+            .query_row(
+                "SELECT journal_era FROM executions WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(JournalEra::from_code(stamped), JournalEra::CURRENT);
     }
 
     #[test]

@@ -2621,6 +2621,7 @@ fn service_inspect_action(
                     verified: recon.is_verified(),
                     unresolved: recon.unresolved.len(),
                     digest_mismatches: recon.digest_mismatches.len(),
+                    journal_era: crate::inspect::deck_journal_era(recon.journal_era),
                 })));
             });
         }

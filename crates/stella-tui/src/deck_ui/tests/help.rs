@@ -148,6 +148,7 @@ fn esc_steps_back_from_the_detail_to_the_list_before_closing() {
             verified: true,
             unresolved: 0,
             digest_mismatches: 0,
+            journal_era: crate::envelope::JournalEra::CompactionJournaled,
         })),
         &mut WorkspaceModel::new(),
         &mut ui,

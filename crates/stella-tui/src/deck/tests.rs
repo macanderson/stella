@@ -902,3 +902,87 @@ fn a_bang_shell_event_for_an_unknown_lane_is_dropped_not_auto_registered() {
         "and none is misrouted"
     );
 }
+
+/// The witness for #2007. A parked wait runs up to its deadline with the
+/// engine emitting **nothing at all** — one `TurnParked` in, one `TurnWoken`
+/// out, and up to half an hour of silence between them. So the countdown
+/// cannot ride an event; it has to run on the deck's own clock, and this is
+/// the assertion that it does: elapsed advances with `now_ms` alone, with no
+/// further input of any kind.
+#[test]
+fn the_park_clock_advances_on_the_decks_own_clock_with_no_further_events() {
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    w.now_ms = 1_000;
+    w.apply_inbound(&ev(
+        "lead",
+        AgentEvent::TurnParked {
+            description: "CI for branch main settles".into(),
+            poll_interval_secs: 30,
+            deadline_secs: 1_800,
+        },
+    ));
+
+    let (park, elapsed) = w.agents[0]
+        .live_park(w.now_ms)
+        .expect("the lane is parked the moment the event lands");
+    assert_eq!(elapsed, 0, "the park has only just begun");
+    assert_eq!(park.deadline_secs, 1_800);
+
+    // Not one further event — only the shell's clock tick, which is all a
+    // parked engine gives us.
+    w.now_ms = 253_000;
+    let (_, elapsed) = w.agents[0].live_park(w.now_ms).expect("still parked");
+    assert_eq!(
+        elapsed, 252_000,
+        "the chip counts up with no new event; before #2007 there was nothing \
+         here to count"
+    );
+
+    w.now_ms = 300_000;
+    w.apply_inbound(&ev(
+        "lead",
+        AgentEvent::TurnWoken {
+            reason: "changed".into(),
+            polls_used: 8,
+        },
+    ));
+    assert!(
+        w.agents[0].live_park(w.now_ms).is_none(),
+        "the wake stops the clock"
+    );
+}
+
+/// The stamp is deliberately never cleared, so the *gate* has to be the pure
+/// fold. A park that already settled must not resurrect as a live chip just
+/// because the lane still remembers when the last one started.
+#[test]
+fn a_stale_park_stamp_cannot_resurrect_a_settled_park() {
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    w.now_ms = 1_000;
+    w.apply_inbound(&ev(
+        "lead",
+        AgentEvent::TurnParked {
+            description: "CI settles".into(),
+            poll_interval_secs: 30,
+            deadline_secs: 600,
+        },
+    ));
+    w.apply_inbound(&ev(
+        "lead",
+        AgentEvent::TurnWoken {
+            reason: "deadline_expired".into(),
+            polls_used: 20,
+        },
+    ));
+
+    assert!(
+        w.agents[0].parked_since_ms.is_some(),
+        "the stamp is left behind by design — nothing clears it"
+    );
+    assert!(
+        w.agents[0].live_park(999_999).is_none(),
+        "and it is inert, because `live_park` gates on the pure fold"
+    );
+}

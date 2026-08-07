@@ -441,6 +441,27 @@ pub struct InspectMessage {
     pub content: String,
 }
 
+/// Which compaction-journaling era wrote the journal a reconstruction came
+/// from — the deck's mirror of `stella_store::JournalEra` (this crate links no
+/// store; the driver maps one to the other, exactly as it does for every other
+/// type on this envelope).
+///
+/// It exists here for one reason: it decides whether a digest mismatch is
+/// routine housekeeping or a real integrity signal, and the overlay must not
+/// guess (#1981).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum JournalEra {
+    /// Compaction rewrote tool results in place and journaled nothing about it
+    /// (#1667 and earlier), so a compacted block mismatches as a matter of
+    /// course. The default: an era the deck was not told reads as the one
+    /// where a mismatch means the least.
+    #[default]
+    CompactionUnjournaled,
+    /// Every compaction rewrite is journaled, so a compacted block resolves to
+    /// exactly what the step sent and a mismatch has no routine explanation.
+    CompactionJournaled,
+}
+
 /// The reconstructed context of one model call — what the INSPECT overlay
 /// shows. Carries the verification verdict alongside the bytes, because a
 /// transcript you cannot vouch for is worse than none.
@@ -455,10 +476,47 @@ pub struct InspectView {
     pub unresolved: usize,
     /// Blocks whose recovered bytes did NOT re-hash to the digest they
     /// recorded — the preimage shown is the closest one the journal holds, not
-    /// the exact bytes this step sent. Usually a compaction rewrite the journal
-    /// was never told about, not evidence of tampering. Kept distinct from
-    /// `unresolved`: the two mean very different things.
+    /// the exact bytes this step sent. Kept distinct from `unresolved`: the two
+    /// mean very different things. What a mismatch *means* depends on
+    /// [`Self::journal_era`] — see [`Self::digest_mismatch_line`].
     pub digest_mismatches: usize,
+    /// Who wrote the journal these blocks were resolved from.
+    pub journal_era: JournalEra,
+}
+
+impl InspectView {
+    /// The overlay's mismatch line and whether it is a genuine integrity
+    /// signal, or `None` when nothing mismatched.
+    ///
+    /// The wording lives here rather than in the renderer for two reasons.
+    /// `deck_render.rs` is a god file at its ceiling, so a second branch there
+    /// costs lines it does not have; and the overlay **clips** rather than
+    /// wraps, so each variant has to be short enough to survive the right edge
+    /// intact — which is a property of the string, testable here, not of the
+    /// draw call. Both variants stay under 80 columns and put the *meaning*
+    /// before the detail, so the part that distinguishes them survives even on
+    /// the narrowest terminal the popup can be drawn in.
+    ///
+    /// A legacy journal's mismatch stays the benign warning #1668 introduced,
+    /// naming compaction as the cause. A journal that records every rewrite
+    /// has no such excuse, so the same mismatch reads as the alarm it is
+    /// (#1981).
+    pub fn digest_mismatch_line(&self) -> Option<(String, bool)> {
+        let n = self.digest_mismatches;
+        if n == 0 {
+            return None;
+        }
+        Some(match self.journal_era {
+            JournalEra::CompactionUnjournaled => (
+                format!("  ! {n} block(s) did not re-hash — an older journal's compaction rewrite"),
+                false,
+            ),
+            JournalEra::CompactionJournaled => (
+                format!("  !! {n} block(s) unaccounted for — this journal records its rewrites"),
+                true,
+            ),
+        })
+    }
 }
 
 /// One row of the ISSUES tab's browse list — a tracker-agnostic mirror of
@@ -1367,6 +1425,39 @@ mod tests {
             AgentStatus::Killed,
         ] {
             assert!(!(s.is_active() && s.is_terminal()), "{s:?}");
+        }
+    }
+
+    /// The INSPECT overlay clips rather than wraps, and its popup is
+    /// `min(frame - 6, 120)` columns wide — so on an 80-column terminal a
+    /// banner line has about 72 to work with. Both variants are written to
+    /// that budget and put the meaning first; this pins it, because a wording
+    /// change that silently pushes the distinguishing half off the right edge
+    /// would undo #1981 without failing anything else (see #2029).
+    #[test]
+    fn both_mismatch_lines_survive_an_eighty_column_terminal() {
+        for era in [
+            JournalEra::CompactionUnjournaled,
+            JournalEra::CompactionJournaled,
+        ] {
+            let view = InspectView {
+                call: RecordedCallInfo {
+                    turn_instance: 0,
+                    step: 1,
+                    call_seq: 0,
+                    call_role: "worker".into(),
+                    provider: "zai".into(),
+                    model: "glm-5.2".into(),
+                    estimated_input_tokens: 10,
+                },
+                messages: Vec::new(),
+                verified: false,
+                digest_mismatches: 999,
+                unresolved: 0,
+                journal_era: era,
+            };
+            let (line, _) = view.digest_mismatch_line().expect("a mismatch is reported");
+            assert!(line.chars().count() <= 72, "{} cols: {line}", line.len());
         }
     }
 

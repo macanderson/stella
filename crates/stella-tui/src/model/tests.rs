@@ -59,6 +59,89 @@ fn a_parked_wait_folds_into_typed_entries_not_narration() {
     }
 }
 
+/// The live half of #2007: alongside the scrollback rows, the fold carries
+/// *whether a park is open right now* and what it is waiting on.
+///
+/// The transcript cannot answer that on its own — it is a log, so both a park
+/// that is still running and one that woke an hour ago leave the same ⏳ row.
+/// The chip needs current state, and this is the pure half of it (the clock is
+/// stamped outside, in `deck::AgentEntry::parked_since_ms`).
+#[test]
+fn an_open_park_is_live_state_and_the_wake_closes_it() {
+    let mut model = SessionModel::new();
+    assert!(model.parked.is_none(), "a fresh model is not parked");
+
+    model.apply(&AgentEvent::TurnParked {
+        description: "CI for branch main settles".into(),
+        poll_interval_secs: 30,
+        deadline_secs: 1800,
+    });
+    let park = model.parked.as_ref().expect("the park is open");
+    assert_eq!(park.description, "CI for branch main settles");
+    assert_eq!(park.poll_interval_secs, 30);
+    assert_eq!(park.deadline_secs, 1800, "the countdown's denominator");
+
+    model.apply(&AgentEvent::TurnWoken {
+        reason: "changed".into(),
+        polls_used: 41,
+    });
+    assert!(model.parked.is_none(), "the wake closes the span");
+    // …and the scrollback still reads as history afterwards.
+    assert!(
+        matches!(model.transcript.last(), Some(TranscriptEntry::Woken { .. })),
+        "{:?}",
+        model.transcript
+    );
+}
+
+/// A park the turn was cancelled or soft-stopped out of never gets its
+/// `TurnWoken` — `driver::waiting` returns early on both paths. Without a
+/// close here the ⏳ chip would count up forever on a turn that is over.
+#[test]
+fn a_turn_that_ends_mid_park_closes_the_span_anyway() {
+    for terminal in [
+        AgentEvent::Complete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        },
+        AgentEvent::Error {
+            message: "cancelled".into(),
+            retryable: false,
+        },
+    ] {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::TurnParked {
+            description: "the deploy finishes".into(),
+            poll_interval_secs: 10,
+            deadline_secs: 600,
+        });
+        assert!(model.parked.is_some());
+        model.apply(&terminal);
+        assert!(
+            model.parked.is_none(),
+            "a turn ending mid-park must close the span: {terminal:?}"
+        );
+    }
+}
+
+/// A *retryable* error is a warning mid-flight, not the end of the turn, so it
+/// must leave an open park alone — the same reading the proof rail and the
+/// plan take of the identical event.
+#[test]
+fn a_retryable_error_does_not_close_an_open_park() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::TurnParked {
+        description: "CI settles".into(),
+        poll_interval_secs: 10,
+        deadline_secs: 600,
+    });
+    model.apply(&AgentEvent::Error {
+        message: "429".into(),
+        retryable: true,
+    });
+    assert!(model.parked.is_some(), "the wait is still running");
+}
+
 #[test]
 fn streaming_text_deltas_coalesce_into_one_entry() {
     let mut model = SessionModel::new();

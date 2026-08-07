@@ -41,7 +41,7 @@ use stella_core::context_record::{
     SelectionHealthPolicy, fold_selection_health,
 };
 
-use crate::db::{DbError, collect_rows, is_missing_schema, open_read_only};
+use crate::db::{DbError, collect_rows, is_missing_schema, open_read_only, truncate};
 
 /// Ledger revisions read per record kind, newest first in append order —
 /// mirrors `stella proposals`' own `READ_LIMIT`
@@ -354,14 +354,4 @@ fn health_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
             })
         })
         .collect())
-}
-
-/// Cap a string at `max` chars on a char boundary, appending an ellipsis.
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    let mut out: String = s.chars().take(max).collect();
-    out.push('…');
-    out
 }
