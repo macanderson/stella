@@ -133,6 +133,7 @@ fn interactive_allowed() -> bool {
 mod aux;
 mod listing;
 mod providers;
+mod reload;
 
 // Re-exported at the old paths: the table moved for the line ratchet, not
 // for callers, and `crate::config::PROVIDERS` stays the one way to reach it.
