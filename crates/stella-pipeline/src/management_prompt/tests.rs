@@ -36,7 +36,7 @@ const SHARED_MANAGEMENT_PREAMBLE: &str = "";
 /// family. Completeness is not compiler-checked here — that job belongs to
 /// the exhaustive match in [`management_system_block`], which forces a new
 /// variant to declare its prefix posture before this array matters.
-const ALL_ROLES: [ModelCallRole; 14] = [
+const ALL_ROLES: [ModelCallRole; 15] = [
     ModelCallRole::Unknown,
     ModelCallRole::Triage,
     ModelCallRole::Plan,
@@ -51,6 +51,7 @@ const ALL_ROLES: [ModelCallRole; 14] = [
     ModelCallRole::DomainInference,
     ModelCallRole::Reflection,
     ModelCallRole::Summarization,
+    ModelCallRole::Research,
 ];
 
 /// The system block a role dispatches through the management chokepoint
@@ -82,7 +83,9 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         // adopt the split these arms move to `Some(...)` and the roles join
         // the parity witness automatically.
         ModelCallRole::Plan | ModelCallRole::PlanRepair => None,
-        // Never dispatched through the management chokepoint.
+        // Never dispatched through the management chokepoint. `Research`
+        // (#1778) rides the sub-agent primitive — its system prompt travels
+        // on the `SubAgentSpec`, not through `metered_raw_call`.
         ModelCallRole::Unknown
         | ModelCallRole::WitnessAuthor
         | ModelCallRole::WitnessRepair
@@ -90,7 +93,8 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         | ModelCallRole::SkillAuthor
         | ModelCallRole::DomainInference
         | ModelCallRole::Reflection
-        | ModelCallRole::Summarization => None,
+        | ModelCallRole::Summarization
+        | ModelCallRole::Research => None,
     }
 }
 
