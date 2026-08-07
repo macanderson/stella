@@ -12,43 +12,40 @@ export interface ConnState {
 }
 
 /*
- * The lockup: "arenabench / by stella*", where the asterisk is the comet
- * itself — a four-point star with its trail, flying left to right, drawn
- * from the same geometry as the stella logomark so the two are the same
- * mark at two sizes. Gold appears exactly once, on the star.
+ * The lockup: the stella wordmark from the brand kit, a hairline pipe, and
+ * the arena's domain. The artwork is a byte-copy of
+ * docs/brand/logo/svg/wordmark-color-{dark,light}.svg served from
+ * public/brand/ — never redrawn here, so the kit stays the single source of
+ * the mark. Two fixed cuts swap with the scheme because next-themes stamps
+ * `.dark` on <html>; the kit's *-adaptive.svg follows only the OS media
+ * query and would ignore the in-app toggle.
  */
 function Brand() {
   return (
-    <div className="flex items-center gap-2.5">
+    <div className="flex items-center gap-3.5">
       {/*
-       * The viewBox spans y -5..39, not 0..34: the star's north and south
-       * points sit at y=-5 and y=39, so a box that stopped at the trails'
-       * extent sliced both of them flat. Height follows the box's own
-       * ratio (34 x 44/96) so the artwork keeps the logomark's proportions
-       * rather than being squashed back into the old square-ish frame.
+       * h-[57px] is 2.25x the height of the lockup this one replaced. The
+       * artwork carries a 9-unit left bearing in its 264-wide viewBox (~5px
+       * at this size); the negative margin sets the glyphs, not the
+       * transparent frame, on the content edge.
        */}
-      <svg
-        className="block h-[15.58px] w-[34px] flex-none overflow-visible"
-        viewBox="0 -5 96 44"
-        role="img"
-        aria-label="stella"
-      >
-        <line className="comet-trail stroke-gold" x1="6" y1="17" x2="34" y2="17" strokeWidth="7" strokeLinecap="round" />
-        <line className="comet-trail stroke-gold" x1="17" y1="4" x2="34" y2="4" strokeWidth="7" strokeLinecap="round" />
-        <line className="comet-trail stroke-gold" x1="17" y1="30" x2="34" y2="30" strokeWidth="7" strokeLinecap="round" />
-        <path
-          className="comet-star fill-gold"
-          d="M68 -5 C69.65 8.2 76.8 15.35 90 17 C76.8 18.65 69.65 25.8 68 39
-             C66.35 25.8 59.2 18.65 46 17 C59.2 15.35 66.35 8.2 68 -5 Z"
-        />
-      </svg>
-      <span className="flex flex-col gap-px leading-none">
-        <span className="text-[15px] font-extrabold lowercase tracking-[-0.02em]">
-          arena<span className="text-accent">bench</span>
-        </span>
-        <span className="flex items-center gap-1 text-[9.5px] lowercase tracking-[0.14em] text-dim">
-          by <b className="font-medium text-muted">stella</b>
-        </span>
+      <img
+        src="/brand/wordmark-color-light.svg"
+        alt="stella"
+        width={157}
+        height={57}
+        className="brand-mark -ml-[5px] block h-[57px] w-auto flex-none dark:hidden"
+      />
+      <img
+        src="/brand/wordmark-color-dark.svg"
+        alt="stella"
+        width={157}
+        height={57}
+        className="brand-mark -ml-[5px] hidden h-[57px] w-auto flex-none dark:block"
+      />
+      <span aria-hidden="true" className="h-7 w-px flex-none bg-line" />
+      <span className="whitespace-nowrap text-[20px] font-bold tracking-[0.04em]">
+        ARENABENCH.ORG
       </span>
     </div>
   );
@@ -66,56 +63,70 @@ export function Topbar({
   conn: ConnState;
 }) {
   return (
-    <header className="sticky top-0 z-40 flex h-14 items-center gap-6 border-b border-line bg-background/85 px-5 backdrop-blur-md mx-auto max-w-[1600px] px-5 m-b-5">
-      <Brand />
-      <Tabs.Root value={view} onValueChange={(v) => onViewChange(v as View)}>
-        <Tabs.List className="flex gap-1">
-          <Tabs.Tab
-            value="setup"
+    <header className="sticky top-0 z-40 border-b border-line bg-background/85 backdrop-blur-md">
+      {/*
+       * The bar itself spans the viewport (so the border and blur do too);
+       * this inner rail mirrors the active view's container — setup is
+       * mx-auto max-w-[1180px] px-5, arena max-w-[1600px] px-5 sm:px-7 —
+       * so the wordmark's left edge lands on the content's left edge, not
+       * the page's.
+       */}
+      <div
+        className={cn(
+          "mx-auto flex items-center gap-6 px-5 py-3",
+          view === "setup" ? "max-w-[1180px]" : "max-w-[1600px] sm:px-7",
+        )}
+      >
+        <Brand />
+        <Tabs.Root value={view} onValueChange={(v) => onViewChange(v as View)}>
+          <Tabs.List className="flex gap-1">
+            <Tabs.Tab
+              value="setup"
+              className={cn(
+                "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
+                "hover:bg-panel hover:text-foreground",
+                "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
+              )}
+            >
+              Setup
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="arena"
+              disabled={!arenaEnabled}
+              className={cn(
+                "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
+                "hover:bg-panel hover:text-foreground",
+                "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
+                "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-35",
+              )}
+            >
+              Arena
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="trends"
+              className={cn(
+                "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
+                "hover:bg-panel hover:text-foreground",
+                "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
+              )}
+            >
+              Trends
+            </Tabs.Tab>
+          </Tabs.List>
+        </Tabs.Root>
+        <div className="ml-auto flex items-center gap-2 text-xs">
+          <span
             className={cn(
-              "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
-              "hover:bg-panel hover:text-foreground",
-              "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
+              "size-[7px] rounded-full transition-all",
+              conn.tone === "live" && "bg-ok shadow-[0_0_0_3px_rgb(92_230_138/0.16)]",
+              conn.tone === "error" && "bg-bad",
+              conn.tone === "" && "bg-dim",
             )}
-          >
-            Setup
-          </Tabs.Tab>
-          <Tabs.Tab
-            value="arena"
-            disabled={!arenaEnabled}
-            className={cn(
-              "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
-              "hover:bg-panel hover:text-foreground",
-              "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
-              "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-35",
-            )}
-          >
-            Arena
-          </Tabs.Tab>
-          <Tabs.Tab
-            value="trends"
-            className={cn(
-              "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
-              "hover:bg-panel hover:text-foreground",
-              "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
-            )}
-          >
-            Trends
-          </Tabs.Tab>
-        </Tabs.List>
-      </Tabs.Root>
-      <div className="ml-auto flex items-center gap-2 text-xs">
-        <span
-          className={cn(
-            "size-[7px] rounded-full transition-all",
-            conn.tone === "live" && "bg-ok shadow-[0_0_0_3px_rgb(92_230_138/0.16)]",
-            conn.tone === "error" && "bg-bad",
-            conn.tone === "" && "bg-dim",
-          )}
-          title={conn.tone === "live" ? "connected" : "disconnected"}
-        />
-        <span className="font-mono text-muted">{conn.label}</span>
-        <ThemeToggle />
+            title={conn.tone === "live" ? "connected" : "disconnected"}
+          />
+          <span className="font-mono text-muted">{conn.label}</span>
+          <ThemeToggle />
+        </div>
       </div>
     </header>
   );
