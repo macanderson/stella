@@ -36,9 +36,10 @@ const SHARED_MANAGEMENT_PREAMBLE: &str = "";
 /// family. Completeness is not compiler-checked here — that job belongs to
 /// the exhaustive match in [`management_system_block`], which forces a new
 /// variant to declare its prefix posture before this array matters.
-const ALL_ROLES: [ModelCallRole; 14] = [
+const ALL_ROLES: [ModelCallRole; 15] = [
     ModelCallRole::Unknown,
     ModelCallRole::Triage,
+    ModelCallRole::Research,
     ModelCallRole::Plan,
     ModelCallRole::PlanRepair,
     ModelCallRole::WitnessAuthor,
@@ -82,8 +83,12 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         // adopt the split these arms move to `Some(...)` and the roles join
         // the parity witness automatically.
         ModelCallRole::Plan | ModelCallRole::PlanRepair => None,
-        // Never dispatched through the management chokepoint.
+        // Never dispatched through the management chokepoint. `Research`
+        // (#1778) runs as an engine sub-agent turn, so its system prompt
+        // rides its `SubAgentSpec` rather than this family — the same
+        // grouping, for the same reason, that `raw_usage.rs` gives it.
         ModelCallRole::Unknown
+        | ModelCallRole::Research
         | ModelCallRole::WitnessAuthor
         | ModelCallRole::WitnessRepair
         | ModelCallRole::AgentAuthor
