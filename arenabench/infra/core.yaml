@@ -326,7 +326,7 @@ Resources:
   BatchSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: ArenaBench Batch instances — egress only, no ingress.
+      GroupDescription: ArenaBench Batch instances - egress only, no ingress.
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: "-1"
@@ -586,20 +586,30 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: arenabench-vercel-web
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Federated: !GetAtt VercelOidcProvider.Arn
-            Action: sts:AssumeRoleWithWebIdentity
-            Condition:
-              StringEquals:
-                !Sub "oidc.vercel.com/${VercelTeamSlug}:aud": !Sub https://vercel.com/${VercelTeamSlug}
-              StringLike:
-                !Sub "oidc.vercel.com/${VercelTeamSlug}:sub":
-                  - !Sub owner:${VercelTeamSlug}:project:arena:*
-                  - !Sub owner:${VercelTeamSlug}:project:arenabench:*
+      # Rendered as a Sub'd JSON string because the condition keys embed the
+      # team slug, and CloudFormation forbids intrinsics in mapping keys.
+      AssumeRolePolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Federated": "${VercelOidcProvider.Arn}" },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "oidc.vercel.com/${VercelTeamSlug}:aud": "https://vercel.com/${VercelTeamSlug}"
+                },
+                "StringLike": {
+                  "oidc.vercel.com/${VercelTeamSlug}:sub": [
+                    "owner:${VercelTeamSlug}:project:arena:*",
+                    "owner:${VercelTeamSlug}:project:arenabench:*"
+                  ]
+                }
+              }
+            }
+          ]
+        }
       Policies:
         - PolicyName: arenabench-vercel-web
           PolicyDocument:
