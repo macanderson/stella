@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 
-use crate::db::{DbError, is_missing_schema, merge};
+use crate::db::{DbError, is_missing_schema, merge, truncate};
 
 /// Sessions returned by [`sessions`]. Same shape of reasoning as
 /// `MAX_LISTED_EXECUTIONS`: the page re-fetches the list on every refresh, so
@@ -343,19 +343,9 @@ fn first_prompts(conn: &Connection) -> Result<BTreeMap<String, String>, DbError>
     let mut out = BTreeMap::new();
     for row in mapped {
         let (id, prompt) = row?;
-        out.insert(id, clip(prompt, 140));
+        out.insert(id, truncate(&prompt, 140));
     }
     Ok(out)
-}
-
-/// Cap a string at `max` chars on a char boundary, appending an ellipsis.
-fn clip(s: String, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s;
-    }
-    let mut out: String = s.chars().take(max).collect();
-    out.push('…');
-    out
 }
 
 /// The `/api/sessions` payload: every session of this workspace, registry
@@ -852,7 +842,7 @@ fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
     // multi-kilobyte goal; the drawer shows the full text.
     for row in &mut out {
         if let Some(prompt) = row.get("prompt").and_then(Value::as_str) {
-            let clipped = clip(prompt.to_string(), 240);
+            let clipped = truncate(prompt, 240);
             row["prompt"] = json!(clipped);
         }
     }
