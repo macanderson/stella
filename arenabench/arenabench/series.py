@@ -202,8 +202,10 @@ def match_row(match: Any) -> dict[str, Any]:
         # carry no per-seat entry; the match-level commit stands in then.
         seat_sut = ""
         if contestant.agent == "stella":
-            recorded = (prov.sut_seats if prov else {}).get(contestant.id) or {}
-            seat_sut = recorded.get("commit", "") or sut_commit
+            # getattr, like `color` above: records written before per-seat
+            # pins (and duck-typed stand-ins) carry no `sut_seats`.
+            recorded = (getattr(prov, "sut_seats", None) or {}).get(contestant.id)
+            seat_sut = (recorded or {}).get("commit", "") or sut_commit
         seats.append(
             {
                 "id": contestant.id,

@@ -844,8 +844,10 @@ class TestOfflineTaskSource:
                 return None
 
         monkeypatch.setattr("arenabench.runner.subprocess.Popen", _Fake)
+        # Explicitly unpinned: this test is about the argv shape, and a
+        # pinned seat with no staged build now refuses the launch (#2098).
         spec = MatchSpec.from_json({
-            "dataset": "terminal-bench-2.1", "tasks": ["alpha"],
+            "dataset": "terminal-bench-2.1", "tasks": ["alpha"], "sut_ref": "",
             "contestants": [{"name": "s", "agent": "stella",
                              "engine": {"api": "openrouter", "model": "x/y"}}],
         })

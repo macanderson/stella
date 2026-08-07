@@ -559,10 +559,16 @@ def _stub_harbor(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _capture_popen(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
-    """Stub the launch subprocess and capture every (command, env) handed to it."""
-    captured: list[dict] = []
+    """Capture every (command, env) the *launch* hands Popen.
 
-    class _Fake:
+    Only the stubbed Harbor binary is intercepted: `arenabench.runner` imports
+    the shared ``subprocess`` module, so a blanket patch would also break the
+    real ``git`` subprocesses the pin resolution runs mid-launch.
+    """
+    captured: list[dict] = []
+    real_popen = subprocess.Popen
+
+    class _Recorder:
         def __init__(self, command, **kwargs):
             captured.append({"command": command, "env": kwargs.get("env") or {}})
             self.returncode = None
@@ -570,7 +576,12 @@ def _capture_popen(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
         def poll(self):
             return None
 
-    monkeypatch.setattr("arenabench.runner.subprocess.Popen", _Fake)
+    def dispatch(command, **kwargs):
+        if command and command[0] == "/usr/bin/harbor":
+            return _Recorder(command, **kwargs)
+        return real_popen(command, **kwargs)
+
+    monkeypatch.setattr("arenabench.runner.subprocess.Popen", dispatch)
     return captured
 
 
