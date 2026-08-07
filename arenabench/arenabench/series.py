@@ -195,12 +195,22 @@ def match_row(match: Any) -> dict[str, Any]:
     seats = []
     for contestant in spec.contestants:
         metrics = metrics_by_seat[contestant.id]
+        # Which Stella this arm ran — per seat, because two seats may race
+        # two builds (#2082). Deliberately OUTSIDE `_seat_signature`: the SUT
+        # commit is the variable under test, and folding it into the group
+        # key would split the exact series it exists to draw. Legacy records
+        # carry no per-seat entry; the match-level commit stands in then.
+        seat_sut = ""
+        if contestant.agent == "stella":
+            recorded = (prov.sut_seats if prov else {}).get(contestant.id) or {}
+            seat_sut = recorded.get("commit", "") or sut_commit
         seats.append(
             {
                 "id": contestant.id,
                 # Display only — never part of the comparability signature.
                 "color": getattr(contestant, "color", ""),
                 **_seat_signature(contestant),
+                "sut_commit": seat_sut,
                 "outcomes": _seat_outcomes(metrics),
                 "per_task": _per_task(metrics),
             }
