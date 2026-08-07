@@ -10,7 +10,9 @@
 # monorepo, "." once it is ejected into its own repository.
 ARG PKG_PATH=arenabench
 
-FROM ubuntu:24.04
+# ECR Public mirror of the official image: Docker Hub rate-limits anonymous
+# pulls from CodeBuild's shared egress IPs (429s), ECR Public does not.
+FROM public.ecr.aws/docker/library/ubuntu:24.04
 ARG PKG_PATH
 ENV DEBIAN_FRONTEND=noninteractive
 
