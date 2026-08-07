@@ -127,6 +127,19 @@ impl FlipHalt {
         self.flipped.load(Ordering::SeqCst)
     }
 
+    /// The latch to hand a follow-up turn: `Some(self)` only while unfired.
+    ///
+    /// A latch that already fired belongs to the turn it stopped. A revision
+    /// dispatched after that flip was requested *despite* it — the ladder
+    /// found something else to fix (a lint regression, a refuted verdict) —
+    /// so the stale latch must not end the revision at its first step
+    /// boundary. Only a flip observed during the new turn itself may stop it,
+    /// and that is exactly what an unfired latch delivers (#1793).
+    #[must_use]
+    pub fn unfired(self: &Arc<Self>) -> Option<Arc<Self>> {
+        (!self.is_flipped()).then(|| Arc::clone(self))
+    }
+
     /// Feed one finished shell call. Returns `true` if this observation
     /// latched the flip.
     ///
@@ -147,39 +160,38 @@ impl FlipHalt {
     }
 }
 
-/// The halt to hand a *revision* turn, given the one this candidate armed and
-/// what its oracle currently believes about the tracked command.
+/// The halt to hand a *revision* turn: [`FlipHalt::unfired`], narrowed by what
+/// the candidate's oracle currently believes about the tracked command.
 ///
-/// A revision halts on a flip for the same reason an execute turn does: the
-/// tracked command going green is the goal being met, and what follows is the
-/// re-litigation this module's header measured. Revise turns used to pass
-/// `None` unconditionally, so the measured fix never applied to them (#1793).
+/// [`FlipHalt::unfired`] refuses a latch that already fired, which covers the
+/// halt the *execute* turn stopped on. It cannot cover the other way a
+/// revision opens on an already-green command, because that halt has never
+/// fired: `witness_on_demand` arms a **fresh** `FlipHalt` after execution, and
+/// by then the witness it names may have already flipped — that is the ordinary
+/// case, since the witness is written to pass once the work is done. A verifier
+/// can still reject such a candidate (a lint regression, a refuted verdict),
+/// and the revision would then inherit an unfired halt on a command that is
+/// green before it starts. The first time the model re-ran that test the
+/// revision would end, before it addressed a single thing the verifier
+/// objected to.
 ///
-/// Handed over only while `tracked` is [`FlipState::Failing`], which is the
-/// same precondition `run_candidate` arms from and is doing real work here
-/// rather than restating it. A revision is entered when the *verifier*
-/// rejected the candidate, and that happens on a flipped command too — the
-/// witness went green but the review found the change wanting. Arming then
-/// would end the revision at its first step boundary the moment the model
-/// re-ran an already-passing test, before it addressed a single thing the
-/// verifier objected to. Only `Failing` means the flip this halt watches for
-/// is still ahead of the turn rather than behind it.
+/// So the oracle decides: only [`FlipState::Failing`] means the flip this halt
+/// watches for is still *ahead* of the turn. It is the same precondition
+/// `run_candidate` arms from, and the same rule stated there — a command that
+/// is passing as the turn opens cannot flip during it, so a halt on it can
+/// only end work early.
 ///
-/// [`FlipState::Flipped`] and [`FlipState::Unstable`] are both excluded, for
-/// one reason: a pass has been seen. `Unstable` is the weaker case — the pass
-/// did not reproduce — but a halt cannot tell a reproducible pass from a flaky
-/// one, and stopping a revision on a flake is the failure the confirmation
-/// re-run (#859) exists to prevent downstream.
-///
-/// The sticky latch is refused too. It survives the turn that fired it, so an
-/// already-flipped halt would stop the next revision instantly even if the
-/// oracle disagreed about the command's state.
+/// [`FlipState::Flipped`] and [`FlipState::Unstable`] are both excluded for one
+/// reason: a pass has been seen. `Unstable` is the weaker case — the pass did
+/// not reproduce — but a halt cannot tell a reproducible pass from a flaky one,
+/// and stopping a revision on a flake is what the confirmation re-run (#859)
+/// exists to catch downstream.
 #[must_use]
 pub fn for_revision(armed: &Option<Arc<FlipHalt>>, tracked: FlipState) -> Option<Arc<FlipHalt>> {
     if tracked != FlipState::Failing {
         return None;
     }
-    armed.as_ref().filter(|halt| !halt.is_flipped()).cloned()
+    armed.as_ref().and_then(FlipHalt::unfired)
 }
 
 impl TurnHalt for FlipHalt {
@@ -256,6 +268,21 @@ mod tests {
         let halt = FlipHalt::new("pytest -q");
         assert!(!halt.observe("pytest -q", "3 passed"));
         assert!(!halt.is_flipped());
+    }
+
+    #[test]
+    fn a_fired_latch_is_withheld_from_a_follow_up_turn() {
+        let halt = Arc::new(FlipHalt::new("pytest -q"));
+        // Unfired: the follow-up turn gets the same latch, not a copy — a
+        // flip it observes must be visible to the caller that armed it.
+        let handed = halt.unfired().expect("an unfired latch is handed on");
+        assert!(Arc::ptr_eq(&halt, &handed));
+
+        halt.observe("pytest -q", "ok\n[exit code: 0]");
+        assert!(
+            halt.unfired().is_none(),
+            "a latch that already fired must not end a later turn at its first step boundary"
+        );
     }
 
     #[test]

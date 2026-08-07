@@ -1103,8 +1103,12 @@ fn skill_usage_records_per_execution_version_rows() {
     // shared token rule, NULL when that block's preimage is gone (#925). v20
     // adds `foundry_tools` (#830): per self-authored tool, the witness that
     // proved it, the digests of the bytes it ran against, and the human
-    // `enabled` flag adoption never sets. Additive.
-    assert_eq!(SCHEMA_VERSION, 20);
+    // `enabled` flag adoption never sets. Additive. v21 adds
+    // `session_turn_diffs` (#1870): per (session, turn), the precomputed
+    // workspace diff the work journal's turn marks describe, so the
+    // observatory can replay file changes without opening the bare repo.
+    // Additive.
+    assert_eq!(SCHEMA_VERSION, 21);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

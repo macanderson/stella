@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>stella · oxagen investor deck</title>
-<meta name="description" content="Frontier models are expensive, opaque, and unverifiable. Oxagen's witness protocol makes done deterministic, and turns verified work into training data.">
+<meta name="description" content="AI that proves its own work, then trains on it. #1 on Terminal-Bench 2.1. The witness protocol, the context system of record, and private models at a 90% discount.">
 <meta property="og:title" content="stella · oxagen investor deck">
-<meta property="og:description" content="Verified done, not claimed done. The witness protocol, the context system of record, and frontier quality at a 90% discount.">
+<meta property="og:description" content="Verified done, not claimed done. #1 on Terminal-Bench 2.1, the witness protocol, and private models trained on your own proof.">
 <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" fill="%230B0B0C"/><path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="%23FFB000"/></svg>'>
 <style>
 /* ==========================================================================
@@ -110,16 +110,22 @@ h1 em, h2 em { font-style: normal; color: var(--gold); }
   margin-top: 2em; padding-left: 1em; border-left: 3px solid var(--gold);
   font-weight: 700; max-width: 40em;
 }
+.fine { font-size: 0.68em; color: var(--muted); margin-top: 2.2em; max-width: 60em; }
 
 /* stat tiles */
 .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 2.4em; }
 @media (max-width: 760px) { .tiles { grid-template-columns: 1fr; } }
+.tiles.four { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 960px) { .tiles.four { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .tiles.four { grid-template-columns: 1fr; } }
 .tile {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 14px; padding: 20px 22px;
 }
 .tile .big { font-size: clamp(1.5rem, 3.4vw, 2.2rem); font-weight: 800; letter-spacing: -0.02em; color: var(--gold); line-height: 1.15; }
 .tile .cap { font-size: 0.78em; color: var(--muted); margin-top: 0.5em; line-height: 1.5; }
+.tile .tag { font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; color: var(--gold); }
+.tile .name { font-weight: 800; font-size: 1.2em; margin-top: 0.3em; }
 
 /* flow steps (oracle flip) */
 .steps { display: grid; gap: 12px; margin-top: 2em; counter-reset: step; }
@@ -139,6 +145,17 @@ h1 em, h2 em { font-style: normal; color: var(--gold); }
 .badge.fail { color: #E4408F; border-color: #E4408F; }
 .badge.pass { color: #2FD3C6; border-color: #2FD3C6; }
 
+/* the run → verify → learn → compound loop */
+.loop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 1.8em; }
+@media (max-width: 760px) { .loop { grid-template-columns: 1fr; } }
+.lstep {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px;
+}
+.lstep .n { font-weight: 800; color: var(--gold); }
+.lstep .t { font-weight: 700; margin-left: 0.4em; }
+.lstep .d { color: var(--muted); font-size: 0.78em; margin-top: 0.4em; line-height: 1.5; }
+
 /* comparison table */
 table.vs { width: 100%; border-collapse: collapse; margin-top: 2em; font-size: 0.9em; }
 table.vs th, table.vs td { text-align: left; padding: 12px 16px; border: 1px solid var(--border); }
@@ -156,6 +173,63 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
 .term .g { color: var(--gold); }
 .term .ok { color: #2FD3C6; }
 .term .no { color: #E4408F; }
+
+/* two-card splits (product, founder) */
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 2.2em; }
+@media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 22px 24px;
+}
+.card h3 { font-weight: 800; font-size: 1.35em; letter-spacing: -0.02em; }
+.card h3 em { font-style: normal; color: var(--gold); }
+.card .role { color: var(--gold); font-size: 0.78em; font-weight: 700; letter-spacing: 0.1em; margin: 0.4em 0 0.9em; }
+.card p { font-size: 0.88em; line-height: 1.7; }
+.card p + p { margin-top: 0.9em; }
+.card .sub { color: var(--muted); font-size: 0.82em; }
+
+/* callout (the trap) */
+.callout {
+  background: var(--surface); border: 1px solid var(--gold); border-radius: 14px;
+  padding: 22px 26px; margin-top: 2em; max-width: 34em;
+  font-weight: 800; font-size: clamp(1.05rem, 2.2vw, 1.45rem); line-height: 1.4;
+}
+.callout .g2 { color: var(--gold); }
+
+/* benchmark bars */
+.bench { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 2.2em; }
+@media (max-width: 760px) { .bench { grid-template-columns: 1fr; } }
+.bench .bh { font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; color: var(--gold); }
+.bench .bsub { font-size: 0.72em; color: var(--muted); margin-bottom: 0.6em; }
+.brow { margin-top: 1.1em; }
+.brow .blabel { font-size: 0.8em; margin-bottom: 0.45em; }
+.brow .blabel strong { font-weight: 700; }
+.btrack { display: flex; align-items: center; gap: 10px; }
+.btrack .fill { flex: 1; }
+.bar { height: 20px; border-radius: 4px; background: var(--border); }
+.bar.gold { background: var(--gold); box-shadow: 0 0 18px rgb(255 176 0 / 0.22); }
+.bval { font-size: 0.8em; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* founder bio */
+.avatar {
+  width: 64px; height: 64px; border-radius: 50%; margin-bottom: 14px;
+  border: 1px solid var(--gold-deep); color: var(--gold);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 1.2em; letter-spacing: 0.04em;
+  background: var(--ink);
+}
+
+/* the ask */
+.askbox {
+  border: 1px solid var(--gold); border-radius: 14px;
+  padding: 22px 26px; margin-top: 1.8em;
+  background: var(--surface);
+}
+.askbox .at { color: var(--gold); font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; }
+.askbox .ah { font-weight: 800; font-size: clamp(1.1rem, 2.4vw, 1.5rem); margin-top: 0.3em; }
+.askbox .ah em { font-style: normal; color: var(--gold); }
+.askbox ul { margin: 0.9em 0 0 1.2em; font-size: 0.85em; }
+.askbox li + li { margin-top: 0.45em; }
 
 /* cover */
 .cover { text-align: left; }
@@ -221,7 +295,7 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
   </svg>
   <span>stella · oxagen</span>
 </div>
-<div class="chrome counter" id="counter" aria-live="polite">01 / 12</div>
+<div class="chrome counter" id="counter" aria-live="polite">01 / 21</div>
 <div class="chrome hint">&larr; &rarr; or space to navigate</div>
 <div class="navbtns">
   <button id="prev" aria-label="previous slide">&larr;</button>
@@ -241,8 +315,8 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
       </svg>
       <div class="wordmark">stella<sup>*</sup></div>
     </div>
-    <h1 class="rise">verified done,<br>not claimed done.</h1>
-    <p class="lead rise">The open-source coding agent with a deterministic definition of done, and the enterprise control plane behind it.</p>
+    <h1 class="rise">AI that proves its own work,<br><em>then trains on it.</em></h1>
+    <p class="lead rise">stella proves every step it takes. Oxagen turns that proof into specialized models built for you alone, trained on your own code and ontology. Better results than frontier, about 90% less cost, and nothing ever leaves your network.</p>
   </div>
 </section>
 
@@ -253,10 +327,11 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
     <h2 class="rise">Your AI bill is <em>out of control.</em></h2>
     <p class="lead rise">Frontier models bill by the token, and agents never get tired. They work through the night, retry until the budget is gone, and hand you the invoice either way. Headcount stays flat while spend compounds.</p>
     <div class="tiles rise">
+      <div class="tile"><div class="big">$37B</div><div class="cap">spent on AI in 2025, triple the year before — rented by the token, and the meter never stops</div></div>
       <div class="tile"><div class="big">24/7</div><div class="cap">an agent that never sleeps is a meter that never stops</div></div>
-      <div class="tile"><div class="big">$15+</div><div class="cap">frontier list price per 1M output tokens, before retries</div></div>
       <div class="tile"><div class="big">0</div><div class="cap">built-in reasons for the model to stop and say "good enough"</div></div>
     </div>
+    <p class="fine rise">Source: Menlo Ventures, 2025 State of Generative AI in the Enterprise.</p>
   </div>
 </section>
 
@@ -265,14 +340,14 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
   <div class="frame">
     <p class="overline rise">the pain <span class="idx">· 02 of 03</span></p>
     <h2 class="rise">You cannot see <em>how it works.</em></h2>
-    <p class="lead rise">A frontier model is a black box: trillions of weights nobody can read. When it is wrong, you cannot ask why. When it is right, you cannot prove it will be right again tomorrow.</p>
-    <p class="lead rise muted">Explainability here is not a roadmap item. It is structurally impossible.</p>
+    <p class="lead rise">A frontier model is a black box: trillions of weights nobody can read. 45% of AI-written code hides a known security hole, and there is no attribution — who did what, where, when, why. That trail does not exist without months of custom work.</p>
     <div class="term rise" role="img" aria-label="terminal showing an unexplainable answer">
       <div><span class="p">$</span> why did the model do that?</div>
       <div><span class="no">error:</span> not inspectable. 1.8T parameters, no trace, no warrant.</div>
       <div><span class="p">$</span> will it do it again?</div>
       <div><span class="no">error:</span> unknowable. sampling is probabilistic.</div>
     </div>
+    <p class="fine rise">Source: Veracode, 2025 GenAI Code Security Report.</p>
   </div>
 </section>
 
@@ -301,7 +376,34 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
   </div>
 </section>
 
-<!-- 06 · the invention -->
+<!-- 06 · the trap -->
+<section class="slide" aria-label="the trap: your traces are the asset">
+  <div class="frame">
+    <p class="overline rise">the trap</p>
+    <h2 class="rise">You're paying to <em>train the lab</em> you depend on.</h2>
+    <p class="lead rise">The most valuable thing your team makes with a coding tool is not the code. It is the traces: every step, every fix, every decision. Today those traces vanish into someone else's model.</p>
+    <div class="callout rise">Your traces are the asset.<br><span class="g2">And you're giving them away.</span></div>
+    <p class="kicker rise">stella captures and verifies those traces, so the hardest part of fine-tuning your own model is already done.</p>
+  </div>
+</section>
+
+<!-- 07 · the shift -->
+<section class="slide" aria-label="the shift: open models">
+  <div class="frame">
+    <p class="overline rise">the shift</p>
+    <h2 class="rise">Open models are <em>no longer the trade-off.</em></h2>
+    <p class="lead rise">The gap to the frontier has collapsed, and open weights cost a fraction to run. The base model is now a commodity you can build on. The ceiling is no longer the lab's model. It is your data.</p>
+    <div class="tiles rise">
+      <div class="tile"><div class="big">8.04% &rarr; 1.70%</div><div class="cap">how far the best open model trailed the best closed model, one year later</div></div>
+      <div class="tile"><div class="big">49.2 vs 48.9</div><div class="cap">open (DeepSeek-R1) matched frontier (o1) on SWE-bench Verified</div></div>
+      <div class="tile"><div class="big">~1/27th</div><div class="cap">the API cost of that same open model, at launch</div></div>
+    </div>
+    <p class="kicker rise">Why now: quality is up, cost is down, and enterprises now demand control. The window is open.</p>
+    <p class="fine rise">Sources: Stanford HAI AI Index 2025; DeepSeek-R1 vs OpenAI o1, Jan 2025.</p>
+  </div>
+</section>
+
+<!-- 08 · the invention -->
 <section class="slide" aria-label="the invention: the witness protocol">
   <div class="frame">
     <p class="overline rise">the invention</p>
@@ -311,7 +413,7 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
   </div>
 </section>
 
-<!-- 07 · oracle flip -->
+<!-- 09 · oracle flip -->
 <section class="slide" aria-label="how the oracle flip works">
   <div class="frame">
     <p class="overline rise">how it works</p>
@@ -326,7 +428,7 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
   </div>
 </section>
 
-<!-- 08 · self-labelling data -->
+<!-- 10 · self-labelling data -->
 <section class="slide" aria-label="self-labelling training data">
   <div class="frame">
     <p class="overline rise">the byproduct</p>
@@ -341,17 +443,70 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
   </div>
 </section>
 
-<!-- 09 · system of record -->
-<section class="slide" aria-label="oxagen, the system of record for context">
+<!-- 11 · product -->
+<section class="slide" aria-label="the product: stella does the work, oxagen governs it">
   <div class="frame">
-    <p class="overline rise">the business</p>
-    <h2 class="rise">Oxagen is the <em>system of record</em> for context.</h2>
-    <p class="lead rise">The aggregator of that verified data, and the home of everything your agents need to know: your business ontology, your rules, your memory, your proof of what worked.</p>
-    <p class="lead rise muted">CRMs made customer data an asset. Oxagen does it for context: governed, permissioned, and owned by you.</p>
+    <p class="overline rise">the product</p>
+    <h2 class="rise"><em>stella</em> does the work. oxagen governs it.</h2>
+    <div class="split rise">
+      <div class="card">
+        <h3><em>stella</em></h3>
+        <p class="role">the self-improving agent</p>
+        <p>It writes, fixes, and ships inside your environment, and it keeps getting better at your work.</p>
+      </div>
+      <div class="card">
+        <h3>oxagen</h3>
+        <p class="role">the control plane</p>
+        <p>It sets the rules, checks every step, and turns the results into a private model that is yours alone.</p>
+      </div>
+    </div>
+    <div class="loop rise">
+      <div class="lstep"><span class="n">1</span><span class="t">Run</span><div class="d">stella does real work in your environment, under role-based access control.</div></div>
+      <div class="lstep"><span class="n">2</span><span class="t">Verify</span><div class="d">oxagen checks every step against your rules with deterministic gates, not guesses.</div></div>
+      <div class="lstep"><span class="n">3</span><span class="t">Learn</span><div class="d">every verified trace trains a model on your knowledge graph, ontology, and code.</div></div>
+      <div class="lstep"><span class="n">4</span><span class="t">Compound</span><div class="d">the model gets better at your business each day, and the traces prove what it did.</div></div>
+    </div>
+    <p class="kicker rise">Deterministic first, model last. The loop is the moat: every turn through it makes your private model harder to catch.</p>
   </div>
 </section>
 
-<!-- 10 · open weights -->
+<!-- 12 · proof: terminal-bench -->
+<section class="slide" aria-label="the proof: number one on terminal-bench 2.1">
+  <div class="frame">
+    <p class="overline rise">the proof</p>
+    <h2 class="rise"><em>#1</em> on Terminal-Bench 2.1.</h2>
+    <p class="lead rise">Our benchmarks indicate stella, trained on your data, beats Claude Code running Fable 5 on Terminal-Bench 2.1 — on both solve rate and cost.</p>
+    <div class="bench rise" role="img" aria-label="bar chart: stella solves 91.32 percent of tasks at 3 dollars 12 cents per solved task, claude code solves 80.3 percent at 24 dollars 12 cents">
+      <div>
+        <div class="bh">solve rate</div>
+        <div class="bsub">higher is better</div>
+        <div class="brow">
+          <div class="blabel"><strong>stella</strong> · Fable 5</div>
+          <div class="btrack"><div class="fill"><div class="bar gold" style="width: 91.3%"></div></div><span class="bval">91.32%</span></div>
+        </div>
+        <div class="brow">
+          <div class="blabel">Claude Code · Fable 5</div>
+          <div class="btrack"><div class="fill"><div class="bar" style="width: 80.3%"></div></div><span class="bval">80.3%</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="bh">cost per solved task</div>
+        <div class="bsub">lower is better</div>
+        <div class="brow">
+          <div class="blabel"><strong>stella</strong></div>
+          <div class="btrack"><div class="fill"><div class="bar gold" style="width: 13%"></div></div><span class="bval">$3.12</span></div>
+        </div>
+        <div class="brow">
+          <div class="blabel">Claude Code · Fable 5</div>
+          <div class="btrack"><div class="fill"><div class="bar" style="width: 100%"></div></div><span class="bval">$24.12</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="fine rise">These numbers come from pre-registered Terminal-Bench 2.1 training runs; the full result data package is available on GitHub for anyone to inspect. Terminal-Bench 2.1, tbench.ai (Laude Institute and Stanford Hazy Research), an independent CLI-agent benchmark. stella figures are Oxagen internal benchmarks.</p>
+  </div>
+</section>
+
+<!-- 13 · open weights -->
 <section class="slide" aria-label="frontier quality at a 90 percent discount">
   <div class="frame">
     <p class="overline rise">the payoff</p>
@@ -365,10 +520,55 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
   </div>
 </section>
 
-<!-- 11 · go to market -->
-<section class="slide" aria-label="go to market">
+<!-- 14 · system of record + moat -->
+<section class="slide" aria-label="oxagen, the system of record for context, and the moat">
   <div class="frame">
-    <p class="overline rise">go to market</p>
+    <p class="overline rise">the business</p>
+    <h2 class="rise">Oxagen is the <em>system of record</em> for context.</h2>
+    <p class="lead rise">The home of everything your agents need to know: your ontology, your rules, your memory, your proof of what worked. CRMs made customer data an asset. Oxagen does it for context — governed, permissioned, and owned by you.</p>
+    <div class="tiles rise">
+      <div class="tile"><div class="name">Private models</div><div class="cap">your data trains your model, and never anyone else's — a frontier API cannot promise that</div></div>
+      <div class="tile"><div class="name">Typed knowledge graph</div><div class="cap">your ontology, brand voice, governance rules, and engineering practices are absorbed every time you use it</div></div>
+      <div class="tile"><div class="name">The proof flywheel</div><div class="cap">every verified trace is training data your competitors will never have</div></div>
+    </div>
+    <p class="kicker rise">This compounds, and it locks in. The longer you run, the harder we are to replace.</p>
+  </div>
+</section>
+
+<!-- 15 · market -->
+<section class="slide" aria-label="the market">
+  <div class="frame">
+    <p class="overline rise">the market</p>
+    <h2 class="rise">A new line item, <em>growing fast.</em></h2>
+    <div class="tiles rise">
+      <div class="tile"><div class="big">$37B</div><div class="cap">enterprise spend on AI in 2025, up 3.2&times; in a single year</div></div>
+      <div class="tile"><div class="big">$12.5B</div><div class="cap">on model APIs alone — the cost base we cut</div></div>
+      <div class="tile"><div class="big">~$50B</div><div class="cap">projected AI agents market by 2030, growing about 46% a year</div></div>
+    </div>
+    <p class="lead rise" style="margin-top: 2em;">We sell to large enterprise and government: regulated, security-first, and where we already have warm relationships.</p>
+    <p class="fine rise">Sources: Menlo Ventures, 2025 State of Generative AI in the Enterprise; Grand View Research, AI Agents Market, 2025.</p>
+  </div>
+</section>
+
+<!-- 16 · business model -->
+<section class="slide" aria-label="business model and go to market">
+  <div class="frame">
+    <p class="overline rise">the business model</p>
+    <h2 class="rise">Land on trust. <em>Expand to the control plane.</em></h2>
+    <p class="lead rise">We start where the pain is sharpest: verifying AI work. That is an easy yes. From there we expand to the full control plane and the private model, which become core infrastructure you cannot rip out.</p>
+    <div class="tiles rise">
+      <div class="tile"><div class="tag">LAND</div><div class="name">Verification</div><div class="cap">prove trust on one team</div></div>
+      <div class="tile"><div class="tag">EXPAND</div><div class="name">Control plane</div><div class="cap">govern every agent in the org</div></div>
+      <div class="tile"><div class="tag">ANCHOR</div><div class="name">Private model</div><div class="cap">trained on your data, hard to leave</div></div>
+    </div>
+    <p class="lead rise muted" style="margin-top: 2em; font-size: 0.85em;">Platform subscription per team, plus usage. We reach buyers through warm networks — the same way past deals got done. Design partners: Town of Cary, NC (municipal government) &middot; Lumenium (combustion engine lab).</p>
+  </div>
+</section>
+
+<!-- 17 · positioning -->
+<section class="slide" aria-label="positioning against cursor and claude code">
+  <div class="frame">
+    <p class="overline rise">positioning</p>
     <h2 class="rise">stella is free. <em>The control plane is not.</em></h2>
     <p class="lead rise">stella is open source and bring-your-own-key, head-to-head with Cursor and Claude Code, with one thing neither can claim: a deterministic definition of done. Oxagen sells the enterprise layer above it: identity, governance, the context system of record, and your private models.</p>
     <table class="vs rise" aria-label="comparison with cursor and claude code">
@@ -381,7 +581,62 @@ table.vs td.gold { color: var(--gold); font-weight: 700; }
   </div>
 </section>
 
-<!-- 12 · close -->
+<!-- 18 · team -->
+<section class="slide" aria-label="the team">
+  <div class="frame">
+    <p class="overline rise">the team</p>
+    <h2 class="rise">A founder who has <em>done this before.</em></h2>
+    <div class="split rise">
+      <div class="card">
+        <div class="avatar" aria-hidden="true">MA</div>
+        <h3>Mac Anderson</h3>
+        <p class="role">Founder &amp; CEO</p>
+        <p><strong>Cofounded and sold Fonteva for $125M in 2021</strong> on $6M raised, keeping about 60%. Eight-time Inc 5000 recipient and member of Inc magazine's hall of fame.</p>
+        <p>Deep roots in enterprise and government software — the exact buyers we are selling to now.</p>
+      </div>
+      <div class="card">
+        <p><strong>16 years</strong> software engineering &amp; engineering leadership experience.</p>
+        <p><strong>BS, Machine Learning &amp; Algorithms</strong><br><span class="sub">University of Tennessee, Knoxville &middot; GPA 3.92</span></p>
+        <p><strong>MS, Machine Learning</strong><br><span class="sub">Georgia Institute of Technology &middot; GPA 3.89</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 19 · traction and the ask -->
+<section class="slide" aria-label="traction and the ask">
+  <div class="frame">
+    <p class="overline rise">traction &amp; the ask</p>
+    <h2 class="rise">Where we are today, and what gets us <em>to revenue.</em></h2>
+    <div class="tiles four rise">
+      <div class="tile"><div class="big">#1</div><div class="cap">Terminal-Bench 2.1</div></div>
+      <div class="tile"><div class="big">$12.31</div><div class="cap">cost per task &middot; vs $59.32 Claude Code on Fable 5</div></div>
+      <div class="tile"><div class="big">88.55%</div><div class="cap">resolution rate &middot; vs 81.03% Claude Code on Fable 5</div></div>
+      <div class="tile"><div class="big">100%</div><div class="cap">of your data never touches the internet</div></div>
+    </div>
+    <div class="askbox rise">
+      <div class="at">THE ASK</div>
+      <div class="ah">Raising a <em>$2M SAFE</em> at a $12.5M post-money cap</div>
+      <ul>
+        <li>Top all five benchmarks and displace Claude Code and Codex. We lead one today.</li>
+        <li>Three hires: a GTM lead for enterprise, a GTM lead for public sector, and a senior inference engineer.</li>
+        <li>Stand up training-pipeline infrastructure for continuous, self-improving language model delivery.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 20 · vision -->
+<section class="slide" aria-label="the vision">
+  <div class="frame">
+    <p class="overline rise">the vision</p>
+    <h2 class="rise">The loop is <em>not about code.</em></h2>
+    <p class="lead rise">It is about any agent that acts, gets feedback, and can improve. Coding agents today. Enterprise agents next. On the far edge, self-improving models on any device — even humanoid robots.</p>
+    <p class="kicker rise">We start with the hardest, most valuable traces in software, and earn the right to the rest.</p>
+  </div>
+</section>
+
+<!-- 21 · close -->
 <section class="slide cover" aria-label="close">
   <div class="frame">
     <div class="lockup rise">

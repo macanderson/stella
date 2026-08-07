@@ -80,10 +80,14 @@ fn turn_ref(session: &str, turn: u32) -> String {
     format!("refs/stella/{session}/turn/{turn}")
 }
 
-/// Stella's own records live under a reserved prefix, so a blob can never
-/// collide with a real workspace path.
+/// The reserved directory stella's own records live under, so a blob can
+/// never collide with a real workspace path — and so a per-turn diff can
+/// filter the records back out ([`WorkJournal::changed_paths_at_turn`]).
+const JOURNAL_DIR: &str = ".stella-journal";
+
+/// One reserved record's path under [`JOURNAL_DIR`].
 fn journal_blob_path(name: &str) -> String {
-    format!(".stella-journal/{name}")
+    format!("{JOURNAL_DIR}/{name}")
 }
 
 /// Where one session's private git index lives, beside the store's git dir
@@ -546,29 +550,71 @@ impl WorkJournal {
 
     /// The content of `path` as it stood at the end of `turn`.
     ///
-    /// # No production caller yet, and why it is still here
-    ///
-    /// The refs this reads through are written by every real session as of the
-    /// change that wired [`Self::mark_turn`] — before that they existed only in
-    /// this module's own tests, which made this genuinely unreachable API.
-    /// It now has data; what it does not yet have is a *consumer*. Answering
-    /// "show me the workspace as it stood three turns ago" needs a surface to
-    /// ask it from, and neither a CLI verb nor the cross-machine transport work
-    /// that would want this granularity is built.
-    ///
-    /// Kept rather than deleted because the write side is now load-bearing and
-    /// costs one `update-ref` per turn: retiring the reader would leave the
-    /// marks being written for nothing, which is the worse of the two shapes.
-    /// If the transport work is dropped, delete the pair together.
+    /// The refs this reads through are written by every real session as of
+    /// the change that wired [`Self::mark_turn`]. Its production consumer is
+    /// the per-turn diff (#1870): `stella-cli`'s `turn_diff` module pairs
+    /// [`Self::changed_paths_at_turn`] with this on each side of the boundary
+    /// to shape the hunks `session_turn_diffs` persists.
     pub fn read_at_turn(&self, turn: u32, path: &str) -> Result<String> {
         self.git(&["show", &format!("{}:{path}", turn_ref(&self.session, turn))])
     }
 
     /// One of the reserved journal blobs as it stood at the end of `turn`.
     ///
-    /// Same standing as [`Self::read_at_turn`]: real refs, no consumer yet.
+    /// Unlike [`Self::read_at_turn`] this still has no production consumer:
+    /// the per-turn diff deliberately filters the reserved records out. Kept
+    /// because the marks are written anyway and a historical checkpoint read
+    /// is the obvious next replay surface; if that never lands, delete this
+    /// alone.
     pub fn blob_at_turn(&self, turn: u32, name: &str) -> Result<String> {
-        self.read_at_turn(turn, &format!(".stella-journal/{name}"))
+        self.read_at_turn(turn, &journal_blob_path(name))
+    }
+
+    /// Workspace paths whose recorded content differs between the end of
+    /// `turn - 1` and the end of `turn` — the name half of a per-turn diff
+    /// (#1870); the content halves come from [`Self::read_at_turn`] on each
+    /// side. This is [`Self::read_at_turn`]'s first production consumer,
+    /// closing the "writers but no reader" standing its doc records.
+    ///
+    /// A turn whose predecessor was never marked (the session's first, or a
+    /// mark lost to pruning) diffs against nothing: every path in its tree is
+    /// new. Reserved journal records (the private `journal_blob_path`
+    /// namespace, `.stella-journal/`) are never workspace paths and are
+    /// filtered out.
+    ///
+    /// **Read-only by construction.** Both shapes are tree-to-tree plumbing
+    /// (`diff-tree`, `ls-tree`) that touches neither an index nor the work
+    /// tree, so a live session committing to this shared store is never
+    /// blocked or altered by a reader computing a diff — the observatory-side
+    /// constraint #1870 states, discharged here at the only layer that opens
+    /// the repo at all.
+    pub fn changed_paths_at_turn(&self, turn: u32) -> Result<Vec<String>> {
+        let target = turn_ref(&self.session, turn);
+        let base = turn
+            .checked_sub(1)
+            .filter(|&prev| prev > 0)
+            .map(|prev| turn_ref(&self.session, prev))
+            .filter(|name| self.ref_exists(name));
+        let listing = match base {
+            Some(base) => self.git(&["diff-tree", "-r", "--name-only", &base, &target])?,
+            None => self.git(&["ls-tree", "-r", "--name-only", &target])?,
+        };
+        // The prefix carries its slash: a real workspace file that merely
+        // starts with the reserved name (`.stella-journal-notes`) is the
+        // agent's work and must survive the filter.
+        let reserved = format!("{JOURNAL_DIR}/");
+        Ok(listing
+            .lines()
+            .map(str::trim)
+            .filter(|path| !path.is_empty() && !path.starts_with(reserved.as_str()))
+            .map(String::from)
+            .collect())
+    }
+
+    /// Whether `name` currently resolves to a commit.
+    fn ref_exists(&self, name: &str) -> bool {
+        self.git(&["rev-parse", "--verify", "--quiet", name])
+            .is_ok_and(|out| !out.trim().is_empty())
     }
 
     /// Compact the object store. The end-of-session step: everything stays
@@ -998,6 +1044,93 @@ mod tests {
             ws.join("kept.txt").exists(),
             "the file on disk is untouched by a checkpoint retraction"
         );
+    }
+
+    #[test]
+    fn changed_paths_name_exactly_what_moved_between_turns() {
+        // The #1870 name half: turn 2 changed a.txt and created c.txt, so
+        // those two — and only those two — are its changed paths. b.txt was
+        // recorded in turn 1 and untouched since; the checkpoint blob rides
+        // in the same commits and must never surface as a workspace path.
+        let (_guard, ws, store) = scratch();
+        std::fs::write(ws.join("a.txt"), "v1\n").unwrap();
+        std::fs::write(ws.join("b.txt"), "stable\n").unwrap();
+        let journal = WorkJournal::open_in(&store, &ws, "ses-diff").unwrap();
+        let c1 = journal
+            .record(
+                &["a.txt".into(), "b.txt".into()],
+                &[(CHECKPOINT_BLOB, Some(r#"{"step":1}"#))],
+                "turn 1",
+            )
+            .unwrap();
+        journal.mark_turn(1, &c1).unwrap();
+
+        std::fs::write(ws.join("a.txt"), "v2\n").unwrap();
+        std::fs::write(ws.join("c.txt"), "new\n").unwrap();
+        let c2 = journal
+            .record(
+                &["a.txt".into(), "c.txt".into()],
+                &[(CHECKPOINT_BLOB, Some(r#"{"step":2}"#))],
+                "turn 2",
+            )
+            .unwrap();
+        journal.mark_turn(2, &c2).unwrap();
+
+        assert_eq!(
+            journal.changed_paths_at_turn(2).unwrap(),
+            vec!["a.txt".to_string(), "c.txt".into()],
+            "the untouched file and the reserved records stay out"
+        );
+        assert_eq!(
+            journal.changed_paths_at_turn(1).unwrap(),
+            vec!["a.txt".to_string(), "b.txt".into()],
+            "a first turn diffs against nothing: its whole tree is new"
+        );
+        // The content halves of the diff pair, on each side of the boundary.
+        assert_eq!(journal.read_at_turn(1, "a.txt").unwrap(), "v1\n");
+        assert_eq!(journal.read_at_turn(2, "a.txt").unwrap(), "v2\n");
+        assert!(
+            journal.read_at_turn(1, "c.txt").is_err(),
+            "a path born in turn 2 has no turn-1 side — the caller maps this to empty"
+        );
+    }
+
+    #[test]
+    fn computing_a_diff_neither_blocks_nor_mutates_a_live_writer() {
+        // The #1870 no-lock constraint, made a test instead of a sentence:
+        // the diff reads are tree-to-tree plumbing against refs, so another
+        // session committing into the same shared store is not blocked, and
+        // the reader leaves every ref of both sessions exactly where it was.
+        let (_guard, ws, store) = scratch();
+        std::fs::write(ws.join("a.txt"), "v1\n").unwrap();
+        let reader = WorkJournal::open_in(&store, &ws, "ses-reader").unwrap();
+        let c1 = reader.record(&["a.txt".into()], &[], "turn 1").unwrap();
+        reader.mark_turn(1, &c1).unwrap();
+
+        // A live neighbour session mid-write: it has recorded (index seeded,
+        // ref moved) and not yet marked a turn.
+        let writer = WorkJournal::open_in(&store, &ws, "ses-writer").unwrap();
+        std::fs::write(ws.join("b.txt"), "theirs\n").unwrap();
+        writer.record(&["b.txt".into()], &[], "their step").unwrap();
+        let writer_tip_before = writer.session_tip();
+
+        let refs_before = reader.git(&["for-each-ref", "refs/stella/"]).unwrap();
+        assert_eq!(
+            reader.changed_paths_at_turn(1).unwrap(),
+            vec!["a.txt".to_string()],
+            "the reader answers while the neighbour is mid-write"
+        );
+        assert_eq!(
+            reader.git(&["for-each-ref", "refs/stella/"]).unwrap(),
+            refs_before,
+            "and moved no ref of either session"
+        );
+
+        // The writer was never blocked: its next write succeeds and lands on
+        // top of the tip it had.
+        std::fs::write(ws.join("b.txt"), "theirs v2\n").unwrap();
+        let c2 = writer.record(&["b.txt".into()], &[], "their next").unwrap();
+        assert_ne!(Some(c2), writer_tip_before, "the writer kept moving");
     }
 
     #[test]
