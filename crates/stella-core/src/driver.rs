@@ -1127,8 +1127,8 @@ impl<'a> Engine<'a> {
         state.memos.receipts.set_transcript_revision(revision);
 
         if let Some(aborted) = loop_escalation::check_loop_detection(
-            self.config.loop_detection,
-            self.config.turn_instance,
+            &self.config,
+            self.tools,
             &mut state.messages,
             &state.memos.identities,
             &mut state.loop_steered,

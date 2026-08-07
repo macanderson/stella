@@ -20,11 +20,12 @@
 use stella_protocol::{AgentEvent, CompletionMessage};
 
 use crate::event_sender::EventSender;
-use crate::loop_detect::{LoopDetectionConfig, LoopIdentity, LoopVerdict, detect_loop};
+use crate::loop_detect::{LoopIdentity, LoopVerdict, detect_loop};
+use crate::ports::ToolExecutor;
 use crate::step::AbortKind;
 
 use super::loop_evidence::{ResultIdentities, recent_call_records};
-use super::{LOOP_STEER_PREFIX, TurnOutcome};
+use super::{EngineConfig, LOOP_STEER_PREFIX, TurnOutcome};
 
 /// Loop detection, before spending a model call on a step that's already
 /// stuck. Progress-aware: each call is paired with the output it produced
@@ -47,16 +48,17 @@ use super::{LOOP_STEER_PREFIX, TurnOutcome};
 /// second loop is a genuinely different one, the honest answer is that the
 /// steer worked (see #1524 and the identity it now compares).
 pub(super) fn check_loop_detection(
-    loop_detection: LoopDetectionConfig,
-    turn_instance: u32,
+    config: &EngineConfig,
+    tools: &dyn ToolExecutor,
     messages: &mut Vec<CompletionMessage>,
     result_identities: &ResultIdentities,
     loop_steered: &mut Option<LoopIdentity>,
     total_cost_usd: f64,
     events: &EventSender,
 ) -> Option<TurnOutcome> {
+    let turn_instance = config.turn_instance;
     let records = recent_call_records(messages, result_identities);
-    let verdict = detect_loop(&records, loop_detection);
+    let verdict = detect_loop(&records, config.loop_detection);
     // The typed twin of the prose steer/abort (receipts spec §6.3): a
     // receipt parses this instead of string-matching "stuck-loop
     // detected:" prefixes. Emitted for both outcomes — `aborted` says
@@ -100,12 +102,10 @@ pub(super) fn check_loop_detection(
     });
     let Some(warned) = loop_steered else {
         *loop_steered = Some(identity);
-        let text = format!(
-            "{LOOP_STEER_PREFIX}] you appear to be looping: {evidence}. Repeating the \
-             same call cannot produce new information — change strategy: vary the \
-             arguments, try a different tool, or report what is blocking you. If you \
-             keep looping, the turn will be aborted."
-        );
+        // Duration priors (#1472) are not wired yet: `None` states the
+        // blocking wait without a number, and the composer cites one the
+        // moment a caller can supply it.
+        let text = steer_text(&evidence, polling_tool(&verdict, tools).as_deref(), None);
         let _ = events.send(AgentEvent::Steered { text: text.clone() });
         messages.push(CompletionMessage::user(text));
         return None;
@@ -120,6 +120,66 @@ pub(super) fn check_loop_detection(
         kind: AbortKind::DeliberateStop,
         cost_usd: total_cost_usd,
     })
+}
+
+/// The polling shape (#1473): ONE read-only tool re-issued against state
+/// that has not changed. The detector only trips on byte-identical outputs,
+/// so by verdict time "nothing changed" is established fact — what remains
+/// is whether the repeated call was a status check (read-only, where "vary
+/// the arguments / try another tool" is precisely wrong) or an action worth
+/// varying. Cycles keep the generic steer: several tools are involved and
+/// no single wait replaces them. Pure over the verdict plus the declared
+/// schemas (invariant #2) — `schemas()` returns owned declarations, no I/O.
+fn polling_tool(verdict: &LoopVerdict, tools: &dyn ToolExecutor) -> Option<String> {
+    let tool = match verdict {
+        LoopVerdict::ExactRepeat { tool, .. }
+        | LoopVerdict::Stagnant { tool, .. }
+        | LoopVerdict::InterleavedRepeat { tool, .. } => tool,
+        LoopVerdict::NoLoop | LoopVerdict::ShortCycle { .. } => return None,
+    };
+    tools
+        .schemas()
+        .iter()
+        .any(|schema| schema.name == *tool && schema.read_only)
+        .then(|| tool.clone())
+}
+
+/// The first-detection steer. Generic by default; for a polling loop the
+/// prescription is the ONE move that helps — a single blocking wait —
+/// because the generic "vary the arguments, try a different tool" makes a
+/// polling model strictly worse (#1473). The session that motivated this
+/// obeyed the generic steer into a 600s `gh run watch` that timed out as a
+/// tool error and voided the prompt cache, then blind `sleep` calls with no
+/// signal at all. The wait cites a duration prior when one is supplied
+/// (#1472's data, once a caller carries it) and is stated without a number
+/// otherwise. Volatile mid-turn context either way — invariant #7 safe by
+/// construction.
+fn steer_text(evidence: &str, polling_tool: Option<&str>, prior_secs: Option<u64>) -> String {
+    let Some(tool) = polling_tool else {
+        return format!(
+            "{LOOP_STEER_PREFIX}] you appear to be looping: {evidence}. Repeating the \
+             same call cannot produce new information — change strategy: vary the \
+             arguments, try a different tool, or report what is blocking you. If you \
+             keep looping, the turn will be aborted."
+        );
+    };
+    let sizing = match prior_secs {
+        Some(secs) => format!(
+            "this operation typically takes ~{secs}s here, so make ONE blocking wait \
+             of at least that long (a single call whose timeout exceeds {secs}s)"
+        ),
+        None => "make ONE blocking wait sized to how long this operation usually \
+                 takes — a single call with a generous timeout, not repeated checks"
+            .to_string(),
+    };
+    format!(
+        "{LOOP_STEER_PREFIX}] you are polling: {evidence} — `{tool}` is read-only and \
+         its result has not changed between your calls. Do NOT vary the arguments or \
+         switch tools: the state you are waiting on genuinely has not changed, and \
+         checking it differently cannot change it. Instead, {sizing}; then check once. \
+         If nothing lets you wait, report what you are blocked on and stop. If you \
+         keep polling, the turn will be aborted."
+    )
 }
 
 /// The abort's reason line, phrased by what the steering warning was about.
@@ -153,10 +213,92 @@ fn abort_reason(warned: &LoopIdentity, detected: &LoopIdentity, evidence: &str) 
 
 #[cfg(test)]
 mod tests {
-    use super::{LoopIdentity, abort_reason};
+    use super::{LoopIdentity, LoopVerdict, abort_reason, polling_tool, steer_text};
+    use crate::ports::ToolExecutor;
+    use stella_protocol::tool::{ToolOutput, ToolSchema};
 
     fn tools(names: &[&str]) -> Vec<String> {
         names.iter().map(|n| n.to_string()).collect()
+    }
+
+    /// A registry with one status-shaped (read-only) tool and one mutating
+    /// tool — the classification input, nothing more.
+    struct StatusAndBash;
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for StatusAndBash {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            let schema = |name: &str, read_only: bool| ToolSchema {
+                name: name.into(),
+                description: String::new(),
+                input_schema: serde_json::json!({}),
+                read_only,
+                speculation_safe: read_only,
+            };
+            vec![schema("ci_status", true), schema("bash", false)]
+        }
+        async fn execute(&self, _name: &str, _input: &serde_json::Value) -> ToolOutput {
+            unreachable!("steer classification never executes a tool")
+        }
+    }
+
+    fn exact_repeat(tool: &str) -> LoopVerdict {
+        LoopVerdict::ExactRepeat {
+            tool: tool.to_string(),
+            input: serde_json::json!({"wait": true}),
+            count: 3,
+        }
+    }
+
+    /// #1473's witness: a 3-repeat of a read-only status tool with
+    /// byte-identical output steers to ONE blocking wait — where the
+    /// generic text prescribed "vary the arguments", the exact move that
+    /// made the motivating session strictly worse (a 600s watch timeout
+    /// that voided the prompt cache, then blind sleeps).
+    #[test]
+    fn a_polling_loop_is_steered_to_one_blocking_wait_not_variation() {
+        let verdict = exact_repeat("ci_status");
+        let tool = polling_tool(&verdict, &StatusAndBash);
+        assert_eq!(tool.as_deref(), Some("ci_status"));
+
+        let text = steer_text("ci_status repeated 3×", tool.as_deref(), None);
+        assert!(text.contains("ONE blocking wait"), "{text}");
+        assert!(
+            !text.contains("vary the arguments, try a different tool"),
+            "the generic prescription is precisely wrong for a poll: {text}"
+        );
+        assert!(
+            text.contains("has not changed"),
+            "the steer must say WHY re-checking is futile: {text}"
+        );
+    }
+
+    /// A supplied duration prior is cited with a concrete number (#1472's
+    /// data, once a caller carries it).
+    #[test]
+    fn a_duration_prior_sizes_the_wait_concretely() {
+        let text = steer_text("ci_status repeated 3×", Some("ci_status"), Some(720));
+        assert!(text.contains("~720s"), "{text}");
+    }
+
+    /// A mutating tool keeps the generic steer: repeating an ACTION is not
+    /// polling, and "vary the arguments" is real advice there.
+    #[test]
+    fn a_mutating_repeat_keeps_the_generic_steer() {
+        let verdict = exact_repeat("bash");
+        assert_eq!(polling_tool(&verdict, &StatusAndBash), None);
+        let text = steer_text("bash repeated 3×", None, None);
+        assert!(text.contains("vary the arguments"), "{text}");
+    }
+
+    /// A cycle involves several tools; no single wait replaces it.
+    #[test]
+    fn a_cycle_keeps_the_generic_steer_even_over_read_only_tools() {
+        let verdict = LoopVerdict::ShortCycle {
+            pattern: Vec::new(),
+            repeats: 3,
+        };
+        assert_eq!(polling_tool(&verdict, &StatusAndBash), None);
     }
 
     /// An exact-repeat loop: one tool, one set of arguments.
