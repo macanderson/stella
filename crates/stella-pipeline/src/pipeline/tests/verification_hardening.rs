@@ -7,59 +7,16 @@
 use super::*;
 use crate::LineMutation;
 
-/// The shell tool `flip_halt_arming` scripts its revision against.
+/// The mid-turn flip halt's arming witnesses (#1793) — a child rather than a
+/// sibling module so it reaches this file's shared fakes through `use super::*`,
+/// and so the already-oversized `tests.rs` does not grow another module
+/// declaration.
 ///
-/// A distinct name from [`WRITING_TOOL`] because the two fakes answer
-/// differently and a flip must be attributable: only this one emits the exit
-/// marker [`crate::flip_halt::exit_status`] reads.
-const SHELL_TOOL: &str = "bash";
-
-/// One model turn that runs `command` through the shell tool.
-///
-/// The `command` key is what [`crate::flip_halt::command_of`] looks for, so a
-/// call built any other way would be invisible to the halt and the test would
-/// pass for the wrong reason.
-fn shell_call_result(command: &str) -> CompletionResult {
-    CompletionResult {
-        tool_calls: vec![ToolCall {
-            call_id: "call-shell".into(),
-            name: SHELL_TOOL.into(),
-            input: serde_json::json!({ "command": command }),
-        }],
-        ..text_result("")
-    }
-}
-
-/// A shell whose every command succeeds, reported the way the real bash tool
-/// reports it — the trailing `[exit code: 0]` marker.
-///
-/// That marker is the whole point: [`crate::flip_halt::FlipHalt::observe`]
-/// latches only on a tracked command that exited zero, and output without a
-/// marker can never stop a turn. A fake returning bare prose would leave the
-/// halt unlatched and the arming test green for no reason.
-struct PassingShell;
-#[async_trait]
-impl ToolExecutor for PassingShell {
-    fn schemas(&self) -> Vec<ToolSchema> {
-        vec![ToolSchema {
-            name: SHELL_TOOL.into(),
-            description: "run a shell command".into(),
-            input_schema: serde_json::json!({ "type": "object" }),
-            read_only: false,
-            speculation_safe: false,
-        }]
-    }
-    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
-        ToolOutput::Ok {
-            content: "ok\n[exit code: 0]".into(),
-        }
-    }
-}
-
-/// The authored-witness arming of the mid-turn flip halt (#1793) — a child
-/// rather than a sibling module so it reaches the shared fakes through this
-/// file's own `use super::*`, and so the already-oversized `tests.rs` does
-/// not grow another module declaration.
+/// Its two *shell* doubles are deliberately not shared from here. They live
+/// beside the witnesses that use them, so a wholesale rewrite of this file
+/// collides with them instead of silently deleting the tests underneath — the
+/// clobber that cost a #1793 witness once already (#1971, #1997). That file's
+/// own module doc is the normative statement of the rule.
 mod flip_halt_arming;
 
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,

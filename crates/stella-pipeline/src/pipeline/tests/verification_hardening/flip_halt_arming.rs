@@ -20,6 +20,55 @@
 
 use super::*;
 
+/// The shell tool both witnesses script their revision against.
+///
+/// A distinct name from [`WRITING_TOOL`] because the two fakes answer
+/// differently and a flip must be attributable: only this one emits the exit
+/// marker [`crate::flip_halt::exit_status`] reads.
+const SHELL_TOOL: &str = "bash";
+
+/// One model turn that runs `command` through the shell tool.
+///
+/// The `command` key is what [`crate::flip_halt::command_of`] looks for, so a
+/// call built any other way would be invisible to the halt and the test would
+/// pass for the wrong reason.
+fn shell_call_result(command: &str) -> CompletionResult {
+    CompletionResult {
+        tool_calls: vec![ToolCall {
+            call_id: "call-shell".into(),
+            name: SHELL_TOOL.into(),
+            input: serde_json::json!({ "command": command }),
+        }],
+        ..text_result("")
+    }
+}
+
+/// A shell whose every command succeeds, reported the way the real bash tool
+/// reports it — the trailing `[exit code: 0]` marker.
+///
+/// That marker is the whole point: [`crate::flip_halt::FlipHalt::observe`]
+/// latches only on a tracked command that exited zero, and output without a
+/// marker can never stop a turn. A fake returning bare prose would leave the
+/// halt unlatched and the arming test green for no reason.
+struct PassingShell;
+#[async_trait]
+impl ToolExecutor for PassingShell {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: SHELL_TOOL.into(),
+            description: "run a shell command".into(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            read_only: false,
+            speculation_safe: false,
+        }]
+    }
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        ToolOutput::Ok {
+            content: "ok\n[exit code: 0]".into(),
+        }
+    }
+}
+
 /// #1793 witness (authored side): after `witness_on_demand` seeds a failing
 /// witness, a revision that observes the witness command pass halts at that
 /// step boundary. As in the configured-command twin, the provider is

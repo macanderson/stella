@@ -78,6 +78,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::compaction_rewrite::CompactionRewrite;
 use crate::context_event::CompiledContextFrameBuilt;
 // The ladder's own wire vocabulary lives in `crate::ladder`; a verdict event
 // carries it, and `ProofStep::Oracle` names the tree an observation ran
@@ -542,11 +543,11 @@ pub enum AgentEvent {
         /// The replacement bytes each in-place rewrite left behind, one entry
         /// per digest — what lets reconstruction resolve a compacted block to
         /// the bytes the model received rather than the pre-compaction output
-        /// under the same `call_id` (#1667); see [`CompactionRewrite`].
+        /// under the same `call_id` (#1667); see [`crate::CompactionRewrite`].
         /// `serde(default)` — absent on journals written before rewrites were
         /// journaled, whose compacted blocks surface as digest mismatches.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        rewrites: Vec<crate::CompactionRewrite>,
+        rewrites: Vec<CompactionRewrite>,
         /// The budget this pass actually compared against — the raw compaction
         /// budget divided by the model's calibration factor — and that factor.
         /// The event's `before/after_tokens` are raw estimates; these are the

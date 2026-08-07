@@ -25,6 +25,32 @@ fn touched_tests_status(observed: Option<bool>) -> &'static str {
     }
 }
 
+/// The most observations the trusted zone will render (#1787). The trace
+/// grows once per verification round, and the repair gate can keep granting
+/// rounds as long as a measured budget affords them — so unlike the diff,
+/// which rides under a token budget, this channel had no ceiling at all.
+/// Sized far above a normal run (baseline plus a handful of rounds) so the
+/// bound only ever bites a pathological loop.
+const MAX_ORACLE_TRACE_OBSERVATIONS: usize = 24;
+
+/// Render the oracle trace for the verifier prompt, bounded to the newest
+/// [`MAX_ORACLE_TRACE_OBSERVATIONS`] entries.
+///
+/// Newest kept, oldest dropped: the recent runs are the ones the verdict
+/// weighs, and the drop is stated in-band — the verifier must read "earlier
+/// observations exist" rather than a trace that silently starts mid-run.
+/// The stored snapshot keeps the full trace either way; only this prompt
+/// ingress is clipped (the structural-bound rule from #1932).
+fn bounded_oracle_trace(trace: &[OracleObservation]) -> String {
+    let omitted = trace.len().saturating_sub(MAX_ORACLE_TRACE_OBSERVATIONS);
+    let rendered = crate::replay::render_oracle_trace(&trace[omitted..]);
+    if omitted == 0 {
+        rendered
+    } else {
+        format!("…{omitted} earlier observation(s) omitted → {rendered}")
+    }
+}
+
 impl<'a> Pipeline<'a> {
     /// Assemble the deterministic evidence summary and the witness-stripped
     /// diff for one model-verdict round.
@@ -118,7 +144,7 @@ impl<'a> Pipeline<'a> {
             // order, and what each observed — instead of a diff cold.
             evidence_summary.push_str(&format!(
                 "; oracle_trace=[{}]",
-                crate::replay::render_oracle_trace(&snapshot.oracle_trace)
+                bounded_oracle_trace(&snapshot.oracle_trace)
             ));
         }
         if let Some(symptom) = state.witness_baseline_symptom {
@@ -157,7 +183,10 @@ impl<'a> Pipeline<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::touched_tests_status;
+    use super::{
+        MAX_ORACLE_TRACE_OBSERVATIONS, OracleObservation, ProofTree, bounded_oracle_trace,
+        touched_tests_status,
+    };
 
     #[test]
     fn touched_tests_render_names_the_unobserved_case() {
@@ -168,5 +197,48 @@ mod tests {
         assert_eq!(touched_tests_status(Some(true)), "passed");
         assert_eq!(touched_tests_status(Some(false)), "failed");
         assert_eq!(touched_tests_status(None), "unobserved");
+    }
+
+    fn trace_of(len: usize) -> Vec<OracleObservation> {
+        (0..len)
+            .map(|i| OracleObservation {
+                tree: ProofTree::Candidate,
+                // Alternate so a clipped render is distinguishable from a
+                // repeated one.
+                passed: i % 2 == 0,
+            })
+            .collect()
+    }
+
+    /// #1787's witness for the trusted-zone bound: a pathological run's
+    /// trace reaches the prompt clipped to the newest observations, with the
+    /// drop stated in-band rather than the trace silently starting mid-run.
+    #[test]
+    fn a_pathological_oracle_trace_is_clipped_with_the_drop_stated() {
+        let trace = trace_of(100);
+        let rendered = bounded_oracle_trace(&trace);
+        assert!(
+            rendered.starts_with("…76 earlier observation(s) omitted → "),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.matches("candidate:").count(),
+            MAX_ORACLE_TRACE_OBSERVATIONS,
+            "only the newest observations are rendered: {rendered}"
+        );
+        // The newest entry survives: index 99 is odd, so it observed a fail.
+        assert!(rendered.ends_with("candidate:fail"), "{rendered}");
+    }
+
+    /// An ordinary run's trace is untouched — byte-identical to the
+    /// unbounded render, so every existing prompt (and verdict-reuse digest)
+    /// is unchanged where the bound does not bite.
+    #[test]
+    fn an_ordinary_oracle_trace_renders_unchanged() {
+        let trace = trace_of(5);
+        assert_eq!(
+            bounded_oracle_trace(&trace),
+            crate::replay::render_oracle_trace(&trace)
+        );
     }
 }
