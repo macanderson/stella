@@ -22,7 +22,7 @@ use stella_mcp::{McpConfig, McpServerConfig, McpToolSet};
 use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
 use stella_pipeline::{
-    AlwaysAbortGate, CmdOutcome, ContextRecallPort, McpPrefetchPort, NoContextRecall, Pipeline,
+    AlwaysAbortGate, CmdOutcome, ContextRecallPort, McpPrefetchPort, NoContextRecall,
     PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStatusPort,
     RepoStructurePort,
 };
@@ -43,7 +43,7 @@ use crate::memory::{
 };
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
-use crate::{OutputFormat, config::Config};
+use crate::{OutputFormat, config::Config, resume_frame};
 use stella_context::EpisodeOutcome;
 
 mod coverage;
@@ -452,8 +452,8 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
-        crate::resume_frame::declare(&cfg.durability, &pipeline_config);
-        let pipeline = Pipeline::new(ports, pipeline_event_sender(&tx, format), pipeline_config);
+        let events = pipeline_event_sender(&tx, format);
+        let pipeline = resume_frame::pipeline(&cfg.durability, ports, events, pipeline_config);
         pipeline.run(prompt, &mut messages, &mut budget).await
     };
 
