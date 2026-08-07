@@ -1462,8 +1462,7 @@ impl<'a> Pipeline<'a> {
         research: &[ResearchFinding],
         repo_structure: &str,
         revision: Option<&str>,
-        budget: &mut BudgetGuard,
-        total: &mut f64,
+        spend: &mut Spend<'_>,
     ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Plan,
@@ -1491,8 +1490,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
@@ -1516,8 +1515,8 @@ impl<'a> Pipeline<'a> {
                     overrides: &worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
-                budget,
-                total,
+                spend.budget,
+                spend.total,
             )
             .await
         {
