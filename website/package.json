@@ -13,7 +13,8 @@
     "build": "NODE_ENV=production next build",
     "start": "next start --port 3400",
     "postinstall": "fumadocs-mdx",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@upstash/redis": "^1.38.0",

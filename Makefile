@@ -331,6 +331,10 @@ file-size-test: ## Test which languages the file-size ratchet actually watches (
 guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)
 	./scripts/test-guard-sigpipe.sh
 
+.PHONY: changelog-roll-test
+changelog-roll-test: ## Test which releases get a CHANGELOG.md section (hermetic; not part of `gate`)
+	./scripts/test-changelog-roll.sh
+
 .PHONY: releases-published
 releases-published: ## Assert every v* tag older than the grace window has a published release (#1464)
 	@./scripts/check-releases-published.sh

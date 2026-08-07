@@ -1,284 +1,45 @@
 ---
 title: Release notes
-description: What's new in stella, per minor release — the user-facing changes behind each version, with the commit-level changelog linked on its GitHub Release.
+description: Where stella's release notes live — the per-line changelog at /releases, and the per-tag notes on GitHub.
 ---
 
-stella follows [semantic versioning](https://semver.org). Every merge to `main`
-cuts a release and publishes prebuilt binaries plus a Homebrew formula, so
-`brew upgrade stella` always tracks the latest build.
+Release notes live in two places, and which one you want depends on the
+question you are asking.
 
-This page is organized **by minor release**, and it is a summary rather than a
-changelog: the patch releases within a line ship continuously and are not
-itemized here. For what changed in one specific tag, read that tag's
-[GitHub Release](https://github.com/macanderson/stella/releases) — every one
-carries its full commit-level log.
+## What changed in the line I am upgrading across
 
-## 0.6.x — since 0.6.0
+**[stella.oxagen.sh/releases](/releases)** — one section per **minor line**,
+searchable, filterable by kind. This is the curated record: what a line
+delivered, written for someone deciding whether to upgrade.
 
-The patch releases in this line are not itemized (see the note above), but several
-of them added surface worth knowing about. Current release: **0.6.44**.
+It is generated from [`CHANGELOG.md`](https://github.com/macanderson/stella/blob/main/CHANGELOG.md)
+at build time, so the page and the repository cannot drift.
 
-### The PROOF rail — the verification, beside the work, live
+## What changed in this exact build
 
-The deck grew a rail that answers one question continuously: *right now, is this run
-proving what it is doing?* It folds live from the turn's proof events — what assurance
-triage decided to buy, whether the warrant judged the diff to need a test, the witness
-that was authored and pinned, and the oracle's baseline-versus-candidate result.
+**[The releases page on GitHub](https://github.com/macanderson/stella/releases)**
+— notes for every tag, generated from that tag's own diff.
 
-It is a panel rather than transcript rows on purpose. Proof is a small state machine
-whose *current* value matters and whose history does not; rendered as scrolling lines
-the answer is buried under whatever the worker printed since.
+Every merge to `main` cuts a patch release (the 0.6 line was 127 of them in
+eight days), so this is the surface to reach for when you are bisecting a
+regression or want the commit-level log for one version.
 
-The rail carries one invariant: **once a turn has ended, no row may read `pending`**.
-A surface that reports only when things go well is one you cannot trust when they do
-not, and `pending` on a finished turn is silence wearing the costume of progress. That
-is held in the fold rather than by asking eighteen terminal exits to each remember to
-report.
+<Callout title="Why this page is not the changelog">
+It used to be — a hand-maintained copy of the same notes, which is exactly why
+it stopped being one. It sat on "Current release: 0.6.44" while the tree was on
+0.6.131. A second copy of a record that changes every day is a copy that is
+wrong every day; `/releases` renders the repository's own file instead.
+</Callout>
 
-A related fix made the same honesty hold for the file counts beside it: `FileChange`
-now comes from the single recorder that actually measures a touch, so counts ride the
-event instead of being re-derived from diff text.
+## How a section gets written
 
-### `stella ingest` — your markdown becomes reviewable records
+Contributors and coding agents do not write changelog entries — CI does, so the
+file keeps one voice instead of whatever each PR happened to say about itself.
+When a minor or major release is cut,
+[`scripts/changelog-ai.sh`](https://github.com/macanderson/stella/blob/main/scripts/changelog-ai.sh)
+drafts the section from the whole series diff and
+[`scripts/changelog-roll.sh`](https://github.com/macanderson/stella/blob/main/scripts/changelog-roll.sh)
+rolls it into place under the new version heading.
 
-[`stella ingest`](/docs/commands/ingest) reads markdown you already wrote and turns it
-into context-record proposals. With no arguments it scans and classifies what the
-workspace contains; name a document and one model call splits it into atomic claims,
-each mapped to a record, run through a **deterministic safety gate**, probed for
-staleness, and written to `.stella/proposals/` as reviewable TOML.
-
-The gate is the point: the model is asked to surface executable content, but nothing
-downstream trusts that it did. Atomicity and quarantine are re-decided by a pure
-function that cannot be talked out of a rule by a cleverly-worded document.
-
-### Custom commands: TOML, parity fields, and namespaces
-
-[Custom commands](/docs/agent-tools/commands) can now be authored as TOML as well as
-markdown-with-frontmatter. The formats carry exactly the same fields, so TOML is a
-spelling rather than a feature tier — but a `prompt` key needs no frontmatter fence,
-and `allowed-tools` becomes a typed array.
-
-Alongside it: the full parity field set (`argument-hint`, `allowed-tools`, `model`,
-`disable-model-invocation`), namespaced commands via a subdirectory
-(`commands/vercel/deploy.toml` → `/vercel:deploy`), and
-[`stella commands`](/docs/commands/commands) to list what a workspace offers or convert
-markdown definitions in place.
-
-### A mid-turn prompt says what it became
-
-Typing while a turn runs is no longer ambiguous. Only a message prefixed `>` steers the
-running turn; a plain prompt becomes its own sub-session — and the deck now **says so**
-instead of leaving you to guess whether your text landed. The previously-reported "turn
-blew up" symptom was UI silence, not a broken turn.
-
-One exception is deliberate: while a gate card is pending, the gate owns the submission,
-so your keystrokes answer the card rather than starting anything.
-
-### Self-tuning, on evidence
-
-[`stella tune`](/docs/commands/tune) A/Bs one policy knob — the worker's reasoning
-effort — over two loop-bench runs, and promotes the winner **only** when it confidently
-wins, with a `--min-samples` floor and a reversible rollback record. Without
-`--promote` it reports and records the receipt but changes nothing.
-
-### `stella scoreboard` — and nothing grading its own homework
-
-[`stella scoreboard`](/docs/commands/scoreboard) reports four numbers per unit of work:
-model calls, characters a person had to type, follow-ups, and the verdict a merged or
-closed pull request implies. The store *does* carry a model self-rating field and the
-scoreboard deliberately ignores it. An open or draft PR is not counted as a verdict at
-all, because work still in flight has not been judged.
-
-### Telemetry, witness, and the terminal
-
-- **Live tool-call projection, crash recovery, and a real streaming telemetry API.**
-- **Witness assertion-density screen** — a witness that asserts nothing is no longer
-  accepted as proof — plus impacted-test selection that provably narrows across crates.
-- **A blind diff probe no longer completes as "nothing changed"**, which is what made
-  the warrant's guard inert on candidates that emitted no file events.
-- **A live thought follows its tail** instead of freezing on its first line; a `create`
-  reports what it made instead of vanishing; the Files tab populates for batched
-  `apply_edits`; and the markdown renderer stopped eating underscores in identifiers.
-- **`stella-serve`** gained `--version`/`--help` and a corrected as-built route table.
-
-### Brand: one identity, written down
-
-`docs/brand/BRAND.md` is now the normative source for stella's visual identity —
-electric blue and gold on deep space — and the terminal palette, the brand assets, the
-docs site tokens, and the Observatory dashboard all mirror it. Four surfaces had drifted
-to three different identities, and the drift was possible because nothing was normative.
-Retired in the same pass: the vermilion "ember" block cursor, the terminal-green dark
-theme, and the `--stella-sky*` token names they shipped under.
-
-## 0.6.0
-
-The `0.6.x` line opens with the feature the `0.5.x` series was building toward: **stella now learns from working in your codebase, and shows its work.** The adaptive context lifecycle is complete and on by default. Alongside it, this release gathers a large security and reliability pass, streaming on every provider that supports it, a rebuilt transcript, and a relicense.
-
-### Adaptive context — the loop closes
-
-stella has always recalled memories. What it could not do was tell you *why* a memory was chosen, whether it helped, or stop selecting one that never did. All four phases of that work landed in this line.
-
-- **Every turn is accountable.** The step manifest is now a compiled context frame with a deterministic identity and a content hash, and recall is decomposed into one block per item instead of a single undifferentiated blob. For any past turn you can see exactly which memories entered it, in what order, at what token cost, and where each came from.
-- **`stella inspect`** reconstructs the exact message array any past model call was sent, verified against the digests taken at emission, and reports coverage gaps and digest mismatches separately rather than papering over them. `Ctrl-G` opens the same view inside the deck.
-- **Proposals are typed, governed, and reviewable.** What the loop wants to make durable now lands in an append-only ledger with the evidence behind it. `stella proposals list / keep / edit / ignore` is the review surface; every decision is an immutable event, so the history replays exactly and Ignore is reversible rather than permanent. A proposal must recur across **distinct tasks**, not merely many times in one.
-- **Context that stops helping gets retired — reversibly.** Selection health is derived from immutable use and feedback records and rebuilds exactly; nothing is a stored counter that can drift. `stella memory retire` / `reaffirm` / `retired` manage it. A retired memory is excluded from automatic recall but stays explicitly retrievable by id, and **nothing is ever deleted**.
-- **The agent cannot talk itself into forgetting.** Citation feedback is recorded as `agent_self_report` and, by design, may inform selection health but never drive retirement — a self-report that can retire its own subject is self-reinforcing, because a model that misreads a memory reports it unhelpful, retires it, and destroys the evidence that the reading was wrong. Retirement requires a human or a deterministic source.
-- **`stella memory` grew a full lifecycle:** `forget` / `restore` / `forgotten` (a tombstone that survives re-learning, because the reflection loop re-mines paraphrases), `edit` (a new revision of the same id, so recall stops serving the old words), `compact`, and `index`.
-
-`context.lifecycle.enabled: false` in `settings.json` restores every pre-adaptive behavior wholesale.
-
-### Retrieval got much faster and much more relevant
-
-- **Recall no longer loads the whole corpus to answer a five-frame query.** It is two-phase: corpus-wide passes read a body-free projection computed in SQL, and bodies, vectors and domain tags are fetched only for the handful of rows that can still become frames. Ranking output is unchanged by construction — only what it costs to produce it.
-- **Recency stopped hijacking recall.** It was fused at full weight, so the newest rows could take every slot regardless of the query — one run's leftovers were being handed to the next, unrelated run.
-- **~1,000 tokens off every model call.** Both system prompts opened with a hand-maintained tool catalogue restating what each tool's generated schema already carries, shown to the model twice on every call for the life of the session.
-- **The cached system prefix is byte-stable again.** Relative ages ("2 hours ago") and draft lines naming a live pid made the ~15–20k-token prefix change every call, missing the provider prompt cache *and* paying the cache-write premium on the whole thing.
-- Context blocks are hashed once per turn rather than once per step, and an optional IVF approximate-similarity index is available behind `stella memory index`.
-
-### Every tool ships on
-
-`bash` and the key-free web tools are now registered in every session. The `"tools"` block in `settings.json` became an open map — any tool, group, or `*` → `on`/`off` — covering MCP and custom tools too, with a matching editor in the deck's SETTINGS tab. `stella tools` names the key that withheld each tool. Org-managed denials render locked.
-
-### Providers
-
-- **Streaming now works on OpenAI, Gemini and Vertex.** Only Anthropic and zai implemented the observed-completion path; everywhere else the deck rendered nothing until the whole turn finished.
-- **Bedrock stopped burning four paid generations per turn** — a shared per-read timeout was bounding the entire unary generation, so anything slower failed as retryable and was reissued three more times.
-- Transient gateway 5xx are retried again (OpenRouter reports upstream status in a field the error type wasn't reading, so a retryable 502 classified as terminal), a truncated Gemini/Vertex stream is retried rather than committed as a silently half-complete answer, and per-turn cost is priced against the right provider.
-- **Chain-of-thought is no longer published as the answer** on tool-calling turns via OpenRouter.
-
-### Terminal UI
-
-- **The transcript was rebuilt for reading.** Rows open on a fixed-width rail — `●` call, `⎿` result, `✗` failure, `▌` prompt — giving back 18 columns the old right-aligned tags spent on chrome. Collapsed output anchors on the first failing line rather than line 1, and a failure never collapses to one line. System notes split into *loud* (errors, gates, questions — a scan should stop on them) and *quiet* (recall, memory, compaction — bookkeeping), stages render as section rules rather than rows carrying one word, and the budget gauge prints the turn's cost once instead of a fresh `spend` row after every model call.
-- **Navigation:** `Ctrl-F` incremental find that searches the *full* tool output rather than the drawn preview, `Ctrl-N`/`Ctrl-P` to jump between failures, `Ctrl-Z` to fold a finished turn to one line.
-- **The deck prompts on large plans instead of dead-ending.** Scope review was hardcoded headless with an always-abort gate, and the advice it printed named a key only `stella run` reads. `Trim` keeps the largest prefix under the thresholds and says what it dropped.
-- **Live fleet dashboard** with supervisor verbs — pause, resume, and stop the focused task, with stop requiring two keystrokes.
-- **A new palette: bright sky on true black.** Four rival palettes collapsed into one system with WCAG-AA contrast contracts enforced at build time. The ground is neutral on purpose — a pale blue accent on a blue-tinted ground loses the separation that makes it read as a signal — and the accent is spent on exactly one thing in the transcript: the name of the tool being called, since those names are the index to the whole scrollback. A palette-law test rejects any categorical hue that sits within confusable distance of the accent, which moved azure to amber and the old glacier blue to teal. `/color` offers `sky` (the default), `azure`, `violet`, `magenta` and `mint`; `cyan` is kept as an alias so an existing `/color cyan` still resolves.
-
-### Security
-
-- **`git clone && stella` is no longer arbitrary code execution.** A repo's `.env` could set `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, `BASH_ENV`, `GIT_SSH_COMMAND` or a redirected `PATH`. Loader, interpreter and config-redirect names are refused from project `.env` files and printed on stderr; a live shell env still wins, so `LD_PRELOAD=… stella …` works when a human means it.
-- **Ambient authority scrubbed from model-controlled subprocesses**, including git's config/SSH/proxy hooks and `SSH_AUTH_SOCK`. Escape hatch: `STELLA_SUBPROCESS_ENV_ALLOW`.
-- Secrets are zeroized on drop and no longer dumpable via `{:?}`; files stella creates are owner-only; `run_tests`' `filter` is quoted per token, closing a command-injection path; a stored-XSS hole in the exported dashboard is closed; MCP servers are bounded on every axis (an MCP server streaming without a newline used to OOM-kill stella).
-- **Releases carry build-provenance attestation** covering both the tarballs and `SHA256SUMS`, and `install.sh` verifies it. A *contradicted* attestation always aborts; set `STELLA_REQUIRE_PROVENANCE=1` to make *unverifiable* abort too.
-- A new [threat model](https://github.com/macanderson/stella/blob/main/docs/spec/threat-model.md) records nine residual risks — including that "bash is off" was never the same claim as "the agent cannot run code."
-
-### Reliability
-
-- **Cancelling a turn actually kills the work.** Esc, the tool-timeout backstop and a fleet stop now kill the process group; before, the child kept running and kept editing your tree. Ctrl-C works headlessly for the first time, with exit codes **130** / **143**.
-- **Source writes survive a crash.** `write_file`, `edit_file`, `apply_edits` and `save_memory` used to truncate the target directly, so a crash mid-write left your file truncated with the replacement nowhere. Writes are now durable and in-place, preserving mode, owner and hard links.
-- **Loop detection works during compaction again** — its evidence was keyed off tool-result content compaction had already replaced, so the primary stuck-turn defense was off exactly when it was needed. On Gemini and Vertex it was effectively off entirely, because their per-step `call_{ordinal}` ids made three different outputs compare equal.
-- A crashed fleet run no longer wedges a workspace with a lock naming a dead run id; media downloads, SSE buffers and tool output are all bounded; deeply nested sources no longer crash the indexer; sessions survive a power cut.
-- **New default ceilings:** 10 minutes per model call, 15 minutes per tool dispatch, 5 seconds for recall.
-
-### Retention & cost
-
-- **`stella stats prune`** gives `store.db` a retention path — it holds full prompts, event payloads, tool arguments and context blocks and previously had none across 21 tables. `stella usage prune` bounds the hub. Both support `--dry-run`.
-- **Cache-write tokens are now priced.** They were reported end-to-end and priced at $0 by nothing, understating the budget meter and every receipt. **Reported costs go up for identical workloads** — a correction, not a price change.
-- Every JSON envelope leads with `schema_version`, and `AgentEvent` gained an `Unknown` variant so an older binary no longer fails a whole stream on one unrecognized event.
-
-### Docs
-
-A mobile-first overhaul turned reference tables into card grids and added diagrams for the credential chain, settings cascade, permission gate and telemetry flow. Building it surfaced three real defects, fixed in the same pass — `--model openrouter/auto` was documented and broken, `enable_recap` never reached the runtime, and one flag's help described the opposite of what it did. New: a `stella doctor` page, `CHANGELOG.md`, and a README per crate.
-
-### Licensing
-
-stella is relicensed from `MIT OR Apache-2.0` to **`AGPL-3.0-only`**, dual-licensed with commercial licenses from Oxagen, Inc. Two carve-outs worth stating plainly: **using stella to write proprietary code does not make that code AGPL**, and **releases up to v0.5.14 remain perpetually available under MIT/Apache**, including the right to fork from that point. Contributions now require a CLA. The Context Graph Protocol stays Apache-2.0.
-
-### Upgrading — what changes under you
-
-1. **`bash` and the key-free web tools are on by default.** Turn off with `"tools": {"bash": "off"}`.
-2. **The adaptive context lifecycle is on by default.** `"context": {"lifecycle": {"enabled": false}}` restores previous behavior.
-3. **Reported costs rise** for identical workloads, because cache-write tokens are now priced.
-4. **Witness test files are no longer written into your tree.** `stella run --keep-witness` restores it.
-5. **The deck now blocks on an approval card** for plans over 5 steps / 8 files / $1.00, where it previously aborted.
-6. **`OXAGEN_DEBUG` / `OXAGEN_MEDIA_LIVE` are renamed** to `STELLA_*`. The old names still work **for this release only**.
-7. **Extension deny policies now bite** on `build_project`, `run_tests`, `verify_done` and `send_stdin`, which previously bypassed them.
-8. **Downgrading is refused, not silently misread** — `context.db`, `codegraph.db` and the media journal now decline to open a schema newer than the binary knows.
-9. **The TUI palette is bright sky on true black**, and the default accent is `sky`. `/color cyan` still resolves, as an alias. *(Superseded later in the `0.6.x` line — the deck's themes are now `stella-dark` and `stella-light`, electric blue on deep space. `/color` still sets the plain REPL's accent from the same list.)*
-
-```bash
-# Homebrew (macOS / Linux)
-brew upgrade stella
-
-# From a release tarball — pick your target
-# https://github.com/macanderson/stella/releases/latest
-```
-
-Prebuilt binaries are published for `aarch64`/`x86_64` macOS and Linux. Verify a download against the `SHA256SUMS` attached to the release.
-
-## 0.5.0
-
-The first minor release of the `0.5.x` line. It gathers the stabilization and
-feature work that accumulated across the `0.4.x` patch series into one coherent
-step: a smarter edit path, graph-aware tooling, a durable context engine, and
-fleet-scale telemetry.
-
-### Editing & tools
-
-- **read→edit drift oracle.** `edit_file` now keeps a per-file record of the
-  content the model last *saw* (via a read, or its own successful write). When
-  an edit's `old_string` no longer matches, stella distinguishes an
-  out-of-band change to the file from a genuine not-found, echoes the current
-  content, and lets the model recover — instead of blindly retrying a stale
-  edit.
-- **`apply_edits` — transactional multi-file edits.** A new tool applies a batch
-  of edits across many files atomically, with a dry-run preflight that reports
-  exactly what would change before anything is written. Either the whole batch
-  applies or none of it does.
-- **`run_tests scope:"impacted"`.** Test selection is now graph-driven: stella
-  walks the tree-sitter code graph from your changes to the tests that actually
-  exercise them, so a focused change runs a focused suite.
-- **graph-derived planner context.** The planner localizes a goal to the
-  relevant files deterministically from the code graph, giving each turn a
-  tighter, more relevant working set.
-
-### Context engine
-
-- **Adaptive-context baseline (Phase 0 & 1).** The foundation of stella's
-  durable memory: a typed record taxonomy with scope and temporal axes, and
-  canonical JCS hashing for stable content identity. Context receipts now emit
-  **typed decision events** (loop-detection, budget, retry, and policy
-  decisions) as parseable twins of the prose the agent already narrates, bridged
-  into the policy-plane journal.
-- **compaction preserves the prompt-cache prefix.** When compaction dedupes
-  repeated blocks it now keeps the *earliest* copy, so the stable prefix the
-  provider's prompt cache keys on survives — fewer cache misses, lower bills.
-
-### Fleet & telemetry
-
-- **Observatory: org / hub telemetry dashboard.** A new view aggregates
-  telemetry across an organization's agents and workspaces, with hub-and-spoke
-  scoping for org / workspace / repo.
-- **Benchmark harnesses.** `loop-bench` (a cheap turn-loop + context-query
-  correctness harness) and the **stella arena** arena-bench adapter, which
-  records runs as ContextGraph traces.
-
-### Terminal UI
-
-- **Syntax highlighting in edit mode.** Markdown and TOML are now highlighted
-  when editing skills and agents in the TUI.
-- **Interactive Command Deck.** The docs landing page gained an interactive
-  Command Deck with animated terminals.
-
-### Fixes
-
-- Loop detection now sees through `read_file`'s session-tally footer, so
-  legitimate re-reads are no longer misread as a loop.
-- The conversational fast path no longer authors a witness test for a bare
-  greeting like `hi`.
-- Exhaustive TUI event matches handle `SpeculationDiscarded` cleanly, unbreaking
-  the clippy gate.
-
-### Install & upgrade
-
-```bash
-# Homebrew (macOS / Linux)
-brew install macanderson/tap/stella
-brew upgrade stella
-
-# From a release tarball — pick your target
-# https://github.com/macanderson/stella/releases/latest
-```
-
-Prebuilt binaries are published for `aarch64`/`x86_64` macOS and Linux. Verify a
-download against the `SHA256SUMS` attached to the release.
+If your change needs context the diff alone will not convey, put it in the pull
+request description: the drafter reads commit bodies, not just code.
