@@ -159,6 +159,7 @@ pub mod reflection;
 pub mod scoreboard;
 pub mod sessions;
 pub mod task_board;
+pub mod turn_diffs;
 pub mod usage;
 pub mod work_journal;
 pub mod workspace_local;

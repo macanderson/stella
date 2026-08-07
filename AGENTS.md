@@ -306,7 +306,7 @@ tracks its fail→pass flip in the flip oracle, and refuses to credit the flip i
 the worker modified the witness files (tamper exclusion). Authoring is
 **demand-driven and runs after execution** — once the warrant has read the
 executed diff and found something worth proving — so the stage order is
-triage → recall → plan → scope → **execute → witness** → verify → verdict
+triage → recall → research → plan → scope → **execute → witness** → verify → verdict
 (`stage_rank` in `crates/stella-pipeline/src/replay.rs` is the canonical
 ordering; the revise back-edges land on execute, so re-execution never
 re-authors). The witness
@@ -424,12 +424,11 @@ a plan needs and the part that rarely changes:
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs`, `src/zai.rs` |
 | `stella-pipeline` | `src/pipeline.rs`, `src/pipeline/tests.rs` |
-| `stella-protocol` | `src/event.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tools` | `src/registry.rs`, `src/scripts.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs`, `src/views/session.rs`, `src/deck_render.rs` |
 
-The other thirteen crates carry no god files — keep it that way. Each crate's
+The other fourteen crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

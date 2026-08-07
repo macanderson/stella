@@ -19,7 +19,7 @@
 /// ([`crate::enterprise_telemetry`]) — they are deliberately absent here, since
 /// the fresh-file probe must answer "has the versioned schema ever been
 /// created?" and those tables are created after it runs.
-pub(crate) const TABLES: [&str; 20] = [
+pub(crate) const TABLES: [&str; 21] = [
     "executions",
     "forgotten",
     "events",
@@ -40,6 +40,7 @@ pub(crate) const TABLES: [&str; 20] = [
     "step_manifest",
     "step_receipt",
     "foundry_tools",
+    "session_turn_diffs",
 ];
 
 /// `executions` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the spine every other table
@@ -584,4 +585,28 @@ pub(crate) const FOUNDRY_TOOLS_DDL: &str = "CREATE TABLE IF NOT EXISTS foundry_t
        enabled INTEGER NOT NULL DEFAULT 0,
        adopted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
        enabled_at TEXT
+     );";
+
+/// One turn's precomputed workspace diff (#1870): the `stella-diff`-shaped
+/// hunks between the work journal's `refs/stella/<session>/turn/<n-1>` and
+/// `turn/<n>` marks, computed by the session that owns the journal at the
+/// moment it marks the turn and persisted here so the observatory can replay
+/// a turn's file changes without ever opening the bare repo (the dashboard
+/// reads artifacts and spawns nothing — the #1870 boundary ruling, recorded
+/// in `stella-cli`'s `turn_diff` module).
+///
+/// `execution_id` ties the journal's turn ordinal to the store's turn
+/// identity (one turn is one execution) — the two numbering schemes have no
+/// other persisted correspondence, and the Sessions view joins through it.
+/// Nullable: a turn can end without having opened an execution row. The
+/// `UNIQUE (session_id, turn)` upsert key makes a re-recorded turn a
+/// replacement, matching the ref namespace it mirrors, where a turn mark is
+/// a single ref.
+pub(crate) const SESSION_TURN_DIFFS_DDL: &str = "CREATE TABLE IF NOT EXISTS session_turn_diffs (
+       session_id   TEXT NOT NULL,
+       turn         INTEGER NOT NULL,
+       execution_id INTEGER,
+       recorded_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       files        TEXT NOT NULL,
+       UNIQUE (session_id, turn)
      );";

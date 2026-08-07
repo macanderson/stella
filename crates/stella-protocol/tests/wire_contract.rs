@@ -285,6 +285,7 @@ fn all_stage_kinds() -> Vec<StageKind> {
     vec![
         Triage,
         ContextRecall,
+        Research,
         Plan,
         ScopeReview,
         Witness,
@@ -315,6 +316,7 @@ fn all_model_call_roles() -> Vec<ModelCallRole> {
     vec![
         Unknown,
         Triage,
+        Research,
         Plan,
         PlanRepair,
         WitnessAuthor,
@@ -436,6 +438,10 @@ fn all_proof_steps() -> Vec<ProofStep> {
             run: Some(2),
             runs_required: Some(3),
             seed: Some(7741),
+        },
+        ProofStep::VerdictDegraded {
+            candidate: 2,
+            reason: "the verifier call failed or timed out".into(),
         },
     ]
 }
