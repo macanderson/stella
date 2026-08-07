@@ -52,6 +52,7 @@ const ALL_ROLES: [ModelCallRole; 15] = [
     ModelCallRole::DomainInference,
     ModelCallRole::Reflection,
     ModelCallRole::Summarization,
+    ModelCallRole::Research,
 ];
 
 /// The system block a role dispatches through the management chokepoint
@@ -84,9 +85,8 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         // the parity witness automatically.
         ModelCallRole::Plan | ModelCallRole::PlanRepair => None,
         // Never dispatched through the management chokepoint. `Research`
-        // (#1778) runs as an engine sub-agent turn, so its system prompt
-        // rides its `SubAgentSpec` rather than this family — the same
-        // grouping, for the same reason, that `raw_usage.rs` gives it.
+        // (#1778) rides the sub-agent primitive — its system prompt travels
+        // on the `SubAgentSpec`, not through `metered_raw_call`.
         ModelCallRole::Unknown
         | ModelCallRole::Research
         | ModelCallRole::WitnessAuthor
@@ -95,7 +95,8 @@ fn management_system_block(role: ModelCallRole) -> Option<String> {
         | ModelCallRole::SkillAuthor
         | ModelCallRole::DomainInference
         | ModelCallRole::Reflection
-        | ModelCallRole::Summarization => None,
+        | ModelCallRole::Summarization
+        | ModelCallRole::Research => None,
     }
 }
 
