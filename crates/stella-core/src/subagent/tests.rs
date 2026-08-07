@@ -1290,3 +1290,132 @@ fn the_ledger_accumulates_and_drains_to_zero() {
     assert!((drain_sub_agent_spend(&ledger) - 0.03).abs() < 1e-9);
     assert_eq!(drain_sub_agent_spend(&ledger), 0.0);
 }
+
+// ---- cancellation (#1954) --------------------------------------------
+
+/// Serves its script, then hangs forever — and says so on `hang_reached`,
+/// which is what lets a test cancel the child at a *deterministic* point
+/// instead of racing a wall-clock timeout.
+struct HangAfterScript {
+    script: Mutex<Vec<Result<CompletionResult, ProviderError>>>,
+    hang_reached: std::sync::Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl Provider for HangAfterScript {
+    fn id(&self) -> &str {
+        "hanging"
+    }
+
+    async fn complete_ref(
+        &self,
+        _request: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        let next = self.script.lock().unwrap().pop();
+        match next {
+            Some(result) => result,
+            None => {
+                self.hang_reached.notify_one();
+                std::future::pending().await
+            }
+        }
+    }
+}
+
+/// #1954 witness: a caller that drops the sub-agent future mid-flight still
+/// gets a **balanced** bracket whose `Finished` carries the committed step
+/// count and cost, after the abandoned call's `UsageIncomplete { Cancelled }`
+/// envelope — and the money still settles into the parent's guard. Before
+/// `CancelBracket`, the `Started` bracket stayed open forever and every
+/// ceiling-bearing caller had to forge a `Finished` it could only fill with
+/// `steps: 0`.
+#[tokio::test]
+async fn a_cancelled_child_closes_its_bracket_with_committed_steps_and_cost() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let hang_reached = std::sync::Arc::new(tokio::sync::Notify::new());
+    // One committed step (a tool call), then the second model call hangs.
+    let child_provider = HangAfterScript {
+        script: Mutex::new(vec![Ok(tool_call_result("read_file", "c1", 0.002))]),
+        hang_reached: hang_reached.clone(),
+    };
+    let tools = MixedTools::default();
+    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let spec = SubAgentSpec::read_only("search-1", "find it");
+
+    {
+        let fut = parent.run_sub_agent(SubAgentHost::new(&child_provider), &spec, &mut budget, &tx);
+        let mut fut = std::pin::pin!(fut);
+        tokio::select! {
+            _ = &mut fut => unreachable!("a hanging child cannot complete"),
+            _ = hang_reached.notified() => {}
+        }
+        // `fut` drops here: the cancel every latency-ceiling caller performs.
+    }
+
+    let events = drain(&mut rx);
+    let started = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AgentEvent::SubAgent {
+                    phase: SubAgentPhase::Started { .. }
+                }
+            )
+        })
+        .count();
+    let finished: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::SubAgent {
+                phase: phase @ SubAgentPhase::Finished { .. },
+            } => Some(phase.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(started, 1);
+    assert_eq!(
+        finished.len(),
+        1,
+        "the bracket must close exactly once on a cancel: {events:?}"
+    );
+    match &finished[0] {
+        SubAgentPhase::Finished {
+            status,
+            steps,
+            cost_usd,
+            reason,
+            ..
+        } => {
+            assert_eq!(*status, SubAgentStatus::Incomplete);
+            assert_eq!(
+                *steps, 1,
+                "the committed step count, not a forged zero (#1954)"
+            );
+            assert!(
+                (*cost_usd - 0.002).abs() < 1e-9,
+                "the committed cost: {cost_usd}"
+            );
+            let reason = reason.as_deref().unwrap_or_default();
+            assert!(reason.contains("cancelled"), "the close says why: {reason}");
+        }
+        SubAgentPhase::Started { .. } => unreachable!(),
+    }
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::UsageIncomplete {
+                reason: stella_protocol::UsageIncompleteReason::Cancelled,
+                ..
+            }
+        )),
+        "the abandoned in-flight call owes its envelope: {events:?}"
+    );
+    assert!(
+        (budget.session_spent_usd() - 0.002).abs() < 1e-9,
+        "the committed spend still settles on the drop path: {}",
+        budget.session_spent_usd()
+    );
+}

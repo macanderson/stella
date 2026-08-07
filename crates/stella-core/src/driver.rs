@@ -131,6 +131,7 @@ use stella_protocol::ToolResult;
 use tokio::sync::mpsc::UnboundedSender;
 
 mod dispatch;
+mod resume;
 mod settlement;
 mod waiting;
 use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
