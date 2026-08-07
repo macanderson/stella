@@ -15,11 +15,12 @@ use crate::witness::{RUNNER_VOCABULARY, WITNESS_SYSTEM_PROMPT, runner_probe};
 /// baseline's own [`TestRunner`] port; a port that cannot check answers
 /// `true` per its default, so this only ever narrows on real evidence.
 ///
-/// Probed concurrently: the vocabulary is thirteen programs, each an awaited
-/// process spawn, and a best-of-N fan-out pays this per candidate — serially
-/// that was thirteen spawn round-trips of pure latency before any authoring
-/// could start. Order is restored from the vocabulary, not the completion
-/// order, so the prompt's listing stays deterministic (invariant 7).
+/// Probed concurrently: every vocabulary program is an awaited process
+/// spawn, and a best-of-N fan-out pays this per candidate — serially that
+/// was one spawn round-trip of pure latency per program before any
+/// authoring could start. Order is restored from the vocabulary, not the
+/// completion order, so the prompt's listing stays deterministic
+/// (invariant 7).
 async fn runner_availability(tests: &dyn TestRunner) -> Vec<String> {
     let probes = RUNNER_VOCABULARY.iter().filter_map(|program| {
         let probe = runner_probe(program)?;
@@ -705,6 +706,32 @@ impl<'a> Pipeline<'a> {
 mod tests {
     use super::*;
 
+    /// A workspace with a shell and nothing else — the Terminal-Bench
+    /// container shape (#2064): nginx config, git surgery, system images
+    /// with no language toolchain at all.
+    struct ShellOnlyRunner;
+
+    #[async_trait::async_trait]
+    impl TestRunner for ShellOnlyRunner {
+        async fn run_test(&self, _invocation: &TestInvocation) -> crate::ports::CmdOutcome {
+            unreachable!("availability probing never runs a test")
+        }
+        async fn runner_available(&self, probe: &TestInvocation) -> bool {
+            probe.program == "sh"
+        }
+    }
+
+    /// #2064's witness: a workspace where no language runner probes — only a
+    /// shell — resolves a non-empty availability set, so the witness stage
+    /// proceeds to authoring instead of degrading with "no supported test
+    /// runner". On `main`, `sh` is not in the vocabulary, the set is empty,
+    /// and the stage degrades before spending an author turn.
+    #[tokio::test]
+    async fn a_shell_only_workspace_still_resolves_a_runner() {
+        let available = runner_availability(&ShellOnlyRunner).await;
+        assert_eq!(available, vec!["sh".to_string()]);
+    }
+
     /// #1790's witness: a compile-error baseline is RECORDED, not refused —
     /// refusal would reject the most common Rust witness shape (a missing-API
     /// test fails to build on the old code by design), while silence hid the
@@ -713,6 +740,14 @@ mod tests {
     fn a_build_failure_baseline_is_recorded_and_an_assertion_one_is_not() {
         assert_eq!(
             witness_baseline_symptom("error[E0425]: cannot find function `retry_delays`"),
+            Some("build_failure")
+        );
+        // The import/loader shape (#2067): a baseline dying on a module that
+        // is a build artifact absent from a fresh checkout ran nothing.
+        assert_eq!(
+            witness_baseline_symptom(
+                "ModuleNotFoundError: No module named 'portfolio_optimized_c'"
+            ),
             Some("build_failure")
         );
         assert_eq!(

@@ -91,6 +91,15 @@ function winnersFor(
   return won;
 }
 
+/**
+ * The verdict and the incident are two facts, not one (#2066): a trial can
+ * score the reward and then raise (`crack-7z-hash` solved at reward 1.0 and
+ * still hit `AgentTimeoutError`), and the either/or branch this used to be
+ * showed only the tick — under-reporting the incident entirely. The tick
+ * stays `text-ok` because the task DID solve (the grading is Harbor's and
+ * unchanged); the marker carries the exception in a warning tone so it is
+ * legible without implying failure.
+ */
 function Verdict({ cell }: { cell: Cell | null | undefined }) {
   if (!cell) return <span className="font-mono text-[11px] text-dim">queued</span>;
   if (cell.status !== "done") {
@@ -101,9 +110,26 @@ function Verdict({ cell }: { cell: Cell | null | undefined }) {
       </span>
     );
   }
-  return cell.resolved === true ? (
-    <span className="font-mono text-[11px] font-semibold text-ok">✓ solved</span>
-  ) : (
+  if (cell.resolved === true) {
+    if (!cell.failure) {
+      return <span className="font-mono text-[11px] font-semibold text-ok">✓ solved</span>;
+    }
+    return (
+      <span className="flex items-center gap-1">
+        <span className="font-mono text-[11px] font-semibold text-ok">✓ solved</span>
+        <Tip
+          content={
+            `Solved, then raised ${cell.failure}. The reward was scored before the ` +
+            `exception, so the solve stands — but the trial did not end cleanly ` +
+            `(for a timeout: the agent kept burning budget after succeeding).`
+          }
+        >
+          <span className="font-mono text-[11px] text-warn">⚠ incident</span>
+        </Tip>
+      </span>
+    );
+  }
+  return (
     <Tip content={cell.failure || undefined}>
       <span className="font-mono text-[11px] text-bad">✗ failed</span>
     </Tip>

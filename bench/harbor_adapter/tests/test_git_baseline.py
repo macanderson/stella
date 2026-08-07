@@ -42,6 +42,7 @@ _spec.loader.exec_module(_git_baseline)
 GIT_BASELINE_SIZE_CAP_KB = _git_baseline.GIT_BASELINE_SIZE_CAP_KB
 GIT_BASELINE_MARKER = _git_baseline.GIT_BASELINE_MARKER
 GIT_BASELINE_COMMIT_MESSAGE = _git_baseline.GIT_BASELINE_COMMIT_MESSAGE
+GIT_BASELINE_REF = _git_baseline.GIT_BASELINE_REF
 git_baseline_script = _git_baseline.git_baseline_script
 parse_git_baseline_report = _git_baseline.parse_git_baseline_report
 run_git_baseline = _git_baseline.run_git_baseline
@@ -141,6 +142,11 @@ class TestScriptBehavior:
         assert log.stdout.strip() == (
             f"stella-harbor <stella-harbor@bench.invalid> {GIT_BASELINE_COMMIT_MESSAGE}"
         )
+        # The witness-baseline pin (#2067): `verify_done` resolves this ref in
+        # preference to a HEAD the agent's own commits have advanced past.
+        pinned = _git(tmp_path, "rev-parse", "--verify", GIT_BASELINE_REF)
+        assert pinned.returncode == 0
+        assert pinned.stdout.strip() == report["commit"]
         # The agent's later edits are what a diff shows — the tree is clean now.
         assert _git(tmp_path, "status", "--short").stdout == ""
         # …and Stella's own state stays invisible to that diff, without adding
