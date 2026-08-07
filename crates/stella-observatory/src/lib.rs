@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! The stella Observatory — a local, loopback-only dashboard over the
-//! workspace's own telemetry (`.stella/private/store.db`, `.stella/private/fleet.db`).
+//! workspace's own telemetry (`.stella/private/store.db`,
+//! `.stella/private/fleet.db`, `.stella/private/context.db`).
 //!
 //! Design constraints, in order:
 //!

@@ -950,17 +950,17 @@ fn context_diff_names_the_moved_line_and_reports_identity_honestly() {
 /// One ledger append through the real write API, with the record's own
 /// identity, hash and timestamps — the shape every production writer uses
 /// (`crates/stella-cli/src/memory/observations.rs::append_observation` et al).
-fn append_lifecycle<T: serde::Serialize>(
+#[allow(clippy::too_many_arguments)] // mirrors LedgerAppend's own field list
+fn append_lifecycle(
     store: &ContextStore,
     kind: &str,
     record_id: &str,
     lineage_id: &str,
     record_hash: &str,
     schema_version: &str,
-    record: &T,
+    body: &str,
     observed_at: &str,
 ) {
-    let body = serde_json::to_string(record).expect("record json");
     store
         .append_record(LedgerAppend {
             record_id,
@@ -968,7 +968,7 @@ fn append_lifecycle<T: serde::Serialize>(
             record_kind: kind,
             record_hash,
             schema_version,
-            body: &body,
+            body,
             observed_at,
             supersedes: None,
         })
@@ -1012,7 +1012,7 @@ fn real_context_workspace() -> (tempfile::TempDir, String, String) {
         &observation.lineage_id,
         &observation.record_hash,
         &observation.schema_version,
-        &observation,
+        &serde_json::to_string(&observation).expect("record json"),
         &observation.observed_at,
     );
 
@@ -1041,7 +1041,7 @@ fn real_context_workspace() -> (tempfile::TempDir, String, String) {
         &proposal.lineage_id,
         &proposal.record_hash,
         &proposal.schema_version,
-        &proposal,
+        &serde_json::to_string(&proposal).expect("record json"),
         &proposal.observed_at,
     );
 
@@ -1062,7 +1062,7 @@ fn real_context_workspace() -> (tempfile::TempDir, String, String) {
         &event.lineage_id,
         &event.record_hash,
         &event.schema_version,
-        &event,
+        &serde_json::to_string(&event).expect("record json"),
         &event.occurred_at,
     );
 
@@ -1081,7 +1081,11 @@ fn real_context_workspace() -> (tempfile::TempDir, String, String) {
                 .expect("episode upsert");
         });
 
-    (dir, proposal.lineage_id.clone(), observation.record_id.clone())
+    (
+        dir,
+        proposal.lineage_id.clone(),
+        observation.record_id.clone(),
+    )
 }
 
 /// The #1871 witness: the route folds the seeded observation → proposal →
@@ -1149,7 +1153,13 @@ fn a_workspace_with_no_context_db_degrades_to_an_empty_lifecycle() {
     );
     let v: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
     assert_eq!(v["present"], false, "{v}");
-    for key in ["counts", "proposals", "events", "episodes", "selection_health"] {
+    for key in [
+        "counts",
+        "proposals",
+        "events",
+        "episodes",
+        "selection_health",
+    ] {
         assert_eq!(v[key], serde_json::json!([]), "{key} must be empty: {v}");
     }
 }
@@ -1163,9 +1173,8 @@ fn a_workspace_with_no_context_db_degrades_to_an_empty_lifecycle() {
 fn a_context_db_older_than_v8_degrades_to_empty_ledger_sections() {
     let (workspace, _, _) = real_context_workspace();
     {
-        let raw =
-            rusqlite::Connection::open(workspace.path().join(".stella/private/context.db"))
-                .expect("open");
+        let raw = rusqlite::Connection::open(workspace.path().join(".stella/private/context.db"))
+            .expect("open");
         // Rebuild the pre-v8 shape honestly: no ledger table, no lineage
         // columns on `episode`. Dropping the whole table also drops its
         // append-only triggers, exactly as a pre-v8 file never had them.
@@ -1188,7 +1197,13 @@ fn a_context_db_older_than_v8_degrades_to_empty_ledger_sections() {
     );
     let v: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
     assert_eq!(v["present"], true, "the file exists and is reported: {v}");
-    for key in ["counts", "proposals", "events", "episodes", "selection_health"] {
+    for key in [
+        "counts",
+        "proposals",
+        "events",
+        "episodes",
+        "selection_health",
+    ] {
         assert_eq!(v[key], serde_json::json!([]), "{key} must be empty: {v}");
     }
 }
