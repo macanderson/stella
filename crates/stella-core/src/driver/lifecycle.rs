@@ -111,6 +111,29 @@ pub fn turn_outcome_payload(outcome: &TurnOutcome, steps: usize) -> serde_json::
     }
 }
 
+/// What `agent.turn.parked` carries: the park's timing envelope (#1857).
+///
+/// Deliberately NOT the wait's `description` — that is tool-authored free
+/// text describing what the agent is doing, and this stream carries counts
+/// and identifiers only (see the module docs). The description rides
+/// `AgentEvent::TurnParked` on the transcript stream, which already has a
+/// considered exposure story.
+pub(super) fn turn_parked_payload(poll_interval_secs: u64, deadline_secs: u64) -> serde_json::Value {
+    serde_json::json!({
+        "poll_interval_secs": poll_interval_secs,
+        "deadline_secs": deadline_secs,
+    })
+}
+
+/// What `agent.turn.woken` carries: how the park ended and what it cost in
+/// probes (#1857). `reason` is the closed `WakeReason` token, not free text.
+pub(super) fn turn_woken_payload(reason: &'static str, polls_used: u64) -> serde_json::Value {
+    serde_json::json!({
+        "reason": reason,
+        "polls_used": polls_used,
+    })
+}
+
 /// How one step ended, as the lifecycle stream names it.
 ///
 /// Three labels rather than the full reason string: an observer pairing

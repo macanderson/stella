@@ -14,7 +14,8 @@
 
 use stella_protocol::{AgentEvent, CompletionMessage, ToolCall, ToolOutput};
 
-use super::Engine;
+use super::{Engine, lifecycle};
+use crate::bus;
 use crate::event_sender::EventSender;
 use crate::step::{StepOutcome, TurnState};
 use crate::waiting::{WaitCall, WakeReason, decide, probe_fingerprint, wake_message};
@@ -66,14 +67,18 @@ impl<'a> Engine<'a> {
             }
         }
 
-        let _ = events.send(AgentEvent::Text {
-            text: format!(
-                "\n⏳ Parked: waiting until {} — probing every {}s for up to {}s, with no model \
-                 calls while waiting.\n",
-                request.description,
-                request.interval_secs(),
-                request.deadline_secs()
-            ),
+        // The typed span-open (#1857): consumers distinguish a park from
+        // model narration by the variant, renderers word it themselves
+        // (`stella-tui::textline::parked`), and replay can attribute the
+        // wall-clock gap. The prose ⏳ Text delta this replaced said the
+        // same thing unparseably.
+        let _ = events.send(AgentEvent::TurnParked {
+            description: request.description.clone(),
+            poll_interval_secs: request.interval_secs(),
+            deadline_secs: request.deadline_secs(),
+        });
+        self.emit_lifecycle(bus::names::AGENT_TURN_PARKED, || {
+            lifecycle::turn_parked_payload(request.interval_secs(), request.deadline_secs())
         });
 
         let mut polls_used = 0u64;
@@ -125,15 +130,14 @@ impl<'a> Engine<'a> {
             _ => last_observed,
         };
         let message = wake_message(&request, reason, polls_used, detail.as_deref());
-        let _ = events.send(AgentEvent::Text {
-            text: format!(
-                "\n▶ Wait ended after {polls_used} probe{}: {}\n",
-                if polls_used == 1 { "" } else { "s" },
-                match reason {
-                    WakeReason::Changed => "the watched state changed.",
-                    WakeReason::DeadlineExpired => "the deadline expired with no change.",
-                }
-            ),
+        // The typed span-close, replacing the prose ▶ Text delta the same
+        // way the park replaced ⏳.
+        let _ = events.send(AgentEvent::TurnWoken {
+            reason: reason.wire_token().to_string(),
+            polls_used,
+        });
+        self.emit_lifecycle(bus::names::AGENT_TURN_WOKEN, || {
+            lifecycle::turn_woken_payload(reason.wire_token(), polls_used)
         });
         // The wake rides the conversation tail — the volatile cache zone —
         // exactly where a user steer lands (invariant 7): the stable prefix

@@ -186,24 +186,35 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
     );
     assert_tool_pairing(&messages);
 
-    // The user-facing stream announced the park and the wake.
+    // The stream carries the typed span (#1857): a `TurnParked` naming the
+    // wait's parameters and a `TurnWoken` accounting for the probes — never
+    // prose `Text` a consumer would have to distinguish from model narration.
     let events = drain_events(&mut rx);
-    let texts: Vec<&str> = events
-        .iter()
-        .filter_map(|e| match e {
-            AgentEvent::Text { text: delta } => Some(delta.as_str()),
-            _ => None,
-        })
-        .collect();
     assert!(
-        texts.iter().any(|t| t.contains("Parked: waiting until")),
-        "the park must be announced: {texts:?}"
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnParked {
+                description,
+                poll_interval_secs: 5,
+                deadline_secs: 600,
+            } if description == "CI for branch main settles"
+        )),
+        "the park must be announced as a typed TurnParked: {events:?}"
     );
     assert!(
-        texts
-            .iter()
-            .any(|t| t.contains("Wait ended after 3 probes")),
-        "the wake must be announced with its probe count: {texts:?}"
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnWoken { reason, polls_used: 3 } if reason == "changed"
+        )),
+        "the wake must be announced as a typed TurnWoken: {events:?}"
+    );
+    // The park narrates through the typed pair alone — no synthetic prose.
+    assert!(
+        !events.iter().any(
+            |e| matches!(e, AgentEvent::Text { text } if text.contains("Parked")
+                || text.contains("Wait ended"))
+        ),
+        "the ⏳/▶ prose deltas must not accompany the typed events"
     );
 }
 
@@ -230,7 +241,7 @@ async fn an_unchanged_condition_wakes_once_at_the_deadline() {
         CompletionMessage::user("monitor CI"),
     ];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let (tx, _rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::unbounded_channel();
 
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
 
@@ -240,6 +251,14 @@ async fn an_unchanged_condition_wakes_once_at_the_deadline() {
     );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     assert_eq!(probe_calls.load(Ordering::SeqCst), 4, "deadline / interval");
+    // The typed wake names the timeout, not a phantom change (#1857).
+    assert!(
+        drain_events(&mut rx).iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnWoken { reason, polls_used: 4 } if reason == "deadline_expired"
+        )),
+        "the deadline wake must be a typed TurnWoken with the spent polls"
+    );
     assert_eq!(
         wake_calls.load(Ordering::SeqCst),
         0,
