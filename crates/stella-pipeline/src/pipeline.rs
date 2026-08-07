@@ -1445,7 +1445,8 @@ impl<'a> Pipeline<'a> {
     // Stage: plan
 
     /// `revision` is the reviewer's note from a rejected scope card, or `None`
-    /// for a turn's first plan.
+    /// for a turn's first plan. `spend` bundles budget + total as downstream
+    /// does: #1778's `research` param took the pair one over clippy's cap.
     async fn plan_stage(
         &self,
         goal: &str,
