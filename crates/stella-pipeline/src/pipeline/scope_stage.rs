@@ -31,6 +31,7 @@ impl Pipeline<'_> {
         let repo_structure = self.repo.structure_summary().await;
         let mut revision: Option<String> = None;
         let mut spent_revisions = 0usize;
+        let mut spend = Spend { budget, total };
 
         loop {
             let plan = match self
@@ -40,8 +41,7 @@ impl Pipeline<'_> {
                     research,
                     &repo_structure,
                     revision.as_deref(),
-                    budget,
-                    total,
+                    &mut spend,
                 )
                 .await
             {

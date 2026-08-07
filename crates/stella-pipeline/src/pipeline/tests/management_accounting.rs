@@ -453,8 +453,10 @@ async fn a_late_plan_is_abandoned_and_falls_back_to_the_single_step_plan() {
             &[],
             "",
             None,
-            &mut budget,
-            &mut total,
+            &mut Spend {
+                budget: &mut budget,
+                total: &mut total,
+            },
         )
         .await
         .expect("a wedged planner is never a run-ending failure");
