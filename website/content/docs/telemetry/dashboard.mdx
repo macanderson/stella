@@ -30,10 +30,12 @@ stella — not as a policy, as a construction:
 
 ## What you can see
 
-The nav has nine tabs, plus a **window** selector — `24h` / `7d` / `30d` /
+The nav has eleven tabs, plus a **window** selector — `24h` / `7d` / `30d` /
 `all` (the default). The Overview KPIs, the tokens-per-run timeline, the
 Executions table, and every Activity chart honor the window; the leaderboard
-panels labeled *all-time* ignore it.
+panels labeled *all-time* ignore it. A twelfth, **transcript**, appears only
+while you have a turn open — it is a child route of Sessions, not a section
+you visit.
 
 <CardGrid size="md">
   <OptionCard name="overview">
@@ -43,15 +45,32 @@ panels labeled *all-time* ignore it.
     the most-touched files, the **fleet ledger** (per fleet run: tasks, attempts,
     successes, commits) with MCP traffic, and a memory/reflections/skills digest — plus the
     **Executions** table: every run's kind, prompt, model, outcome, steps, tool calls,
-    files touched, tokens, and cost. Clicking a row opens a drill-down drawer with per-step
-    tokens and latency, **context sent** — the message array each recorded model call was
-    given, system prompt included, rebuilt from that call's context receipt and checked
-    against the digests recorded when it was emitted (what `stella inspect` prints, with
-    the same two readings of a failed check: routine on a journal written before
-    compaction recorded its rewrites, a real integrity signal on one written since) — the
-    **transcript** replayed from the run's event journal — answer text, reasoning, and each
-    tool call's arguments and output, with long bodies clipped until you ask for them in
-    full — every tool call, the files touched, and the post-turn self-reflection.
+    files touched, tokens, and cost. Clicking a row opens that run's **transcript** page
+    (below).
+  </OptionCard>
+  <OptionCard name="sessions">
+    Every session this workspace has run, merged from the cross-process registry and the
+    store (a session the registry has pruned but the store still remembers is marked *store
+    only*), with its live/crashed status, turns, spend, and cache rate. Selecting one lists
+    its turns oldest-first, alongside the skills and subagents it used, its MCP traffic, the
+    self-improvement residue it left, and its task board and pull requests. Each turn opens
+    its transcript; the `± diff` control expands what that turn changed on disk without
+    leaving the list.
+  </OptionCard>
+  <OptionCard name="transcript">
+    One turn, inspected, at `#transcript/<execution>` — a page with an address, so it
+    reloads and links like one. **Prompt & what changed** lists every model call the run
+    recorded and, for the one you pick, either the unified diff against the previous call
+    of that role (the newest call's diff is open on arrival) or **context sent** — the whole
+    message array that call was given, system prompt included, rebuilt from its context
+    receipt and checked against the digests recorded when it was emitted. That is what
+    `stella inspect` prints, with the same two readings of a failed check: routine on a
+    journal written before compaction recorded its rewrites, a real integrity signal on one
+    written since. Below it: the **transcript** replayed from the run's event journal —
+    answer text, reasoning, and each tool call's arguments and output, with long bodies
+    clipped until you ask for them in full — then per-step tokens and latency, every tool
+    call, the files touched, and the post-turn self-reflection. ← / → step through the
+    owning session's turns without going back to the list.
   </OptionCard>
   <OptionCard name="activity">
     Per-day time series over the window: cost, tokens (input vs output), runs (resolved vs

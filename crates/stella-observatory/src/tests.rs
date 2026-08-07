@@ -1345,11 +1345,11 @@ fn percent_decode_tolerates_malformed_escapes() {
 #[test]
 fn inspecting_a_turn_is_a_page_not_a_drawer() {
     for needle in [
-        "data-tab=\"transcript\"",  // the panel
-        "id=\"panel-transcript\"",  // …addressed by its tab
+        "data-tab=\"transcript\"",              // the panel
+        "id=\"panel-transcript\"",              // …addressed by its tab
         "location.hash = \"transcript/\" + id", // the route
-        "goTranscript(+tr.dataset.exec)", // sessions → turn
-        "goTranscript(+tr.dataset.id)",   // overview → execution
+        "goTranscript(+tr.dataset.exec)",       // sessions → turn
+        "goTranscript(+tr.dataset.id)",         // overview → execution
     ] {
         assert!(
             INDEX_HTML.contains(needle),

@@ -368,7 +368,11 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .ctx-row button{margin-top:0;padding:4px 10px;font:var(--fs-micro)/1.4 var(--mono)}
 .ctx-row button.on{color:var(--ground);background:var(--accent);border-color:var(--accent);
                    font-weight:600}
-#ctx-body{margin-top:var(--sp2)}
+/* position:relative so a row's offsetTop is measured against the box that
+   scrolls it (see markCtxRow). */
+.ctx-list{position:relative;max-height:264px;overflow-y:auto;padding-right:4px;
+          border-bottom:1px solid var(--hairline);margin-bottom:var(--sp2)}
+#ctx-body{min-height:1px}
 #ctx-body:empty{display:none}
 .ctx-verdict{font:var(--fs-sm)/1.6 var(--mono);margin-bottom:var(--sp1)}
 
@@ -1465,7 +1469,8 @@ function sentContextSectionHtml(cx) {
     return `<div class="empty">${
       esc(cx?.note ?? "No context receipts were recorded for this run.")}</div>`;
   }
-  const rows = (cx.calls ?? []).map(c => `<div class="ctx-row"
+  const calls = cx.calls ?? [];
+  const rows = calls.map(c => `<div class="ctx-row"
       data-turn="${esc(String(c.turn))}" data-step="${esc(String(c.step))}"
       data-seq="${esc(String(c.call_seq))}">
       <span class="who">step ${fmtInt(c.step)} · ${esc(c.call_role)}</span>
@@ -1477,7 +1482,13 @@ function sentContextSectionHtml(cx) {
       <button type="button" class="jrnl-full ctx-call"
         title="the whole message array this call was given">context sent</button>
     </div>`).join("");
-  return `${rows}<div id="ctx-body"></div>`;
+  /* The picker comes first — it is the control, and a control belongs before
+     what it controls — but it scrolls inside a fixed box. A long agentic turn
+     records a receipt per model call, and a real turn in this workspace has
+     202: at full height the list alone was three screens, and the panel it
+     drives opened below all of them. */
+  return `<div class="ctx-list">${rows}</div>
+    <div id="ctx-body"></div>`;
 }
 /* The two failure modes stay separate, as they do on the CLI: an unresolved
    block is a documented coverage gap, a digest mismatch is a torn-journal or
@@ -1513,6 +1524,14 @@ function markCtxRow(turn, step, seq, which) {
     r.classList.toggle("on", on);
     for (const b of r.querySelectorAll("button"))
       b.classList.toggle("on", on && b.classList.contains(which));
+    /* Keep the lit row visible inside its own scroll box — with 202 of them
+       the default pick sits far below its bottom edge. Set on the box rather
+       than via scrollIntoView, which walks every scrollable ancestor: on
+       arrival that would scroll the PAGE to reach the list, which is the
+       below-the-fold jump this page exists to remove. `.ctx-list` is
+       position:relative, so offsetTop is measured against it. */
+    if (on && r.parentElement)
+      r.parentElement.scrollTop = Math.max(0, r.offsetTop - 8);
   }
 }
 /* Load one call's reconstruction. On demand rather than with the page: this
@@ -1696,8 +1715,7 @@ async function openTranscript(id, full = false) {
       <span>${fmtTok(inTok)} in · ${fmtTok(outTok)} out</span><span class="sep">·</span>
       <span>${fmtUsd(d.cost_usd)}</span><span class="sep">·</span>
       <span>${fmtMs(ms)}</span><span class="sep">·</span>
-      <span title="${esc(d.started_at)} UTC">${ago(d.started_at)}</span>
-      ${stillRunning ? `<span class="badge accent">running</span>` : ""}</p>
+      <span title="${esc(d.started_at)} UTC">${ago(d.started_at)}</span></p>
     ${chips ? `<p class="tx-meta" style="margin-top:6px">${chips}</p>` : ""}
     <div class="tx-steps">
       <button type="button" class="tx-step" id="tx-prev"${
@@ -3273,7 +3291,12 @@ function routeTo(hash) {
   switchTab(tab, arg);
   return true;
 }
-addEventListener("hashchange", () => { routeTo(location.hash); });
+/* A rejected route puts the address back to the section actually on screen.
+   Leaving `#transcript/notanumber` in the bar while Sessions is rendered is a
+   URL that lies, and this page's whole premise is that the URL is the truth. */
+addEventListener("hashchange", () => {
+  if (!routeTo(location.hash)) history.replaceState(null, "", "#" + state.tab);
+});
 
 /* ── time window: a real radiogroup, arrow-key operable ──────────────── */
 const TFS = [...$("tf").querySelectorAll('button[role="radio"]')];
