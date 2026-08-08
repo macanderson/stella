@@ -81,6 +81,7 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/host_attestation.py",
     "bench/harbor_adapter/stella_harbor/live_feed.py",
     "bench/harbor_adapter/stella_harbor/locate.py",
+    "bench/harbor_adapter/stella_harbor/metrics.py",
     "bench/harbor_adapter/stella_harbor/portability.py",
     "bench/harbor_adapter/stella_harbor/posture.py",
     "bench/harbor_adapter/stella_harbor/secure_launcher.py",
