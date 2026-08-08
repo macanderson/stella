@@ -113,6 +113,11 @@ pub struct RunSection {
     /// worktree instead of the checkout. Same name in JSON.
     #[serde(default)]
     pub create_worktrees: Option<super::CreateWorktrees>,
+    /// `on` (the default when absent) = the workspace probe skips paths the
+    /// repository's own `.gitignore` excludes. Same name in JSON
+    /// (`ignore_gitignore`).
+    #[serde(default)]
+    pub ignore_gitignore: Option<Toggle>,
 }
 
 /// `[models]` — policy over the model catalog, not a model table.
@@ -398,6 +403,7 @@ impl TomlConfig {
             tools,
             enable_recap: run.recap,
             trace_capture: run.trace_capture,
+            ignore_gitignore: run.ignore_gitignore,
             create_worktrees: run.create_worktrees,
             ui,
             reward,

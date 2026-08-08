@@ -166,6 +166,14 @@ pub struct Settings {
     /// run's episode. Local-only by construction. Default off.
     #[serde(default)]
     pub trace_capture: Option<Toggle>,
+    /// `on` (the default when the key is absent) = the workspace probe skips
+    /// paths the repository's own `.gitignore` excludes, so build churn is
+    /// never walked, recorded as file touches, or fed to the diff surfaces.
+    /// `off` restores the unfiltered walk. Outside a git repository the
+    /// switch is inert — nothing is ignored, so the probe stays fully
+    /// sighted. Last-wins across scopes, like `enable_recap`.
+    #[serde(default)]
+    pub ignore_gitignore: Option<Toggle>,
     /// `always` / `ask` / `never` — whether a run does its work in a throwaway
     /// git worktree instead of the working tree. Absent, null, or empty means
     /// `ask`, and the question is put once, at triage, only when the run is
@@ -1296,6 +1304,14 @@ impl Settings {
     /// on (a later `"off"` turns it back off — project wins per field).
     pub fn trace_capture_enabled(&self) -> bool {
         self.trace_capture.is_some_and(Toggle::is_on)
+    }
+
+    /// Whether the workspace probe skips what the repository's own ignore
+    /// rules exclude. **Defaults on** — an absent key means the filter runs;
+    /// only an explicit `"ignore_gitignore": "off"` in the scope chain
+    /// restores the unfiltered walk.
+    pub fn ignore_gitignore(&self) -> bool {
+        self.ignore_gitignore.is_none_or(Toggle::is_on)
     }
 
     /// The resolved reward policy for this workspace (#1043). An absent
