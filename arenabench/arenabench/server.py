@@ -1026,6 +1026,11 @@ def serve(
         )
         if existing is not None:
             url = f"http://{host}:{existing}/"
+            # scripts/arena-run.sh greps its launch's slice of the server log
+            # for this exact phrase — and takes the URL off this line — to
+            # tell a deliberate handoff from a crash. The detached pid is
+            # reparented before that script can wait on it, so this line is
+            # the only per-launch channel; reword the two together.
             print(f"\n  arenabench  ->  {url}  (already serving this workspace)")
             print(f"  workspace   ->  {workspace}")
             print("  reusing it instead of starting a second arena over the same")

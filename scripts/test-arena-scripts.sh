@@ -204,5 +204,111 @@ esac
 "$REAP_SH" --min-idle-secs x >/dev/null 2>&1
 check "reap-seats rejects a non-numeric --min-idle-secs" "$?" "1"
 
+# --- arena-run classifies a dead child from its log, never from the box ------
+#
+# A spawned serve that exits at once either crashed or found an arena already
+# serving this workspace and handed off on purpose (#2322). The workspace
+# defaults to ~/.arenabench for every checkout on the machine, so probing "is
+# some arena serving this workspace?" answers yes on a busy box even when THIS
+# launch died of a real crash — and would bury the traceback under a green
+# checkmark. The script must read which one happened out of the child's own
+# slice of the log instead. These checks stand a stub interpreter in for the
+# adapter venv: it passes the import preflight, swallows the launch heredoc,
+# lays down a prepared log, and reports a pid that is already dead (or, with
+# STUB_LINGER, one that dies mid-wait) — so classification has nothing to
+# consult but the log, which is the invariant under test.
+LAUNCH_STUB="$STUB_DIR/launcher"
+{
+  echo '#!/bin/sh'
+  echo 'case "$1" in'
+  echo '  -c) exit 0 ;;'
+  echo '  -)'
+  echo '    cat >/dev/null'
+  echo '    printf "%s\n" "$STUB_LOG_BODY" >> "$STUB_LOG"'
+  # The linger child's stdout is redirected for the same reason the reap
+  # test's orphan is: inherited, it would hold arena-run's $(...) pipe open
+  # for its whole lifetime.
+  echo '    if [ -n "${STUB_LINGER:-}" ]; then'
+  echo '      sleep "$STUB_LINGER" >/dev/null 2>&1 &'
+  echo '      pid=$!'
+  echo '    else'
+  echo '      sh -c ":" & pid=$!'
+  echo '      wait "$pid" 2>/dev/null'
+  echo '    fi'
+  echo '    echo "$pid 8964 ${STUB_LOG_OFFSET:-0} $STUB_LOG"'
+  echo '    ;;'
+  echo '  *) exit 0 ;;'
+  echo 'esac'
+} > "$LAUNCH_STUB"
+chmod +x "$LAUNCH_STUB"
+
+RUN_HOME="$(mktemp -d)"
+trap 'cleanup_fakes; rm -rf "$STUB_DIR" "$RUN_HOME"' EXIT
+
+# The marker names port 8931 while the stub reports the launch on 8964: the
+# printed URL must come from the child's log line, not from the launch port.
+HLOG="$RUN_HOME/server-handoff.log"
+: > "$HLOG"
+RUN_OUT="$(
+  ARENA_PYTHON="$LAUNCH_STUB" ARENABENCH_HOME="$RUN_HOME" \
+  STUB_LOG="$HLOG" STUB_LOG_OFFSET=0 \
+  STUB_LOG_BODY='  arenabench  ->  http://127.0.0.1:8931/  (already serving this workspace)' \
+  "$RUN_SH" 2>&1
+)"
+check "arena-run reports a logged handoff as a handoff" "$?" "0"
+case "$RUN_OUT" in
+  *"http://127.0.0.1:8931/"*) ok "…and prints the arena url from the child's log" ;;
+  *) no "…and prints the arena url from the child's log"
+     printf '        actual:\n%s\n' "$RUN_OUT" ;;
+esac
+
+CLOG="$RUN_HOME/server-crash.log"
+: > "$CLOG"
+RUN_OUT="$(
+  ARENA_PYTHON="$LAUNCH_STUB" ARENABENCH_HOME="$RUN_HOME" \
+  STUB_LOG="$CLOG" STUB_LOG_OFFSET=0 \
+  STUB_LOG_BODY='RuntimeError: match store corrupted' \
+  "$RUN_SH" 2>&1
+)"
+check "arena-run reports a dead child with no handoff marker as a crash" "$?" "1"
+case "$RUN_OUT" in
+  *"RuntimeError: match store corrupted"*) ok "…and shows the child's own log slice" ;;
+  *) no "…and shows the child's own log slice"
+     printf '        actual:\n%s\n' "$RUN_OUT" ;;
+esac
+
+# A previous launch on this port handed off and left its marker in the shared
+# log. This launch crashed. Only the slice past the offset may be consulted.
+OLOG="$RUN_HOME/server-stale.log"
+printf '%s\n' \
+  '  arenabench  ->  http://127.0.0.1:8900/  (already serving this workspace)' \
+  > "$OLOG"
+STALE_LEN="$(wc -c < "$OLOG" | tr -d ' ')"
+RUN_OUT="$(
+  ARENA_PYTHON="$LAUNCH_STUB" ARENABENCH_HOME="$RUN_HOME" \
+  STUB_LOG="$OLOG" STUB_LOG_OFFSET="$STALE_LEN" \
+  STUB_LOG_BODY='OSError: [Errno 48] Address already in use' \
+  "$RUN_SH" 2>&1
+)"
+check "arena-run ignores a previous launch's handoff marker before the offset" "$?" "1"
+
+# A child that outlives the 2s check and dies during the ready wait was
+# previously announced as serving, banner and all.
+LLOG="$RUN_HOME/server-linger.log"
+: > "$LLOG"
+RUN_OUT="$(
+  ARENA_PYTHON="$LAUNCH_STUB" ARENABENCH_HOME="$RUN_HOME" \
+  STUB_LOG="$LLOG" STUB_LOG_OFFSET=0 STUB_LINGER=3 \
+  STUB_LOG_BODY='ValueError: port 8964 already serves a different arena' \
+  "$RUN_SH" 2>&1
+)"
+check "arena-run reports a death during the ready wait as a crash" "$?" "1"
+case "$RUN_OUT" in
+  *"✔ arenabench serving"*)
+    no "…and does not print the serving banner for a dead server"
+    printf '        actual:\n%s\n' "$RUN_OUT" ;;
+  *) ok "…and does not print the serving banner for a dead server" ;;
+esac
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
