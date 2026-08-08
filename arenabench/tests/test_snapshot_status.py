@@ -296,3 +296,119 @@ def test_capture_survives_a_stumble_without_being_retired(tmp_path, monkeypatch)
     assert record["snapshots"] >= 2, "a recovering host was retired anyway"
     assert record["state"] != "failed"
     assert sup.unmeasured() == []
+
+
+# -- the severe shape is ONE snapshot, not zero -----------------------------
+
+
+def test_a_trial_measured_only_before_the_agent_worked_is_not_sound(tmp_path, monkeypatch):
+    """The dangerous trial captures the pristine workspace and nothing after.
+
+    `_begin` lands snapshot 0 of the *unsolved* workspace, capture then breaks,
+    and the trial finishes before `max_capture_attempts` consecutive failures
+    retire it. Capture ran to the end, so the record closes `complete` and
+    `captured_nothing` is false — yet the only state in the manifest is the one
+    from before the agent did anything, so replay still reports
+    `flip_index=None` for a trial that may well have been solved.
+
+    So neither the `failed` state nor `captured_nothing` can be the question a
+    reader asks. `broke` is (#2196).
+    """
+    from arenabench import snapshot
+
+    landed = iter([(0, "a" * 40 + "\n")])  # snapshot 0, then capture goes away
+
+    def breaks_after_the_first(container: str, script: str, *, timeout: float = 180.0):
+        if "rev-parse HEAD" in script:
+            return next(landed, (1, "no such container\n"))
+        if "init -q" in script:
+            return 0, "ok\n"
+        return 0, "/app\n"
+
+    monkeypatch.setattr(snapshot, "_exec", breaks_after_the_first)
+    monkeypatch.setattr(snapshot, "_container_running", lambda name: True)
+
+    trial = _trial(tmp_path)
+    sup = _supervisor(tmp_path, max_capture_attempts=5)
+    sup._consider(trial)  # begins capture; snapshot 0 of the pristine workspace
+    sup._consider(trial)  # capture breaks, well short of being retired
+    (trial / "result.json").write_text("{}\n", encoding="utf-8")
+    sup._consider(trial)  # the trial ends and the record is closed
+
+    record = _record(trial)
+    assert record["snapshots"] == 1, "the pristine snapshot did not land"
+    assert record["state"] == "complete", (
+        f"this shape is what `complete` looks like; got {record['state']!r}"
+    )
+    assert record["failures"] > 0, "the broken capture left no evidence in the record"
+
+    status = snapshot.load_capture_status(trial)
+    assert status is not None
+    assert not status.captured_nothing, "the zero-capture check cannot see this shape"
+    assert status.broke, (
+        "a trial measured only before the agent worked was reported as sound — "
+        "`arenabench flip` would print 'no snapshot passed' with no warning"
+    )
+    assert sup.unmeasured() == [], "one snapshot is not zero snapshots"
+
+
+def test_flip_warns_when_capture_broke_even_though_it_ended_complete(
+    tmp_path, monkeypatch, capsys
+):
+    """The reader-facing half: the warning must fire for the `complete` shape too.
+
+    `no snapshot passed` is the sentence that gets read as "the agent never
+    solved it", and it is exactly as wrong after a capture that broke late as
+    after one that never worked. Driven through `_cmd_flip` with `replay_flip`
+    stubbed, because what is on trial is which records earn the warning, not
+    Docker.
+    """
+    import argparse
+
+    from arenabench import cli
+    from arenabench.snapshot import CaptureStatus, FlipResult
+
+    trial = _trial(tmp_path)
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+
+    broke_late = CaptureStatus(
+        trial=trial.name,
+        state="complete",  # capture ran to the end; it just stopped working first
+        snapshots=1,
+        attempts=4,
+        failures=3,
+        reason="the snapshot commit exited 1: no such container",
+        at=0.0,
+    )
+    monkeypatch.setattr(
+        cli,
+        "replay_flip",
+        lambda *a, **k: FlipResult(
+            flip_index=None,
+            flip_elapsed=None,
+            wasted_elapsed=None,
+            snapshots=1,
+            probes=1,
+            unknown=0,
+            capture=broke_late,
+        ),
+    )
+
+    code = cli._cmd_flip(
+        argparse.Namespace(
+            trial_dir=str(trial),
+            task_dir=str(task_dir),
+            verifier_timeout=1.0,
+            confirm_window=0,
+        )
+    )
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "no snapshot passed" in captured.out
+    assert "not fully measured" in captured.err, (
+        "'no snapshot passed' was printed alone for a trial capture broke on: "
+        f"{captured.err!r}"
+    )
+    assert "no such container" in captured.err, "the warning drops the reason"

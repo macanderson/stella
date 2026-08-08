@@ -258,6 +258,27 @@ class CaptureStatus:
         """
         return self.snapshots <= 0
 
+    @property
+    def broke(self) -> bool:
+        """Capture was failing when this record was last written.
+
+        Weaker than :attr:`captured_nothing` and, for this bug, the more
+        common shape: :meth:`SnapshotSupervisor._begin` lands snapshot 0 of
+        the *pristine* workspace, capture then breaks, and the trial finishes
+        before ``max_capture_attempts`` consecutive failures retire it. Capture
+        did run to the end, so the record closes ``complete`` and
+        ``captured_nothing`` is false — but the one state in the manifest is
+        the unsolved one, so replay still reports ``flip_index=None`` for a
+        trial the agent may well have solved. The severe case is one snapshot,
+        not zero, and a check keyed on :data:`CAPTURE_FAILED` alone would miss
+        it (#2196).
+
+        :attr:`failures` is the evidence rather than :attr:`state`, because it
+        resets on any attempt that lands: non-zero here means the last thing
+        capture did was fail, whatever state the record was closed in.
+        """
+        return self.state == CAPTURE_FAILED or self.failures > 0
+
     def to_json(self) -> dict[str, object]:
         return {
             "trial": self.trial,
