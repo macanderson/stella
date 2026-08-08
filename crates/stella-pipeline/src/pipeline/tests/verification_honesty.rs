@@ -157,3 +157,198 @@ async fn the_verifier_reads_an_untracked_files_content_not_just_its_name() {
         "the marker still names the file the content belongs to: {verifier_prompt}"
     );
 }
+
+// ── The errored-command census (#2125) ────────────────────────────────────
+
+/// The shell tool the census reads results from. Not `read_only`, so the call
+/// also counts as a mutating action and the ladder escalates instead of
+/// writing the turn off as a no-op.
+const CENSUS_SHELL: &str = "bash";
+
+/// A shell whose every command answers with `content`, rendered the way the
+/// real bash tool renders one (`stella-tools/src/bash.rs`): stdout, then a
+/// `[stderr]` block, then the trailing exit marker. Nothing weaker will do —
+/// the census is gated on those two markers precisely so a tool result that
+/// is not a command chain says nothing.
+struct FixedShell(&'static str);
+#[async_trait]
+impl ToolExecutor for FixedShell {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: CENSUS_SHELL.into(),
+            description: "run a shell command".into(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            read_only: false,
+            speculation_safe: false,
+        }]
+    }
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        ToolOutput::Ok {
+            content: self.0.into(),
+        }
+    }
+}
+
+/// A diff probe that reports a real one-line change, so the ladder finds the
+/// turn observable and escalates to the model verifier — the only path on
+/// which a verifier prompt exists to assert against.
+struct MeasuringDiff;
+#[async_trait]
+impl DiagnosticRunner for MeasuringDiff {
+    async fn run_diagnostic(&self, _invocation: &DiagnosticInvocation) -> CmdOutcome {
+        CmdOutcome {
+            exit_code: 0,
+            stdout_tail: "diff --git a/README.md b/README.md\n--- a/README.md\n\
+                          +++ b/README.md\n@@ -1 +1,2 @@\n line\n+The hook runs in 70 ms.\n"
+                .to_string(),
+            stderr_tail: String::new(),
+            kind: CmdKind::Completed,
+        }
+    }
+}
+
+/// Run one scripted candidate whose worker turn makes a single shell call
+/// answering with `shell_output`, and hand back the prompt the model verifier
+/// was given.
+async fn verifier_prompt_for_shell_output(shell_output: &'static str) -> String {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: single\nWITNESS: no\nVERIFIER: yes"),
+        // The worker measures...
+        CompletionResult {
+            tool_calls: vec![ToolCall {
+                call_id: "call-measure".into(),
+                name: CENSUS_SHELL.into(),
+                input: serde_json::json!({ "command": "echo \"scale=0; $t/1\" | bc" }),
+            }],
+            ..text_result("")
+        },
+        // ...and reports the number it read.
+        text_result("The hook runs in 70 ms."),
+        text_result("PASS the change documents the measured latency"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = MeasuringDiff;
+    let tests = ScriptedRunner::new(vec![], "");
+    let tools = FixedShell(shell_output);
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = SeqRepoStatus::new(vec![vec![], vec![]]);
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &tests,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            test_command: None,
+            diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+            witness_writer: false,
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    pipeline
+        .run(
+            "Measure the hook and note it in README.md",
+            &mut messages,
+            &mut budget,
+        )
+        .await
+        .expect("run completes");
+
+    provider
+        .prompts()
+        .into_iter()
+        .find(|p| p.contains("independent code reviewer"))
+        .expect("the verifier was asked")
+}
+
+/// The trusted zone of a verdict prompt: the deterministic evidence the
+/// pipeline states in its own voice, between the goal and the worker-authored
+/// diff. Sliced out because the fixed instruction block *defines* the census
+/// key on every call — a whole-prompt search for it would find the definition
+/// and never notice a missing observation.
+fn evidence_section(prompt: &str) -> &str {
+    let (_, rest) = prompt
+        .split_once("## Deterministic evidence gathered")
+        .expect("the verdict prompt carries a trusted evidence section");
+    rest.split_once("\n\nThe diff follows below")
+        .expect("the evidence section ends where the untrusted diff begins")
+        .0
+}
+
+/// **Witness (#2125).** A measurement claim standing on a command chain that
+/// errored under a zero exit reaches the verifier as a fact it can weigh.
+///
+/// This is the verifier-side half of #1957. That issue's prompt rule tells the
+/// worker to void such a number; nothing caught a worker that cited it anyway,
+/// and the verify stage structurally could not — the `bc: command not found`
+/// under the cited "70 ms" lives only in the worker's tool transcript, which
+/// the verifier must never read (L-E11, #1795). Before the census the prompt
+/// carried no trace of it and the claim was unfalsifiable at verdict time.
+///
+/// Asserting on the verifier's own prompt is the point, exactly as in the
+/// untracked-content witness above: an assertion on the tally would still pass
+/// if the count were dropped anywhere between the tool stream and the model.
+#[tokio::test]
+async fn the_verifier_is_told_when_a_measurement_stood_on_an_errored_command() {
+    let prompt = verifier_prompt_for_shell_output(
+        "\n[stderr]\nbash: line 1: bc: command not found\n[exit code: 0]",
+    )
+    .await;
+    let evidence = evidence_section(&prompt);
+    assert!(
+        evidence.contains("errored_commands=1"),
+        "the census must reach the trusted zone of the verdict prompt: {evidence}"
+    );
+    // ...and the fixed instruction block must define what to do with it, or
+    // the count is a number with no meaning attached (#1434 keeps that block
+    // byte-stable, so the definition rides there and the count rides per-call).
+    assert!(
+        prompt.contains("UNSUBSTANTIATED"),
+        "the instructions must state how to weigh the census: {prompt}"
+    );
+    // Content-free by construction: the count travels, the stderr does not.
+    assert!(
+        !prompt.contains("command not found"),
+        "the census must carry no transcript text: {prompt}"
+    );
+}
+
+/// The other half of the witness: a clean run's verifier evidence is
+/// unchanged. An `errored_commands=0` printed on every verdict would read as
+/// "this run's commands were verified clean" — a claim a closed signature
+/// vocabulary cannot make — and would put a number a reader must learn to
+/// ignore in front of every verifier.
+#[tokio::test]
+async fn a_clean_run_carries_no_errored_command_census() {
+    let prompt = verifier_prompt_for_shell_output("70\n[exit code: 0]").await;
+    let evidence = evidence_section(&prompt);
+    assert!(
+        !evidence.contains("errored_commands"),
+        "silence means the probe had nothing to say: {evidence}"
+    );
+}
