@@ -554,6 +554,26 @@ Resources:
                   - ssm:GetParameters
                   - ssm:GetParametersByPath
                 Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/arenabench/*
+              # Reading a SecureString is two authorizations, not one: SSM
+              # returns the ciphertext and KMS decrypts it. Without this the
+              # role can *list* every credential and read none of them, and
+              # `get-parameters-by-path --with-decryption` fails wholesale,
+              # so every seat launches uncredentialled and every trial scores
+              # a 0.0 indistinguishable from a real loss. Provider keys are
+              # SecureStrings under the AWS-managed alias/aws/ssm key, whose
+              # id cannot be referenced statically and which IAM will not
+              # accept as an alias in Resource — hence the wildcard.
+              #
+              # The ViaService condition is what keeps that wildcard honest:
+              # decryption is permitted only for ciphertext handed over by
+              # SSM in this region, so the role cannot decrypt arbitrary data
+              # under any other key it can name.
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
 
   TrialJobDefinition:
     Type: AWS::Batch::JobDefinition
