@@ -298,6 +298,72 @@ fn a_corrupt_store_is_quarantined_and_rebuilt_on_open() {
     assert_eq!(file_count(&conn).unwrap(), 1);
 }
 
+/// The 2026-08-08 field corruption, as a witness: damage confined to DATA
+/// pages under an intact schema page. Such an image opens and migrates
+/// cleanly — `CREATE TABLE IF NOT EXISTS` reads only the early pages — and
+/// used to be handed back as a working store whose every scan then failed
+/// with `SQLITE_CORRUPT`; the mount path discards the catch-up error, so the
+/// graph stayed dead with no signal and no rebuild. `open` must treat this
+/// image exactly like the unreadable-header one above: quarantine and start
+/// over.
+#[test]
+fn a_store_corrupt_only_in_its_data_pages_is_quarantined_at_open() {
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("codegraph.db");
+
+    // Enough rows to spread the files table across many pages, so damage in
+    // the middle of the file lands in its b-tree and nowhere near page 1.
+    {
+        let conn = open(&db).unwrap();
+        for i in 0..4000 {
+            conn.execute(
+                "INSERT INTO code_graph_files \
+                 (path, language, content_sha256, mtime_ns, indexed_at) \
+                 VALUES (?1, 'rust', ?2, ?3, ?3)",
+                rusqlite::params![format!("src/file_{i:04}.rs"), format!("{i:064}"), i],
+            )
+            .unwrap();
+        }
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
+        drop(conn);
+    }
+
+    // Scramble one whole page in the middle of the image. The header and the
+    // schema stay pristine — this store still *opens* without complaint.
+    {
+        use std::io::{Seek, SeekFrom, Write};
+        let len = fs::metadata(&db).unwrap().len();
+        let page = (len / 2) / 4096;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .open(&db)
+            .expect("open db for corruption");
+        file.seek(SeekFrom::Start(page * 4096)).expect("seek");
+        file.write_all(&[0x7f; 512]).expect("write garbage");
+        file.sync_all().expect("sync");
+    }
+
+    // The open must detect what migration cannot, and heal the same way.
+    let conn = open(&db).unwrap();
+    assert_eq!(
+        file_count(&conn).unwrap(),
+        0,
+        "a data-page-corrupt store must be rebuilt, not served"
+    );
+    let quarantined = fs::read_dir(dbdir.path())
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("codegraph.db.corrupt-")
+        })
+        .count();
+    assert_eq!(quarantined, 1, "the damaged image was moved aside");
+}
+
 #[test]
 fn sql_files_produce_storage_rows_and_prune_with_their_file() {
     let ws = tempdir().unwrap();

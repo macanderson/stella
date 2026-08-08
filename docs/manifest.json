@@ -70,6 +70,11 @@
       "status": "proposed",
       "title": "ADR 0013: The session artifact boundary"
     },
+    "adr/0014-memories-join-the-record-control-plane": {
+      "path": "docs/adr/0014-memories-join-the-record-control-plane.md",
+      "status": "proposed",
+      "title": "ADR 0014: Memories join the context-record control plane"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

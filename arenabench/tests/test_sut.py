@@ -21,6 +21,7 @@ import pytest
 
 from arenabench import runner as runner_module
 from arenabench import sut
+from arenabench.adapter import stage_adapter
 from arenabench.model import MatchSpec
 from arenabench.provenance import Provenance
 from arenabench.registry import DEFAULT_REGISTRY
@@ -62,6 +63,13 @@ def repo(tmp_path: Path, monkeypatch) -> Path:
     (origin / "a.txt").write_text("three")
     _git(origin, "commit", "-qam", "third")
     _git(work, "fetch", "-q", "origin")
+
+    # A Stella checkout carries the harbor adapter, and a launch now refuses a
+    # Stella seat without one rather than producing a seat that imports nothing
+    # and reports done (#2127, #2192). The fixture models that, minimally.
+    adapter = work / "bench" / "harbor_adapter" / "stella_harbor"
+    adapter.mkdir(parents=True)
+    (adapter / "__init__.py").write_text("VERSION = 'fixture'\n")
 
     monkeypatch.setenv(sut.STELLA_REPO_ENV, str(work))
     monkeypatch.setenv("ARENABENCH_HOME", str(tmp_path / "home"))
@@ -344,12 +352,19 @@ class TestCheckoutDiscovery:
     ) -> None:
         """Launching is not enough if the seat then runs nothing.
 
-        Without ``stella_harbor`` on the subprocess's ``PYTHONPATH``,
-        ``harbor_agent.py`` falls back to ``_Base = object``, Harbor dies with
-        "ArenaStellaAgent() takes no arguments" — and **exits 0**, so the seat
-        reports done having made no model call at all. The adapter ships in the
-        checkout discovery just found, so the arena can wire it rather than
-        depend on an operator remembering a variable whose omission is silent.
+        Without ``stella_harbor`` on the subprocess's ``PYTHONPATH``, the seat
+        makes no model call at all — historically in silence, since
+        ``harbor_agent.py`` fell back to ``_Base = object`` and Harbor exited 0
+        (#2192, now a named refusal). The adapter ships in the checkout
+        discovery just found, so the arena can wire it rather than depend on an
+        operator remembering a variable whose omission is invisible.
+
+        What reaches ``PYTHONPATH`` is a **staged copy** of that checkout's
+        adapter rather than the checkout path itself (#2127): the launch
+        worktree was deleted mid-match once and took four trials with it. The
+        assertion below therefore pins the property that matters — the seat can
+        import ``stella_harbor``, and what it imports came from this checkout —
+        rather than the literal source path, which is no longer what is wired.
         """
         repo, head = self._stage_head(monkeypatch, tmp_path / "home")
         _stub_harbor(monkeypatch)
@@ -357,10 +372,12 @@ class TestCheckoutDiscovery:
 
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._spec(head))
-        runner._launch(match, match.spec.contestants[0])
+        runner._launch(match, match.spec.contestants[0], runner.resolve_harbor(match))
 
         roots = captured[0]["env"]["PYTHONPATH"].split(os.pathsep)
-        assert str(repo / "bench" / "harbor_adapter") in roots
+        staged = stage_adapter(repo / "bench" / "harbor_adapter")
+        assert str(staged) in roots
+        assert (Path(staged) / "stella_harbor").is_dir()
 
 
 def _stamped(path: Path, commit: str | None) -> Path:
@@ -781,8 +798,9 @@ class TestTwoSeatsRaceTwoBuilds:
 
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._two_seat_spec(head, other))
+        resolution = runner.resolve_harbor(match)
         runs = {
-            contestant.id: runner._launch(match, contestant)
+            contestant.id: runner._launch(match, contestant, resolution)
             for contestant in match.spec.contestants
         }
 
@@ -810,7 +828,7 @@ class TestTwoSeatsRaceTwoBuilds:
 
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._two_seat_spec(head, other))
-        record = runner_module._provenance_for(match)
+        record = runner_module._provenance_for(match, runner.resolve_harbor(match))
 
         assert record.sut_seats["champ"]["commit"] == head
         assert record.sut_seats["chall"]["commit"] == other
@@ -877,7 +895,7 @@ class TestAPinIsObservedOnce:
 
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._stella_spec(built))
-        run = runner._launch(match, match.spec.contestants[0])
+        run = runner._launch(match, match.spec.contestants[0], runner.resolve_harbor(match))
 
         assert run.error == ""
         assert captured[0]["env"]["STELLA_BINARY"] == str(binary)
@@ -905,7 +923,7 @@ class TestAPinIsObservedOnce:
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._stella_spec("main"))
         with pytest.raises(sut.SutUnavailableError) as refusal:
-            runner._launch(match, match.spec.contestants[0])
+            runner._launch(match, match.spec.contestants[0], runner.resolve_harbor(match))
         assert "moved since the build" in str(refusal.value)
         assert built[:8] in str(refusal.value)
         assert captured == [], "a refused trial must launch nothing at all"
@@ -933,8 +951,10 @@ class TestAPinIsObservedOnce:
         monkeypatch.setattr(sut, "resolve_ref", moving)
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._stella_spec("main"))
-        match.provenance = runner_module._provenance_for(match)
-        run = runner._launch(match, match.spec.contestants[0])
+        match.provenance = runner_module._provenance_for(
+            match, runner.resolve_harbor(match)
+        )
+        run = runner._launch(match, match.spec.contestants[0], runner.resolve_harbor(match))
 
         assert run.error == ""
         recorded = match.provenance.sut_seats["st"]["commit"]

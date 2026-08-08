@@ -45,6 +45,15 @@ const NON_WILDCARDS: &[char] = &['?', '[', ']', '{', '}', '!'];
 /// carrying something that was pasted rather than written.
 const MAX_STATEMENT_CHARS: usize = 600;
 
+/// True when `statement` violates the one-sentence shape (ADR 0012, decision 8):
+/// embedded newlines or novel-length text read as pasted prompt or tool output
+/// rather than a written claim. Exposed so every writer of a record — the CLI's
+/// promotion and mining paths included — can refuse the shape this validator
+/// would flag, instead of publishing a file that fails `stella context validate`.
+pub fn statement_reads_as_pasted(statement: &str) -> bool {
+    statement.contains('\n') || statement.chars().count() > MAX_STATEMENT_CHARS
+}
+
 /// An equal-precedence overlap between two records with different enforcement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
@@ -152,7 +161,7 @@ fn forbidden_data(record: &Record) -> Vec<RecordFinding> {
     // A statement is one sentence. Embedded newlines or novel-length text mean raw
     // prompt or tool output was pasted into a reviewable field — which is both a
     // privacy boundary (§10) and an atomicity problem.
-    if record.statement.contains('\n') || record.statement.chars().count() > MAX_STATEMENT_CHARS {
+    if statement_reads_as_pasted(&record.statement) {
         findings.push(RecordFinding::GuardLint(format!(
             "statement is {} characters over {} lines — a record's statement is a single \
              sentence; this reads as pasted prompt or tool text",

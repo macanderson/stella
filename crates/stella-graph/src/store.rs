@@ -247,14 +247,17 @@ pub(crate) fn open_read(db_path: &Path) -> Result<Connection, GraphError> {
 /// writer has just run [`MIGRATION`], which is what makes the store's shape
 /// provably match the version being stamped.
 ///
-/// A store that fails to open because its disk image is damaged is not an
-/// error here: the graph is a cache, fully rebuildable from the tree, so the
-/// corrupt file is quarantined through
-/// [`stella_store::integrity::quarantine_corrupt_store`] (which salvages what
-/// is still readable) and a fresh store is opened in its place. Any OTHER
-/// failure — permissions, a future schema stamp — still propagates.
+/// A store whose disk image is damaged is not an error here: the graph is a
+/// cache, fully rebuildable from the tree, so the corrupt file is quarantined
+/// through [`stella_store::integrity::quarantine_corrupt_store`] (which
+/// salvages what is still readable) and a fresh store is opened in its place.
+/// Any OTHER failure — permissions, a future schema stamp — still propagates.
+///
+/// "Damaged" is decided by [`open_verified`], not by whether the open call
+/// happens to trip: an image can be corrupt in ways the open path never
+/// touches, and that shape used to leave the graph dead with no rebuild.
 pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
-    match open_migrated(db_path) {
+    match open_verified(db_path) {
         Ok(conn) => Ok(conn),
         Err(error) if is_corruption(&error) => {
             let quarantine = stella_store::integrity::quarantine_corrupt_store(db_path)
@@ -283,7 +286,31 @@ pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
     }
 }
 
-/// The unmolested open-and-migrate [`open`] retries after a quarantine.
+/// [`open_migrated`] plus a structural `PRAGMA quick_check` over the image.
+///
+/// Migration alone proved too weak a probe for damage. The 2026-08-08 field
+/// corruption — rowid-out-of-order data pages under an intact schema page —
+/// sailed through `CREATE TABLE IF NOT EXISTS` and only surfaced on the
+/// catch-up scan, whose error the mount path discards; the graph sat dead
+/// for four days, sessions re-creating the WAL sidecars and writing nothing,
+/// with no notice and no rebuild. `quick_check` walks every page, which is
+/// exactly what makes its "ok" trustworthy; it stops at the first fault, and
+/// the writer's open pays it once, ahead of a tree walk that dwarfs it.
+fn open_verified(db_path: &Path) -> Result<Connection, GraphError> {
+    let conn = open_migrated(db_path)?;
+    let verdict: String = conn.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
+    if verdict == "ok" {
+        return Ok(conn);
+    }
+    drop(conn);
+    Err(GraphError::Sqlite(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+        Some(format!("quick_check: {verdict}")),
+    )))
+}
+
+/// The unmolested open-and-migrate [`open`] retries after a quarantine — a
+/// store this process just created from nothing has no pages to re-verify.
 fn open_migrated(db_path: &Path) -> Result<Connection, GraphError> {
     let conn = open_read(db_path)?;
     conn.execute_batch(MIGRATION)?;

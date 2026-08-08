@@ -138,12 +138,9 @@ impl ConstraintEffect {
 }
 
 /// Semantic source class for a record (lifecycle §7.1). Ratified as a uniform
-/// 5-value set across all families.
-///
-/// NOTE (flagged, not enforced here): the directive record schema narrows a
-/// directive's origin to `user, system, inferred, imported` (no `observed`).
-/// That per-family validator is deferred pending confirmation — see the module
-/// docs.
+/// 5-value set across all families — ADR 0009 resolved *against* a per-family
+/// narrowing, so an `observed` directive is representable; forbidding it would
+/// be a new decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Origin {

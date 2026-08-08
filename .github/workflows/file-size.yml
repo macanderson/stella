@@ -43,9 +43,19 @@ jobs:
     name: file size ratchet
     runs-on: ubuntu-latest
     steps:
-      # Full history is not needed — the guard reads the working tree and the
-      # committed baseline, never a diff against the base.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Two, not one. The guard judges THE CHANGE, not the tree (#2004):
+          # on a `pull_request` event this checks out `refs/pull/N/merge`, and
+          # the ratchet reads that merge commit's first parent — the base
+          # branch tip — to ask whether a file went over its ceiling HERE or
+          # arrived that way. At the default depth of 1 the parents are not
+          # in the clone, the base cannot resolve, and the guard falls back to
+          # the strict whole-tree check: green on this PR, but blind to the
+          # difference this workflow exists to draw. It compares two TREES,
+          # not two histories, so one extra commit is the whole cost — the
+          # same trade ci.yml's guards job makes for check-deleted-tests.sh.
+          fetch-depth: 2
 
       # The guard's own tests first: they are hermetic and they are what proves
       # it can still FAIL. A ratchet that has quietly become incapable of

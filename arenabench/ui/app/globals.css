@@ -43,36 +43,39 @@
   --line:       #d8d3c4;
   --line-soft:  #e4e0d3;
   --foreground: #1c1b16;
-  --muted:      #6e6a5f;
-  --dim:        #98948a;
+  --muted:      #5d5a50;
+  --dim:        #66625a;
 
-  --accent:     #5133be;   /* gold that passes contrast on light */
-  --ok:         #1c7c43;
-  --bad:        #c0343c;
-  --warn:       #8a6d00;
-  --acc-cyan:   #0b7285;
+  /* Every one of these is picked to clear 4.5:1 against --panel-2 (#e9e5da),
+     the darkest of the three light surfaces and so the binding constraint —
+     a color that passes against --background can still fail there. */
+  --accent:     #835b00;
+  --ok:         #1a713d;
+  --bad:        #b53139;
+  --warn:       #796000;
+  --acc-cyan:   #0a6c7e;
   --acc-violet: #7048a8;
   --acc-rose:   #ba2358;
   --acc-citron: #796000;
 
   /* Seat colours arrive as data (each contestant carries a hex). As fills
      they work on both schemes; as *text* on paper they need ink mixed in. */
-  --seat-fg: color-mix(in srgb, var(--seat, #5133be) 62%, #1c1b16);
+  --seat-fg: color-mix(in srgb, var(--seat, #835b00) 62%, #1c1b16);
 
   --glow-gold: 0 0 24px rgb(163 114 0 / 0.18), 0 0 96px rgb(163 114 0 / 0.08);
 }
 
 .dark {
-  --background: #080b1c;   /* Ink: the terminal, not pure black */
+  --background: #0b0b0c;   /* Ink: the terminal, not pure black */
   --panel:      #131315;
   --panel-2:    #1a1a1d;
   --line:       #232327;
   --line-soft:  #17171a;
-  --foreground: #eef1fa;   /* Paper, as text */
+  --foreground: #f4f1ea;   /* Paper, as text */
   --muted:      #9b9890;
   --dim:        #6e6a5f;
 
-  --accent:     #7c5cff;   /* Phosphor Gold — the only owned colour */
+  --accent:     #ffb000;   /* Phosphor Gold — the only owned colour */
   --ok:         #5ce68a;
   --bad:        #f2545b;
   --warn:       #ffe066;
@@ -81,7 +84,7 @@
   --acc-rose:   #ff6b9d;
   --acc-citron: #ffe066;
 
-  --seat-fg: var(--seat, #7c5cff);
+  --seat-fg: var(--seat, #ffb000);
 
   --glow-gold: 0 0 24px rgb(255 176 0 / 0.28), 0 0 96px rgb(255 176 0 / 0.12);
 }
@@ -105,8 +108,8 @@
   --color-acc-citron: var(--acc-citron);
 
   /* Gold as a FILL is the same in both schemes; ink is what sits on it. */
-  --color-gold: #7c5cff;
-  --color-ink: #080b1c;
+  --color-gold: #ffb000;
+  --color-ink: #0b0b0c;
 
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 

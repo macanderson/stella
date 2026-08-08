@@ -986,7 +986,7 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
         Span::styled("filter ", theme::muted()),
         Span::styled(ui.graph_picker_query.clone(), theme::body()),
-        Span::styled("▏", Style::new().fg(theme::ORCHID)),
+        Span::styled("▏", Style::new().fg(theme::VIOLET)),
     ])];
 
     if matches.is_empty() {
@@ -1184,7 +1184,7 @@ fn render_scroll_gutter(first: usize, visible: usize, total: usize, area: Rect, 
         if let Some(cell) = buf.cell_mut((gx, area.y + i as u16)) {
             let on = i >= thumb_top && i < thumb_top + thumb_h;
             cell.set_symbol(if on { "▐" } else { "│" });
-            cell.set_fg(if on { theme::ORCHID } else { theme::HAIRLINE });
+            cell.set_fg(if on { theme::VIOLET } else { theme::HAIRLINE });
         }
     }
 }
@@ -1221,7 +1221,7 @@ fn render_composer_footer(
     if area.height == 0 {
         return;
     }
-    let key = Style::default().fg(theme::ORCHID);
+    let key = Style::default().fg(theme::VIOLET);
     let dim = Style::default().fg(theme::TEXT_TERTIARY);
     let sep = Style::default().fg(theme::HAIRLINE);
 

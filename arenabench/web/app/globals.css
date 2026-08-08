@@ -3,12 +3,12 @@
    palette the ArenaBench UI itself ships in ui/app/globals.css. */
 :root {
   color-scheme: dark;
-  --bg: #080b1c;
+  --bg: #0b0b0c;
   --panel: #131315;
   --line: #232327;
-  --text: #eef1fa;
+  --text: #f4f1ea;
   --dim: #9b9890;
-  --accent: #7c5cff;
+  --accent: #ffb000;
   --ok: #4fbf72;
   --bad: #e0565e;
 }
@@ -21,7 +21,7 @@
     --line: #d8d3c4;
     --text: #1c1b16;
     --dim: #6e6a5f;
-    --accent: #5133be;
+    --accent: #a37200;
     --ok: #1c7c43;
     --bad: #c0343c;
   }

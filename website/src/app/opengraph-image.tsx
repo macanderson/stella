@@ -21,8 +21,8 @@ import {
  * double up — the kit's own lockup SVG omits it for the same reason.
  *
  * Colours are literals or imported constants rather than CSS vars because
- * Satori resolves no cascade: Ink #080b1c, Paper #eef1fa, Nebula Violet
- * #7c5cff, muted #9aa3c2 (5.9:1 on ink). Keep the markup inside Satori's
+ * Satori resolves no cascade: Ink #0b0b0c, Paper #f4f1ea, Phosphor Gold
+ * #ffb000, muted #9b9890 (5.9:1 on ink). Keep the markup inside Satori's
  * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
  * filters (the trails are pre-flattened rounded rects for exactly this
  * reason), and every element with children carries an explicit `display`.
@@ -39,10 +39,10 @@ export const alt =
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#080b1c";
-const PAPER = "#eef1fa";
-const MUTED = "#9aa3c2";
-const SURFACE = "#10142E";
+const INK = "#0b0b0c";
+const PAPER = "#f4f1ea";
+const MUTED = "#9b9890";
+const SURFACE = "#121214";
 const SURFACE_TOP = "#17171a";
 const BORDER = "#2b2b2e";
 
@@ -244,7 +244,7 @@ export default function OpengraphImage() {
               borderRadius: "34px",
               border: `2px solid ${GOLD}`,
               // The one thing on the card a reader is meant to act on.
-              background: "rgba(124,92,255,0.12)",
+              background: "rgba(255,176,0,0.12)",
               color: GOLD,
             }}
           >

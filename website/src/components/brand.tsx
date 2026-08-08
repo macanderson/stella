@@ -1,14 +1,14 @@
 /**
- * The stella marks — brand kit v2.0, "the comet": a four-point star moving
+ * The stella marks — brand kit v1.0, "the comet": a four-point star moving
  * fast enough to leave a trail. Drawn inline so they paint from CSS rather
  * than from a per-mode asset file; the geometry is copied from
  * docs/brand/logo/svg/ (the normative source) and the SVG copies in
  * public/brand/ are the same files — the two must move together.
  *
  * Colour rules (docs/brand/BRAND.md):
- *  - The comet is ALWAYS Nebula Violet, on every ground — it is a shape, not
+ *  - The comet is ALWAYS Phosphor Gold, on every ground — it is a shape, not
  *    small text, so it never drops to gold-deep. The kit's color-light lockup
- *    keeps #7C5CFF verbatim; so do we, via `--stella-gold`.
+ *    keeps #FFB000 verbatim; so do we, via `--stella-gold`.
  *  - The wordmark letters take `currentColor`, so the name inverts with the
  *    theme (Paper on ink, Ink on paper).
  *  - The sparkle — the `*` in "stella*" — is gold, same law as the comet.
@@ -20,8 +20,8 @@
  * x1→x2 is a rect from x1−3.5 to x2+3.5, 7 tall, rx 3.5.
  */
 
-/** Nebula Violet. Inline fallback for contexts with no cascade (Satori). */
-export const GOLD = "#7c5cff";
+/** Phosphor Gold. Inline fallback for contexts with no cascade (Satori). */
+export const GOLD = "#ffb000";
 
 /** The comet on its own — docs/brand/logo/svg/logomark-color.svg. */
 export const MARK_VIEW_BOX = "0 0 96 96";

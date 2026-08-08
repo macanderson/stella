@@ -146,3 +146,87 @@ pub(crate) fn spawn_forwarder(
         persistence_complete
     })
 }
+
+/// End a lane's turn stream and wait out its forwarder — the deck-lane twin
+/// of [`agent::close_event_stream`], owing the same debt in the same order.
+///
+/// `drop(tx)` on its own never closes the channel: the turn handed the
+/// registry an `EventSender` clone (`ToolRegistry::attach_events`) so
+/// `record_touch` could announce `FileChange`s, and the registry outlives the
+/// turn — the deck's session registry by design, a worker lane's because the
+/// closing future itself still holds the `Arc`. With that clone alive, the
+/// forwarder's `recv()` loop stayed pending forever and awaiting it wedged
+/// the turn future *after* the deck had painted the turn done: the driver
+/// never left its mid-turn `select!`, every prompt queued as the "next turn"
+/// of a turn that could not end, and only `/clear` — the one input that
+/// breaks that `select!` — could free the session (#2290). One-shot
+/// `stella run` hit the same shape as #960; the deck lanes reintroduced it
+/// when #903 pointed the recorder at the turn channel without paying the
+/// detach the fix demands.
+///
+/// Detaching unconditionally is safe against concurrent lanes because turns
+/// do not overlap on one registry (the invariant
+/// [`stella_tools::subagent::TurnControlsGuard`] documents): the lead's turns
+/// run sequentially on the session registry, and every worker lane builds a
+/// registry of its own.
+pub(crate) async fn close_turn_stream(
+    registry: &stella_tools::ToolRegistry,
+    tx: UnboundedSender<AgentEvent>,
+    forwarder: tokio::task::JoinHandle<bool>,
+) -> bool {
+    registry.detach_event_stream();
+    drop(tx);
+    forwarder.await.unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The frozen-deck witness (#2290): a turn's tail must complete even
+    /// though the registry still holds the `EventSender` the turn attached.
+    /// Before [`close_turn_stream`], every lane's tail was `drop(tx)` +
+    /// `forwarder.await` — with the registry's clone alive the forwarder
+    /// never saw the channel close, the turn future never returned, and the
+    /// deck queued prompts forever under a lane it had painted done.
+    #[tokio::test]
+    async fn the_turn_tail_completes_with_the_registry_still_attached() {
+        let root = tempfile::tempdir().expect("root");
+        let registry =
+            stella_tools::ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder(
+            rx,
+            None,
+            InsightScope {
+                provider_id: "anthropic".into(),
+                cache_ttl: stella_model::CacheTtl::default(),
+            },
+            in_tx,
+            "lead".to_string(),
+            None,
+        );
+        registry.attach_events(stella_core::EventSender::new(tx.clone()));
+        tx.send(AgentEvent::Complete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        })
+        .unwrap();
+
+        let settled = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            close_turn_stream(&registry, tx, forwarder),
+        )
+        .await;
+
+        let persistence_complete =
+            settled.expect("the registry-held sender must not wedge the turn tail");
+        assert!(
+            persistence_complete,
+            "an event-only stream persists cleanly"
+        );
+        // The forwarded event reached the deck lane before the stream closed.
+        assert!(matches!(in_rx.try_recv(), Ok(Inbound::Event { .. })));
+    }
+}

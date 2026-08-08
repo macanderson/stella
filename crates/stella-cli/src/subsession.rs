@@ -36,7 +36,7 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 
 use crate::agent;
-use crate::command_deck::{LEAD, now_ms, prompt_line, spawn_forwarder};
+use crate::command_deck::{LEAD, close_turn_stream, now_ms, prompt_line, spawn_forwarder};
 use crate::config::Config;
 use crate::runtime::TokioSleeper;
 
@@ -763,8 +763,7 @@ async fn run_worker(
             _ = stop_wait => RacedTurn::Stopped,
         }
     };
-    drop(tx);
-    let persistence_complete = forwarder.await.unwrap_or(false);
+    let persistence_complete = close_turn_stream(&registry, tx, forwarder).await;
     // Release the worker's whole claim set — the stop path included (the
     // dropped turn future cannot release for itself).
     claims.release_all();
