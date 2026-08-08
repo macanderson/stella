@@ -72,7 +72,7 @@ use crate::file_touch::{FileOp, changed_region_diff, line_diff};
 /// hand-rolled variant here would silently blind it — the same defect that once
 /// let a turn creating a new source file classify as docs-only. The two crates
 /// cannot share a constant (neither depends on the other), so
-/// [`tests::marker_line_matches_the_pipeline_contract`] pins the literal
+/// `tests::marker_line_matches_the_pipeline_contract` pins the literal
 /// instead.
 const MARKER_PREFIX: &str = "+ untracked change: ";
 

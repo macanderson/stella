@@ -21,7 +21,7 @@
 //!
 //! Three properties make this a hatch rather than a loophole:
 //!
-//! 1. [`note!`] accepts **only a string literal**, so the justification lives
+//! 1. [`note!`](crate::note) accepts **only a string literal**, so the justification lives
 //!    in the source, is greppable, and shows up in the diff that introduced it.
 //!    A `format!` or a variable does not compile.
 //! 2. The justification travels *into the record*, so a maintainer reading a

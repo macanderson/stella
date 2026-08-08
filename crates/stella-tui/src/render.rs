@@ -184,7 +184,7 @@ fn park_subject(description: &str) -> String {
     }
 }
 
-/// [`render_transcript`] for a caller that already materialized just the
+/// The transcript panel for a caller that already materialized just the
 /// visible window (the deck's fold cache clones ≤ one viewport of lines per
 /// frame instead of the whole history); `total` sizes the title. `hint`, when
 /// set, renders as a dim bottom title — the contextual "what can I press
@@ -438,7 +438,7 @@ pub(crate) fn slash_popup_area(root: Rect, composer: Rect, matches: usize) -> Re
 /// The first visible row of a scrolling list of `len` rows that shows
 /// `visible` at a time, chosen so `selected` stays on screen — the window
 /// only moves once the selection would fall off an edge. Mirrors the
-/// composer's cursor-row windowing ([`render_composer`]) so the slash popup
+/// composer's cursor-row windowing (`render_composer` in [`crate::deck_render`]) so the slash popup
 /// and the textarea scroll with identical feel.
 pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -> usize {
     if visible == 0 || len <= visible {

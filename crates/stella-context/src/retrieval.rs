@@ -16,7 +16,7 @@
 //! someone. The IVF accelerator in [`crate::ann`] is opt-in through
 //! [`RecallTuning::ann_enabled`] and announces itself on
 //! [`RecallResult::used_ann_index`] when it fires. They are property-tested in
-//! [`tests`].
+//! `tests` (a `#[cfg(test)]` module, so rustdoc cannot link it).
 
 use std::collections::{HashMap, HashSet};
 

@@ -249,7 +249,7 @@ macro_rules! __diag_level {
 /// ```
 ///
 /// `target` is `module_path!()` at the call site, which is what
-/// [`Filter`](crate::Filter) matches on — so `STELLA_LOG=stella_store=debug`
+/// [`Filter`] matches on — so `STELLA_LOG=stella_store=debug`
 /// selects records by where they were written, with no bookkeeping at the emit
 /// site.
 ///

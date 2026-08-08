@@ -458,7 +458,7 @@ impl Drop for Session {
 /// mutated on the way there.
 ///
 /// `Engine::run_turn` writes those back through `&mut` borrows. Driving steps
-/// means owning a [`TurnState`] instead, so they come back as values — which
+/// means owning a `TurnState` instead, so they come back as values — which
 /// is also what makes the transcript available to checkpoint *between* steps
 /// rather than only after the turn.
 pub(crate) struct DrivenTurn {

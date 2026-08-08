@@ -11,7 +11,7 @@
 //! | `GET /readyz` | readiness — is it safe to send new work (#1131) |
 //! | `GET /v1/metrics` | counters ([`crate::observe::Snapshot`]) — authenticated, pull-only |
 //! | `POST /v1/turns` | start a turn (`TurnRequest` body) → `{ "turn_id": … }` |
-//! | `GET /v1/turns/{id}/events` | SSE stream of [`ServerFrame`]s until `turn_complete` |
+//! | `GET /v1/turns/{id}/events` | SSE stream of [`ServerFrame`](crate::frame::ServerFrame)s until `turn_complete` |
 //! | `POST /v1/turns/{id}/tool-result` | answer a `tool_request` (`ToolResultIn`) |
 //! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` (`ProviderResultIn`) |
 //! | `POST /v1/turns/{id}/cancel` | end an in-flight turn → `{ "status": "cancelled" }` |
@@ -89,7 +89,7 @@
 //! - Cancelling a turn nobody has streamed also works, and reclaims its thread.
 //!
 //! Cancellation and the reverse-request deadline
-//! ([`SessionSpec::reverse_request_timeout`]) are the two bounds on a turn that
+//! ([`SessionSpec::reverse_request_timeout`](crate::session::SessionSpec::reverse_request_timeout)) are the two bounds on a turn that
 //! stops making progress: the deadline is the automatic one, cancel the manual
 //! one.
 
@@ -616,7 +616,7 @@ impl ServerState {
     /// Called when a stream ends because the *peer* went away, rather than
     /// because the turn finished. The session goes back into its entry so a
     /// reconnect can pick it up, and a task is armed to cancel the turn if
-    /// nobody does within [`RESUME_GRACE`].
+    /// nobody does within the configured `resume_grace` (see [`DEFAULT_RESUME_GRACE`]).
     ///
     /// `generation` is the value read when this stream took the session. The
     /// reaper cancels only if it is still current: a later subscriber bumps it,

@@ -18,9 +18,10 @@
 //! Two consequences worth stating, since both are load-bearing:
 //!
 //! - **The completion signal is a driver snapshot, not the keypress.** The
-//!   in-flight states ([`super::InstalledMode::Creating`],
+//!   in-flight states ([`InstalledMode::Creating`](crate::deck_ui::InstalledMode::Creating),
 //!   [`super::SkillPrompt::Creating`]) are left by
-//!   [`settle_agents_snapshot`] / [`settle_skills_snapshot`], never by a key.
+//!   [`settle_agents_snapshot`](crate::deck_ui::create::settle_agents_snapshot) /
+//!   [`settle_skills_snapshot`](crate::deck_ui::create::settle_skills_snapshot), never by a key.
 //!   An interim snapshot for a *parked* create carries `creating: true`
 //!   precisely so it cannot be mistaken for the real thing.
 //! - **Esc hides, it does not cancel.** The driver-side draft keeps running

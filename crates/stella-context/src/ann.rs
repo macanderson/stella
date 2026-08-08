@@ -20,7 +20,7 @@
 //!
 //! With an IVF the postings are ordinary rows and liveness stays exactly where
 //! it already lives: the `JOIN node` under the shared
-//! [`NODE_AS_OF`](crate::candidates::NODE_AS_OF) predicate. So supersede,
+//! [`NODE_AS_OF`] predicate. So supersede,
 //! restore, and point-in-time recall need **zero index maintenance** — pinned by
 //! `forgetting_a_node_needs_no_reindex` and
 //! `a_point_in_time_probe_needs_no_reindex`. A graph index would need an

@@ -187,7 +187,7 @@ pub(crate) fn wrap_one_indent(
 /// [`push_row_block`] for multi-line content) — no transcript row renders at
 /// the left margin without a rail. The
 /// `every_transcript_entry_renders_on_a_rail` test enforces it, with exactly
-/// one deliberate exception: [`TranscriptEntry::Evicted`] is a system note
+/// one deliberate exception: [`TranscriptEntry::Evicted`](crate::model::TranscriptEntry::Evicted) is a system note
 /// *about* the transcript rather than an entry in it, so it renders untagged
 /// and full-bleed.
 pub(crate) fn push_row(
