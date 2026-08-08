@@ -48,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -143,6 +144,14 @@ _REMOTE_TMP = "/tmp/stella-upload"
 # Filenames written under ``self.logs_dir`` (host side) for durability/debug.
 _RUN_JSON_NAME = "stella-run.json"
 _RUN_STDOUT_NAME = "stella-run.stdout.txt"
+#: Host-side directory (under the trial's ``agent/`` logs) receiving the
+#: container's ``.stella/private/`` telemetry before teardown.
+_PRIVATE_TELEMETRY_DIR = "telemetry"
+#: Container-side private state worth surviving the container: the SQLite
+#: store `stella observe` and `stella usage sync` read, the reflection log
+#: skill mining feeds on, and episodic context. SQLite WAL/SHM sidecars ride
+#: along when present so an uncheckpointed database stays openable.
+_PRIVATE_TELEMETRY_FILES = ("store.db", "reflections.jsonl", "context.db")
 _RUN_STDERR_NAME = "stella-run.stderr.txt"
 _STREAM_EVENTS_NAME = "stella-events.jsonl"
 _STREAM_EVENTS_PATH = f"/logs/agent/{_STREAM_EVENTS_NAME}"
@@ -1608,6 +1617,7 @@ class StellaAgent(BaseInstalledAgent):
             )
         if stderr:
             self._write_log(_RUN_STDERR_NAME, stderr)
+        await self._export_private_telemetry(environment)
 
         # Populate now so Harbor keeps metrics even though it deliberately
         # skips a second post-run call once AgentContext is non-empty.
@@ -2247,6 +2257,48 @@ class StellaAgent(BaseInstalledAgent):
         if logs_dir is None:
             return None
         return Path(logs_dir) / name
+
+    async def _export_private_telemetry(self, environment: BaseEnvironment) -> None:
+        """Pull the trial's ``.stella/private/`` telemetry out before teardown.
+
+        The container is deleted with everything Stella recorded inside it:
+        the SQLite store that ``stella observe`` and ``stella usage sync``
+        read, and the reflections that skill mining feeds on. Only the event
+        journal survived, and it is a projection — so bench runs contributed
+        nothing to local telemetry, skill mining, or the tool foundry. This
+        copies each private file (plus any SQLite ``-wal``/``-shm`` sidecar)
+        into the trial's ``agent/telemetry/`` directory on the host.
+
+        Best-effort by contract: a graded trial is never failed over a
+        telemetry export, so every probe and download failure is skipped, and
+        harbor API variance (sync vs async file helpers) is absorbed.
+        """
+        target_dir = self._log_path(_PRIVATE_TELEMETRY_DIR)
+        if target_dir is None:
+            return
+        workdir = (
+            getattr(getattr(environment, "task_env_config", None), "workdir", None)
+            or "/app"
+        )
+
+        async def _call(method: Any, *args: Any) -> Any:
+            result = method(*args)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+
+        for base in _PRIVATE_TELEMETRY_FILES:
+            for name in (base, f"{base}-wal", f"{base}-shm"):
+                source = f"{workdir}/.stella/private/{name}"
+                try:
+                    if not await _call(environment.is_file, source):
+                        continue
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    await _call(
+                        environment.download_file, source, target_dir / name
+                    )
+                except Exception:  # noqa: BLE001 — export never fails a trial
+                    continue
 
     def _write_log(self, name: str, content: str | None) -> None:
         """Persist ``content`` under ``logs_dir`` without clobbering — or
