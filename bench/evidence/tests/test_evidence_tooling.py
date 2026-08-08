@@ -311,6 +311,38 @@ def test_extract_carries_the_verification_ladder_a_run_actually_exercised(
     assert row["accuracy"] == 0.0
 
 
+def test_the_author_is_read_from_the_key_the_adapter_actually_writes(
+    tmp_path: Path,
+) -> None:
+    """`stella_verifier_model` is the current spelling, and this reader missed it.
+
+    The adapter renamed the key; this extractor kept asking for
+    `stella_witness_author_model`, so every dev-baseline row published since
+    said `null` for the field that names the independent author — a forensic
+    reading a channel its producer stopped writing, which is #2134's shape one
+    layer out. The test above pins the pre-rename spelling on purpose: both
+    have to resolve, or re-scoring an older `result.json` loses the field the
+    newer one just gained.
+    """
+    path = _result(
+        tmp_path,
+        {
+            "task_name": "task",
+            "verifier_result": {"rewards": {"reward": 1.0}},
+            "agent_result": {
+                "metadata": {
+                    "stella_assurance_arm": "witness-on",
+                    "stella_verifier_model": "openrouter/moonshotai/kimi-k3",
+                    "stella_witness_authored_state": "authored",
+                }
+            },
+        },
+    )
+    row = scorer.extract_trial(path)
+
+    assert row["witness_author_model"] == "openrouter/moonshotai/kimi-k3"
+
+
 def test_a_trial_that_closed_no_verdict_extracts_null_not_false(tmp_path: Path) -> None:
     """Tri-state, or "not measured" starts reading as "measured and honest"."""
     path = _result(

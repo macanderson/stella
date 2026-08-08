@@ -401,7 +401,11 @@ impl GitCandidateWorkspaces {
                 let witness_reads: Arc<dyn stella_core::ToolExecutor> = Arc::new(
                     crate::agent::PolicyToolSet::new_owned(registry.clone(), self.policy.clone()),
                 );
-                let witness_tools = WitnessToolExecutor::new(ws_root.clone(), witness_reads);
+                // `canon_root`, not `self.root`: the frame screen compares
+                // spellings, and the goal's paths are phrased against the
+                // real, resolved location of the workspace (#2130).
+                let witness_tools =
+                    WitnessToolExecutor::new(ws_root.clone(), &canon_root, witness_reads);
                 let native =
                     CustomToolSet::new_owned(registry, self.custom_tools.clone(), ws_root.clone());
                 // MCP: layer the candidate_safe-filtered session view on top

@@ -95,6 +95,16 @@ export interface Totals {
   total_cost: number;
   /** Every seat's tokens through one price table. `null` = model unpriced. */
   priced_cost: number | null;
+  /** Model ids this seat ran that the shared price table has no row for — the
+   *  reason `priced_cost` is null, so a blank cost cell can name its cause
+   *  instead of reading as "free" (#2108). Empty whenever the cost is known;
+   *  absent only in payloads recorded before the field existed. */
+  unpriced_models?: string[];
+  /** Trials that published no usage at all. Their tokens and cost read 0 in
+   *  every total here, which is the absence of a measurement rather than a
+   *  measurement of zero (#2132) — so this is the denominator those totals
+   *  were summed over. Absent only in payloads recorded before the field. */
+  unmeasured_trials?: number;
   tokens_in: number;
   tokens_out: number;
   cache_read: number;
@@ -105,7 +115,10 @@ export interface Totals {
   wasted_time?: number | null;
   /** How many trials the wasted-time sum covers (`arenabench flip` runs). */
   flip_trials?: number;
-  [key: string]: number | null | undefined;
+  // `string[]` rides in the index signature for `unpriced_models` alone. Every
+  // *dimension* key is still numeric — `race.tsx` indexes by `dim.key` and
+  // coerces with `Number` — and no dimension is or will be a list.
+  [key: string]: number | string[] | null | undefined;
 }
 
 export interface ContestantSnap {
@@ -144,6 +157,11 @@ export interface Cell {
   cache_write: number;
   total_cost: number;
   priced_cost: number | null;
+  /** `false` when no source published usage for this trial: its zeroed token
+   *  and cost fields are unknown, not measured, and `priced_cost` is null for
+   *  that reason rather than because a price row is missing (#2132). Absent
+   *  only in payloads recorded before the field existed. */
+  usage_measured?: boolean;
   clock_time: number;
   cap_hits?: number;
   has_video?: boolean;
@@ -178,6 +196,8 @@ export interface SeriesOutcomes {
   clock_time: number;
   priced_cost: number | null;
   priced_cost_per_solve: number | null;
+  /** Which models the two figures above have no rate for (#2108). */
+  unpriced_models?: string[];
 }
 
 export interface SeriesTaskVerdict {

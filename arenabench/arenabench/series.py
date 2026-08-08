@@ -90,13 +90,24 @@ def _seat_outcomes(metrics: dict[str, Any]) -> dict[str, Any]:
     reasons: dict[str, int] = {}
     clock_time = 0.0
     priced: float | None = 0.0
+    unpriced: set[str] = set()
     for m in metrics.values():
         if m.status != "done":
             continue
         judged += 1
         clock_time += m.clock_time or 0.0
         if priced is not None:
-            priced = None if m.priced_cost is None else priced + m.priced_cost
+            if m.priced_cost is not None:
+                priced += m.priced_cost
+            elif m.usage_measured:
+                # Spent tokens nobody could price: unknown, never smaller.
+                priced = None
+            # else: a trial nothing measured, skipped rather than poisoning the
+            # seat. It has no tokens to be short by, and since #2132 gave it
+            # `priced_cost = None` (it used to be a fabricated `0.0`),
+            # poisoning here would blank the trends cost for every match that
+            # contains one crashed setup.
+        unpriced.update(m.unpriced_models)
         reason = m.outcome_reason() or "unlabelled"
         reasons[reason] = reasons.get(reason, 0) + 1
         if m.resolved is None:
@@ -132,6 +143,10 @@ def _seat_outcomes(metrics: dict[str, Any]) -> dict[str, Any]:
         "priced_cost_per_solve": (
             round(priced / solved, 6) if priced is not None and solved else None
         ),
+        # The reason both figures above can be null, carried with them so a
+        # trends row that plots nothing can say which model it has no rate
+        # for rather than silently dropping out of the chart (#2108).
+        "unpriced_models": sorted(unpriced),
     }
 
 

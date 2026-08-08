@@ -200,6 +200,21 @@ pub struct ChangeSignals {
     /// the diff fully explains, and an opaque call is by definition something
     /// it does not.
     pub opaque_actions: u32,
+    /// `verify_done` tool runs this turn whose result printed
+    /// `WITNESS CONFIRMED` — a deterministic fail-on-baseline / pass-on-new
+    /// shadow observation made by the worker's own tool call (#2129). Counted
+    /// off the `ToolResult` stream, so like every field here it records what
+    /// the turn *did*; the ladder reads it as flip evidence the pipeline's
+    /// own oracle (which tracks only its own command) cannot see.
+    pub verify_done_confirmations: u32,
+    /// Command chains this turn that exited 0 while their captured stderr
+    /// reported a failed command — the errored-command census
+    /// ([`crate::verify::command_errors`], #2125). Counted off the
+    /// `ToolResult` stream like the field above, and carried only as far as
+    /// the verifier's deterministic evidence: nothing in [`warrant`] or the
+    /// ladder reads it, because a broken probe behind a cited number makes
+    /// that number unsubstantiated, never the change wrong.
+    pub errored_commands: u32,
 }
 
 /// Whether a *mutating* tool call's effects are fully accountable to the

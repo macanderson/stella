@@ -2091,24 +2091,8 @@ impl<'a> Pipeline<'a> {
                     }
                 }
             }
-            let mut inputs = LadderInputs {
-                flip_achieved: state.oracle.is_flipped(),
-                touched_tests_passed,
-                diff_lines: state.diff_lines,
-                diff_budget: self.config.diff_budget_lines,
-                diff_available: state.diff_available,
-                file_change_events: state.signals.file_changes,
-                mutating_actions: state.signals.mutating_actions,
-                // Filled by the pre-submit audit below (#861, #870, #1291) —
-                // the lint, coverage and mutation probes only run when a
-                // fast-submit is imminent.
-                new_diag_errors: 0,
-                new_diag_warnings: 0,
-                veto_warnings: self.config.diagnostics_veto_warnings,
-                witness_tautological: false,
-                diff_coverage: DiffCoverage::Unmeasured,
-                require_diff_coverage: self.config.require_diff_coverage,
-            };
+            let mut inputs =
+                self.ladder_inputs(&state, touched_tests_passed, effective_cmd.is_none());
 
             // Pre-submit audit (#859, #861): a deterministic pass is about
             // to be credited, so spend the two cheap checks that can refute
@@ -2536,7 +2520,7 @@ impl<'a> Pipeline<'a> {
                                 },
                             );
                             match self
-                                .verifier(&mut state.degradation, prompt, &inputs, spend)
+                                .verifier(&state.degradation, prompt, &inputs, spend)
                                 .await
                             {
                                 Ok(verdict) => {

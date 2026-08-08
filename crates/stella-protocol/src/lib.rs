@@ -56,6 +56,7 @@ pub mod completion;
 pub mod context_event;
 pub mod error;
 pub mod event;
+pub mod journal;
 pub mod ladder;
 pub mod proof;
 pub mod provider;
@@ -87,6 +88,10 @@ pub use event::{
     PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare, ScopeProposal, StageKind,
     TaskItem, TaskStatus, UsageIncompleteReason, VerdictEvidence,
 };
+// The journal line is the event plus the wall-clock stamp its sink adds
+// (#2111). Deliberately a separate type from `AgentEvent`: a stamp is a fact
+// about a write, and the engine that produces events owns no clock.
+pub use journal::{StampedEvent, stamped_line};
 // The ladder vocabulary moved out of `event` when the rung joined it (#1043);
 // re-exported here so `stella_protocol::LadderSnapshot` never moved.
 pub use ladder::{LadderRung, LadderSnapshot, OracleObservation, ProofTree};

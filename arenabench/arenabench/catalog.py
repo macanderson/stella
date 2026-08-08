@@ -31,7 +31,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .sut import STELLA_REPO_ENV, stella_repo
+from .sut import repo_problem, stella_repo
 
 __all__ = ["models_payload", "parse_catalog"]
 
@@ -121,8 +121,7 @@ def models_payload() -> dict[str, Any]:
     repo = stella_repo()
     if repo is None:
         raise RuntimeError(
-            f"no Stella checkout found — set {STELLA_REPO_ENV} to the "
-            "repository root so the model catalog can be read"
+            f"the model catalog cannot be read: {repo_problem()}"
         )
     entries = parse_catalog(_read(repo, _CATALOG_REL, "the model catalog"))
     if not entries:

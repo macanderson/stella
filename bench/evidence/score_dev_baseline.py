@@ -141,7 +141,18 @@ def extract_trial(result_path: Path) -> dict[str, Any]:
         # fields — which arm the posture *declared*, who the independent author
         # was, whether the tier actually *fired* on this task, and what Stella
         # itself claimed about the work the external reward then graded.
-        "witness_author_model": metadata.get("stella_witness_author_model"),
+        # Both spellings, current one first. The adapter renamed this key to
+        # `stella_verifier_model` and this reader was not chased, so every
+        # dev-baseline row published since has carried `null` for the one field
+        # that says WHO the independent author was — the same
+        # producer-writes-A/reader-reads-B failure as #2134, one layer out. The
+        # old spelling stays readable because the `result.json` trees recorded
+        # before the rename still use it, and re-scoring them is the point of
+        # this script.
+        "witness_author_model": (
+            metadata.get("stella_verifier_model")
+            or metadata.get("stella_witness_author_model")
+        ),
         "witness_authored_state": metadata.get("stella_witness_authored_state"),
         "witness_authored_count": _int(stream.get("witness_authored_count")),
         "witness_warranted_count": _int(stream.get("witness_warranted_count")),

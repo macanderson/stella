@@ -28,6 +28,13 @@ use super::*;
 // byte-stable-prefix property (L-E8) a runtime `format!` would give up. One
 // shared literal, embedded verbatim by both prompts, is also what keeps the two
 // copies from drifting the way the catalogue's did (#450).
+//
+// ADDING A CONTRACT: embed it in BOTH prompts below, and add its row to
+// `SHARED_CONTRACTS` in `prompt/parity.rs`. That module derives the set of
+// contracts from this file's own source, so it fails by name on either
+// omission — the coupling used to hold by convention alone, and a contract
+// reaching `SYSTEM_PROMPT` only is invisible to `stella run` and to every
+// bench measurement, which read `PIPELINE_SYSTEM_PROMPT` (#2231).
 
 /// The cross-tool steering shared by both static prompts — what the generated
 /// schemas cannot say. No trailing newline: each prompt continues with its own
@@ -74,6 +81,32 @@ macro_rules! measurement_discipline {
     };
 }
 
+/// The verification-proportionality contract shared by both static prompts:
+/// re-verification is not free, and a check that mutates the system under test
+/// is not the same instrument as one that only reads it. Born from the same
+/// real TB2.1 `git-multibranch` trace as the two literals above (#1958): turns
+/// whose step was already satisfied on disk still ran the maximum-strength
+/// check — install sshpass, clone, push both branches, curl both endpoints —
+/// and then a **destructive reset-to-pristine** (re-init the bare repo, wipe
+/// the deploy dirs) justified only by a guess about the grader ("it will clone
+/// fresh"). That ran four times in one task. Three of those turns had changed
+/// nothing, so `git rev-parse --is-bare-repository` / `nginx -t` /
+/// `openssl x509 -noout` would have settled the same claim for free, and each
+/// reset destroyed verified-working state for a hunch — the setup survived
+/// only because the worker happened to rebuild it correctly every time.
+///
+/// The cheap rung is a *stated* choice, never a silent omission: the last
+/// sentence is what keeps proportionality from degrading into "skip
+/// verification", the same discipline the ladder's abstain rung keeps on the
+/// verdict side (`stella_pipeline::verify`). One shared literal, embedded
+/// verbatim by both prompts, same as `tool_steering!` and for the same
+/// anti-drift reason (#450).
+macro_rules! verification_proportionality {
+    () => {
+        r#"Verification is proportional to what THIS turn changed, and re-verification is not free. A check that only READS (`git rev-parse`, `nginx -t`, `openssl x509 -noout`, reading back the config you wrote) costs almost nothing and risks nothing; a check that MUTATES the system under test — installing packages, cloning, pushing, restarting a service, re-initializing a repository — spends real time and can break state that already worked. A turn that changed nothing gets the read-only probe; a turn that did change state earns one end-to-end run of what it changed. Never reset working state to "pristine" because you guess some later consumer wants a clean slate: destroying verified-working setup needs a requirement that says so, and on a hunch it is only a fresh chance to break what already passed. Taking the cheap path is never silent — name the probe you ran and the claim it settles, so an end-to-end cycle you did not run is a stated decision rather than an omission."#
+    };
+}
+
 pub(crate) const SYSTEM_PROMPT: &str = concat!(
     r#"You are Stella, a fast terminal coding agent. You help the user with software engineering tasks by reading files, writing code, running commands, and searching the codebase.
 
@@ -87,6 +120,10 @@ pub(crate) const SYSTEM_PROMPT: &str = concat!(
 
 "#,
     measurement_discipline!(),
+    r#"
+
+"#,
+    verification_proportionality!(),
     r#"
 
 Rules:
@@ -115,6 +152,10 @@ pub(crate) const PIPELINE_SYSTEM_PROMPT: &str = concat!(
 
 "#,
     measurement_discipline!(),
+    r#"
+
+"#,
+    verification_proportionality!(),
     r#"
 
 Methodology (always follow in order):
@@ -451,15 +492,22 @@ pub(crate) fn render_file_tree(files: &str, max_lines: usize) -> String {
     out
 }
 
+/// The structural half of the shared-contract discipline: the tests above are
+/// written one per contract, so they cover the contracts that exist and say
+/// nothing about the next one. This module derives the set from this file's own
+/// source and asserts the coupling over it (#2231). Declared last because
+/// `macro_rules!` scope is textual — the contracts above have to be in scope.
+#[cfg(test)]
+mod parity;
+
 #[cfg(test)]
 mod tests {
-    use super::{PIPELINE_SYSTEM_PROMPT, SYSTEM_PROMPT, append_workspace_memories};
+    use super::append_workspace_memories;
 
-    /// Every static prompt, labelled.
-    const PROMPTS: &[(&str, &str)] = &[
-        ("SYSTEM_PROMPT", SYSTEM_PROMPT),
-        ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
-    ];
+    // Every static prompt, labelled. Lives in `parity`, where it is
+    // cross-checked against this file's own source, so a third prompt cannot
+    // join the set without joining the list every test here iterates (#2231).
+    use super::parity::STATIC_PROMPTS as PROMPTS;
 
     /// The catalogue-shaped lines of `prompt`: `- <tool_name>: …`, where the
     /// lead-in is a bare canonical tool name or a `/`-joined run of them.
@@ -595,6 +643,60 @@ mod tests {
             assert!(
                 prompt.contains(shared),
                 "{label} does not embed the shared measurement-discipline block verbatim"
+            );
+        }
+    }
+
+    /// Witness for the verification-proportionality defect (#1958): in the same
+    /// TB2.1 `git-multibranch` trace, turns whose step was already satisfied on
+    /// disk still ran the maximum-strength check — install sshpass, clone, push
+    /// both branches, curl both endpoints — and then a destructive
+    /// reset-to-pristine justified by a guess about the grader. Four times in
+    /// one task, three of them on turns that had changed nothing, where a
+    /// read-only probe settled the same claim for free and each reset was a
+    /// fresh chance to break verified-working state.
+    ///
+    /// Neither prompt drew any line between reading and mutating, so pin the
+    /// shared literal verbatim in both — plus each clause of the rule
+    /// separately, so the assertion cannot pass against a hollowed-out literal.
+    /// Both halves of the read/mutate distinction are pinned, not just the
+    /// mutating one: a trim that kept "a check that MUTATES … can break state"
+    /// and dropped the sentence naming what to do instead would leave a
+    /// prohibition with no cheaper rung to fall to, which is how a
+    /// proportionality rule turns into a reason to verify nothing.
+    ///
+    /// The visibility claim is the load-bearing one: proportionality that may
+    /// be taken silently is just "skip verification" with a nicer name, and
+    /// this repository's whole contract is verified done, not claimed done.
+    #[test]
+    fn both_prompts_size_verification_to_what_the_turn_changed() {
+        let shared = verification_proportionality!();
+        for claim in [
+            // The distinction the issue asks to encode, both halves of it:
+            // reading is nearly free, mutating the system under test carries
+            // restore-risk.
+            "only READS",
+            "MUTATES the system under test",
+            // The mapping that makes it a rule rather than an observation —
+            // a no-op turn gets the cheap probe, a real change earns the
+            // end-to-end run.
+            "A turn that changed nothing gets the read-only probe",
+            // The destructive half — a speculative reset of working state.
+            "Never reset working state to \"pristine\"",
+            // Degradation warns, never silently disables: the cheaper rung is
+            // announced, so a skipped end-to-end is a decision on the record.
+            "never silent",
+        ] {
+            assert!(
+                shared.contains(claim),
+                "the shared literal must keep the proportionality claim {claim:?} — \
+                 without it the rule degrades into permission to skip verification"
+            );
+        }
+        for (label, prompt) in PROMPTS {
+            assert!(
+                prompt.contains(shared),
+                "{label} does not embed the shared verification-proportionality block verbatim"
             );
         }
     }

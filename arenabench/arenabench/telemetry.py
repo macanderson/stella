@@ -279,6 +279,13 @@ class TrialMetrics:
     #: List-price cost recomputed from this trial's own token counts using one
     #: shared table. ``None`` when the model is unpriced — missing beats wrong.
     priced_cost: float | None = None
+    #: The model ids this trial ran that :mod:`.pricing` has no row for — the
+    #: *reason* :attr:`priced_cost` is ``None``, carried beside it. Missing
+    #: beats wrong, but missing and unexplained is how an entire arm's cost
+    #: column read blank across every kimi match without anyone noticing
+    #: (#2108). Empty whenever the cost is known, so a non-empty tuple is
+    #: always something an operator can act on: add the row, re-read.
+    unpriced_models: tuple[str, ...] = ()
     clock_time: float = 0.0
     #: Seconds since the trial last wrote any :data:`LIVENESS_NAMES`
     #: artifact — its liveness, whichever files this arm happens to write.
@@ -310,6 +317,33 @@ class TrialMetrics:
     #: destroy its own solution. ``None`` whenever :attr:`flip_elapsed` is:
     #: without a located flip there is no "after".
     wasted_elapsed: float | None = None
+
+    @property
+    def usage_measured(self) -> bool:
+        """Whether any source published usage for this trial at all (#2132).
+
+        ``False`` means **nothing measured this trial** — which is a different
+        fact from "it spent nothing", and pricing it as one is how a real
+        $0.79 became a confident ``$0.00`` in a cost comparison. The artifacts
+        cannot tell a trial that never launched from one whose stream was lost,
+        and the second kind is not hypothetical: usage can be dropped mid-run
+        (#1467) and a timed-out trial's writer can be reaped while it is still
+        appending (#2131).
+
+        Read off observed spend rather than off the presence of a file or a
+        row, for the same reason the zero-spend guard in :meth:`MetricsReader.read`
+        is: a ``step_usage`` whose token fields never arrived is exactly as
+        unmeasured as no ``step_usage`` at all, and only the numbers say so.
+        No real model call reports zero of everything, so "all counters zero"
+        is "unknown", never "free".
+        """
+        return bool(
+            self.tokens_in
+            or self.tokens_out
+            or self.cache_read
+            or self.cache_write
+            or self.total_cost
+        )
 
     @property
     def cache_hit_rate(self) -> float | None:
@@ -390,6 +424,8 @@ class TrialMetrics:
             "priced_cost": (
                 round(self.priced_cost, 6) if self.priced_cost is not None else None
             ),
+            "unpriced_models": list(self.unpriced_models),
+            "usage_measured": self.usage_measured,
             "cache_hit_rate": self.cache_hit_rate,
             "clock_time": round(self.clock_time, 2),
             "age_s": self.age_s,
@@ -681,6 +717,23 @@ class MetricsReader:
                         break
             return price
 
+        def seat_label() -> str:
+            """What to call this trial's model when nothing could price it.
+
+            The same candidates :func:`single_rate` tries, in the same order,
+            so the name a reader is told to go add a row for is the one the
+            lookup actually failed on.
+            """
+            for name in (qualified, configured, *metrics.models):
+                if name:
+                    return str(name)
+            return ""
+
+        # Every id the shared table had no row for. Collected rather than
+        # counted: the operator's next move is to add those rows, and a bare
+        # "unpriced" tells them nothing about which (#2108).
+        unpriced: list[str] = []
+
         # A pipeline seat runs several models at several rates — worker,
         # verifier, triage — so where the stream says which model each step
         # used, each model's subtotal is priced at its own rate and the trial
@@ -691,8 +744,22 @@ class MetricsReader:
         # share would publish a cost that is confidently short, and missing
         # beats wrong here.
         by_model = (events or {}).get("by_model") or {}
-        if any(model for model in by_model):
-            total = 0.0
+        if not metrics.usage_measured:
+            # Nothing measured this trial, so there is nothing to price and no
+            # rate is missing. The branches below would have run its zeroed
+            # counters through `trial_cost` and published `$0.00` — a confident
+            # measurement of "spent nothing" produced by the absence of any
+            # measurement at all, and the one number a cost comparison must
+            # never invent (#2132). `None` is the honest answer, and
+            # `usage_measured` beside it in `to_json` is the reason.
+            #
+            # No `unpriced_models` entry: the table is not missing a row, so
+            # naming a model here would send an operator to edit
+            # `pricing.PRICES` for a trial that produced no tokens — the same
+            # discipline as the queued-trial rule below.
+            metrics.priced_cost = None
+        elif any(model for model in by_model):
+            subtotal = 0.0
             for model, bucket in by_model.items():
                 if not model:
                     price = single_rate()  # steps that named no model
@@ -701,10 +768,14 @@ class MetricsReader:
                 else:
                     price = price_for(model)  # no route fact: gateway tier
                 if price is None:
-                    total = None
-                    break
-                total += trial_cost(price, **bucket)
-            metrics.priced_cost = total
+                    # Scanning continues past the first miss on purpose: the
+                    # cost is blanked either way, and naming every missing row
+                    # makes one edit to `pricing.PRICES` enough to price the
+                    # trial rather than uncovering the next gap on a re-read.
+                    unpriced.append(model or seat_label())
+                    continue
+                subtotal += trial_cost(price, **bucket)
+            metrics.priced_cost = None if unpriced else subtotal
         else:
             # ATIF-only trials publish grand totals and a single model; a
             # stream that never named one is priced the same way.
@@ -717,6 +788,14 @@ class MetricsReader:
                     cache_read=metrics.cache_read,
                     cache_write=metrics.cache_write,
                 )
+            else:
+                unpriced.append(seat_label())
+        # Deduplicated, order preserved, and empty names dropped — a queued
+        # trial that has not named a model yet is unstarted, not unpriced, and
+        # must not raise a warning an operator cannot act on.
+        metrics.unpriced_models = tuple(
+            dict.fromkeys(name for name in unpriced if name)
+        )
 
         # A running trial has no finish timestamp, so wall clock has to come
         # from its artifacts' own span rather than from Harbor. The earliest
@@ -794,12 +873,46 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         "total_cost": sum(t.total_cost for t in trials),
         # Comparable spend: every seat priced from the same table. `None` when
         # no trial had a priced model, so the column stays empty rather than
-        # reading as a free run.
+        # reading as a free run — and `None`, too, when any trial *did* spend
+        # tokens nobody could price.
+        #
+        # That second rule is the #2132 fix. This used to sum the priced share
+        # and publish it as the seat's cost, which silently dropped every
+        # unpriced trial: on match `cc00894779ff` the seat read `$1.94` against
+        # a true `$5.25` — 63% short, with nothing on the number saying it was
+        # a subset. It also contradicted the two rules either side of it. The
+        # per-trial reduction above already blanks a whole trial on one
+        # unpriced subtotal ("missing beats wrong"), `series.py`'s
+        # `_seat_outcomes` already null-poisons a seat, and the arena's cost
+        # tile already null-poisons across seats; `aggregate` was the single
+        # link in that chain that quietly filled the gap with nothing.
+        #
+        # A trial that measured *no* usage does not poison: it has no tokens to
+        # be short by, its whole row already reads empty, and blanking the
+        # column for every match with one crashed setup would trade a wrong
+        # number for no number at all. It is counted in `unmeasured_trials`
+        # instead, so the denominator of every total here stays visible.
         "priced_cost": (
-            sum(t.priced_cost for t in trials if t.priced_cost is not None)
-            if any(t.priced_cost is not None for t in trials)
-            else None
+            None
+            if any(t.priced_cost is None and t.usage_measured for t in trials)
+            else (
+                sum(t.priced_cost for t in trials if t.priced_cost is not None)
+                if any(t.priced_cost is not None for t in trials)
+                else None
+            )
         ),
+        # How many trials contributed no usage measurement at all — the
+        # denominator behind every token and cost total above. Absence of
+        # telemetry is not a measurement of zero (#2132), so a reader has to be
+        # able to see that "4736446 tokens" was summed over six of ten trials.
+        "unmeasured_trials": sum(1 for t in trials if not t.usage_measured),
+        # Why the figure above is missing, when it is. A blank cost cell is
+        # the symptom and this is the cause, carried in the same payload so
+        # every reader of the totals — CLI, UI, a saved `results.json` — can
+        # say "no pricing entry for X" instead of showing an empty column and
+        # letting a whole arm's spend go unnoticed (#2108). Sorted so the
+        # payload is deterministic.
+        "unpriced_models": sorted({name for t in trials for name in t.unpriced_models}),
         "cache_hit_rate": (
             sum(t.cache_read for t in trials) / sum(t.tokens_in for t in trials) * 100.0
             if sum(t.tokens_in for t in trials) > 0
@@ -879,6 +992,12 @@ class TranscriptState:
     offset: int = 0
     seq: int = 0
     started: float | None = None
+    #: The first line's own ``ts`` (epoch millis), when the stream carries one.
+    #: Every later entry's ``t`` is measured from this, so a finished trial read
+    #: in one pass reports the offsets the run actually had rather than the
+    #: offsets of the *read* (#2111). ``None`` for a stream recorded before the
+    #: field existed, which falls back to ``started``.
+    origin_ms: float | None = None
     #: Open text/reasoning entries being accumulated from deltas, by kind.
     open_entries: dict[str, int] = field(default_factory=dict)
     #: ``call_id`` -> entry sequence, so a tool result can find its call.
@@ -970,13 +1089,40 @@ class TranscriptReader:
         state.seq += 1
         return state.seq
 
+    @staticmethod
+    def _elapsed_for(event: dict[str, Any], state: TranscriptState) -> float:
+        """Seconds from the trial's first event to this one.
+
+        Read from the line's own ``ts`` (epoch millis, stamped by Stella's sink
+        — see ``stella_protocol::journal``). Measuring from ``time.time()``
+        instead was the #2111 bug: a finished trial is read in a single pass, so
+        every event in the file was parsed within the same few milliseconds and
+        every row rendered ``0:00``. Anchoring to the *stream's* first stamp
+        makes an archived transcript report the offsets the run actually had —
+        and makes the paced replay in ``ui/components/arena/transcript-page.tsx``
+        pace on them instead of flushing at its 16 ms floor.
+
+        Two hedges the wire contract requires. A system clock is not monotonic,
+        so an NTP step can put a later line before the origin; that is clamped
+        to ``0.0`` rather than rendered as a negative offset. And a stream with
+        no ``ts`` at all — anything recorded before the field existed — keeps
+        the old read-time behaviour, which is wrong in the same way it always
+        was but is the only thing such a file supports.
+        """
+        stamp = event.get("ts")
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            if state.origin_ms is None:
+                state.origin_ms = float(stamp)
+            return round(max(0.0, (float(stamp) - state.origin_ms) / 1000.0), 2)
+        if state.started is None:
+            state.started = time.time()
+        return round(time.time() - state.started, 2)
+
     def _entries_for(
         self, event: dict[str, Any], state: TranscriptState, path_key: str
     ) -> list[dict[str, Any]]:
         kind = str(event.get("type", ""))
-        if state.started is None:
-            state.started = time.time()
-        now = round(time.time() - state.started, 2)
+        now = self._elapsed_for(event, state)
 
         def entry(
             seq: int, etype: str, title: str, body: str = "", **meta: Any

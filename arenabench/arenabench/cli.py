@@ -186,6 +186,22 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"({totals['passed']}/{totals['judged']})  {cost:>9}  "
             f"(self-reported ${totals['total_cost']:.2f})"
         )
+        # A blank cost column is a finding, not a formatting detail: it went
+        # unremarked across every kimi match because "unpriced" named nothing
+        # an operator could go fix (#2108). Naming the slug turns it into a
+        # one-line edit to `pricing.PRICES`.
+        for slug in totals.get("unpriced_models") or ():
+            print(f"    !! no pricing entry for {slug} — priced cost unavailable")
+        # The other way a total goes short: trials nothing measured. Their
+        # tokens and cost read 0 in every figure on the line above, which is
+        # the absence of a measurement and not a measurement of zero (#2132).
+        # Printed with the denominator so the line says what it is a total of.
+        unmeasured = totals.get("unmeasured_trials") or 0
+        if unmeasured:
+            print(
+                f"    !! {unmeasured}/{totals['trials']} trials published no usage "
+                "— the token and cost totals above are over the rest"
+            )
         if totals["judged"] == 0:
             worst = 1
     if args.results:
@@ -470,6 +486,19 @@ def _cmd_flip(args: argparse.Namespace) -> int:
             f"no snapshot passed ({result.snapshots} captured, "
             f"{result.probes} probed, {result.unknown} unknown)"
         )
+        # "No snapshot passed" reads as "the agent never solved it", so it must
+        # never be printed alone when capture is the thing that failed — that
+        # is how a solved trial gets recorded as a failure (#2196).
+        capture = result.capture
+        if capture is not None and capture.broke:
+            print(
+                f"warning: capture broke during this trial — "
+                f"{capture.snapshots} of {capture.attempts} attempt(s) landed, "
+                f"and the last one failed: {capture.reason}\n"
+                "         this trial was not fully measured; do not read the "
+                "absence of a flip as the agent never solving it",
+                file=sys.stderr,
+            )
         return 0
     print(
         f"flip at snapshot {result.flip_index}/{result.snapshots - 1} "
