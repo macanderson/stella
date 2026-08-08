@@ -1,5 +1,5 @@
 //! The `stella init` cinematic — a tiny terminal animation that plays while
-//! the workspace is being indexed: a sky-blue starfield drifting by, crossed by
+//! the workspace is being indexed: a nebula starfield drifting by, crossed by
 //! stella's mascot-grade absurdity, a turtle on a jetpack skateboard.
 //!
 //! Rendering discipline mirrors the deck's fx rules:
@@ -16,8 +16,11 @@
 //!   exactly as before.
 //!
 //! Colors come from the brand palette (crates/stella-tui/src/palette.rs) and are
-//! enforced by this module's tests: the two star/flame inks are the `SKY_DEEP`
-//! and `SKY` brand tokens, and the shell takes the deck's categorical violet.
+//! enforced by this module's tests: the two star/flame inks are the `ACCENT_DEEP`
+//! and `ACCENT` brand tokens, and the shell takes the deck's categorical violet.
+//! (This sentence named `SKY_DEEP`/`SKY` until the Nebula recolour — tokens that
+//! are now retired hues the theme tests forbid, which is precisely the drift the
+//! next paragraph describes.)
 //! This module used to carry a private palette of its own that tracked nothing;
 //! it now takes the brand tokens directly, so the cinematic and the deck agree
 //! by construction instead of merely coinciding.
@@ -163,11 +166,11 @@ fn truncate_width(row: &mut String, width: usize) {
 /// palette-law test must check the *choice*, not the escape bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ink {
-    /// Deep sky — jetpack flames and the skateboard deck.
+    /// Deep nebula — jetpack flames and the skateboard deck.
     Flame,
     /// Muted — the dimmer twinkle of a star.
     Star,
-    /// Brand sky — the brighter twinkle of a star.
+    /// Brand nebula — the brighter twinkle of a star.
     StarBright,
     /// Violet — the turtle's shell linework. Categorical, not brand.
     Shell,
