@@ -538,10 +538,7 @@ mod tests {
              kind of invisible behavior change §5.5 forbids"
         );
         assert_eq!(d.ann_probes, stella_context::DEFAULT_ANN_PROBES);
-        assert_eq!(
-            d.require_evidence,
-            stella_context::DEFAULT_REQUIRE_EVIDENCE
-        );
+        assert_eq!(d.require_evidence, stella_context::DEFAULT_REQUIRE_EVIDENCE);
         assert!(
             d.require_evidence,
             "the evidence gate must ship ON: with it off, max_frames is a cap \

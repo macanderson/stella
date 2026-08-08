@@ -107,11 +107,12 @@ async fn recall_abstains_when_nothing_ties_the_corpus_to_the_query() {
 async fn recall_admits_exactly_the_relevant_node() {
     let (_dir, store) = contaminated_store(tuning(0.0, true)).await;
     store
-        .upsert(ContextDelta::new().with_node(
-            NodeInput::new(NodeKind::Artifact, "deck-lesson").with_content(
-                "the deck keybinding map moved into the scrollback paging state",
+        .upsert(
+            ContextDelta::new().with_node(
+                NodeInput::new(NodeKind::Artifact, "deck-lesson")
+                    .with_content("the deck keybinding map moved into the scrollback paging state"),
             ),
-        ))
+        )
         .await
         .unwrap();
     let result = store.recall(&base_query(QUERY)).await.unwrap();
@@ -137,10 +138,12 @@ async fn the_lexical_fallback_is_gated_too() {
     assert_eq!(empty.no_evidence_cut, 5);
 
     store
-        .upsert(ContextDelta::new().with_node(
-            NodeInput::new(NodeKind::Artifact, "deck-lesson")
-                .with_content("the deck keybinding map for scrollback paging"),
-        ))
+        .upsert(
+            ContextDelta::new().with_node(
+                NodeInput::new(NodeKind::Artifact, "deck-lesson")
+                    .with_content("the deck keybinding map for scrollback paging"),
+            ),
+        )
         .await
         .unwrap();
     let one = store.recall(&base_query(QUERY)).await.unwrap();

@@ -250,13 +250,7 @@ mod tests {
 
     #[test]
     fn admissibility_is_the_union_of_the_channels() {
-        let ids = admissible_ids(
-            &[1],
-            &HashSet::from([2]),
-            &HashSet::from([3]),
-            &[4],
-            &[5],
-        );
+        let ids = admissible_ids(&[1], &HashSet::from([2]), &HashSet::from([3]), &[4], &[5]);
         assert_eq!(ids, HashSet::from([1, 2, 3, 4, 5]));
     }
 }

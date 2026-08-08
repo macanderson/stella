@@ -27,8 +27,8 @@ use contextgraph_types::{
 use rusqlite::Connection;
 
 use crate::candidates::{
-    NodeMeta, domains_for_nodes, live_node_metas, nodes_by_ids, scan_terms,
-    score_nodes_by_vector, vectors_for_ids,
+    NodeMeta, domains_for_nodes, live_node_metas, nodes_by_ids, scan_terms, score_nodes_by_vector,
+    vectors_for_ids,
 };
 use crate::error::ContextError;
 use crate::store::{
@@ -152,11 +152,11 @@ pub const DEFAULT_ANN_PROBES: usize = 12;
 /// into every turn no matter how badly they scored — a small workspace
 /// surfaced the same five irrelevant memories on every call. With the gate
 /// on, admission requires an anchor, anchor adjacency, a distinctive lexical
-/// match, domain overlap, or a semantic-posture cosine floor (see
-/// [`evidence`] for the channels and
-/// [`crate::embed::SimilarityPosture`] for why the default embedder's cosine
-/// is not one of them) — and a recall where nothing qualifies returns **zero
-/// frames**, which downstream already renders as "no recalled context".
+/// match, domain overlap, or a semantic-posture cosine floor (the `evidence`
+/// module holds the channels; [`crate::embed::SimilarityPosture`] says why
+/// the default embedder's cosine is not one of them) — and a recall where
+/// nothing qualifies returns **zero frames**, which downstream already
+/// renders as "no recalled context".
 ///
 /// `false` is the documented escape hatch back to the old padding behavior,
 /// for a workspace that would rather see weak matches than nothing.
@@ -1001,15 +1001,21 @@ fn recall_blocking(
             *graph_weight.entry(s).or_insert(0.0) += 1.0;
         }
         let mut anchor_adjacent: HashSet<i64> = HashSet::new();
-        for (neighbor, weight) in
-            neighbors_valid_at(conn, &anchor_seeds, q.as_of.as_deref(), q.valid_at.as_deref())?
-        {
+        for (neighbor, weight) in neighbors_valid_at(
+            conn,
+            &anchor_seeds,
+            q.as_of.as_deref(),
+            q.valid_at.as_deref(),
+        )? {
             anchor_adjacent.insert(neighbor);
             *graph_weight.entry(neighbor).or_insert(0.0) += weight;
         }
-        for (neighbor, weight) in
-            neighbors_valid_at(conn, &vector_seeds, q.as_of.as_deref(), q.valid_at.as_deref())?
-        {
+        for (neighbor, weight) in neighbors_valid_at(
+            conn,
+            &vector_seeds,
+            q.as_of.as_deref(),
+            q.valid_at.as_deref(),
+        )? {
             *graph_weight.entry(neighbor).or_insert(0.0) += weight;
         }
         let mut graph_scored: Vec<(i64, f64)> = graph_weight.into_iter().collect();
@@ -1399,10 +1405,15 @@ fn term_pass(
 ) -> Result<evidence::TermEvidence, ContextError> {
     let mut matcher = evidence::TermMatcher::new(&q.terms);
     if !q.terms.is_empty() {
-        scan_terms(conn, excluded, q.as_of.as_deref(), |id, display_name, content| {
-            let haystack = format!("{display_name} {content}").to_lowercase();
-            matcher.observe(id, &haystack);
-        })?;
+        scan_terms(
+            conn,
+            excluded,
+            q.as_of.as_deref(),
+            |id, display_name, content| {
+                let haystack = format!("{display_name} {content}").to_lowercase();
+                matcher.observe(id, &haystack);
+            },
+        )?;
     }
     Ok(matcher.finish())
 }
