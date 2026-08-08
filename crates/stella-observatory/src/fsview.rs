@@ -374,10 +374,78 @@ pub fn explorations(workspace_root: &Path) -> Value {
     json!(rows)
 }
 
-/// Rule files: `.stella/rules/*.md` (the db-promoted rules live in
+/// One card per `[[record]]` entry in a published context record TOML file
+/// (`ctx.stella.*.toml`), carrying the fields the Rules panel shows.
+///
+/// Malformed files, and files without a `[[record]]` array, contribute no
+/// cards rather than erroring — this is a best-effort dashboard view, not a
+/// validator.
+fn toml_record_cards(path: &Path) -> Vec<Value> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(parsed) = text.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let Some(records) = parsed.get("record").and_then(|r| r.as_array()) else {
+        return Vec::new();
+    };
+    records
+        .iter()
+        .filter_map(|record| {
+            let table = record.as_table()?;
+            let lineage_id = table.get("lineage_id")?.as_str()?.to_string();
+            let kind = table.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let statement = table
+                .get("statement")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let tags: Vec<&str> = table
+                .get("tags")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|t| t.as_str()).collect())
+                .unwrap_or_default();
+            let steering_force = table
+                .get("steering")
+                .and_then(|s| s.as_table())
+                .and_then(|s| s.get("force"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let enforcement_mode = table
+                .get("enforcement")
+                .and_then(|e| e.as_table())
+                .and_then(|e| e.get("mode"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Some(json!({
+                "lineage_id": lineage_id,
+                "kind": kind,
+                "statement": statement,
+                "tags": tags,
+                "steering_force": steering_force,
+                "enforcement_mode": enforcement_mode,
+            }))
+        })
+        .collect()
+}
+
+/// Rule files: `.stella/rules/*.md` and the published context records at
+/// `.stella/rules/ctx.stella.*.toml` (the db-promoted rules live in
 /// [`crate::db::Observatory::memory`]'s payload).
 pub fn rules_files(workspace_root: &Path) -> Value {
-    json!(markdown_cards(&workspace_root.join(".stella/rules"), 400))
+    let dir = workspace_root.join(".stella/rules");
+    let mut rows = markdown_cards(&dir, 400);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return json!(rows);
+    };
+    for entry in entries.flatten().take(MAX_DIR_ENTRIES) {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "toml") {
+            continue;
+        }
+        rows.extend(toml_record_cards(&path));
+    }
+    json!(rows)
 }
 
 /// Distilled lessons from `.stella/private/reflections.jsonl` — one object per line,
@@ -603,6 +671,68 @@ pub fn config(workspace_root: &Path) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Rules panel reads `.stella/rules/*`, but the repository's real
+    /// context records there are `ctx.stella.*.toml` files, not markdown —
+    /// `rules_files` must parse the `[[record]]` entries in those TOML files
+    /// (lineage_id, kind, statement, tags, steering force, enforcement mode)
+    /// while still returning cards for any plain `.md` file in the directory.
+    #[test]
+    fn rules_files_parses_toml_context_records_alongside_markdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules_dir = dir.path().join(".stella/rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+
+        std::fs::write(
+            rules_dir.join("ctx.stella.test-rule.toml"),
+            r#"
+schema = "context-record/v0.1"
+set_id = "stella"
+
+[[record]]
+lineage_id = "ctx.stella.test-rule"
+kind       = "constraint"
+statement  = "Tests must pin something."
+tags       = ["testing", "pins"]
+
+  [record.steering]
+  force      = "must"
+  precedence = 90
+
+  [record.enforcement]
+  mode = "hard"
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(rules_dir.join("hand-written.md"), "# A rule\nSome body text.").unwrap();
+
+        let rows = rules_files(dir.path());
+        let rows = rows.as_array().expect("rules_files returns an array");
+
+        let toml_card = rows
+            .iter()
+            .find(|r| r["lineage_id"] == "ctx.stella.test-rule")
+            .expect("toml record card present");
+        assert_eq!(toml_card["kind"], "constraint");
+        assert_eq!(toml_card["statement"], "Tests must pin something.");
+        assert_eq!(toml_card["tags"], serde_json::json!(["testing", "pins"]));
+        assert_eq!(toml_card["steering_force"], "must");
+        assert_eq!(toml_card["enforcement_mode"], "hard");
+
+        let md_card = rows
+            .iter()
+            .find(|r| r["name"] == "hand-written")
+            .expect(".md cards still work");
+        assert!(
+            md_card["snippet"]
+                .as_str()
+                .unwrap()
+                .contains("Some body text."),
+            "md snippet: {:?}",
+            md_card["snippet"]
+        );
+    }
 
     /// The card read is bounded, but `bytes` must still be the file's real
     /// size — otherwise bounding the read would silently start lying to the
