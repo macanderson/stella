@@ -785,7 +785,14 @@ def sut_status(ref: str = "main") -> dict[str, Any]:
         "problem": None,
     }
     repo = stella_repo()
-    if repo is None:
+    # A checkout answers exactly one question: what commit does this
+    # symbolic ref mean. A pin that is already a full SHA has no such
+    # question, and the staged binary beside it is content-addressed by that
+    # commit — so a runner holding the binary and no Stella source can still
+    # say precisely which Stella it is about to run. Refusing there rejected
+    # every cloud trial (ctl-0808-0028) for want of a repository it had no
+    # use for.
+    if repo is None and not _FULL_SHA.match(ref):
         out["problem"] = (
             "no Stella checkout is configured, so the arena cannot say which "
             f"commit a Stella seat would run. Set {STELLA_REPO_ENV} to the "
@@ -794,7 +801,7 @@ def sut_status(ref: str = "main") -> dict[str, Any]:
         legacy = legacy_staged()
         out["legacy"] = legacy.to_json() if legacy else None
         return out
-    out["repo"] = str(repo)
+    out["repo"] = str(repo) if repo is not None else None
     try:
         target = resolve_ref(ref, repo)
     except SutUnavailableError as exc:
@@ -816,7 +823,10 @@ def sut_status(ref: str = "main") -> dict[str, Any]:
     # for very different reactions — and when the ref is a branch that moved
     # mid-build, the nearest per-commit build IS the drift, named so the
     # operator can pin the commit that was actually built (#2098).
-    nearest = _nearest_staged(target, repo)
+    # Naming the drift takes git (how far is the nearest build from the one
+    # asked for), so without a checkout the honest report is the plain
+    # absence rather than a distance nobody can compute.
+    nearest = None if repo is None else _nearest_staged(target, repo)
     if nearest is None:
         out["problem"] = (
             f"no Stella binary has been built for {target[:8]}. Build one "

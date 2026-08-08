@@ -422,6 +422,43 @@ class TestACommitPinSurvivesAMovingBranch:
         (directory / "sut_commit.txt").write_text(commit)
         (directory / "binary_sha256.txt").write_text("deadbeef")
 
+    def test_a_commit_pin_is_ready_with_no_checkout_at_all(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The cloud runner's exact condition: a staged binary, no source.
+
+        A checkout answers one question — what commit does this symbolic ref
+        mean — and a full SHA does not ask it. The binary is content-addressed
+        by that commit, so the runner can say precisely which Stella it runs.
+        Refusing here rejected every cloud trial of ctl-0808-0028 after
+        credentials, staging and dockerd had all succeeded.
+        """
+        monkeypatch.delenv(sut.STELLA_REPO_ENV, raising=False)
+        monkeypatch.setenv("ARENABENCH_HOME", str(tmp_path / "home"))
+        monkeypatch.chdir(tmp_path)
+        assert sut.stella_repo() is None, "the fixture must leave no checkout"
+
+        commit = "7edec3b2333e0a8649bb1fcc7190ad97242d9e3e"
+        self._stage(commit)
+        status = sut.sut_status(commit)
+        assert status["ready"], status["problem"]
+        assert status["target"] == commit
+
+    def test_a_branch_pin_still_needs_a_checkout(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The relaxation is scoped to what needs no resolving. `main` is
+        still unanswerable without a repository, and must say so rather than
+        guess at whatever binary happens to be staged."""
+        monkeypatch.delenv(sut.STELLA_REPO_ENV, raising=False)
+        monkeypatch.setenv("ARENABENCH_HOME", str(tmp_path / "home"))
+        monkeypatch.chdir(tmp_path)
+        self._stage("7edec3b2333e0a8649bb1fcc7190ad97242d9e3e")
+
+        status = sut.sut_status("main")
+        assert not status["ready"]
+        assert "no Stella checkout is configured" in status["problem"]
+
     def test_a_commit_pin_stays_ready_when_the_branch_moves_on(self, repo: Path):
         built = _git(repo, "rev-parse", "origin/main")
         self._stage(built)
