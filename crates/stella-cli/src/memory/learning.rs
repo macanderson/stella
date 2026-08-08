@@ -137,9 +137,18 @@ impl SessionMemory {
         // from one reflection call read as one task and three turns on one task
         // read as three. Both directions are wrong; the session id is at least
         // a real boundary for the one-shot path, where one process is one task.
+        //
+        // `occurred_at` is stamped in the same pass, from the session clock
+        // (#2320). Both fields answer "which session, and when" — one loop
+        // owning both is why neither the reflection dispatch nor the parser
+        // needs to know the time. It also overwrites anything a model put in
+        // the field: a lesson's instant is ours to assign, never the
+        // response's to claim.
         let mut lessons = lessons;
+        let occurred_at = self.clock.now_unix_secs().max(0) as u64;
         for lesson in &mut lessons {
             lesson.task_id = self.task_id.clone();
+            lesson.occurred_at = occurred_at;
         }
 
         // Drop anything the user has already forgotten, BEFORE it reaches any
@@ -440,12 +449,12 @@ impl SessionMemory {
     /// remove. Refusals are printed too — a sweep that silently declines to act
     /// on protected records reads as "nothing was failing", a different claim.
     fn retire_failing_context(&self, quiet: bool) {
-        let now = stella_context::format_rfc3339(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0) as i64,
-        );
+        // The instant every TTL and staleness predicate below is judged
+        // against, from the session clock (#2320). While this read was
+        // `SystemTime::now()` the sweep always saw today, so no test could
+        // place a record past its TTL — retirement was unobservable rather
+        // than merely untested.
+        let now = self.clock.now_rfc3339();
 
         // Deterministic validation first (#753): a memory whose path anchors
         // have ALL left the tree is stale by a reproducible check, needing no

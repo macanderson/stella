@@ -258,6 +258,44 @@ class RoleConfig:
         )
 
 
+#: Stella's own truthy vocabulary (``crates/stella-cli/src/settings.rs``),
+#: plus its negations, so a match file and the agent it configures agree on
+#: what "true" means.
+_FLAG_TRUE = frozenset({"1", "true", "yes", "on"})
+_FLAG_FALSE = frozenset({"", "0", "false", "no", "off"})
+
+
+def declared_flag(value: Any) -> bool | None:
+    """A declared boolean, or ``None`` when the value does not declare one.
+
+    ``bool(value)`` is the wrong reader for a config flag: it answers ``True``
+    for the string ``"false"``, for the sole reason that it is not empty. A
+    seat spelled to run the staged pipeline would then run the bare loop — a
+    selector spelled to close must never open, which is the discipline
+    ``STELLA_TRUST_PROJECT`` paid for.
+
+    Returning ``None`` for anything unrecognised is what lets each caller
+    answer differently, and they do: the TOML loader refuses the template
+    outright, because a human wrote that word and meant something by it; the
+    JSON loader falls back to the closed default, because it is fed by
+    round-tripped machine output where a stray value is corruption rather than
+    intent.
+    """
+    if isinstance(value, bool):
+        return value
+    # JSON's spelling of a boolean when a client serialises one as a number.
+    # Any other int is a value that meant something else, and is not a flag.
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in _FLAG_TRUE:
+            return True
+        if word in _FLAG_FALSE:
+            return False
+    return None
+
+
 @dataclass(frozen=True)
 class Engine:
     """How one contestant's model calls are pinned — the full engine config.
@@ -284,10 +322,23 @@ class Engine:
     base_url: str | None = None
     #: Per-trial USD target handed to the agent, if it supports one.
     budget_usd: float | None = None
-    #: Output-token ceiling per step. Left ``None`` to take the agent's own
-    #: default — but see the Stella adapter's note on why a low cap plus high
-    #: effort is the classic way to buy reasoning that cannot fit an answer.
+    #: Output-token ceiling per step. Leave ``None`` to take the model's own
+    #: maximum, which is nearly always right. A model spends up to whatever
+    #: ceiling it is handed, so a cap pinned BELOW its real one cuts the step
+    #: off mid-reasoning and the call comes back ``length`` with no answer and
+    #: no tool call. That is what #2128 actually was: not effort overrunning a
+    #: budget the model was told about — it is not supposed to do that — but a
+    #: cap we chose without knowing the model's real ceiling. See the Stella
+    #: adapter's note in ``posture.py`` for the measurement.
     max_tokens: int | None = None
+    #: Run the agent's raw step loop instead of its staged pipeline. For Stella
+    #: that is ``--no-pipeline``, which settles triage, witness and verify at
+    #: once because all three ARE the pipeline. Declared on the engine rather
+    #: than exported at launch: the runner scrubs every ambient ``STELLA_*`` so
+    #: a host setting can never quietly reconfigure a seat, and which loop an
+    #: arm ran belongs in the match's published identity either way. Agents
+    #: with no pipeline ignore it, like the role overrides below.
+    bare_loop: bool = False
     #: Per-role overrides, keyed by a member of :data:`ROLES`.
     roles: dict[str, RoleConfig] = field(default_factory=dict)
 
@@ -347,6 +398,7 @@ class Engine:
             "base_url": self.base_url,
             "budget_usd": self.budget_usd,
             "max_tokens": self.max_tokens,
+            "bare_loop": self.bare_loop,
             "roles": {name: role.to_json() for name, role in self.roles.items()},
         }
 
@@ -363,7 +415,11 @@ class Engine:
         return cls(
             api=str(raw.get("api") or "openrouter"),
             model=str(raw.get("model") or ""),
-            reasoning=bool(raw.get("reasoning", True)),
+            # Same reader as `bare_loop`, and the same misreading avoided
+            # (#2334): `bool("false")` is True. The fallback is True, because
+            # `reasoning` defaults ON — "closed" for this field means the
+            # shipping configuration, not the off state.
+            reasoning=declared_flag(raw.get("reasoning", True)) is not False,
             effort=str(raw.get("effort") or "high"),
             base_url=(str(raw["base_url"]) or None) if raw.get("base_url") else None,
             budget_usd=(
@@ -372,6 +428,10 @@ class Engine:
             max_tokens=(
                 int(raw["max_tokens"]) if raw.get("max_tokens") not in (None, "") else None
             ),
+            # Closed on anything that does not declare a boolean: this side is
+            # fed by round-tripped machine output, so a value neither `true`
+            # nor `false` is corruption, and corruption must not select an arm.
+            bare_loop=declared_flag(raw.get("bare_loop")) is True,
             roles=roles,
         )
 
@@ -380,8 +440,12 @@ class Engine:
         """A one-line human description, e.g. ``glm-5.2 · xhigh · +2 roles``."""
         short = self.model.rsplit("/", 1)[-1] or "unset"
         think = self.effort if self.reasoning else "no-reasoning"
+        # Named before the roles: on a bare-loop arm the roles are inert, and a
+        # label reading "+2 roles" with no mention of the loop would advertise
+        # management stages that never ran.
+        loop = " · bare loop" if self.bare_loop else ""
         extra = f" · +{len(self.roles)} roles" if self.roles else ""
-        return f"{short} · {think}{extra}"
+        return f"{short} · {think}{loop}{extra}"
 
 
 @dataclass(frozen=True)

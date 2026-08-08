@@ -140,6 +140,17 @@ dimension) — and runs in CI like `stella context validate`.
 
 ### 4.2 Schema
 
+> **Generalized by doc:self-driving-missions (2026-08-08).** The
+> `[objective]`, `[bench]`, and `[promotion]` blocks below are re-based by
+> the mission layer — doc:self-driving-missions §3–§5 — which replaces the
+> single-metric objective with declared `[[dimension]]` blocks, generalizes
+> `[bench]` into the evaluator port (the arena fields survive verbatim as
+> `[evaluator.arenabench]`), and derives promotion guards from dimensions
+> instead of restating them. Where the two documents disagree on these
+> blocks, the mission document wins; everything else in this file is
+> unchanged and stays normative here. Nothing has shipped against
+> `schema = 1`, so this is a re-base, not a migration.
+
 ```toml
 schema = 1
 
@@ -694,6 +705,18 @@ append, never renumber.
    redact at the writer; the content-free gate's scope is unchanged.
 10. **One supervisor surface.** Campaign processes run under
     `stella daemon`; no parallel service-registration path may return.
+11. **Pre-registration bounds credit.** An experiment may confirm only the
+    dimension its hypothesis predicted, at no less than that dimension's
+    `min_step`; anything else observed is evidence for a new hypothesis,
+    never a win. (doc:self-driving-missions §8)
+12. **Baselines are measured, never asserted.** Every delta is computed
+    against a ledger measurement taken under the mission's own protocol; an
+    authored baseline is a claim to check, not an operand.
+    (doc:self-driving-missions §4)
+13. **A dimension's metric is declared by its evaluator, and validated.** A
+    mission naming a metric no evaluator declares refuses to validate —
+    parity is declared, not assumed, exactly as AGENTS.md invariant 8
+    treats providers. (doc:self-driving-missions §5)
 
 ---
 

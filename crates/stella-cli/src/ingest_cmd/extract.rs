@@ -637,12 +637,18 @@ fn default_basis(kind: RecordKind) -> TruthBasis {
 }
 
 /// The precedence a force implies, so conflicting records order deterministically.
+///
+/// Monotonic with [`Force::strength`], and a test pins that: `may` used to be
+/// stamped *below* `info` here, which read as "an informational note outranks a
+/// relevant one" everywhere precedence is consulted — silently, because the only
+/// consumer at the time was conflict detection, which asks whether two
+/// precedences are equal and never which is larger.
 fn precedence_for(force: Force) -> u32 {
     match force {
         Force::Must => 100,
         Force::Should => 40,
-        Force::Info => 20,
-        Force::May => 15,
+        Force::May => 20,
+        Force::Info => 15,
     }
 }
 

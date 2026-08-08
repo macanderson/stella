@@ -947,6 +947,12 @@ class MatchRunner:
             env["STELLA_BUDGET"] = str(engine.budget_usd)
         if engine.base_url:
             env["STELLA_BASE_URL"] = engine.base_url
+        if engine.bare_loop:
+            # Set here rather than inherited: `_base_environment` scrubs every
+            # ambient STELLA_* so a host export can never stand in for a seat's
+            # declared configuration. The adapter turns this into
+            # `stella run --no-pipeline`.
+            env["STELLA_NO_PIPELINE"] = "1"
         env.setdefault("STELLA_DISABLE_REFLECTION", "1")
 
         # Both packages must be importable by the Harbor subprocess: the

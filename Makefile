@@ -112,6 +112,16 @@ test-cli: ## Test stella-cli only (the shipping binary)
 test-protocol: ## Test stella-protocol only (shared types)
 	cargo test -p stella-protocol
 
+# The trace-replay learning harness (#2304, `doc:trace-replay-learning-harness`
+# §8). Deliberately NOT a `make gate` step: the assertions are ordinary in-crate
+# tests already covered by the gate's existing `test` step, and a target whose
+# job is to PRINT a report adds nothing as pass/fail — while every added step is
+# one more shared cell the Makefile, AGENTS.md and CONTRIBUTING.md must agree on.
+.PHONY: replay-learning
+replay-learning: ## Replay the synthetic months corpus and print what the learners built (#2304)
+	cargo test -p stella-cli --bin stella \
+	  memory::replay::tests::replay_learning_report -- --exact --nocapture
+
 .PHONY: record-golden
 record-golden: ## Re-record the golden replay trajectories (review the fixture diff!)
 	STELLA_REFRESH_GOLDEN=1 cargo test -p stella-pipeline --lib golden
@@ -454,6 +464,42 @@ reap-agents: ## List orphaned stella agents/tool-subprocesses idle 20m+ (dry run
 .PHONY: reap-agents-kill
 reap-agents-kill: ## Kill orphaned stella agents/tool-subprocesses idle 20m+ (asks first)
 	scripts/reap-agents.sh
+
+# The arena server is launched detached on purpose, so it outlives the terminal
+# that started it — and therefore accumulates. `kill-arena` sends SIGTERM, which
+# stops the server WITHOUT running serve()'s KeyboardInterrupt handler, so
+# in-flight matches keep running and keep writing their artifacts. Pass
+# `ARENA_ARGS=--cancel` for the SIGINT path that also cancels them. Both
+# scripts carry the full reasoning in their headers.
+.PHONY: kill-arena
+kill-arena: ## Stop every arenabench server (in-flight matches survive; ARENA_ARGS=--cancel to end them)
+	scripts/arena-kill.sh $(ARENA_ARGS)
+
+#
+# `ARENA_PORT` rather than a bare `PORT`: make inherits the environment as make
+# variables, and `PORT` is exported by enough dev tooling that the generic name
+# would silently pin a port nobody chose.
+.PHONY: run-arena
+run-arena: ## Launch a detached, Stella-wired arenabench server (ARENA_PORT= to pin; else first free from 8900)
+	scripts/arena-run.sh $(if $(ARENA_PORT),--port $(ARENA_PORT),) $(ARENA_ARGS)
+
+# The companion to kill-arena: that target deliberately spares every seat,
+# because a seat orphaned by stopping an arena is still grading normally. This
+# one is for a seat whose owner died for real. It judges liveness from the
+# process tree — ppid, CPU movement, and what is running inside the seat's own
+# containers — never from an arena's HTTP view, which cannot see a match
+# started by `arenabench run` at all (#2326).
+.PHONY: reap-seats
+reap-seats: ## List abandoned harbor benchmark seats and their containers (dry run)
+	scripts/reap-seats.sh --dry-run --verbose
+
+.PHONY: reap-seats-kill
+reap-seats-kill: ## Kill abandoned harbor seats and remove their task containers (asks first)
+	scripts/reap-seats.sh
+
+.PHONY: arena-scripts-test
+arena-scripts-test: ## Test the arena start/stop/reap scripts — argv self-match, ancestry, liveness (hermetic; not part of `gate`)
+	./scripts/test-arena-scripts.sh
 
 # The supply-chain step gates on the TOOL being present, not on its exit code:
 # a missing cargo-deny soft-skips with a message, but a real

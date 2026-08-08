@@ -219,6 +219,20 @@ packing with an honest drop report. Owns supersession and tombstones for the
 records it stores, because retention policy cannot live in a different database
 from the data it governs.
 
+Admission requires query-conditional evidence: an anchor the goal named, its
+graph adjacency, a term match distinctive against the corpus, or a similarity
+floor an embedder has declared semantically meaningful. The frame budget is a
+cap, never a quota — a recall where nothing qualifies returns zero frames, and
+every refusal is counted in the drop report (§5.5). Ranking orders the
+admissible; it never launders mere existence into relevance.
+
+Admission is strictly narrower than ranking, and domain overlap is where the
+two part. Overlap ranks, because a node tagged with the session's domains is
+plausibly nearer the work. It does not admit, because the scope callers pass
+is the workspace's whole domain vocabulary, so "overlaps the scope" is a
+property of the node — is it tagged at all — rather than of the query. An
+admission rung cannot be built on a predicate the query does not vary.
+
 ### 6.2 The frame
 
 The per-turn compiled artifact: what entered, in what order, why, at what cost,

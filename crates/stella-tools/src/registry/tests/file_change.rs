@@ -573,3 +573,126 @@ async fn stellas_own_state_directory_is_never_announced() {
     assert_eq!(reg.mutations_recorded() - before, 1);
     assert_eq!(reg.files_touched().len(), 1);
 }
+
+/// A shell call that creates thousands of files records a bounded number of
+/// them and reports the rest as a count.
+///
+/// Measured on Terminal-Bench `sqlite-with-gcov` (2026-08-08): one `tar xzf`
+/// produced 2,211 touches, and recording them took 659 seconds of a
+/// 900-second task budget. Every trial of that arm timed out, none of them
+/// because the model was slow — model time was 45-164s. Recording a touch
+/// journals a mutation, which on a bound work journal costs several `git`
+/// invocations, so the price is per touch and the ceiling has to be on the
+/// count rather than on the bytes.
+///
+/// The remainder is announced rather than dropped: a bound applied in silence
+/// is indistinguishable from a workspace that did not change.
+#[tokio::test]
+async fn a_bulk_extraction_records_a_bounded_number_of_touches_and_says_so() {
+    let (dir, reg, mut rx) = announcing_fixture();
+    let overflow = 40;
+    let bulk = crate::shell_touch::MAX_RECORDED_TOUCHES + overflow;
+
+    let before = crate::shell_touch::WorkspaceProbe::capture(dir.path());
+    let extracted = dir.path().join("vendored");
+    std::fs::create_dir_all(&extracted).unwrap();
+    for i in 0..bulk {
+        std::fs::write(extracted.join(format!("f{i}.c")), "int main(void){}\n").unwrap();
+    }
+    let after = crate::shell_touch::WorkspaceProbe::capture(dir.path());
+
+    reg.record_probe_delta(
+        &before,
+        &after,
+        "bash",
+        &serde_json::json!({ "command": "tar xzf vendor/src.tar.gz" }),
+        None,
+    );
+
+    let changes = drain_changes(&mut rx);
+    let (summaries, files): (Vec<_>, Vec<_>) = changes
+        .iter()
+        .partition(|change| change.0.starts_with("… "));
+
+    assert_eq!(
+        files.len(),
+        crate::shell_touch::MAX_RECORDED_TOUCHES,
+        "individually recorded touches must stop at the ceiling"
+    );
+    assert_eq!(
+        summaries.len(),
+        1,
+        "the withheld remainder is announced once"
+    );
+    assert!(
+        summaries[0]
+            .0
+            .contains(&format!("{overflow} further path(s)")),
+        "the summary states how many were withheld: {:?}",
+        summaries[0].0
+    );
+    assert!(
+        !summaries[0].4,
+        "the summary stands for many files, so it carries no diff"
+    );
+    assert_eq!(
+        reg.files_touched().len(),
+        crate::shell_touch::MAX_RECORDED_TOUCHES,
+        "the ledger is bounded with the stream, not behind it"
+    );
+}
+
+/// The `ignore_gitignore` setting reaches the shared probe tail: a registry
+/// built with the default policy never records gitignored churn, and the
+/// same churn under [`crate::shell_touch::IgnorePolicy::WalkAll`]
+/// (`"ignore_gitignore": "off"`) is recorded — proving the option plumbs
+/// from [`RegistryOptions`] through [`ToolRegistry::record_probe_delta`]
+/// rather than existing only on the walk.
+#[tokio::test]
+async fn the_probe_ignore_policy_reaches_the_recorded_delta() {
+    let dir = tempfile::tempdir().unwrap();
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["init", "--quiet"])
+        .status()
+        .expect("git must be runnable in the test environment");
+    assert!(status.success(), "git init failed");
+    std::fs::write(dir.path().join(".gitignore"), "target/\n").unwrap();
+
+    for (policy, expected) in [
+        (crate::shell_touch::IgnorePolicy::SkipIgnored, vec![]),
+        (
+            crate::shell_touch::IgnorePolicy::WalkAll,
+            vec!["target/debug/app.o".to_string()],
+        ),
+    ] {
+        let reg = ToolRegistry::with_backends_and_options(
+            dir.path().to_path_buf(),
+            None,
+            None,
+            RegistryOptions {
+                probe_ignore_policy: policy,
+                ..Default::default()
+            },
+        );
+        std::fs::remove_dir_all(dir.path().join("target")).ok();
+        let before = crate::shell_touch::WorkspaceProbe::capture_with(dir.path(), policy);
+        std::fs::create_dir_all(dir.path().join("target/debug")).unwrap();
+        std::fs::write(dir.path().join("target/debug/app.o"), "object\n").unwrap();
+        let after = crate::shell_touch::WorkspaceProbe::capture_with(dir.path(), policy);
+        reg.record_probe_delta(
+            &before,
+            &after,
+            "bash",
+            &serde_json::json!({ "command": "make" }),
+            None,
+        );
+        let touched: Vec<String> = reg
+            .files_touched()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(touched, expected, "policy {policy:?}");
+    }
+}
