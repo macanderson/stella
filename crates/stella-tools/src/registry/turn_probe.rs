@@ -37,8 +37,10 @@ impl ToolRegistry {
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.bracket_opaque_calls
             .store(0, std::sync::atomic::Ordering::Relaxed);
-        let probe =
-            crate::shell_touch::WorkspaceProbe::capture_with(&self.root, self.probe_ignore_policy);
+        let probe = crate::shell_touch::WorkspaceProbe::capture_with(
+            &self.root,
+            self.probe_ignore_policy(),
+        );
         *self
             .workspace_probe
             .lock()
@@ -69,8 +71,10 @@ impl ToolRegistry {
         else {
             return;
         };
-        let after =
-            crate::shell_touch::WorkspaceProbe::capture_with(&self.root, self.probe_ignore_policy);
+        let after = crate::shell_touch::WorkspaceProbe::capture_with(
+            &self.root,
+            self.probe_ignore_policy(),
+        );
         // Attribution needs a cause. The probe exists to answer "what did the
         // opaque calls do?", so a bracket that dispatched no opaque call has
         // nothing to ask it — any delta it sees is foreign motion (a
