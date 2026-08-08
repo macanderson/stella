@@ -3,11 +3,13 @@
 use std::io::Write;
 use std::sync::Arc;
 
+use stella_core::ports::Clock;
 use stella_core::{EventSendError, EventSender};
 use stella_protocol::AgentEvent;
 use tokio::sync::mpsc;
 
 use crate::OutputFormat;
+use crate::runtime::WallClock;
 
 /// Trusted launcher-only sink for timeout-survivable stream-json telemetry.
 ///
@@ -147,7 +149,7 @@ pub(super) fn event_sender_for_run(
         match configured_durable_stream_path() {
             Ok(Some(path)) => {
                 return (
-                    ordered_durable_event_sender(sender, path.to_path_buf()),
+                    ordered_durable_event_sender(sender, path.to_path_buf(), Arc::new(WallClock)),
                     true,
                 );
             }
@@ -189,13 +191,25 @@ pub(super) fn pipeline_event_sender(events: &EventSender, format: OutputFormat) 
     })
 }
 
+/// The durable sink, and the point at which an event becomes a *line*.
+///
+/// The line carries this sink's own `ts` (#2111). The renderer publishes the
+/// same event to stdout a moment later and stamps its own, so the two copies
+/// differ by the persist — which is the truth, and is why the stamp is
+/// documented as "when this sink admitted the line" rather than "when the event
+/// happened". Nothing downstream may diff the two streams byte-for-byte; they
+/// are two recordings of one event, not two copies of one recording.
 fn ordered_durable_event_sender(
     sender: mpsc::UnboundedSender<AgentEvent>,
     path: std::path::PathBuf,
+    clock: Arc<dyn Clock>,
 ) -> EventSender {
     let ordering = Arc::new(std::sync::Mutex::new(()));
     EventSender::from_fn(move |event| {
-        let line = match serde_json::to_string(&event) {
+        // Read the clock before taking the ordering lock, not after: a stamp is
+        // the instant the sink *admitted* the event, and blocking behind another
+        // producer's write would attribute that wait to this event.
+        let line = match stella_protocol::stamped_line(&event, clock.now_ms()) {
             Ok(line) => line,
             Err(error) => {
                 terminate_stream_json(&format!("stream-json serialization failed: {error}"))
@@ -313,6 +327,16 @@ mod pipeline_sender_tests {
 mod durable_stream_tests {
     use super::*;
 
+    /// A [`Clock`] that never advances, so a durable line's bytes are a
+    /// function of the event alone and an assertion can pin them.
+    struct FixedClock(u64);
+
+    impl Clock for FixedClock {
+        fn now_ms(&self) -> u64 {
+            self.0
+        }
+    }
+
     struct SinkCheckingWriter {
         path: std::path::PathBuf,
         written: Vec<u8>,
@@ -374,6 +398,34 @@ mod durable_stream_tests {
     }
 
     #[test]
+    fn every_durable_line_is_anchored_to_wall_clock() {
+        // The evidence file is the only record a finished trial leaves. Without
+        // this key nothing in it can be placed on a clock, so an idle gap before
+        // a timeout is unmeasurable and the arena transcript has no offsets to
+        // render (#2111).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let (raw_tx, _renderer) = mpsc::unbounded_channel();
+        let sender = ordered_durable_event_sender(
+            raw_tx,
+            path.clone(),
+            Arc::new(FixedClock(1_754_582_400_123)),
+        );
+
+        sender
+            .send(AgentEvent::Stage {
+                name: stella_protocol::StageKind::Execute,
+            })
+            .unwrap();
+
+        let recorded = std::fs::read_to_string(&path).unwrap();
+        let line: serde_json::Value = serde_json::from_str(recorded.trim_end()).unwrap();
+        assert_eq!(line["ts"], serde_json::json!(1_754_582_400_123u64));
+        // Flattened, not nested: every existing reader still finds the tag.
+        assert_eq!(line["type"], serde_json::json!("stage"));
+    }
+
+    #[test]
     fn preflight_rejects_non_regular_sink() {
         let dir = tempfile::tempdir().unwrap();
         assert!(preflight_durable_stream_path(dir.path()).is_err());
@@ -384,7 +436,7 @@ mod durable_stream_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("events.jsonl");
         let (raw_tx, mut paused_renderer) = mpsc::unbounded_channel();
-        let sender = ordered_durable_event_sender(raw_tx, path.clone());
+        let sender = ordered_durable_event_sender(raw_tx, path.clone(), Arc::new(FixedClock(7)));
         let stage = AgentEvent::Stage {
             name: stella_protocol::StageKind::Execute,
         };
@@ -416,8 +468,8 @@ mod durable_stream_tests {
         // simulates timeout/cancellation after provider completion.
         let expected = format!(
             "{}\n{}\n",
-            serde_json::to_string(&stage).unwrap(),
-            serde_json::to_string(&usage).unwrap()
+            stella_protocol::stamped_line(&stage, 7).unwrap(),
+            stella_protocol::stamped_line(&usage, 7).unwrap()
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
         assert_eq!(

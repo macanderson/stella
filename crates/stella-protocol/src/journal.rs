@@ -53,16 +53,16 @@ use crate::event::AgentEvent;
 /// `docs/wire/agentevent.schema.json` and `docs/wire/agentevent.d.ts`, so the
 /// contract a consumer reads and the contract this module documents cannot
 /// drift apart.
+///
+/// Deliberately terse — it is repeated on all 39 variants of a generated
+/// artifact, and the reasoning behind each clause belongs in this module's docs
+/// and in the `.d.ts` banner, which a reader meets exactly once.
 pub const TS_DESCRIPTION: &str = "\
-Wall-clock instant at which the sink that wrote this line admitted it, in \
-milliseconds since the Unix epoch (UTC). Added by the sink, not by the event: \
-the same event written to two sinks carries each sink's own instant, and the \
-durable JSONL file is stamped at the moment it was persisted (which is before \
-the stdout copy, by construction). Read from the system clock, so it is NOT \
-monotonic — it can repeat or move backwards across an NTP step, and consumers \
-computing an elapsed offset must clamp a negative delta rather than trust it. \
-Absent on any line recorded before this field existed, and on any sink with no \
-clock to offer; a consumer must treat it as optional forever.";
+Wall-clock instant at which the sink wrote this line, in milliseconds since the \
+Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it \
+is optional forever — a line recorded before the field existed has none — and \
+it is not monotonic, so a consumer computing an elapsed offset must clamp a \
+negative delta rather than trust it.";
 
 /// One line of a stream-json journal: an [`AgentEvent`] and the `ts` its sink
 /// stamped on it.
