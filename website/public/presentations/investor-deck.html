@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>stella · oxagen investor deck</title>
-<meta name="description" content="AI that proves its own work, then trains on it. +15.7 points over Claude Code with the model held constant, on the full Terminal-Bench 2.1 suite — preregistered and reproducible. The witness protocol, the context system of record, and private models trained on your own proof.">
+<meta name="description" content="We don't sell tokens — we sell verified work. AI that proves its own work, then trains on it. +15.7 points over Claude Code with the model held constant, on the full Terminal-Bench 2.1 suite — preregistered and reproducible. Software first, then every vertical with a checkable outcome.">
 <meta property="og:title" content="stella · oxagen investor deck">
-<meta property="og:description" content="Verified done, not claimed done. Same model, same tasks: +15.7 points over Claude Code on Terminal-Bench 2.1 — preregistered, artifact-backed, reproducible.">
+<meta property="og:description" content="We don't sell tokens. Verified done, not claimed done. Same model, same tasks: +15.7 points over Claude Code on Terminal-Bench 2.1 — preregistered, artifact-backed, reproducible.">
 <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" fill="%230B0B0C"/><path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="%23FFB000"/></svg>'>
 <style>
 /* ==========================================================================
@@ -86,11 +86,20 @@ body {
 .slide {
   position: absolute; inset: 0; z-index: 1;
   display: none;
-  align-items: center;
-  padding: clamp(24px, 6vw, 96px);
+  align-items: flex-start;
+  /* Vertical padding is charged against the slide's usable height, so it is
+     scaled to the viewport height rather than its width — 6vw of top and
+     bottom gutter cost ~170px on a 900px screen and pushed dense slides off
+     the bottom. Horizontal gutter is unchanged. */
+  padding: clamp(18px, 3vh, 44px) clamp(24px, 6vw, 96px);
+  overflow-y: auto;
 }
 .slide.active { display: flex; }
-.frame { max-width: 1060px; margin: 0 auto; width: 100%; position: relative; z-index: 2; }
+/* `margin: auto` centres the frame while free space exists and collapses to
+   zero when it does not — so a slide taller than the viewport scrolls from the
+   top instead of having its heading and its conclusion centred off both edges.
+   `align-items: center` would clip them silently; this cannot. */
+.frame { max-width: 1060px; margin: auto; width: 100%; position: relative; z-index: 2; }
 
 .overline {
   font-size: 0.72em; font-weight: 500; letter-spacing: 0.14em;
@@ -269,7 +278,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 /* print: every slide on its own page */
 @media print {
   body { overflow: visible; background: #fff; color: #0B0B0C; }
-  .slide { display: flex !important; position: relative; page-break-after: always; min-height: 100vh; }
+  .slide { display: flex !important; position: relative; page-break-after: always; min-height: 100vh; overflow: visible; }
   .rise { opacity: 1 !important; transform: none !important; }
   .chrome, .navbtns, .progress, .texture, .starfield { display: none !important; }
 }
@@ -304,7 +313,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </svg>
   <span>stella · oxagen</span>
 </div>
-<div class="chrome counter" id="counter" aria-live="polite">01 / 18</div>
+<div class="chrome counter" id="counter" aria-live="polite">01 / 21</div>
 <div class="chrome hint">&larr; &rarr; or space to navigate</div>
 <div class="navbtns">
   <button id="prev" aria-label="previous slide">&larr;</button>
@@ -325,7 +334,8 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
       <div class="wordmark">stella<sup>*</sup></div>
     </div>
     <h1 class="rise">AI that proves its own work,<br><em>then trains on it.</em></h1>
-    <p class="lead rise">stella proves every step with a deterministic fail &rarr; pass witness. In our preregistered head-to-head on all 89 Terminal-Bench 2.1 tasks — same model in both arms — stella's harness beat Claude Code by 15.7 points, at $1.35 per solved task on stock open weights. Oxagen turns that verified work into private models you alone own. Nothing leaves your network.</p>
+    <p class="lead rise"><strong>stella is the engine. Oxagen is the control plane.</strong> stella proves every step with a deterministic fail &rarr; pass witness. In our preregistered head-to-head on all 89 Terminal-Bench 2.1 tasks — same model in both arms — stella's harness beat Claude Code by 15.7 points, at $1.35 per solved task on stock open weights. Oxagen turns that verified work into private models you alone own. Nothing leaves your network.</p>
+    <p class="kicker rise">We don't sell tokens. We sell verified work — and the models that produce it.</p>
   </div>
 </section>
 
@@ -334,7 +344,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   <div class="frame">
     <p class="overline rise">the problem</p>
     <h2 class="rise">Expensive. Opaque. <em>Unverifiable.</em></h2>
-    <p class="lead rise">Frontier AI is rented by the token, and agents never get tired — they retry until the budget is gone and hand you the invoice either way. What comes back is a black box's word for it: no trace, no attribution, no proof. The industry's fix is an LLM judging another LLM — a probabilistic grader on a probabilistic worker. The doubt compounds; it does not cancel.</p>
+    <p class="lead rise">Frontier AI is rented by the token, and agents never get tired — they retry until the budget is gone and invoice you either way. Cost attribution is broken: short of a custom instrumentation project, you cannot tie a dollar of AI spend to the value it returned. And what comes back is a black box's word for it — graded, if at all, by another probabilistic model, so the doubt compounds instead of cancelling.</p>
     <div class="tiles rise">
       <div class="tile"><div class="big">$37B</div><div class="cap">enterprise spend on AI in 2025 — tripled in one year, and the meter never stops</div></div>
       <div class="tile"><div class="big">45%</div><div class="cap">of test tasks where AI-generated code introduced OWASP Top&nbsp;10 vulnerabilities — across 80 tasks and 100+ models</div></div>
@@ -345,11 +355,28 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
       <div><span class="p">$</span> npm test</div>
       <div><span class="no">4 failed</span>, 2 passed</div>
     </div>
-    <p class="fine rise">Sources: Menlo Ventures, 2025: The State of Generative AI in the Enterprise (Dec 2025). Veracode, 2025 GenAI Code Security Report (Jul 2025), paraphrased.</p>
+    <p class="kicker rise">Nobody trusts the code AI ships — everybody LGTMs it anyway. The world named the result: <em>AI slop</em> — earned by shipping agents with no definition of done.</p>
+    <p class="fine rise">Sources: Menlo Ventures, State of Generative AI in the Enterprise (Dec 2025); Veracode, GenAI Code Security Report (Jul 2025), paraphrased.</p>
   </div>
 </section>
 
-<!-- 03 · the trap -->
+<!-- 03 · the origin -->
+<section class="slide" aria-label="the origin: a thesis test, and the agent that lied about its work">
+  <div class="frame">
+    <p class="overline rise">the origin</p>
+    <h2 class="rise">I built stella with AI &mdash; <em>and it lied to me.</em></h2>
+    <p class="lead rise">It began as a thesis test, not a company: whatever can be handled deterministically should be, by a tool with a strict IO contract — the model asked only for what no tool can do. The motive was economics, so the core shipped with no IO and protocol-driven wire contracts.</p>
+    <div class="steps rise">
+      <div class="step"><span class="n">1</span><span><span class="t">The thesis held.</span><br><span class="d">Deterministic tools took the deterministic work. Token spend fell; capability did not.</span></span></div>
+      <div class="step"><span class="n">2</span><span><span class="t">Then I caught the agent claiming work it had not done.</span><br><span class="d">Complete, it said — with the test never run, the file never saved. Routinely, and confidently.</span></span></div>
+      <div class="step"><span class="n">3</span><span><span class="t">So "done" stopped being the model's opinion.</span><br><span class="d">Nothing closes until an independent oracle flips a test from fail to pass on real evidence.</span></span></div>
+      <div class="step"><span class="n">4</span><span><span class="t">And then the side effect nobody planned.</span><br><span class="d">Every verified run is a trace pre-labeled with its outcome — agent training's scarcest asset.</span></span></div>
+    </div>
+    <p class="kicker rise">The verification we built to stop being lied to turned out to be a data factory. That is the platform.</p>
+  </div>
+</section>
+
+<!-- 04 · the trap -->
 <section class="slide" aria-label="the trap: your traces are the asset">
   <div class="frame">
     <p class="overline rise">the trap</p>
@@ -360,7 +387,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 04 · the invention -->
+<!-- 05 · the invention -->
 <section class="slide" aria-label="the invention: the witness protocol and the oracle flip">
   <div class="frame">
     <p class="overline rise">the invention</p>
@@ -376,7 +403,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 05 · the proof -->
+<!-- 06 · the proof -->
 <section class="slide" aria-label="the proof: same model, same tasks, 15.7 points ahead of claude code">
   <div class="frame">
     <p class="overline rise">the proof</p>
@@ -417,7 +444,23 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 06 · self-labelling data -->
+<!-- 07 · the slope -->
+<section class="slide" aria-label="the slope: stella builds stella, and the self-improvement mechanisms ship today">
+  <div class="frame">
+    <p class="overline rise">the slope</p>
+    <h2 class="rise">stella <em>builds stella.</em></h2>
+    <p class="lead rise">This repository's development loop is agent-first: stella does the work, the witness protocol gates it, and a human reviews the result. The mechanisms that make it better each cycle are shipped features with tests and storage schemas behind them — not a roadmap slide.</p>
+    <div class="tiles rise">
+      <div class="tile"><div class="name">It writes its own skills</div><div class="cap">recurring lessons mined from its own post-turn reflections auto-promote into versioned skill files, which it then selects from on later tasks</div></div>
+      <div class="tile"><div class="name">It builds its own tools</div><div class="cap">a capability-gap detector authors new tools, and each one must pass a capability witness proving it is a genuinely new capability before the adoption ledger accepts it</div></div>
+      <div class="tile"><div class="name">It checks whether that helped</div><div class="cap">an A/B control withholds recalled context on a share of turns, so a gain is measured against a control rather than assumed — the loop can tell improvement from noise</div></div>
+    </div>
+    <p class="kicker rise">The point is not any single benchmark number. The point is the slope: the system improves itself, and the commit history is the audit trail.</p>
+    <p class="fine rise">All three mechanisms are in the open-source tree and reviewable today: skill promotion in <code>stella-core/src/skills.rs</code> and <code>stella-cli/src/memory/learning.rs</code>; the tool foundry in <code>stella-cli/src/tool_foundry.rs</code> with its capability witness in <code>stella-tools/src/foundry_witness.rs</code> and its adoption ledger at store schema v20; the recall control in <code>stella-cli/src/agent/skill_usage.rs</code>.</p>
+  </div>
+</section>
+
+<!-- 08 · self-labelling data -->
 <section class="slide" aria-label="self-labelling training data">
   <div class="frame">
     <p class="overline rise">the byproduct</p>
@@ -432,7 +475,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 07 · product -->
+<!-- 09 · product -->
 <section class="slide" aria-label="the product: stella does the work, oxagen governs it">
   <div class="frame">
     <p class="overline rise">the product</p>
@@ -456,10 +499,11 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
       <div class="lstep"><span class="n">4</span><span class="t">Compound</span><div class="d">the training pipeline this raise stands up turns those traces into your private model.</div></div>
     </div>
     <p class="kicker rise">Deterministic first, model last. Steps 1&ndash;3 ship today; step 4 is what $2M builds.</p>
+    <p class="fine rise">Two sides, one loop: the open engine drives bottom-up adoption among the engineers who choose their own tools, and the commercial control plane is what their enterprise pays for. Nobody ships the second half out of the box today.</p>
   </div>
 </section>
 
-<!-- 08 · the moat, examined -->
+<!-- 10 · the moat, examined -->
 <section class="slide" aria-label="the moat examined: what compounds for oxagen if no data leaves the network">
   <div class="frame">
     <p class="overline rise">the moat, examined</p>
@@ -474,24 +518,40 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 09 · the payoff -->
-<section class="slide" aria-label="open weight economics, measured">
+<!-- 11 · we don't sell tokens -->
+<section class="slide" aria-label="we don't sell tokens: the incentive inversion and the measured economics">
   <div class="frame">
-    <p class="overline rise">the payoff</p>
-    <h2 class="rise">Open-weight economics, <em>measured.</em></h2>
-    <p class="lead rise">The gap to the frontier has collapsed while open weights cost a fraction to run. The base model is now a commodity you build on — the ceiling is your data. We measured what that buys today, before any fine-tuning.</p>
+    <p class="overline rise">the business we are in</p>
+    <h2 class="rise">We don't <em>sell tokens.</em></h2>
+    <p class="lead rise">A frontier vendor's revenue is your consumption — every retry is their upside. Ours is the inverse. stella is free and bring-your-own-key: the agent is not the meter. We are paid for verified outcomes and the private models that produce them, so every token the routing takes off your bill is a feature, not lost revenue.</p>
+    <p class="lead rise muted">That routing is the founding thesis, priced: deterministic tools do deterministic work at zero inference, models tuned on your traces do the routine work, frontier models only where novelty earns them.</p>
     <div class="tiles four rise">
-      <div class="tile"><div class="big">$1.35</div><div class="cap">per solved task — full Terminal-Bench 2.1 run on a stock open-weight model, inference only (2026-07-31)</div></div>
-      <div class="tile"><div class="big">8.04% &rarr; 1.70%</div><div class="cap">how far the best open model trailed the best closed model, one year later</div></div>
-      <div class="tile"><div class="big">~1/27th</div><div class="cap">the API cost of an open frontier-class model at launch (DeepSeek-R1 vs o1)</div></div>
+      <div class="tile"><div class="big">$1.35</div><div class="cap">per solved task — full Terminal-Bench 2.1 run on a stock open-weight model, inference only, before any fine-tuning (2026-07-31)</div></div>
+      <div class="tile"><div class="big">~1/27th</div><div class="cap">the API list price of an open frontier-class model at launch (DeepSeek-R1 vs o1)</div></div>
+      <div class="tile"><div class="big">~90%</div><div class="cap">target cost reduction against a frontier-only stack at equal or better verified quality <span class="chip">target — end-to-end measurement is a funded milestone</span></div></div>
       <div class="tile"><div class="big">0 bytes</div><div class="cap">of your data crossing the wire to a frontier lab</div></div>
     </div>
-    <p class="kicker rise">Why now: quality is up, cost is down, and enterprises demand control. The window is open.</p>
-    <p class="fine rise">Sources: our run tb21-hh10-20260731 (methodology linked from the proof slide); Stanford HAI AI Index 2025; DeepSeek-R1 vs OpenAI o1 API pricing, Jan 2025.</p>
+    <p class="kicker rise">Every execution records its own cost, tokens, and outcome — the cost-to-value question, answered per run.</p>
+    <p class="fine rise">The ~90% is a design target, not a measurement: no valid paired frontier-cost measurement exists yet, and producing one is named in the use of funds. Measured figures: run tb21-hh10-20260731 (methodology on the proof slide). Sources: Stanford HAI AI Index 2025 — best open model trailed best closed by 8.04% in 2024, 1.70% a year later; DeepSeek-R1 vs o1 API pricing, Jan 2025.</p>
   </div>
 </section>
 
-<!-- 10 · market -->
+<!-- 12 · the expansion ladder -->
+<section class="slide" aria-label="software first, then every vertical with a checkable outcome">
+  <div class="frame">
+    <p class="overline rise">the expansion</p>
+    <h2 class="rise">Software first &mdash; then <em>every vertical with a checkable outcome.</em></h2>
+    <p class="lead rise">The loop needs one thing: an oracle that can say pass or fail without asking a human. Wherever that exists, this engine works. We enter where oracles are free and instant, and climb toward where they are expensive but already built.</p>
+    <div class="steps rise">
+      <div class="step"><span class="n">1</span><span><span class="t">Wedge &mdash; software engineering.</span><br><span class="d">The oracle is free, instant, and already running: tests, compilers, type checkers, benchmarks.</span></span></div>
+      <div class="step"><span class="n">2</span><span><span class="t">Rung two &mdash; engine builders and optimizers.</span><br><span class="d">Compilers, databases, CI/CD, simulation — industries that already maintain their own benchmark suites.</span></span></div>
+      <div class="step"><span class="n">3</span><span><span class="t">Rung three &mdash; robotics and physical systems.</span><br><span class="d">The oracle is a simulator, and the digital twin is already that industry's standard practice.</span></span></div>
+    </div>
+    <p class="kicker rise">The engine does not change between rungs. <em>stella-core has no IO and speaks protocol-driven wire contracts</em> — a vertical is an adapter, never a rewrite. That is invariant #1 in the repository, and CI fails the build when it breaks.</p>
+  </div>
+</section>
+
+<!-- 13 · market -->
 <section class="slide" aria-label="the market">
   <div class="frame">
     <p class="overline rise">the market</p>
@@ -506,7 +566,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 11 · business model -->
+<!-- 14 · business model -->
 <section class="slide" aria-label="business model and go to market">
   <div class="frame">
     <p class="overline rise">the business model</p>
@@ -522,7 +582,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 12 · competition -->
+<!-- 15 · competition -->
 <section class="slide" aria-label="competition: agents, labs, open harnesses, fine-tune platforms">
   <div class="frame">
     <p class="overline rise">the competition</p>
@@ -539,7 +599,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 13 · team -->
+<!-- 16 · team -->
 <section class="slide" aria-label="the team">
   <div class="frame">
     <p class="overline rise">the team</p>
@@ -562,7 +622,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 14 · traction and the ask -->
+<!-- 17 · traction and the ask -->
 <section class="slide" aria-label="traction and the ask">
   <div class="frame">
     <p class="overline rise">traction &amp; the ask</p>
@@ -578,7 +638,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
       <div class="ah">Raising a <em>$2M SAFE</em> at an <em>$18M post-money cap</em> &mdash; 11.1% dilution</div>
       <ul>
         <li>Four people and the pipeline: a founding engineer, GTM for enterprise, GTM for public sector, and the training infrastructure for continuous private-model delivery — an 18-month plan.</li>
-        <li>An audited public Terminal-Bench row — the attestation path is already written into our protocol — with the model gap closed on frontier-class open weights.</li>
+        <li>An audited public Terminal-Bench row — submission requires four verified runs of the full suite, and funding that submission is milestone one — with the model gap closed on frontier-class open weights. We intend to own the adjacent agent benchmarks too.</li>
         <li>3&ndash;5 paid pilots in regulated and government accounts; both design partnerships converted to paid contracts.</li>
         <li>The seed prices on: the first customer-trained model in production beating its stock base on that customer's own tasks, reference logos in government, and $1M ARR run-rate.</li>
       </ul>
@@ -586,7 +646,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 15 · close -->
+<!-- 18 · close -->
 <section class="slide cover" aria-label="close">
   <div class="frame">
     <div class="lockup rise">
@@ -598,7 +658,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
       </svg>
     </div>
     <h2 class="rise">verified done,<br>not claimed done.</h2>
-    <p class="lead rise">Coding agents are the wedge — the hardest, most valuable traces in software. The loop — act, verify, learn — is not about code, and we earn the right to the rest.</p>
+    <p class="lead rise">We don't sell tokens. We sell verified work, and the models that produce it. Software is the wedge — the hardest, most valuable traces there are, and the only place the oracle is free. The loop underneath it — act, verify, learn — is not about code, and every vertical with a checkable outcome is downstream of getting this one right.</p>
     <p class="lead rise links">
       <a href="https://stella.oxagen.sh">stella.oxagen.sh</a> &nbsp;·&nbsp;
       <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a> &nbsp;·&nbsp;
@@ -607,7 +667,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 16 · appendix A1: the run behind the number -->
+<!-- 19 · appendix A1: the run behind the number -->
 <section class="slide" aria-label="appendix A1: benchmark methodology">
   <div class="frame">
     <p class="overline rise">appendix <span class="idx">· A1 · for technical diligence</span></p>
@@ -625,7 +685,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 17 · appendix A2: what the flip does not prove -->
+<!-- 20 · appendix A2: what the flip does not prove -->
 <section class="slide" aria-label="appendix A2: witness protocol failure modes and guards">
   <div class="frame">
     <p class="overline rise">appendix <span class="idx">· A2 · for technical diligence</span></p>
@@ -640,7 +700,7 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
   </div>
 </section>
 
-<!-- 18 · appendix A3: licensing and IP -->
+<!-- 21 · appendix A3: licensing and IP -->
 <section class="slide" aria-label="appendix A3: licensing and intellectual property">
   <div class="frame">
     <p class="overline rise">appendix <span class="idx">· A3 · for counsel</span></p>

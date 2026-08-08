@@ -90,3 +90,91 @@ context. Details: `BENCHMARK_METHODOLOGY.md`.
 7. **Oracle-coverage percentage** (appendix A2): deliberately unnumbered — no
    measured figure exists. The slide says so and commits to per-pilot
    measurement. Do not add a number without a measurement behind it.
+
+---
+
+# Revision 2 — 2026-08-08, the v2.1 core message
+
+Source: `Oxagen-Stella-Investor-Deck-v2_1.pptx` (founder-authored, 9 slides).
+Its **narrative** was merged into this deck; its **benchmark arithmetic was
+not**, for the reasons in the rebuild section above.
+
+## Rejected from the PPTX
+
+| PPTX claim | Disposition |
+|---|---|
+| "Latest 2-run average: **97.81%** of tasks solved. The current public leaderboard leader sits near 89%." (slide 6) | **Not imported.** 97.81% appears in no run artifact, and 89% contradicts the tbench.ai row already cited here (83.8% ± 1.2%). The proof slide keeps the measured 58/89 = 65.2%. |
+| "We sell **90% cost reductions**" as a headline assertion (cover) | **Imported only as a labelled target.** The PPTX's own slide 7 calls it *"Target economics"*, which is a different claim than a measurement — so it ships on the "we don't sell tokens" slide with an on-slide `target` chip, beside the measured $1.35/solved task, and the footnote states plainly that no valid paired frontier-cost measurement exists yet. |
+| "The frontier labs deserve it" (slide 2) | Reframed to blame the design decision, not the vendors: "earned by shipping agents with no definition of done." stella is BYOK on those same providers. |
+
+## Imported from the PPTX
+
+- **New slide — "the origin" (03):** the founder's thesis test, the discovery
+  that the agent was claiming work it had not done, the oracle flip as the fix,
+  and pre-labeled traces as the unplanned side effect. The deck previously
+  asserted the witness protocol as a design; it now tells how it was found.
+- **New slide — "the slope" (07): "stella builds stella."** The three
+  self-improvement mechanisms, each verified present in the tree before being
+  claimed: skill auto-promotion (`stella-core/src/skills.rs`,
+  `stella-cli/src/memory/learning.rs`), the tool foundry with its capability
+  witness and adoption ledger (`stella-cli/src/tool_foundry.rs`,
+  `stella-tools/src/foundry_witness.rs`, store schema v20), and the A/B recall
+  control (`stella-cli/src/agent/skill_usage.rs`). Framed as the PPTX frames
+  it — "the point is the slope, not the number" — with no number attached.
+- **New slide — "we don't sell tokens" (11):** the incentive inversion, which
+  is the PPTX's core message and had no home in the previous deck. Replaces
+  "the payoff" and absorbs its measured economics tiles.
+- **New slide — "software first, then every vertical with a checkable
+  outcome" (12):** the three-rung ladder (software → engine builders and
+  optimizers → robotics), each rung named by the oracle it already has. The
+  closing claim that the engine ports unchanged is backed by architecture
+  invariant #1, which `scripts/check-invariants.sh` enforces in `make gate` —
+  a market claim with a CI gate behind it. Previously one sentence on the
+  close slide.
+- **Problem slide (02):** broken cost attribution added as the setup, answered
+  on slide 11 by per-execution cost/token/outcome recording. Plus the PPTX's
+  sharpest line — nobody trusts the code AI ships, everybody LGTMs it anyway —
+  and the "AI slop" framing.
+- **Cover:** "stella is the engine. Oxagen is the control plane." and the
+  positioning line "We don't sell tokens. We sell verified work — and the
+  models that produce it."
+- **Product slide (09):** the two-sided motion — open engine drives bottom-up
+  adoption, commercial control plane is what the enterprise buys.
+- **Ask slide (17):** leaderboard submission requires four verified runs, named
+  as milestone one.
+
+Deck length: 18 slides → **21** (18 core + 3 diligence appendices).
+
+## Layout defect found and fixed (pre-existing)
+
+`.slide` combined `display:flex; align-items:center` with `body{overflow:hidden}`,
+so any slide taller than the viewport had its content centred **off both
+edges** — heading and conclusion clipped while the middle still looked
+designed. Measured at 1440×900, five slides were losing content this way,
+including the proof slide, whose `<h2>` and overline were both off-screen.
+
+Two changes, no content removed:
+
+- `.frame` now uses `margin: auto` instead of the container's
+  `align-items: center`. An auto cross-axis margin centres while free space
+  exists and collapses to zero when it does not, so an over-tall slide starts
+  at the top and scrolls rather than clipping. `.slide` gains `overflow-y:auto`
+  (and `overflow:visible` under `@media print`).
+- Vertical padding moved from `clamp(24px,6vw,96px)` to `clamp(18px,3vh,44px)`
+  — it is charged against the slide's usable height, so scaling it to viewport
+  *width* cost ~170px of vertical room on a 900px screen.
+
+Every slide was then re-measured over CDP. Slides 2, 6, 15 and 20 still exceed
+900px and scroll a little (17px, 195px, 51px, 57px); all four keep their
+heading, lead and argument above the fold, and only footnote tails fall below
+it. Slides 6, 15 and 20 are pre-existing density from revision 1 and their
+content was deliberately left intact — slide 6's overflow is the benchmark
+methodology disclosure.
+
+## Flag added for founder verification
+
+8. **The ~90% cost-reduction target** ("we don't sell tokens" slide): shipped
+   with an on-slide `target` chip and a footnote saying no paired measurement
+   exists. Either ratify it as the stated target or replace it with a measured
+   figure once a like-for-like frontier-cost comparison is run. Do not let the
+   chip be dropped while the number stays.
