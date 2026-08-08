@@ -86,9 +86,10 @@ impl RepoStructurePort for GitRepoStructure {
             _ => String::new(),
         };
         // Read-only like the system-prompt seam: renders only from an
-        // EXISTING index (never builds one inline), is bounded and
-        // byte-stable for a given index state, and simply appears once the
-        // session's background graph build has landed.
+        // EXISTING index (never builds one inline), is bounded, and is
+        // byte-stable for a given index and top-level tree state. The
+        // graph-backed map appears once the session's background graph build
+        // has landed; until then it falls back to a bounded top-level listing.
         compose_structure_summary(
             tree,
             stella_tools::overview::render_orientation_block(&self.root),
