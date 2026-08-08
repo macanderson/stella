@@ -245,7 +245,7 @@ impl GitCli {
     /// stderr into stdout, so any of that chatter lands inside the value the
     /// caller is about to parse. A branch name is the sharp case: `rev-parse
     /// --abbrev-ref HEAD` plus one hint becomes a "branch" that git rejects as
-    /// `fatal: invalid refspec` when [`RepoBackend::push`] builds a refspec
+    /// `fatal: invalid refspec` when [`RepoBackend::push_branch`] builds a refspec
     /// from it. `verify` already moved its own reads to stdout-only for exactly
     /// this reason; these call sites had not.
     ///

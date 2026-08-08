@@ -2185,7 +2185,7 @@ impl<'a> Engine<'a> {
     /// no-tool shape that does NOT finish the turn (up to
     /// `driver::truncation::MAX_LENGTH_CONTINUATIONS` times): the model was
     /// cut off, not done, so the step is recorded and the turn continues with
-    /// [`LENGTH_CONTINUATION_NUDGE`]. `length_continuations` is the turn's
+    /// [`LENGTH_CONTINUATION_NUDGE`](truncation::LENGTH_CONTINUATION_NUDGE). `length_continuations` is the turn's
     /// running count ([`TurnState`]'s, threaded rather than owned so the
     /// bound survives across steps).
     async fn dispatch_completion(
@@ -2551,7 +2551,7 @@ type SpeculationFuture<'a> = Pin<Box<dyn Future<Output = SpeculationPool> + 'a>>
 
 /// Prefix of the overflow summarizer's marker message
 /// ([`Engine::summarize_overflow_span`]). Shared with
-/// [`recent_call_records`]: the marker is User-role on the wire, but it is
+/// [`recent_call_records`](loop_evidence::recent_call_records): the marker is User-role on the wire, but it is
 /// NOT a real user turn and must not act as a loop-detection window
 /// boundary.
 pub(crate) const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";

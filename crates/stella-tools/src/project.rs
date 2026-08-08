@@ -418,7 +418,7 @@ fn test_command(
 
 /// Resolve `build_project`'s or `run_tests`'s command line for the
 /// registry's `command.started` policy chain, mirroring
-/// [`crate::scripts::resolve_command_for_gate`] — best-effort: `None` (no
+/// [`crate::scripts`]'s private `gate::resolve_command_for_gate` — best-effort: `None` (no
 /// gating from here) when the index composes nothing, in which case the
 /// tool itself returns the named error. An explicit `command` override also
 /// resolves to `None`: the registry reads that straight off the input, so

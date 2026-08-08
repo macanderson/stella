@@ -268,7 +268,7 @@ fn search_client() -> Result<reqwest::Client, String> {
 /// `Arc`-internal, so handing out clones is free.
 ///
 /// The per-domain user agent was the only thing that varied between them, and
-/// it does not need to be baked into the client: [`fetch_url`] sends it as a
+/// it does not need to be baked into the client: [`fetch_raw`] sends it as a
 /// per-request header, which overrides this default and, like the default,
 /// carries across redirects.
 fn client_for(policy: &Arc<EgressPolicy>) -> Result<reqwest::Client, String> {

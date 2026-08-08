@@ -230,7 +230,7 @@ fn shutting_down(state: &Arc<ServerState>) {
 /// operator sends from a terminal). Whichever arrives first resolves.
 ///
 /// On a non-Unix target only `Ctrl-C` exists, so that is the whole of it.
-/// Returning a future rather than installing anything eagerly keeps [`serve`]
+/// Returning a future rather than installing anything eagerly keeps [`serve`](crate::server::serve)
 /// the only place with a process-wide side effect.
 pub(crate) async fn termination_signal() {
     #[cfg(unix)]

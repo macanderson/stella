@@ -72,7 +72,7 @@ const GREP_CMDS: &[&str] = &["grep", "egrep", "fgrep", "rg", "ripgrep", "ag"];
 /// pattern out of the common command shapes, returning each word already
 /// unquoted. NOT a shell parser: it respects `'…'` and `"…"` (so a pattern or
 /// path with spaces stays one word) and preserves backslash escapes like
-/// `\|` (so an alternation survives into [`is_symbol_shaped`]); unquoted
+/// `\|` (so an alternation survives into [`is_symbol_shaped`](crate::code_map::is_symbol_shaped)); unquoted
 /// operators (`&&`, `||`, `|`, `;`, `&`) come back as their own words to
 /// bound a scan — including when attached to a word, so `cd /app; ls` yields
 /// the target `/app`, not the unresolvable `/app;` a paid bench trial saw

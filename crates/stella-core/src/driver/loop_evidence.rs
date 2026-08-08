@@ -126,13 +126,13 @@ pub(super) fn recent_call_records<'a>(
 /// construction on two real providers — poisoning the id on the first step
 /// whose first call differs, and keeping it poisoned for the rest of the turn.
 ///
-/// Name and input are exactly the fields [`loop_detect::same_record`] already
+/// Name and input are exactly the fields `loop_detect::same_record` already
 /// requires to match before two records are "the same", so widening the key
 /// with them cannot merge two calls the detector would have distinguished. It
 /// only stops two UNRELATED calls that happened to share an ordinal from being
 /// treated as one.
 ///
-/// Deliberately not positional: [`Engine::apply_overflow_summary`] splices a
+/// Deliberately not positional: [`Engine::apply_overflow_summary`](super::Engine::apply_overflow_summary) splices a
 /// span of messages down to a single summary, so any index-derived key would
 /// silently re-point surviving results at another call's evidence after the
 /// first overflow — a WRONG identity, which is far worse than none.
