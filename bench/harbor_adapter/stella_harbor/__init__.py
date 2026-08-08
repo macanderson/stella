@@ -120,8 +120,9 @@ from .stream_envelope import (
     _stream_to_envelope,
     _sum_step_usage,  # noqa: F401 — re-exported for tests/test_adapter.py
 )
-from .stream_release import communicate_with_release, journal_reports_completion
+from .stream_release import journal_reports_completion
 from .telemetry_export import PRIVATE_TELEMETRY_DIR, export_private_telemetry
+from .timeout_reap import exec_with_agent_reap
 from .turn_budget import (
     TURN_BUDGET_ENV as _TURN_BUDGET_ENV,
 )
@@ -693,8 +694,8 @@ async def _secure_exec_with_credential_fd(
         if callable(test_hook):
             return await test_hook(command=command, env=env, stdin=bytes(wire))
 
-        compose = _compose_base_argv(environment)
-        compose.extend(["exec", "-T"])
+        compose_base = _compose_base_argv(environment)
+        compose = [*compose_base, "exec", "-T"]
 
         cwd = getattr(environment.task_env_config, "workdir", None)
         if cwd:
@@ -726,14 +727,9 @@ async def _secure_exec_with_credential_fd(
                 "selected provider credential remains in Docker's host environment"
             )
 
-        process = await asyncio.create_subprocess_exec(
-            *compose,
-            env=host_env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        return await exec_with_agent_reap(
+            compose, compose_base, host_env, wire, completion_probe, _INSTALL_PATH
         )
-        return await communicate_with_release(process, wire, completion_probe)
     finally:
         for index in range(len(wire)):
             wire[index] = 0

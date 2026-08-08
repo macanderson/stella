@@ -91,14 +91,16 @@ fi
 if [ "$ARM" = "on" ]; then
   python3 - "$TB_MODEL" "$AUTHOR" <<'PY' || exit 1
 import sys
-from stella_harbor.posture import _validated_witness_author
+from stella_harbor.posture import _validated_verifier
 
 try:
-    author = _validated_witness_author(sys.argv[1], sys.argv[2])
+    author = _validated_verifier(sys.argv[1], sys.argv[2])
 except Exception as exc:  # noqa: BLE001 - the message is the whole output
     print(f"FATAL: {exc}")
     raise SystemExit(1)
-if author is None:
+# `_validated_verifier` raises on an empty spec rather than returning None, so
+# this is belt-and-braces against a future loosening — never a silent pass.
+if not author:
     print("FATAL: the witness author resolved to nothing — this is the control arm")
     raise SystemExit(1)
 print(f"witness author accepted: {author}")

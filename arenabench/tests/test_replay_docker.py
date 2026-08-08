@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -92,7 +91,9 @@ def bindable_root():
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_flip_lands_where_the_solution_actually_appeared(bindable_root: Path):
+def test_flip_lands_where_the_solution_actually_appeared(
+    bindable_root: Path, wait_for_snapshots
+):
     jobs = bindable_root / "jobs"
     trial = jobs / "seat" / "demo__RpL1"
     (trial / "agent").mkdir(parents=True)
@@ -117,12 +118,28 @@ def test_flip_lands_where_the_solution_actually_appeared(bindable_root: Path):
         )
         sup.start()
         try:
-            time.sleep(5)  # snapshots taken while unsolved
+            # Every wait below is on the manifest, never on the clock: a
+            # capture costs whatever the host charges for `docker commit`, and
+            # a fixed sleep sized from `interval` is a bet on that price that
+            # a loaded host wins (#2114). See `_wait_for_snapshots`.
+            wait_for_snapshots(trial, 2, what="of the unsolved workspace")
             _sh("docker", "exec", name, "sh", "-c", "echo done > /app/solution.txt")
             solved_at = len(load_manifest(trial))
-            time.sleep(5)  # snapshots taken after solving
+            # One capture may already have been in flight when the solution
+            # landed, so entry `solved_at` might predate it — but the
+            # supervisor captures on a single thread, so `solved_at + 1`
+            # started afterwards and definitely contains it. Two entries is
+            # therefore the smallest wait that puts a passing snapshot in the
+            # manifest.
+            wait_for_snapshots(trial, solved_at + 2, what="of the solved workspace")
+            finished_at = len(load_manifest(trial))
             (trial / "result.json").write_text('{"reward": 1}', encoding="utf-8")
-            time.sleep(3)
+            # `result.json` is how the supervisor learns a trial ended: it
+            # takes one last snapshot — the graded state, which the interval
+            # will rarely have landed on — and retires the trial. That entry
+            # is also what keeps the flip off the end of the manifest, so
+            # `wasted_elapsed` has something to measure.
+            wait_for_snapshots(trial, finished_at + 1, what="of the graded state")
         finally:
             sup.stop(timeout=20)
     finally:
