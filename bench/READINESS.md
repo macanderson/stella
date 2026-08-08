@@ -444,7 +444,7 @@ than clearing it — 16384 → 32000 changed which trials truncated, and 64000
 |---|---|---|---|
 | `params.max_tokens` | 32,000 | **64,000** (the model's ceiling) | this posture |
 | `EngineConfig::model_timeout` | 600s | **816s** | 60s above the longest rewarded Arm B step (756s) |
-| `--turn-budget` | unwired; 840s by hand on the box | **per-trial, from Harbor's own agent timeout −60s** | the adapter, which previously had no way to learn the deadline |
+| `--turn-budget` | unwired; 840s by hand on the box | **per-trial, from Harbor's own agent timeout −60s** | the adapter, which now discovers that timeout from the trial itself (#2135) |
 
 The rule setting all three is the same, and it is the only one that makes a
 head-to-head mean anything: **never be the side that stops first.** A ceiling
