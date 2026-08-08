@@ -281,7 +281,7 @@ pub struct TurnState {
     /// ::factor` then falls back to the session's single seeded entry.
     pub(crate) calibration_model: Option<String>,
     /// The compaction budget this turn settled on, latched once the model is
-    /// known (#1841).
+    /// known and the calibration is correcting (#1841, #2133).
     ///
     /// The drift factor is re-recorded on every committed step, so recomputing
     /// the budget per step made the denominator MOVE mid-turn: a conversation
@@ -299,6 +299,11 @@ pub struct TurnState {
     /// would silently disable drift correction for exactly the sessions that
     /// route triage, verifier and worker to different models, while leaving
     /// every single-model test green.
+    ///
+    /// Also NOT latched while the fresh factor is the 1.0 identity — the
+    /// estimator's still-warming answer. Capturing it froze "no correction"
+    /// for entire 40-step turns while the calibration underneath converged on
+    /// 2×+ drift (#2133); see [`Self::latch_effective_budget`].
     pub(crate) effective_budget: Option<(u64, f64)>,
     /// The loop this turn's one stuck-loop steering warning was issued about
     /// (`driver::loop_escalation`), or `None` while the warning is unspent.
@@ -400,13 +405,26 @@ impl TurnState {
     }
 
     /// The compaction budget to use this step: `fresh` until the model is
-    /// known, then whatever was latched the first time it was (#1841).
+    /// known AND the calibration is actually correcting, then whatever was
+    /// latched the first time both held (#1841, #2133).
+    ///
+    /// A `fresh` factor of exactly 1.0 is the estimator's identity — the
+    /// literal answer [`crate::estimator::Calibration::effective_budget`]
+    /// gives while it is still below its warm-up sample floor, and the only
+    /// factor under which the budget equals the raw configured one. Capturing
+    /// it froze "no correction" for the whole turn: a fresh session's first
+    /// latched read lands one sample into a three-sample warm-up, so a
+    /// 40-step bench turn ran every compaction decision on factor 1.0 while
+    /// the map underneath it converged on 2×+ observed drift (#2133). The
+    /// identity is therefore served live and never captured — safe against
+    /// the mid-turn oscillation #1841 latched against, because the identity
+    /// cannot move — and the first corrected value is what settles.
     ///
     /// Takes the freshly-computed value rather than a closure so the caller
     /// keeps ownership of how it is derived — this type knows nothing about
     /// calibration beyond the model string it already carries.
     pub(crate) fn latch_effective_budget(&mut self, fresh: (u64, f64)) -> (u64, f64) {
-        if self.calibration_model.is_none() {
+        if self.calibration_model.is_none() || (self.effective_budget.is_none() && fresh.1 == 1.0) {
             return fresh;
         }
         *self.effective_budget.get_or_insert(fresh)
@@ -1300,7 +1318,7 @@ mod tests {
     }
 
     /// **Witness (#1841).** The compaction budget stops moving between steps
-    /// once the model is known.
+    /// once a corrected value lands.
     ///
     /// The drift factor is re-recorded on every committed step, so the budget
     /// was recomputed — and moved — on every one. A conversation parked just
@@ -1309,9 +1327,9 @@ mod tests {
     /// rewriting the earliest tool result: the worst position to mutate for
     /// the prompt cache, and exactly what that hysteresis exists to prevent.
     ///
-    /// The fresh values here descend the way a warming calibration's do.
+    /// The fresh values here move the way a warmed calibration's do.
     #[test]
-    fn the_compaction_budget_is_latched_once_the_model_is_known() {
+    fn the_compaction_budget_is_latched_once_the_calibration_corrects() {
         let mut state = TurnState::new(
             Vec::new(),
             BudgetGuard::new(BudgetMode::Observed, None, None),
@@ -1319,16 +1337,52 @@ mod tests {
         );
         state.calibration_model = Some("anthropic/claude-fable-5".to_string());
 
-        let first = state.latch_effective_budget((150_000, 1.0));
-        assert_eq!(first, (150_000, 1.0));
+        let first = state.latch_effective_budget((120_000, 1.25));
+        assert_eq!(first, (120_000, 1.25));
 
-        for moving in [(120_000, 1.25), (98_000, 1.53), (75_000, 2.0)] {
+        for moving in [(98_000, 1.53), (75_000, 2.0), (150_000, 1.0)] {
             assert_eq!(
                 state.latch_effective_budget(moving),
                 first,
                 "a factor update alone must not move the budget mid-turn"
             );
         }
+    }
+
+    /// **Witness (#2133).** A warming calibration's identity answer is served
+    /// live and never captured — the first CORRECTED value is what settles.
+    ///
+    /// A fresh session's first latched read lands one sample into the
+    /// three-sample warm-up, so the latch captured `(budget, 1.0)` and served
+    /// it for the rest of the turn: 40+ steps of a bench trial reported
+    /// `calibration_factor: 1.0` while the map underneath had long since
+    /// converged on 2×+ observed drift, and every compaction decision ran on
+    /// a fraction of the real context.
+    #[test]
+    fn a_warming_calibrations_identity_is_served_live_never_captured() {
+        let mut state = TurnState::new(
+            Vec::new(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            &EngineConfig::default(),
+        );
+        state.calibration_model = Some("claude-fable-5".to_string());
+
+        // Below the sample floor the estimator answers the identity.
+        assert_eq!(state.latch_effective_budget((150_000, 1.0)), (150_000, 1.0));
+        assert_eq!(state.latch_effective_budget((150_000, 1.0)), (150_000, 1.0));
+        assert!(
+            state.effective_budget.is_none(),
+            "the identity must not latch"
+        );
+
+        // Warm-up crossed: the first corrected value reaches the decision…
+        assert_eq!(
+            state.latch_effective_budget((100_000, 1.5)),
+            (100_000, 1.5),
+            "the first corrected value must be adopted, not the frozen identity"
+        );
+        // …and THAT is what settles: later drift no longer moves the budget.
+        assert_eq!(state.latch_effective_budget((75_000, 2.0)), (100_000, 1.5));
     }
 
     /// …and NOT before, because a value latched then is keyed on nothing.
@@ -1357,7 +1411,7 @@ mod tests {
         );
         assert!(state.effective_budget.is_none(), "and nothing was captured");
 
-        // The moment the first result lands, the next value sticks.
+        // The moment the first result lands, the next CORRECTED value sticks.
         state.calibration_model = Some("zai/glm-5.2".to_string());
         let latched = state.latch_effective_budget((118_000, 1.27));
         assert_eq!(state.latch_effective_budget((75_000, 2.0)), latched);

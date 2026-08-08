@@ -1200,3 +1200,53 @@ fn approval_capability_for_a_supervised_child_is_sidecar_in_every_format() {
     );
     assert!(!config.headless_bypass_scope_review);
 }
+
+/// #1847: post-turn reflection must dispatch on the configured cheap tier.
+///
+/// It ran on the WORKER model from the day it shipped — with `memory.rs`
+/// calling it "one cheap model call" the whole time — because no reflection
+/// pin existed anywhere in the role wiring. The route rides the triage
+/// declaration (`pipeline_triage_model`/`agents.triage.*`): the posture's one
+/// existing statement of "the cheap, fast model", so there is no second knob
+/// for the two to drift apart on.
+#[test]
+fn reflection_routes_to_the_configured_triage_model() {
+    let cfg = cfg_with_engine(
+        "zai", // session default (the worker): zai/glm-5.2
+        r#"{ "pipeline_triage_model": "deepseek/deepseek-chat" }"#,
+    );
+    let configured = vec![configured_provider("zai"), configured_provider("deepseek")];
+
+    let (model, provider) = reflection_route(&cfg, &configured)
+        .expect("a credentialed triage pin must route reflection off the worker");
+    assert_eq!(model, ModelRef::new("deepseek", "deepseek-chat"));
+    assert_eq!(
+        provider.id(),
+        "deepseek",
+        "the routed adapter must be the triage provider's, not the worker's"
+    );
+}
+
+/// Every unroutable shape rides the worker — `None`, the exact pre-#1847
+/// dispatch — because reflection is best-effort by contract and a
+/// configuration problem must never cost the turn its learning. The
+/// same-model case is deliberate rather than degenerate: the worker adapter
+/// already serves that exact model, and a duplicate instance would buy only
+/// a second connection pool.
+#[test]
+fn reflection_rides_the_worker_when_the_triage_tier_is_unroutable() {
+    // The stock posture: no engine settings at all.
+    let stock = cfg_for("zai");
+    assert!(reflection_route(&stock, &[configured_provider("zai")]).is_none());
+
+    // A triage pin whose provider has no resolvable credential.
+    let uncredentialed = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_triage_model": "deepseek/deepseek-chat" }"#,
+    );
+    assert!(reflection_route(&uncredentialed, &[configured_provider("zai")]).is_none());
+
+    // A triage pin naming the session default model itself.
+    let same_model = cfg_with_engine("zai", r#"{ "pipeline_triage_model": "zai/glm-5.2" }"#);
+    assert!(reflection_route(&same_model, &[configured_provider("zai")]).is_none());
+}

@@ -8,7 +8,9 @@ mod tests;
 use std::path::Path;
 
 use stella_model::provider::Provider;
-use stella_protocol::{AgentEvent, CompletionMessage, CompletionRequest, MessageRole};
+use stella_protocol::{
+    AgentEvent, CompletionMessage, CompletionRequest, MessageRole, ReasoningEffort,
+};
 use stella_store::reflection::SelfReviewRow;
 
 use super::ReflectionLesson;
@@ -44,6 +46,61 @@ pub fn should_reflect_on<E: std::fmt::Display>(result: &Result<(), E>) -> bool {
     }
 }
 
+/// How much of the transcript the reflection digest reads ([`reflect_on_turn`]
+/// takes exactly this many messages off the tail).
+const REFLECTED_TAIL_MESSAGES: usize = 12;
+
+/// The slice of `messages` worth copying for a reflection transcript.
+///
+/// A caller that appends turn context (the final answer, a files-changed
+/// note) before reflecting should clone this tail, never the whole history:
+/// [`reflect_on_turn`] digests only the last [`REFLECTED_TAIL_MESSAGES`]
+/// messages, so on a long session everything earlier was memcpy'd to be
+/// dropped (#1847's call-site nit).
+pub(crate) fn reflection_tail(messages: &[CompletionMessage]) -> Vec<CompletionMessage> {
+    messages[messages.len().saturating_sub(REFLECTED_TAIL_MESSAGES)..].to_vec()
+}
+
+/// Post-turn reflection on the cheap tier (#1847): resolve the reflection
+/// route, then run [`super::SessionMemory::reflect_and_record`] on whichever
+/// provider it lands on — the configured triage model when routable
+/// (`crate::agent::reflection_route`), else the worker this turn already ran
+/// on, exactly as every reflection call dispatched before the route existed.
+///
+/// This is the one seam all four reflecting surfaces (one-shot `run`, the
+/// REPL, `/goal`, the Command Deck) dispatch through, so the routing
+/// decision cannot be remembered by three drivers and forgotten by the
+/// fourth. Provider discovery runs per call rather than per session because
+/// reflection is already a post-turn, best-effort model call that opens the
+/// store — one credential scan is noise beside it, and it keeps this seam a
+/// drop-in for the call sites' previous direct dispatch.
+pub(crate) async fn reflect_routed(
+    memory: &mut super::SessionMemory,
+    cfg: &crate::config::Config,
+    worker: &dyn Provider,
+    transcript: &[CompletionMessage],
+    quiet: bool,
+    succeeded: bool,
+    budget_limit: Option<f64>,
+) -> ReflectionReport {
+    let routed =
+        crate::agent::reflection_route(cfg, &crate::config::discover_configured_providers());
+    let (provider, model_hint) = match &routed {
+        Some((model, provider)) => (provider.as_ref(), model.model_id.as_str()),
+        None => (worker, cfg.model_id.as_str()),
+    };
+    memory
+        .reflect_and_record(
+            provider,
+            model_hint,
+            transcript,
+            quiet,
+            succeeded,
+            budget_limit,
+        )
+        .await
+}
+
 pub async fn reflect_on_turn(
     provider: &dyn Provider,
     model_hint: &str,
@@ -59,7 +116,7 @@ pub async fn reflect_on_turn(
     let digest = transcript
         .iter()
         .rev()
-        .take(12)
+        .take(REFLECTED_TAIL_MESSAGES)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -224,7 +281,16 @@ pub async fn reflect_on_turn(
         // spent by models that were going to be cut off.
         max_output_tokens: Some(2048),
         temperature: Some(0.0),
-        effort: None,
+        // Pinned low, like every bounded management call (the pipeline's
+        // `management_bounds` pins triage the same way, and the overflow
+        // summarizer pins its own pass low): the written output contract is
+        // a three-lesson JSON array, and an unset effort leaves the
+        // provider's default reasoning allowance in force — unbounded
+        // thinking spent deciding, most turns, to return an empty list.
+        // Providers that cannot express effort drop it per their declared
+        // `ReasoningPosture` (provider-parity invariant #8), the same path
+        // every pinned management call rides.
+        effort: Some(ReasoningEffort::Low),
         tools: Vec::new(),
         reasoning: None,
         params: None,

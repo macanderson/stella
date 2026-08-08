@@ -1053,3 +1053,60 @@ pub(crate) fn resolve_cross_family_verifier(
     .ok()?;
     Some((verifier, decision.model_ref.provider))
 }
+
+/// Resolve where post-turn reflection dispatches (#1847): the configured
+/// triage model when it is routable, else `None` — ride the worker.
+///
+/// Reflection ran on the WORKER model from the day it shipped, with a 2048
+/// output-token allowance and no effort pin, while `crate::memory`'s own
+/// module doc called it "one cheap model call". Nothing routed it to a cheap
+/// tier. The triage pin (`pipeline_triage_model`/`agents.triage.*`) is
+/// already the posture's declaration of "the cheap, fast model", so
+/// reflection rides that declaration rather than adding a second cheap-model
+/// knob the two settings could drift apart on.
+///
+/// Every miss is soft, matching [`resolve_cross_family_verifier`] and
+/// `pin_role`: no engine settings, no triage spec, an uncredentialed
+/// provider, or an adapter that will not build all yield `None`, and the
+/// caller keeps dispatching on the worker exactly as every reflection call
+/// always has. A triage spec that resolves to the session default model also
+/// yields `None` — the worker adapter already serves that exact model, and a
+/// second instance would buy only a second connection pool (the same "no
+/// duplicate adapter" rule the wiring's `pin_role` applies).
+pub(crate) fn reflection_route(
+    cfg: &Config,
+    configured: &[crate::config::ConfiguredProvider],
+) -> Option<(ModelRef, Box<dyn Provider>)> {
+    let engine = cfg.engine_settings.as_ref()?;
+    let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
+    let spec = crate::engine_config::model_spec_for(
+        engine,
+        crate::settings::EngineAgentKind::Triage,
+        &is_provider,
+    )?;
+    let entry = configured.iter().find(|c| c.config.id == spec.provider)?;
+    // An empty slug is the "provider pin without a model" form — the
+    // provider's own default model, exactly as `pin_role` reads it.
+    let slug = if spec.model.is_empty() {
+        entry.config.default_model.to_string()
+    } else {
+        spec.model
+    };
+    let routed = ModelRef::new(entry.config.id, slug.clone());
+    if routed == ModelRef::new(cfg.provider.id, cfg.model_id.clone()) {
+        return None;
+    }
+    let provider = build_provider_parts(
+        &entry.config,
+        &slug,
+        entry.api_key.clone(),
+        entry.config.base_url.to_string(),
+        None,
+        entry.aux.clone(),
+        // One post-turn call per reflected turn: bursty within a session,
+        // so the 5-minute cache window is the right ask (#1839).
+        stella_model::CacheTtl::default(),
+    )
+    .ok()?;
+    Some((routed, provider))
+}

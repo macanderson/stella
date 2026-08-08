@@ -14,6 +14,13 @@ use crate::LineMutation;
 /// in that module, beside the only tests that script them.
 mod flip_halt_arming;
 
+/// The witness repair wall-clock bound (#2141) — a child module for the same
+/// two reasons `flip_halt_arming` is: it reaches the shared fakes through
+/// this file's own `use super::*`, and the already-oversized `tests.rs` does
+/// not grow another module declaration. The stalling provider it needs lives
+/// there, beside the only test that scripts it.
+mod witness_repair_bound;
+
 /// #860 acceptance: a baseline that TIMES OUT observed no failing assertion,
 /// so a candidate whose suite then passes has no fail→pass flip — the run
 /// must escalate to the model verifier, never credit `DeterministicPass`. Before
