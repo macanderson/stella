@@ -130,10 +130,14 @@ impl<'a> Pipeline<'a> {
             {
                 TurnOutcome::Completed { text, cost_usd } => {
                     *spend.total += cost_usd;
-                    // #1702: a worker that declares the whole goal done
-                    // ends the walk — the remaining steps could only
-                    // re-confirm finished work, and a false declaration
-                    // is the verify stage's to refute, not this loop's.
+                    // #1702: a worker that declares the whole goal done ends
+                    // the walk — the remaining steps could only re-confirm
+                    // finished work. The declaration is screened for polarity
+                    // and position in `plan_steps`, not left to the verify
+                    // stage as this loop originally assumed: a task whose
+                    // subject is `/etc` or a system service leaves the diff
+                    // probe an unchanged tree, so verify returns
+                    // `UNVERIFIABLE` and refutes nothing (#2104).
                     let closed_out = plan_steps::goal_declared_complete(&text);
                     state.final_text = text;
                     if closed_out {
