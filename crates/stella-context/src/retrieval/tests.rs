@@ -682,12 +682,18 @@ async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
 ///
 /// The cosine-call guard above passes just as well when recall has already
 /// loaded every body and every vector in the workspace and merely declines to
-/// fold them all — which is what it used to do. This pins the other half: a
-/// 5-frame recall may move only the candidates' bodies across the SQLite
-/// boundary, so the bytes it reads track `max_frames`, not lifetime memory
-/// size.
+/// fold them all — which is what it used to do. This pins the other half,
+/// under the gate's declared budget: a gated 5-frame recall may read the
+/// corpus **once** (the evidence term pass, #2289) plus the candidates'
+/// bodies, and nothing more. What it must never regress to is the old
+/// failure — bodies materialized per candidate and thrown away, a *multiple*
+/// of the corpus rather than one pass of it.
+///
+/// (Renamed from `recall_reads_only_the_candidates_bodies_not_the_whole_corpus`
+/// when the evidence gate landed: the old name claimed a zero-corpus-read
+/// property the gated default deliberately no longer has.)
 #[tokio::test]
-async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
+async fn recall_reads_one_term_pass_plus_only_the_candidates_bodies() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("context.db");
     let store = ContextStore::open_with(
@@ -1208,21 +1214,31 @@ async fn tuning_reaches_the_ranking() {
     );
 }
 
-/// The benchmark #712's gate names: recall work bounded by the requested frame
-/// count, at three corpus sizes spanning two orders of magnitude.
+/// The benchmark #712's gate names: **ungated** recall work bounded by the
+/// requested frame count, at three corpus sizes spanning two orders of
+/// magnitude.
 ///
-/// The two guards above pin the same property at a single size, which cannot
-/// distinguish "bounded" from "the constant happens to be small here". Three
-/// sizes can: content bytes must come out *byte-identical* across a 100x corpus,
-/// and the cosine scan — the one honest exception, since "most similar" is not
-/// something SQLite can `ORDER BY` without an ANN index — must stay linear
-/// rather than quadratic.
+/// "Ungated" is in the name because it is the honest scope: under the default
+/// evidence gate (#2289) every recall also pays one streaming term pass, so
+/// the shipped default's bytes are corpus-linear by declared design — that
+/// cost is budgeted by `recall_reads_one_term_pass_plus_only_the_candidates_bodies`
+/// and tracked for sublinear replacement in #2297, at which point this
+/// benchmark should run gate-on again and the "not corpus size" claim return
+/// to the default path. What survives here meanwhile is the two-phase
+/// candidate load: with the gate off, content bytes must come out
+/// *byte-identical* across a 100x corpus, and the cosine scan — the one
+/// honest exception, since "most similar" is not something SQLite can
+/// `ORDER BY` without an ANN index — must stay linear rather than quadratic.
 ///
 /// It measures work, not wall clock. A wall-clock assertion cannot tell
 /// "bounded" from "fast on this machine today", and is the kind of test that
 /// gets marked flaky and deleted.
+///
+/// (Renamed from `recall_work_is_bounded_by_frame_count_not_corpus_size`
+/// when the evidence gate landed: the unqualified name overclaimed for the
+/// shipped default.)
 #[tokio::test]
-async fn recall_work_is_bounded_by_frame_count_not_corpus_size() {
+async fn ungated_recall_work_is_bounded_by_frame_count_not_corpus_size() {
     const FRAMES: u32 = 5;
     // (corpus, content bytes read, cosine calls)
     let mut measured: Vec<(usize, u64, usize)> = Vec::new();
@@ -1230,12 +1246,6 @@ async fn recall_work_is_bounded_by_frame_count_not_corpus_size() {
     for corpus in [50usize, 500, 5_000] {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("context.db");
-        // Gate off: the byte-identical-across-corpus-sizes claim below is
-        // about the two-phase candidate load. The evidence gate's term pass
-        // deliberately reads the corpus once per recall (its budget is pinned
-        // in `recall_reads_only_the_candidates_bodies_not_the_whole_corpus`),
-        // which would make the bytes scale with the store and drown the
-        // property this benchmark exists to hold.
         let store = ContextStore::open_with(
             &path,
             Arc::new(HashEmbedder::default()),

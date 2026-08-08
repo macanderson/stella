@@ -168,6 +168,58 @@ async fn the_escape_hatch_restores_the_old_padding() {
     assert_eq!(result.no_evidence_cut, 0);
 }
 
+/// The gate runs **before** the shortlist cut: an inadmissible head cannot
+/// displace admissible candidates ranked below the cut window.
+///
+/// Twelve noise nodes whose text is near-identical to the query — maximal
+/// trigram cosine, so they own the top of the fused ranking — but every term
+/// they share with the query saturates the corpus (df ≥ 12 of 13 → glue).
+/// One quiet node carries the query's `zzzunique` term (df = 1 →
+/// distinctive) in otherwise-unrelated text, so it ranks *below* the
+/// `max_frames × mmr_candidate_multiple = 8` shortlist. Gate-after-cut would
+/// truncate to the eight inadmissible heads, refuse them all, and return
+/// empty; gate-before-cut admits exactly the quiet node. This pins the
+/// ordering the implementation comment claims.
+#[tokio::test]
+async fn the_gate_runs_before_the_shortlist_cut_not_after() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let store = ContextStore::open_with(
+        &path,
+        Arc::new(HashEmbedder::default()),
+        FixedClock::shared(1_000),
+    )
+    .unwrap()
+    .with_tuning(tuning(0.0, true));
+    let mut delta = ContextDelta::new();
+    for i in 0..12 {
+        delta = delta.with_node(
+            NodeInput::new(NodeKind::Artifact, format!("noise-{i}")).with_content(format!(
+                "pack the context frames to the token budget note {i}"
+            )),
+        );
+    }
+    delta = delta.with_node(
+        NodeInput::new(NodeKind::Artifact, "ordering-witness")
+            .with_content("zzzunique marker for the ordering property"),
+    );
+    store.upsert(delta).await.unwrap();
+
+    let mut q = base_query("pack the context frames to the token budget zzzunique");
+    q.max_frames = 1;
+    let result = store.recall(&q).await.unwrap();
+    assert_eq!(
+        result.frames.len(),
+        1,
+        "the one admissible candidate must survive the cut"
+    );
+    assert_eq!(result.frames[0].title, "ordering-witness");
+    assert_eq!(
+        result.no_evidence_cut, 12,
+        "every glue-only head was refused, and reported"
+    );
+}
+
 /// An anchor is evidence with no lexical overlap at all: the user named the
 /// file, and that outranks every heuristic. Its 1-hop graph neighborhood is
 /// grounded by the same naming.

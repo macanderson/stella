@@ -29,8 +29,14 @@
 //!
 //! Like the rest of `retrieval`'s split-out modules, everything here is a pure
 //! function over already-loaded data. The parent owns the I/O: it streams the
-//! corpus past [`TermMatcher::observe`] once (the same scan shape the lexical
-//! fallback always paid) and hands the finished [`TermEvidence`] back down.
+//! corpus past [`TermMatcher::observe`] once and hands the finished
+//! [`TermEvidence`] back down. That pass is the scan shape the lexical
+//! fallback paid on weak-coverage turns — but the fused arm paid **zero**
+//! corpus scan before this gate, so under the default `require_evidence` every
+//! recall now reads each live body once. That is the gate's declared price,
+//! linear in the corpus, budgeted by
+//! `recall_reads_one_term_pass_plus_only_the_candidates_bodies` and tracked
+//! for sublinear replacement (a warm-time posting/FTS index) in #2297.
 
 use std::collections::{HashMap, HashSet};
 
