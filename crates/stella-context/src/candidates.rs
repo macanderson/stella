@@ -309,12 +309,12 @@ pub(crate) fn vectors_for_ids(
 }
 
 /// Domain names for `ids` only, sorted per node — the bounded form of
-/// [`domains_by_node`].
+/// [`domains_by_node`](crate::store::domains_by_node).
 ///
 /// An unscoped recall needs domains for exactly the frames it mints (they ride
 /// provenance so a citation view can show them), which is at most
 /// `max_frames × mmr_candidate_multiple` nodes. It was calling
-/// [`domains_by_node`] instead — a full `node_domains ⋈ domain ⋈ node` scan
+/// [`domains_by_node`](crate::store::domains_by_node) instead — a full `node_domains ⋈ domain ⋈ node` scan
 /// building a `HashMap` entry per tagged node in the workspace — and then
 /// looking up 20 of them. A domain-*scoped* recall still needs the whole map,
 /// because the overlap ranking in step 3b scores every node.

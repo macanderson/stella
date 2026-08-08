@@ -199,9 +199,9 @@ fn sha256_hex(s: &str) -> String {
 pub(crate) struct JournalPreimages {
     tool_calls: HashMap<String, ToolCall>,
     tool_outputs: HashMap<String, ToolOutput>,
-    /// `content_digest` ("sha256:<hex>") → the assistant text bytes.
+    /// `content_digest` (`sha256:<hex>`) → the assistant text bytes.
     text_by_digest: HashMap<String, String>,
-    /// `content_digest` ("sha256:<hex>") → the serialized post-rewrite tool
+    /// `content_digest` (`sha256:<hex>`) → the serialized post-rewrite tool
     /// output a compaction pass journaled (#1667). Consulted before the
     /// `call_id` fallback: a compacted block's digest resolves here exactly,
     /// where the `call_id` route can only reach the pre-compaction bytes.

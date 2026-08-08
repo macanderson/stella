@@ -226,8 +226,8 @@ file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitti
 	@./scripts/check-file-size.sh --update
 
 .PHONY: doc-warnings
-doc-warnings: ## Assert rustdoc is clean workspace-wide (#634; CARGO_SCOPE to narrow)
-	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_SCOPE) --no-deps
+doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included (#634, #2336; CARGO_SCOPE to narrow)
+	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_SCOPE) --no-deps --document-private-items --keep-going
 
 .PHONY: shellcheck
 shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)

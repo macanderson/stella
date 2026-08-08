@@ -1531,7 +1531,7 @@ impl ToolRegistry {
     ///
     /// Every tool that reaches `bash -c` MUST ride the same fence as `bash`:
     /// they stay in the surface when an operator sets `"bash": "off"` (and
-    /// `start_process`'s argv[0] may itself be a shell, `["bash", "-c", …]`),
+    /// `start_process`'s `argv[0]` may itself be a shell, `["bash", "-c", …]`),
     /// so leaving any out hands ambient shell execution to the very posture
     /// that turned `bash` off. The #615 known gap is closed (#804): the
     /// `bash -c` composers (`screenshot`, `ci_status`, `start_work_on_issue`)

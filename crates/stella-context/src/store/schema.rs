@@ -156,7 +156,7 @@ DROP TABLE IF EXISTS code_graph_files;
 /// key and SQLite could only answer it by scanning the whole clustered index —
 /// every blob of every fingerprint, including the stale rows a fingerprint bump
 /// leaves behind. Recall runs exactly that predicate on every turn
-/// ([`score_nodes_by_vector`]), so the scan was proportional to the store's
+/// ([`score_nodes_by_vector`](crate::candidates::score_nodes_by_vector)), so the scan was proportional to the store's
 /// lifetime embedding count rather than to the active fingerprint's.
 ///
 /// `IF NOT EXISTS` because the index is also created by a fresh v4 store that

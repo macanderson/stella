@@ -1006,7 +1006,7 @@ where
     }
 }
 
-/// Drop guard for the paid-call window ([`Engine::run_model_call`]): armed
+/// Drop guard for the paid-call window ([`Engine`](crate::driver::Engine)'s `run_model_call`): armed
 /// before the retried provider dispatch, disarmed on both normal exits. It
 /// fires only when the turn future is dropped mid-await — the caller-side
 /// hard cancel — AND a paid attempt was genuinely in flight
