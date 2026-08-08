@@ -192,6 +192,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
         # one-line edit to `pricing.PRICES`.
         for slug in totals.get("unpriced_models") or ():
             print(f"    !! no pricing entry for {slug} — priced cost unavailable")
+        # The other way a total goes short: trials nothing measured. Their
+        # tokens and cost read 0 in every figure on the line above, which is
+        # the absence of a measurement and not a measurement of zero (#2132).
+        # Printed with the denominator so the line says what it is a total of.
+        unmeasured = totals.get("unmeasured_trials") or 0
+        if unmeasured:
+            print(
+                f"    !! {unmeasured}/{totals['trials']} trials published no usage "
+                "— the token and cost totals above are over the rest"
+            )
         if totals["judged"] == 0:
             worst = 1
     if args.results:
