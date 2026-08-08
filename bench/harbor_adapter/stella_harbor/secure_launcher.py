@@ -65,11 +65,10 @@ _FIXED_ANALYZER_PATH = "bench/terminal_bench_analysis/tb21_analysis.py"
 _FIXED_PUBLIC_TIMING_PATH = "bench/terminal_bench_analysis/github_public_timing.py"
 _FIXED_PROTOCOL_PATH = "bench/terminal-bench-2.1-protocol.md"
 # Every Python source in the adapter package, enumerated rather than globbed:
-# the public-tree check compares this exact set against what the published
-# commit contains, so an adapter file that exists locally but is missing here
-# would be executed without ever being byte-compared to the published source.
-# A new module must therefore be added here, and the fail-closed set mismatch
-# ("public adapter tree hash differs from runtime identity") is what enforces it.
+# the public-tree check compares this exact set against the published commit,
+# so a file present locally but missing here would be executed without ever
+# being byte-compared to its published source. A new module must therefore be
+# added here; "public adapter tree hash differs from runtime identity" enforces it.
 _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/__init__.py",
     "bench/harbor_adapter/stella_harbor/atif.py",
@@ -81,6 +80,7 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/host_attestation.py",
     "bench/harbor_adapter/stella_harbor/live_feed.py",
     "bench/harbor_adapter/stella_harbor/locate.py",
+    "bench/harbor_adapter/stella_harbor/loop_mode.py",
     "bench/harbor_adapter/stella_harbor/portability.py",
     "bench/harbor_adapter/stella_harbor/posture.py",
     "bench/harbor_adapter/stella_harbor/secure_launcher.py",

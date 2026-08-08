@@ -64,6 +64,13 @@ def _seat_signature(contestant: Any) -> dict[str, Any]:
         # #2023's vocabulary: an arm with any independently pinned role is a
         # materially different agent from one model wearing every hat.
         "arm": "treatment" if pinned_roles else "control",
+        # Strictly more material than a pinned role, and for the same reason:
+        # a bare-loop arm has no triage, witness or verify stage at all, so a
+        # line drawn from it to a staged-pipeline match charts two different
+        # agents as one. ``getattr`` like ``color`` below — records written
+        # before this field, and the duck-typed stand-ins in the tests, carry
+        # no ``bare_loop``.
+        "bare_loop": bool(getattr(engine, "bare_loop", False)),
     }
 
 
@@ -204,6 +211,9 @@ def match_row(match: Any) -> dict[str, Any]:
     seat_sig_token = "&".join(
         sorted(
             f"{s['agent']}={s['model']}({','.join(f'{r}:{m}' for r, m in s['roles'].items())})"
+            # Present only on a bare-loop seat, so every group key written
+            # before this arm existed still spells itself the same way.
+            f"{'+bare-loop' if s['bare_loop'] else ''}"
             for s in seat_signatures
         )
     )

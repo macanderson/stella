@@ -48,15 +48,23 @@ def _seat(
     name: str = "stella",
     model: str = "anthropic/claude-sonnet-5",
     roles: dict[str, str] | None = None,
+    bare_loop: bool | None = None,
 ) -> SimpleNamespace:
     role_objs = {
         role: SimpleNamespace(model=pinned) for role, pinned in (roles or {}).items()
     }
+    # ``None`` omits the attribute entirely rather than setting it False, so the
+    # default seat keeps exercising the legacy path — a record written before
+    # the bare-loop arm existed has no such field, and must still key as a
+    # staged-pipeline run rather than raising.
+    engine = SimpleNamespace(model=model, roles=role_objs)
+    if bare_loop is not None:
+        engine.bare_loop = bare_loop
     return SimpleNamespace(
         id=f"seat-{name}",
         name=name,
         agent="stella",
-        engine=SimpleNamespace(model=model, roles=role_objs),
+        engine=engine,
         _metrics=metrics,
     )
 
@@ -235,6 +243,40 @@ class TestComparability:
         assert (
             control_row["comparability"]["group_key"]
             != treatment_row["comparability"]["group_key"]
+        )
+
+    def test_a_bare_loop_arm_never_joins_the_staged_pipeline_series(self) -> None:
+        """A bare-loop arm has no triage, witness or verify stage at all.
+
+        Strictly more material than the pinned role above, which is why it
+        keys apart for the same reason. Without this the two matches share a
+        ``group_key``, and the trends client draws a connected line between an
+        agent measured with its management stages and one measured without —
+        this module's docstring calls that the most misleading thing the
+        feature could do.
+        """
+        metrics = {"a": _trial("a", resolved=True)}
+        pipeline = _match([_seat(metrics)], match_id="m1")
+        bare = _match([_seat(metrics, bare_loop=True)], match_id="m2")
+        assert match_row(pipeline)["comparability"]["seats"][0]["bare_loop"] is False
+        assert match_row(bare)["comparability"]["seats"][0]["bare_loop"] is True
+        assert (
+            match_row(pipeline)["comparability"]["group_key"]
+            != match_row(bare)["comparability"]["group_key"]
+        )
+
+    def test_declaring_the_pipeline_keys_the_same_as_never_mentioning_it(self) -> None:
+        """Every group key written before this arm existed must be unchanged.
+
+        ``bare_loop = false`` and a record with no such field are the same
+        measurement, so the token is emitted only when true — otherwise this
+        change would silently re-group the entire existing corpus."""
+        metrics = {"a": _trial("a", resolved=True)}
+        legacy = _match([_seat(metrics)], match_id="m1")
+        declared = _match([_seat(metrics, bare_loop=False)], match_id="m2")
+        assert (
+            match_row(legacy)["comparability"]["group_key"]
+            == match_row(declared)["comparability"]["group_key"]
         )
 
     def test_seat_order_does_not_split_a_group(self) -> None:
