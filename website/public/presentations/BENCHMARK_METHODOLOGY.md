@@ -21,7 +21,7 @@ row, and the deck says so wherever the number appears.
 |---|---|
 | Run id | `tb21-hh10-20260731` |
 | Date (UTC) | 2026-07-31, 21:02:19 → 23:02:16 |
-| Preregistration | [`preregistration.json`](https://github.com/macanderson/stella/blob/main/bench/evidence/tb21-hh10-20260731/preregistration.json), written 2026-07-31T21:02:14Z — five seconds before the first trial. Preregistration issue: [#1013](https://github.com/macanderson/stella/issues/1013) |
+| Preregistration | [`preregistration.json`](https://github.com/macanderson/stella/blob/8b80519dc67cf3b1f50c30f8d0e54a4d3bc6c613/bench/evidence/tb21-hh10-20260731/preregistration.json), written 2026-07-31T21:02:14Z — five seconds before the first trial. Preregistration issue: [#1013](https://github.com/macanderson/stella/issues/1013) |
 | Harness | Harbor 0.6.1, adapter `bench/harbor_adapter` (`stella_harbor:StellaAgent`) |
 | Dataset | `terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a` — all 89 tasks, no filters, no exclusions |
 | Verifier | the dataset's own, unmodified |
@@ -107,7 +107,7 @@ block names the five reasons, quoted in full:
 
 Closing these — and submitting an audited public row — is a named use of
 funds in the deck. The audit path is specified in
-[`bench/terminal-bench-2.1-protocol.md`](https://github.com/macanderson/stella/blob/main/bench/terminal-bench-2.1-protocol.md).
+[`bench/terminal-bench-2.1-protocol.md`](https://github.com/macanderson/stella/blob/8b80519dc67cf3b1f50c30f8d0e54a4d3bc6c613/bench/terminal-bench-2.1-protocol.md).
 
 ## The public leaderboard, and why our number is not a row on it
 
@@ -123,11 +123,11 @@ not rank one against the other.
 
 Everything needed to recompute the numbers is committed:
 
-- [`bench/evidence/tb21-hh10-20260731/`](https://github.com/macanderson/stella/tree/main/bench/evidence/tb21-hh10-20260731) —
+- [`bench/evidence/tb21-hh10-20260731/`](https://github.com/macanderson/stella/tree/8b80519dc67cf3b1f50c30f8d0e54a4d3bc6c613/bench/evidence/tb21-hh10-20260731) —
   `run-manifest.json` (frozen identity), `preregistration.json`,
   `trials.jsonl` + `score.json` + `results.md` (Arm A), `comparator/` (Arm B,
   same three files, same denominator)
-- [`docs/benchmarks/terminal-bench-2-1-glm-5-2.html`](https://github.com/macanderson/stella/blob/main/docs/benchmarks/terminal-bench-2-1-glm-5-2.html) —
+- [`docs/benchmarks/terminal-bench-2-1-glm-5-2.html`](https://github.com/macanderson/stella/blob/8b80519dc67cf3b1f50c30f8d0e54a4d3bc6c613/docs/benchmarks/terminal-bench-2-1-glm-5-2.html) —
   the published per-task results page
 
 Reproduce:
