@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -87,19 +86,28 @@ def test_the_workspace_is_found_inside_the_image(container):
     assert detect_workspace(name) == "/app"
 
 
-def test_capture_produces_patches_and_leaves_the_workspace_untouched(container):
+def test_capture_produces_patches_and_leaves_the_workspace_untouched(
+    container, wait_for_snapshots
+):
     name, trial, jobs_root = container
     sup = SnapshotSupervisor(
         jobs_root=jobs_root, jobs=["seat"], interval=2.0, poll_interval=0.5
     )
     sup.start()
     try:
-        time.sleep(4)
+        # Waiting on the manifest rather than the clock: capture costs whatever
+        # the host charges for `docker commit`, which is not bounded by
+        # `interval` (#2114). See `_wait_for_snapshots`.
+        wait_for_snapshots(trial, 1, what="of the pristine workspace")
         _sh("docker", "exec", name, "sh", "-c", "echo two >> /app/a.txt; echo new > /app/b.txt")
-        time.sleep(4)
+        edited_at = len(load_manifest(trial))
+        # A capture may have been in flight when the edit landed, so entry
+        # `edited_at` might predate it; the supervisor captures on a single
+        # thread, so `edited_at + 1` started afterwards and must carry a patch.
+        wait_for_snapshots(trial, edited_at + 2, what="of the edited workspace")
         # `result.json` appearing is how the supervisor learns a trial ended.
         (trial / "result.json").write_text('{"reward": 1}', encoding="utf-8")
-        time.sleep(3)
+        wait_for_snapshots(trial, edited_at + 3, what="of the graded state")
     finally:
         sup.stop(timeout=20)
 

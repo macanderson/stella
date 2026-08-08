@@ -73,12 +73,21 @@ async fn a_two_candidate_fanout_records_which_candidates_degraded() {
     );
 }
 
-/// #1787 witness, dedup half: ONE candidate whose escalation hits the same
-/// non-compliant verifier on the first round AND on the revision records its
-/// degradation fact exactly once — per candidate, not per round (the ladder
-/// rung already counts rounds).
+/// #2129 witness, replacing #1787's dedup half: ONE candidate whose
+/// escalation hits the same non-compliant verifier on the first round AND on
+/// the revision records a degradation fact for EACH — the proof stream is a
+/// record of what happened, not a notice to a reader, and aggregate
+/// telemetry counts its rows.
+///
+/// #1787 deduplicated this per candidate on the reasoning that the fact does
+/// not change between rounds. It does not, but its *incidence* does, and
+/// that turned out to be the number that mattered: in match `cc00894779ff`
+/// the `extract-elf` trial degraded twice and emitted one proof event, so
+/// round 2 was invisible to everything reading the stream. The once-per-run
+/// prose warning is what keeps the transcript from repeating itself — that
+/// half of #1787 is unchanged, and asserted below.
 #[tokio::test]
-async fn a_candidate_degrading_on_every_round_records_one_fact() {
+async fn a_candidate_degrading_on_every_round_records_a_fact_per_occurrence() {
     // triage; worker; tokenless verdict; revision turn; tokenless verdict.
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
@@ -147,8 +156,8 @@ async fn a_candidate_degrading_on_every_round_records_one_fact() {
     );
 
     // Both scripted verdict calls were really made — without this, a run that
-    // never reached the second escalation would pass the one-fact assertion
-    // below for the wrong reason.
+    // never reached the second escalation would pass the per-occurrence
+    // assertion below for the wrong reason.
     assert_eq!(
         provider.prompts().len(),
         5,
@@ -167,7 +176,19 @@ async fn a_candidate_degrading_on_every_round_records_one_fact() {
         .collect();
     assert_eq!(
         facts,
-        vec![1],
-        "two degraded rounds, one candidate, one fact"
+        vec![1, 1],
+        "two degraded rounds, one candidate, one fact EACH — both keyed to \
+         that candidate's ordinal"
+    );
+    let warnings = events
+        .iter()
+        .filter(|event| {
+            matches!(event, AgentEvent::Error { message, .. }
+                if message.contains("falls back to a deterministic heuristic"))
+        })
+        .count();
+    assert_eq!(
+        warnings, 1,
+        "the prose warning still fires once per run — #1787's other half"
     );
 }

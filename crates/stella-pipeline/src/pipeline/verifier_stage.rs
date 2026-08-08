@@ -26,27 +26,24 @@ pub(super) struct VerifierNotices {
 }
 
 /// One candidate's verdict-degradation record: its ordinal (1-based,
-/// [`ProofStep::Oracle`]'s `run` convention) and whether the degradation fact
-/// has been emitted yet.
+/// [`ProofStep::Oracle`]'s `run` convention).
 ///
-/// Per candidate rather than per run, because a best-of-N fan-out degrading N
-/// times used to leave one prose caveat and no record of *which* candidates
-/// the heuristic judged (#1787) — and per candidate rather than per round,
-/// because the escalation loop can hit the same dead verifier on every
-/// revision and the fact does not change. Plain candidate-local state, never
-/// a shared flag: candidates run concurrently, and resetting a run-wide flag
-/// at candidate boundaries would race.
+/// Per candidate, because a best-of-N fan-out degrading N times used to
+/// leave one prose caveat and no record of *which* candidates the heuristic
+/// judged (#1787). The proof fact itself is emitted per OCCURRENCE, not once
+/// per candidate (#2129): deduplicating it made a round-2 degradation
+/// invisible in aggregate telemetry — an `extract-elf` trace held two
+/// degraded verdicts and one proof event — and unlike the prose warning
+/// below, a proof stream is a record of what happened, not a notice to a
+/// reader. Plain candidate-local state, never a shared flag: candidates run
+/// concurrently.
 pub(super) struct VerdictDegradation {
     candidate: u32,
-    recorded: bool,
 }
 
 impl VerdictDegradation {
     pub(super) fn new(candidate: u32) -> Self {
-        Self {
-            candidate,
-            recorded: false,
-        }
+        Self { candidate }
     }
 }
 
@@ -115,7 +112,7 @@ impl<'a> Pipeline<'a> {
     /// call can fail.
     pub(super) async fn verifier(
         &self,
-        degradation: &mut VerdictDegradation,
+        degradation: &VerdictDegradation,
         prompt: ManagementPrompt,
         inputs: &LadderInputs,
         spend: &mut Spend<'_>,
@@ -214,11 +211,12 @@ impl<'a> Pipeline<'a> {
     /// prose warning once per run, like the caveat above, because the
     /// escalation loop can hit the same dead verifier several times and the
     /// transcript needs the fact, not an echo; and the structured
-    /// [`ProofStep::VerdictDegraded`] fact once per candidate, because the
-    /// run-wide warning cannot say *which* of a fan-out's candidates the
-    /// heuristic judged (#1787). The ladder rung (`HeuristicFallback`)
-    /// records *that* it happened on every round either way.
-    fn warn_verifier_fallback(&self, degradation: &mut VerdictDegradation, why: &str) {
+    /// [`ProofStep::VerdictDegraded`] fact on EVERY occurrence, carrying the
+    /// candidate ordinal the run-wide warning cannot (#1787). Per occurrence
+    /// rather than per candidate (#2129): the proof stream is the record
+    /// aggregate telemetry reads, and deduplicating it hid every degradation
+    /// after a candidate's first.
+    fn warn_verifier_fallback(&self, degradation: &VerdictDegradation, why: &str) {
         if !self
             .verifier_notices
             .fallback_warned
@@ -229,12 +227,9 @@ impl<'a> Pipeline<'a> {
                  falls back to a deterministic heuristic"
             ));
         }
-        if !degradation.recorded {
-            degradation.recorded = true;
-            self.emit_proof(ProofStep::VerdictDegraded {
-                candidate: degradation.candidate,
-                reason: why.to_string(),
-            });
-        }
+        self.emit_proof(ProofStep::VerdictDegraded {
+            candidate: degradation.candidate,
+            reason: why.to_string(),
+        });
     }
 }

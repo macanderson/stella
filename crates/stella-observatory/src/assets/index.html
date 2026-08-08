@@ -733,6 +733,8 @@ footer b{color:var(--text-2);font-weight:600}
         <div class="scroll-x" id="mem-citations"></div>
         <div class="subhead">Promoted rules</div>
         <div id="rules-list"></div>
+        <div class="subhead">Enforcement ledger <span id="rules-governance" class="chip"></span></div>
+        <div id="rules-promotions"></div>
       </div>
     </div>
     <div class="card">
@@ -2042,14 +2044,45 @@ function renderMemoryTab(files, rules, explorations) {
       <div>${esc(r.contents)}</div></div>`).join("");
   }
   if (fileRules.length) {
-    html += fileRules.map(f => `<div class="feed-item">
-      <b>§ ${esc(f.name)}</b>
+    // A published context record carries a lineage; a hand-written markdown
+    // rule does not. The sigil follows that distinction because the CLI's
+    // `stella context list` prints a record as `^handle`, and an operator
+    // comparing the two surfaces should see the same name.
+    html += fileRules.map(f => {
+      const record = !!f.lineage_id;
+      const chips = [f.kind, f.steering_force, f.enforcement_mode && f.enforcement_mode !== "none"
+        ? `enforced: ${f.enforcement_mode}` : ""]
+        .filter(Boolean)
+        .map(c => `<span class="chip">${esc(c)}</span>`).join("");
+      const tags = Array.isArray(f.tags) && f.tags.length
+        ? `<div class="when">${esc(f.tags.join(" · "))}</div>` : "";
+      return `<div class="feed-item">
+      <b>${record ? "^" : "§"} ${esc(f.name)}</b>${chips}
       <span class="when">${agoUnix(f.modified_unix)}</span>
-      <div>${esc(f.snippet)}</div></div>`).join("");
+      <div>${esc(f.snippet)}</div>${tags}</div>`;
+    }).join("");
   }
   $("rules-list").innerHTML = html ||
     `<div class="empty">No promoted rules.<br>
      Lessons that keep proving true across runs get promoted here.</div>`;
+
+  // The hash-chained enforcement ledger (.stella/rules/promotions.jsonl) — a
+  // different ledger from the loop's own keep/ignore events on the Improve
+  // tab. This one is the human act that moves a published record between
+  // advisory and blocking, and it travels with the repository.
+  const gov = rules?.governance_mode;
+  $("rules-governance").textContent = gov ? `governance: ${gov}` : "";
+  const promotions = rules?.promotions ?? [];
+  $("rules-promotions").innerHTML = promotions.length
+    ? promotions.map(p => `<div class="feed-item">
+        <b>^${esc(p.lineage_id.split(".").pop())}</b>
+        <span class="chip">${esc(p.from)} → ${esc(p.to)}</span>
+        <span class="chip">${esc(p.approver)}</span>
+        <span class="when">${esc(p.at)}</span>
+        <div>${esc(p.reason)}</div></div>`).join("")
+    : `<div class="empty">No enforcement promotions.<br>
+       <code>stella context promote</code> records an accountable, hash-chained
+       change to what a record may enforce.</div>`;
 }
 
 /* ── self-improve tab ────────────────────────────────────────────────── */

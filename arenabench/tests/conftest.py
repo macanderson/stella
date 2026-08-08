@@ -15,16 +15,30 @@ Each extraction is stamped with the archive's digest, so an unchanged
 archive costs one hash per session and an updated one re-extracts from
 scratch. The first-ever extraction is not concurrency-safe across processes
 (the suite runs single-process; revisit the stamp if pytest-xdist arrives).
+
+Also home to the pacing every snapshot test shares — see
+:func:`_wait_for_snapshots`.
 """
 
 from __future__ import annotations
 
 import hashlib
 import shutil
+import time
 import zipfile
 from pathlib import Path
 
+import pytest
+
+from arenabench.snapshot import load_manifest
+
 MATCHES = Path(__file__).parent / "fixtures" / "matches"
+
+#: How long a snapshot wait tolerates before calling the host broken. Sized as
+#: roughly twenty times the dearest capture ever measured (5.6 s, against a
+#: 2.0 s interval, on the run that filed #2114), so it cannot lose a race a
+#: working host would eventually win — while still bounding a wedged one.
+SNAPSHOT_DEADLINE = 120.0
 
 
 def _unpack(archive: Path) -> None:
@@ -45,3 +59,54 @@ def _unpack(archive: Path) -> None:
 def pytest_configure(config) -> None:
     for archive in sorted(MATCHES.glob("*.zip")):
         _unpack(archive)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot pacing
+# ---------------------------------------------------------------------------
+
+
+def _wait_for_snapshots(
+    trial_dir: Path,
+    at_least: int,
+    *,
+    what: str,
+    deadline: float = SNAPSHOT_DEADLINE,
+) -> int:
+    """Block until ``trial_dir`` holds ``at_least`` snapshots; return the count.
+
+    ``SnapshotSupervisor.interval`` is a floor on the cadence, never a period:
+    ``_snapshot`` stamps its clock *before* running the container's ``git
+    add``/``commit``/``diff``, so a capture dearer than the interval stretches
+    the real cadence to whatever the host allows. One was measured at 5.6 s
+    against a 2.0 s interval.
+
+    So a ``time.sleep`` sized from the interval is a bet on capture speed, and
+    losing it is what made the docker snapshot tests flaky under load — three
+    snapshots where the arithmetic assumed seven, failing as "too few
+    snapshots to bisect meaningfully" (#2114). Waiting on the manifest is the
+    same test with the bet removed: it costs a fast host nothing extra and
+    lets a slow one take as long as it needs, while still failing loudly —
+    never skipping — on a host that has genuinely stopped capturing.
+    """
+    limit = time.monotonic() + deadline
+    while True:
+        count = len(load_manifest(trial_dir))
+        if count >= at_least:
+            return count
+        if time.monotonic() >= limit:
+            # Zero here is a different fault from "too few": the supervisor
+            # logs a capture that failed outright at debug level, so it is
+            # invisible unless the run asked for it (#2196).
+            raise AssertionError(
+                f"only {count} of {at_least} snapshots {what} after "
+                f"{deadline:.0f}s — capture is not keeping up on this host, or "
+                f"stopped working; re-run with --log-cli-level=DEBUG to see which"
+            )
+        time.sleep(0.2)
+
+
+@pytest.fixture
+def wait_for_snapshots():
+    """The condition-driven pacing every snapshot test uses instead of sleeping."""
+    return _wait_for_snapshots

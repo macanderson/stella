@@ -11,12 +11,16 @@ the number an operator reads.
 
 from __future__ import annotations
 
+import itertools
 import json
+import time
 
+from arenabench import snapshot
 from arenabench.model import MatchSpec
 from arenabench.snapshot import (
     SNAPSHOT_DIRNAME,
     SnapshotEntry,
+    SnapshotSupervisor,
     bisect_first_pass,
     confirm_first_pass,
     container_for_trial,
@@ -243,3 +247,75 @@ def test_snapshot_interval_never_spins_the_watcher():
 def test_capture_is_off_by_default():
     spec = MatchSpec.from_json({"dataset": "d", "contestants": []})
     assert spec.capture_snapshots is False
+
+
+# -- pacing -----------------------------------------------------------------
+
+#: The fixed sleep the docker snapshot tests used to pace themselves with,
+#: before they waited on the manifest instead (#2114).
+OLD_FIXED_SLEEP = 5.0
+
+
+def _slow_capture(monkeypatch, *, cost: float) -> None:
+    """Run a real supervisor without Docker, at a capture cost we choose.
+
+    ``_exec`` and ``_container_running`` are the module's only two doors to
+    Docker, so stubbing exactly those leaves every line of the supervisor's own
+    timing under test — which is the part that decides the cadence.
+    """
+    commits = itertools.count()
+
+    def fake_exec(container: str, script: str, *, timeout: float = 180.0) -> tuple[int, str]:
+        if "rev-parse HEAD" in script:
+            # What a loaded host pays for `git add`/`commit` over a workspace.
+            time.sleep(cost)
+            return 0, f"{next(commits):040x}\n"
+        if "diff --binary" in script:
+            return 0, ""
+        if "init -q" in script:
+            return 0, "ok\n"
+        return 0, "/app\n"  # the workspace probe
+
+    monkeypatch.setattr(snapshot, "_exec", fake_exec)
+    monkeypatch.setattr(snapshot, "_container_running", lambda name: True)
+
+
+def test_snapshot_waiting_outlasts_the_fixed_sleep_it_replaces(
+    tmp_path, monkeypatch, wait_for_snapshots
+):
+    """Capture cost, not ``interval``, sets the cadence — so pace on the manifest.
+
+    ``SnapshotSupervisor._snapshot`` stamps its clock *before* it runs the
+    container's ``git add``/``commit``, so a capture dearer than ``interval``
+    stretches the real cadence to whatever the host allows; 5.6 s against a
+    2.0 s interval was measured on the run that filed #2114. The docker
+    snapshot tests used to sleep a fixed five seconds and then assert a
+    snapshot count, which is a bet on capture speed. Here the bet is rigged to
+    lose, and only a wait on the manifest still collects what those assertions
+    need.
+    """
+    trial = tmp_path / "jobs" / "seat" / "demo__Slow1"
+    (trial / "agent").mkdir(parents=True)
+    _slow_capture(monkeypatch, cost=3.0)
+
+    sup = SnapshotSupervisor(
+        jobs_root=tmp_path / "jobs", jobs=["seat"], interval=2.0, poll_interval=0.1
+    )
+    started = time.time()
+    sup.start()
+    try:
+        wait_for_snapshots(trial, 2, what="of a deliberately slow capture", deadline=60.0)
+        # Read here, not after `stop()`: joining the watcher finishes a capture
+        # already in flight, which would hand the manifest an entry the pacing
+        # never waited for. The docker tests read the manifest mid-run for the
+        # same reason — that reading is what their assertions are sized from.
+        entries = load_manifest(trial)
+    finally:
+        sup.stop(timeout=20)
+
+    # What waiting on the condition collects.
+    assert len(entries) >= 2
+    # What waiting on the clock would have collected from the very same run:
+    # the "too few snapshots to bisect meaningfully" failure of #2114.
+    on_the_clock = [e for e in entries if e.at - started <= OLD_FIXED_SLEEP]
+    assert len(on_the_clock) < 2, "the stubbed capture was not slow enough to starve a sleep"

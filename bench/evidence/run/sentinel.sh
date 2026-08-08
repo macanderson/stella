@@ -42,7 +42,7 @@ print(f"reward={reward} stella_status={md.get('stella_status')} "
 # (#1284), but a warrant that decided this task needed no new test is a
 # legitimate `not_reported`, and failing on it would be a false gate.
 print(f"arm={md.get('stella_assurance_arm')} "
-      f"author={md.get('stella_witness_author_model')} "
+      f"author={md.get('stella_verifier_model') or md.get('stella_witness_author_model')} "
       f"witness={md.get('stella_witness_authored_state')} "
       f"self_verdict={md.get('stella_self_verdict_state')}")
 # NOTE: while #960 stands, an AgentTimeoutError accompanies even a perfect

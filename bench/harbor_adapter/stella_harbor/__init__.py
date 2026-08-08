@@ -106,6 +106,7 @@ from .posture import (
     PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
+    assurance_tiers_from_posture,
     resolve_candidates,
     resolve_verifier_evidence_demand,
     resolve_max_revisions,
@@ -119,8 +120,9 @@ from .stream_envelope import (
     _stream_to_envelope,
     _sum_step_usage,  # noqa: F401 — re-exported for tests/test_adapter.py
 )
-from .stream_release import communicate_with_release, journal_reports_completion
+from .stream_release import journal_reports_completion
 from .telemetry_export import PRIVATE_TELEMETRY_DIR, export_private_telemetry
+from .timeout_reap import exec_with_agent_reap
 from .turn_budget import (
     TURN_BUDGET_ENV as _TURN_BUDGET_ENV,
 )
@@ -692,8 +694,8 @@ async def _secure_exec_with_credential_fd(
         if callable(test_hook):
             return await test_hook(command=command, env=env, stdin=bytes(wire))
 
-        compose = _compose_base_argv(environment)
-        compose.extend(["exec", "-T"])
+        compose_base = _compose_base_argv(environment)
+        compose = [*compose_base, "exec", "-T"]
 
         cwd = getattr(environment.task_env_config, "workdir", None)
         if cwd:
@@ -725,14 +727,9 @@ async def _secure_exec_with_credential_fd(
                 "selected provider credential remains in Docker's host environment"
             )
 
-        process = await asyncio.create_subprocess_exec(
-            *compose,
-            env=host_env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        return await exec_with_agent_reap(
+            compose, compose_base, host_env, wire, completion_probe, _INSTALL_PATH
         )
-        return await communicate_with_release(process, wire, completion_probe)
     finally:
         for index in range(len(wire)):
             wire[index] = 0
@@ -1030,17 +1027,18 @@ class StellaAgent(BaseInstalledAgent):
         self._disable_reflection = env["STELLA_DISABLE_REFLECTION"]
         self._budget_usd = self._configured_budget()
         verifier = self._verifier_model()
-        self._verifier_model_value = verifier
         (
             self._engine_posture,
             self._engine_posture_json,
             self._engine_posture_sha256,
         ) = self._build_engine_posture(configured_model, verifier=verifier)
+        # From the posture, never the selector beside it (#2134).
         (
             self._assurance_tiers,
             self._assurance_tiers_json,
             self._assurance_tiers_sha256,
-        ) = _benchmark_assurance_tiers(configured_model, verifier=verifier)
+        ) = assurance_tiers_from_posture(self._engine_posture)
+        self._verifier_model_value = self._assurance_tiers.get("verifier_model")
         # Highest precedence, after ambient and all Harbor extra env. A task
         # cannot replace this with its own routing or request-effort config.
         env[_ENGINE_CONFIG_ENV] = self._engine_posture_json
@@ -1586,18 +1584,16 @@ class StellaAgent(BaseInstalledAgent):
         assurance_tiers_json = getattr(self, "_assurance_tiers_json", None)
         assurance_tiers_sha256 = getattr(self, "_assurance_tiers_sha256", None)
         # An outer timeout can reach this hook before run() built the posture.
-        # Reconstruct the declaration from the same inputs rather than leaving
-        # the arm unstated on exactly the trials most likely to be re-read.
+        # Reconstruct from the recorded posture — or, failing that, the same
+        # overridable builder — rather than leave the arm unstated (#2134).
         if assurance_tiers is None:
             try:
-                (
-                    assurance_tiers,
-                    assurance_tiers_json,
-                    assurance_tiers_sha256,
-                ) = _benchmark_assurance_tiers(
-                    self._effective_model(),
-                    verifier=self._verifier_model(),
-                )
+                declared = engine_posture or self._build_engine_posture(
+                    self._effective_model(), verifier=self._verifier_model()
+                )[0]
+                tiers = assurance_tiers_from_posture(declared)
+                assurance_tiers, assurance_tiers_json, assurance_tiers_sha256 = tiers
+                verifier_model = verifier_model or assurance_tiers["verifier_model"]
             except (ValueError, RuntimeError):
                 assurance_tiers = None
         assurance_arm = (
