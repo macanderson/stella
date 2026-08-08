@@ -41,8 +41,11 @@ fn both_wordmark_cuts_are_served_and_referenced() {
     assert_eq!(light.content_type, "image/svg+xml");
     let light_body = String::from_utf8(light.body).unwrap();
     assert!(light_body.contains("<svg"));
-    // Ink text, not Paper — this cut is for the Paper ground, not the Ink one.
-    assert!(light_body.contains("#0B0B0C"));
+    // Ink text, not Paper — this cut is for the Paper ground, not the Void one.
+    // Under the nebula kit Ink is `#0B0E1A`: the comet kit used one black for
+    // both the dark ground and the light text, and the nebula splits them
+    // (ground is Void `#080B1C`) because a canvas wants more blue than a glyph.
+    assert!(light_body.contains("#0B0E1A"));
 
     let page = String::from_utf8(respond(ws.path(), "/").body).unwrap();
     for needle in [
@@ -68,7 +71,7 @@ fn no_selector_recolors_the_page_background_as_text() {
          worked because dark mode's --ground happens to be dark"
     );
     for needle in [
-        "--ink:#0B0B0C",
+        "--ink:#0B0E1A",
         ".tf button[aria-checked=\"true\"]{color:var(--ink)",
         ".ctx-row button.on{color:var(--ink)",
     ] {
