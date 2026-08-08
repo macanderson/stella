@@ -436,3 +436,409 @@ pattern = "20"
         "a dropped record does not reappear in the other channel"
     );
 }
+
+/// Four-class hit-discipline certification for per-turn selection.
+///
+/// The corpus below is written the way an adversarial reviewer would write it,
+/// against one realistic terminal-bench-shaped task (repairing a corrupted git
+/// repository), with one record per relevance class:
+///
+/// 1. **Similar but irrelevant** — the statement is drenched in the task's own
+///    vocabulary (git, fsck, reflog, dangling) but its declared scope names a
+///    different situation. It must NOT be selected: selection keys on declared
+///    scope, never on how much the statement *sounds* like the task.
+/// 2. **Dissimilar and irrelevant** — plain noise. Must not be selected.
+/// 3. **Similar-situation, non-obvious relevance** — the statement shares no
+///    vocabulary with the task at all; only its declared scope knows why it
+///    matters here. It MUST be selected: declared scope is the signal.
+/// 4. **Total match** — obviously relevant, declared for exactly this
+///    situation. Must be selected, first.
+///
+/// The tuning direction the assertions encode: **compact** (rendered bytes are
+/// invariant under injected noise), **sufficient-only** (exactly the relevant
+/// handles render, nothing else), **honest under budget** (a drop is ledgered
+/// as `dropped`, never silent), and **cheap** (the whole certification is pure
+/// and model-free, so it runs on every `cargo test`).
+mod four_class_certification {
+    use super::super::registry;
+    use super::super::select::TurnFacts;
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// The published corpus, in the exact artifact shape `stella context keep`
+    /// publishes. All four ride the volatile channel (`force = "may"`): the
+    /// cached channel is unconditional by contract and never selected.
+    const CORPUS: &str = r#"
+schema = "context-record/v0.1"
+set_id = "tb.rescue"
+
+[defaults]
+sharing_scope = "repository"
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.tb.rescue.git-tutorial-style"
+kind = "rule"
+statement = "The git tutorial chapter must demonstrate fsck, dangling commits, and reflog recovery on a scripted corrupted repository."
+[record.steering]
+force = "may"
+precedence = 50
+applies_to = { paths = ["docs/tutorials/*"], keywords = ["tutorial"] }
+
+[[record]]
+lineage_id = "ctx.tb.rescue.css-design-tokens"
+kind = "rule"
+statement = "Component styles reference the design tokens, never raw hex colors."
+[record.steering]
+force = "may"
+precedence = 50
+applies_to = { paths = ["web/styles/*"], keywords = ["stylesheet"] }
+
+[[record]]
+lineage_id = "ctx.tb.rescue.mtime-not-recency"
+kind = "rule"
+statement = "Object-file mtimes survive packing unchanged, so file age is not evidence of when work was created."
+[record.steering]
+force = "may"
+precedence = 40
+applies_to = { paths = [".git/*"] }
+
+[[record]]
+lineage_id = "ctx.tb.rescue.reflog-first"
+kind = "rule"
+statement = "Recover lost commits from the reflog before any history rewrite; the reflog survives a corrupted HEAD."
+[record.steering]
+force = "may"
+precedence = 80
+applies_to = { paths = [".git/*"], keywords = ["fsck", "reflog"] }
+"#;
+
+    /// The corpus with the two irrelevant classes removed, for the
+    /// noise-invariance assertion.
+    const CORPUS_WITHOUT_NOISE: &str = r#"
+schema = "context-record/v0.1"
+set_id = "tb.rescue"
+
+[defaults]
+sharing_scope = "repository"
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.tb.rescue.mtime-not-recency"
+kind = "rule"
+statement = "Object-file mtimes survive packing unchanged, so file age is not evidence of when work was created."
+[record.steering]
+force = "may"
+precedence = 40
+applies_to = { paths = [".git/*"] }
+
+[[record]]
+lineage_id = "ctx.tb.rescue.reflog-first"
+kind = "rule"
+statement = "Recover lost commits from the reflog before any history rewrite; the reflog survives a corrupted HEAD."
+[record.steering]
+force = "may"
+precedence = 80
+applies_to = { paths = [".git/*"], keywords = ["fsck", "reflog"] }
+"#;
+
+    fn registry_of(corpus: &str) -> registry::Registry {
+        let files = [crate::rules::RuleFile {
+            path: ".stella/rules/tb.rescue.toml".to_string(),
+            contents: corpus.to_string(),
+        }];
+        let facts = Facts {
+            verdicts: BTreeMap::new(),
+            last_checked: BTreeMap::new(),
+            approved_blocking: BTreeSet::new(),
+            now: "2026-08-08T00:00:00Z",
+        };
+        registry::load(&[], &files, &facts)
+    }
+
+    /// The task turn: a terminal-bench-shaped git-repository rescue.
+    fn git_rescue_turn() -> (String, Vec<String>) {
+        (
+            "Repair the corrupted repository: recover the dangling commits, \
+             restore main to the latest good commit, and make git fsck exit clean."
+                .to_string(),
+            vec![".git/HEAD".to_string(), ".git/objects".to_string()],
+        )
+    }
+
+    #[test]
+    fn the_task_turn_selects_exactly_the_two_relevant_classes() {
+        let registry = registry_of(CORPUS);
+        let (text, paths) = git_rescue_turn();
+        let facts = TurnFacts {
+            text: &text,
+            paths: &paths,
+        };
+        let rendered = registry.render_volatile_for_turn(&facts, None);
+
+        // Render order is load order by contract ("records are emitted in the
+        // order given" — render.rs), so this asserts the exact set in that
+        // order; precedence is a conflict tiebreaker, not a ranking. That the
+        // budget also drops in load order rather than by precedence is #2299.
+        assert_eq!(
+            rendered.rendered,
+            vec!["mtime-not-recency", "reflog-first"],
+            "sufficient-only: exactly the relevant records, in load order"
+        );
+        assert!(
+            !rendered.text.contains("tutorial"),
+            "the similar-but-irrelevant record leaked in: {}",
+            rendered.text
+        );
+        assert!(
+            !rendered.text.contains("hex colors"),
+            "noise leaked in: {}",
+            rendered.text
+        );
+        // The non-obvious record earned its place through declared scope, not
+        // vocabulary: its statement shares no task words, and it still rendered.
+        assert!(rendered.text.contains("mtimes survive packing"));
+    }
+
+    #[test]
+    fn statement_similarity_alone_never_selects() {
+        // A turn whose words heavily overlap the tutorial record's *statement*
+        // but whose situation (paths, keywords) matches nothing it declared.
+        let registry = registry_of(CORPUS);
+        let text = "git fsck reports dangling commits; recover them via the reflog.";
+        let facts = TurnFacts { text, paths: &[] };
+        let rendered = registry.render_volatile_for_turn(&facts, None);
+        assert!(
+            !rendered
+                .rendered
+                .contains(&"git-tutorial-style".to_string()),
+            "a record was selected because its statement sounded similar: {:?}",
+            rendered.rendered
+        );
+    }
+
+    #[test]
+    fn the_same_corpus_reaims_for_a_different_situation() {
+        let registry = registry_of(CORPUS);
+        let paths = vec!["web/styles/buttons.css".to_string()];
+        let facts = TurnFacts {
+            text: "Audit the stylesheet and replace raw hex colors with tokens.",
+            paths: &paths,
+        };
+        let rendered = registry.render_volatile_for_turn(&facts, None);
+        assert_eq!(
+            rendered.rendered,
+            vec!["css-design-tokens"],
+            "context re-aims per turn: the css record alone applies here"
+        );
+    }
+
+    #[test]
+    fn rendered_bytes_are_invariant_under_injected_noise() {
+        // Compactness as a property: adding irrelevant records to the corpus
+        // must not change one byte of what the task turn receives — cost does
+        // not grow with corpus size, only with relevance.
+        let (text, paths) = git_rescue_turn();
+        let facts = TurnFacts {
+            text: &text,
+            paths: &paths,
+        };
+        let with_noise = registry_of(CORPUS).render_volatile_for_turn(&facts, None);
+        let without_noise =
+            registry_of(CORPUS_WITHOUT_NOISE).render_volatile_for_turn(&facts, None);
+        assert_eq!(
+            with_noise.text, without_noise.text,
+            "irrelevant records changed the bytes the model receives"
+        );
+    }
+
+    #[test]
+    fn a_budget_drop_is_ledgered_never_silent() {
+        let registry = registry_of(CORPUS);
+        let (text, paths) = git_rescue_turn();
+        let facts = TurnFacts {
+            text: &text,
+            paths: &paths,
+        };
+        let full = registry.render_volatile_for_turn(&facts, None);
+        assert_eq!(full.dropped, Vec::<String>::new());
+
+        let squeezed = registry.render_volatile_for_turn(&facts, Some(full.text.len() - 1));
+        let mut accounted: Vec<String> = squeezed
+            .rendered
+            .iter()
+            .chain(squeezed.dropped.iter())
+            .cloned()
+            .collect();
+        accounted.sort();
+        assert_eq!(
+            accounted,
+            vec!["mtime-not-recency".to_string(), "reflog-first".to_string()],
+            "every selected record is accounted for as rendered or dropped"
+        );
+        assert!(
+            !squeezed.dropped.is_empty(),
+            "the budget dropped a record and the ledger must say so"
+        );
+    }
+
+    #[test]
+    fn the_volatile_corpus_never_touches_the_cached_prefix() {
+        let registry = registry_of(CORPUS);
+        let cached = registry.render(Channel::Cached, None);
+        assert_eq!(
+            cached.rendered,
+            Vec::<String>::new(),
+            "a may-force record leaked into the byte-stable prefix"
+        );
+    }
+}
+
+/// Time-lapse certification: one record walked through simulated months.
+///
+/// Adaptive context means context has a **lifecycle**, and this pins the
+/// in-engine half of it end to end: a believed `should` record rides the
+/// cached prefix; when its review cadence lapses unverified it is demoted to
+/// the volatile channel with its staleness said out loud; when its truth probe
+/// is refuted it leaves the prompt entirely (or survives demoted, when the
+/// record declared `on_expiry = "stale"`). The whole walk is pure `Facts`
+/// arithmetic — no clock, no model, no filesystem — so CI replays months in
+/// microseconds on every `cargo test`.
+mod time_lapse_certification {
+    use super::super::registry;
+    use super::super::select::TurnFacts;
+    use super::*;
+    use crate::ingest::Verdict;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    const AGED_RECORD: &str = r#"
+schema = "context-record/v0.1"
+set_id = "tb.rescue"
+
+[defaults]
+sharing_scope = "repository"
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.tb.rescue.head-symref"
+kind = "rule"
+statement = "HEAD on this image is a symref; repair it by rewriting the ref text, never by deleting HEAD."
+[record.steering]
+force = "should"
+precedence = 70
+applies_to = { paths = [".git/*"] }
+[record.truth]
+basis = "measured"
+confidence = 90
+verified_at = "2026-01-01T00:00:00Z"
+review_every = "P30D"
+[record.truth.probe]
+kind = "file_contains"
+path = ".git/HEAD"
+pattern = "ref:"
+expect = "present"
+"#;
+
+    fn registry_at(
+        now: &'static str,
+        verdict: Option<Verdict>,
+        last_checked: &str,
+    ) -> registry::Registry {
+        let files = [crate::rules::RuleFile {
+            path: ".stella/rules/tb.rescue.toml".to_string(),
+            contents: AGED_RECORD.to_string(),
+        }];
+        let lineage = "ctx.tb.rescue.head-symref".to_string();
+        let mut verdicts = BTreeMap::new();
+        if let Some(verdict) = verdict {
+            verdicts.insert(lineage.clone(), verdict);
+        }
+        let mut checked = BTreeMap::new();
+        checked.insert(lineage, last_checked.to_string());
+        let facts = Facts {
+            verdicts,
+            last_checked: checked,
+            approved_blocking: BTreeSet::new(),
+            now,
+        };
+        registry::load(&[], &files, &facts)
+    }
+
+    fn git_turn_facts() -> (String, Vec<String>) {
+        (
+            "Repair the corrupted repository so git fsck exits clean.".to_string(),
+            vec![".git/HEAD".to_string()],
+        )
+    }
+
+    #[test]
+    fn month_zero_a_confirmed_record_rides_the_cached_prefix() {
+        let registry = registry_at(
+            "2026-01-02T00:00:00Z",
+            Some(Verdict::Supported),
+            "2026-01-01T00:00:00Z",
+        );
+        let cached = registry.render(Channel::Cached, None);
+        assert_eq!(cached.rendered, vec!["head-symref"]);
+    }
+
+    #[test]
+    fn month_two_an_unreverified_record_demotes_to_volatile_with_its_reason() {
+        // The P30D cadence lapsed two months ago and nothing re-ran the probe
+        // (a verdict in `Facts` means "the probe ran this sweep", so a lapsed
+        // cadence arrives as no verdict at all): the record leaves the
+        // byte-stable prefix and rides the volatile channel, where its
+        // staleness can be said without a clock entering the cache.
+        let registry = registry_at("2026-03-05T00:00:00Z", None, "2026-01-01T00:00:00Z");
+        let cached = registry.render(Channel::Cached, None);
+        assert_eq!(
+            cached.rendered,
+            Vec::<String>::new(),
+            "a stale record must not sit in the cached prefix"
+        );
+
+        let (text, paths) = git_turn_facts();
+        let facts = TurnFacts {
+            text: &text,
+            paths: &paths,
+        };
+        let volatile = registry.render_volatile_for_turn(&facts, None);
+        assert_eq!(volatile.rendered, vec!["head-symref"]);
+
+        // And demotion does not bypass selection: a turn its scope does not
+        // match still does not receive it.
+        let unrelated = TurnFacts {
+            text: "Write a haiku about the ocean.",
+            paths: &[],
+        };
+        assert_eq!(
+            registry.render_volatile_for_turn(&unrelated, None).rendered,
+            Vec::<String>::new(),
+        );
+    }
+
+    #[test]
+    fn a_refuted_record_leaves_the_prompt_entirely() {
+        let registry = registry_at(
+            "2026-03-05T00:00:00Z",
+            Some(Verdict::Refuted),
+            "2026-03-05T00:00:00Z",
+        );
+        let cached = registry.render(Channel::Cached, None);
+        let (text, paths) = git_turn_facts();
+        let facts = TurnFacts {
+            text: &text,
+            paths: &paths,
+        };
+        let volatile = registry.render_volatile_for_turn(&facts, None);
+        assert!(
+            cached.rendered.is_empty() && volatile.rendered.is_empty(),
+            "a refuted claim reached the model: cached {:?}, volatile {:?}",
+            cached.rendered,
+            volatile.rendered
+        );
+    }
+}
