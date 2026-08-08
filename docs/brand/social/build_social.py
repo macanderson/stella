@@ -49,13 +49,13 @@ REPO = HERE.parents[2]
 # brand tokens — docs/brand/css/tokens.css is normative; these mirror it
 # ---------------------------------------------------------------------------
 
-GOLD = "#FFB000"  # Phosphor Gold — the comet, on every ground
-GOLD_DEEP = "#A37200"  # small gold *text* on light surfaces only
-INK = "#0B0B0C"
-PAPER = "#F4F1EA"  # warm text on dark
-PAPER_BG = "#F6F2E9"  # light-mode surface
-MUTED_ON_DARK = "#9B9890"
-MUTED_ON_LIGHT = "#6E6A5F"
+GOLD = "#7C5CFF"  # Phosphor Gold — the comet, on every ground
+GOLD_DEEP = "#5133BE"  # small gold *text* on light surfaces only
+INK = "#080B1C"
+PAPER = "#EEF1FA"  # warm text on dark
+PAPER_BG = "#F6F7FB"  # light-mode surface
+MUTED_ON_DARK = "#9AA3C2"
+MUTED_ON_LIGHT = "#5C678F"
 
 # The repo this art advertises, and the one command that installs it.
 REPO_SLUG = "macanderson/stella"
@@ -144,7 +144,7 @@ GITHUB_BOX = 24.0
 class Theme:
     """One ground and everything that has to change with it.
 
-    Note what does *not* change: the comet stays #FFB000 on both grounds. The
+    Note what does *not* change: the comet stays #7C5CFF on both grounds. The
     kit's rule is that the mark is a shape, not small text, so it never drops
     to gold-deep — only gold *lettering* does, and only on light.
     """
@@ -176,9 +176,9 @@ DARK = Theme(
     fg=PAPER,
     muted=MUTED_ON_DARK,
     gold_text=GOLD,
-    surface="#121214",
-    surface_top="#17171A",
-    border="#2B2B2E",
+    surface="#10142E",
+    surface_top="#181D3D",
+    border="#2A3160",
     grid="#FFFFFF",
     grid_op=0.045,
     sweep_dark="#000000",
@@ -197,7 +197,7 @@ LIGHT = Theme(
     surface="#FFFDF7",
     surface_top="#F1ECDF",
     border="#DCD6C7",
-    grid="#0B0B0C",
+    grid="#080B1C",
     grid_op=0.05,
     sweep_dark="#C9BFA6",
     sweep_dark_op=0.22,
@@ -499,7 +499,7 @@ def starfield(lo: Layout, th: Theme, keep_out: tuple[float, float, float, float]
         if kx - pad < x < kx + kw + pad and ky - pad < y < ky + kh + pad:
             continue
         warm = rng.random() < 0.42
-        fill = GOLD if warm else (PAPER if th.is_dark else "#6E6A5F")
+        fill = GOLD if warm else (PAPER if th.is_dark else "#5C678F")
         # Gold reads quieter than paper on ink, so it carries the higher cap;
         # a paper speck at full strength competes with the wordmark.
         top = 0.42 if warm else 0.26

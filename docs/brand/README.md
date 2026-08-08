@@ -7,7 +7,7 @@ status: living
 # stella\* — brand kit v1.0
 
 The comet: a four-point star moving fast enough to leave a trail.
-One shape, one color — Phosphor Gold `#FFB000` on Ink `#0B0B0C`.
+One shape, one color — Phosphor Gold `#7C5CFF` on Ink `#080B1C`.
 
 **Start with `brand-guidelines.html`** — it explains everything below,
 adapts to light/dark, and works offline.
@@ -32,7 +32,7 @@ fonts/             JetBrains Mono woff2 (400/500/700/800) + OFL license
 ```
 
 Quick rules: lowercase always. Comet flies left→right. Gold is the signal,
-never the surface. On light backgrounds use gold-deep `#A37200` for small
+never the surface. On light backgrounds use gold-deep `#5133BE` for small
 gold text. Assemble, don't spin.
 
 ```

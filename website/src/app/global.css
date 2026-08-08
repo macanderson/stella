@@ -12,8 +12,8 @@
  * the mark, the prompt, the active item, the primary action — and nowhere
  * else. If everything is gold, nothing is.
  *
- * Gold text is ground-aware. Full-strength #FFB000 only earns its keep on the
- * dark ground; at small text sizes on paper it drops to gold-deep (#A37200).
+ * Gold text is ground-aware. Full-strength #7C5CFF only earns its keep on the
+ * dark ground; at small text sizes on paper it drops to gold-deep (#5133BE).
  * `--stella-accent-text` in tokens.css encodes exactly this flip — components
  * use it and never pick a gold by hand.
  *
@@ -81,18 +81,18 @@
 
   --color-fd-background: var(--stella-bg);
   --color-fd-foreground: var(--stella-fg);
-  --color-fd-muted: #ede8db;
+  --color-fd-muted: #e6e9f2;
   --color-fd-muted-foreground: var(--stella-muted-fg); /* 4.6:1 on paper-bg */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-fg);
   --color-fd-popover: var(--stella-surface);
   --color-fd-popover-foreground: var(--stella-fg);
   --color-fd-border: var(--stella-border); /* decorative seam */
-  --color-fd-accent: #f0e9d6; /* hover/selected surface — warm cream */
+  --color-fd-accent: #efeaff; /* hover/selected surface — warm cream */
   --color-fd-accent-foreground: var(--stella-fg);
   --color-fd-primary: var(--stella-accent-text); /* gold-deep, 4.9:1 on paper */
   --color-fd-primary-foreground: var(--stella-ink); /* label on a gold fill */
-  --color-fd-secondary: #ede8db;
+  --color-fd-secondary: #e6e9f2;
   --color-fd-secondary-foreground: var(--stella-fg);
   --color-fd-ring: var(--stella-accent-text);
 }
@@ -116,14 +116,14 @@
   --color-fd-muted-foreground: var(--stella-muted-fg); /* 5.9:1 on ink */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-fg);
-  --color-fd-popover: #1a1a1d;
+  --color-fd-popover: #141936;
   --color-fd-popover-foreground: var(--stella-fg);
   --color-fd-border: var(--stella-border);
-  --color-fd-accent: #201d15; /* hover surface — ink warmed with gold */
+  --color-fd-accent: #1a1f3d; /* hover surface — ink warmed with gold */
   --color-fd-accent-foreground: var(--stella-fg);
   --color-fd-primary: var(--stella-gold); /* 9.6:1 on ink */
   --color-fd-primary-foreground: var(--stella-ink);
-  --color-fd-secondary: #1a1a1d;
+  --color-fd-secondary: #141936;
   --color-fd-secondary-foreground: var(--stella-fg);
   --color-fd-ring: var(--stella-gold);
 }
@@ -316,28 +316,28 @@ figure.shiki ::selection,
  * colour, and it takes the ground-aware gold because it is the signal.
  *
  * The sidebar's ground is WHITE, not the page's warm paper. Fumadocs paints
- * the aside with `bg-fd-card` (#fcfaf4 here), which sat within 1.02:1 of the
- * #f6f2e9 page — the two grounds read as one soft warm field with no seam.
+ * the aside with `bg-fd-card` (#fdfdff here), which sat within 1.02:1 of the
+ * #f6f7fb page — the two grounds read as one soft warm field with no seam.
  * Navigation is chrome, not page: it gets the cool white ground so the warm
  * paper reads as "the document" and the sidebar reads as "the frame". The
  * fd tokens are re-scoped inside the aside so hover/selected chips stay
  * neutral on white instead of dropping warm cream blobs on it. Dark mode
- * needs no override: fd-card (#131315) already lifts off the ink ground.
+ * needs no override: fd-card (#10142E) already lifts off the ink ground.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 #nd-sidebar {
   font-size: var(--stella-type-sm);
   --color-fd-card: #ffffff;
-  --color-fd-accent: #f0f0ee; /* hover/selected chip — neutral on white */
-  --color-fd-secondary: #f0f0ee;
-  --color-fd-muted: #f6f6f4;
+  --color-fd-accent: #eef0f7; /* hover/selected chip — neutral on white */
+  --color-fd-secondary: #eef0f7;
+  --color-fd-muted: #f4f5fa;
   background-color: #ffffff;
 }
 
 .dark #nd-sidebar {
   --color-fd-card: var(--stella-surface);
-  --color-fd-accent: #201d15; /* restore the ink-warmed hover on dark */
-  --color-fd-secondary: #1a1a1d;
+  --color-fd-accent: #1a1f3d; /* restore the ink-warmed hover on dark */
+  --color-fd-secondary: #141936;
   --color-fd-muted: var(--stella-surface);
   background-color: var(--stella-surface);
 }
@@ -605,10 +605,10 @@ figure.shiki ::selection,
  * page bottoming out into the terminal. The fd text tokens are re-scoped so
  * the light mode's ink text doesn't land on a near-black ground. */
 .lp-footer {
-  background: #070708;
-  border-top-color: #232327;
+  background: #05071a;
+  border-top-color: #232A4D;
   --color-fd-foreground: var(--stella-paper);
-  --color-fd-muted-foreground: #9b9890;
+  --color-fd-muted-foreground: #9aa3c2;
   color: var(--stella-paper);
 }
 
@@ -719,7 +719,7 @@ html[data-home-nav="hidden"] #nd-nav {
   background: var(--stella-cta-bg-hover);
 }
 .dark .lp-cta:hover {
-  box-shadow: var(--stella-glow-gold);
+  box-shadow: var(--stella-glow-nebula);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -735,7 +735,7 @@ html[data-home-nav="hidden"] #nd-nav {
   font-family: var(--font-mono);
   font-size: var(--stella-type-sm);
   line-height: 1.7;
-  border: 1px solid #232327;
+  border: 1px solid #232A4D;
   border-radius: 0.5rem;
   background: var(--stella-ink);
   color: var(--stella-paper);
@@ -748,9 +748,9 @@ html[data-home-nav="hidden"] #nd-nav {
   align-items: center;
   gap: 0.6rem;
   padding: 0.5rem 0.9rem;
-  border-bottom: 1px solid #232327;
+  border-bottom: 1px solid #232A4D;
   font-size: var(--stella-type-xs);
-  color: #9b9890; /* muted on ink, regardless of page theme */
+  color: #9aa3c2; /* muted on ink, regardless of page theme */
 }
 
 .term-body {
@@ -764,7 +764,7 @@ html[data-home-nav="hidden"] #nd-nav {
   color: var(--stella-gold); /* 9.6:1 on ink */
 }
 .term-dim {
-  color: #9b9890;
+  color: #9aa3c2;
 }
 .term-ok {
   color: var(--stella-success); /* 11.4:1 on ink */
@@ -825,9 +825,9 @@ html[data-home-nav="hidden"] #nd-nav {
   background: linear-gradient(
     105deg,
     transparent 35%,
-    rgb(255 176 0 / 0.05) 45%,
-    rgb(255 216 115 / 0.16) 50%,
-    rgb(255 176 0 / 0.05) 55%,
+    rgb(124 92 255 / 0.05) 45%,
+    rgb(31 216 230 / 0.16) 50%,
+    rgb(124 92 255 / 0.05) 55%,
     transparent 65%
   );
   transform: translateX(-101%);
@@ -873,9 +873,9 @@ html[data-home-nav="hidden"] #nd-nav {
   font-size: var(--stella-type-2xs);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #9b9890; /* muted on ink, regardless of page theme */
-  background: #1a1a1d;
-  border: 1px solid #232327;
+  color: #9aa3c2; /* muted on ink, regardless of page theme */
+  background: #141936;
+  border: 1px solid #232A4D;
   border-radius: 0.375rem;
   padding: 0.15rem 0.5rem;
 }
@@ -1142,20 +1142,20 @@ html[data-home-nav="hidden"] #nd-nav {
 
 figure.shiki {
   background: var(--stella-ink);
-  border-color: #232327;
+  border-color: #232A4D;
   border-radius: 0.5rem;
   box-shadow: var(--stella-shadow-card);
   color: var(--stella-paper);
   cursor: copy;
   --color-fd-primary: var(--stella-gold);
-  --color-fd-muted-foreground: #9b9890;
+  --color-fd-muted-foreground: #9aa3c2;
   --color-fd-ring: var(--stella-gold);
 }
 
 /* The title bar, when a block has one — the `.term-head` look. */
 figure.shiki > div:has(figcaption) {
-  border-bottom-color: #232327;
-  color: #9b9890;
+  border-bottom-color: #232A4D;
+  color: #9aa3c2;
 }
 
 /* The floating copy chip — bottom-right, over the code, anchored to the
@@ -1167,10 +1167,10 @@ figure.shiki > div:has(figcaption) {
   bottom: 0.6rem;
   inset-inline-end: 0.6rem;
   z-index: 2;
-  border: 1px solid #232327;
+  border: 1px solid #232A4D;
   border-radius: 0.375rem;
-  background: #1a1a1d;
-  color: #9b9890;
+  background: #141936;
+  color: #9aa3c2;
   font-family: var(--font-mono);
   font-size: var(--stella-type-2xs);
   font-weight: 500;
@@ -1193,7 +1193,7 @@ figure.shiki > div:has(figcaption) {
 }
 .lp-code-copy[data-copied] {
   color: var(--stella-success); /* 11.4:1 on ink; word + glyph carry it */
-  border-color: color-mix(in oklab, var(--stella-success) 40%, #232327);
+  border-color: color-mix(in oklab, var(--stella-success) 40%, #232A4D);
 }
 
 .lp-code-copy-face {

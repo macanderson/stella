@@ -8,7 +8,7 @@
  * Colour rules (docs/brand/BRAND.md):
  *  - The comet is ALWAYS Phosphor Gold, on every ground — it is a shape, not
  *    small text, so it never drops to gold-deep. The kit's color-light lockup
- *    keeps #FFB000 verbatim; so do we, via `--stella-gold`.
+ *    keeps #7C5CFF verbatim; so do we, via `--stella-gold`.
  *  - The wordmark letters take `currentColor`, so the name inverts with the
  *    theme (Paper on ink, Ink on paper).
  *  - The sparkle — the `*` in "stella*" — is gold, same law as the comet.
@@ -21,7 +21,7 @@
  */
 
 /** Phosphor Gold. Inline fallback for contexts with no cascade (Satori). */
-export const GOLD = "#ffb000";
+export const GOLD = "#7c5cff";
 
 /** The comet on its own — docs/brand/logo/svg/logomark-color.svg. */
 export const MARK_VIEW_BOX = "0 0 96 96";
