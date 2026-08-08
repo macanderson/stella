@@ -70,6 +70,34 @@ fn witness_baseline_symptom(baseline_output: &str) -> Option<&'static str> {
     }
 }
 
+/// The static wall-clock ceiling on the witness repair engine turn (#2141).
+///
+/// Sized from the trace that motivated it: a legitimate authoring turn
+/// settles in about a minute, while the one unbounded repair observed on
+/// Terminal-Bench ran a single reasoning-heavy call for 965 seconds — more
+/// than half the trial's whole allowance — and was still streaming when the
+/// harness killed the trial. Five minutes is generous headroom above every
+/// observed legitimate repair, and still leaves a bounded trial most of its
+/// clock for the work the repair is only scaffolding for.
+const WITNESS_REPAIR_CEILING: Duration = Duration::from_secs(300);
+
+/// The wall clock one witness repair turn may spend (#2141): the static
+/// ceiling, tightened to half the run's remaining declared allowance when
+/// the caller declared one ([`PipelineConfig::run_budget`]).
+///
+/// Half, not all: the repair buys scaffolding, and whatever it consumes must
+/// leave the verification of the real work at least as much room as the
+/// scaffolding got. `None` remaining — nobody is measuring — falls back to
+/// the ceiling alone, so the bound exists on every configuration rather than
+/// only under a bench harness. Pure so the derivation is testable apart from
+/// the stage.
+fn witness_repair_bound(remaining_run_budget: Option<Duration>) -> Duration {
+    match remaining_run_budget {
+        Some(remaining) => WITNESS_REPAIR_CEILING.min(remaining / 2),
+        None => WITNESS_REPAIR_CEILING,
+    }
+}
+
 /// Candidate-bound hook execution: both the hook process and the engine's
 /// payload use the isolated root, never the session root.
 pub(super) struct BoundHookRunner<'a> {
@@ -194,6 +222,16 @@ impl<'a> Pipeline<'a> {
             self.engine_config_for(surface),
             &self.config.role_overrides.verifier,
         )
+    }
+
+    /// What remains of the run's declared wall-clock allowance
+    /// ([`PipelineConfig::run_budget`]), measured from the pipeline's start.
+    /// `None` when the caller declared no deadline — the same "nobody is
+    /// measuring" reading the repair gate gives its clock axis.
+    fn remaining_run_budget(&self) -> Option<Duration> {
+        self.config
+            .run_budget
+            .map(|budget| budget.saturating_sub(self.started.elapsed()))
     }
 
     pub(super) fn engine_config_for(&self, surface: CandidateSurface<'_>) -> EngineConfig {
@@ -403,6 +441,23 @@ impl<'a> Pipeline<'a> {
             first_baseline.stdout_tail, first_baseline.stderr_tail
         );
         if first_baseline.passed() {
+            // #2141: the "one bounded repair" is bounded in wall clock too,
+            // not just in attempts. A reasoning-heavy repair model at ~37
+            // tok/s once spent 965 seconds — still mid-stream — on a call
+            // whose whole purpose is to salvage scaffolding, and rode the
+            // trial into an external kill that discarded the entire
+            // verification record. The engine's own `model_timeout` cannot
+            // catch this shape: it measures idle gaps, and a runaway
+            // reasoning stream never goes idle. Checked before dispatch so a
+            // run that is already out of clock degrades for free.
+            let repair_bound = witness_repair_bound(self.remaining_run_budget());
+            if repair_bound.is_zero() {
+                return Err(WitnessAbort::degradable(
+                    "no wall-clock room remains for a witness repair; the executed change \
+                     stands unproven"
+                        .to_string(),
+                ));
+            }
             messages.push(CompletionMessage::user(witness_repair_prompt(&command)));
             let mut repair_engine = Engine::with_sleeper(
                 author.provider,
@@ -412,24 +467,43 @@ impl<'a> Pipeline<'a> {
             )
             .with_call_role(stella_protocol::ModelCallRole::WitnessRepair);
             repair_engine = self.attach(repair_engine);
-            let repaired = match self
-                .run_engine_turn(
-                    &repair_engine,
-                    &mut messages,
-                    spend.budget,
-                    &mut discarded_signals,
-                    // Witness repair, same reasoning as the author turn.
-                    None,
-                )
-                .await
-            {
-                TurnOutcome::Completed { text, cost_usd } => {
+            let repair_turn = self.run_engine_turn(
+                &repair_engine,
+                &mut messages,
+                spend.budget,
+                &mut discarded_signals,
+                // Witness repair, same reasoning as the author turn.
+                None,
+            );
+            // The expiry drops the in-flight turn, the same posture as the
+            // triage and research ceilings — and safe here for the same
+            // reasons a hard drop is documented as the last resort in
+            // `stella_core::step::CancelToken` (a token cancel only lands at
+            // a step boundary, which a single runaway generation never
+            // reaches): the turn's only durable effects live in the
+            // authoring snapshot, which every exit path below discards; the
+            // transcript it may leave mid-pair is `messages`, which nothing
+            // reads after this turn; and the abandoned call is not silent in
+            // accounting — the engine's `CancelUsageGuard` leaves its
+            // `UsageIncomplete { Cancelled }` envelope (its provider-side
+            // spend is unknowable once the response never lands). The budget
+            // guard itself is untouched, so invariant 6 — budget aborts at
+            // safe boundaries only — is unaffected: this is a stage latency
+            // ceiling, not a budget stop.
+            let repaired = match tokio::time::timeout(repair_bound, repair_turn).await {
+                Err(_elapsed) => {
+                    return Err(WitnessAbort::degradable(format!(
+                        "witness repair exceeded its wall-clock bound ({repair_bound:?}); \
+                         the executed change stands unproven"
+                    )));
+                }
+                Ok(TurnOutcome::Completed { text, cost_usd }) => {
                     *spend.total += cost_usd;
                     text
                 }
-                TurnOutcome::Aborted {
+                Ok(TurnOutcome::Aborted {
                     reason, cost_usd, ..
-                } => {
+                }) => {
                     *spend.total += cost_usd;
                     // Degradable for the same #1789 reason as the author
                     // turn's budget arm above.
@@ -755,6 +829,32 @@ mod tests {
                 "thread 'witness' panicked at 'assertion failed: `(left == right)`'"
             ),
             None
+        );
+    }
+
+    /// #2141's derivation half: the repair bound exists on every
+    /// configuration (no declared run budget still yields the static
+    /// ceiling), tightens to half the remaining allowance when that is the
+    /// smaller number, and collapses to zero — the pre-dispatch refusal —
+    /// when the run's clock is spent.
+    #[test]
+    fn the_repair_bound_is_the_ceiling_tightened_by_remaining_clock() {
+        assert_eq!(witness_repair_bound(None), WITNESS_REPAIR_CEILING);
+        assert_eq!(
+            witness_repair_bound(Some(Duration::from_secs(3600))),
+            WITNESS_REPAIR_CEILING,
+            "a roomy run budget must not widen the static ceiling"
+        );
+        assert_eq!(
+            witness_repair_bound(Some(Duration::from_secs(120))),
+            Duration::from_secs(60),
+            "a tight run budget halves: verification must keep at least the \
+             room the scaffolding spends"
+        );
+        assert_eq!(
+            witness_repair_bound(Some(Duration::ZERO)),
+            Duration::ZERO,
+            "a spent clock buys no repair call at all"
         );
     }
 
