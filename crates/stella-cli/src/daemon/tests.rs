@@ -90,6 +90,33 @@ fn a_terminal_run_is_supervised_and_everything_else_is_not() {
     assert!(!should_supervise(false, true, true));
 }
 
+/// **Witness (#2142).** The banner teaches the opt-out.
+///
+/// Supervision is a default, not a choice the user made, so the moment it
+/// engages is the one reliable place to say what it means — the run is in
+/// the background — and how to decline it next time: `--foreground` keeps
+/// the work in this terminal's process.
+#[test]
+fn the_attached_banner_says_background_and_names_the_foreground_opt_out() {
+    let lines = super::announcement("ses-banner");
+    assert!(
+        lines[0].contains("survives this terminal closing"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains("stella daemon attach ses-banner"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[2].contains("running in the background"),
+        "{}",
+        lines[2]
+    );
+    assert!(lines[2].contains("--foreground"), "{}", lines[2]);
+}
+
 /// The witness for the whole feature: a supervised run leaves the terminal's
 /// session, so the `SIGHUP` a closing window sends to that session cannot
 /// reach it.
