@@ -320,6 +320,9 @@ impl crate::embed::Embedder for CountingEmbedder {
     fn fingerprint(&self) -> EmbedderFingerprint {
         self.inner.fingerprint()
     }
+    fn similarity_posture(&self) -> crate::embed::SimilarityPosture {
+        self.inner.similarity_posture()
+    }
     async fn embed(
         &self,
         texts: &[String],
@@ -493,7 +496,16 @@ async fn a_deferred_memory_loses_the_last_slot_to_a_normal_one() {
         std::sync::Arc::new(crate::embed::HashEmbedder::default()),
         crate::clock::FixedClock::shared(1_000),
     )
-    .unwrap();
+    .unwrap()
+    // This test's premise NEEDS a memory the query does not match: tier
+    // precedence is only visible when the durable fact wins the slot on band,
+    // not on similarity (see the doc comment). The evidence gate would refuse
+    // that unmatched memory outright, so the tier property is measured with
+    // the gate off; admission itself is pinned in `retrieval::evidence_tests`.
+    .with_tuning(crate::retrieval::RecallTuning {
+        require_evidence: false,
+        ..crate::retrieval::RecallTuning::default()
+    });
 
     store
         .upsert(

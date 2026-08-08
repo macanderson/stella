@@ -209,7 +209,7 @@ async fn repeated_probes_return_the_identical_ranked_list() {
 /// The property the whole module exists for: with the index on, cosine calls
 /// **per stored node** must FALL as the corpus grows.
 ///
-/// Modeled on `recall_work_is_bounded_by_frame_count_not_corpus_size` in
+/// Modeled on `ungated_recall_work_is_bounded_by_frame_count_not_corpus_size` in
 /// `retrieval/tests.rs`, which pins the exact scan at *flat* per-node cost — the
 /// best a linear scan can do. Sublinear means the ratio must go down, not merely
 /// stay put, so that is the assertion.

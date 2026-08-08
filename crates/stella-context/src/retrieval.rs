@@ -27,8 +27,8 @@ use contextgraph_types::{
 use rusqlite::Connection;
 
 use crate::candidates::{
-    NodeMeta, domains_for_nodes, live_node_metas, nodes_by_ids, scan_lexical,
-    score_nodes_by_vector, vectors_for_ids,
+    NodeMeta, domains_for_nodes, live_node_metas, nodes_by_ids, scan_terms, score_nodes_by_vector,
+    vectors_for_ids,
 };
 use crate::error::ContextError;
 use crate::store::{
@@ -144,6 +144,23 @@ pub const DEFAULT_ANN_ENABLED: bool = false;
 /// third of the probe cost; the trade is a setting, which is why this is a
 /// default rather than a constant.
 pub const DEFAULT_ANN_PROBES: usize = 12;
+/// Whether a candidate must carry query-conditional evidence to be admitted.
+///
+/// **`true`, and that is a deliberate behavior change (#2289).** Before it,
+/// `max_frames` was a cap that always filled: every embedded node is in the
+/// vector list, so on any store with ≥`max_frames` live nodes five frames rode
+/// into every turn no matter how badly they scored — a small workspace
+/// surfaced the same five irrelevant memories on every call. With the gate
+/// on, admission requires an anchor, anchor adjacency, a distinctive lexical
+/// match, domain overlap, or a semantic-posture cosine floor (the `evidence`
+/// module holds the channels; [`crate::embed::SimilarityPosture`] says why
+/// the default embedder's cosine is not one of them) — and a recall where
+/// nothing qualifies returns **zero frames**, which downstream already
+/// renders as "no recalled context".
+///
+/// `false` is the documented escape hatch back to the old padding behavior,
+/// for a workspace that would rather see weak matches than nothing.
+pub const DEFAULT_REQUIRE_EVIDENCE: bool = true;
 
 /// The knobs that shape a recall, resolved once per store.
 ///
@@ -183,6 +200,10 @@ pub struct RecallTuning {
     /// Centroid posting lists an enabled probe reads, before over-fetch widens
     /// it. See [`DEFAULT_ANN_PROBES`].
     pub ann_probes: usize,
+    /// Whether admission requires query-conditional evidence, or the budget
+    /// may fill with the best-ranked of whatever exists. See
+    /// [`DEFAULT_REQUIRE_EVIDENCE`] for why the default changed.
+    pub require_evidence: bool,
 }
 
 impl Default for RecallTuning {
@@ -198,6 +219,7 @@ impl Default for RecallTuning {
             mmr_candidate_multiple: DEFAULT_MMR_CANDIDATE_MULTIPLE,
             ann_enabled: DEFAULT_ANN_ENABLED,
             ann_probes: DEFAULT_ANN_PROBES,
+            require_evidence: DEFAULT_REQUIRE_EVIDENCE,
         }
     }
 }
@@ -235,6 +257,9 @@ impl RecallTuning {
             // ranking nothing but the unassigned tail — an empty recall on a
             // full store. Clamped like every other knob rather than rejected.
             ann_probes: self.ann_probes.max(1),
+            // A bool has no invalid range; carried so the escape hatch a file
+            // sets survives sanitization.
+            require_evidence: self.require_evidence,
         }
     }
 }
@@ -467,6 +492,17 @@ pub struct RecallResult {
     /// `L-C5` bans silent truncation, and a bound that vanishes from the report
     /// is exactly that.
     pub candidates_cut: usize,
+    /// How many candidates were refused for carrying **no query-conditional
+    /// evidence** — nothing tied them to this query beyond existing and
+    /// ranking somewhere (`require_evidence`, #2289).
+    ///
+    /// Reported apart from both [`Self::dropped`] (a budget drop is reversible
+    /// by asking for more) and [`Self::candidates_cut`] (a rank cut is about
+    /// shortlist size): this count says the gate judged them unrelated, which
+    /// no budget raise changes. Zero whenever the gate is off. `L-C5`: a gate
+    /// that silently vanished candidates would be exactly the truncation that
+    /// principle bans.
+    pub no_evidence_cut: usize,
     /// Whether the IVF index served the similarity scan instead of the exact
     /// one.
     ///
@@ -628,6 +664,10 @@ impl ContextStore {
         // are real and the worker keeps serving other tasks. It needs `'static`
         // inputs, which is why the query is projected into an owned
         // [`RecallInputs`] first — bounded by the query, never by the corpus.
+        let similarity_floor = match self.embedder().similarity_posture() {
+            crate::embed::SimilarityPosture::Semantic { admission_floor } => Some(admission_floor),
+            crate::embed::SimilarityPosture::Surface => None,
+        };
         let inputs = RecallInputs {
             anchors: q.anchors.clone(),
             as_of: q.as_of.clone(),
@@ -641,6 +681,7 @@ impl ContextStore {
             terms: query_terms(q),
             domains: domains.to_vec(),
             fingerprint: self.fingerprint().id(),
+            similarity_floor,
         };
         let handle = self.conn_handle();
         let task = tokio::task::spawn_blocking(move || {
@@ -718,6 +759,11 @@ struct RecallInputs {
     domains: Vec<String>,
     /// The embedder fingerprint whose vectors this recall may read (`L-C2`).
     fingerprint: String,
+    /// `Some(floor)` when the active embedder declares
+    /// [`SimilarityPosture::Semantic`](crate::embed::SimilarityPosture) — a
+    /// cosine at or above it is admission evidence on its own. `None` under a
+    /// `Surface` posture: scores order, they never admit.
+    similarity_floor: Option<f32>,
     /// Public ids this workspace suppresses, applied before the budget.
     ///
     /// Suppression the plane can mark on its own rows goes through
@@ -881,14 +927,27 @@ fn recall_blocking(
     // The lexical-fallback arm is already bounded by `DEFAULT_LEXICAL_LIMIT`,
     // so it leaves this zero.
     let mut candidates_cut = 0usize;
+    // Candidates the evidence gate refused: nothing tied them to this query
+    // (`require_evidence`, #2289). Counted on whichever arm ran.
+    let mut no_evidence_cut = 0usize;
     let candidates: Vec<Ranked> = if used_lexical_fallback {
-        let scored = lexical_search(
-            conn,
-            &excluded,
-            &q.terms,
-            q.tuning.lexical_limit,
-            q.as_of.as_deref(),
-        )?;
+        // One streaming pass computes both the historical term-fraction
+        // scores and, when the gate is on, which matches are distinctive.
+        let pass = term_pass(conn, &excluded, q)?;
+        let mut scored = pass.fallback_scores();
+        if q.tuning.require_evidence {
+            // A match made only of glue terms (present in most of the corpus)
+            // says nothing about this query; see `evidence::term_is_distinctive`.
+            let distinctive = pass.distinctive_matchers();
+            let before = scored.len();
+            scored.retain(|(id, _)| distinctive.contains(id));
+            no_evidence_cut = before - scored.len();
+        }
+        // Ties break on node id — same discipline, same reason as the scan
+        // this replaced: term-fraction scores collide heavily, and the
+        // truncate below must keep the same *set* from run to run.
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        scored.truncate(q.tuning.lexical_limit);
         scored
             .into_iter()
             .filter_map(|(id, relevance)| {
@@ -917,6 +976,12 @@ fn recall_blocking(
         let recency_ranked: Vec<i64> = recency.iter().map(|m| m.id).collect();
 
         // 4b. Graph adjacency: 1-hop from anchors + strongest vector hits.
+        // The expansion is split by seed origin — anchor-seeded adjacency is
+        // an evidence channel (the user named the anchor; its neighborhood is
+        // grounded by that), vector-seeded adjacency is ranking only (under a
+        // `Surface` embedder the strongest hit certifies nothing, so neither
+        // can its neighbors). The two partitions' contributions sum to
+        // exactly what the single call over their union contributed.
         let mut seeds: Vec<i64> = anchor_ids.clone();
         seeds.extend(
             vector_ranked
@@ -926,15 +991,31 @@ fn recall_blocking(
         );
         seeds.sort_unstable();
         seeds.dedup();
+        let anchor_set: HashSet<i64> = anchor_ids.iter().copied().collect();
+        let (anchor_seeds, vector_seeds): (Vec<i64>, Vec<i64>) =
+            seeds.iter().partition(|s| anchor_set.contains(s));
         let mut graph_weight: HashMap<i64, f64> = HashMap::new();
         for &s in &seeds {
             // Seeds themselves are relevant context (an open file, a
             // mentioned symbol), so they enter the list with a base weight.
             *graph_weight.entry(s).or_insert(0.0) += 1.0;
         }
-        for (neighbor, weight) in
-            neighbors_valid_at(conn, &seeds, q.as_of.as_deref(), q.valid_at.as_deref())?
-        {
+        let mut anchor_adjacent: HashSet<i64> = HashSet::new();
+        for (neighbor, weight) in neighbors_valid_at(
+            conn,
+            &anchor_seeds,
+            q.as_of.as_deref(),
+            q.valid_at.as_deref(),
+        )? {
+            anchor_adjacent.insert(neighbor);
+            *graph_weight.entry(neighbor).or_insert(0.0) += weight;
+        }
+        for (neighbor, weight) in neighbors_valid_at(
+            conn,
+            &vector_seeds,
+            q.as_of.as_deref(),
+            q.valid_at.as_deref(),
+        )? {
             *graph_weight.entry(neighbor).or_insert(0.0) += weight;
         }
         let mut graph_scored: Vec<(i64, f64)> = graph_weight.into_iter().collect();
@@ -961,7 +1042,44 @@ fn recall_blocking(
             ],
             q.tuning.rrf_k,
         );
-        let ordered_all = dedup_by_content_hash(&fused, &meta_by_id);
+        let mut ordered_all = dedup_by_content_hash(&fused, &meta_by_id);
+
+        // The evidence gate (#2289): admission requires something that ties
+        // the candidate to THIS query. Ranking alone enforced nothing — every
+        // embedded node is in the vector list, so on any store with
+        // ≥`max_frames` live nodes the budget filled every slot regardless of
+        // score, and a small workspace surfaced the same frames on every
+        // prompt. Note that admission is a **stricter** test than the fusion's
+        // "grounded signal": domain overlap ranks here but does not admit,
+        // because the scope every caller passes is the whole workspace
+        // vocabulary, which makes overlap a property of the node rather than
+        // of this query (see [`evidence`]'s module doc, and #2333). The gate
+        // runs before the shortlist cut so an inadmissible head cannot
+        // displace admissible candidates ranked below it, and its refusals
+        // are counted, never silent (`L-C5`).
+        if q.tuning.require_evidence {
+            let pass = term_pass(conn, &excluded, q)?;
+            let semantic_hits: Vec<i64> = match q.similarity_floor {
+                // Only a `Semantic`-posture embedder may admit by cosine; the
+                // default `Surface` posture contributes nothing here. See
+                // `crate::embed::SimilarityPosture`.
+                Some(floor) => cos_scored
+                    .iter()
+                    .filter(|(_, c)| *c >= floor)
+                    .map(|(id, _)| *id)
+                    .collect(),
+                None => Vec::new(),
+            };
+            let admissible = evidence::admissible_ids(
+                &anchor_ids,
+                &anchor_adjacent,
+                &pass.distinctive_matchers(),
+                &semantic_hits,
+            );
+            let before = ordered_all.len();
+            ordered_all.retain(|(id, _)| admissible.contains(id));
+            no_evidence_cut = before - ordered_all.len();
+        }
         // Bound the candidate set BEFORE the MMR pass and before any frame
         // is built. Both are per-candidate and both are wasted on a tail
         // that `pack_to_budget` cannot keep. The cut is by fused rank, so
@@ -1069,6 +1187,7 @@ fn recall_blocking(
         used_lexical_fallback,
         considered,
         candidates_cut,
+        no_evidence_cut,
         used_ann_index,
         ann_probes,
         vectors_scored,
@@ -1271,40 +1390,37 @@ fn query_terms(q: &ContextQuery) -> Vec<String> {
         .collect()
 }
 
-/// Bounded substring/term search over stored content — the honest fallback
-/// when graph/vector coverage is weak (`L-C6`). Score is the fraction of query
-/// terms found in the node's content or label.
+/// The one streaming term pass a recall runs: the corpus's bodies go past
+/// [`evidence::TermMatcher`] a row at a time, and only per-term document
+/// frequencies plus per-node matched-term sets come back (`evidence` — the
+/// admission gate — and the lexical fallback's scores are both derived from
+/// it). The per-row match is byte-for-byte the substring scan the fallback
+/// always did; the same call now also serves admission, so a recall never
+/// scans twice.
 ///
-/// Streams the corpus past the matcher rather than taking a materialized
-/// `&[NodeRow]`: the scan is inherently corpus-wide, but it no longer requires
-/// the corpus to be *resident* first. Only `(id, score)` for matching nodes is
-/// kept, and the ≤`limit` survivors' bodies are fetched by the caller. The
-/// per-row match is byte-for-byte the one this always did.
-fn lexical_search(
+/// An empty term list skips the scan outright: nothing could match, and the
+/// fallback's historical empty-result short-circuit is preserved.
+fn term_pass(
     conn: &Connection,
     excluded: &HashSet<i64>,
-    terms: &[String],
-    limit: usize,
-    as_of: Option<&str>,
-) -> Result<Vec<(i64, f32)>, ContextError> {
-    if terms.is_empty() {
-        return Ok(Vec::new());
+    q: &RecallInputs,
+) -> Result<evidence::TermEvidence, ContextError> {
+    let mut matcher = evidence::TermMatcher::new(&q.terms);
+    if !q.terms.is_empty() {
+        scan_terms(
+            conn,
+            excluded,
+            q.as_of.as_deref(),
+            |id, display_name, content| {
+                let haystack = format!("{display_name} {content}").to_lowercase();
+                matcher.observe(id, &haystack);
+            },
+        )?;
     }
-    let mut scored = scan_lexical(conn, excluded, as_of, |display_name, content| {
-        let haystack = format!("{display_name} {content}").to_lowercase();
-        let hits = terms.iter().filter(|t| haystack.contains(*t)).count();
-        (hits > 0).then(|| hits as f32 / terms.len() as f32)
-    })?;
-    // Ties break on node id. Term-fraction scores collide heavily (there are
-    // only `terms.len() + 1` possible values) and the scan arrives in SQLite's
-    // unordered order, so without the tiebreak the `truncate` below keeps
-    // a *different set* of frames from run to run — not merely a different
-    // order — which is the one thing the fallback path must not do.
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-    scored.truncate(limit);
-    Ok(scored)
+    Ok(matcher.finish())
 }
 
+mod evidence;
 mod ranking;
 
 pub(crate) use ranking::{
@@ -1316,5 +1432,7 @@ pub(crate) use ranking::{
 #[cfg(test)]
 pub(crate) use ranking::budget_tokens_for_bytes;
 
+#[cfg(test)]
+mod evidence_tests;
 #[cfg(test)]
 mod tests;
