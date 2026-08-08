@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "one engineer, one repository, six simulated months - a tool-registration convention re-encountered across four distinct tasks in four different wordings, a recurring `rg -n <pattern> <path>` shape, one unreadable reflection, and several unrelated one-off facts so the corpus stays multi-topic",
+  "description": "one engineer, one repository, six simulated months - a tool-registration convention re-encountered across five distinct tasks in four naturally-varied wordings plus one near-restatement, a recurring `rg -n <pattern> <path>` shape, one unreadable reflection, and several unrelated one-off facts so the corpus stays multi-topic",
   "workspace": {
     "domains": [
       "tools",
@@ -40,7 +40,7 @@
             "kind": "lessons",
             "lessons": [
               {
-                "lesson": "Register the tool in crates/stella-tools/src/registry.rs",
+                "lesson": "Tool registration happens in crates/stella-tools/src/registry.rs — add the entry there.",
                 "domains": [
                   "tools"
                 ],
@@ -148,7 +148,7 @@
             "kind": "lessons",
             "lessons": [
               {
-                "lesson": "Tool registration lives at crates/stella-tools/src/registry.rs",
+                "lesson": "Register a new tool by editing the ToolRegistry in crates/stella-tools/src/registry.rs.",
                 "domains": [
                   "tools"
                 ],
@@ -238,7 +238,7 @@
             "kind": "lessons",
             "lessons": [
               {
-                "lesson": "Tools register through crates/stella-tools/src/registry.rs",
+                "lesson": "A tool nobody registered in crates/stella-tools/src/registry.rs is invisible to the agent.",
                 "domains": [
                   "tools"
                 ],
@@ -278,7 +278,7 @@
             "kind": "lessons",
             "lessons": [
               {
-                "lesson": "Registered tools come from crates/stella-tools/src/registry.rs",
+                "lesson": "Every builtin is wired through crates/stella-tools/src/registry.rs before it can be called.",
                 "domains": [
                   "tools"
                 ],
@@ -364,6 +364,40 @@
           "shell": [
             {
               "command": "rg -n \"data:\" crates/stella-model/src/anthropic.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        },
+        {
+          "at": 1715382800,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "Tool registration happens in crates/stella-tools/src/registry.rs, so add the new entry there.",
+                "domains": [
+                  "tools"
+                ],
+                "kind": "domain"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"register\" crates/stella-tools/src/registry.rs",
               "succeeded": true
             }
           ],

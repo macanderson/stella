@@ -445,20 +445,23 @@ harness earning its keep before it shipped.
 
 ### 13.1 Four measurements that changed the fixtures
 
-1. **The dedup filter and the skill miner use the same metric at the same
-   threshold, so a corpus of natural repetitions builds nothing.**
-   `retain_unknown` drops a lesson at Jaccard `>= 0.5` against existing
-   memories, *before* the mining log is appended — so a dropped lesson never
-   becomes an observation and can never contribute an occurrence. The miner then
-   clusters at `min_similarity: 0.5`. For a cluster of three to form, three
-   lessons must be similar enough to cluster while staying dissimilar enough to
-   survive dedup. The band exists **only because the tokenizers differ**:
-   `stella_store::forget::tokens` keeps a path as one token and keeps stopwords,
-   while `stella_core::mining::terms` shatters the path into five terms and
-   drops them. Four naturally-varied phrasings of one convention mined **zero**
-   candidates; four written into the band mined a skill and a rule. Filed as
-   **#2358** — the committed corpus is worded around this defect, and that
-   workaround should not outlive it.
+1. **The dedup filter and the skill miner used the same metric at the same
+   threshold, so a corpus of natural repetitions built nothing.** Filed as
+   **#2358** and fixed in two halves. Ordering: `partition_known` (né
+   `retain_unknown`) now *diverts* a store-restatement to the mining log
+   instead of dropping it before the log was appended, so re-learning — the
+   most common recurrence shape — finally counts as an occurrence while the
+   store still keeps one copy. Threshold: the miners' `min_similarity` moved
+   from the inherited 0.5 to 0.4, a value measured in
+   `stella_core::mining::terms`'s own token space (naturally-varied same-fact
+   pairs score 0.40; the worst cross-fact pair 0.36) rather than borrowed from
+   `stella_store::SIMILARITY_THRESHOLD`, which is measured over a tokenizer
+   that keeps a path as one token where `terms` shatters it into five. The
+   relationship is declared and tripwired by
+   `the_dedup_and_clustering_predicates_hold_the_declared_relationship`, and
+   the committed corpus is now worded the way a real engagement words itself —
+   four natural phrasings plus one near-restatement — instead of being
+   engineered into the accidental band the old thresholds left open.
 2. **The foundry holes only a value-like argument.** `classify_argument` makes a
    positional argument a parameter only if it is a path or a number, so
    `cargo test -p <crate>` yields a different signature per crate and never
@@ -504,8 +507,6 @@ harness earning its keep before it shipped.
 
 ### 13.3 Still open
 
-- **#2358** — the dedup/mining threshold collision. The most consequential thing
-  the harness has found.
 - **#2359** — the placeholder metric.
 - **The corpus can prove the corpus.** §6's recurrence profile mitigates it and
   does not remove it.

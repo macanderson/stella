@@ -701,8 +701,8 @@ fn mine_candidates_respects_the_limit() {
     // Five lessons with deliberately disjoint vocabulary (a shared
     // boilerplate template — e.g. "lesson about {word} handling" —
     // would keep 3 of 4 terms identical across "different" lessons,
-    // pushing Jaccard similarity above the default 0.5 threshold and
-    // collapsing them into one cluster instead of five), each
+    // pushing Jaccard similarity above the default clustering threshold
+    // and collapsing them into one cluster instead of five), each
     // recurring three times so all five clear the occurrence
     // threshold and become candidates before truncation.
     let lessons = [
