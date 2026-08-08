@@ -269,7 +269,7 @@ fn find_conflicts(records: &[LoadedRecord]) -> Vec<Conflict> {
 }
 
 fn conflict_between(left: &LoadedRecord, right: &LoadedRecord) -> Option<Conflict> {
-    if precedence_of(&left.record) != precedence_of(&right.record) {
+    if left.record.precedence() != right.record.precedence() {
         // Different precedence is the *designed* way to express which record wins;
         // there is nothing to resolve.
         return None;
@@ -296,7 +296,7 @@ fn conflict_between(left: &LoadedRecord, right: &LoadedRecord) -> Option<Conflic
              exclusion, a different precedence, or a supersession link",
             left_mode.as_str(),
             right_mode.as_str(),
-            precedence_of(&left.record),
+            left.record.precedence(),
         ),
         suspended: suspended.clone(),
     })
@@ -307,14 +307,6 @@ fn applies_to(record: &Record) -> Option<&AppliesTo> {
         .steering
         .as_ref()
         .and_then(|steering| steering.applies_to.as_ref())
-}
-
-fn precedence_of(record: &Record) -> u32 {
-    record
-        .steering
-        .as_ref()
-        .and_then(|steering| steering.precedence)
-        .unwrap_or(0)
 }
 
 fn mode_of(record: &Record) -> EnforcementMode {
