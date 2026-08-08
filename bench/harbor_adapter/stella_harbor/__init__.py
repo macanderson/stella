@@ -92,12 +92,6 @@ from .exit_cause import (
 )
 from .git_baseline import ensure_git, run_git_baseline
 from .locate import locate_binary as _locate_binary
-from .metrics import (
-    _extract_metrics,
-    _load_json_object,
-    _sum_step_usage,  # noqa: F401 — re-exported for tests/test_adapter.py
-    _valid_nonnegative_number,
-)
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
@@ -112,13 +106,18 @@ from .posture import (
     PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
-    fold_witness_observations,
     resolve_candidates,
     resolve_verifier_evidence_demand,
     resolve_max_revisions,
     resolve_model_timeout,
     resolve_triage_model,
     resolve_worker_effort,
+)
+from .stream_envelope import (
+    _extract_metrics,
+    _load_json_object,
+    _stream_to_envelope,
+    _sum_step_usage,  # noqa: F401 — re-exported for tests/test_adapter.py
 )
 from .stream_release import communicate_with_release, journal_reports_completion
 from .telemetry_export import PRIVATE_TELEMETRY_DIR, export_private_telemetry
@@ -795,168 +794,6 @@ def _embedded_source_commit(version_text: str) -> str | None:
     """Extract the full compile-time STELLA_BUILD_GIT_SHA from `--version`."""
     match = re.search(r"-dev\.([0-9a-fA-F]{40})(?:\s|$)", version_text)
     return match.group(1).lower() if match is not None else None
-
-
-def _json_dicts_from_line(line: str) -> list[dict[str, Any]]:
-    """Decode complete JSON objects from one otherwise noisy stream line."""
-    stripped = line.strip()
-    if not stripped:
-        return []
-    try:
-        value = json.loads(stripped)
-    except json.JSONDecodeError:
-        value = None
-    if isinstance(value, dict):
-        return [value]
-    if value is not None:
-        return []
-
-    decoder = json.JSONDecoder()
-    objects: list[dict[str, Any]] = []
-    position = 0
-    while True:
-        start = stripped.find("{", position)
-        if start < 0:
-            break
-        try:
-            candidate, end = decoder.raw_decode(stripped, start)
-        except json.JSONDecodeError:
-            position = start + 1
-            continue
-        if isinstance(candidate, dict):
-            objects.append(candidate)
-        position = max(end, start + 1)
-    return objects
-
-
-def _stream_to_envelope(
-    text: str | None,
-    *,
-    process_returned: bool = False,
-) -> dict[str, Any] | None:
-    """Build a best-effort Stella envelope from durable stream-json output.
-
-    Non-JSON diagnostics and a truncated final line are ignored, but counted.
-    Only top-level objects with a string ``type`` are Stella events. A process
-    that did not return normally is explicitly marked interrupted unless a
-    ``complete`` event proves completion; no missing terminal values are
-    inferred.
-    """
-    if not text:
-        return None
-
-    events: list[dict[str, Any]] = []
-    diagnostic_lines = 0
-    ignored_json_objects = 0
-    for line in text.splitlines():
-        line_events = 0
-        objects = _json_dicts_from_line(line)
-        for candidate in objects:
-            if isinstance(candidate.get("type"), str):
-                events.append(candidate)
-                line_events += 1
-            else:
-                ignored_json_objects += 1
-        if line.strip() and line_events == 0:
-            diagnostic_lines += 1
-
-    if not events:
-        return None
-
-    last_terminal: dict[str, Any] | None = None
-    last_error: dict[str, Any] | None = None
-    last_text: str | None = None
-    last_model: str | None = None
-    usage_costs: list[float] = []
-    usage_cost_complete = True
-    usage_count = 0
-    complete_count = 0
-    error_count = 0
-
-    for event in events:
-        event_type = event.get("type")
-        if event_type == "step_usage":
-            usage_count += 1
-            model = event.get("model")
-            if isinstance(model, str) and model:
-                last_model = model
-            cost = event.get("cost_usd")
-            if _valid_nonnegative_number(cost):
-                usage_costs.append(float(cost))
-            else:
-                usage_cost_complete = False
-        elif event_type == "text":
-            fragment = event.get("delta")
-            if fragment is None:
-                fragment = event.get("text")
-            if isinstance(fragment, str):
-                last_text = fragment
-        elif event_type == "error":
-            error_count += 1
-            last_error = event
-            last_terminal = event
-        elif event_type == "complete":
-            complete_count += 1
-            last_terminal = event
-            model = event.get("model")
-            if isinstance(model, str) and model:
-                last_model = model
-
-    terminal_type = last_terminal.get("type") if last_terminal else None
-    stream_complete = terminal_type == "complete" or (
-        process_returned and terminal_type == "error"
-    )
-    if terminal_type == "complete":
-        status = "completed"
-    elif process_returned and terminal_type == "error":
-        status = "aborted"
-    else:
-        status = "interrupted"
-
-    complete_cost = (
-        last_terminal.get("cost_usd")
-        if terminal_type == "complete" and last_terminal is not None
-        else None
-    )
-    if _valid_nonnegative_number(complete_cost):
-        total_cost: float | None = float(complete_cost)
-        cost_source = "complete_event"
-    elif usage_count and usage_cost_complete:
-        total_cost = sum(usage_costs)
-        cost_source = "summed_step_usage"
-    else:
-        total_cost = None
-        cost_source = "unknown"
-
-    reason = None
-    if last_error is not None and isinstance(last_error.get("message"), str):
-        reason = last_error["message"]
-
-    # Stella's own account of its verification ladder, folded into fields an
-    # analysis can read. See `posture.fold_witness_observations`.
-    witness = fold_witness_observations(events)
-
-    return {
-        "status": status,
-        "text": last_text,
-        "cost_usd": total_cost,
-        "reason": reason,
-        "model": last_model,
-        "events": events,
-        "_stella_stream": {
-            "event_count": len(events),
-            "diagnostic_lines": diagnostic_lines,
-            "ignored_json_objects": ignored_json_objects,
-            "terminal_event": terminal_type,
-            "stream_complete": stream_complete,
-            "process_returned": process_returned,
-            "step_usage_count": usage_count,
-            "complete_event_count": complete_count,
-            "error_event_count": error_count,
-            "cost_source": cost_source,
-            **witness,
-        },
-    }
 
 
 class StellaAgent(BaseInstalledAgent):
