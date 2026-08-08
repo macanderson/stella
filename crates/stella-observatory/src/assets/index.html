@@ -733,6 +733,8 @@ footer b{color:var(--text-2);font-weight:600}
         <div class="scroll-x" id="mem-citations"></div>
         <div class="subhead">Promoted rules</div>
         <div id="rules-list"></div>
+        <div class="subhead">Enforcement ledger <span id="rules-governance" class="chip"></span></div>
+        <div id="rules-promotions"></div>
       </div>
     </div>
     <div class="card">
@@ -2063,6 +2065,24 @@ function renderMemoryTab(files, rules, explorations) {
   $("rules-list").innerHTML = html ||
     `<div class="empty">No promoted rules.<br>
      Lessons that keep proving true across runs get promoted here.</div>`;
+
+  // The hash-chained enforcement ledger (.stella/rules/promotions.jsonl) — a
+  // different ledger from the loop's own keep/ignore events on the Improve
+  // tab. This one is the human act that moves a published record between
+  // advisory and blocking, and it travels with the repository.
+  const gov = rules?.governance_mode;
+  $("rules-governance").textContent = gov ? `governance: ${gov}` : "";
+  const promotions = rules?.promotions ?? [];
+  $("rules-promotions").innerHTML = promotions.length
+    ? promotions.map(p => `<div class="feed-item">
+        <b>^${esc(p.lineage_id.split(".").pop())}</b>
+        <span class="chip">${esc(p.from)} → ${esc(p.to)}</span>
+        <span class="chip">${esc(p.approver)}</span>
+        <span class="when">${esc(p.at)}</span>
+        <div>${esc(p.reason)}</div></div>`).join("")
+    : `<div class="empty">No enforcement promotions.<br>
+       <code>stella context promote</code> records an accountable, hash-chained
+       change to what a record may enforce.</div>`;
 }
 
 /* ── self-improve tab ────────────────────────────────────────────────── */

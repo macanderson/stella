@@ -494,6 +494,59 @@ pub fn rules_files(workspace_root: &Path) -> Value {
     json!(rows)
 }
 
+/// The governance mode from `.stella/rules/governance.toml` (`solo` / `team` /
+/// `regulated`), or `None` when the file is absent or unreadable.
+pub fn governance_mode(workspace_root: &Path) -> Option<String> {
+    let text =
+        std::fs::read_to_string(workspace_root.join(".stella/rules/governance.toml")).ok()?;
+    let parsed = text.parse::<toml::Table>().ok()?;
+    Some(parsed.get("mode")?.as_str()?.to_string())
+}
+
+/// The enforcement-promotion ledger, `.stella/rules/promotions.jsonl` — the
+/// hash-chained record of every accountable change to what a published context
+/// record is allowed to enforce.
+///
+/// This is a **different ledger** from the `promotion_event` records
+/// [`crate::context_db`] folds out of `context.db`. Those are the adaptive
+/// loop's own keep/ignore/retire decisions over induced proposals; this one is
+/// the human governance act that moves a *published* record between advisory
+/// and blocking, and it travels with the repository because a record only
+/// steers a teammate if its authority does too. Serving only the first left
+/// the dashboard claiming "no governance decisions recorded" for a workspace
+/// whose steering policy had been promoted by a named approver.
+///
+/// Fields are emitted by allowlist rather than passed through: the file is
+/// operator-authored text, and only the chain's own vocabulary belongs in the
+/// browser.
+pub fn promotions(workspace_root: &Path) -> Value {
+    let path = workspace_root.join(".stella/rules/promotions.jsonl");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return json!([]);
+    };
+    let mut rows: Vec<Value> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|v| v["lineage_id"].is_string())
+        .map(|v| {
+            json!({
+                "seq": v["seq"].as_i64(),
+                "at": v["at"].as_str().unwrap_or(""),
+                "lineage_id": v["lineage_id"].as_str().unwrap_or(""),
+                "from": v["from"].as_str().unwrap_or(""),
+                "to": v["to"].as_str().unwrap_or(""),
+                "approver": v["approver"].as_str().unwrap_or(""),
+                "mode": v["mode"].as_str().unwrap_or(""),
+                "reason": snippet(v["reason"].as_str().unwrap_or(""), 400),
+            })
+        })
+        .collect();
+    // Newest first, matching every other feed on the page. `seq` is the chain's
+    // own order and is authoritative; `at` is operator-supplied text.
+    rows.sort_by_key(|r| -r["seq"].as_i64().unwrap_or(0));
+    json!(rows)
+}
+
 /// Distilled lessons from `.stella/private/reflections.jsonl` — one object per line,
 /// `{lesson, domains, occurred_at}`. Unparseable lines are skipped.
 pub fn lessons(workspace_root: &Path) -> Value {
