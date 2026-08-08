@@ -25,6 +25,7 @@ def _trial(
     priced: float | None = 1.0,
     clock: float = 100.0,
     status: str = "done",
+    tokens: int = 1000,
 ) -> TrialMetrics:
     m = TrialMetrics(task=task, trial=f"{task}__x")
     m.status = status
@@ -32,6 +33,12 @@ def _trial(
     m.failure = failure or ""
     m.priced_cost = priced
     m.clock_time = clock
+    # A trial that ran spent tokens, and since #2132 that is what tells the
+    # cost rules apart: an unpriced trial that *measured* usage poisons the
+    # seat's cost, while one that measured nothing is skipped. Default nonzero
+    # so every fixture here is the ordinary case; pass `tokens=0` for the
+    # trial that published no telemetry at all.
+    m.tokens_in = tokens
     return m
 
 
