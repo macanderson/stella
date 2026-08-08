@@ -57,9 +57,9 @@ pub(super) fn step_prompt(index: usize, total: usize, description: &str) -> Stri
 
 /// Words that turn the declaration into its own denial (#2104).
 ///
-/// Compared against the payload's first word after punctuation is stripped and
-/// case is folded, never as a prefix: `nothing left to do` is a genuine
-/// completion and must not be read as `not`.
+/// Compared against the payload's first word — the run of alphanumerics that
+/// punctuation *terminates* — with case folded, never as a prefix: `nothing
+/// left to do` is a genuine completion and must not be read as `not`.
 const NEGATION_OPENERS: &[&str] = &[
     "no",
     "not",
@@ -124,13 +124,23 @@ fn declares_completion(line: &str) -> bool {
 /// A bare `PLAN COMPLETE:` is the contract [`step_prompt`] actually asks for,
 /// so an empty payload is affirmative.
 fn opens_with_negation(payload: &str) -> bool {
-    let payload = payload.trim_start().trim_start_matches(':');
-    let Some(word) = payload.split_whitespace().next() else {
-        return false;
-    };
-    let word: String = word
+    // Scan to the first word rather than splitting on whitespace: a model
+    // writes `no—steps 2-10 remain` and `n/a` as often as it writes `no, …`,
+    // and a filter that *deletes* the separator instead of stopping at it
+    // reads those as the words `nosteps` and `na` — no longer negations, so
+    // the denial closes the plan, which is #2104 all over again.
+    let opener = payload.trim_start_matches(|c: char| !c.is_alphanumeric());
+    // `n/a` is one idiom the word scan below cannot see: it stops at the
+    // slash and reads a bare `n`, which is too thin a word to deny on.
+    if opener
+        .get(..3)
+        .is_some_and(|s| s.eq_ignore_ascii_case("n/a"))
+    {
+        return true;
+    }
+    let word: String = opener
         .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '\'')
+        .take_while(|c| c.is_alphanumeric() || *c == '\'')
         .flat_map(char::to_lowercase)
         .collect();
     // `isn't`, `doesn't`, `hasn't` — the contraction carries the negation.
@@ -142,7 +152,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_marker_line_closes_the_plan_wherever_it_sits_in_the_reply() {
+    fn a_marker_line_closes_the_plan_when_it_opens_or_closes_the_reply() {
         assert!(goal_declared_complete("PLAN COMPLETE: nginx is serving."));
         assert!(goal_declared_complete(
             "All eight steps were covered by the setup script.\n  PLAN COMPLETE: verified."
@@ -184,6 +194,27 @@ mod tests {
             "PLAN COMPLETE: Not complete.",
             "PLAN COMPLETE: partially; the cert is missing.",
             "PLAN COMPLETE: isn't done, one step left.",
+        ] {
+            assert!(
+                !goal_declared_complete(denial),
+                "should not close the plan: {denial}"
+            );
+        }
+    }
+
+    /// Models punctuate denials without a space as readily as with one. A
+    /// screen that deleted the separator instead of stopping at it read these
+    /// as `nosteps` / `noincomplete` / `na` and closed the plan on its own
+    /// denial — the #2104 failure, one keystroke away.
+    #[test]
+    fn a_denial_fused_to_its_punctuation_is_still_a_denial() {
+        for denial in [
+            "PLAN COMPLETE: no—steps 2-10 remain.",
+            "PLAN COMPLETE: no–steps 2-10 remain.",
+            "PLAN COMPLETE: no/incomplete, steps remain.",
+            "PLAN COMPLETE: no,steps 2-10 remain.",
+            "PLAN COMPLETE — no, steps remain.",
+            "PLAN COMPLETE: n/a — still on step 1.",
         ] {
             assert!(
                 !goal_declared_complete(denial),
