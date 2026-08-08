@@ -318,7 +318,7 @@ fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
     if !server.auth_fields.is_empty() {
         spans.push(Span::styled(
             format!("  ⚿ {}", server.auth_fields.join(",")),
-            Style::default().fg(theme::ORCHID),
+            Style::default().fg(theme::VIOLET),
         ));
     }
     // OAuth state for http servers: logged in (green) or available (`o`).
@@ -548,7 +548,7 @@ fn footer(mode: McpMode) -> Line<'static> {
         spans.push(Span::styled(
             format!(" {key} "),
             Style::default()
-                .fg(theme::ORCHID)
+                .fg(theme::VIOLET)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(format!("{desc}  "), theme::muted()));

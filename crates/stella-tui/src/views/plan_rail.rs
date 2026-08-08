@@ -167,7 +167,7 @@ fn plan_ring(state: PlanState) -> (&'static str, Style) {
         PlanState::Approved => ("●", Style::new().fg(theme::TEXT_PRIMARY)),
         PlanState::Started => (
             "●",
-            Style::new().fg(theme::ORCHID).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
         ),
         PlanState::Completed => ("●", Style::new().fg(theme::OK)),
         PlanState::Cancelled => ("○", Style::new().fg(theme::TEXT_TERTIARY)),
@@ -190,7 +190,7 @@ fn verify_ring(tone: Tone) -> (&'static str, Style) {
         ),
         // In flight: the same violet the plan uses for "working", so one
         // colour means one thing across the whole rail.
-        Tone::Info => ("●", Style::new().fg(theme::ORCHID)),
+        Tone::Info => ("●", Style::new().fg(theme::VIOLET)),
         // Nothing has been established here yet.
         Tone::Muted => ("○", Style::new().fg(theme::TEXT_TERTIARY)),
     }

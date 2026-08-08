@@ -49,23 +49,18 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 // only — `/color` exists so several terminal windows running stella can be told
 // apart at a glance, which needs hues that are *distinct* rather than on-brand.
 // `colored`'s named ANSI colors are the portable stand-ins, and the nearest one
-// to the brand's Nebula Violet (`theme::ACCENT`, `#8F72FF`) is bright-magenta —
-// the same 16-colour cell `theme::FALLBACKS` gives the accent.
+// to the brand's Phosphor Gold (`theme::ACCENT`, `#FFB81A`) is bright-yellow.
 //
-// The default used to be bright-blue (and bright-cyan before that, and
-// bright-yellow under the comet kit): the accent trailed the identity through
-// recolour after recolour because nothing asserted which hue the default
-// resolves to. The test below pins it.
+// The default used to be bright-blue (and bright-cyan before that): the
+// accent trailed the identity through recolour after recolour because
+// nothing asserted which hue the default resolves to. The comet kit ends
+// that — the brand slot is `gold` now, and the test below pins it.
 //
 // The old slugs are all kept as personalisation: `sky` and `azure` still
 // land on bright-blue (the named set holds no second distinct blue), and
 // `/color sky` keeps working for anyone whose muscle memory types it — it
 // just no longer claims to be the brand.
-const PALETTE: [(&str, Color); 8] = [
-    ("nebula", Color::BrightMagenta),
-    // `gold` keeps its slot for anyone whose muscle memory types it — exactly
-    // as `sky` did when gold displaced it — it just no longer claims to be
-    // the brand.
+const PALETTE: [(&str, Color); 7] = [
     ("gold", Color::BrightYellow),
     ("sky", Color::BrightBlue),
     ("cyan", Color::BrightCyan),
@@ -641,29 +636,25 @@ mod tests {
         );
     }
 
-    /// The nebula is the brand, so it is the default accent -- `/color` with
-    /// no argument, and a fresh session, must land on it.
+    /// Gold is the brand, so it is the default accent -- `/color` with no
+    /// argument, and a fresh session, must land on it.
     #[test]
-    fn default_accent_is_the_nebula() {
-        assert_eq!(PALETTE[0].0, "nebula");
+    fn default_accent_is_gold() {
+        assert_eq!(PALETTE[0].0, "gold");
         assert_eq!(ACCENT.load(Ordering::Relaxed) % PALETTE.len(), 0);
         // …and it must be the BRAND hue, not merely first in the list. The
         // default trailed the identity through recolour after recolour
         // because nothing asserted which colour the default slug actually
-        // resolves to. Bright-magenta is the nearest named ANSI stand-in for
-        // `theme::ACCENT` (Nebula Violet `#8F72FF`), and is the same
-        // 16-colour cell `theme::FALLBACKS` assigns it.
-        assert_eq!(PALETTE[0].1, Color::BrightMagenta);
-        assert_eq!(accent(), Color::BrightMagenta);
-        // Both retired brand slugs survive as personalisation, then the
-        // process global returns to the brand default for any test that reads
-        // it.
+        // resolves to. Bright-yellow is the nearest named ANSI stand-in for
+        // `theme::ACCENT` (Phosphor Gold `#FFB81A`).
+        assert_eq!(PALETTE[0].1, Color::BrightYellow);
+        assert_eq!(accent(), Color::BrightYellow);
+        // The old brand slug survives as personalisation, then the process
+        // global returns to the brand default for any test that reads it.
         assert!(set_accent("sky"));
         assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "sky");
         assert!(set_accent("gold"));
         assert_eq!(accent(), Color::BrightYellow);
-        assert!(set_accent("nebula"));
-        assert_eq!(accent(), Color::BrightMagenta);
     }
 
     #[test]
