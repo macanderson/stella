@@ -25,6 +25,7 @@ def _trial(
     priced: float | None = 1.0,
     clock: float = 100.0,
     status: str = "done",
+    tokens: int = 1000,
 ) -> TrialMetrics:
     m = TrialMetrics(task=task, trial=f"{task}__x")
     m.status = status
@@ -32,6 +33,12 @@ def _trial(
     m.failure = failure or ""
     m.priced_cost = priced
     m.clock_time = clock
+    # A trial that ran spent tokens, and since #2132 that is what tells the
+    # cost rules apart: an unpriced trial that *measured* usage poisons the
+    # seat's cost, while one that measured nothing is skipped. Default nonzero
+    # so every fixture here is the ordinary case; pass `tokens=0` for the
+    # trial that published no telemetry at all.
+    m.tokens_in = tokens
     return m
 
 
@@ -168,6 +175,22 @@ class TestOutcomeCounting:
         outcomes = match_row(_match([seat]))["seats"][0]["outcomes"]
         assert outcomes["priced_cost"] is None
         assert outcomes["priced_cost_per_solve"] is None
+
+    def test_a_trial_that_measured_nothing_does_not_poison_the_cost(self) -> None:
+        """The other half of the rule above (#2132). An unpriced trial makes
+        the seat's cost unknown only when it *measured* usage; one that
+        published no telemetry at all has no tokens to be short by, and since
+        #2132 gave it `priced_cost = None` (it used to be a fabricated `0.0`)
+        it would otherwise poison every match containing one crashed setup."""
+        seat = _seat(
+            {
+                "a": _trial("a", resolved=True, priced=2.0),
+                "b": _trial("b", resolved=False, priced=None, tokens=0),
+            }
+        )
+        outcomes = match_row(_match([seat]))["seats"][0]["outcomes"]
+        assert outcomes["priced_cost"] == 2.0
+        assert outcomes["priced_cost_per_solve"] == 2.0
 
     def test_unjudged_trials_do_not_count(self) -> None:
         seat = _seat(
