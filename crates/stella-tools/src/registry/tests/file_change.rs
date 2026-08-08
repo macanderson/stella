@@ -696,3 +696,55 @@ async fn the_probe_ignore_policy_reaches_the_recorded_delta() {
         assert_eq!(touched, expected, "policy {policy:?}");
     }
 }
+
+/// A process-free registry never consults the repository's ignore rules,
+/// because consulting them spawns `git` and this mode's whole promise is that
+/// no built-in launches a child process (`HostDataIsolation::ProcessFree`).
+/// The setting does not get to defeat the attestation: the isolated registry
+/// walks unfiltered, which costs time — bounded by `MAX_RECORDED_TOUCHES` —
+/// rather than costing the boundary.
+///
+/// The effective policy is asserted directly, because that is the whole
+/// mechanism: every capture this registry takes reads this one field, and no
+/// observable *output* distinguishes "walked unfiltered" from "the rules
+/// happened to exclude nothing" without a repository whose rules the test
+/// would then have to trust.
+#[test]
+fn a_process_free_registry_never_consults_the_repositorys_ignore_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let isolated = ToolRegistry::with_backends_and_options(
+        dir.path().to_path_buf(),
+        None,
+        None,
+        RegistryOptions {
+            // The setting asks for the filter…
+            probe_ignore_policy: crate::shell_touch::IgnorePolicy::SkipIgnored,
+            // …and the attestation withholds it.
+            media_host_data_isolation: Some(crate::media::HostDataIsolation::ProcessFree),
+            ..Default::default()
+        },
+    );
+    assert!(isolated.is_process_free(), "the fixture must be isolated");
+    assert_eq!(
+        isolated.probe_ignore_policy(),
+        crate::shell_touch::IgnorePolicy::WalkAll,
+        "an isolated registry may not spawn git to learn what is ignored"
+    );
+
+    // The control: the identical option outside isolation is honored, so the
+    // assertion above is about the attestation and not about the default.
+    let ordinary = ToolRegistry::with_backends_and_options(
+        dir.path().to_path_buf(),
+        None,
+        None,
+        RegistryOptions {
+            probe_ignore_policy: crate::shell_touch::IgnorePolicy::SkipIgnored,
+            ..Default::default()
+        },
+    );
+    assert!(!ordinary.is_process_free());
+    assert_eq!(
+        ordinary.probe_ignore_policy(),
+        crate::shell_touch::IgnorePolicy::SkipIgnored,
+    );
+}

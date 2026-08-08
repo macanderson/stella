@@ -29,3 +29,26 @@ pub struct RegistryOptions {
     /// observation machinery, which no MCP or custom tool ever routes around.
     pub probe_ignore_policy: crate::shell_touch::IgnorePolicy,
 }
+
+impl RegistryOptions {
+    /// The policy the registry will actually use, once host attestations are
+    /// applied to what the operator asked for.
+    ///
+    /// Process-free isolation outranks the setting. Consulting the
+    /// repository's ignore rules means spawning `git`, and that mode's whole
+    /// promise is that no built-in launches a child process — so an isolated
+    /// registry walks unfiltered rather than quietly breaking the boundary
+    /// the host attested to. The cost is walk time, which
+    /// [`crate::shell_touch::MAX_RECORDED_TOUCHES`] already bounds; honoring
+    /// the setting instead would cost the guarantee.
+    pub(super) fn effective_probe_ignore_policy(
+        &self,
+        process_free: bool,
+    ) -> crate::shell_touch::IgnorePolicy {
+        if process_free {
+            crate::shell_touch::IgnorePolicy::WalkAll
+        } else {
+            self.probe_ignore_policy
+        }
+    }
+}

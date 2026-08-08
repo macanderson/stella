@@ -576,7 +576,7 @@ impl ToolRegistry {
             announce_mutations: std::sync::atomic::AtomicBool::new(true),
             mutations: std::sync::atomic::AtomicU64::new(0),
             process_free,
-            probe_ignore_policy: options.probe_ignore_policy,
+            probe_ignore_policy: options.effective_probe_ignore_policy(process_free),
         }
     }
 
@@ -1095,7 +1095,7 @@ impl ToolRegistry {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         let shell_probe = (opaque_call && !bracketing).then(|| {
-            crate::shell_touch::WorkspaceProbe::capture_with(&self.root, self.probe_ignore_policy)
+            crate::shell_touch::WorkspaceProbe::capture_with(&self.root, self.probe_ignore_policy())
         });
 
         let mut output = match tool {
@@ -1151,7 +1151,7 @@ impl ToolRegistry {
         if let Some(before) = shell_probe {
             let after = crate::shell_touch::WorkspaceProbe::capture_with(
                 &self.root,
-                self.probe_ignore_policy,
+                self.probe_ignore_policy(),
             );
             self.record_probe_delta(
                 &before,

@@ -32,6 +32,7 @@ use crate::graph::Inner;
 use crate::lang::Language;
 use crate::store::IndexStats;
 use crate::walk;
+use crate::workspace_ignore::WorkspaceIgnore;
 
 /// Debounce window: filesystem bursts within this interval coalesce into one
 /// re-index batch.
@@ -66,8 +67,8 @@ type BatchTick = (u64, IndexStats);
 /// stale forever. [`crate::store::apply_changes`] prunes a vanished path by
 /// prefix, so an irrelevant deletion (an editor swap file, say) costs one
 /// no-op batch, never a wrong row.
-fn is_watch_relevant(root: &Path, path: &Path) -> bool {
-    if walk::rel_is_ignored(root, path) {
+fn is_watch_relevant(root: &Path, path: &Path, ignore: &WorkspaceIgnore) -> bool {
+    if walk::rel_is_ignored(root, path, ignore) {
         return false;
     }
     if !path.exists() {
@@ -111,13 +112,21 @@ pub(crate) fn spawn(
     let (tx, _ticks) = start_pipeline(inner, debounce);
 
     let event_root = root.clone();
+    // Resolved once, here, rather than per event: the filter runs on every
+    // saved file, and resolving per call would be one `git` invocation per
+    // keystroke-triggered write. The window this opens is a `.gitignore`
+    // edited while the watcher is live, whose new rules are not seen until
+    // the next full index pass re-resolves them (`walk_indexable`). That
+    // costs an ignored file one wasted re-index, never a wrong row — and it
+    // is the same direction every other bound in this subsystem fails.
+    let event_ignore = WorkspaceIgnore::resolve(&root);
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
         let Ok(event) = result else {
             return;
         };
         for path in event.paths {
             // Only source files we index, and never inside ignored dirs.
-            if is_watch_relevant(&event_root, &path) {
+            if is_watch_relevant(&event_root, &path, &event_ignore) {
                 let _ = tx.send(path);
             }
         }
@@ -137,7 +146,13 @@ pub(crate) fn spawn(
 pub(crate) fn spawn_injectable(inner: Arc<Inner>, debounce: Duration) -> WatchInjector {
     let root = inner.root.clone();
     let (tx, ticks) = start_pipeline(inner, debounce);
-    WatchInjector { root, tx, ticks }
+    let ignore = WorkspaceIgnore::resolve(&root);
+    WatchInjector {
+        root,
+        ignore,
+        tx,
+        ticks,
+    }
 }
 
 /// Test seam: stands in for the OS watcher, feeding synthetic events into the
@@ -149,6 +164,10 @@ pub(crate) fn spawn_injectable(inner: Arc<Inner>, debounce: Duration) -> WatchIn
 #[doc(hidden)]
 pub struct WatchInjector {
     root: PathBuf,
+    /// Resolved at construction, like the real watcher's — the injector is a
+    /// stand-in for event *delivery* only, so it must apply the identical
+    /// filter against an identically-aged rule set.
+    ignore: WorkspaceIgnore,
     tx: mpsc::UnboundedSender<PathBuf>,
     ticks: tokio::sync::watch::Receiver<BatchTick>,
 }
@@ -158,7 +177,7 @@ impl WatchInjector {
     /// applying the same relevance filter as the real `notify` callback.
     /// Returns whether the path passed the filter and was enqueued.
     pub fn inject(&self, path: &Path) -> bool {
-        if !is_watch_relevant(&self.root, path) {
+        if !is_watch_relevant(&self.root, path, &self.ignore) {
             return false;
         }
         self.tx.send(path.to_path_buf()).is_ok()

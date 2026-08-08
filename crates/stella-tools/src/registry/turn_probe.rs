@@ -7,6 +7,13 @@
 use super::*;
 
 impl ToolRegistry {
+    /// The ignore policy every capture this registry takes will use — the
+    /// requested one, unless a host attestation withheld it
+    /// ([`RegistryOptions::effective_probe_ignore_policy`]).
+    pub(crate) fn probe_ignore_policy(&self) -> crate::shell_touch::IgnorePolicy {
+        self.probe_ignore_policy
+    }
+
     /// Take a before-image of the workspace for the turn about to run.
     ///
     /// Paired with [`Self::settle_workspace_probe`]. `classify_file_op` reads
@@ -30,8 +37,10 @@ impl ToolRegistry {
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.bracket_opaque_calls
             .store(0, std::sync::atomic::Ordering::Relaxed);
-        let probe =
-            crate::shell_touch::WorkspaceProbe::capture_with(&self.root, self.probe_ignore_policy);
+        let probe = crate::shell_touch::WorkspaceProbe::capture_with(
+            &self.root,
+            self.probe_ignore_policy(),
+        );
         *self
             .workspace_probe
             .lock()
@@ -62,8 +71,10 @@ impl ToolRegistry {
         else {
             return;
         };
-        let after =
-            crate::shell_touch::WorkspaceProbe::capture_with(&self.root, self.probe_ignore_policy);
+        let after = crate::shell_touch::WorkspaceProbe::capture_with(
+            &self.root,
+            self.probe_ignore_policy(),
+        );
         // Attribution needs a cause. The probe exists to answer "what did the
         // opaque calls do?", so a bracket that dispatched no opaque call has
         // nothing to ask it — any delta it sees is foreign motion (a

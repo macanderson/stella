@@ -151,12 +151,20 @@ respects `max_tokens`/`max_frames` (L-C5).
 
 ## Gotchas
 
-- **Custom `.gitignore` patterns are not honored.** `walk.rs` is a deny-list
-  approximation of ripgrep semantics (hidden dirs, `target`, `node_modules`,
-  `dist`, `dist-standalone`, `build`, `out`, `.next`, `vendor`,
-  `__pycache__`, `venv`, …), not the `ignore` crate. The same gap applies to
-  `.gitattributes`: only the root-level file is read, per-directory ones are
-  not merged.
+- **The repository's own ignore rules are honored, and so is a deny-list —
+  they are two filters, not one.** `workspace_ignore.rs` asks `git` what this
+  workspace ignores (one `git ls-files` per walk, only when the workspace is
+  itself the repository root), so per-directory ignore files, negations,
+  globs, `.git/info/exclude`, and the global excludesfile all behave exactly
+  as they do at the command line (#2360). `walk.rs`'s deny-list (hidden dirs,
+  `target`, `node_modules`, `dist`, `dist-standalone`, `build`, `out`,
+  `.next`, `vendor`, `__pycache__`, `venv`, …) survives *beside* that answer:
+  it is what still prunes a vendored bundle in a workspace that is **not** a
+  repository, where no ignore file says anything at all. The live watcher
+  resolves the rules once at construction, so a `.gitignore` edited
+  mid-session is not seen until the next full index pass.
+- **`.gitattributes` is still root-level only.** Per-directory files are not
+  merged — unlike the ignore rules above, this one is genuinely unresolved.
 - **Generated-file exclusion runs *before* the byte-compat skip.** Deliberate:
   the sha256 skip would otherwise keep a file indexed before `generated.rs`
   existed in the store forever, because its bytes never change.
