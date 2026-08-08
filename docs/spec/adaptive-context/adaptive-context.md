@@ -219,6 +219,14 @@ packing with an honest drop report. Owns supersession and tombstones for the
 records it stores, because retention policy cannot live in a different database
 from the data it governs.
 
+Admission requires query-conditional evidence: an anchor the goal named, its
+graph adjacency, a term match distinctive against the corpus, domain overlap,
+or a similarity floor an embedder has declared semantically meaningful. The
+frame budget is a cap, never a quota — a recall where nothing qualifies
+returns zero frames, and every refusal is counted in the drop report (§5.5).
+Ranking orders the admissible; it never launders mere existence into
+relevance.
+
 ### 6.2 The frame
 
 The per-turn compiled artifact: what entered, in what order, why, at what cost,

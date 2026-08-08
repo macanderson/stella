@@ -88,6 +88,40 @@ pub struct Embedding {
     pub vector: Vec<f32>,
 }
 
+/// What a similarity score from this embedder is allowed to *mean* — the
+/// declared-posture pattern from `stella-model`'s provider parity matrix
+/// (`CachePosture`/`ReasoningPosture`), applied to the one seam where an
+/// embedder's honesty matters: recall admission.
+///
+/// Every consumer may use scores from either posture to **order** candidates.
+/// Only a `Semantic` posture lets a score **admit** one: retrieval's evidence
+/// gate treats a cosine at or above the declared floor as proof of relevance,
+/// and under `Surface` it treats the cosine as ordering only and demands
+/// evidence from another channel (anchor, graph adjacency, distinctive term,
+/// domain). The distinction is measured, not cautious — see
+/// [`crate::retrieval::DEFAULT_RECENCY_WEIGHT`] for the incident where hashed
+/// trigram scores of contaminants (0.38–0.50) overlapped genuinely relevant
+/// frames (0.45–0.63), which is exactly a `Surface` embedder being asked a
+/// `Semantic` question.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SimilarityPosture {
+    /// Scores reflect meaning. A cosine at or above `admission_floor` is, on
+    /// its own, evidence that the node is relevant to the query. The floor is
+    /// per-embedder because it is an empirical property of the model's score
+    /// distribution — declare it from measurement, the way a provider's cache
+    /// posture names its witness test.
+    Semantic {
+        /// The measured cosine at which this embedder's relevant/irrelevant
+        /// score distributions separate.
+        admission_floor: f32,
+    },
+    /// Scores reflect surface text overlap only (hashed character n-grams).
+    /// They order candidates but certify nothing; admission must come from
+    /// another evidence channel. The safe default for a new backend: claiming
+    /// `Semantic` is an opt-in with a number to defend, never an omission.
+    Surface,
+}
+
 /// Produces vectors for text. Async because real backends (ONNX on a
 /// threadpool, hosted APIs over HTTP) are; the hashing default resolves
 /// immediately.
@@ -99,6 +133,12 @@ pub trait Embedder: Send + Sync {
     /// Embed a batch. Returns one vector per input, in order. An empty batch
     /// is an error, not an empty success — callers should not ask for nothing.
     async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError>;
+
+    /// Whether this backend's similarity scores may admit a recall candidate
+    /// on their own, and at what floor. Deliberately without a default: an
+    /// implementor must look at this question, exactly as a provider must
+    /// declare its row on every parity axis (invariant 8).
+    fn similarity_posture(&self) -> SimilarityPosture;
 }
 
 /// The pure-Rust default embedder: the hashing trick over character n-grams.
@@ -211,6 +251,13 @@ impl Embedder for HashEmbedder {
                 vector: self.project(t),
             })
             .collect())
+    }
+
+    /// Hashed character trigrams are lexical surface overlap, not semantics —
+    /// this type's own docs say so, and the measured overlap quoted on
+    /// [`SimilarityPosture`] proved no admission floor exists for it.
+    fn similarity_posture(&self) -> SimilarityPosture {
+        SimilarityPosture::Surface
     }
 }
 

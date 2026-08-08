@@ -250,6 +250,14 @@ pub struct RetrievalSettings {
     /// exact and slower; the probe widens past this on its own when the
     /// ranking's own depth requirements demand it, so this is a floor.
     pub ann_probes: usize,
+    /// Whether recall admission requires query-conditional evidence — an
+    /// anchor, anchor adjacency, a distinctive term match, domain overlap, or
+    /// a semantic-posture similarity floor. **On by default (#2289):** with it
+    /// off, `max_frames` is a cap that always fills, so a small workspace
+    /// surfaces the same frames on every prompt no matter what was asked.
+    /// `false` is the escape hatch back to that padding behavior, for a
+    /// workspace that would rather see weak matches than nothing.
+    pub require_evidence: bool,
     /// A/B recall control: every `rate`-th turn in this workspace runs with
     /// recall suppressed, so recall's value is readable from the outcomes of
     /// the two arms. `0` (and `1`) disable the control entirely; the schedule
@@ -282,6 +290,7 @@ impl Default for RetrievalSettings {
             mmr_candidate_multiple: t.mmr_candidate_multiple,
             ann_enabled: t.ann_enabled,
             ann_probes: t.ann_probes,
+            require_evidence: t.require_evidence,
             ab_recall_rate: DEFAULT_AB_RECALL_RATE,
         }
     }
@@ -315,6 +324,7 @@ impl RetrievalSettings {
             mmr_candidate_multiple: self.mmr_candidate_multiple,
             ann_enabled: self.ann_enabled,
             ann_probes: self.ann_probes,
+            require_evidence: self.require_evidence,
         }
         .sanitized()
     }
@@ -448,6 +458,7 @@ mod tests {
                 "mmr_candidate_multiple":6,
                 "ann_enabled":true,
                 "ann_probes":23,
+                "require_evidence":false,
                 "ab_recall_rate":7
             }
         }}"#;
@@ -494,6 +505,7 @@ mod tests {
         assert_eq!(r.mmr_candidate_multiple, 6);
         assert!(r.ann_enabled);
         assert_eq!(r.ann_probes, 23);
+        assert!(!r.require_evidence, "the escape hatch must parse");
         assert_eq!(r.ab_recall_rate, 7);
     }
 
@@ -526,6 +538,14 @@ mod tests {
              kind of invisible behavior change §5.5 forbids"
         );
         assert_eq!(d.ann_probes, stella_context::DEFAULT_ANN_PROBES);
+        assert_eq!(d.require_evidence, stella_context::DEFAULT_REQUIRE_EVIDENCE);
+        assert!(
+            d.require_evidence,
+            "the evidence gate must ship ON: with it off, max_frames is a cap \
+             that always fills, and a small workspace surfaces the same \
+             irrelevant frames on every prompt (#2289) — the deliberate \
+             behavior change is the default, and false is the escape hatch"
+        );
         assert_eq!(
             d.ab_recall_rate, 10,
             "the rate that shipped as the `AB_RECALL_RATE` constant"
