@@ -9,7 +9,7 @@
 use super::*;
 use stella_context::ContextStore;
 use stella_core::context_record::ObservationSource;
-use stella_core::rules::{RuleGuard, RuleTier};
+use stella_core::rules::RuleGuard;
 
 fn store() -> (tempfile::TempDir, ContextStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -68,15 +68,21 @@ fn an_inferred_rule_is_never_blocking() {
         "an inferred guard survived — this rule would deny tool calls"
     );
 
-    // …and the rendered file has no guard frontmatter, so re-parsing it yields
-    // a Tier 1 rule. Asserting the round trip rather than just the struct:
-    // the file is what actually reaches the loader.
-    let markdown = rules::render_rule_markdown(&stripped);
-    assert!(!markdown.contains("guard-"), "{markdown}");
-    let parsed = stella_core::rules::rule_from_file("some-lesson-abcd1234.md", &markdown)
-        .expect("the rendered rule parses back");
-    assert_eq!(parsed.tier(), RuleTier::Prompt);
-    assert!(parsed.guard.is_none());
+    // …and the published record carries no enforcement section at all, so
+    // nothing downstream can arm a guard from it. Asserting the record rather
+    // than just the struct: the record is what actually reaches the loader.
+    let record = crate::context_records::inferred_rule_record(
+        "acme.web",
+        &stripped.id,
+        &stripped.text,
+        "observation",
+        "proposal:rule:some-lesson-abcd1234",
+    )
+    .expect("a publishable record");
+    assert!(
+        record.enforcement.is_none(),
+        "an inferred record must not carry enforcement"
+    );
 }
 
 /// The same, through the whole induction path.
@@ -108,15 +114,23 @@ fn a_written_rule_file_is_prompt_only() {
         }),
         score: 30,
     };
-    let path = write_rule(dir.path(), &candidate).expect("written");
+    let path = write_rule(dir.path(), &candidate)
+        .expect("publishable")
+        .expect("written");
+    assert_eq!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("toml"),
+        "mined rules publish as TOML context records"
+    );
     let contents = std::fs::read_to_string(&path).expect("read back");
+    let loaded = stella_core::records::load_context_file(&path.display().to_string(), &contents)
+        .expect("the published record loads");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].record.statement, LESSON);
     assert!(
-        !contents.contains("guard-"),
+        loaded[0].record.enforcement.is_none(),
         "a guard reached disk: {contents}"
     );
-    let parsed =
-        stella_core::rules::rule_from_file(&path.display().to_string(), &contents).expect("parses");
-    assert_eq!(parsed.tier(), RuleTier::Prompt);
 }
 
 // ---- GATE: distinct tasks, never raw events ----
@@ -242,7 +256,9 @@ fn writing_never_clobbers_an_existing_rule_file() {
         score: 30,
     };
     assert!(
-        write_rule(dir.path(), &candidate).is_none(),
+        write_rule(dir.path(), &candidate)
+            .expect("an existing file is a skip, not an error")
+            .is_none(),
         "the writer claimed to write over an existing file"
     );
     assert_eq!(
@@ -288,19 +304,19 @@ fn mined_rules_land_where_the_loader_reads() {
         guard: None,
         score: 30,
     };
-    write_rule(dir.path(), &candidate).expect("written");
+    write_rule(dir.path(), &candidate)
+        .expect("publishable")
+        .expect("written");
 
+    // The unfiltered loader keys raw files by filename, and a record file's
+    // name is its lineage — assert the lesson landed under it, which is the
+    // visibility the miner's own no-clobber dedup depends on.
     let loaded = crate::rules::load_workspace_rules_unfiltered(dir.path());
-    assert!(
-        loaded.iter().any(|r| r.id == "landing-abcd1234"),
-        "a mined rule did not reach the loader: {:?}",
-        loaded.iter().map(|r| &r.id).collect::<Vec<_>>()
-    );
     assert!(
         loaded
             .iter()
-            .find(|r| r.id == "landing-abcd1234")
-            .is_some_and(|r| r.text.contains("database migration")),
-        "the rule text did not survive the round trip"
+            .any(|r| r.id.contains("landing-abcd1234") && r.text.contains("database migration")),
+        "a mined rule did not reach the loader: {:?}",
+        loaded.iter().map(|r| &r.id).collect::<Vec<_>>()
     );
 }

@@ -738,69 +738,7 @@ fn mine_candidates_is_deterministic_across_reruns() {
     assert_eq!(first[0].id, second[0].id);
 }
 
-// ---- render_rule_markdown + decide_promotion ----
-
-#[test]
-fn render_rule_markdown_round_trips_through_rule_from_file() {
-    let obs = vec![
-        observation("forgot to add a test for the new route", 1),
-        observation("forgot to add a test for the new route", 2),
-        observation("forgot to add a test for the new route", 3),
-    ];
-    let candidates = mine_candidates(obs, &[], &MineConfig::default());
-    let candidate = &candidates[0];
-    let markdown = render_rule_markdown(candidate);
-    let parsed = rule_from_file(&format!("{}.md", candidate.id), &markdown).unwrap();
-    assert_eq!(parsed.id, candidate.id);
-    assert_eq!(parsed.text, candidate.text);
-    assert!(parsed.description.contains("3 recurring observations"));
-    assert!(parsed.guard.is_none());
-}
-
-#[test]
-fn render_rule_markdown_includes_an_inferred_guard() {
-    let obs = vec![
-        RawObservation {
-            text: "never edit an applied migration file directly".to_string(),
-            source: EvidenceSource::Memory,
-            reference: "memory:m1".to_string(),
-            occurred_at: 1,
-            files: vec!["packages/database/migrations/0001-applied/up.sql".to_string()],
-            salient: true,
-            memory_kind: Some("gotcha".to_string()),
-        },
-        RawObservation {
-            text: "never edit an applied migration file directly".to_string(),
-            source: EvidenceSource::Memory,
-            reference: "memory:m2".to_string(),
-            occurred_at: 2,
-            files: vec!["packages/database/migrations/0002-applied/up.sql".to_string()],
-            salient: true,
-            memory_kind: Some("gotcha".to_string()),
-        },
-    ];
-    let candidates = mine_candidates(obs, &[], &MineConfig::default());
-    let candidate = &candidates[0];
-    let markdown = render_rule_markdown(candidate);
-    let parsed = rule_from_file(&format!("{}.md", candidate.id), &markdown).unwrap();
-    assert_eq!(
-        parsed.guard,
-        Some(RuleGuard {
-            tool: None,
-            deny_path_glob: Some("packages/database/migrations/**".to_string()),
-            deny_command_glob: None,
-        })
-    );
-
-    // And the round-tripped rule feeds guards_to_deny + evaluate_guards
-    // exactly like a hand-authored one would.
-    let denies = guards_to_deny(std::slice::from_ref(&parsed));
-    assert_eq!(
-        denies.deny,
-        vec!["*(packages/database/migrations/**)".to_string()]
-    );
-    assert!(denies.reasons.values().next().unwrap().contains(&parsed.id));
-}
+// ---- decide_promotion ----
 
 #[test]
 fn decide_promotion_declines_without_approval() {
