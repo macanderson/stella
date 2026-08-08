@@ -41,6 +41,16 @@
 //! rewritten as a runtime `format!` stops parsing as a static prompt and the
 //! registry cross-check fails naming it.
 //!
+//! # What deliberately stayed
+//!
+//! The per-contract `both_prompts_*` tests in `prompt.rs` are not deleted here.
+//! Their embedding assertion is now redundant with this module, but each one's
+//! doc comment is the provenance record for its contract and their *claim*
+//! assertions guard the literal's content rather than its presence — a
+//! different property. Consolidating them is #2237, deliberately sequenced
+//! after #2232 lands rather than merged into a `mod tests` block another PR is
+//! adding a test to.
+//!
 //! # Anti-vacuity
 //!
 //! A check that silently examines nothing reads as a passing gate, which is
