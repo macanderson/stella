@@ -232,16 +232,23 @@ async def exec_with_agent_reap(
     exception continues, so the container is quiet before Harbor moves on to
     the verifier, and the durable journal has stopped growing before the
     adapter re-reads it for the trial's usage.
+
+    The spawn is inside the ``try`` because a deadline can land on it: Docker's
+    exec has already started the agent in the container by the time the client
+    is up, so a cancellation delivered while awaiting the handle leaves exactly
+    the orphan this exists to prevent — and the reap needs the Compose prefix,
+    not the handle, so it can still run when there is no client to tear down.
     """
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        env=dict(host_env),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        start_new_session=True,
-    )
+    process: asyncio.subprocess.Process | None = None
     try:
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            env=dict(host_env),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
         return await communicate_with_release(process, wire, completion_probe)
     except BaseException:
         # Nothing in here may replace the exception being reported: a trial

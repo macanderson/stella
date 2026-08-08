@@ -56,6 +56,8 @@ from stella_harbor.timeout_reap import (  # noqa: E402
 )
 
 _CREDENTIAL = "timeout-reap-witness-secret"
+#: Written by the fake driver's run branch; the cancellation waits for it.
+RUN_STARTED = "run-started"
 
 
 def _pid_alive(pid: int) -> bool:
@@ -134,6 +136,11 @@ def _fake_compose_driver(tmp_path: Path, journal_writer: _JournalWriter) -> Path
     reap invocation is recognised by the marker the real reap program carries,
     and stops the in-container stand-in — which is precisely the authority the
     adapter must exercise and previously never did.
+
+    The run branch announces itself first. Timing the cancellation off the
+    journal instead would time it off a process the run never started, and the
+    test would race the run's own spawn on a loaded machine — passing or
+    failing for a reason that has nothing to do with its subject.
     """
     driver = tmp_path / "compose-driver"
     driver.write_text(
@@ -145,6 +152,7 @@ def _fake_compose_driver(tmp_path: Path, journal_writer: _JournalWriter) -> Path
         "        exit 0\n"
         "        ;;\n"
         "esac\n"
+        f": > {shlex.quote(str(tmp_path / RUN_STARTED))}\n"
         "exec sleep 60\n",
         encoding="utf-8",
     )
@@ -220,8 +228,11 @@ class TestContainerAgentReap:
                         credentials=(_CREDENTIAL,),
                     )
                 )
-                # Let the run get going, then time it out the way Harbor does.
-                while agent.events() < 3:
+                # Let the run get going, then time it out the way Harbor does:
+                # the client must be up and the agent must be producing.
+                started = tmp_path / RUN_STARTED
+                while not (started.exists() and agent.events() >= 3):
+                    assert not task.done(), "the run ended before it could time out"
                     await asyncio.sleep(0.05)
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
