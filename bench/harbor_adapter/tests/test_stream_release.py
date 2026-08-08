@@ -19,7 +19,9 @@ import pytest
 
 pytest.importorskip("harbor", reason="Harbor is required to import the adapter")
 
-from stella_harbor import _communicate_with_completion_probe  # noqa: E402
+from stella_harbor.stream_release import (  # noqa: E402
+    communicate_with_completion_probe,
+)
 
 
 async def _spawn(script: str) -> asyncio.subprocess.Process:
@@ -46,7 +48,7 @@ class TestStreamRelease:
 
         async def scenario() -> tuple[bytes, bool]:
             process = await _spawn("echo held; exec sleep 30")
-            return await _communicate_with_completion_probe(
+            return await communicate_with_completion_probe(
                 process,
                 b"",
                 lambda: True,
@@ -72,7 +74,7 @@ class TestStreamRelease:
 
         async def scenario() -> tuple[bytes, bool]:
             process = await _spawn("sleep 30 & echo held")
-            return await _communicate_with_completion_probe(
+            return await communicate_with_completion_probe(
                 process,
                 b"",
                 lambda: True,
@@ -90,7 +92,7 @@ class TestStreamRelease:
 
         async def scenario() -> tuple[bytes, bool]:
             process = await _spawn("sleep 0.3; echo done")
-            return await _communicate_with_completion_probe(
+            return await communicate_with_completion_probe(
                 process,
                 b"",
                 lambda: True,
@@ -109,7 +111,7 @@ class TestStreamRelease:
 
         async def scenario() -> tuple[bytes, bool]:
             process = await _spawn("echo eof")
-            return await _communicate_with_completion_probe(
+            return await communicate_with_completion_probe(
                 process,
                 b"",
                 lambda: False,
@@ -127,7 +129,7 @@ class TestStreamRelease:
 
         async def scenario() -> tuple[bytes, bool]:
             process = await _spawn("cat")
-            return await _communicate_with_completion_probe(
+            return await communicate_with_completion_probe(
                 process,
                 b"echoed\n",
                 None,
