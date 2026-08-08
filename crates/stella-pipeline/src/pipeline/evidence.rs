@@ -84,6 +84,7 @@ impl<'a> Pipeline<'a> {
             require_diff_coverage: self.config.require_diff_coverage,
             verify_done_flip: state.signals.verify_done_confirmations > 0,
             no_test_surface,
+            errored_commands: state.signals.errored_commands,
         }
     }
 
@@ -120,6 +121,16 @@ impl<'a> Pipeline<'a> {
             inputs.diff_budget,
             inputs.file_change_events,
         );
+        if let Some(clause) =
+            crate::verify::command_errors::evidence_clause(inputs.errored_commands)
+        {
+            // #2125: a command chain that exited 0 with a failed command
+            // inside it. The verifier could never see this — the stderr that
+            // voids a cited measurement lives only in the worker's tool
+            // results, which it must not read (L-E11) — so the fact travels
+            // as a count the pipeline observed, never as transcript text.
+            evidence_summary.push_str(&clause);
+        }
         if let Some(label) = test_infra {
             // #860: the run ended without observing an assertion. Named so the
             // verifier reads "the suite timed out", not "the suite failed".
