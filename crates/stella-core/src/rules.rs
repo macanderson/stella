@@ -50,29 +50,21 @@
 //!     produce.
 //!   - The actual interactive approve/write flow (`stella rules promote`):
 //!     prompting the human, calling a filesystem port to check
-//!     `already-exists`, and writing [`render_rule_markdown`]'s output to
-//!     disk. That belongs to `stella-cli`.
+//!     `already-exists`, and publishing the candidate as a TOML context
+//!     record. That belongs to `stella-cli`.
 //!
 //! What IS ported: the full mining algorithm — lexical clustering, salience
 //! override, dedup against existing rules, guard inference from consistent
 //! file evidence, and ranking (all pure decision logic, see
-//! [`mine_candidates`]) — plus the pure half of `promoteCandidate`:
-//! rendering a candidate's exact rule-file content
-//! ([`render_rule_markdown`]) and deciding what a promotion attempt *would*
-//! do given the caller's own `approve`/`file_exists` facts
-//! ([`decide_promotion`]).
+//! [`mine_candidates`]) — plus the pure half of `promoteCandidate`: deciding
+//! what a promotion attempt *would* do given the caller's own
+//! `approve`/`file_exists` facts ([`decide_promotion`]). The markdown
+//! renderer that once sat beside it was retired when publication moved to
+//! TOML context records (ADR 0011).
 
 use std::collections::HashMap;
 
 use crate::glob::match_glob;
-
-mod metadata;
-
-use metadata::metadata_from_frontmatter;
-pub use metadata::{
-    RuleEnforcement, RuleMetadata, RuleMetadataError, RuleOrigin, RuleRecordKind,
-    render_rule_metadata,
-};
 
 // Types (ports `rules/types.ts`)
 
@@ -117,13 +109,6 @@ pub struct Rule {
     /// Where the rule came from (a file path, or any opaque source label —
     /// TS: `source: string`).
     pub source: String,
-    /// Optional, Git-reviewable context-as-code metadata. Metadata-free rules
-    /// remain first-class rules during the staged migration.
-    pub metadata: Option<RuleMetadata>,
-    /// Metadata issues retained alongside a still-loadable rule. Keeping
-    /// these separate lets a future read-only linter explain invalid metadata
-    /// without changing legacy prompt or guard behavior.
-    pub metadata_errors: Vec<RuleMetadataError>,
 }
 
 impl Rule {
@@ -343,10 +328,9 @@ fn guard_from(data: &HashMap<String, String>) -> Option<RuleGuard> {
 
 /// Why a rule file did not load at all.
 ///
-/// Distinct from [`RuleMetadataError`], which describes a rule that loaded with
-/// unusable metadata: these refuse the file. The distinction is the point —
-/// legacy metadata-free rules must keep working, so only a defect that makes the
-/// *rule itself* untrustworthy is fatal.
+/// These refuse the file, and that severity is the point: unknown frontmatter
+/// keys (including the retired context-as-code metadata keys) load inert, so
+/// only a defect that makes the *rule itself* untrustworthy is fatal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuleFileError {
     /// No frontmatter `name` and no usable filename stem.
@@ -410,18 +394,12 @@ pub fn rule_from_file_checked(path: &str, raw: &str) -> Result<Rule, RuleFileErr
     if fm.body.trim().is_empty() {
         return Err(RuleFileError::EmptyStatement);
     }
-    let (metadata, metadata_errors) = match metadata_from_frontmatter(&fm) {
-        Ok(metadata) => (metadata, Vec::new()),
-        Err(errors) => (None, errors),
-    };
     Ok(Rule {
         id,
         description: fm.data.get("description").cloned().unwrap_or_default(),
         text: fm.body.trim().to_string(),
         guard: guard_from(&fm.data),
         source: path.to_string(),
-        metadata,
-        metadata_errors,
     })
 }
 
@@ -881,40 +859,12 @@ pub fn mine_candidates(
     candidates
 }
 
-/// Render the exact `.stella/rules/<id>.md` file content for `candidate` —
-/// the same frontmatter shape [`rule_from_file`] parses back (mirrors the
-/// frontmatter-building lines in `promoteCandidate`, minus the file write).
-/// Writing this to disk is the I/O half `stella-cli` owns; this half is
-/// pure and independently testable.
-pub fn render_rule_markdown(candidate: &RuleCandidate) -> String {
-    let mut lines = vec![
-        "---".to_string(),
-        format!("description: {}", candidate.description),
-    ];
-    if let Some(guard) = &candidate.guard {
-        if let Some(tool) = &guard.tool {
-            lines.push(format!("guard-tool: {tool}"));
-        }
-        if let Some(deny_path) = &guard.deny_path_glob {
-            lines.push(format!("guard-deny-path: {deny_path}"));
-        }
-        if let Some(deny_command) = &guard.deny_command_glob {
-            lines.push(format!("guard-deny-command: {deny_command}"));
-        }
-    }
-    lines.push("---".to_string());
-    lines.push(String::new());
-    lines.push(candidate.text.clone());
-    lines.push(String::new());
-    lines.join("\n")
-}
-
 /// What should happen to a candidate's rule file (TS:
 /// `PromoteResult["status"]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromoteStatus {
-    /// The candidate should be written — the caller now writes
-    /// [`render_rule_markdown`]'s output to disk.
+    /// The candidate should be written — the caller now publishes it as a
+    /// TOML context record (the CLI's record-publication path).
     Written,
     /// `approve` was `false`; nothing should be touched (the decline
     /// path).

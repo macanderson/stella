@@ -668,7 +668,9 @@ fn candidate_id(suffix: &str, record_hash: Option<&str>) -> String {
 
 /// The record-set slug for this workspace: `org.repo` from the git remote when
 /// resolvable, else the workspace directory name. Deterministic per checkout.
-fn derive_set_id(root: &Path) -> String {
+/// Shared with the promotion and mined-rule publication paths, so every record
+/// a workspace emits lands in the same lineage namespace.
+pub(crate) fn derive_set_id(root: &Path) -> String {
     if let Some(remote) = git(root, &["remote", "get-url", "origin"])
         && let Some(slug) = org_repo_from_remote(&remote)
     {

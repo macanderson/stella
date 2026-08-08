@@ -426,10 +426,15 @@ fn materialize_directive(
         score: 0,
     };
     match crate::memory::rules_mining::write_rule(workspace_root, &candidate) {
-        Some(path) => println!("    {} wrote {}", "·".dimmed(), path.display()),
-        None => println!(
+        Ok(Some(path)) => println!("    {} wrote {}", "·".dimmed(), path.display()),
+        Ok(None) => println!(
             "    {} a rule file for `{}` already exists — left untouched",
             "·".dimmed(),
+            candidate.id
+        ),
+        Err(reason) => println!(
+            "    {} could not publish `{}`: {reason}",
+            "✗".red(),
             candidate.id
         ),
     }

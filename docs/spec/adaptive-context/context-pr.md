@@ -633,8 +633,11 @@ Aligned with the adaptive-context plan (lifecycle "Phase 4: team governance"):
 
 1. **Solo promotion (shipped).** Citation-gated `stella memory promote`,
    markdown rule files, Tier 1/Tier 2 engine, store-published rules.
-2. **Canonical metadata.** Emit snake_case promotion frontmatter (§6.1) and
-   `record_hash` from the promotion path; loader accepts legacy keys.
+2. **Canonical promotion surface (shipped).** The promotion and mined-rule
+   paths publish stamped TOML context records (`record_id`/`record_hash`
+   derived by `Record::stamp`) instead of markdown frontmatter — the
+   frontmatter emission this item originally described was retired with the
+   `rules::metadata` layer; the loader still accepts legacy `.md` files.
 3. **Candidate store + Keep/Edit/Ignore.** Deduplicated candidates with
    evidence scoring, cooldowns, and the solo acceptance flow.
 4. **Context PR materialization through Git.** `stella context propose`

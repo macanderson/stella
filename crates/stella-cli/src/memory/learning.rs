@@ -736,16 +736,27 @@ impl SessionMemory {
             if !self.include_workspace_skills {
                 continue;
             }
-            if let Some(path) =
-                super::rules_mining::write_rule(&self.workspace_root, &rule.candidate)
-                && !quiet
-            {
-                println!(
-                    "  {} new advisory rule from recurring observations: {} ({})",
-                    "✦".magenta().bold(),
-                    rule.candidate.id.bright_magenta(),
-                    path.display()
-                );
+            match super::rules_mining::write_rule(&self.workspace_root, &rule.candidate) {
+                Ok(Some(path)) if !quiet => {
+                    println!(
+                        "  {} new advisory rule from recurring observations: {} ({})",
+                        "✦".magenta().bold(),
+                        rule.candidate.id.bright_magenta(),
+                        path.display()
+                    );
+                }
+                Ok(_) => {}
+                // A lesson the record surface refuses (an overlong or
+                // multi-line statement) stays a reviewable proposal; saying
+                // nothing here would read as "activated".
+                Err(reason) if !quiet => {
+                    println!(
+                        "  {} rule `{}` not auto-activated: {reason}",
+                        "·".dimmed(),
+                        rule.candidate.id
+                    );
+                }
+                Err(_) => {}
             }
         }
     }
