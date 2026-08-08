@@ -97,7 +97,7 @@ pub(crate) fn coverage_score(cos_sorted: &[(i64, f32)], topk: usize) -> f32 {
 /// scores 1/61 and rank 100 scores 1/161 — barely a 2.6× spread across the
 /// whole corpus. A list added at weight 1.0 is therefore not a hint, it is a
 /// peer that can single-handedly decide the top of the result. See
-/// [`DEFAULT_RECENCY_WEIGHT`].
+/// [`DEFAULT_RECENCY_WEIGHT`](crate::retrieval::DEFAULT_RECENCY_WEIGHT).
 pub(crate) fn rrf_fuse(lists: &[(Vec<i64>, f64)], k: f64) -> HashMap<i64, f64> {
     let mut scores: HashMap<i64, f64> = HashMap::new();
     for (list, weight) in lists {
@@ -181,7 +181,7 @@ pub(crate) struct MmrItem<'a> {
 /// `Θ(n³)` cosines.
 ///
 /// This pass is `Θ(n²)` in the candidates handed to it, which is why the caller
-/// bounds them to [`DEFAULT_MMR_CANDIDATE_MULTIPLE`] x `max_frames` first. It used to be
+/// bounds them to [`DEFAULT_MMR_CANDIDATE_MULTIPLE`](crate::retrieval::DEFAULT_MMR_CANDIDATE_MULTIPLE) x `max_frames` first. It used to be
 /// fed *every live node* — the recency ranking contributes all of them — so
 /// recall was quadratic in lifetime memory size and ran to exhaustion selecting
 /// candidates the budget pass then threw away.
@@ -225,7 +225,7 @@ pub(crate) fn mmr_select(items: &[MmrItem<'_>], lambda: f32) -> Vec<usize> {
 /// so a smaller later frame can still fit.
 ///
 /// **Required items are admitted first** — Phase 2 (#713) deliverable 5.
-/// [`SelectionReason::is_required`] marks a candidate the caller asked for by
+/// [`SelectionReason::is_required`](crate::retrieval::SelectionReason::is_required) marks a candidate the caller asked for by
 /// name (today: a goal that names a file verbatim), and ADR 0006 says ranking
 /// may not evict one. A required item is therefore charged against the token
 /// budget before any ranked candidate competes for it, and **`max_frames`

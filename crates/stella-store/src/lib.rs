@@ -1830,7 +1830,7 @@ impl Store {
 
     /// Execute a `SELECT *`-style query and return a JSON array string, one
     /// object per row. Column names come from the query cursor. Used by
-    /// [`export_all_json`] for the uniform tables.
+    /// [`export_all_json`](Store::export_all_json) for the uniform tables.
     fn query_to_json(&self, conn: &Connection, sql: &str) -> Result<String> {
         let mut stmt = conn.prepare(sql)?;
         let col_count = stmt.column_count();

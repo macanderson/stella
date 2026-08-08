@@ -92,7 +92,7 @@
 //! `stella-serve/src/accept.rs` — and duplication is only acceptable here because
 //! it cannot happen quietly. The two servers must not diverge (that is the whole
 //! point of writing the policy down), so
-//! [`tests::the_two_copies_of_this_policy_have_not_drifted`] compares the two
+//! `tests::the_two_copies_of_this_policy_have_not_drifted` compares the two
 //! files byte-for-byte at compile time. It is compiled into *both* crates, so
 //! `cargo test` on either one fails the instant they differ. Change one, change
 //! the other.

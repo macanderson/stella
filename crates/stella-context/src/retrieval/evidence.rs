@@ -25,21 +25,29 @@
 //!   caution but measurement — contaminant frames scored 0.38–0.50 against a
 //!   prompt whose genuinely relevant frames scored 0.45–0.63, so no floor
 //!   separates them (see [`super::DEFAULT_RECENCY_WEIGHT`]).
+//! - **domain overlap against a scope the query itself narrowed** — and only
+//!   then; see [`scope_is_query_conditional`], which is the whole subtlety of
+//!   this channel and is worth reading before touching it.
 //!
-//! **Domain overlap is deliberately not a channel.** It reads as one — "the
-//! query was scoped and the node shares a domain" — but no caller narrows the
-//! scope per query: a session hands recall its whole vocabulary
-//! (`Domains::names()` → `session_host` → `ScopedStore::query`), so
-//! "overlaps the query's domains" degenerates to "carries any tag at all",
-//! which is a fact about the node and says nothing about *this* query. Since
-//! reflection write-back tags every episode whose turn touched files, admitting
-//! on it would re-open #2289 at full width — the same tagged notes on every
-//! prompt, forever. Overlap keeps its honest job as an RRF ranking signal
-//! (it is one of the lists [`super::ranking::rrf_fuse`] folds), which orders
-//! the admissible rather than admitting; it earns evidence status back when a
-//! real per-query scope
-//! exists to make it conditional (#2333). Witness:
-//! `a_full_vocabulary_domain_scope_is_not_evidence`.
+//! Domain overlap earns that last slot only because the scope is derived per
+//! query. Judged against the *session's* scope it is not evidence at all: a
+//! session hands recall its whole vocabulary (`Domains::names()` →
+//! `session_host` → `ScopedStore::query`), so "overlaps the query's domains"
+//! degenerates to "carries any tag at all" — a fact about the node that says
+//! nothing about *this* query. Since reflection write-back tags every episode
+//! whose turn touched files, admitting on that predicate re-opened #2289 at
+//! full width: the same tagged notes on every prompt, forever. The rung was
+//! removed outright for exactly that reason, and returns only with the
+//! narrowing that makes it conditional (#2333). Both halves are witnessed —
+//! `a_full_vocabulary_domain_scope_is_not_evidence` (a degenerate scope admits
+//! nothing) and `a_narrowed_domain_scope_is_evidence` (a narrowed one admits
+//! its own domain, and only it).
+//!
+//! Overlap keeps its separate, unconditional job as an RRF ranking signal (one
+//! of the lists [`super::ranking::rrf_fuse`] folds). Ranking and admission read
+//! the same tags through different scopes on purpose: ranking orders what is
+//! already admissible and may lean on a weaker signal; admission decides
+//! whether a frame exists at all, and may not.
 //!
 //! Like the rest of `retrieval`'s split-out modules, everything here is a pure
 //! function over already-loaded data. The parent owns the I/O: it streams the
@@ -196,20 +204,51 @@ impl TermEvidence {
     }
 }
 
+/// Whether a query's derived domain scope may serve as admission evidence.
+///
+/// True iff `query_scope` is a **non-empty proper subset** of `session_scope`.
+/// Both halves are load-bearing, and neither is a stylistic preference:
+///
+/// - **Non-empty.** A goal that named no workspace file selects no domains, and
+///   an empty scope cannot distinguish one node from another.
+/// - **Proper subset.** This is the guard against the #2289 regression. If the
+///   query's scope equals the session's, then "shares a domain with the query"
+///   and "is in scope at all" are the *same predicate* — and the second is
+///   already the filter every candidate passed to get here, so the rung would
+///   admit the entire in-scope corpus. A scope must *narrow* to discriminate;
+///   one that matches the vocabulary has narrowed nothing.
+///
+/// Set semantics, so a repeated domain cannot inflate the count past the
+/// vocabulary's and fake a narrowing. An empty `session_scope` (a workspace
+/// with no taxonomy) has no proper subset, so the rung correctly never fires
+/// there rather than firing on everything.
+pub(crate) fn scope_is_query_conditional(query_scope: &[String], session_scope: &[String]) -> bool {
+    if query_scope.is_empty() {
+        return false;
+    }
+    let session: HashSet<&str> = session_scope.iter().map(String::as_str).collect();
+    let query: HashSet<&str> = query_scope.iter().map(String::as_str).collect();
+    query.len() < session.len() && query.iter().all(|d| session.contains(d))
+}
+
 /// The assembled admission set: a candidate is admissible iff it is in here.
 ///
-/// `None` means the gate is off (`require_evidence: false` — the documented
-/// escape hatch back to pre-#2289 behavior) and everything is admissible.
+/// `domain_evidence` is already conditioned by
+/// [`scope_is_query_conditional`] — the caller passes an empty slice when the
+/// query's scope did not narrow, so this function never has to know the
+/// difference between "no domain matched" and "domain may not admit".
 pub(crate) fn admissible_ids(
     anchor_ids: &[i64],
     anchor_neighbors: &HashSet<i64>,
     lexical: &HashSet<i64>,
+    domain_evidence: &[i64],
     semantic_hits: &[i64],
 ) -> HashSet<i64> {
     let mut evidence: HashSet<i64> = HashSet::new();
     evidence.extend(anchor_ids.iter().copied());
     evidence.extend(anchor_neighbors.iter().copied());
     evidence.extend(lexical.iter().copied());
+    evidence.extend(domain_evidence.iter().copied());
     evidence.extend(semantic_hits.iter().copied());
     evidence
 }
@@ -268,7 +307,58 @@ mod tests {
 
     #[test]
     fn admissibility_is_the_union_of_the_channels() {
-        let ids = admissible_ids(&[1], &HashSet::from([2]), &HashSet::from([3]), &[4]);
-        assert_eq!(ids, HashSet::from([1, 2, 3, 4]));
+        let ids = admissible_ids(&[1], &HashSet::from([2]), &HashSet::from([3]), &[4], &[5]);
+        assert_eq!(ids, HashSet::from([1, 2, 3, 4, 5]));
+    }
+
+    #[test]
+    fn a_scope_that_narrows_the_vocabulary_is_query_conditional() {
+        let vocabulary = terms(&["retrieval", "tui", "bench"]);
+        assert!(scope_is_query_conditional(
+            &terms(&["retrieval"]),
+            &vocabulary
+        ));
+        assert!(scope_is_query_conditional(
+            &terms(&["retrieval", "tui"]),
+            &vocabulary
+        ));
+    }
+
+    #[test]
+    fn a_scope_that_narrows_nothing_is_not_evidence() {
+        let vocabulary = terms(&["retrieval", "tui", "bench"]);
+        // The whole vocabulary: "shares a domain" == "is tagged", which is the
+        // #2289 regression this predicate exists to refuse.
+        assert!(!scope_is_query_conditional(&vocabulary, &vocabulary));
+        // A goal that named no workspace file selects nothing.
+        assert!(!scope_is_query_conditional(&[], &vocabulary));
+        // No taxonomy at all: nothing to narrow, so nothing to admit on.
+        assert!(!scope_is_query_conditional(&terms(&["retrieval"]), &[]));
+    }
+
+    #[test]
+    fn repeats_cannot_fake_a_narrowing() {
+        // Counted as a list, ["a", "a"] is "shorter" than a 3-domain
+        // vocabulary while covering it no better; as a set it is size 1 and
+        // genuinely narrower. The set reading is the correct one, but the
+        // list reading is how an off-by-one here would slip through.
+        let vocabulary = terms(&["a", "b"]);
+        assert!(!scope_is_query_conditional(
+            &terms(&["a", "b", "b"]),
+            &vocabulary
+        ));
+        assert!(scope_is_query_conditional(&terms(&["a", "a"]), &vocabulary));
+    }
+
+    #[test]
+    fn a_scope_reaching_outside_the_vocabulary_is_not_a_subset() {
+        // Not a narrowing of this session's scope but a different set, and the
+        // out-of-scope half was never a candidate anyway (the scope filter
+        // dropped it), so admitting on it would be admitting on nothing.
+        let vocabulary = terms(&["retrieval", "tui", "bench"]);
+        assert!(!scope_is_query_conditional(
+            &terms(&["retrieval", "unlisted"]),
+            &vocabulary
+        ));
     }
 }

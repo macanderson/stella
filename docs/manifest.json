@@ -551,7 +551,8 @@
         9,
         10,
         11,
-        12
+        12,
+        13
       ],
       "status": "proposed",
       "title": "The trace-replay learning harness \u2014 drive the learning machinery from recorded traces, with zero model calls"

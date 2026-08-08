@@ -78,7 +78,7 @@ pub(crate) fn tag_edge_domains(
 /// citation display — the batched form of the old per-node query. Recall
 /// runs this once per prompt; one statement per live node was an N+1 whose
 /// cost grew with lifetime memory size. Superseded nodes are filtered in
-/// SQL (same liveness predicate as [`live_node_metas`]): recall only looks up
+/// SQL (same liveness predicate as [`live_node_metas`](crate::candidates::live_node_metas)): recall only looks up
 /// live candidates, so loading dead nodes' tags made the scan grow with
 /// historical store size for no reader.
 pub(crate) fn domains_by_node(

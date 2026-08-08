@@ -809,6 +809,15 @@ pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
         media_operation_journal,
         media_host_data_isolation: process_free
             .then_some(stella_tools::media::HostDataIsolation::ProcessFree),
+        // `ignore_gitignore` (settings, default on): whether the workspace
+        // probe skips what the repository's own ignore rules exclude. Mapped
+        // here once — every session lane (interactive, pipeline, deck,
+        // sub-session workers) builds its registry from these options.
+        probe_ignore_policy: if cfg.ignore_gitignore {
+            stella_tools::shell_touch::IgnorePolicy::SkipIgnored
+        } else {
+            stella_tools::shell_touch::IgnorePolicy::WalkAll
+        },
         ..Default::default()
     }
 }

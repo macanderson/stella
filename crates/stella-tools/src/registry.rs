@@ -19,8 +19,11 @@ use crate::file_touch::{
 
 mod belief;
 mod classify;
+mod options;
 mod process_tools;
 mod turn_probe;
+
+pub use options::RegistryOptions;
 
 use belief::{Belief, Coverage};
 
@@ -195,6 +198,10 @@ pub struct ToolRegistry {
     /// edit in a shared worktree — and recording it would fabricate a
     /// `FileChange` for work nothing in this session did (#1553).
     bracket_opaque_calls: std::sync::atomic::AtomicU32,
+    /// How both probe granularities treat gitignored paths — fixed at
+    /// construction so no capture can race a reconfiguration. See
+    /// [`RegistryOptions::probe_ignore_policy`].
+    probe_ignore_policy: crate::shell_touch::IgnorePolicy,
     /// The session's memory-citation ledger, shared with the registered
     /// `cite_memory` tool instance and drained per execution by
     /// [`ToolRegistry::take_memory_citations`].
@@ -335,25 +342,6 @@ impl ExplorationCoverage {
 pub struct StorageIndex {
     baseline: stella_graph::StorageSnapshot,
     session: Vec<stella_graph::storage::RelationEntry>,
-}
-
-/// Prerequisites and host attestations the registry needs to decide what it
-/// *can* build. Deliberately NOT a policy surface: the `bash`/`web` booleans
-/// that used to live here were operator policy welded into construction, and
-/// they only ever covered built-ins — an MCP or custom tool never passed
-/// through them. That job belongs to [`crate::policy::ToolPolicy`], enforced
-/// once above the whole session tool stack.
-#[derive(Clone, Default)]
-pub struct RegistryOptions {
-    /// Where the issue backend comes from. Defaults to
-    /// [`crate::IssueBackendSource::None`], so construction spawns no process
-    /// and reads no environment until a caller opts in (#1596).
-    pub issue_backend: crate::IssueBackendSource,
-    pub media_spend_gate: Option<Arc<dyn stella_media::MediaSpendGate>>,
-    pub media_operation_ids: Option<Arc<dyn crate::media::MediaOperationIdSource>>,
-    pub media_operation_journal: Option<Arc<dyn stella_media::MediaOperationJournal>>,
-    pub media_requires_host_approval: bool,
-    pub media_host_data_isolation: Option<crate::media::HostDataIsolation>,
 }
 
 impl ToolRegistry {
@@ -588,6 +576,7 @@ impl ToolRegistry {
             announce_mutations: std::sync::atomic::AtomicBool::new(true),
             mutations: std::sync::atomic::AtomicU64::new(0),
             process_free,
+            probe_ignore_policy: options.probe_ignore_policy,
         }
     }
 
@@ -1105,8 +1094,9 @@ impl ToolRegistry {
             self.bracket_opaque_calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
-        let shell_probe = (opaque_call && !bracketing)
-            .then(|| crate::shell_touch::WorkspaceProbe::capture(&self.root));
+        let shell_probe = (opaque_call && !bracketing).then(|| {
+            crate::shell_touch::WorkspaceProbe::capture_with(&self.root, self.probe_ignore_policy)
+        });
 
         let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
@@ -1159,7 +1149,10 @@ impl ToolRegistry {
         // patch that applied two hunks of three), and the ledger's job is to
         // describe the tree as it is, not as the exit code implies.
         if let Some(before) = shell_probe {
-            let after = crate::shell_touch::WorkspaceProbe::capture(&self.root);
+            let after = crate::shell_touch::WorkspaceProbe::capture_with(
+                &self.root,
+                self.probe_ignore_policy,
+            );
             self.record_probe_delta(
                 &before,
                 &after,
@@ -1538,7 +1531,7 @@ impl ToolRegistry {
     ///
     /// Every tool that reaches `bash -c` MUST ride the same fence as `bash`:
     /// they stay in the surface when an operator sets `"bash": "off"` (and
-    /// `start_process`'s argv[0] may itself be a shell, `["bash", "-c", …]`),
+    /// `start_process`'s `argv[0]` may itself be a shell, `["bash", "-c", …]`),
     /// so leaving any out hands ambient shell execution to the very posture
     /// that turned `bash` off. The #615 known gap is closed (#804): the
     /// `bash -c` composers (`screenshot`, `ci_status`, `start_work_on_issue`)

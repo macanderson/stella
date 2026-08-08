@@ -6,7 +6,7 @@
 //! buries genuine hits, so this module keeps them out of the store entirely.
 //!
 //! Two independent signals feed the same exclusion, both evaluated in
-//! [`crate::store::index_one`] against a file's already-read bytes:
+//! `index_one` (private to [`crate::store`]) against a file's already-read bytes:
 //!
 //! - **Declared**: `.gitattributes` `linguist-generated=true` patterns
 //!   (root-level only — the same documented gap [`crate::walk`] already
@@ -19,7 +19,7 @@
 //!
 //! Directory-shaped generated output (`dist/`, `build/`, `out/`, `.next/`,
 //! `node_modules/`, `dist-standalone/`, `vendor/`) is excluded earlier, at
-//! the walk itself ([`crate::walk::DENY_DIRS`]) — cheaper, since the walk
+//! the walk itself (`DENY_DIRS` in [`crate::walk`]) — cheaper, since the walk
 //! never even opens those files.
 //!
 //! Both checks here run **before** the byte-compat skip

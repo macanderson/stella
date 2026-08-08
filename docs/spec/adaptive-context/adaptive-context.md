@@ -220,18 +220,30 @@ records it stores, because retention policy cannot live in a different database
 from the data it governs.
 
 Admission requires query-conditional evidence: an anchor the goal named, its
-graph adjacency, a term match distinctive against the corpus, or a similarity
-floor an embedder has declared semantically meaningful. The frame budget is a
-cap, never a quota — a recall where nothing qualifies returns zero frames, and
-every refusal is counted in the drop report (§5.5). Ranking orders the
-admissible; it never launders mere existence into relevance.
+graph adjacency, a term match distinctive against the corpus, overlap with the
+domains this goal selected, or a similarity floor an embedder has declared
+semantically meaningful. The frame budget is a cap, never a quota — a recall
+where nothing qualifies returns zero frames, and every refusal is counted in
+the drop report (§5.5). Ranking orders the admissible; it never launders mere
+existence into relevance.
 
-Admission is strictly narrower than ranking, and domain overlap is where the
-two part. Overlap ranks, because a node tagged with the session's domains is
-plausibly nearer the work. It does not admit, because the scope callers pass
-is the workspace's whole domain vocabulary, so "overlaps the scope" is a
-property of the node — is it tagged at all — rather than of the query. An
-admission rung cannot be built on a predicate the query does not vary.
+Admission is strictly narrower than ranking, and domain overlap shows why the
+distinction has to be structural rather than a matter of care. A recall carries
+two domain scopes. The **session** scope is the workspace's vocabulary: it
+filters (a node tagged wholly outside it is not a candidate) and it ranks.
+The **query** scope is what this goal selected — the domains owning the files
+the goal named. Only the second may admit, and only when it is a non-empty
+proper subset of the first.
+
+The proper-subset condition is the load-bearing part. Judged against the
+session scope, "shares a domain with the query" and "is tagged at all" are the
+same predicate, and the second is already the filter every candidate passed to
+get here — so the rung would admit the whole in-scope corpus and the gate would
+be decorative. A scope must narrow to discriminate. Narrowing the *session*
+scope instead is not an alternative: it also drives the exclusion filter, so a
+narrower value silently starts suppressing memories rather than merely
+declining to admit them. Two scopes, one of which may admit, is the only shape
+that gets both halves right.
 
 ### 6.2 The frame
 

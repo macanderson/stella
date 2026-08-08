@@ -419,6 +419,9 @@ pub struct Config {
     /// Trajectory trace capture after each finished execution (settings
     /// `trace_capture`, #1042). Default off.
     pub trace_capture: bool,
+    /// The workspace probe skips gitignored paths (settings
+    /// `ignore_gitignore`). Default **on**; inert outside a git repository.
+    pub ignore_gitignore: bool,
     /// What a turn's verdict is worth as a training label (settings `reward`,
     /// #1043). Resolved and VALIDATED once here, so every consumer downstream
     /// receives a policy that already satisfies the ordering rule rather than
@@ -627,6 +630,7 @@ impl Config {
         cfg.tool_policy = settings.tool_policy();
         cfg.enable_recap = settings.recap_enabled();
         cfg.trace_capture = settings.trace_capture_enabled();
+        cfg.ignore_gitignore = settings.ignore_gitignore();
         cfg.reward_policy = settings.reward_policy()?;
         cfg.create_worktrees = settings.create_worktrees();
         // Keyed off the provider actually picked, like the engine baseline
@@ -781,6 +785,7 @@ impl Config {
                     tool_policy: Default::default(),
                     enable_recap: false,
                     trace_capture: false,
+                    ignore_gitignore: true,
                     reward_policy: stella_pipeline::reward::RewardPolicy::default(),
                     create_worktrees: Default::default(),
                     authority: crate::settings::AuthorityPolicy::default(),
@@ -996,6 +1001,7 @@ impl Config {
             tool_policy: Default::default(),
             enable_recap: false,
             trace_capture: false,
+            ignore_gitignore: true,
             reward_policy: stella_pipeline::reward::RewardPolicy::default(),
             create_worktrees: Default::default(),
             authority: crate::settings::AuthorityPolicy::default(),
@@ -1319,6 +1325,45 @@ pub fn discover_configured_providers() -> Vec<ConfiguredProvider> {
         }
     }
     configured
+}
+
+#[cfg(test)]
+impl Config {
+    /// A `Config` for offline tests: `provider` at `model_id`, a dummy key
+    /// (never sent — the adapters under test make no network call), and every
+    /// settings-derived field at its shipped default. The default posture is
+    /// "no `--model` given" (`model_pinned_by_flag: false`), so the
+    /// settings-driven wiring is what a test exercises unless it says
+    /// otherwise. One constructor rather than a literal per test module, so a
+    /// new `Config` field lands here once instead of growing every fixture.
+    pub(crate) fn for_tests(provider: ProviderConfig, model_id: String) -> Self {
+        Config {
+            provider,
+            model_id,
+            turn_budget: None,
+            max_output_tokens: None,
+            plan_mode: false,
+            model_pinned_by_flag: false,
+            durability: Default::default(),
+            create_worktrees: Default::default(),
+            api_key: ApiKey::new("dummy-key-unused-offline"),
+            credential_source: None,
+            workspace_root: std::path::PathBuf::from("/tmp"),
+            base_url_override: None,
+            hooks: None,
+            engine_settings: None,
+            engine_settings_trusted: false,
+            tool_policy: Default::default(),
+            enable_recap: false,
+            trace_capture: false,
+            ignore_gitignore: true,
+            reward_policy: stella_pipeline::reward::RewardPolicy::default(),
+            authority: crate::settings::AuthorityPolicy::default(),
+            credential_advisories: Vec::new(),
+            aux_credentials: Default::default(),
+            cache_ttl: None,
+        }
+    }
 }
 
 #[cfg(test)]

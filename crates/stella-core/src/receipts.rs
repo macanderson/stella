@@ -198,8 +198,8 @@ fn zone_tag(zone: CacheZone) -> &'static str {
 /// workspace path — and that metadata is the preimage. The base64 payload
 /// exists only after the model layer hydrates a request, which happens below
 /// this point and never on the messages a receipt sees. A hydrated attachment
-/// that somehow reached here is stripped by
-/// [`BlockDraft::without_local_content`] rather than journaled.
+/// that somehow reached here is dropped from the preimage rather than
+/// journaled: decomposition maps `AttachmentSource::Data` to no local content.
 fn is_gap_kind(kind: BlockKind) -> bool {
     matches!(
         kind,

@@ -22,7 +22,7 @@ use crate::clock::FixedClock;
 use crate::embed::{
     EmbedError, Embedder, EmbedderFingerprint, Embedding, HashEmbedder, SimilarityPosture,
 };
-use crate::retrieval::RecallTuning;
+use crate::retrieval::{RecallScope, RecallTuning};
 use crate::store::{ContextStore, NodeInput, NodeKind};
 use crate::writeback::{ContextDelta, FactAssertion};
 use contextgraph_types::ContextQuery;
@@ -264,23 +264,12 @@ async fn anchors_and_their_neighbors_are_admitted_without_term_overlap() {
     );
 }
 
-/// Sharing a domain with a **full-vocabulary** scope is not evidence, because
-/// the predicate degenerates: "overlaps the query's domains" becomes "carries
-/// any tag at all", which is a fact about the *node*, never about *this
-/// query*. Evidence must be query-conditional or it is not evidence.
-///
-/// The scope is the whole vocabulary on every production recall
-/// ([`VOCABULARY`]), and reflection write-back tags every episode whose turn
-/// touched files (`domains_for_path`, `stella-cli/src/memory.rs`). So an
-/// admission rung reading domain overlap would re-open #2289 at full width —
-/// the same tagged notes admitted on every prompt, forever — which is the
-/// exact failure this module exists to close.
-///
-/// Domain overlap keeps its honest job: a ranking signal in the RRF fusion,
-/// ordering the admissible. Restoring it as *evidence* needs a real per-query
-/// scope first (#2333).
-#[tokio::test]
-async fn a_full_vocabulary_domain_scope_is_not_evidence() {
+/// The contaminated store, additionally domain-tagged: note `i` carries
+/// `VOCABULARY[i % 3]`, so `retrieval` owns notes 0 and 3, `tui` owns 1 and 4,
+/// `bench` owns 2. No note shares a distinctive term with [`QUERY`], so the
+/// **only** channel that can fire in these tests is domain overlap — which is
+/// what makes them a clean read on it.
+async fn domain_tagged_store() -> (TempDir, ContextStore) {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("context.db");
     let store = ContextStore::open_with(
@@ -299,10 +288,35 @@ async fn a_full_vocabulary_domain_scope_is_not_evidence() {
         );
     }
     store.upsert(delta).await.unwrap();
+    (dir, store)
+}
 
-    let scope: Vec<String> = VOCABULARY.iter().map(|d| (*d).to_string()).collect();
+fn vocabulary() -> Vec<String> {
+    VOCABULARY.iter().map(|d| (*d).to_string()).collect()
+}
+
+/// Sharing a domain with a **full-vocabulary** scope is not evidence, because
+/// the predicate degenerates: "overlaps the query's domains" becomes "carries
+/// any tag at all", which is a fact about the *node*, never about *this
+/// query*. Evidence must be query-conditional or it is not evidence.
+///
+/// This is the shape production had when the rung first shipped — the session
+/// hands recall its whole vocabulary and nothing narrows it — and reflection
+/// write-back tags every episode whose turn touched files, so admitting on it
+/// re-opened #2289 at full width: the same tagged notes on every prompt,
+/// forever.
+///
+/// Read this together with [`a_narrowed_domain_scope_is_evidence`]: same
+/// corpus, same prompt, one variable changed. That is the whole contract.
+#[tokio::test]
+async fn a_full_vocabulary_domain_scope_is_not_evidence() {
+    let (_dir, store) = domain_tagged_store().await;
+    let scope = RecallScope {
+        session: vocabulary(),
+        query: vocabulary(),
+    };
     let result = store
-        .recall_scoped(&base_query(QUERY), &scope)
+        .recall_scoped_excluding(&base_query(QUERY), &scope, &Default::default())
         .await
         .unwrap();
     let titles: Vec<&str> = result.frames.iter().map(|f| f.title.as_str()).collect();
@@ -315,6 +329,55 @@ async fn a_full_vocabulary_domain_scope_is_not_evidence() {
         result.no_evidence_cut, 5,
         "and the refusals are reported, never silent"
     );
+}
+
+/// The other half: a scope the query actually **narrowed** is evidence, and
+/// admits exactly its own domain.
+///
+/// Same corpus and same prompt as
+/// [`a_full_vocabulary_domain_scope_is_not_evidence`] — only the query scope
+/// differs, from the whole vocabulary to one domain of it. Notes 0 and 3 carry
+/// `retrieval` and are admitted; the `tui` and `bench` notes are refused
+/// despite being just as tagged, just as recent, and just as irrelevant to the
+/// prompt. Nothing here has term overlap beyond glue, so domain overlap is the
+/// only channel that could have admitted them.
+#[tokio::test]
+async fn a_narrowed_domain_scope_is_evidence() {
+    let (_dir, store) = domain_tagged_store().await;
+    let scope = RecallScope {
+        session: vocabulary(),
+        query: vec!["retrieval".to_string()],
+    };
+    let result = store
+        .recall_scoped_excluding(&base_query(QUERY), &scope, &Default::default())
+        .await
+        .unwrap();
+    let mut titles: Vec<&str> = result.frames.iter().map(|f| f.title.as_str()).collect();
+    titles.sort_unstable();
+    assert_eq!(
+        titles,
+        vec!["note-0", "note-3"],
+        "exactly the nodes in the domain THIS query selected"
+    );
+    assert_eq!(
+        result.no_evidence_cut, 3,
+        "the other two domains' notes are refused, and reported"
+    );
+}
+
+/// The convenience entry point takes only a session scope, so it cannot admit
+/// on domain overlap however the corpus is tagged — the posture its doc
+/// comment claims. A caller with no per-query scope gets the conservative
+/// behavior by construction rather than by remembering to ask for it.
+#[tokio::test]
+async fn recall_scoped_alone_never_admits_on_domain() {
+    let (_dir, store) = domain_tagged_store().await;
+    let result = store
+        .recall_scoped(&base_query(QUERY), &vocabulary())
+        .await
+        .unwrap();
+    assert!(result.frames.is_empty(), "no per-query scope, no admission");
+    assert_eq!(result.no_evidence_cut, 5);
 }
 
 /// An embedder that maps every text to the same unit vector and declares

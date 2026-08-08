@@ -73,7 +73,7 @@ async fn reflection_log_at(at: i64) -> (tempfile::TempDir, String) {
     std::fs::create_dir_all(dir.path().join(".stella")).expect("workspace");
 
     let clock: Arc<dyn Clock> = Arc::new(FixedClock::new(at));
-    let mut memory = SessionMemory::open_with_clock(dir.path(), false, clock)
+    let mut memory = SessionMemory::open_with_clock(dir.path(), false, false, clock)
         .expect("session memory opens in a temp workspace");
 
     let transcript = vec![
@@ -185,7 +185,7 @@ async fn the_context_store_shares_the_session_clock() {
     std::fs::create_dir_all(dir.path().join(".stella")).expect("workspace");
 
     let clock: Arc<dyn Clock> = Arc::new(FixedClock::new(T));
-    let mut memory = SessionMemory::open_with_clock(dir.path(), false, clock)
+    let mut memory = SessionMemory::open_with_clock(dir.path(), false, false, clock)
         .expect("session memory opens in a temp workspace");
 
     let transcript = vec![

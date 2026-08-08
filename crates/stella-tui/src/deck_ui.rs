@@ -3984,7 +3984,7 @@ fn handle_composer_key(key: KeyEvent, ui: &mut DeckUi, model: &WorkspaceModel) -
     }
 }
 
-/// Cycle the trace filter: None → agent[0] → agent[1] → … → None.
+/// Cycle the trace filter: None → `agent[0]` → `agent[1]` → … → None.
 fn cycle_filter(model: &WorkspaceModel, current: Option<&str>) -> Option<AgentId> {
     if model.agents.is_empty() {
         return None;

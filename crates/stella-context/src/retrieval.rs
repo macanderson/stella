@@ -16,7 +16,7 @@
 //! someone. The IVF accelerator in [`crate::ann`] is opt-in through
 //! [`RecallTuning::ann_enabled`] and announces itself on
 //! [`RecallResult::used_ann_index`] when it fires. They are property-tested in
-//! [`tests`].
+//! `tests` (a `#[cfg(test)]` module, so rustdoc cannot link it).
 
 use std::collections::{HashMap, HashSet};
 
@@ -604,12 +604,16 @@ impl ContextStore {
     /// silently handing that turn four frames instead of five. Suppression the
     /// plane cannot mark on its own rows arrives through
     /// [`Self::recall_scoped_excluding`].
+    /// Domain overlap **ranks** here but never **admits**: this entry point
+    /// takes only a session scope, and admission evidence needs a per-query
+    /// one ([`RecallScope`]). A caller that can derive one goes through
+    /// [`Self::recall_scoped_excluding`].
     pub async fn recall_scoped(
         &self,
         q: &ContextQuery,
         domains: &[String],
     ) -> Result<RecallResult, ContextError> {
-        self.recall_scoped_excluding(q, domains, &HashSet::new())
+        self.recall_scoped_excluding(q, &RecallScope::session_only(domains), &HashSet::new())
             .await
     }
 
@@ -626,10 +630,13 @@ impl ContextStore {
     /// excluded memory is never ranked, never packed, and never costs a body
     /// read. The CLI's post-recall filter survives as a net, and is now provably
     /// a no-op for this provider.
+    /// This is also the only entry point that can admit on domain overlap,
+    /// because it is the only one that takes a per-query scope — see
+    /// [`RecallScope`] for why the two scopes cannot be one value.
     pub async fn recall_scoped_excluding(
         &self,
         q: &ContextQuery,
-        domains: &[String],
+        scope: &RecallScope,
         excluded_ids: &HashSet<String>,
     ) -> Result<RecallResult, ContextError> {
         // 1. Query vector: reuse the caller's if it matches our dims, else
@@ -679,7 +686,8 @@ impl ContextStore {
             max_frames: q.max_frames,
             max_tokens: q.max_tokens,
             terms: query_terms(q),
-            domains: domains.to_vec(),
+            domains: scope.session.clone(),
+            query_scope: scope.query.clone(),
             fingerprint: self.fingerprint().id(),
             similarity_floor,
         };
@@ -755,8 +763,14 @@ struct RecallInputs {
     /// Lowercased query terms for the lexical fallback, precomputed so the
     /// blocking pass needs neither `goal` nor `query_text`.
     terms: Vec<String>,
-    /// The active domain scope (empty = whole workspace).
+    /// The session's domain scope (empty = whole workspace). Filters
+    /// out-of-scope nodes and ranks overlap; never admits.
     domains: Vec<String>,
+    /// The domains THIS query selected ([`RecallScope::query`]). Admission
+    /// evidence, and only when it narrows [`Self::domains`] — the check is
+    /// [`evidence::scope_is_query_conditional`], applied at the point of use so
+    /// the two scopes travel together and cannot be conflated in between.
+    query_scope: Vec<String>,
     /// The embedder fingerprint whose vectors this recall may read (`L-C2`).
     fingerprint: String,
     /// `Some(floor)` when the active embedder declares
@@ -884,29 +898,7 @@ fn recall_blocking(
     } else {
         domains_by_node(conn)?
     };
-    let no_domains: Vec<String> = Vec::new();
-    let domain_ranked: Vec<i64> = if query_domains.is_empty() {
-        Vec::new()
-    } else {
-        let mut scored: Vec<(i64, usize)> = metas
-            .iter()
-            .filter_map(|m| {
-                let overlap = scoped_domains
-                    .get(&m.id)
-                    .unwrap_or(&no_domains)
-                    .iter()
-                    .filter(|d| query_domains.contains(d.as_str()))
-                    .count();
-                (overlap > 0).then_some((m.id, overlap))
-            })
-            .collect();
-        // Descending overlap, ties on node id: `nodes` arrives in SQLite's
-        // unordered scan order, and overlap counts collide constantly (most
-        // tagged nodes carry exactly one domain), so ordering by overlap
-        // alone would hand equally-tagged nodes a different rank each run.
-        scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        scored.into_iter().map(|(id, _)| id).collect()
-    };
+    let domain_ranked = scope::overlap_ranking(&metas, &scoped_domains, &query_domains);
 
     // 4. Coverage gate (`L-C6`). Below threshold the vector signal is too
     //    weak to trust; rather than dress fused graph/recency hits up as
@@ -1050,13 +1042,12 @@ fn recall_blocking(
         // ≥`max_frames` live nodes the budget filled every slot regardless of
         // score, and a small workspace surfaced the same frames on every
         // prompt. Note that admission is a **stricter** test than the fusion's
-        // "grounded signal": domain overlap ranks here but does not admit,
-        // because the scope every caller passes is the whole workspace
-        // vocabulary, which makes overlap a property of the node rather than
-        // of this query (see [`evidence`]'s module doc, and #2333). The gate
-        // runs before the shortlist cut so an inadmissible head cannot
-        // displace admissible candidates ranked below it, and its refusals
-        // are counted, never silent (`L-C5`).
+        // "grounded signal": domain overlap ranks above against the SESSION
+        // scope, but admits only against the narrower per-query scope, because
+        // only the latter varies with what was asked (see [`evidence`]'s
+        // module doc, #2289 and #2333). The gate runs before the shortlist cut
+        // so an inadmissible head cannot displace admissible candidates ranked
+        // below it, and its refusals are counted, never silent (`L-C5`).
         if q.tuning.require_evidence {
             let pass = term_pass(conn, &excluded, q)?;
             let semantic_hits: Vec<i64> = match q.similarity_floor {
@@ -1070,10 +1061,22 @@ fn recall_blocking(
                     .collect(),
                 None => Vec::new(),
             };
+            // The domain evidence channel. Free of extra I/O by construction:
+            // a query scope that narrows a non-empty session scope means
+            // `scoped_domains` — the corpus tag map — was already loaded for
+            // the overlap ranking above, so this is a filter over rows in
+            // hand, never a second scan.
+            let domain_evidence: Vec<i64> =
+                if evidence::scope_is_query_conditional(&q.query_scope, &q.domains) {
+                    scope::evidence_ids(&metas, &scoped_domains, &q.query_scope)
+                } else {
+                    Vec::new()
+                };
             let admissible = evidence::admissible_ids(
                 &anchor_ids,
                 &anchor_adjacent,
                 &pass.distinctive_matchers(),
+                &domain_evidence,
                 &semantic_hits,
             );
             let before = ordered_all.len();
@@ -1160,6 +1163,8 @@ fn recall_blocking(
     let kept_ids: Vec<i64> = kept.iter().map(|r| r.meta.id).collect();
     let bodies = nodes_by_ids(conn, &kept_ids, q.as_of.as_deref())?;
     let tags = candidate_domains(conn, &kept_ids, &scoped_domains, &query_domains)?;
+    // An untagged frame carries an empty domain list, not a missing one.
+    let no_domains: Vec<String> = Vec::new();
     let mut frames = Vec::with_capacity(kept.len());
     for candidate in &kept {
         // A row that vanished between packing and serving is skipped rather
@@ -1422,6 +1427,9 @@ fn term_pass(
 
 mod evidence;
 mod ranking;
+mod scope;
+
+pub use scope::RecallScope;
 
 pub(crate) use ranking::{
     MmrItem, cosine, cosine_blob, coverage_score, dedup_by_content_hash, mmr_select,

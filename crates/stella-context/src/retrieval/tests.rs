@@ -1125,7 +1125,7 @@ async fn an_excluded_id_never_costs_a_budget_slot_either() {
 
     let excluded: std::collections::HashSet<String> = [winner.clone()].into_iter().collect();
     let after = store
-        .recall_scoped_excluding(&q, &[], &excluded)
+        .recall_scoped_excluding(&q, &RecallScope::default(), &excluded)
         .await
         .unwrap();
     assert_eq!(
