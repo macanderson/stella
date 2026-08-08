@@ -289,7 +289,19 @@ pub(crate) struct GlobalArgs {
     /// nobody to ask. Invocations with no terminal to lose (a pipe, CI, a
     /// container) are never supervised and are unaffected either way.
     /// Env: STELLA_FOREGROUND.
-    #[arg(long, global = true, env = "STELLA_FOREGROUND", hide_short_help = true)]
+    // `action` and `value_parser` are spelled out because the inferred `bool`
+    // parser accepts only the literals `true`/`false` — and the supervisor
+    // tells its child to do the work through `STELLA_FOREGROUND=1`
+    // (`daemon::launch`), so under the inferred parser every supervised child
+    // died in argument parsing before it ran a turn (#2142).
+    #[arg(
+        long,
+        global = true,
+        env = "STELLA_FOREGROUND",
+        hide_short_help = true,
+        action = clap::ArgAction::SetTrue,
+        value_parser = parse_env_flag,
+    )]
     pub(crate) foreground: bool,
 
     /// Start the run in the background and return to the shell immediately.
@@ -304,7 +316,17 @@ pub(crate) struct GlobalArgs {
     /// The exit code is the launch's, not the run's: the run's own answer is
     /// in `stella daemon list` afterwards. `--foreground` wins if both are
     /// given. Env: STELLA_DETACH.
-    #[arg(long, global = true, env = "STELLA_DETACH", hide_short_help = true)]
+    // Same parser as `foreground`, same reason (#2142): `export
+    // STELLA_DETACH=1` is the conventional shell spelling, and the inferred
+    // parser refuses it.
+    #[arg(
+        long,
+        global = true,
+        env = "STELLA_DETACH",
+        hide_short_help = true,
+        action = clap::ArgAction::SetTrue,
+        value_parser = parse_env_flag,
+    )]
     pub(crate) detach: bool,
 }
 
@@ -1261,6 +1283,29 @@ pub enum McpCmd {
     },
     /// Show MCP tool-usage telemetry (.stella/private/store.db): calls per server/tool
     Usage,
+}
+
+/// `--foreground` / `--detach` through their environment variables
+/// (`STELLA_FOREGROUND`, `STELLA_DETACH`).
+///
+/// clap's inferred `bool` parser accepts only the literals `true`/`false`,
+/// and the environment is exactly where other spellings arrive: the
+/// supervisor's own child telegram is `STELLA_FOREGROUND=1`
+/// (`daemon::launch`), and `export STELLA_DETACH=1` is the convention a
+/// shell user reaches for. Under the inferred parser each of those died in
+/// argument parsing — for the supervised child, before it ran a turn, which
+/// made every supervised run dead on arrival (#2142). Two asymmetries are
+/// deliberate: empty reads as unset rather than erroring, because `export
+/// STELLA_FOREGROUND=` is a shell's way of saying "not set"; anything
+/// unrecognized is still refused by name, never silently read as true.
+fn parse_env_flag(raw: &str) -> Result<bool, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "t" | "yes" | "y" | "on" => Ok(true),
+        "" | "0" | "false" | "f" | "no" | "n" | "off" => Ok(false),
+        _ => Err(format!(
+            "`{raw}` is not a boolean — use 1/0, true/false, yes/no, or on/off"
+        )),
+    }
 }
 
 /// `--budget` must be a positive, finite dollar amount — a NaN or negative

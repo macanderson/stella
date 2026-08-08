@@ -638,6 +638,32 @@ fn detach_before_exec(command: &mut std::process::Command, lock_path: PathBuf) {
     }
 }
 
+/// The attached banner's lines, pure over the session id so what a user is
+/// told at the moment supervision engages is testable without spawning
+/// anything.
+///
+/// The last line exists because supervision is a default, not a choice the
+/// user made: the moment it first engages is the one reliable place to teach
+/// the opt-out — `--help` is where nobody looks for a flag they don't know
+/// exists (#2142).
+fn announcement(id: &str) -> [String; 3] {
+    [
+        format!(
+            "{} {} — survives this terminal closing",
+            "▸ supervised".green().bold(),
+            id.dimmed()
+        ),
+        format!(
+            "  reattach with {}",
+            format!("stella daemon attach {id}").cyan()
+        ),
+        format!(
+            "  stella is running in the background — {} runs it in this terminal instead",
+            "--foreground".cyan()
+        ),
+    ]
+}
+
 impl Supervised {
     /// The banner the terminal sees, once, before the child's first byte.
     ///
@@ -650,15 +676,9 @@ impl Supervised {
     /// (#1585) — this terminal while it stays, any `stella daemon attach`
     /// after it goes — so supervision no longer takes that answer away.
     pub(crate) fn announce(&self) {
-        eprintln!(
-            "{} {} — survives this terminal closing",
-            "▸ supervised".green().bold(),
-            self.id.dimmed()
-        );
-        eprintln!(
-            "  reattach with {}",
-            format!("stella daemon attach {}", self.id).cyan()
-        );
+        for line in announcement(&self.id) {
+            eprintln!("{line}");
+        }
     }
 
     /// Stream the child's console to this terminal until it exits, and answer
