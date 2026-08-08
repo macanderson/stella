@@ -451,15 +451,22 @@ pub(crate) fn render_file_tree(files: &str, max_lines: usize) -> String {
     out
 }
 
+/// The structural half of the shared-contract discipline: the tests above are
+/// written one per contract, so they cover the contracts that exist and say
+/// nothing about the next one. This module derives the set from this file's own
+/// source and asserts the coupling over it (#2231). Declared last because
+/// `macro_rules!` scope is textual — the contracts above have to be in scope.
+#[cfg(test)]
+mod parity;
+
 #[cfg(test)]
 mod tests {
-    use super::{PIPELINE_SYSTEM_PROMPT, SYSTEM_PROMPT, append_workspace_memories};
+    use super::append_workspace_memories;
 
-    /// Every static prompt, labelled.
-    const PROMPTS: &[(&str, &str)] = &[
-        ("SYSTEM_PROMPT", SYSTEM_PROMPT),
-        ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
-    ];
+    // Every static prompt, labelled. Lives in `parity`, where it is
+    // cross-checked against this file's own source, so a third prompt cannot
+    // join the set without joining the list every test here iterates (#2231).
+    use super::parity::STATIC_PROMPTS as PROMPTS;
 
     /// The catalogue-shaped lines of `prompt`: `- <tool_name>: …`, where the
     /// lead-in is a bare canonical tool name or a `/`-joined run of them.
