@@ -28,6 +28,8 @@ use stella_core::ingest::{self, Candidate, Plan, Tier};
 mod extract;
 pub(crate) mod probe;
 
+pub(crate) use extract::derive_set_id;
+
 /// Largest slice of any one file read for classification.
 ///
 /// Classification looks at the head and the bullet structure; a document that
