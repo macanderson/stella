@@ -349,5 +349,16 @@ drift_note=""
 if [ -n "$drift" ]; then
   drift_note=" $(printf '%s' "$drift" | grep -c '^') file(s) carry inherited drift (see above)."
 fi
+# Say which mode ran. The change-relative rule is silent by nature — it only
+# shows itself when something drifts — so a checkout too shallow to resolve a
+# base would fall back to strict and read as an ordinary green line forever.
+# That is exactly how .github/workflows/file-size.yml shipped its ratchet as a
+# whole-tree check while this script believed otherwise, and naming the mode is
+# what makes the difference legible in a log rather than a thing to re-derive.
+if [ -n "$base_commit" ]; then
+  mode_note=" Judged against $(git rev-parse --short "$base_commit" 2>/dev/null || echo "$base_commit")."
+else
+  mode_note=" No base resolved — strict whole-tree check."
+fi
 trap '' PIPE
-echo "check-file-size: OK — $tracked Rust/Python/shell files, none over $LIMIT lines except $grandfathered grandfathered (none grew by this change).${drift_note}" || true
+echo "check-file-size: OK — $tracked Rust/Python/shell files, none over $LIMIT lines except $grandfathered grandfathered (none grew by this change).${mode_note}${drift_note}" || true
