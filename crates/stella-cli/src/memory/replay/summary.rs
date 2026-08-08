@@ -39,6 +39,11 @@ pub(crate) struct ReplaySummary {
     pub turns_unreadable: usize,
     /// Turns scripted as a failed model call.
     pub turns_model_error: usize,
+    /// Turns whose source carried no reflection at all — counted, never folded
+    /// into "nothing to learn". An adapter over a corpus with no reflection JSON
+    /// (§7.2) produces these, and a metric that silently counted them as empty
+    /// reflections would report the learner as idle when it was never asked.
+    pub turns_not_recorded: usize,
     /// Lessons the corpus offered, before any filtering.
     pub lessons_offered: usize,
     // ---- what the learners built ------------------------------------------
@@ -80,6 +85,7 @@ impl ReplaySummary {
                 }
                 ScriptedReflection::Unreadable { .. } => summary.turns_unreadable += 1,
                 ScriptedReflection::ModelError { .. } => summary.turns_model_error += 1,
+                ScriptedReflection::NotRecorded => summary.turns_not_recorded += 1,
             }
         }
         summary
@@ -151,8 +157,12 @@ impl ReplaySummary {
             self.sessions, self.turns, self.distinct_tasks
         ));
         out.push_str(&format!(
-            "  reflections: {} with lessons, {} unreadable, {} model error(s)\n",
-            self.turns_with_lessons, self.turns_unreadable, self.turns_model_error
+            "  reflections: {} with lessons, {} unreadable, {} model error(s), \
+             {} not recorded by the source\n",
+            self.turns_with_lessons,
+            self.turns_unreadable,
+            self.turns_model_error,
+            self.turns_not_recorded
         ));
         out.push_str(&format!(
             "  {} lesson(s) offered across {} turn(s) — recurrence {:.2} lesson/turn\n",

@@ -172,13 +172,13 @@ impl From<&TraceShell> for ShellInvocation {
 
 /// What the reflection model would have returned this turn.
 ///
-/// **Three arms, deliberately.** The two failure arms are not padding: they are
-/// what the live loop actually hits, and they are the ones that starve learning
-/// *silently*. `reflect_and_record` returns `recorded: 0` both for "nothing
-/// worth learning" and for "I could not read the response", and telling those
-/// apart is the entire purpose of the `Unreadable` branch. A corpus that only
-/// ever scripts happy-path lessons cannot certify the starvation guard, which is
-/// the most valuable assertion the harness has.
+/// **The two failure arms are not padding.** They are what the live loop
+/// actually hits, and the ones that starve learning *silently*:
+/// `reflect_and_record` returns `recorded: 0` both for "nothing worth learning"
+/// and for "I could not read the response", and telling those apart is the
+/// entire purpose of the `Unreadable` branch. A corpus that only ever scripts
+/// happy-path lessons cannot certify the starvation guard, which is the most
+/// valuable assertion the harness has.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ScriptedReflection {
@@ -197,6 +197,21 @@ pub(crate) enum ScriptedReflection {
     Unreadable { text: String },
     /// The model call itself failed — drives `StandaloneCallError`.
     ModelError { message: String },
+    /// **The source carried no reflection at all**, so this turn runs the
+    /// foundry and the timeline but never touches the reflection path.
+    ///
+    /// The arm exists because of a real property of the only non-synthetic
+    /// corpus available: Claude Code transcripts contain no Stella reflection
+    /// JSON (§7.2). Every way of expressing that with the other three arms is a
+    /// claim the source does not support — `Lessons { lessons: [] }` asserts the
+    /// model had nothing to say, and `Unreadable` asserts it said something
+    /// unparseable. Both would be *invented signal* in the one place the spec
+    /// warns hardest about, and `Unreadable` in particular would fabricate
+    /// starvation and corrupt assertion 7's own metric.
+    ///
+    /// So it is its own arm, counted separately in the summary, and the
+    /// replayer skips the model boundary entirely for it.
+    NotRecorded,
 }
 
 /// One lesson as the model would have emitted it.
@@ -358,7 +373,15 @@ impl ScriptedReflection {
                 Some(serde_json::to_string(lessons).unwrap_or_else(|_| "[]".to_string()))
             }
             ScriptedReflection::Unreadable { text } => Some(text.clone()),
-            ScriptedReflection::ModelError { .. } => None,
+            ScriptedReflection::ModelError { .. } | ScriptedReflection::NotRecorded => None,
         }
+    }
+
+    /// Whether this turn reaches the reflection path at all.
+    ///
+    /// [`ScriptedReflection::NotRecorded`] does not: there is nothing to script,
+    /// and scripting *something* would invent the signal under test.
+    pub(crate) fn reaches_the_model(&self) -> bool {
+        !matches!(self, ScriptedReflection::NotRecorded)
     }
 }
