@@ -27,10 +27,118 @@ pub(crate) async fn close_event_stream(
     registry: &ToolRegistry,
     tx: stella_core::EventSender,
     renderer: tokio::task::JoinHandle<RendererOutcome>,
+    bracket: TurnBracket,
 ) -> RendererOutcome {
+    // Ahead of `detach_event_stream`, because the settle's `FileChange`s are
+    // born on this sender: settling after the detach would still write the
+    // durable ledger while the journal and the live deck saw nothing change.
+    if matches!(bracket, TurnBracket::Settle) {
+        registry.settle_workspace_probe();
+    }
     registry.detach_event_stream();
     drop(tx);
     renderer.await.unwrap_or_default()
+}
+
+#[cfg(test)]
+mod turn_bracket_tests {
+    use super::*;
+
+    /// Witness for #2337.
+    ///
+    /// The raw step loop arms one workspace-probe bracket per turn and has no
+    /// later stage to close it, so `close_event_stream` is where it settles —
+    /// and it has to settle while the sender is still live, because that is
+    /// where a `FileChange` is born. Fails on `main`, where the function took
+    /// no bracket and settled nothing: a file that only `bash` knew about
+    /// reached the durable ledger and never the journal.
+    #[tokio::test]
+    async fn a_settled_bracket_journals_what_only_the_shell_knew_it_wrote() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_path_buf();
+        let registry = ToolRegistry::new(root, stella_tools::RegistryOptions::default());
+
+        let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let tx = stella_core::EventSender::new(raw_tx);
+        registry.attach_events(tx.clone());
+        let renderer = spawn_renderer(rx, OutputFormat::Json, None, "test".to_string(), true);
+
+        registry.begin_workspace_probe();
+        // Opaque by construction: `classify_file_op` reads a tool's input, and
+        // no input describes what a shell command will touch. The tree is the
+        // only witness, which is the whole reason the probe exists.
+        registry
+            .execute(
+                "bash",
+                &serde_json::json!({ "command": "printf hi > witnessed.txt" }),
+            )
+            .await;
+
+        let rendered = close_event_stream(&registry, tx, renderer, TurnBracket::Settle).await;
+        let journalled: Vec<&str> = rendered
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::FileChange { path, .. } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            journalled
+                .iter()
+                .any(|path| path.ends_with("witnessed.txt")),
+            "a settled bracket must journal the shell's write; saw {journalled:?}"
+        );
+    }
+
+    /// The other half of the pair, and the reason the choice is a parameter
+    /// rather than an unconditional settle: the staged pipeline settles in its
+    /// own verify stage and re-arms from that walk, so a settle here would buy
+    /// nothing but a second walk over a tree nothing has touched since.
+    #[tokio::test]
+    async fn leaving_the_bracket_settles_nothing_here() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_path_buf();
+        let registry = ToolRegistry::new(root, stella_tools::RegistryOptions::default());
+
+        let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let tx = stella_core::EventSender::new(raw_tx);
+        registry.attach_events(tx.clone());
+        let renderer = spawn_renderer(rx, OutputFormat::Json, None, "test".to_string(), true);
+
+        registry.begin_workspace_probe();
+        registry
+            .execute(
+                "bash",
+                &serde_json::json!({ "command": "printf hi > unwitnessed.txt" }),
+            )
+            .await;
+
+        let rendered = close_event_stream(&registry, tx, renderer, TurnBracket::Leave).await;
+        assert!(
+            !rendered.events.iter().any(|event| matches!(
+                event,
+                AgentEvent::FileChange { path, .. } if path.ends_with("unwitnessed.txt")
+            )),
+            "an unsettled bracket must leave the delta for its own owner to settle"
+        );
+    }
+}
+
+/// Whether closing this stream also closes the turn's workspace-probe bracket.
+///
+/// The raw step loop arms one bracket per turn ([`super::goal::run_raw_one_shot`])
+/// and has no later stage to settle it, so the settle belongs here — the last
+/// instant at which the sender is still live. The staged pipeline settles in
+/// its own verify stage and re-arms from that same walk, so asking for a
+/// settle here would only buy a second walk to re-measure a tree that nothing
+/// has touched since the first one.
+pub(crate) enum TurnBracket {
+    /// Settle the armed probe before releasing the senders.
+    Settle,
+    /// Leave it armed — this path settles its bracket elsewhere, or never
+    /// armed one, in which case `settle_workspace_probe` is a no-op anyway.
+    Leave,
 }
 
 /// `durable_pre_persisted` is set when [`super::output::event_sender_for_run`]

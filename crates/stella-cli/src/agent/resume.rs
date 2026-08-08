@@ -400,9 +400,11 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     // drop ours, and only then await the renderer — otherwise the channel
     // never closes and a completed resume hangs.
     drop(tx);
-    let persistence_complete = close_event_stream(&tools_registry, events, renderer)
-        .await
-        .persistence_complete;
+    // Resume arms no bracket of its own, so there is nothing here to settle.
+    let persistence_complete =
+        close_event_stream(&tools_registry, events, renderer, TurnBracket::Leave)
+            .await
+            .persistence_complete;
     let files = tools_registry.files_touched();
     if let Some((store, id)) = &execution
         && !record_execution_end(
