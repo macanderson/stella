@@ -88,7 +88,9 @@ const STDERR_MARKER: &str = "[stderr]";
 ///   (`fatal: detected dubious ownership in repository at '/app'`).
 fn line_reports_a_failed_command(line: &str) -> bool {
     let line = line.trim();
-    line.contains("command not found") || line.ends_with(": not found") || line.starts_with("fatal:")
+    line.contains("command not found")
+        || line.ends_with(": not found")
+        || line.starts_with("fatal:")
 }
 
 /// Whether a shell result's captured stderr block names a failed command.

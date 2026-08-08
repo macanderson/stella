@@ -121,7 +121,8 @@ impl<'a> Pipeline<'a> {
             inputs.diff_budget,
             inputs.file_change_events,
         );
-        if let Some(clause) = crate::verify::command_errors::evidence_clause(inputs.errored_commands)
+        if let Some(clause) =
+            crate::verify::command_errors::evidence_clause(inputs.errored_commands)
         {
             // #2125: a command chain that exited 0 with a failed command
             // inside it. The verifier could never see this — the stderr that
