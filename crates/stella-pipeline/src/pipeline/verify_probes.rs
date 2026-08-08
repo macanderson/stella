@@ -335,6 +335,19 @@ impl<'a> Pipeline<'a> {
                 .map(|(path, _)| path.as_str())
                 .collect();
             fresh.sort(); // deterministic order for the appended evidence
+            // Only the HEAD of that list is read. Every path read costs two
+            // `git diff --no-index` subprocesses, so the pass is linear in
+            // the number of files the turn created — and a task that unpacks
+            // and builds a source tree creates thousands at once. See
+            // [`UNTRACKED_RENDER_BUDGET`] for the trials that spent their
+            // whole remaining clock here and never reached the warrant.
+            //
+            // A count, never a clock: the tail this splits off decides what
+            // the verifier reads, and a wall-clock cut would make that text —
+            // and every prompt built from it — depend on how fast the machine
+            // happened to be. Replay and prompt-cache stability both need this
+            // to be a function of the tree alone.
+            let unmeasured = fresh.split_off(fresh.len().min(UNTRACKED_RENDER_BUDGET));
             // Each of these is a `git diff --no-index --numstat` subprocess.
             // Run sequentially, a turn that creates many untracked files paid
             // one full process round-trip per file — on every verification
@@ -381,6 +394,30 @@ impl<'a> Pipeline<'a> {
                         untracked_rendered.push(path.to_string());
                     }
                 }
+            }
+            // The tail past the budget is NAMED and COUNTED, just not read.
+            //
+            // Naming is not optional. `witness::warrant::untracked_marker_paths`
+            // parses these markers back into the path set the warrant holds to
+            // its "every path must agree" rules, so a tail that went unnamed
+            // could turn a mixed change into a homogeneous one — a `.md`-only
+            // prefix standing in for a tree that also grew source — and relax
+            // exactly when a witness is owed.
+            //
+            // Counting is not optional either, and `1` is this module's
+            // standing floor for "changed, but not measurable in lines" (the
+            // value [`Self::untracked_added_lines`] already falls back to for
+            // a binary file). It is what keeps a large unpack OVER the
+            // diff-size budget rather than slipping under it — the property
+            // the concurrency note above refuses to let a truncating cap cost.
+            for path in &unmeasured {
+                lines = lines.saturating_add(1);
+                text.push('\n');
+                text.push_str(&crate::witness::warrant::untracked_change_line(path, 1));
+            }
+            if !unmeasured.is_empty() {
+                text.push('\n');
+                text.push_str(&untracked_budget_note(unmeasured.len()));
             }
         }
         DiffProbe {
@@ -548,6 +585,47 @@ pub(super) struct DiffProbe {
 /// costs roughly one round-trip instead of N, low enough that a turn which
 /// creates hundreds cannot fork an unbounded burst of git processes.
 const UNTRACKED_NUMSTAT_CONCURRENCY: usize = 16;
+
+/// How many freshly untracked paths [`Pipeline::gather_diff`] will READ.
+///
+/// Reading one path costs two `git diff --no-index` subprocesses — a numstat
+/// and a patch — so the pass is linear in the number of files the turn
+/// created, with no bound of its own. A task that unpacks and builds a source
+/// tree creates thousands at once, and the harness that runs Terminal-Bench
+/// commits a git baseline before the agent starts, so every extracted and
+/// generated file is untracked *and* fresh.
+///
+/// Measured on `sqlite-with-gcov`, whose agent extracts SQLite into the
+/// workspace and builds it with `--coverage`: the pass fanned out roughly nine
+/// thousand subprocesses over a tree it had no use for. Across five models and
+/// six matches, every timed-out trial of that task died inside this
+/// post-execute observation with its journal ending before the warrant — the
+/// verify stage, the verdict and the whole witness record lost because the
+/// probe was reading a build tree when the harness killed it (#2110).
+///
+/// The budget bounds only what is READ. Every fresh path is still named in
+/// the diff text and still contributes to the line count, so neither the
+/// warrant's path rules nor the diff-size budget can be relaxed by a tail
+/// going unmeasured — which is precisely what the concurrency note above
+/// refuses to let a truncating cap cost. Set far above any plausible authored
+/// change, so an ordinary turn never reaches it at all.
+const UNTRACKED_RENDER_BUDGET: usize = 256;
+
+/// The sentence [`Pipeline::gather_diff`] appends when a turn created more
+/// untracked paths than [`UNTRACKED_RENDER_BUDGET`] lets it read, so a reader
+/// is told the tail's counts are floors rather than measurements.
+///
+/// Deliberately NOT built through
+/// [`crate::witness::warrant::untracked_change_line`]: that marker's shape is
+/// parsed back into a path set, and this sentence names a count, not a file.
+fn untracked_budget_note(unmeasured: usize) -> String {
+    format!(
+        "[{unmeasured} further untracked path(s) are named above but were not read: this turn \
+         created more new files than the diff probe reads ({UNTRACKED_RENDER_BUDGET}). Their \
+         line counts are floors of 1, not measurements. This is NOT evidence that those files \
+         are empty, unchanged, or unimportant.]"
+    )
+}
 
 /// Reduce one `git diff --no-index -- /dev/null <path>` patch to the part a
 /// reviewer can read: the hunks, or git's binary sentence.
