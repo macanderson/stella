@@ -1,11 +1,11 @@
 //! What a workspace's own repository declares uninteresting.
 //!
 //! Two tree walks in this codebase need the same answer: the code-graph walk
-//! ([`crate::walk`]), which must not index a checked-in build tree, and the
-//! workspace probe in `stella-tools`, which must not attribute one as agent
-//! work. They used to approximate it separately — the graph with a hardcoded
-//! deny-list, the probe with nothing at all — and the two approximations
-//! disagreed with each other and with `git`.
+//! (this crate's private `walk` module), which must not index a checked-in
+//! build tree, and the workspace probe in `stella-tools`, which must not
+//! attribute one as agent work. They used to approximate it separately — the
+//! graph with a hardcoded deny-list, the probe with nothing at all — and the
+//! two approximations disagreed with each other and with `git`.
 //!
 //! This module is the one answer both consume. It lives here rather than in
 //! `stella-tools` because `stella-tools` already depends on this crate and
