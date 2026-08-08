@@ -55,6 +55,7 @@ from typing import Any
 
 from .artifacts import mp4_is_finalized
 from .pricing import Price, price_for, price_for_route, price_on_route, trial_cost
+from .proof import TrialProof, distill
 
 __all__ = [
     "EVENTS_NAME",
@@ -317,6 +318,13 @@ class TrialMetrics:
     #: destroy its own solution. ``None`` whenever :attr:`flip_elapsed` is:
     #: without a located flip there is no "after".
     wasted_elapsed: float | None = None
+    #: What actually proved this trial: the witness, the oracle flip, the
+    #: reasons, and which model ran which pipeline role
+    #: (:mod:`arenabench.proof`). ``None`` for a trial with no Stella event
+    #: stream at all — a Claude Code arm publishes no proof rail, and an
+    #: empty rail there is the absence of the machinery rather than a
+    #: failure of it.
+    proof: TrialProof | None = None
 
     @property
     def usage_measured(self) -> bool:
@@ -437,6 +445,7 @@ class TrialMetrics:
             "late_error": self.late_error,
             "flip_elapsed": self.flip_elapsed,
             "wasted_elapsed": self.wasted_elapsed,
+            "proof": self.proof.to_json() if self.proof is not None else None,
         }
 
 
@@ -468,6 +477,12 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
         "late_error": "",
     }
     seen_models: set[str] = set()
+    # The proof rail's raw events, kept for one pass through
+    # :func:`arenabench.proof.distill`. Collected rather than folded inline
+    # because the distillation is a pure function worth testing on its own,
+    # and cheap to buffer: these four types are a fraction of a percent of a
+    # stream that is overwhelmingly `reasoning` deltas.
+    rail: list[dict[str, Any]] = []
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
             for line in handle:
@@ -478,6 +493,8 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
                 if not isinstance(event, dict):
                     continue
                 kind = str(event.get("type", ""))
+                if kind in ("proof", "stage", "step_usage", "verdict", "judge_verdict"):
+                    rail.append(event)
                 if kind == "tool_start":
                     totals["tools"] += 1
                 elif kind == "step_usage":
@@ -515,13 +532,17 @@ def _reduce_events(path: Path) -> dict[str, Any] | None:
                     totals["late_error"] = str(event.get("message") or "")[:400]
                 elif kind == "usage_incomplete":
                     totals["usage_incomplete"] += 1
-                elif kind == "verdict":
+                elif kind in ("verdict", "judge_verdict"):
+                    # `judge_verdict` is the pre-rename tag the protocol still
+                    # reads back; an archive recorded under it must not lose
+                    # its verdict here (`AgentEvent::Verdict`'s serde alias).
                     passed = event.get("passed")
                     totals["verifier_passed"] = None if passed is None else bool(passed)
                 elif kind == "complete":
                     totals["complete"] = True
     except OSError:
         return None
+    totals["proof"] = distill(rail)
     return totals
 
 
@@ -615,6 +636,9 @@ class MetricsReader:
             metrics.declared_complete = events["complete"]
             metrics.usage_incomplete = events["usage_incomplete"]
             metrics.late_error = events["late_error"]
+            # `.get` rather than `[…]`: a cached reduction from a reader that
+            # predates the proof rail has no such key.
+            metrics.proof = events.get("proof")
         elif metrics.age_s is not None:
             # Liveness artifacts and no verdict yet mean the trial is in
             # flight even though nothing streams — every trajectory-only arm
@@ -933,6 +957,54 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
             else None
         ),
         "flip_trials": sum(1 for t in trials if t.wasted_elapsed is not None),
+        # -- the proof rail, rolled up ------------------------------------
+        # `proven` is the only one of these that is a *rate* worth reading on
+        # its own; the rest are counts, because their denominators differ.
+        # A seat that publishes no proof rail at all (every non-Stella arm)
+        # scores 0 on each, which is correct: it proved nothing, and the
+        # reason is that it has no machinery for it rather than that it
+        # tried and failed. `rail_trials` is that denominator.
+        "rail_trials": sum(1 for t in trials if t.proof is not None),
+        #: Trials where an authored witness or a tracked command went
+        #: fail→pass. The only outcome that earns the word "done".
+        "proven": sum(
+            1 for t in trials if t.proof is not None and t.proof.grade in ("flip", "oracle")
+        ),
+        #: Trials where a witness test was authored, accepted and pinned.
+        "witnessed": sum(
+            1 for t in trials if t.proof is not None and t.proof.witness_authored
+        ),
+        #: Summed :attr:`~arenabench.proof.TrialProof.failed_attempts` — every
+        #: time a model believed it was finished and a test said otherwise,
+        #: whether or not it went on to recover. The whole reason the rail
+        #: exists, as one number.
+        "wrong_guesses": sum(
+            t.proof.failed_attempts for t in trials if t.proof is not None
+        ),
+        #: Trials the oracle ran on and never passed. The rail catching a
+        #: premature "done" is a *success* of the machinery, so this is
+        #: deliberately not folded into a failure count.
+        "refuted": sum(
+            1 for t in trials if t.proof is not None and t.proof.grade == "refuted"
+        ),
+        #: Passing verdicts with nothing deterministic behind them. The
+        #: honesty trap: `unverifiable` and `waived` both publish
+        #: `passed: true`, and a model verdict is an assertion.
+        "claimed_without_proof": sum(
+            1 for t in trials if t.proof is not None and t.proof.claimed_without_proof
+        ),
+        #: Trials where proof was warranted and no witness could be authored.
+        #: Each carries its own sentence saying why.
+        "unproven": sum(
+            1 for t in trials if t.proof is not None and t.proof.grade == "unproven"
+        ),
+        #: Trials whose verifier resolved to the same model as the worker —
+        #: the run graded its own homework.
+        "self_graded": sum(
+            1
+            for t in trials
+            if t.proof is not None and t.proof.verifier_independent is False
+        ),
     }
 
 
@@ -983,6 +1055,79 @@ def leaders(
 # --------------------------------------------------------------------------
 # Transcripts
 # --------------------------------------------------------------------------
+
+
+def _proof_line(step: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    """One ``proof`` step as a transcript line: title, body, metadata.
+
+    The body is **never truncated**. Every other long field in this reader is
+    clipped because a transcript is a reading surface and a 60 KB tool result
+    helps nobody — but a proof reason is the pipeline's entire explanation of
+    why it could not prove something, and the half that gets cut is reliably
+    the half that says which model, which command, or which constraint. Those
+    strings are bounded by construction: the longest is a model verdict's
+    prose, and it is the thing a reader opened this page to read.
+    """
+    kind = str(step.get("kind") or "proof")
+    meta: dict[str, Any] = {"step": kind}
+    reason = str(step.get("reason") or "")
+
+    if kind == "warrant":
+        required = bool(step.get("required"))
+        lines = step.get("diff_lines")
+        meta.update(required=required, diff_lines=lines)
+        title = "warrant: proof required" if required else "warrant: no proof required"
+        detail = f"{lines} diff lines" if lines is not None else ""
+        return title, reason or detail, meta
+
+    if kind == "assurance":
+        witness = bool(step.get("witness"))
+        verifier = step.get("verifier")
+        if verifier is None:
+            verifier = step.get("judge")
+        meta.update(witness=witness, verifier=verifier)
+        return (
+            "assurance",
+            f"witness {'on' if witness else 'off'}"
+            f" · verifier {'on' if verifier else 'off'}",
+            meta,
+        )
+
+    if kind == "witness_authored":
+        meta.update(
+            path=step.get("path"),
+            command=step.get("command"),
+            fingerprint=step.get("fingerprint"),
+        )
+        return (
+            "witness authored",
+            f"{step.get('path') or ''}\n{step.get('command') or ''}",
+            meta,
+        )
+
+    if kind == "oracle":
+        passed = bool(step.get("passed"))
+        tree = str(step.get("tree") or "")
+        meta.update(passed=passed, tree=tree, command=step.get("command"))
+        return (
+            f"oracle: {tree} {'passed' if passed else 'failed'}",
+            str(step.get("command") or ""),
+            meta,
+        )
+
+    if kind == "verdict_degraded":
+        meta.update(candidate=step.get("candidate"))
+        return "verdict degraded", reason, meta
+
+    # `witness_unavailable`, `verification_unavailable`, and any step kind
+    # added to the protocol after this was written. An unknown kind renders
+    # as itself with whatever it carries rather than vanishing — the same
+    # posture `_entries_for` takes on unknown event types.
+    if reason:
+        return kind.replace("_", " "), reason, meta
+    return kind.replace("_", " "), json.dumps(
+        {k: v for k, v in step.items() if k != "kind"}
+    ), meta
 
 
 @dataclass
@@ -1260,15 +1405,38 @@ class TranscriptReader:
                 )
             ]
 
-        if kind == "verdict":
+        if kind == "proof":
+            step = event.get("step")
+            if not isinstance(step, dict):
+                return []
+            title, body, meta = _proof_line(step)
+            return [entry(self._next_seq(state), "proof", title, body, **meta)]
+
+        if kind in ("verdict", "judge_verdict"):
             passed = event.get("passed")
+            # The body is `evidence.summary`. It was read from a top-level
+            # `reasoning` key that the wire has never carried, so every
+            # verdict in every transcript rendered with an empty body — and
+            # the summary is where the pipeline says whether the pass was
+            # actually proven (`UNVERIFIABLE`/`UNVERIFIED`/`UNPROVEN`).
+            evidence = event.get("evidence")
+            evidence = evidence if isinstance(evidence, dict) else {}
+            ladder = evidence.get("ladder")
+            ladder = ladder if isinstance(ladder, dict) else {}
             return [
                 entry(
                     self._next_seq(state),
                     "verdict",
                     "verifier: pass" if passed else "verifier: fail",
-                    str(event.get("reasoning") or ""),
+                    str(evidence.get("summary") or event.get("reasoning") or ""),
                     passed=passed,
+                    rung=ladder.get("rung"),
+                    deterministic=evidence.get("deterministic"),
+                    flip_achieved=ladder.get("flip_achieved"),
+                    witness_intact=ladder.get("witness_intact"),
+                    verifier_independent=ladder.get("verifier_independent"),
+                    diff_coverage=ladder.get("diff_coverage"),
+                    oracle_trace=ladder.get("oracle_trace"),
                 )
             ]
 
