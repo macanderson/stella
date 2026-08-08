@@ -66,6 +66,13 @@ its own merge rule across the [scope hierarchy](#the-scope-hierarchy):
     Write one training-ready trajectory record per finished run. Off unless set.
   </SpecCard>
   <SpecCard
+    title={<code>ignore_gitignore</code>}
+    href="#the-probes-gitignore-filter"
+    meta={[{ label: "Values", value: '"on" | "off"' }]}
+  >
+    The workspace probe skips gitignored paths. **On unless set off.**
+  </SpecCard>
+  <SpecCard
     title={<code>context</code>}
     href="#the-context-block"
     meta={[{ label: "Merges", value: "whole block, last scope wins", mono: false }]}
@@ -438,6 +445,32 @@ surface "we did something like this before" together with the key to the full re
 This is the raw material for the self-improvement track (curated dataset export
 builds on it), and it costs **no model call** — the record is assembled from what the
 store already persisted.
+
+## The probe's gitignore filter
+
+`ignore_gitignore` uses the same strict `"on"`/`"off"` vocabulary — and it is the one
+toggle in this family that **defaults on**: an absent key means the filter runs, and
+only an explicit `"off"` restores the unfiltered walk.
+
+```json title="~/.stella/settings.json"
+{
+  "ignore_gitignore": "off"
+}
+```
+
+With it on (the default), the workspace probe — the walk that attributes what an
+opaque shell command changed — skips every path the repository's own `.gitignore`
+excludes. Build churn (`target/`, `node_modules/`, an object tree) is never walked,
+never recorded as a file touch, and never fed to the Files tab or the verification
+ladder, because the repository has already declared it uninteresting. Source edits in
+the same delta are attributed exactly as before.
+
+Two boundaries keep the filter honest. It consults only the repository rooted **at
+the workspace itself** — a workspace that merely sits under someone else's repository
+(say, a scratch directory beneath a `$HOME` dotfiles repo whose `.gitignore` says
+`*`) inherits nothing, so an ancestor's rules can never blind the probe. And outside
+a git repository the switch is inert: nothing is ignored, and the probe stays fully
+sighted — producing build output there is frequently the whole job.
 
 ## The `ui` section
 

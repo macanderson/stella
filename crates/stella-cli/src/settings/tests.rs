@@ -478,6 +478,40 @@ fn trace_capture_defaults_off_and_survives_the_scope_merge() {
     assert!(!merged.trace_capture_enabled());
 }
 
+/// The probe's gitignore filter: **defaults ON** when no scope mentions it —
+/// the one flag in this family whose absence means yes — and, the
+/// `enable_recap` lesson, an explicit `"off"` must survive the scope merge
+/// or the setting is decorative.
+#[test]
+fn ignore_gitignore_defaults_on_and_an_off_survives_the_scope_merge() {
+    assert!(
+        Settings::default().ignore_gitignore(),
+        "ignore_gitignore defaults on"
+    );
+    assert!(
+        !serde_json::from_str::<Settings>(r#"{"ignore_gitignore":"off"}"#)
+            .unwrap()
+            .ignore_gitignore()
+    );
+    // Toggle discipline: a bool is a loud parse error, not a silent value.
+    assert!(serde_json::from_str::<Settings>(r#"{"ignore_gitignore":false}"#).is_err());
+
+    let dir = tempfile::tempdir().unwrap();
+    let user = write(dir.path(), "user.json", r#"{"ignore_gitignore": "off"}"#);
+    // A later scope that says nothing must not reset the lower scope's "off"
+    // back to the on-by-default…
+    let silent = write(dir.path(), "silent.json", r#"{"providers": {}}"#);
+    let merged = Settings::load_from(&[user.clone(), silent]).unwrap();
+    assert!(
+        !merged.ignore_gitignore(),
+        "the merge must carry the flag (the enable_recap lesson)"
+    );
+    // …and a later explicit "on" wins.
+    let on = write(dir.path(), "on.json", r#"{"ignore_gitignore": "on"}"#);
+    let merged = Settings::load_from(&[user, on]).unwrap();
+    assert!(merged.ignore_gitignore());
+}
+
 /// **Witness: `{"bash": "off"}` is the only thing that withholds the
 /// shell**, and scopes merge per key with the later (project) scope
 /// winning in both directions.
