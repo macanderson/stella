@@ -267,6 +267,16 @@ def _cmd_contest(args: argparse.Namespace) -> int:
         print(f"  arenabench cloud run {destination} --ref main")
         return 0
 
+    # Named before the run starts, not after: the watcher is worth opening
+    # while trials are queueing, and a run id printed only on completion is a
+    # run nobody watched.
+    if args.run_id:
+        print(f"\nwatch the scoreboard while it runs:")
+        print(f"  arenabench cloud watch {args.run_id}")
+    else:
+        print("\nwatch the scoreboard with `arenabench cloud watch <run-id>` "
+              "(the id is printed below)")
+
     # Hand off rather than re-implement: `cloud run` owns SUT resolution,
     # per-trial submission, the refusal of seats with no SSM credentials, and
     # result download. A second submission path here would be a second thing
