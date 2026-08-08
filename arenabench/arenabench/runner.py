@@ -909,9 +909,20 @@ class MatchRunner:
         env.setdefault("STELLA_DISABLE_REFLECTION", "1")
 
         # Both packages must be importable by the Harbor subprocess: the
-        # ArenaBench adapter and the stella_harbor base it subclasses.
+        # ArenaBench adapter and the stella_harbor base it subclasses. Missing
+        # the second one does not fail loudly — `harbor_agent.py` falls back to
+        # `_Base = object`, Harbor dies with "ArenaStellaAgent() takes no
+        # arguments", and *exits 0*, so the seat reports done having run
+        # nothing. The adapter ships in the same checkout `sut.stella_repo()`
+        # already found, so an arena running out of a clone can wire itself
+        # rather than depend on an operator remembering one variable whose
+        # omission is invisible.
         roots = [str(Path(__file__).resolve().parent.parent)]
         adapter = os.environ.get("ARENABENCH_STELLA_ADAPTER")
+        if not adapter:
+            repo = sut.stella_repo()
+            if repo is not None and (repo / "bench" / "harbor_adapter").is_dir():
+                adapter = str(repo / "bench" / "harbor_adapter")
         if adapter:
             roots.append(str(Path(adapter).expanduser().resolve()))
         existing = os.environ.get("PYTHONPATH", "")

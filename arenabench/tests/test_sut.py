@@ -13,6 +13,7 @@ which Stella it measured.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -235,6 +236,131 @@ class TestLaunchRefusal:
         visible.
         """
         assert MatchSpec.from_json({"name": "m", "dataset": "d"}).sut_ref == "main"
+
+
+class TestCheckoutDiscovery:
+    """An arena running out of a checkout must not report that it has none.
+
+    The arena ships *inside* the repository it measures (``<repo>/arenabench``),
+    so ``python -m arenabench serve`` from a clone is the ordinary development
+    launch — and it was the one launch that could not resolve a ref. Neither
+    ``ARENABENCH_STELLA_REPO`` nor ``ARENABENCH_STELLA_ADAPTER`` is set on that
+    path, so every Stella seat was refused with "no Stella checkout is
+    configured" by a process whose own source file sat two directories below
+    the repository root, and the model select fell back to free text for the
+    same reason.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _unconfigured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exactly the environment of a bare `python -m arenabench serve`."""
+        monkeypatch.delenv(sut.STELLA_REPO_ENV, raising=False)
+        monkeypatch.delenv("ARENABENCH_STELLA_ADAPTER", raising=False)
+
+    def test_the_checkout_this_arena_runs_from_needs_no_configuration(self) -> None:
+        found = sut.stella_repo()
+        assert found is not None, (
+            "the arena refused to name the checkout it is executing out of"
+        )
+        for marker in sut._STELLA_MARKERS:
+            assert (found / marker).exists(), marker
+        assert sut.repo_problem() is None
+
+    def test_an_unrelated_git_checkout_is_declined(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Discovery must not claim whatever repository the arena happens to be
+        installed inside: resolving `main` against someone else's history
+        answers with a commit that means nothing here, which is worse than
+        answering with nothing at all."""
+        package = tmp_path / "elsewhere" / "arenabench"
+        package.mkdir(parents=True)
+        (tmp_path / "elsewhere" / ".git").mkdir()
+        monkeypatch.setattr(sut, "_PACKAGE_DIR", package)
+
+        assert sut.stella_repo() is None
+        assert sut.STELLA_REPO_ENV in (sut.repo_problem() or "")
+
+    def test_a_misconfigured_repo_env_is_not_reported_as_unconfigured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit setting that is wrong is reported, never quietly
+        replaced by discovery — and telling an operator who set the variable to
+        set the variable is how a five-second fix becomes an afternoon."""
+        wrong = tmp_path / "not-a-checkout"
+        monkeypatch.setenv(sut.STELLA_REPO_ENV, str(wrong))
+
+        assert sut.stella_repo() is None
+        problem = sut.repo_problem() or ""
+        assert "not a git checkout" in problem
+        assert str(wrong) in problem
+
+    def _stage_head(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> tuple[Path, str]:
+        """A staged binary for a commit this checkout really has.
+
+        Pins the resolved commit rather than `main`: a branch name is a moving
+        target and these tests assert about discovery, not about the tip.
+        """
+        monkeypatch.setenv("ARENABENCH_HOME", str(home))
+        monkeypatch.delenv(sut.STELLA_BINARY_ENV, raising=False)
+        repo = sut.stella_repo()
+        assert repo is not None
+        head = _git(repo, "rev-parse", "HEAD")
+        staged = sut.sut_root() / head
+        staged.mkdir(parents=True)
+        binary = staged / "stella"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        (staged / "sut_commit.txt").write_text(head)
+        return repo, head
+
+    def _spec(self, ref: str) -> MatchSpec:
+        return MatchSpec.from_json(
+            {
+                "name": "m",
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["fix-git"],
+                "sut_ref": ref,
+                "contestants": [
+                    {
+                        "name": "seat",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "m"},
+                    }
+                ],
+            }
+        )
+
+    def test_a_pinned_seat_launches_with_nothing_configured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole point, end to end: a staged binary for the pinned commit
+        is enough to launch, with no arena-specific environment at all."""
+        _, head = self._stage_head(monkeypatch, tmp_path / "home")
+        assert sut.sut_problem_for(self._spec(head)) is None
+
+    def test_the_launch_wires_the_adapter_from_that_same_checkout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Launching is not enough if the seat then runs nothing.
+
+        Without ``stella_harbor`` on the subprocess's ``PYTHONPATH``,
+        ``harbor_agent.py`` falls back to ``_Base = object``, Harbor dies with
+        "ArenaStellaAgent() takes no arguments" — and **exits 0**, so the seat
+        reports done having made no model call at all. The adapter ships in the
+        checkout discovery just found, so the arena can wire it rather than
+        depend on an operator remembering a variable whose omission is silent.
+        """
+        repo, head = self._stage_head(monkeypatch, tmp_path / "home")
+        _stub_harbor(monkeypatch)
+        captured = _capture_popen(monkeypatch)
+
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(self._spec(head))
+        runner._launch(match, match.spec.contestants[0])
+
+        roots = captured[0]["env"]["PYTHONPATH"].split(os.pathsep)
+        assert str(repo / "bench" / "harbor_adapter") in roots
 
 
 def _stamped(path: Path, commit: str | None) -> Path:

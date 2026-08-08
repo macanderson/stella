@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from arenabench import catalog as cat
+from arenabench import sut
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -115,11 +116,24 @@ class TestLiveSources:
         for provider, listing in providers.items():
             assert listing == sorted(listing, key=lambda e: e["slug"]), provider
 
-    def test_no_checkout_degrades_with_the_env_name(
+    def test_an_unconfigured_arena_reads_the_catalog_it_ships_beside(
         self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bare `python -m arenabench serve` used to fall back to a free-text
+        model field, because the catalog lives in the checkout the arena is
+        itself running out of and nothing looked there."""
+        monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
+        monkeypatch.delenv("ARENABENCH_STELLA_ADAPTER", raising=False)
+        assert cat.models_payload()["providers"]
+
+    def test_no_checkout_degrades_with_the_env_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
         monkeypatch.delenv("ARENABENCH_STELLA_ADAPTER", raising=False)
+        # ...and out of a checkout entirely, which is the only remaining way to
+        # have none: an arena installed into some other project's virtualenv.
+        monkeypatch.setattr(sut, "_PACKAGE_DIR", tmp_path)
         with pytest.raises(RuntimeError) as caught:
             cat.models_payload()
         assert "ARENABENCH_STELLA_REPO" in str(caught.value)
