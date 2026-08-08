@@ -923,6 +923,12 @@ class TranscriptState:
     offset: int = 0
     seq: int = 0
     started: float | None = None
+    #: The first line's own ``ts`` (epoch millis), when the stream carries one.
+    #: Every later entry's ``t`` is measured from this, so a finished trial read
+    #: in one pass reports the offsets the run actually had rather than the
+    #: offsets of the *read* (#2111). ``None`` for a stream recorded before the
+    #: field existed, which falls back to ``started``.
+    origin_ms: float | None = None
     #: Open text/reasoning entries being accumulated from deltas, by kind.
     open_entries: dict[str, int] = field(default_factory=dict)
     #: ``call_id`` -> entry sequence, so a tool result can find its call.
@@ -1014,13 +1020,40 @@ class TranscriptReader:
         state.seq += 1
         return state.seq
 
+    @staticmethod
+    def _elapsed_for(event: dict[str, Any], state: TranscriptState) -> float:
+        """Seconds from the trial's first event to this one.
+
+        Read from the line's own ``ts`` (epoch millis, stamped by Stella's sink
+        — see ``stella_protocol::journal``). Measuring from ``time.time()``
+        instead was the #2111 bug: a finished trial is read in a single pass, so
+        every event in the file was parsed within the same few milliseconds and
+        every row rendered ``0:00``. Anchoring to the *stream's* first stamp
+        makes an archived transcript report the offsets the run actually had —
+        and makes the paced replay in ``ui/components/arena/transcript-page.tsx``
+        pace on them instead of flushing at its 16 ms floor.
+
+        Two hedges the wire contract requires. A system clock is not monotonic,
+        so an NTP step can put a later line before the origin; that is clamped
+        to ``0.0`` rather than rendered as a negative offset. And a stream with
+        no ``ts`` at all — anything recorded before the field existed — keeps
+        the old read-time behaviour, which is wrong in the same way it always
+        was but is the only thing such a file supports.
+        """
+        stamp = event.get("ts")
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            if state.origin_ms is None:
+                state.origin_ms = float(stamp)
+            return round(max(0.0, (float(stamp) - state.origin_ms) / 1000.0), 2)
+        if state.started is None:
+            state.started = time.time()
+        return round(time.time() - state.started, 2)
+
     def _entries_for(
         self, event: dict[str, Any], state: TranscriptState, path_key: str
     ) -> list[dict[str, Any]]:
         kind = str(event.get("type", ""))
-        if state.started is None:
-            state.started = time.time()
-        now = round(time.time() - state.started, 2)
+        now = self._elapsed_for(event, state)
 
         def entry(
             seq: int, etype: str, title: str, body: str = "", **meta: Any

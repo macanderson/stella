@@ -632,6 +632,83 @@ class TestFlip:
         assert leaders(totals, DIMENSIONS)["wasted_time"] == ["tight"]
 
 
+class TestTranscriptElapsed:
+    """The transcript's elapsed column, which read `0:00` on every row (#2111).
+
+    `t` was measured from `time.time()` at parse. A finished trial is read in
+    one pass, so every event in the file was parsed within the same few
+    milliseconds, every `t` rounded to `0.0`, and `fmtClock(0)` rendered `0:00`
+    down the whole gutter — indistinguishable, to anyone watching a live match,
+    from a broken feed. It also flattened the paced replay in
+    `ui/components/arena/transcript-page.tsx`, which paces on the gap between
+    consecutive `t` values and therefore had no gaps to pace on.
+
+    The fix is to read the `ts` Stella now stamps on each line and measure from
+    the stream's own first stamp.
+    """
+
+    def test_elapsed_comes_from_the_events_own_stamps(self, tmp_path: Path):
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            {"ts": 1_754_582_400_000, "type": "stage", "name": "execute"},
+            {"ts": 1_754_582_412_500, "type": "stage", "name": "witness"},
+            {"ts": 1_754_582_490_000, "type": "stage", "name": "verify"},
+        ])
+        entries = TranscriptReader().read(path)
+        assert [e["t"] for e in entries] == [0.0, 12.5, 90.0]
+
+    def test_an_idle_gap_before_a_timeout_is_visible(self, tmp_path: Path):
+        """The forensic half of #2111: the wall clock between the last real
+        event and the timeout is the whole question, and it is unanswerable
+        unless both ends carry a stamp."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            {"ts": 1_754_582_400_000, "type": "text", "text": "done"},
+            {"ts": 1_754_582_900_000, "type": "error", "message": "AgentTimeoutError"},
+        ])
+        entries = TranscriptReader().read(path)
+        assert entries[-1]["t"] - entries[0]["t"] == 500.0
+
+    def test_a_clock_step_backwards_never_renders_a_negative_offset(
+        self, tmp_path: Path
+    ):
+        """A system clock is not monotonic; the wire contract says so and asks
+        consumers to clamp. Rendering `-0:03` would look like corruption."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            {"ts": 1_754_582_400_000, "type": "stage", "name": "execute"},
+            {"ts": 1_754_582_397_000, "type": "stage", "name": "verify"},
+        ])
+        entries = TranscriptReader().read(path)
+        assert [e["t"] for e in entries] == [0.0, 0.0]
+
+    def test_a_stream_recorded_before_the_stamp_existed_still_reads(
+        self, tmp_path: Path
+    ):
+        """Every `stella-events.jsonl` under `bench/evidence/` has no `ts`.
+        Those archives must keep rendering — flat offsets and all — rather than
+        failing on a missing key."""
+        path = tmp_path / "e.jsonl"
+        write_events(path, [
+            {"type": "stage", "name": "execute"},
+            {"type": "stage", "name": "verify"},
+        ])
+        entries = TranscriptReader().read(path)
+        assert [e["title"] for e in entries] == ["execute", "verify"]
+        assert all(isinstance(e["t"], float) for e in entries)
+
+    def test_incremental_reads_share_one_origin(self, tmp_path: Path):
+        """A live tail sees the file in several passes. The offsets must be
+        measured from the trial's first event, not from whatever line happened
+        to open the current batch."""
+        path = tmp_path / "e.jsonl"
+        reader = TranscriptReader()
+        write_events(path, [{"ts": 1_754_582_400_000, "type": "stage", "name": "a"}])
+        assert [e["t"] for e in reader.read(path)] == [0.0]
+        write_events(path, [{"ts": 1_754_582_460_000, "type": "stage", "name": "b"}])
+        assert [e["t"] for e in reader.read(path)] == [60.0]
+
+
 class TestTranscript:
     def test_streaming_fragments_coalesce_under_one_seq(self, tmp_path: Path):
         path = tmp_path / "e.jsonl"
