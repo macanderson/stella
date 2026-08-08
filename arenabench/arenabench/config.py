@@ -41,6 +41,7 @@ from .model import (
     Engine,
     MatchSpec,
     RoleConfig,
+    declared_flag,
     is_credential_name,
 )
 
@@ -120,6 +121,18 @@ def _declared_env(
 
 
 def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> Engine:
+    # Refused rather than coerced: a human wrote `bare_loop = "no"` and meant
+    # something by it, and the one outcome a selector must never have is to
+    # silently run the arm it was spelled to decline. `declared_flag` returns
+    # None for exactly the values `bool()` would have read backwards.
+    bare_loop = declared_flag(raw.get("bare_loop", False))
+    if bare_loop is None:
+        problems.append(
+            f"{where}: engine.bare_loop must be a boolean — "
+            f"{raw.get('bare_loop')!r} declares neither arm"
+        )
+        bare_loop = False
+
     roles_raw = raw.get("roles")
     roles: dict[str, RoleConfig] = {}
     if isinstance(roles_raw, dict):
@@ -143,7 +156,7 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
         max_tokens=(
             int(raw["max_tokens"]) if raw.get("max_tokens") not in (None, "") else None
         ),
-        bare_loop=bool(raw.get("bare_loop", False)),
+        bare_loop=bare_loop,
         roles=roles,
     )
 
@@ -190,6 +203,15 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
         engine = _engine_from_toml(engine_raw, problems, where)
         if not engine.model:
             problems.append(f"{where}: engine.model is required")
+        if engine.bare_loop and agent and agent != "stella":
+            # Refused at parse for the same reason `sut_ref` is below (#2082):
+            # a selector nothing reads is a template claiming to measure an arm
+            # it never ran, and the whole point of declaring the loop on the
+            # engine was that a match cannot lie about which one it used.
+            problems.append(
+                f"{where}: bare_loop applies only to a stella seat — "
+                f"{agent!r} has no staged pipeline to switch off"
+            )
 
         env_raw = entry.get("env")
         declared: tuple[str, ...] = ()

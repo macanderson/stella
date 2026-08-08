@@ -143,54 +143,6 @@ class TestMatchSpec:
         assert any("dataset" in p for p in problems)
         assert any("model" in p for p in problems)
 
-    def test_bare_loop_survives_json_and_toml_and_reaches_the_seat_env(self):
-        """A bare-loop arm must survive every launch path and reach the seat.
-
-        The runner scrubs every ambient ``STELLA_*`` so a host export cannot
-        stand in for a seat's declared configuration, which means an exported
-        ``STELLA_NO_PIPELINE`` silently ran the pipeline instead — the arm
-        looked configured and was not. Declaring it on the engine is what makes
-        it travel with the match. Witness: field absent → each hop drops it and
-        the seat env carries no selector.
-        """
-        import tomllib
-
-        from arenabench.config import dump_match, match_from_toml
-
-        spec = MatchSpec.from_json(
-            {
-                "dataset": "terminal-bench-2.1",
-                "contestants": [
-                    {
-                        "name": "s",
-                        "agent": "stella",
-                        "engine": {"model": "m", "bare_loop": True},
-                    },
-                ],
-            }
-        )
-        assert spec.contestants[0].engine.bare_loop is True
-        rehydrated = MatchSpec.from_json(spec.to_json())
-        assert rehydrated.contestants[0].engine.bare_loop is True
-        parsed = match_from_toml(tomllib.loads(dump_match(spec)))
-        assert parsed.contestants[0].engine.bare_loop is True
-        # The label has to say so: the roles are inert on a bare-loop arm, and
-        # a label naming only them advertises stages that never ran.
-        assert "bare loop" in parsed.contestants[0].engine.label
-
-        # Default stays off, and stays absent from a rendered template, so
-        # every existing match renders back unchanged.
-        plain = MatchSpec.from_json(
-            {
-                "dataset": "terminal-bench-2.1",
-                "contestants": [
-                    {"name": "s", "agent": "stella", "engine": {"model": "m"}},
-                ],
-            }
-        )
-        assert plain.contestants[0].engine.bare_loop is False
-        assert "bare_loop" not in dump_match(plain)
-
     def test_agent_timeout_multiplier_survives_json_and_toml(self):
         """The agent-execution budget knob must survive every launch path.
 

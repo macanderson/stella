@@ -258,6 +258,44 @@ class RoleConfig:
         )
 
 
+#: Stella's own truthy vocabulary (``crates/stella-cli/src/settings.rs``),
+#: plus its negations, so a match file and the agent it configures agree on
+#: what "true" means.
+_FLAG_TRUE = frozenset({"1", "true", "yes", "on"})
+_FLAG_FALSE = frozenset({"", "0", "false", "no", "off"})
+
+
+def declared_flag(value: Any) -> bool | None:
+    """A declared boolean, or ``None`` when the value does not declare one.
+
+    ``bool(value)`` is the wrong reader for a config flag: it answers ``True``
+    for the string ``"false"``, for the sole reason that it is not empty. A
+    seat spelled to run the staged pipeline would then run the bare loop — a
+    selector spelled to close must never open, which is the discipline
+    ``STELLA_TRUST_PROJECT`` paid for.
+
+    Returning ``None`` for anything unrecognised is what lets each caller
+    answer differently, and they do: the TOML loader refuses the template
+    outright, because a human wrote that word and meant something by it; the
+    JSON loader falls back to the closed default, because it is fed by
+    round-tripped machine output where a stray value is corruption rather than
+    intent.
+    """
+    if isinstance(value, bool):
+        return value
+    # JSON's spelling of a boolean when a client serialises one as a number.
+    # Any other int is a value that meant something else, and is not a flag.
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in _FLAG_TRUE:
+            return True
+        if word in _FLAG_FALSE:
+            return False
+    return None
+
+
 @dataclass(frozen=True)
 class Engine:
     """How one contestant's model calls are pinned — the full engine config.
@@ -386,7 +424,10 @@ class Engine:
             max_tokens=(
                 int(raw["max_tokens"]) if raw.get("max_tokens") not in (None, "") else None
             ),
-            bare_loop=bool(raw.get("bare_loop", False)),
+            # Closed on anything that does not declare a boolean: this side is
+            # fed by round-tripped machine output, so a value neither `true`
+            # nor `false` is corruption, and corruption must not select an arm.
+            bare_loop=declared_flag(raw.get("bare_loop")) is True,
             roles=roles,
         )
 
