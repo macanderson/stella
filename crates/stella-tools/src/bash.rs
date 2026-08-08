@@ -72,8 +72,11 @@ const GREP_CMDS: &[&str] = &["grep", "egrep", "fgrep", "rg", "ripgrep", "ag"];
 /// pattern out of the common command shapes, returning each word already
 /// unquoted. NOT a shell parser: it respects `'…'` and `"…"` (so a pattern or
 /// path with spaces stays one word) and preserves backslash escapes like
-/// `\|` (so an alternation survives into [`is_symbol_shaped`]); bare
-/// operators (`&&`, `|`, `;`) come back as their own words to bound a scan.
+/// `\|` (so an alternation survives into [`is_symbol_shaped`]); unquoted
+/// operators (`&&`, `||`, `|`, `;`, `&`) come back as their own words to
+/// bound a scan — including when attached to a word, so `cd /app; ls` yields
+/// the target `/app`, not the unresolvable `/app;` a paid bench trial saw
+/// warned about as an escape from its own session root.
 fn shell_words(command: &str) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -90,7 +93,21 @@ fn shell_words(command: &str) -> Vec<String> {
                 in_double = !in_double;
                 has_word = true;
             }
-            '\\' if in_double => {
+            c @ (';' | '&' | '|') if !in_single && !in_double => {
+                if has_word {
+                    words.push(std::mem::take(&mut cur));
+                    has_word = false;
+                }
+                let mut op = String::from(c);
+                // `&&` / `||` are one operator; `;;` never appears in the
+                // shapes this scans, so `;` stays single.
+                if c != ';' && chars.peek() == Some(&c) {
+                    chars.next();
+                    op.push(c);
+                }
+                words.push(op);
+            }
+            '\\' if !in_single => {
                 // Keep the escape literal (covers `\|`, `\"`, …); we don't
                 // interpret it, just preserve it for the symbol test.
                 cur.push('\\');
@@ -130,11 +147,14 @@ fn cd_escape_target(command: &str, root: &Path) -> Option<String> {
             continue;
         }
         let target = pair[1].as_str();
-        // `-` (cd to previous dir) is caught by the `-` prefix below.
+        // `-` (cd to previous dir) is caught by the `-` prefix below. An
+        // operator word means the `cd` had no target at all (`cd && make`):
+        // that goes to `$HOME`, which we skip for the same reason as `~`.
         if target.is_empty()
             || target.starts_with('$')
             || target.starts_with('~')
             || target.starts_with('-')
+            || matches!(target, ";" | "&" | "&&" | "|" | "||")
         {
             continue;
         }
@@ -647,6 +667,41 @@ mod tests {
         assert_eq!(cd_escape_target("cd $HOME && ls", dir.path()), None);
         assert_eq!(cd_escape_target("cd ~/foo && ls", dir.path()), None);
         assert_eq!(cd_escape_target("grep -rn x .", dir.path()), None);
+    }
+
+    #[test]
+    fn shell_words_splits_operators_attached_to_a_word() {
+        assert_eq!(shell_words("cd /app; ls"), ["cd", "/app", ";", "ls"]);
+        assert_eq!(shell_words("a&&b"), ["a", "&&", "b"]);
+        assert_eq!(
+            shell_words("a || b|c & d"),
+            ["a", "||", "b", "|", "c", "&", "d"]
+        );
+        // Quoted and escaped operators stay inside the word.
+        assert_eq!(shell_words("echo 'a;b'"), ["echo", "a;b"]);
+        assert_eq!(shell_words(r"grep x\|y ."), ["grep", r"x\|y", "."]);
+    }
+
+    /// The false positive a paid bench trial hit: `cd /app; …` with session
+    /// root `/app` drew the "work here is invisible to the diff and to
+    /// verification" warning, because the target parsed as the unresolvable
+    /// `/app;`.
+    #[test]
+    fn an_attached_separator_does_not_fake_a_cd_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        // In-root cd with the separator attached — no drift, no warning.
+        assert_eq!(cd_escape_target("cd sub; ls", &root), None);
+        assert_eq!(
+            cd_escape_target(&format!("cd {}; ls", root.display()), &root),
+            None
+        );
+        // A real escape still warns, and names the clean target.
+        assert_eq!(cd_escape_target("cd /; ls", &root).as_deref(), Some("/"));
+        // A bare `cd` before an operator goes to `$HOME` — unresolvable
+        // here, so it is skipped rather than misnamed.
+        assert_eq!(cd_escape_target("cd && ls", &root), None);
     }
 
     #[test]

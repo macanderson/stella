@@ -287,10 +287,14 @@ fn append_project_scripts(prompt: &mut String, workspace_root: &std::path::Path)
 /// useful on monorepos far past a few hundred files (issue #328). Read-only
 /// (`stella_tools::overview::render_orientation_block`
 /// opens an existing index and never builds one), so it adds nothing to
-/// first-response latency; it appears once the session's background index
-/// build has completed (or immediately when the workspace was pre-indexed,
-/// as the benchmark adapter does). Byte-stable for a given index state, so it
-/// keeps the cache-stable system prefix stable. The point is fewer
+/// first-response latency. It renders the graph-backed map once the session's
+/// background index build has completed (or immediately when the workspace was
+/// pre-indexed, as the benchmark adapter does), and falls back to a bounded
+/// top-level listing whenever the index is absent or empty — a worker is never
+/// left blind on an unindexable tree. Byte-stable for a given index and
+/// top-level tree state, so it keeps the cache-stable system prefix stable
+/// (the prompt is assembled once per session, so mid-session churn cannot
+/// reach the prefix). The point is fewer
 /// grep/glob/read_file discovery turns: the model starts knowing the shape of
 /// the code.
 fn append_project_orientation(prompt: &mut String, workspace_root: &std::path::Path) {
