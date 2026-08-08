@@ -69,8 +69,10 @@ pub use db::{DbError, Observatory};
 const INDEX_HTML: &str = include_str!("assets/index.html");
 /// The stella comet logomark, served for the favicon.
 const MARK_SVG: &str = include_str!("assets/mark.svg");
-/// The stella wordmark, served for the header lockup.
+/// The stella wordmark, served for the header lockup's dark-theme cut.
 const WORDMARK_SVG: &str = include_str!("assets/wordmark.svg");
+/// The stella wordmark, served for the header lockup's light-theme cut.
+const WORDMARK_LIGHT_SVG: &str = include_str!("assets/wordmark-light.svg");
 
 /// How long a peer has to deliver a complete request head.
 ///
@@ -212,6 +214,13 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 status: "200 OK",
                 content_type: "image/svg+xml",
                 body: WORDMARK_SVG.as_bytes().to_vec(),
+            };
+        }
+        "/assets/wordmark-light.svg" => {
+            return Response {
+                status: "200 OK",
+                content_type: "image/svg+xml",
+                body: WORDMARK_LIGHT_SVG.as_bytes().to_vec(),
             };
         }
         "/api/meta" => Ok(obs.meta()),

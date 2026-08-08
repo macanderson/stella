@@ -36,12 +36,16 @@
   --neutral-mark:#8D8A82;          /* the "everything else" mark — --text-3 */
   /* END brand palette */
 
-  /* Semantic alias. The dashboard is dark-only, so this resolves once. Only
-     ONE alias, and only for accent/active/focus. Gold is the signal, never
-     the surface: it marks what is active, selected or focused, and it never
-     carries status — --ok/--warn/--bad stay functional and glyph-paired
-     (--warn sits in gold's region at 1.05:1, which is exactly why the glyph,
-     never the hue, is the status carrier). */
+  /* Semantic alias. Only ONE alias, and only for accent/active/focus. Gold
+     is the signal, never the surface: it marks what is active, selected or
+     focused, and it never carries status — --ok/--warn/--bad stay functional
+     and glyph-paired (--warn sits in gold's region at 1.05:1 in dark, which
+     is exactly why the glyph, never the hue, is the status carrier). Every
+     token above this line is re-pointed for the light theme below — see
+     "Light mode" — except --ink, which never moves: it is the fixed color
+     that sits ON a gold fill (the selected tab, the selected context chip),
+     never the color a gold fill sits on. */
+  --ink:#0B0B0C;
   --accent:var(--gold);
   --accent-wash:rgba(255,176,0,.09);   /* gold @9% — hover / selected fill    */
   --accent-edge:rgba(255,176,0,.42);   /* gold @42% — chip + badge edges      */
@@ -64,6 +68,57 @@
   /* Rhythm. One 8px unit; every gutter, gap and pad is a multiple. */
   --sp1:8px; --sp2:16px; --sp3:24px; --sp4:32px;
   --radius:8px; --radius-sm:4px;
+}
+
+/* ── Light mode ───────────────────────────────────────────────────────────
+   Dark is the brand's home (arenabench/ui's own words — ui/app/globals.css),
+   so this maps the same semantic slots onto Paper the way arenabench's own
+   light scheme does, not a re-derivation: --gold, --ok, --warn, --bad and
+   --c1..--c4 below are byte-identical to arenabench's `--accent`, `--ok`,
+   `--warn`/`--acc-citron`, `--bad` and `--acc-{citron,violet,rose,cyan}`
+   (arenabench/ui/app/globals.css, PR #2168) — that fix independently landed
+   on nearly the same values this file already carried, re-picked so every
+   token clears 4.5:1 against arenabench's darkest light surface
+   (`--panel-2`). --text-2/--text-3 are arenabench's `--muted`/`--dim` the
+   same way. Every pair below was re-measured here against WCAG 2.1's
+   relative luminance formula, worst case against --ground (lighter than
+   arenabench's --panel-2, so never the binding constraint), and clears
+   4.5:1; --text and --text-2 clear 7:1 (AAA).
+
+   Two gates apply it, same pattern as docs/brand/css/tokens.css: the OS
+   preference, unless the page has been told "dark" explicitly, and an
+   explicit choice stamped on <html data-theme> by the toggle in the header —
+   see the init script below and the click handler in the page script. The
+   explicit choice wins in both directions, because :not([data-theme="dark"])
+   excludes it from the media-query block and the attribute block below has
+   no media guard at all. */
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    color-scheme:light;
+    --void:#E9E5DA; --ground:#F2EFE7; --surface:#FAF8F2; --raised:#FFFFFF;
+    --hairline:#E4E0D3; --hairline-strong:#D8D3C4;
+    --gold:#835B00; --gold-bright:#A37200; --gold-deep:#523900;
+    --text:#1C1B16; --text-2:#5D5A50; --text-3:#66625A;
+    --ok:#1A713D; --warn:#796000; --bad:#B53139;
+    --c1:#796000; --c2:#7048A8; --c3:#BA2358; --c4:#0A6C7E;
+    --neutral-mark:#66625A;
+    --accent-wash:rgba(131,91,0,.10);
+    --accent-edge:rgba(131,91,0,.38);
+    --sunken:rgba(28,27,22,.05);        /* --text @5% — inset wells */
+  }
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --void:#E9E5DA; --ground:#F2EFE7; --surface:#FAF8F2; --raised:#FFFFFF;
+  --hairline:#E4E0D3; --hairline-strong:#D8D3C4;
+  --gold:#835B00; --gold-bright:#A37200; --gold-deep:#523900;
+  --text:#1C1B16; --text-2:#5D5A50; --text-3:#66625A;
+  --ok:#1A713D; --warn:#796000; --bad:#B53139;
+  --c1:#796000; --c2:#7048A8; --c3:#BA2358; --c4:#0A6C7E;
+  --neutral-mark:#66625A;
+  --accent-wash:rgba(131,91,0,.10);
+  --accent-edge:rgba(131,91,0,.38);
+  --sunken:rgba(28,27,22,.05);
 }
 
 /* ── Reset & base ─────────────────────────────────────────────────────── */
@@ -106,6 +161,20 @@ body{
 header{display:flex;align-items:baseline;gap:var(--sp2);padding:var(--sp3) 0 var(--sp2);
        flex-wrap:wrap;border-bottom:1px solid var(--hairline)}
 header .bword{height:45px;width:auto;display:block;align-self:center}
+/* Two fixed cuts, swapped by theme rather than one adaptive mark — the same
+   reason arenabench/ui/components/topbar.tsx gives for doing it the same
+   way: the artwork's own text fill is baked per cut (Paper on the dark cut,
+   Ink on the light one), so an OS-media-query-only adaptive mark would track
+   the OS and ignore this page's own explicit toggle. Byte copies of
+   docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
+   /assets/wordmark{,-light}.svg (src/lib.rs). */
+.bword-light{display:none}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]) .bword-dark{display:none}
+  :root:not([data-theme="dark"]) .bword-light{display:block}
+}
+:root[data-theme="light"] .bword-dark{display:none}
+:root[data-theme="light"] .bword-light{display:block}
 .title{display:flex;flex-direction:column;gap:2px;padding-left:var(--sp2);
        border-left:1px solid var(--hairline);align-self:center}
 .title h1{font:600 var(--fs-md)/1.2 var(--mono);letter-spacing:.04em}
@@ -122,6 +191,22 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
 select{background:var(--raised);color:var(--text);border:1px solid var(--control-edge);
        border-radius:var(--radius-sm);font:var(--fs-micro)/1.4 var(--mono);
        padding:6px 10px;max-width:280px}
+.theme-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;
+  width:26px;height:26px;padding:0;line-height:0;background:var(--raised);color:var(--text-2);
+  border:1px solid var(--control-edge);border-radius:var(--radius-sm);cursor:pointer}
+.theme-toggle:hover{color:var(--text);border-color:var(--accent)}
+/* One icon shown at a time, naming the theme a click reaches — not the one
+   showing — same affordance as arenabench's ThemeToggle (dark ⇒ sun icon,
+   click for light; light ⇒ moon icon, click for dark). Driven by the same
+   two gates as the wordmark and the root palette above, so all three change
+   together off one attribute. */
+.theme-toggle .i-moon{display:none}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]) .theme-toggle .i-sun{display:none}
+  :root:not([data-theme="dark"]) .theme-toggle .i-moon{display:block}
+}
+:root[data-theme="light"] .theme-toggle .i-sun{display:none}
+:root[data-theme="light"] .theme-toggle .i-moon{display:block}
 
 /* ── Nav: section tabs + time window ──────────────────────────────────── */
 nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
@@ -141,7 +226,7 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
   color:var(--text-2);cursor:pointer;font:var(--fs-micro)/1 var(--mono);padding:6px 11px}
 .tf button:first-child{border-left:0}
 .tf button:hover{color:var(--text);background:var(--accent-wash)}
-.tf button[aria-checked="true"]{color:var(--ground);background:var(--accent);font-weight:600}
+.tf button[aria-checked="true"]{color:var(--ink);background:var(--accent);font-weight:600}
 .tf button:focus-visible{outline-offset:-2px}
 section[data-tab]{display:none}
 section[data-tab].on{display:block}
@@ -366,7 +451,7 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .ctx-row .who{color:var(--text);font-weight:600}
 .ctx-row .spacer{margin-left:auto}
 .ctx-row button{margin-top:0;padding:4px 10px;font:var(--fs-micro)/1.4 var(--mono)}
-.ctx-row button.on{color:var(--ground);background:var(--accent);border-color:var(--accent);
+.ctx-row button.on{color:var(--ink);background:var(--accent);border-color:var(--accent);
                    font-weight:600}
 /* position:relative so a row's offsetTop is measured against the box that
    scrolls it (see markCtxRow). */
@@ -445,12 +530,26 @@ footer b{color:var(--text-2);font-weight:600}
 .vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
     clip:rect(0 0 0 0);white-space:nowrap;border:0}
 </style>
+<script>
+/* Stamp an explicit theme choice on <html> before first paint, so a stored
+   "light" preference never flashes dark first. Deliberately tiny and
+   synchronous — everything else theme-related (the toggle's click handler,
+   its label) lives in the page script at the end of body, where the DOM it
+   touches actually exists. */
+(function () {
+  try {
+    var t = localStorage.getItem("stella-observatory-theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to dashboard</a>
 <div class="wrap">
   <header>
-    <img class="bword" src="/assets/wordmark.svg" alt="stella" width="124" height="45">
+    <img class="bword bword-dark" src="/assets/wordmark.svg" alt="stella" width="124" height="45">
+    <img class="bword bword-light" src="/assets/wordmark-light.svg" alt="stella" width="124" height="45">
     <div class="title">
       <h1>observatory</h1>
       <p>Local telemetry. Reads .stella only. Nothing leaves this machine.</p>
@@ -461,6 +560,18 @@ footer b{color:var(--text-2);font-weight:600}
       <span id="ws" title="Workspace root"></span>
       <span class="live" id="live" data-state="live" role="status">
         <i aria-hidden="true"></i><span id="liveText">Live</span></span>
+      <button type="button" class="theme-toggle" id="themeToggle">
+        <svg class="i-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2.5M12 19.5V22M4.22 4.22l1.77 1.77M18 18l1.78 1.78M2 12h2.5M19.5 12H22
+                    M4.22 19.78 6 18M18 6l1.78-1.78"/>
+        </svg>
+        <svg class="i-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 13.4A8.2 8.2 0 1 1 10.6 4a6.6 6.6 0 0 0 9.4 9.4Z"/>
+        </svg>
+      </button>
     </div>
   </header>
 
@@ -858,6 +969,38 @@ footer b{color:var(--text-2);font-weight:600}
 
 <script>
 "use strict";
+/* ── theme toggle ────────────────────────────────────────────────────────
+   The attribute this reads and writes — <html data-theme> — is what every
+   `:root[data-theme="light"]` rule in the stylesheet keys off, and what the
+   head's inline init script stamps before first paint (see index.html's
+   <head>). This is the other half: the click handler, persistence, and the
+   button's label, which need a parsed DOM and so belong at the end of body
+   rather than in that synchronous head script. */
+const THEME_KEY = "stella-observatory-theme";
+function currentTheme() {
+  const stamped = document.documentElement.dataset.theme;
+  if (stamped === "light" || stamped === "dark") return stamped;
+  return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+function initThemeToggle() {
+  const btn = document.getElementById("themeToggle");
+  if (!btn) return;
+  const sync = () => {
+    const next = currentTheme() === "light" ? "dark" : "light";
+    btn.setAttribute("aria-label", `Switch to ${next} mode`);
+    btn.title = `${next} mode`;
+  };
+  btn.addEventListener("click", () => {
+    const next = currentTheme() === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = next;
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch (e) {}
+    sync();
+  });
+  sync();
+}
+initThemeToggle();
 /* ── helpers ─────────────────────────────────────────────────────────── */
 const $ = (id) => document.getElementById(id);
 /* The one HTML escaper, and the page's injection invariant (#804 audit):
