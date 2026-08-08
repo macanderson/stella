@@ -112,12 +112,22 @@ def _drift(computed: dict[str, Any], recorded: str | None) -> dict[str, Any]:
 
 
 def _posture(model: str, witness_author: str | None) -> dict[str, Any]:
-    """Read the posture + its hash from the adapter itself."""
+    """Read the posture + its hash from the adapter itself.
+
+    The adapter spells this selector `verifier`; this module spells it
+    `witness_author`, because that is the name the manifest schema persists
+    (`engine.witness_author_model`) and that `compare_arms.py` reads back out
+    of committed evidence. The two names are deliberately not unified — one is
+    a wire-visible field of `stella-tb21-dev-baseline-manifest-v2` and the
+    other is a Python parameter — so the translation happens here, at the one
+    seam that crosses between them. `test_manifest_parity.py` in the adapter's
+    own suite is what keeps that seam honest (#2182).
+    """
     try:
         from stella_harbor import _benchmark_engine_posture  # type: ignore[attr-defined]
     except ImportError as error:
         return {"error": f"adapter not importable: {error}"}
-    posture, normalized, digest = _benchmark_engine_posture(model, witness_author=witness_author)
+    posture, normalized, digest = _benchmark_engine_posture(model, verifier=witness_author)
     return {
         "posture": posture,
         "normalized_sha256": digest,
@@ -134,6 +144,9 @@ def _assurance(model: str, witness_author: str | None) -> dict[str, Any]:
     the number came from a ladder with a rung missing. Read from the adapter for
     the same reason the posture is: a hand-written declaration can drift from
     what the agent actually ran.
+
+    Same `witness_author` → `verifier` translation as `_posture`, and for the
+    same reason; see its docstring.
     """
     try:
         from stella_harbor import (  # type: ignore[attr-defined]
@@ -141,7 +154,7 @@ def _assurance(model: str, witness_author: str | None) -> dict[str, Any]:
         )
     except ImportError as error:
         return {"error": f"adapter not importable: {error}"}
-    tiers, normalized, digest = _benchmark_assurance_tiers(model, witness_author=witness_author)
+    tiers, normalized, digest = _benchmark_assurance_tiers(model, verifier=witness_author)
     return {
         "tiers": tiers,
         "normalized_sha256": digest,
