@@ -48,6 +48,10 @@
 //!   between two replays inside one process. Compare edge content, never edge
 //!   identity (see `stella_context`'s `process_nonce` audit note).
 
+// §7: the Claude Code transcript adapter. Local-only and opt-in; it derives no
+// lessons (option (b)), so it feeds the foundry and the timeline and never the
+// reflection path.
+pub(crate) mod cc_adapter;
 pub(crate) mod summary;
 pub(crate) mod trace;
 
@@ -303,21 +307,30 @@ impl<'a> Replayer<'a> {
         //     lesson, then the next turn must not re-learn it.
         self.apply_world_changes(turn);
 
-        // 2-3. Script the single model boundary.
-        let provider = ScriptedProvider::for_turn(&turn.reflection);
-        let transcript: Vec<CompletionMessage> = turn
-            .transcript
-            .iter()
-            .map(CompletionMessage::from)
-            .collect();
-
-        // 4. The one call. Everything downstream of it — the forgetting filter,
-        //    the store write, the mining log, observation extraction, both
-        //    miners, the retirement sweep — is already deterministic and runs
-        //    inside it.
-        let report = memory
-            .reflect_and_record(&provider, "replay", &transcript, true, turn.succeeded, None)
-            .await;
+        // 2-4. The single model boundary, scripted — unless the source carried
+        //      no reflection at all, in which case the turn does not reach it.
+        //      Skipping is the whole of option (b) in §7.2: an adapter over a
+        //      corpus with no reflection JSON supplies shell history, session
+        //      boundaries and timing, and scripting a reflection it never saw
+        //      would launder an invention into a result.
+        //
+        //      Everything downstream of the call — the forgetting filter, the
+        //      store write, the mining log, observation extraction, both miners,
+        //      the retirement sweep — is already deterministic and runs inside
+        //      `reflect_and_record`.
+        let report = if turn.reflection.reaches_the_model() {
+            let provider = ScriptedProvider::for_turn(&turn.reflection);
+            let transcript: Vec<CompletionMessage> = turn
+                .transcript
+                .iter()
+                .map(CompletionMessage::from)
+                .collect();
+            memory
+                .reflect_and_record(&provider, "replay", &transcript, true, turn.succeeded, None)
+                .await
+        } else {
+            crate::memory::ReflectionReport::default()
+        };
 
         // 5. The foundry, over the history accumulated so far. Pure over the
         //    slice and documented to be byte-identical for identical input, so
