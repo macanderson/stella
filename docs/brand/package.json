@@ -10,7 +10,8 @@
   },
   "scripts": {
     "generate-assets": "node scripts/generate-assets.mjs",
-    "check-assets": "node scripts/generate-assets.mjs --check"
+    "check-assets": "node scripts/generate-assets.mjs --check",
+    "test": "node --test 'scripts/**/*.test.mjs'"
   },
   "dependencies": {
     "omggif": "1.0.10",
