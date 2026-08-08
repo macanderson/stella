@@ -473,8 +473,22 @@ kill-arena: ## Stop every arenabench server (in-flight matches survive; ARENA_AR
 run-arena: ## Launch a detached, Stella-wired arenabench server (ARENA_PORT= to pin; else first free from 8900)
 	scripts/arena-run.sh $(if $(ARENA_PORT),--port $(ARENA_PORT),) $(ARENA_ARGS)
 
+# The companion to kill-arena: that target deliberately spares every seat,
+# because a seat orphaned by stopping an arena is still grading normally. This
+# one is for a seat whose owner died for real. It judges liveness from the
+# process tree — ppid, CPU movement, and what is running inside the seat's own
+# containers — never from an arena's HTTP view, which cannot see a match
+# started by `arenabench run` at all (#2326).
+.PHONY: reap-seats
+reap-seats: ## List abandoned harbor benchmark seats and their containers (dry run)
+	scripts/reap-seats.sh --dry-run --verbose
+
+.PHONY: reap-seats-kill
+reap-seats-kill: ## Kill abandoned harbor seats and remove their task containers (asks first)
+	scripts/reap-seats.sh
+
 .PHONY: arena-scripts-test
-arena-scripts-test: ## Test the arena start/stop scripts — argv self-match, ancestry, preflight (hermetic; not part of `gate`)
+arena-scripts-test: ## Test the arena start/stop/reap scripts — argv self-match, ancestry, liveness (hermetic; not part of `gate`)
 	./scripts/test-arena-scripts.sh
 
 # The supply-chain step gates on the TOOL being present, not on its exit code:

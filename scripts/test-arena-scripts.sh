@@ -110,5 +110,99 @@ case "$MISSING_OUT" in
      printf '        actual: %s\n' "$MISSING_OUT" ;;
 esac
 
+# --- reap-seats: liveness comes from the process tree ------------------------
+#
+# The predicate under test is the one that matters. An earlier spec judged a
+# seat abandoned when no arena reported a running match for it, and that would
+# have killed a live 48-minute benchmark: a match started with `arenabench run`
+# binds no socket and is invisible to every arena endpoint by construction.
+#
+# Two synthetic seats stand in for the real thing — a real executable named
+# `harbor`, so the argv in `ps` is genuine rather than simulated. One is
+# reparented to init, one keeps a live parent. Only the first may be reaped.
+REAP_SH="$ROOT/scripts/reap-seats.sh"
+FAKE_DIR="$(mktemp -d)"
+FAKE_PIDS=""
+cleanup_fakes() {
+  for p in $FAKE_PIDS; do kill -KILL "$p" 2>/dev/null || true; done
+  rm -rf "$FAKE_DIR"
+}
+trap 'cleanup_fakes; rm -rf "$STUB_DIR"' EXIT
+
+printf '#!/bin/sh\nsleep 300\n' > "$FAKE_DIR/harbor"
+chmod +x "$FAKE_DIR/harbor"
+
+# Reparented to init: the launcher exits immediately, so ppid becomes 1.
+#
+# The seat's own stdout goes to DEVNULL deliberately. Inherited, it would be
+# this command substitution's pipe, which stays open as long as the seat lives
+# — so `$(...)` would block for the seat's full lifetime instead of returning
+# the pid it just printed.
+ORPHAN_PID="$(
+  python3 -c "
+import subprocess
+p = subprocess.Popen(
+    ['$FAKE_DIR/harbor', 'run', '--env', 'docker',
+     '--jobs-dir', '$FAKE_DIR/jobs', '--job-name', 'orphan-job'],
+    start_new_session=True,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+print(p.pid)
+"
+)"
+FAKE_PIDS="$FAKE_PIDS $ORPHAN_PID"
+
+# Owned: the launcher stays alive, so the seat keeps a live parent.
+python3 -c "
+import subprocess, time
+subprocess.Popen(
+    ['$FAKE_DIR/harbor', 'run', '--env', 'docker',
+     '--jobs-dir', '$FAKE_DIR/jobs', '--job-name', 'owned-job'],
+)
+time.sleep(90)
+" >/dev/null 2>&1 &
+OWNER_PID=$!
+FAKE_PIDS="$FAKE_PIDS $OWNER_PID"
+# Off the job table, or bash announces "Killed: 9" when the trap reaps it and
+# a clean run looks like a crashed one.
+disown "$OWNER_PID" 2>/dev/null || true
+sleep 1
+OWNED_PID="$(
+  ps -Awwo pid=,command= 2>/dev/null |
+    awk '$0 ~ /[h]arbor run / && /owned-job/ {print $1; exit}'
+)"
+FAKE_PIDS="$FAKE_PIDS $OWNED_PID"
+
+# Let the orphan settle into ppid 1 before asking.
+sleep 1
+REAP_OUT="$("$REAP_SH" --dry-run --verbose --min-idle-secs 0 --sample-secs 1 2>&1)"
+
+case "$REAP_OUT" in
+  *"$ORPHAN_PID"*) ok "reap-seats lists a seat reparented to init" ;;
+  *) no "reap-seats lists a seat reparented to init"
+     printf '        orphan pid %s not in:\n%s\n' "$ORPHAN_PID" "$REAP_OUT" ;;
+esac
+
+if [ -n "$OWNED_PID" ]; then
+  case "$REAP_OUT" in
+    *"pid $OWNED_PID "*)
+      no "reap-seats spares a seat whose parent is alive"
+      printf '        owned pid %s WAS listed:\n%s\n' "$OWNED_PID" "$REAP_OUT" ;;
+    *) ok "reap-seats spares a seat whose parent is alive" ;;
+  esac
+else
+  no "reap-seats spares a seat whose parent is alive (setup failed: no owned pid)"
+fi
+
+case "$REAP_OUT" in
+  *"left alone"*) ok "…and says how many live seats it left alone" ;;
+  *) no "…and says how many live seats it left alone"
+     printf '        actual:\n%s\n' "$REAP_OUT" ;;
+esac
+
+"$REAP_SH" --min-idle-secs x >/dev/null 2>&1
+check "reap-seats rejects a non-numeric --min-idle-secs" "$?" "1"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
