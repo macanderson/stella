@@ -65,8 +65,9 @@ fn tuning(min_coverage: f32, require_evidence: bool) -> RecallTuning {
 
 async fn contaminated_store(t: RecallTuning) -> (TempDir, ContextStore) {
     let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
     let store = ContextStore::open_with(
-        &dir.path().join("context.db"),
+        &path,
         Arc::new(HashEmbedder::default()),
         FixedClock::shared(1_000),
     )
@@ -247,13 +248,10 @@ impl Embedder for ConstEmbedder {
 #[tokio::test]
 async fn a_semantic_posture_admits_by_cosine_alone() {
     let dir = TempDir::new().unwrap();
-    let store = ContextStore::open_with(
-        &dir.path().join("context.db"),
-        Arc::new(ConstEmbedder),
-        FixedClock::shared(1_000),
-    )
-    .unwrap()
-    .with_tuning(tuning(0.0, true));
+    let path = dir.path().join("context.db");
+    let store = ContextStore::open_with(&path, Arc::new(ConstEmbedder), FixedClock::shared(1_000))
+        .unwrap()
+        .with_tuning(tuning(0.0, true));
     let mut delta = ContextDelta::new();
     for (i, text) in CONTAMINANTS.iter().enumerate() {
         delta = delta
