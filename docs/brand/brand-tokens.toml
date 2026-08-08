@@ -1,0 +1,30 @@
+# stella — brand-tokens.toml
+#
+# The one file that names brand color for the generated asset pipeline.
+# Edit this, then `pnpm generate-assets`, to recolor every binary the
+# pipeline owns: docs/brand/pwa/, docs/brand/wallpapers/, and
+# docs/brand/spinners/*.gif (plus their website/ mirrors).
+#
+# This file changes FILLS ONLY. Geometry, padding, animation timing, and
+# typography are never read from here — scripts/generate-assets.mjs recolors
+# each committed binary in place rather than re-composing it from scratch, so
+# a run with these values unchanged reproduces the committed files.
+#
+# `nebula` is the comet's own gradient. Per docs/brand/README.md the mark is
+# one shape, one color, on every ground — so unlike `dark`/`light` below it is
+# not theme-scoped.
+[nebula]
+violet = "#7C5CFF" # gradient start — docs/brand/css/tokens.css --stella-violet
+cyan   = "#1FD8E6" # gradient end   — docs/brand/css/tokens.css --stella-cyan
+
+# Canvas background and foreground ink for assets composited on a dark
+# ground (PWA app icons, the dark wallpaper/spinner variants).
+[dark]
+bg = "#080B1C" # --stella-void
+fg = "#EEF1FA" # --stella-paper
+
+# Same, for assets composited on a light ground (the light wallpaper/spinner
+# variants). PWA app icons are always dark — see the README's "why" note.
+[light]
+bg = "#F6F7FB" # --stella-paper-bg
+fg = "#0B0E1A" # --stella-ink
