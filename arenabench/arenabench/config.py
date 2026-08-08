@@ -133,6 +133,17 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
         )
         bare_loop = False
 
+    # The sibling field, same reader, same refusal (#2334). Its fallback is
+    # True where `bare_loop`'s is False: `reasoning` defaults ON, so the
+    # shipping configuration is the one an unreadable value must not leave.
+    reasoning = declared_flag(raw.get("reasoning", True))
+    if reasoning is None:
+        problems.append(
+            f"{where}: engine.reasoning must be a boolean — "
+            f"{raw.get('reasoning')!r} declares neither"
+        )
+        reasoning = True
+
     roles_raw = raw.get("roles")
     roles: dict[str, RoleConfig] = {}
     if isinstance(roles_raw, dict):
@@ -147,7 +158,7 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
     return Engine(
         api=str(raw.get("api") or "openrouter"),
         model=str(raw.get("model") or ""),
-        reasoning=bool(raw.get("reasoning", True)),
+        reasoning=reasoning,
         effort=str(raw.get("effort") or "high"),
         base_url=(str(raw["base_url"]).strip() or None) if raw.get("base_url") else None,
         budget_usd=(

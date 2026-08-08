@@ -415,7 +415,11 @@ class Engine:
         return cls(
             api=str(raw.get("api") or "openrouter"),
             model=str(raw.get("model") or ""),
-            reasoning=bool(raw.get("reasoning", True)),
+            # Same reader as `bare_loop`, and the same misreading avoided
+            # (#2334): `bool("false")` is True. The fallback is True, because
+            # `reasoning` defaults ON — "closed" for this field means the
+            # shipping configuration, not the off state.
+            reasoning=declared_flag(raw.get("reasoning", True)) is not False,
             effort=str(raw.get("effort") or "high"),
             base_url=(str(raw["base_url"]) or None) if raw.get("base_url") else None,
             budget_usd=(
