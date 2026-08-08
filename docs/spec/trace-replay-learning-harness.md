@@ -214,8 +214,17 @@ Per turn, in order:
   isolated, so the harness asserts no ambient read — the pattern
   `crates/stella-runtime/tests/no_ambient_reads.rs` already enforces for the
   runtime.
-- **Two replays of one trace produce byte-identical summaries.** This is
-  assertion 8, not a comment.
+- **Two replays of one trace produce byte-identical summaries, and those
+  summaries carry the trace's own instants.** This is assertion 8, not a
+  comment — and the second clause is load-bearing, not emphasis.
+
+  Agreement alone is not evidence of determinism: two replays sharing one
+  ambient clock agree with each other while agreeing with nothing. Measured, not
+  reasoned — #2320's originally-specified witness was exactly the weak form, and
+  it **passed against the unfixed code**, because two sessions in one process
+  read the same wall-clock second. It only failed on a run that happened to
+  straddle a second boundary. Every determinism assertion in this harness must
+  pin the injected value, not merely the agreement.
 
 ---
 
@@ -232,7 +241,7 @@ Each pins a mechanism that today has no end-to-end proof.
 | 5 | A tombstoned lesson is **never re-learned**, including when the corpus later restates it in different words | `retain_unforgotten` matches by restatement, not equality — so the corpus must paraphrase, or the assertion is vacuous |
 | 6 | A retired record stops rendering into the prompt | truth sweep + the volatile channel |
 | 7 | A corpus of `Unreadable` reflections builds **nothing** and the harness **says so loudly** | the starvation guard — a clean `recorded: 0` on every turn must not read as "the agent keeps getting things right" |
-| 8 | Two replays of one trace produce byte-identical summaries | the determinism contract itself |
+| 8 | Two replays of one trace produce byte-identical summaries **and those summaries carry the trace's own instants** | the determinism contract itself |
 
 Assertion 5 deserves a note: because suppression matches restatements, a corpus
 that tombstones lesson *L* and then re-emits *L verbatim* proves almost nothing —

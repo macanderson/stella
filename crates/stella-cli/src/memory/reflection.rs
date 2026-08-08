@@ -101,6 +101,10 @@ pub(crate) async fn reflect_routed(
         .await
 }
 
+/// Stamps no timestamp of its own (#2320). `occurred_at` is assigned by
+/// `SessionMemory::reflect_and_record`, in the same pass that stamps
+/// `task_id`, from the session clock — so neither this dispatch nor the parser
+/// below ever reads a clock, and the mining log they feed is reproducible.
 pub async fn reflect_on_turn(
     provider: &dyn Provider,
     model_hint: &str,
@@ -461,6 +465,8 @@ fn extract_lesson_array(text: &str) -> Option<Vec<ReflectionLesson>> {
     None
 }
 
+/// Purely a parser: it reads no clock and assigns no instant. `occurred_at`
+/// is the session's to stamp — see [`reflect_on_turn`] (#2320).
 pub fn parse_lessons_checked(text: &str, allowed_domains: &[String]) -> ReflectionParse {
     let Some(mut lessons) = extract_lesson_array(text) else {
         // An empty response is a legitimate "nothing to record". Anything else
@@ -471,13 +477,8 @@ pub fn parse_lessons_checked(text: &str, allowed_domains: &[String]) -> Reflecti
             ReflectionParse::Unreadable(text.chars().take(180).collect())
         };
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
     lessons.truncate(3);
     for lesson in &mut lessons {
-        lesson.occurred_at = now;
         lesson.domains.retain(|domain| {
             allowed_domains
                 .iter()
