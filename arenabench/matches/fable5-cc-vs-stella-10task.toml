@@ -103,7 +103,7 @@ color = "#FF6B9D"
 id = "stella"
 name = "Stella (Fable 5 pipeline)"
 agent = "stella"
-color = "#FFB000"
+color = "#7C5CFF"
 
   [contestant.engine]
   api = "openrouter"

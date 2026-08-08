@@ -99,7 +99,7 @@ impl Rail {
             Rail::Call => Style::new().fg(theme::ACCENT_DEEP),
             Rail::Result => Style::new().fg(theme::MUTED),
             Rail::Fail => Style::new().fg(theme::DANGER),
-            Rail::User => Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
+            Rail::User => Style::new().fg(theme::ORCHID).add_modifier(Modifier::BOLD),
             Rail::Agent => Style::new(),
         }
     }

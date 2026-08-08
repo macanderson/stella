@@ -70,7 +70,7 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
             saw_text = true;
             assert_eq!(
                 span.style.fg,
-                Some(theme::VIOLET),
+                Some(theme::ORCHID),
                 "user entry span {:?} is not the violet accent",
                 span.content
             );
@@ -172,7 +172,7 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
     // violet shared with the composer, never the reserved brand accent.
     assert_eq!(
         prefix_fg(&TranscriptEntry::User("hi".into())),
-        Some(theme::VIOLET),
+        Some(theme::ORCHID),
         "the user rail is violet",
     );
     // Assistant prose is the one rail with no colour, because it has no

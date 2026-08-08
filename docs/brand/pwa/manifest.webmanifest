@@ -4,8 +4,8 @@
   "description": "the terminal agent \u2014 faster \u00b7 cheaper \u00b7 more accurate",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0B0B0C",
-  "theme_color": "#0B0B0C",
+  "background_color": "#080B1C",
+  "theme_color": "#080B1C",
   "icons": [
     {
       "src": "/icon-192.png",

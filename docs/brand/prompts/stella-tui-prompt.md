@@ -2,7 +2,7 @@ Restyle stella's TUI to the official brand. The brand is fixed; your job is tran
 
 ## brand in one line
 
-stella is Latin for star. The mark is a comet — a four-point star with three trails, flying left→right. One color: Phosphor Gold. Principles: one shape · one color · assemble, don't spin · terminal-native. All UI copy is lowercase ("thinking…", "done", "install stella") — the brand name is never capitalized.
+stella is Latin for star. The mark is a comet — a four-point star with three trails, flying left→right. One color: Nebula Violet. Principles: one shape · one color · assemble, don't spin · terminal-native. All UI copy is lowercase ("thinking…", "done", "install stella") — the brand name is never capitalized.
 
 ## the text-native logomark
 
@@ -20,20 +20,20 @@ Detect capability in this order: `$COLORTERM` contains `truecolor`/`24bit` → u
 
 | role | truecolor | 256 | 16-color |
 |---|---|---|---|
-| gold (brand accent) | `#FFB000` | 214 | yellow + bold |
-| gold-dim (secondary accent) | `#FCD07D` | 222 | yellow |
-| gold-deep (accent on LIGHT terminals) | `#A37200` | 136 | yellow |
+| gold (brand accent) | `#7C5CFF` | 214 | yellow + bold |
+| gold-dim (secondary accent) | `#B6A6FF` | 222 | yellow |
+| gold-deep (accent on LIGHT terminals) | `#5133BE` | 136 | yellow |
 | text | terminal default fg | default | default |
-| muted (chrome, labels, borders text) | `#9B9890` | 246 | bright black |
-| border | `#232327` | 235 | bright black |
-| panel bg (sparingly) | `#131315` | 233 | — |
+| muted (chrome, labels, borders text) | `#9AA3C2` | 246 | bright black |
+| border | `#232A4D` | 235 | bright black |
+| panel bg (sparingly) | `#10142E` | 233 | — |
 | error | `#E4573F` | 167 | red |
 | success (semantic only) | terminal green | 71 | green |
 | diff add / del | green 71 / red 167 | 71 / 167 | green / red |
 
-Light-terminal adaptation: probe background via OSC 11 (fallback `$COLORFGBG`, config override `theme = auto|dark|light`). On light backgrounds swap gold→gold-deep for any colored TEXT (star/trail glyphs may stay `#FFB000`), and muted→`#6E6A5F` (241).
+Light-terminal adaptation: probe background via OSC 11 (fallback `$COLORFGBG`, config override `theme = auto|dark|light`). On light backgrounds swap gold→gold-deep for any colored TEXT (star/trail glyphs may stay `#7C5CFF`), and muted→`#5C678F` (241).
 
-Budget: gold appears in at most ~5 places per screen — the lockup, the prompt star, the spinner, one primary action, one key stat. Everything else is default text and muted. Gold is the signal, never the surface: no gold backgrounds except the single primary button/toast. Green and red exist only for semantic success/diff/error — never decoration. Warnings are gold (`✦! lowercase message`), errors are red (`✕ message`); never color-only — always pair glyph + text.
+Budget: gold appears in at most ~5 places per screen — the lockup, the prompt star, the spinner, one primary action, one key stat. Everything else is default text and muted. The nebula is the signal, never the surface: no gold backgrounds except the single primary button/toast. Green and red exist only for semantic success/diff/error — never decoration. Warnings are gold (`✦! lowercase message`), errors are red (`✕ message`); never color-only — always pair glyph + text.
 
 ## the spinner — assemble, don't spin
 
@@ -65,7 +65,7 @@ Trails/star gold; the working loop is frames 1–6 only; on task completion run 
 - **diffs**: `+` lines green, `-` lines red, context default, file header bold, hunk `@@` muted. No colored backgrounds.
 - **markdown rendering**: headings bold (h1 prefixed with gold `#`), inline code on panel bg 233, code blocks in a bordered box with dim language tag, links underlined gold (gold-deep on light), bullets muted `·`, blockquote bar muted `▎`.
 - **lists/menus**: selected row = gold `✦` marker + bold text (no full-row gold bg); unselected marker is a muted `·`.
-- **primary action / confirm toast**: the one allowed gold fill — `[ install ]` gold bg, ink `#0B0B0C` text. Secondary actions are bordered, no fill.
+- **primary action / confirm toast**: the one allowed gold fill — `[ install ]` gold bg, ink `#080B1C` text. Secondary actions are bordered, no fill.
 - **errors**: red `✕`, lowercase message, dim hint line under it. **empty states**: muted text + a single small `✧`.
 - **completion celebrations**: after a successful run, the comet flies off across the current line once (frames 7–12) — never confetti, never rainbow.
 

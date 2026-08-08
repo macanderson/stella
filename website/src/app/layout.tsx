@@ -63,8 +63,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0b0b0c" }, // --stella-ink
-    { media: "(prefers-color-scheme: light)", color: "#f6f2e9" }, // --stella-paper-bg
+    { media: "(prefers-color-scheme: dark)", color: "#080b1c" }, // --stella-ink
+    { media: "(prefers-color-scheme: light)", color: "#f6f7fb" }, // --stella-paper-bg
   ],
 };
 

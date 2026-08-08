@@ -142,7 +142,7 @@ DIMENSIONS_BY_KEY: dict[str, Dimension] = {d.key: d for d in DIMENSIONS}
 #: for the most common forms of colour blindness (no red/green-only pairs) and
 #: to survive on the arena's near-black background.
 ARENA_COLORS: tuple[str, ...] = (
-    "#FFB000",  # amber
+    "#7C5CFF",  # amber
     "#37D5F2",  # cyan
     "#C77DFF",  # violet
     "#5CE68A",  # mint

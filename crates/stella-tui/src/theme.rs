@@ -109,77 +109,89 @@ pub const ORACLE_PRE_FLIP: Color = palette::ORACLE_RED;
 
 // ── Categorical hues (deliberately NOT brand) ───────────────────────────────
 //
-// A few surfaces need more mutually-distinguishable colours than a one-hue
-// brand palette provides: syntax tokens, graph node kinds, and one colour per
+// A few surfaces need more mutually-distinguishable colours than a two-stop
+// brand sweep provides: syntax tokens, graph node kinds, and one colour per
 // concurrent agent. Making those the brand hue would violate the reservation
 // above, so they are a categorical set — the *same four values* the
 // observatory paints its data marks with, so a series in a chart and a chip in
-// the deck agree. All are complements of gold that stay warm/rich on ink —
-// muted violet (215° from gold), deep teal (134°), warm rose (70°) — and every
-// one clears AA body (5.09:1 or better) on [`GROUND`]. They carry no brand
-// meaning and must never be used for brand, status, or "active".
+// the deck agree. Every one clears the brand violet by ≥ 30° of hue and clears
+// AA body (5.05:1 or better) on [`GROUND`]. They carry no brand meaning and
+// must never be used for brand, status, or "active".
+//
+// These names are hue-NAMED, unlike `palette`'s role-named constants, so a
+// recolor has to rename them. The nebula recolor did: the old VIOLET/AMBER/
+// TEAL/MAGENTA became ORCHID/LIME/AZURE/ROSE, because "violet" is now the
+// brand itself and the other three had moved off their names entirely.
 
-/// Violet — process/structural events (links, diff hunk headers, graph
+/// Orchid — process/structural events (links, diff hunk headers, graph
 /// relations, trace stages, the user's own prompt). Categorical, not the brand
-/// accent. `data-2`, 5.29:1 on ground.
-pub const VIOLET: Color = palette::DATA_2;
-/// Amber — the stood-down categorical hue. `data-1` measures 1.06:1 against
-/// the gold accent — the same brass at a glance — so with gold as THE accent
-/// it may no longer colour a chip, a node, or an agent (the observatory
-/// stands the same mark down from every plotted surface). It survives in one
-/// context only: syntax keywords inside code bodies, where gold chrome never
-/// reaches and the neighbouring tones are the diff washes and the other
-/// syntax hues. 10.11:1 on ground.
-pub const AMBER: Color = palette::DATA_1;
-/// Teal — media traces and one slot of the per-agent palette. `data-4`,
-/// 10.54:1 on ground. Deep blue-green: 134° from the gold accent and far
-/// from the success green, and emphatically not the retired ice blue — it
-/// replaced a glacier blue (`AGENT_ICE`) that drifted confusable with the
-/// old accent, and it reads rich, not icy, on ink.
-pub const TEAL: Color = palette::DATA_4;
-/// Warm rose — file artifacts (trace chips, graph file/module nodes) and the
-/// fourth chart series. `data-3`, 5.09:1 on ground. 70° from gold; 1.30:1
-/// against [`DANGER`]'s red-pink, so it never carries an error meaning and
+/// accent. `data-2`, hue 304° (52° from brand), 7.04:1 on ground.
+pub const ORCHID: Color = palette::DATA_2;
+/// Lime — syntax and one slot of the per-agent palette. `data-1`, hue 93°
+/// (159° from brand), 12.04:1 on ground.
+///
+/// Its predecessor (amber `#E3B341`) was stood down from every plotted
+/// surface because it measured 1.06:1 against the gold accent. That
+/// stand-down is **lifted**: gold is no longer the accent, so this mark
+/// neighbours nothing reserved and may colour a chip, a node or an agent
+/// again.
+pub const LIME: Color = palette::DATA_1;
+/// Azure — media traces and one slot of the per-agent palette. `data-4`,
+/// hue 208° (44° from brand), 6.60:1 on ground.
+///
+/// It sits 24° from [`ACCENT_BRIGHT`]'s cyan, so it is kept off any surface
+/// where the bright brand stop also appears — the one collision a four-mark
+/// set cannot avoid against five spoken-for semantic hues.
+pub const AZURE: Color = palette::DATA_4;
+/// Rose — file artifacts (trace chips, graph file/module nodes) and the
+/// fourth chart series. `data-3`, hue 331° (79° from brand), 5.05:1 on
+/// ground. 16° from [`DANGER`], so it never carries an error meaning and
 /// never appears without a neutral label or glyph beside it.
-pub const MAGENTA: Color = palette::DATA_3;
+pub const ROSE: Color = palette::DATA_3;
 
 // ── Role aliases (what the rest of the crate references) ─────────────────────
 // Role names remap onto the palette so call sites read as intent (accent,
 // ink, rule) rather than as a hue that a future recolor would falsify.
 
-/// stella's brand accent — Phosphor Gold `#FFB81A`, the kit value lifted 10%
-/// in lightness (11.36:1 on [`GROUND`]). Brand, active/running, focus, selection, and
-/// progress only. In the transcript, the tool name and nothing else. The
-/// active theme's actual hue is applied per-frame by [`apply_theme`]; this is
-/// the canonical dark value every call site renders.
+/// stella's brand accent — Nebula Violet `#8F72FF`, the kit value lifted 10%
+/// in lightness (5.58:1 on [`GROUND`]). Brand, active/running, focus,
+/// selection, and progress only. In the transcript, the tool name and nothing
+/// else. The active theme's actual hue is applied per-frame by
+/// [`apply_theme`]; this is the canonical dark value every call site renders.
 ///
-/// Unlike the blue it replaced, gold needs no separate text tone: the same
-/// value clears AA on a glyph, a one-cell rule, and a fill on every dark
-/// ground. When it is a *fill*, the text on it must be [`GROUND`]-dark —
-/// ink on gold is 11.36:1 where white on gold is 1.73:1.
+/// Unlike the gold it replaced, the violet does *not* clear every surface on
+/// its own: 5.58:1 is AA body text and no more, so anything that must survive
+/// at one cell against a busy backdrop reaches for [`ACCENT_BRIGHT`], the
+/// sweep's cyan end, instead. When the accent is a *fill*, the text on it must
+/// be [`GROUND`]-dark — ink on violet is 5.81:1 where paper on violet is
+/// 3.10:1 and fails.
 pub const ACCENT: Color = palette::BRAND;
 /// The brand hue for *fills* — a pill, a bar body, a selected-tab wash. The
-/// same Phosphor Gold: one owned colour means the stroke and the fill agree,
-/// and the fill's legibility comes from pairing it with ink text, never from
-/// a second hue.
+/// same Nebula Violet: the stroke and the fill agree, and the fill's
+/// legibility comes from pairing it with ink text, never from a second hue.
 pub const ACCENT_FILL: Color = palette::BRAND;
-/// A deeper accent (gradient / pressed) — kit `gold-600` lifted 10% with the
-/// brand, the leading stop of the progress fill (8.77:1 on ground, so the
-/// fill's tail clears AA).
+/// The bright stop of the brand sweep — Nebula Cyan `#1FD8E6`, 11.20:1 on
+/// ground. The high-contrast half of the identity: one-cell glyphs, spinners,
+/// hover lifts, and the far end of every brand gradient.
+pub const ACCENT_BRIGHT: Color = palette::BRAND_BRIGHT;
+/// A deeper accent (gradient / pressed) — kit `violet-600`, the leading stop
+/// of the progress fill (3.29:1 on ground: the 3:1 graphical floor and no
+/// more, so it paints fills and gradient tails, never text).
 pub const ACCENT_DEEP: Color = palette::BRAND_DEEP;
 
-/// The identity gold — the logo's block cursor, splash rules, section
-/// markers, and brand chrome generally. The same Phosphor Gold as [`ACCENT`]:
-/// under the comet kit, chrome and accent are one colour. **Never a
-/// verdict**: it sits 4.0° from [`WARN`] in hue, and
-/// `gold_never_carries_a_verdict` proves no outcome mapping can return it —
-/// activity (running/active) is the one status that takes gold, by kit rule.
+/// The north-point gold — the wordmark's asterisk, the effect annotation in a
+/// code body, and the one thing on a screen that matters most. Under the comet
+/// kit this aliased [`ACCENT`]; under the nebula it deliberately does not, and
+/// the kit rations it to roughly one gold moment per view. **Never a
+/// verdict**: it shares a hue family with [`WARN`] outright, and
+/// `gold_never_carries_a_verdict` proves no outcome mapping can return it.
+/// Nor does it carry activity any more — that is the nebula's job now, which
+/// is what makes the ration affordable.
 pub const GOLD: Color = palette::GOLD;
 /// The bright stop of the gold sweep (headlines, the splash rule's leading
-/// edge). Kit `gold-400`.
+/// edge). Kit `gold-hi`.
 pub const GOLD_BRIGHT: Color = palette::GOLD_BRIGHT;
-/// The trailing stop of the gold sweep. Kit `gold-700` — the identity sweep
-/// runs wider and quieter than the progress fill's ([`ACCENT_DEEP`]).
+/// The trailing stop of the gold sweep.
 pub const GOLD_DEEP: Color = palette::GOLD_DEEP;
 /// Warm-paper primary text.
 pub const INK: Color = TEXT_PRIMARY;
@@ -201,18 +213,18 @@ pub const OK: Color = SUCCESS_BRIGHT;
 pub const WARN: Color = WARNING_BRIGHT;
 /// Error / removed lines / failure.
 pub const BAD: Color = DANGER_BRIGHT;
-/// Structural / process accent — aliased to [`VIOLET`], a categorical hue, so
+/// Structural / process accent — aliased to [`ORCHID`], a categorical hue, so
 /// process events (links, diff hunk headers, graph relations, trace
 /// stage/tool/vcs) stay distinct from the brand accent instead of
 /// competing with it. Process is not "active"; only [`ACCENT`] means that.
-pub const RUN: Color = VIOLET;
+pub const RUN: Color = ORCHID;
 /// Paused / held — violet.
-pub const HELD: Color = VIOLET;
+pub const HELD: Color = ORCHID;
 /// A subagent's identity mark — the `◆` beside a nested lane in SESSION and
-/// the statline's `◆ N sub` count. Aliased to [`TEAL`] (categorical): a
+/// the statline's `◆ N sub` count. Aliased to [`AZURE`] (categorical): a
 /// subagent is not the brand, not a status, and must never be confusable
 /// with the lead's gold `✦`.
-pub const SUBAGENT: Color = TEAL;
+pub const SUBAGENT: Color = AZURE;
 
 // ── Runtime theme (the `/theme` switch) ──────────────────────────────────────
 //
@@ -374,21 +386,26 @@ pub const DIFF_DEL_BG_EMPH: Color = Color::Rgb(102, 34, 42);
 // `crate::diff`), while a recognized token overrides only the foreground.
 // Every color is chosen to read on all three diff backdrops (add green, del
 // red, and the plain panel), and every one is *categorical*: syntax is not
-// brand, not status, and not activity. Keyword takes [`AMBER`] — the one
-// surviving home of the amber mark, legitimate here because gold chrome
-// never enters a code body, so nothing nearby can be confused for "active" —
-// strings a soft spring green, numbers the [`VIOLET`] anchor, and comments
-// dim toward the caption tier.
+// brand, not status, and not activity. Keyword takes [`ORCHID`], strings a
+// soft spring green, numbers [`AZURE`], and comments dim toward the caption
+// tier.
+//
+// The kit's reference syntax palette paints keywords violet and strings cyan —
+// i.e. both ends of the brand sweep. This crate deliberately declines that
+// half of the port: on the web a keyword and a nav accent never share a
+// viewport, but in the deck a code body sits inches from the accent chrome,
+// and a keyword the same hue as "running" is precisely the confusion the
+// reservation exists to stop. The *rule* is ported (a two-hue code palette
+// anchored on the brand family); the two exact values are not.
 
 /// Language keyword (`fn`/`let`/`def`/`import`/`return`…).
-pub const SYNTAX_KEYWORD: Color = AMBER;
+pub const SYNTAX_KEYWORD: Color = ORCHID;
 /// String / char literal.
 pub const SYNTAX_STRING: Color = Color::Rgb(126, 231, 135);
-/// Numeric literal — violet, the counterpoint to the amber keyword stop.
-pub const SYNTAX_NUMBER: Color = VIOLET;
-/// Line comment (rendered dimmed + italic). The same warm neutral as
-/// [`TEXT_TERTIARY`] — "comments dim toward the caption tier" made literal,
-/// and the cool gray it replaces is banned from the dark side outright.
+/// Numeric literal — azure, the counterpoint to the orchid keyword stop.
+pub const SYNTAX_NUMBER: Color = AZURE;
+/// Line comment (rendered dimmed + italic). The same cool neutral as
+/// [`TEXT_TERTIARY`] — "comments dim toward the caption tier" made literal.
 pub const SYNTAX_COMMENT: Color = palette::TEXT_TERTIARY;
 
 /// Inline code spans and fenced-code plain runs (`crate::markdown`). A calm
@@ -577,38 +594,42 @@ pub fn detect_color_mode() -> ColorMode {
 /// green/red cube entries for the same reason. Truecolor terminals never see
 /// either column.
 const FALLBACKS: &[(Color, u8, u8)] = &[
+    // The ground ramp is blue-cast, but the 256-colour cube has no dark navy:
+    // its blues start at 17 (0,0,95), far brighter than any of these. So the
+    // grounds still resolve to the greyscale ramp and a degraded terminal
+    // loses the cast entirely. That is the honest outcome — a wrong-but-dark
+    // ground beats a right-hued one three shades too light — and it is why the
+    // cast is decoration in this palette and never a carrier of meaning.
     (VOID, 232, 0),
-    (GROUND, 232, 0),
-    (SURFACE, 233, 0),
-    (RAISED, 234, 8),
-    (HAIRLINE, 235, 8),
-    (HAIRLINE_STRONG, 236, 8),
+    (GROUND, 233, 0),
+    (SURFACE, 234, 0),
+    (RAISED, 235, 8),
+    (HAIRLINE, 236, 8),
+    (HAIRLINE_STRONG, 239, 8),
     (TEXT_PRIMARY, 255, 15),
-    (TEXT_SECONDARY, 246, 7),
-    (TEXT_TERTIARY, 245, 8),
-    // Phosphor Gold `#FFB81A` sits one unit from cube entry 214 (255,175,0) —
-    // for once the terminal cube holds the brand almost exactly. The family
-    // stays on the *yellow* side everywhere: the nearest entry to
-    // `gold-bright` is 215 (255,175,95), an orange, and orange is the one
-    // thing this identity may not render, so it takes 221 (255,215,95)
-    // instead; `gold-deep` likewise skips orange 130 for 136 (175,135,0).
-    // The progress ramp's deep stop takes 178 rather than nearest-entry 172
-    // (215,135,0, again orange) — it shares that dark yellow with `warning`,
-    // which is acceptable because a degraded terminal never paints the
-    // gradient at all (`crate::progress` collapses to solid ACCENT), while
-    // ACCENT vs ACCENT_DEEP staying distinct keeps the head-to-tail ramp
-    // honest. At 16 colours the accent family takes bright yellow (11) and
-    // the deep stop plain yellow's darker sibling is unavailable, so it
-    // shares 3 with warning under the same never-painted reasoning; GOLD
-    // family values stay on 11 so chrome never collapses onto `warning`'s
-    // plain yellow — gold is chrome, warning is a verdict, and the two may
-    // not become the same cell.
-    (ACCENT, 214, 11), // also ACCENT_FILL and GOLD (one value, one entry)
-    (GOLD_BRIGHT, 221, 11),
-    (ACCENT_DEEP, 178, 3),
+    // The text ramp is cool, and here the cube *does* hold the cast: 146
+    // (175,175,215) and 103 (135,135,175) are both blue-leaning greys.
+    (TEXT_SECONDARY, 146, 7),
+    (TEXT_TERTIARY, 103, 8),
+    // The nebula's two ends land on opposite sides of the cube: the violet on
+    // 99 (135,95,255) and the cyan on 44 (0,215,215). Under the comet kit
+    // ACCENT and GOLD shared one entry because they shared one value; they no
+    // longer do, so gold now needs its own rows and — crucially — its own
+    // 16-colour column. At 16 colours the accent family takes the magenta pair
+    // (13 bright / 5 plain) and the gold family takes yellow (11), which is
+    // the first identity in this file's history where chrome and warning do
+    // *not* compete for the same degraded cell: WARN keeps plain yellow (3)
+    // and gold keeps bright yellow (11).
+    (ACCENT, 99, 13), // also ACCENT_FILL (one value, one entry)
+    (ACCENT_BRIGHT, 44, 14),
+    (ACCENT_DEEP, 63, 5),
+    (GOLD, 221, 11),
+    (GOLD_BRIGHT, 223, 11),
     (GOLD_DEEP, 136, 11),
     (SUCCESS, 78, 10),
-    (WARNING, 178, 3),
+    // 214 (255,175,0) was the retired gold accent's entry; with the accent off
+    // the yellow side it is free, and it is the nearest cube entry to warning.
+    (WARNING, 214, 3),
     (DANGER, 204, 9),
     // Nearest cube entry to #F87171 is 203 (255,95,95) — one step from
     // DANGER's 204, so the two stay distinct at 256 colours. At 16 colours
@@ -616,10 +637,14 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     // danger; the `red ──▸ green` wording, not the hue, carries the meaning
     // there (the same glyph-over-hue rule every status obeys).
     (ORACLE_PRE_FLIP, 203, 9),
-    (VIOLET, 98, 13),
-    (AMBER, 179, 3),
-    (TEAL, 44, 6),
-    (MAGENTA, 168, 5),
+    (ORCHID, 170, 13),
+    (LIME, 113, 10),
+    // AZURE's nearest entry is 74 (95,175,215); it stays clear of
+    // ACCENT_BRIGHT's 44 at 256 colours, but at 16 both are blue-cyan, so the
+    // pairing rule in `palette` (never on one surface together) is what keeps
+    // them apart on a degraded terminal.
+    (AZURE, 74, 12),
+    (ROSE, 168, 5),
     (CODE, 72, 2),
     (DIFF_ADD_BG, 22, 2),
     (DIFF_DEL_BG, 52, 1),
@@ -702,16 +727,19 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     (TEXT_PRIMARY, palette::INK),
     (TEXT_SECONDARY, palette::MUTED),
     (TEXT_TERTIARY, palette::INK_DIM),
-    // Brand → the deep gold ramp. ACCENT, ACCENT_FILL and GOLD are one
-    // Phosphor Gold value, so one entry sends every flat gold cell to
-    // `brand-ink` (kit gold-800 lifted 10%, 5.22:1 on paper) — the kit's `gold-deep`
-    // is reserved for *graphical* chrome via `gold_stops`, because at
-    // 3.79:1 it cannot carry terminal-cell text on paper.
+    // Brand → the deep violet ramp. ACCENT and ACCENT_FILL are one value, so
+    // one entry sends every flat accent cell to `brand-ink` (kit violet-700,
+    // 7.59:1 on paper). The cyan end needs its own entry now that it is no
+    // longer the same value as the gold bright stop: kit cyan-500 measures
+    // 1.72:1 on paper, so it drops to cyan-800 (6.23:1).
     (ACCENT, palette::BRAND_INK),
-    (GOLD_BRIGHT, palette::GOLD_INK),
+    (ACCENT_BRIGHT, Color::Rgb(0x0C, 0x66, 0x70)),
     (ACCENT_DEEP, palette::BRAND_INK_DEEP),
-    // `gold-deep` already IS the kit's light-ground gold; its entry is the
-    // identity so the sweep's trailing stop needs no second value.
+    // Gold is its own family under the nebula, so it needs its own rows; all
+    // three stops land on the kit's one light-ground gold, which unlike the
+    // comet kit's `gold-ink` clears AA for text as well as chrome (5.53:1).
+    (GOLD, palette::GOLD_INK),
+    (GOLD_BRIGHT, palette::GOLD_INK),
     (GOLD_DEEP, palette::GOLD_INK),
     // Status → ink variants (OK/BRIGHT share the base value).
     (SUCCESS, palette::SUCCESS_INK),
@@ -720,13 +748,19 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     (ORACLE_PRE_FLIP, palette::ORACLE_RED_INK),
     // Inline code — a darker sage, 5.26:1 on paper.
     (CODE, Color::Rgb(0x2A, 0x71, 0x50)),
-    // Categorical hues, darkened for AA on the warm paper (RUN/HELD/NUMBER==
-    // VIOLET, KEYWORD==AMBER). Teal drops to teal-700: the old teal-600
-    // measured 3.35:1 on the kit's paper, under the 4.5:1 text floor.
-    (VIOLET, Color::Rgb(0x6D, 0x28, 0xD9)),
-    (AMBER, Color::Rgb(0x92, 0x40, 0x0E)),
-    (TEAL, Color::Rgb(0x0F, 0x76, 0x6E)),
-    (MAGENTA, Color::Rgb(0xA6, 0x18, 0x5C)),
+    // Categorical hues, darkened for AA on the cool paper (RUN/HELD/NUMBER==
+    // ORCHID, KEYWORD==ORCHID too). Each keeps its dark-theme hue and walks
+    // down its own ramp until it clears the 4.5:1 text floor on `PAPER`;
+    // measured left to right: 5.92:1, 6.60:1, 6.26:1, 6.75:1.
+    //
+    // ORCHID deliberately does NOT drop to a violet here, though its dark
+    // value is violet-adjacent: on paper the accent is `brand-ink` violet, and
+    // a categorical hue that darkens toward the accent is exactly the
+    // collision the reservation exists to prevent.
+    (ORCHID, Color::Rgb(0xA2, 0x1C, 0xAF)),
+    (LIME, Color::Rgb(0x3F, 0x62, 0x12)),
+    (AZURE, Color::Rgb(0x1D, 0x4E, 0xD8)),
+    (ROSE, Color::Rgb(0xA6, 0x18, 0x5C)),
     // Syntax bodies. Strings take green-800 (6.38:1 — green-700 sat at
     // 4.49:1 on the warm paper).
     (SYNTAX_STRING, Color::Rgb(0x16, 0x65, 0x34)),
@@ -815,7 +849,7 @@ pub fn stage_color(stage: stella_protocol::StageKind) -> Color {
     match stage {
         S::Triage | S::ContextRecall | S::Research | S::Plan | S::ScopeReview | S::Witness => RUN,
         S::Execute => ACCENT,
-        S::Verify | S::Verdict => TEAL,
+        S::Verify | S::Verdict => AZURE,
         S::Reflect | S::ContextWrite => MUTED,
         S::Complete => OK,
     }
@@ -847,7 +881,7 @@ pub fn graph_kind_color(kind: &str) -> Color {
     match kind {
         "function" | "method" => RUN,
         "struct" | "enum" | "trait" => OK,
-        "file" | "module" => MAGENTA,
+        "file" | "module" => ROSE,
         _ => MUTED,
     }
 }
@@ -896,7 +930,7 @@ pub fn spark_glyph(intensity: u8) -> char {
 /// chip that can be mistaken for "running" is worse than no chip) and none
 /// of them danger (which reads as failure elsewhere, so it never brands a
 /// healthy agent).
-const AGENT_PALETTE: [Color; 5] = [HELD, MAGENTA, OK, TEXT_SECONDARY, TEAL];
+const AGENT_PALETTE: [Color; 5] = [HELD, ROSE, OK, TEXT_SECONDARY, AZURE];
 
 /// A deterministic (not randomized — stable across processes and test runs)
 /// color for one agent id, picked from `AGENT_PALETTE` by hashing the id.
@@ -922,7 +956,7 @@ fn fnv1a(s: &str) -> u64 {
 
 /// A color per [`TraceKind`], for the Traces tab's kind chip. Grouped by
 /// meaning: `RUN` (violet) for process/action events (stage, tool, vcs),
-/// `MAGENTA`/`TEAL` for produced artifacts (file, media) — categorical, so
+/// `ROSE`/`AZURE` for produced artifacts (file, media) — categorical, so
 /// an artifact never reads as "running"; the file chip's warm rose sits
 /// 1.30:1 from [`BAD`], which is tolerable exactly because a chip is always
 /// a coloured *word* and an error is always glyph-paired — a dim neutral for
@@ -935,11 +969,11 @@ pub fn trace_kind_color(kind: TraceKind) -> Color {
         TraceKind::Text => INK,
         TraceKind::Reasoning => MUTED,
         TraceKind::Tool => RUN,
-        TraceKind::File => MAGENTA,
+        TraceKind::File => ROSE,
         TraceKind::Budget => WARN,
         TraceKind::Context => TEXT_TERTIARY,
         TraceKind::Verdict => OK,
-        TraceKind::Media => TEAL,
+        TraceKind::Media => AZURE,
         TraceKind::Vcs => RUN,
         TraceKind::Error => BAD,
         TraceKind::Complete => OK,

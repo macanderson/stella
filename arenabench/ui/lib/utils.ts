@@ -7,7 +7,7 @@ export function cn(...inputs: ClassValue[]) {
 
 /** Seat colours, in seating order. Mirrors the server's own default cycle. */
 export const PALETTE = [
-  "#FFB000",
+  "#7C5CFF",
   "#37D5F2",
   "#C77DFF",
   "#5CE68A",
