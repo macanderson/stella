@@ -137,7 +137,7 @@ class TestSeatEnvironmentIsScreened:
         )
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(replace(spec, contestants=(seat,)))
-        run = runner._launch(match, seat)
+        run = runner._launch(match, seat, runner.resolve_harbor(match))
 
         assert seen["env"]["ZAI_API_KEY"] == "zk"
         assert seen["env"].get("PATH") != "/evil/bin"

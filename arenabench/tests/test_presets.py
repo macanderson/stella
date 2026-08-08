@@ -322,6 +322,141 @@ class TestPerDatasetHarbor:
         assert dataset.min_harbor == "0.20.0"
 
 
+def _fake_harbor(path: Path, version: str) -> Path:
+    """A binary that answers ``--version`` and nothing else.
+
+    Enough for resolution, which only ever asks that question of a candidate.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'#!/bin/sh\necho "{version}"\n')
+    path.chmod(0o755)
+    return path
+
+
+class TestResolutionSatisfiesTheFloorRatherThanOnlyCheckingIt:
+    """A floor the machine can already meet must not stop a run.
+
+    The failure this class pins down happened on a laptop that had a correct
+    Harbor installed the whole time: PATH held an unrelated 0.6.1, resolution
+    looked nowhere else, and every seat of a one-task Frontier-Bench match
+    failed before a single trial ran. Refusing was right in general and wrong
+    here, and the difference is whether anything went looking.
+    """
+
+    def test_an_old_harbor_on_path_is_no_longer_the_end_of_the_search(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """The witness: PATH cannot grade, something else can, so the run lives."""
+        on_path = _fake_harbor(tmp_path / "path" / "harbor", "0.6.1")
+        good = _fake_harbor(tmp_path / "managed" / "0.20.0" / "bin" / "harbor", "0.20.0")
+        monkeypatch.setenv("PATH", str(on_path.parent))
+        monkeypatch.setenv(harbor.MANAGED_HOME_ENV, str(tmp_path / "managed"))
+
+        resolved = harbor.resolve_for_dataset(
+            "frontier-bench", "0.20.0", "Frontier Bench"
+        )
+
+        assert resolved.binary == str(good)
+        assert resolved.version == "0.20.0"
+
+    def test_a_dataset_with_no_floor_still_resolves_to_path_alone(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """Terminal-Bench's 0.6.1 lane must not be quietly upgraded.
+
+        Its whole claim rests on one audited binary. With no floor to satisfy
+        there is nothing to search *for*, so the newer Harbor sitting right
+        there is not a better answer — it is a different experiment.
+        """
+        on_path = _fake_harbor(tmp_path / "path" / "harbor", "0.6.1")
+        _fake_harbor(tmp_path / "managed" / "0.20.0" / "bin" / "harbor", "0.20.0")
+        monkeypatch.setenv("PATH", str(on_path.parent))
+        monkeypatch.setenv(harbor.MANAGED_HOME_ENV, str(tmp_path / "managed"))
+
+        resolved = harbor.resolve_for_dataset(
+            "terminal-bench-2.1", None, "Terminal-Bench 2.1"
+        )
+
+        assert resolved.binary == str(on_path)
+
+    def test_path_keeps_the_job_when_it_can_do_the_job(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """Satisfying the floor is the test, not being the newest thing around."""
+        on_path = _fake_harbor(tmp_path / "path" / "harbor", "0.20.0")
+        _fake_harbor(tmp_path / "managed" / "0.30.0" / "bin" / "harbor", "0.30.0")
+        monkeypatch.setenv("PATH", str(on_path.parent))
+        monkeypatch.setenv(harbor.MANAGED_HOME_ENV, str(tmp_path / "managed"))
+
+        resolved = harbor.resolve_for_dataset(
+            "frontier-bench", "0.20.0", "Frontier Bench"
+        )
+
+        assert resolved.binary == str(on_path)
+
+    def test_a_pin_that_is_too_old_is_refused_by_name_never_replaced(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """A pin states an intent; searching past it would make that a lie.
+
+        This is the one case that still refuses even though a good Harbor is
+        sitting in plain sight, and it refuses *because* one is: silently
+        running a binary other than the pinned one is how a lane stops being
+        the thing it says it is.
+        """
+        pinned = _fake_harbor(tmp_path / "pinned" / "harbor", "0.6.1")
+        _fake_harbor(tmp_path / "managed" / "0.20.0" / "bin" / "harbor", "0.20.0")
+        monkeypatch.setenv("ARENABENCH_HARBOR_FRONTIER_BENCH", str(pinned))
+        monkeypatch.setenv(harbor.MANAGED_HOME_ENV, str(tmp_path / "managed"))
+
+        with pytest.raises(harbor.HarborTooOldError) as refusal:
+            harbor.resolve_for_dataset("frontier-bench", "0.20.0", "Frontier Bench")
+
+        assert "ARENABENCH_HARBOR_FRONTIER_BENCH" in str(refusal.value)
+
+    def test_a_refusal_names_every_harbor_it_actually_looked_at(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """"Too old" without "and here is what I saw" is what sent someone hunting."""
+        on_path = _fake_harbor(tmp_path / "path" / "harbor", "0.6.1")
+        monkeypatch.setenv("PATH", str(on_path.parent))
+        monkeypatch.setenv(harbor.MANAGED_HOME_ENV, str(tmp_path / "managed"))
+        monkeypatch.setenv(harbor.NO_PROVISION_ENV, "1")
+        monkeypatch.setattr(harbor, "_repo_root", lambda: None)
+
+        with pytest.raises(harbor.HarborTooOldError) as refusal:
+            harbor.resolve_for_dataset("frontier-bench", "0.20.0", "Frontier Bench")
+
+        message = str(refusal.value)
+        assert str(on_path) in message and "0.6.1" in message
+
+    def test_nothing_usable_anywhere_installs_one_rather_than_giving_up(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """The last resort before the refusal, and the reason a fresh box works.
+
+        Stubbed at :func:`arenabench.harbor.provision` rather than run for
+        real: that a ``uv`` install produces a working 0.20.0 is uv's contract,
+        not this module's, and paying a package download per test run would buy
+        no confidence about the thing under test — which is that resolution
+        *reaches* for it before it refuses.
+        """
+        on_path = _fake_harbor(tmp_path / "path" / "harbor", "0.6.1")
+        built = _fake_harbor(tmp_path / "built" / "bin" / "harbor", "0.20.0")
+        monkeypatch.setenv("PATH", str(on_path.parent))
+        monkeypatch.setenv(harbor.MANAGED_HOME_ENV, str(tmp_path / "managed"))
+        monkeypatch.delenv(harbor.NO_PROVISION_ENV, raising=False)
+        monkeypatch.setattr(harbor, "_repo_root", lambda: None)
+        monkeypatch.setattr(harbor, "provision", lambda minimum, **_: str(built))
+
+        resolved = harbor.resolve_for_dataset(
+            "frontier-bench", "0.20.0", "Frontier Bench"
+        )
+
+        assert resolved.binary == str(built)
+        assert resolved.version == "0.20.0"
+
+
 class TestBothLaunchPathsAgree:
     """`arenabench run` and the UI must resolve a seat the same way.
 
