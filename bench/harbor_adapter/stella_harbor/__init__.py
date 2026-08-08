@@ -106,6 +106,7 @@ from .posture import (
     PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
+    assurance_tiers_from_posture,
     resolve_candidates,
     resolve_verifier_evidence_demand,
     resolve_max_revisions,
@@ -1026,17 +1027,18 @@ class StellaAgent(BaseInstalledAgent):
         self._disable_reflection = env["STELLA_DISABLE_REFLECTION"]
         self._budget_usd = self._configured_budget()
         verifier = self._verifier_model()
-        self._verifier_model_value = verifier
         (
             self._engine_posture,
             self._engine_posture_json,
             self._engine_posture_sha256,
         ) = self._build_engine_posture(configured_model, verifier=verifier)
+        # From the posture, never the selector beside it (#2134).
         (
             self._assurance_tiers,
             self._assurance_tiers_json,
             self._assurance_tiers_sha256,
-        ) = _benchmark_assurance_tiers(configured_model, verifier=verifier)
+        ) = assurance_tiers_from_posture(self._engine_posture)
+        self._verifier_model_value = self._assurance_tiers.get("verifier_model")
         # Highest precedence, after ambient and all Harbor extra env. A task
         # cannot replace this with its own routing or request-effort config.
         env[_ENGINE_CONFIG_ENV] = self._engine_posture_json
@@ -1582,18 +1584,16 @@ class StellaAgent(BaseInstalledAgent):
         assurance_tiers_json = getattr(self, "_assurance_tiers_json", None)
         assurance_tiers_sha256 = getattr(self, "_assurance_tiers_sha256", None)
         # An outer timeout can reach this hook before run() built the posture.
-        # Reconstruct the declaration from the same inputs rather than leaving
-        # the arm unstated on exactly the trials most likely to be re-read.
+        # Reconstruct from the recorded posture — or, failing that, the same
+        # overridable builder — rather than leave the arm unstated (#2134).
         if assurance_tiers is None:
             try:
-                (
-                    assurance_tiers,
-                    assurance_tiers_json,
-                    assurance_tiers_sha256,
-                ) = _benchmark_assurance_tiers(
-                    self._effective_model(),
-                    verifier=self._verifier_model(),
-                )
+                declared = engine_posture or self._build_engine_posture(
+                    self._effective_model(), verifier=self._verifier_model()
+                )[0]
+                tiers = assurance_tiers_from_posture(declared)
+                assurance_tiers, assurance_tiers_json, assurance_tiers_sha256 = tiers
+                verifier_model = verifier_model or assurance_tiers["verifier_model"]
             except (ValueError, RuntimeError):
                 assurance_tiers = None
         assurance_arm = (

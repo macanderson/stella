@@ -36,7 +36,15 @@ from typing import Any
 PostureBuilder = Callable[..., "tuple[dict[str, Any], str, str]"]
 
 _ENGINE_POSTURE_VERSION = "stella-tb21-engine-posture-v1"
-_ASSURANCE_TIERS_VERSION = "stella-tb21-assurance-tiers-v1"
+# v2: the declaration derives from the RESOLVED engine posture rather than from
+# the host-side witness-author selector, resolves each role through the engine's
+# own fallback chain (`agents.<role>.model` > flat key > `default_model`), and
+# states an off-reason naming the models both roles resolved to and the keys
+# they came from — instead of asserting "every role inherits default_model", a
+# sentence that was false whenever any other role carried a pin (#2134). v1
+# declarations recorded before this change keep describing what their runs
+# computed.
+_ASSURANCE_TIERS_VERSION = "stella-tb21-assurance-tiers-v2"
 
 # Host-side selector for the witness/verifier author. Unset (the default) is the
 # control arm: one inherited model, authored witness structurally off. Set to a
@@ -732,6 +740,173 @@ def _benchmark_engine_posture(
     return posture, normalized, digest
 
 
+#: The flat root key that pins each role's model, by role.
+_FLAT_ROLE_MODEL_KEY = {
+    "worker": "pipeline_worker_model",
+    "verifier": "pipeline_verifier_model",
+    "triage": "pipeline_triage_model",
+}
+
+
+def _posture_model_value(value: Any, key: str) -> str | None:
+    """Read one role-model value from a resolved posture, or refuse it.
+
+    ``None`` (the key is absent) is a real answer — the role inherits — but a
+    present value that is not a non-empty string is a malformed posture, and a
+    declaration derived from a guess about it would be exactly the
+    false-metadata failure #2134 is about. Fail closed with the reason.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"engine posture key `{key}` must be a non-empty string when "
+            f"present; got {value!r}"
+        )
+    return value.strip()
+
+
+def _posture_agent_model(posture: dict[str, Any], role: str) -> str | None:
+    """The ``agents.<role>.model`` pin, or ``None`` when the role sets none."""
+    agents = posture.get("agents")
+    if agents is None:
+        return None
+    if not isinstance(agents, dict):
+        raise ValueError(
+            f"engine posture key `agents` must be a mapping when present; got "
+            f"{agents!r}"
+        )
+    entry = agents.get(role)
+    if entry is None:
+        return None
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"engine posture key `agents.{role}` must be a mapping when "
+            f"present; got {entry!r}"
+        )
+    return _posture_model_value(entry.get("model"), f"agents.{role}.model")
+
+
+def resolve_posture_role_model(
+    posture: dict[str, Any], role: str, *, default_model: str
+) -> tuple[str, str]:
+    """Resolve one role's model from a posture, and name the key it came from.
+
+    Mirrors ``AgentEngineConfig::model_for`` (``crates/stella-cli/src/settings.rs``)
+    key for key: ``agents.<role>.model`` outranks the flat ``pipeline_<role>_model``,
+    which outranks ``default_model``. Mirroring it *exactly* is the whole point —
+    a declaration that resolves roles by a different rule than the engine does is
+    free to disagree with the run it describes, which is the shape of #2134 and of
+    #1147 before it.
+
+    Two of those rungs bit in the same match. ``cc00894779ff`` read only the
+    host-side selector and so missed the flat key an ArenaBench roles config
+    writes; a reader that took the flat key alone would still miss
+    ``agents.<role>.model`` above it, and would still call a verifier that
+    inherits ``default_model`` "the worker's model" when the *worker* is the
+    pinned one. The returned origin key is what lets the off-reason name the
+    setting an operator would actually edit, in the same vocabulary
+    ``settings_check::flat_source_label`` reports.
+    """
+    flat_key = _FLAT_ROLE_MODEL_KEY.get(role)
+    if flat_key is None:
+        raise ValueError(f"unknown engine role `{role}`")
+    agent_key = f"agents.{role}.model"
+    for key, value in (
+        (agent_key, _posture_agent_model(posture, role)),
+        (flat_key, _posture_model_value(posture.get(flat_key), flat_key)),
+    ):
+        if value is not None:
+            return value, key
+    return default_model, "default_model"
+
+
+def assurance_tiers_from_posture(
+    posture: dict[str, Any],
+) -> tuple[dict[str, Any], str, str]:
+    """Declare which verification tiers a *resolved* engine posture exercises.
+
+    The input is the exact ``agent_engine_config`` dict delivered to Stella —
+    the output of ``_benchmark_engine_posture`` or of a harness's overridden
+    builder (``StellaAgent._build_engine_posture`` is a documented seam) — so
+    the declaration can never disagree with the configuration the engine
+    actually ran. It used to be recomputed from the host-side witness-author
+    selector alone, which is a second, narrower channel: an ArenaBench roles
+    config reaches the posture without touching that selector, and match
+    ``cc00894779ff`` recorded ``verifier_model: null`` / ``arm: witness-off``
+    for a run whose posture named kimi-k3 as the verifier and whose trials
+    demonstrably authored a witness (#2134).
+
+    The witness arm's predicate is exactly one sentence, and it is the engine's
+    own: the verifier role resolves to a model different from the worker's
+    (``Pipeline::witness_author_independence``). Both sides are resolved here
+    through :func:`resolve_posture_role_model`, so "the verifier inherits" is
+    never *assumed* to mean "the verifier equals the worker" — a posture that
+    pins only the worker leaves the verifier on ``default_model``, which is an
+    independent author and used to be declared as the opposite.
+
+    When the predicate fails, the recorded off-reason states the models both
+    roles resolved to and the posture keys they came from — never a claim about
+    roles this function did not examine.
+    """
+    if not isinstance(posture, dict):
+        raise ValueError(
+            "assurance tiers need the resolved engine posture as a dict; got "
+            f"{type(posture).__name__}"
+        )
+    default_model = posture.get("default_model")
+    if not isinstance(default_model, str) or "/" not in default_model.strip():
+        raise ValueError(
+            "engine posture `default_model` must be a non-empty provider/model "
+            f"spec; got {default_model!r}"
+        )
+    baseline = default_model.strip()
+    worker, worker_origin = resolve_posture_role_model(
+        posture, "worker", default_model=baseline
+    )
+    verifier, verifier_origin = resolve_posture_role_model(
+        posture, "verifier", default_model=baseline
+    )
+    author = verifier if verifier != worker else None
+    off_reason = (
+        None
+        if author
+        else (
+            "no author independent of the worker: the engine posture resolves "
+            f"the verifier role to `{verifier}` (from `{verifier_origin}`) and "
+            f"the worker role to the same model (from `{worker_origin}`), so "
+            "the witness tier cannot be authored on any task in this run"
+        )
+    )
+    declaration: dict[str, Any] = {
+        "version": _ASSURANCE_TIERS_VERSION,
+        "arm": "witness-on" if author else "witness-off",
+        "worker_model": worker,
+        "verifier_model": author,
+        "tiers": {
+            # Flip oracle and recorded test results need no second model, so
+            # this rung is on in both arms.
+            "deterministic_verify": "on",
+            "authored_witness": "on" if author else "off",
+            # The verifier rung runs either way; in the control arm it resolves to
+            # the worker's own model, which is a materially weaker claim and is
+            # named as such rather than reported as a plain "on".
+            "model_verdict": (
+                "on-independent-of-worker" if author else "on-same-model-as-worker"
+            ),
+        },
+        "authored_witness_off_reason": off_reason,
+    }
+    normalized = json.dumps(
+        declaration,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return declaration, normalized, digest
+
+
 def _benchmark_assurance_tiers(
     model: str,
     *,
@@ -750,6 +925,13 @@ def _benchmark_assurance_tiers(
     the event stream, discoverable only by reading trajectories — which is what
     turns a stated caveat into a misread number. A scored run now either
     exercises a tier or declares it off in metadata a manifest can read (#1007).
+
+    The ``(model, verifier)`` selector shape is kept for the callers that hold
+    only the host-side inputs (``make_manifest.py``, the preregistration
+    tooling); it validates them with the same refusals as the posture builder,
+    then delegates to :func:`assurance_tiers_from_posture` so the two paths
+    cannot disagree about what a declaration says. The adapter itself derives
+    from the built posture instead — see ``StellaAgent.run`` (#2134).
     """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
@@ -759,41 +941,10 @@ def _benchmark_assurance_tiers(
         if verifier is not None
         else None
     )
-    declaration: dict[str, Any] = {
-        "version": _ASSURANCE_TIERS_VERSION,
-        "arm": "witness-on" if author else "witness-off",
-        "worker_model": selected_model,
-        "verifier_model": author,
-        "tiers": {
-            # Flip oracle and recorded test results need no second model, so
-            # this rung is on in both arms.
-            "deterministic_verify": "on",
-            "authored_witness": "on" if author else "off",
-            # The verifier rung runs either way; in the control arm it resolves to
-            # the worker's own model, which is a materially weaker claim and is
-            # named as such rather than reported as a plain "on".
-            "model_verdict": (
-                "on-independent-of-worker" if author else "on-same-model-as-worker"
-            ),
-        },
-        "authored_witness_off_reason": (
-            None
-            if author
-            else (
-                "no author independent of the worker: every role inherits "
-                "default_model, so the witness tier cannot be authored on any "
-                "task in this run"
-            )
-        ),
-    }
-    normalized = json.dumps(
-        declaration,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    return declaration, normalized, digest
+    posture: dict[str, Any] = {"default_model": selected_model}
+    if author is not None:
+        posture["pipeline_verifier_model"] = author
+    return assurance_tiers_from_posture(posture)
 
 
 def fold_witness_observations(events: list[dict[str, Any]]) -> dict[str, Any]:

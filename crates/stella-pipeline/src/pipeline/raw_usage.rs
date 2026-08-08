@@ -8,7 +8,8 @@ use stella_core::{
     AccountedCall, AccountedCallError, BudgetGuard, ReceiptContext, run_accounted_call,
 };
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionResult, ModelCallRole, ReasoningEffort,
+    CompletionMessage, CompletionRequest, CompletionResult, FinishReason, ModelCallRole,
+    ReasoningEffort,
 };
 
 use super::stage_budget::{PipelineBudgetAbort, budget_abort};
@@ -45,6 +46,36 @@ pub(super) enum RawCallError {
     Budget(PipelineBudgetAbort),
 }
 
+/// Headroom added to every management role's *visible-output* budget so a
+/// reasoning model can think before it answers (#2128).
+///
+/// `max_output_tokens` is one number on the wire and reasoning models bill
+/// their reasoning stream against it, so a cap sized for the role's written
+/// output contract is a cap the model spends entirely on thinking: in match
+/// `cc00894779ff` every triage call (512) and every verdict call (1024)
+/// returned `finish_reason: length` with `output_text: ""` — the reasoning
+/// token count matched or exceeded the cap in each one. Empty triage
+/// collapsed research/plan/scope/witness to defaults that looked like
+/// decisions; empty verdict degraded to the heuristic and re-opened finished
+/// work (#2129).
+///
+/// The number is a heuristic bound, and this comment is the honest place to
+/// say so: no posture axis reports a model's reasoning budget, and the value
+/// varies by model and prompt. It is deliberately generous relative to the
+/// contracts below (which are two to six lines) and still an order of
+/// magnitude under the 64k engine base, so a runaway role call is still
+/// bounded. [`starved_retry_cap`] is the actual guarantee — headroom only
+/// makes it rare.
+const REASONING_HEADROOM_TOKENS: u32 = 4_096;
+
+/// The cap a call that provably starved is retried at (#2128).
+///
+/// Reached only after a response came back empty with `finish_reason:
+/// length`, which is the provider stating that the budget ran out before the
+/// first visible token. Sized so one retry is enough for any reasoning
+/// budget observed in the wild rather than sized to a model.
+const STARVED_RETRY_CAP: u32 = 32_768;
+
 /// Role-shaped request bounds `(max_output_tokens, effort)` for the
 /// management chokepoint, applied between the caller's explicit overrides
 /// (which always win) and the engine config's worker-tier base.
@@ -56,6 +87,11 @@ pub(super) enum RawCallError {
 /// two to six lines with a 64k allowance and unbounded thinking. The bounded
 /// shape is the one the engine's own overflow summarizer already pins
 /// (`stella-core`'s `run_compaction_pass`: 1,200 tokens, `effort: Low`).
+///
+/// Each arm names the role's **visible-output** contract;
+/// [`REASONING_HEADROOM_TOKENS`] is added on top by [`role_output_cap`], so
+/// the numbers here stay readable against the prompts that justify them
+/// instead of silently encoding someone's guess at a thinking budget.
 ///
 /// Exhaustive over [`ModelCallRole`] on purpose: a new role dispatched
 /// through this chokepoint must decide its bounds here, not inherit the
@@ -89,6 +125,55 @@ fn management_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffor
         | ModelCallRole::Reflection
         | ModelCallRole::Summarization => (None, None),
     }
+}
+
+/// The wire cap for one management call: the caller's explicit override
+/// (which always wins, unchanged), else the role's visible-output contract
+/// plus [`REASONING_HEADROOM_TOKENS`], else the engine base.
+///
+/// The override is deliberately NOT given headroom. It is the most specific
+/// statement anyone made about this call — an operator who pinned 512 asked
+/// for 512, and quietly serving 4,608 would make the setting a suggestion.
+/// A starved override still gets the retry below, which is the difference
+/// between honoring a number and silently discarding its result.
+fn role_output_cap(
+    role: ModelCallRole,
+    overrides: &RoleCallOverrides,
+    base: Option<u32>,
+) -> Option<u32> {
+    if let Some(explicit) = overrides.max_output_tokens {
+        return Some(explicit);
+    }
+    match management_bounds(role).0 {
+        Some(contract) => Some(contract.saturating_add(REASONING_HEADROOM_TOKENS)),
+        None => base,
+    }
+}
+
+/// The cap to retry a provably starved call at, or `None` when a retry could
+/// not change the outcome (#2128).
+///
+/// `None` when the call already had at least [`STARVED_RETRY_CAP`] of room:
+/// the response was then empty for some reason more room cannot fix, and
+/// buying a second identical call to discover that again is waste.
+fn starved_retry_cap(previous: Option<u32>) -> Option<u32> {
+    match previous {
+        Some(cap) if cap < STARVED_RETRY_CAP => Some(STARVED_RETRY_CAP),
+        Some(_) => None,
+        // No cap was set at all, so the budget was never the binding
+        // constraint — nothing to raise.
+        None => None,
+    }
+}
+
+/// Whether a completion is the cap-starvation signature (#2128): the provider
+/// stopped at the token limit and no visible text was produced.
+///
+/// Both halves are required. `Length` with text is an ordinary truncation
+/// (the parsers handle a clipped reply), and empty text with any other finish
+/// reason is a model declining to answer — neither is fixed by more room.
+fn starved_of_output(result: &CompletionResult) -> bool {
+    result.text.trim().is_empty() && result.finish_reason == Some(FinishReason::Length)
 }
 
 impl<'a> Pipeline<'a> {
@@ -138,26 +223,109 @@ impl<'a> Pipeline<'a> {
         // verifier prompt from anything reading the estimate.
         let estimated_input_tokens =
             stella_core::estimator::estimate_conversation_tokens(&messages);
-        let (role_cap, role_effort) = management_bounds(role);
-        let req = CompletionRequest {
+        let cap = role_output_cap(role, overrides, engine.max_output_tokens);
+        // Kept for the starvation retry (#2128), and ONLY when one could
+        // change the outcome. An earlier revision moved the list into the
+        // request precisely to avoid this copy, on the grounds that nothing
+        // read it afterwards — true then, and no longer: a call that comes
+        // back empty because the cap was spent on reasoning is recoverable,
+        // and recovering it means re-sending what it sent. One `Vec` copy of
+        // a management prompt against a provider round trip is the cheaper
+        // half of that trade.
+        let retry_messages = starved_retry_cap(cap).map(|_| messages.clone());
+        let request = |messages, max_output_tokens| CompletionRequest {
             messages,
-            max_output_tokens: overrides
-                .max_output_tokens
-                .or(role_cap)
-                .or(engine.max_output_tokens),
+            max_output_tokens,
             temperature: overrides.temperature.or(engine.temperature),
-            effort: overrides.effort.or(role_effort).or(engine.effort),
+            effort: overrides
+                .effort
+                .or(management_bounds(role).1)
+                .or(engine.effort),
             reasoning: overrides.reasoning.or(engine.reasoning),
             params: overrides.params.or(engine.params),
             tools: Vec::new(),
         };
+        let result = self
+            .dispatch_raw(
+                &call_meta(role, resolved),
+                request(messages, cap),
+                policy,
+                timeout,
+                estimated_input_tokens,
+                budget,
+                total,
+            )
+            .await?;
+        // A provider that stopped at the token limit with nothing visible to
+        // show for it has stated that the budget ran out before the first
+        // answer token — the #2128 signature. Every other outcome returns
+        // here unchanged.
+        let Some(raised) = starved_of_output(&result)
+            .then(|| starved_retry_cap(cap))
+            .flatten()
+        else {
+            return Ok(result);
+        };
+        let Some(messages) = retry_messages else {
+            return Ok(result);
+        };
+        // Loud, never silent: before this, an empty triage collapsed the
+        // research/plan/scope/witness stages to defaults that read like
+        // decisions, and an empty verdict degraded to the heuristic — both
+        // with nothing in the transcript naming the cause.
+        self.warn(format!(
+            "the {role:?} call returned no output: it stopped at its {} token limit with an \
+             empty response, which on a reasoning model means the whole budget went to \
+             reasoning. Retrying once at {raised}.",
+            cap.map_or_else(|| "(unset)".to_string(), |c| c.to_string()),
+        ));
+        let retried = self
+            .dispatch_raw(
+                &call_meta(role, resolved),
+                request(messages, Some(raised)),
+                RetryPolicy::deterministic(),
+                timeout,
+                estimated_input_tokens,
+                budget,
+                total,
+            )
+            .await?;
+        // The retry's own emptiness is not worth a third call, but it IS
+        // worth saying: the caller is about to take a degraded path, and this
+        // is the only place that knows why.
+        if starved_of_output(&retried) {
+            self.warn(format!(
+                "the {role:?} retry at {raised} tokens returned no output either; this call's \
+                 result is unusable and the stage will take its degraded path"
+            ));
+        }
+        Ok(retried)
+    }
+
+    /// One metered dispatch: everything [`Pipeline::metered_raw_call`] does
+    /// per attempt, so its starvation retry (#2128) re-sends through exactly
+    /// the same accounting seam the first attempt used. Both attempts are
+    /// real paid calls and each emits its own `StepUsage`, which is the
+    /// honest record — the retry is not free and the telemetry must not
+    /// imply it was.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_raw(
+        &self,
+        meta: &RawCallMeta<'_>,
+        request: CompletionRequest,
+        retry_policy: RetryPolicy,
+        timeout: Option<Duration>,
+        estimated_input_tokens: u64,
+        budget: &mut BudgetGuard,
+        total: &mut f64,
+    ) -> Result<CompletionResult, RawCallError> {
         match run_accounted_call(
             AccountedCall {
-                provider: resolved.provider,
-                role,
-                model_hint: resolved.model_ref.model_id.clone(),
-                request: req,
-                retry_policy: policy,
+                provider: meta.provider,
+                role: meta.role,
+                model_hint: meta.model_id.to_string(),
+                request,
+                retry_policy,
                 timeout,
                 estimated_input_tokens,
                 // Management roles assemble their own prompts — the role's task
@@ -170,7 +338,7 @@ impl<'a> Pipeline<'a> {
                     call_seq: self.raw_call_seq.fetch_add(1, Ordering::Relaxed),
                     // Phase 2 (#713): a management role rides the session's
                     // engine config, so it inherits the same lifecycle switch.
-                    lifecycle_enabled: engine.lifecycle_enabled,
+                    lifecycle_enabled: self.config.engine.lifecycle_enabled,
                 }),
             },
             budget,
@@ -192,5 +360,120 @@ impl<'a> Pipeline<'a> {
                 ))
             }
         }
+    }
+}
+
+/// The routing facts both attempts of a [`Pipeline::metered_raw_call`] share.
+/// Borrowed rather than cloned per attempt: the retry sends to the same
+/// resolved provider and model, and re-resolving could silently retry
+/// somewhere else.
+struct RawCallMeta<'r> {
+    role: ModelCallRole,
+    provider: &'r dyn stella_protocol::Provider,
+    model_id: &'r str,
+}
+
+fn call_meta<'r>(role: ModelCallRole, resolved: &'r ResolvedRole<'_>) -> RawCallMeta<'r> {
+    RawCallMeta {
+        role,
+        provider: resolved.provider,
+        model_id: &resolved.model_ref.model_id,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2128 witness for the prevention half: every capped role reaches the
+    /// wire with reasoning headroom above its written output contract, so a
+    /// reasoning model has room to think before its first answer token. The
+    /// old caps (512 triage, 1024 verdict) are exactly the numbers that came
+    /// back empty across a whole benchmark match.
+    #[test]
+    fn every_capped_role_carries_reasoning_headroom() {
+        let none = RoleCallOverrides::default();
+        for (role, contract) in [
+            (ModelCallRole::Triage, 512),
+            (ModelCallRole::Verdict, 1024),
+            (ModelCallRole::DistressGuidance, 1024),
+            (ModelCallRole::Plan, 4096),
+            (ModelCallRole::PlanRepair, 4096),
+            (ModelCallRole::Worker, 2048),
+        ] {
+            let cap = role_output_cap(role, &none, Some(64_000))
+                .unwrap_or_else(|| panic!("{role:?} is a capped role"));
+            assert_eq!(
+                cap,
+                contract + REASONING_HEADROOM_TOKENS,
+                "{role:?} must budget its output contract PLUS thinking room"
+            );
+            assert!(
+                cap < 64_000,
+                "{role:?} must still be far under the engine base — the cap is \
+                 what keeps a runaway role call bounded"
+            );
+        }
+    }
+
+    /// An operator's explicit cap is honored exactly, headroom included or
+    /// not: it is the most specific statement about the call, and quietly
+    /// serving a larger number would make the setting a suggestion. The
+    /// starvation retry is what keeps honoring it from being a silent loss.
+    #[test]
+    fn an_explicit_override_is_never_widened() {
+        let pinned = RoleCallOverrides {
+            max_output_tokens: Some(512),
+            ..RoleCallOverrides::default()
+        };
+        assert_eq!(
+            role_output_cap(ModelCallRole::Triage, &pinned, Some(64_000)),
+            Some(512)
+        );
+    }
+
+    /// An uncapped role inherits the engine base, exactly as before.
+    #[test]
+    fn an_uncapped_role_still_inherits_the_engine_base() {
+        let none = RoleCallOverrides::default();
+        assert_eq!(
+            role_output_cap(ModelCallRole::Reflection, &none, Some(64_000)),
+            Some(64_000)
+        );
+    }
+
+    /// The starvation signature requires BOTH halves: a truncated reply with
+    /// text is ordinary (the parsers cope), and an empty reply that stopped
+    /// for any other reason is a model declining, which more room cannot fix.
+    #[test]
+    fn only_an_empty_length_stop_counts_as_starvation() {
+        fn result(text: &str, finish_reason: Option<FinishReason>) -> CompletionResult {
+            CompletionResult {
+                text: text.to_string(),
+                tool_calls: Vec::new(),
+                usage: stella_protocol::CompletionUsage::default(),
+                model: "scripted".into(),
+                cost_usd: 0.0,
+                finish_reason,
+            }
+        }
+        let length = Some(FinishReason::Length);
+        assert!(starved_of_output(&result("", length)));
+        assert!(
+            starved_of_output(&result("   \n ", length)),
+            "whitespace is not an answer"
+        );
+        assert!(!starved_of_output(&result("PASS — looks right", length)));
+        assert!(!starved_of_output(&result("", Some(FinishReason::Stop))));
+        assert!(!starved_of_output(&result("", None)));
+    }
+
+    /// A retry is bought only when more room could change the answer.
+    #[test]
+    fn a_retry_is_declined_when_room_was_never_the_constraint() {
+        assert_eq!(starved_retry_cap(Some(1024)), Some(STARVED_RETRY_CAP));
+        assert_eq!(starved_retry_cap(Some(STARVED_RETRY_CAP)), None);
+        assert_eq!(starved_retry_cap(Some(64_000)), None);
+        assert_eq!(starved_retry_cap(None), None);
     }
 }

@@ -42,6 +42,7 @@ from .sut import (
     SutUnavailableError,
     binary_for,
     file_sha256,
+    repo_problem,
     resolve_ref,
     stella_repo,
     sut_root,
@@ -268,9 +269,7 @@ class SutBuilder:
     def _build(self, record: BuildRecord) -> tuple[Path, str]:
         repo = stella_repo()
         if repo is None:
-            raise SutUnavailableError(
-                "no Stella checkout configured; set ARENABENCH_STELLA_REPO"
-            )
+            raise SutUnavailableError(f"nothing to build from: {repo_problem()}")
         if shutil.which("cargo") is None:
             raise SutUnavailableError("cargo is not on PATH")
 
