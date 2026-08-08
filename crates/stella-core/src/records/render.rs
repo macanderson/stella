@@ -43,7 +43,7 @@
 //! Records render in the order the caller gave them, which for the cached channel
 //! must not vary across turns. *Which* records render is asked only when a budget
 //! binds, and answered by declared precedence rather than by position — a record
-//! is not worth less for having loaded later. [`survivors`] resolves that ahead of
+//! is not worth less for having loaded later. `survivors` resolves that ahead of
 //! rendering, so the two answers cannot drift into each other; with budget to
 //! spare it admits everything and the block is byte-for-byte what load order alone
 //! would have produced.
@@ -109,7 +109,8 @@ pub struct RenderedChannel {
     /// Handles the budget dropped after selection. These are `selected` but **not**
     /// `rendered` — the silent gap `MissingContextKind::NotRendered` names.
     ///
-    /// Chosen by ascending precedence, not by position: see [`survivors`].
+    /// Chosen by ascending precedence, not by position — the least important
+    /// record loses its place, not the last-loaded one.
     pub dropped: Vec<String>,
 }
 
@@ -157,10 +158,10 @@ fn effective_force(record: &LoadedRecord, disposition: &Disposition) -> Force {
 /// on why handles do not depend on load order).
 ///
 /// **Which records are emitted is a separate question from their order**, and the
-/// budget is the only thing that ever asks it — see [`survivors`]. With budget to
-/// spare the two questions collapse and every record renders where it was given;
-/// under pressure the least important record loses its place rather than the
-/// last-loaded one.
+/// budget is the only thing that ever asks it. With budget to spare the two
+/// questions collapse and every record renders where it was given; under pressure
+/// the record with the lowest declared `precedence` loses its place rather than
+/// the last-loaded one.
 pub fn render_channel(
     inputs: &[RenderInput<'_>],
     channel: Channel,
