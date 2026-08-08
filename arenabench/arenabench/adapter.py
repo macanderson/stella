@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import tempfile
 from pathlib import Path
 
 from .sut import arenabench_home
@@ -124,16 +125,28 @@ def stage_adapter(source: Path) -> Path:
         # Copy to a sibling first, then rename: a half-copied tree that a
         # concurrent match started importing would fail in a way that reads
         # like a corrupt adapter rather than a racing one.
-        pending = destination.with_name(f"{destination.name}.pending")
-        shutil.rmtree(pending, ignore_errors=True)
-        shutil.copytree(source / PACKAGE_NAME, pending / PACKAGE_NAME)
+        #
+        # The sibling name must be unique per attempt, not per digest. The
+        # server is a ThreadingHTTPServer, so two matches staging the same
+        # digest run this concurrently in one process: with a shared name,
+        # the second thread's rmtree deletes the first thread's finished copy
+        # and the first thread's rename then publishes the second's
+        # *in-flight* partial tree — permanently, since the cache check above
+        # never revisits a digest that exists.
+        pending = Path(
+            tempfile.mkdtemp(dir=destination.parent, prefix=f"{destination.name}.pending-")
+        )
         try:
-            (pending / PACKAGE_NAME).rename(marker)
-        except OSError:
-            # Another match staged the identical digest first. Its copy is
-            # byte-identical by construction, so losing the race is fine.
-            if not marker.is_dir():
-                raise
+            shutil.copytree(source / PACKAGE_NAME, pending / PACKAGE_NAME)
+            try:
+                (pending / PACKAGE_NAME).rename(marker)
+            except OSError:
+                # Another match staged the identical digest first. Its copy is
+                # byte-identical by construction *and complete* — a unique
+                # staging dir is what makes that second half true — so losing
+                # the race is fine.
+                if not marker.is_dir():
+                    raise
         finally:
             shutil.rmtree(pending, ignore_errors=True)
 

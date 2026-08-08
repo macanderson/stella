@@ -21,7 +21,9 @@ neither can re-enter ``solve_rate``'s denominator.
 
 from __future__ import annotations
 
+import itertools
 import shutil
+import threading
 from pathlib import Path
 
 import pytest
@@ -109,6 +111,80 @@ def test_an_empty_package_directory_is_refused_rather_than_staged(tmp_path: Path
     (tmp_path / "adapter" / PACKAGE_NAME).mkdir(parents=True)
     with pytest.raises(AdapterUnavailableError):
         stage_adapter(tmp_path / "adapter")
+
+
+def test_concurrent_staging_never_publishes_a_half_copied_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The server is threaded, so two matches stage one digest at once.
+
+    A staging directory named after the digest alone is shared, and the
+    damage is permanent: thread B's ``rmtree`` deletes A's finished copy, A
+    then renames B's *in-flight* tree into place, and the cache check never
+    revisits a digest that already exists — every later trial in the process
+    imports the partial adapter.
+
+    The interleaving is forced rather than raced, so this fails
+    deterministically against a shared staging name.
+    """
+    source = _source_tree(tmp_path / "adapter")
+    real_copytree = shutil.copytree
+    a_copied = threading.Event()
+    b_mid_copy = threading.Event()
+    a_done = threading.Event()
+    calls = itertools.count()
+
+    def sequenced(src, dst, *args, **kwargs):
+        # ``copytree`` recurses through this same module attribute for every
+        # subdirectory; only the top-level package copy is a staging attempt.
+        if Path(dst).name != PACKAGE_NAME:
+            return real_copytree(src, dst, *args, **kwargs)
+        if next(calls) == 0:
+            # A: copy in full, then hold before the rename while B runs.
+            result = real_copytree(src, dst, *args, **kwargs)
+            a_copied.set()
+            assert b_mid_copy.wait(timeout=10), "B never reached its copy"
+            return result
+        # B: land one file, let A rename whatever is at the staging path,
+        # then finish. Mid-copy is the state A must not be able to publish.
+        src, dst = Path(src), Path(dst)
+        dst.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src / "__init__.py", dst / "__init__.py")
+        b_mid_copy.set()
+        assert a_done.wait(timeout=10), "A never finished"
+        for path in sorted(p for p in src.rglob("*") if p.is_file()):
+            target = dst / path.relative_to(src)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+        return str(dst)
+
+    monkeypatch.setattr(adapter.shutil, "copytree", sequenced)
+    failures: list[BaseException] = []
+
+    def stage(record_done: bool):
+        try:
+            stage_adapter(source)
+        except BaseException as error:  # a thread's failure is asserted below
+            failures.append(error)
+        finally:
+            if record_done:
+                a_done.set()
+
+    first = threading.Thread(target=stage, args=(True,))
+    first.start()
+    assert a_copied.wait(timeout=10), f"A never copied: {failures}"
+    adapter._staged.clear()  # a second match, same process, same digest
+    second = threading.Thread(target=stage, args=(False,))
+    second.start()
+    first.join(timeout=15)
+    second.join(timeout=15)
+    assert not first.is_alive() and not second.is_alive(), "staging wedged"
+    assert not failures, f"staging raised: {failures}"
+
+    published = adapter_root() / adapter._digest(source) / PACKAGE_NAME
+    assert (published / "__init__.py").is_file()
+    assert (published / "prices.json").is_file(), "published a half-copied tree"
+    assert (published / "sub" / "posture.py").read_text() == "X = 1\n"
 
 
 def test_a_missing_adapter_refuses_at_construction_naming_the_fix():
