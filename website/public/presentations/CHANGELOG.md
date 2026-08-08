@@ -63,10 +63,12 @@ context. Details: `BENCHMARK_METHODOLOGY.md`.
 
 ## Flags — claims that need founder verification before this deck ships
 
-1. **Design-partner status** (business-model slide): Town of Cary, NC and
-   Lumenium carry a visible `[confirm — signed vs verbal · paid vs unpaid ·
-   deployment date]` chip. Fill it or cut the names. An unpaid pilot is fine
-   at pre-seed; ambiguity is not.
+1. ~~Design-partner status~~ **Resolved by founder, 2026-08-08**: both
+   partnerships are verbal; both are repeat buyers the founder has sold
+   software to before. Cary has transacted north of $1M/year across three of
+   the founder's companies, and its R&D department can waive competitive bid.
+   The slide now states "verbal" plainly with that context; the confirm chip
+   is removed.
 2. **Degree titles** (team slide): "BS, Machine Learning & Algorithms —
    University of Tennessee, Knoxville" and "MS, Machine Learning — Georgia
    Institute of Technology" could not be verified against a registrar. Confirm
