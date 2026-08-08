@@ -46,6 +46,7 @@ or arbitrary Harbor agent extras abort a claim run.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import math
@@ -54,7 +55,7 @@ import re
 import shlex
 import sys
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -605,6 +606,90 @@ async def _probe_sigkill_cause(environment: BaseEnvironment) -> dict[str, Any]:
     )
 
 
+#: How often the completion probe is consulted while the exec stream is open.
+_STREAM_PROBE_POLL_SECONDS = 5.0
+#: How long a proven-finished stream may still end on its own before the
+#: client is terminated. Generous enough for an ordinary EOF racing the probe,
+#: short enough that a held stream costs seconds rather than the agent budget.
+_STREAM_PROBE_GRACE_SECONDS = 10.0
+
+#: Rides in ``ExecResult.stderr`` when the stream was released, so the fact
+#: lands in the trial's stderr log through the existing write path.
+_STREAM_RELEASED_NOTE = (
+    "stella-harbor: exec stream released after the journal's terminal event; "
+    "a process the agent left running held the stream open past Stella's "
+    "exit (#2122)"
+)
+
+
+async def _communicate_with_completion_probe(
+    process: asyncio.subprocess.Process,
+    wire: bytes | bytearray,
+    completion_probe: Callable[[], bool] | None,
+    *,
+    poll_seconds: float = _STREAM_PROBE_POLL_SECONDS,
+    grace_seconds: float = _STREAM_PROBE_GRACE_SECONDS,
+    drain_seconds: float = 5.0,
+) -> tuple[bytes, bool]:
+    """``communicate()``, released early once the run is proven finished.
+
+    ``docker compose exec``'s output stream reaches EOF only when every fd
+    holder inside the container lets go. A daemon the agent legitimately
+    started — ``sshd``, ``nginx``; several Terminal-Bench tasks require one —
+    inherits the stream and holds it open past Stella's exit, so a plain
+    ``communicate()`` outlives a *finished* trial until Harbor's agent
+    timeout kills it (#2122). The probe consults evidence outside the
+    stream (the durable journal on the host side); only a probe that proves
+    completion releases the wait. The stream is granted ``grace_seconds`` to
+    end on its own, then the **client** process is terminated — nothing in
+    the container is touched, so daemons the verifier will probe stay up.
+
+    Returns the captured stdout and whether the wait was released by the
+    probe rather than by stream EOF. A run that never proves completion is
+    deliberately NOT released: a hung pipeline must stay visible as a
+    timeout, not be dressed up as a finished trial (#2110 stays loud).
+    """
+    communicate = asyncio.ensure_future(process.communicate(input=wire))
+
+    async def _finish(released: bool) -> tuple[bytes, bool]:
+        stdout_bytes, _ = await communicate
+        return stdout_bytes, released
+
+    try:
+        if completion_probe is None:
+            return await _finish(False)
+        while True:
+            done, _ = await asyncio.wait({communicate}, timeout=poll_seconds)
+            if done:
+                return await _finish(False)
+            if not completion_probe():
+                continue
+            done, _ = await asyncio.wait({communicate}, timeout=grace_seconds)
+            if done:
+                return await _finish(False)
+            # The client may itself have exited already (only a grandchild
+            # holds the pipe); a signal to a reaped pid is not an error here.
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+            done, _ = await asyncio.wait({communicate}, timeout=drain_seconds)
+            if not done:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                done, _ = await asyncio.wait({communicate}, timeout=drain_seconds)
+            if done:
+                return await _finish(True)
+            # Nothing left to signal and the pipe is still held (an orphan
+            # shares our read end). Stop reading; the journal carries the
+            # run's truth and the caller's cleanup owns the process.
+            communicate.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await communicate
+            return b"", True
+    except BaseException:
+        communicate.cancel()
+        raise
+
+
 async def _secure_exec_with_credential_fd(
     environment: BaseEnvironment,
     *,
@@ -614,6 +699,7 @@ async def _secure_exec_with_credential_fd(
     verifier: str | None = None,
     expected_posture_json: str | None = None,
     posture_builder: PostureBuilder | None = None,
+    completion_probe: Callable[[], bool] | None = None,
 ) -> ExecResult:
     """Execute in Harbor Docker with the credentials only on anonymous stdin.
 
@@ -725,7 +811,9 @@ async def _secure_exec_with_credential_fd(
             stderr=asyncio.subprocess.STDOUT,
         )
         try:
-            stdout_bytes, _ = await process.communicate(input=wire)
+            stdout_bytes, released = await _communicate_with_completion_probe(
+                process, wire, completion_probe
+            )
         except BaseException:
             if process.returncode is None:
                 process.terminate()
@@ -736,6 +824,17 @@ async def _secure_exec_with_credential_fd(
                     await process.wait()
             raise
         stdout = stdout_bytes.decode(errors="replace") if stdout_bytes else None
+        if released:
+            # The client was terminated by the release, so its return code is
+            # the signal, not Stella's. The journal — which the caller already
+            # treats as the source of truth over captured stdout — proved the
+            # run finished; the note lands in the trial's stderr log so the
+            # release is auditable rather than silent.
+            return ExecResult(
+                stdout=stdout,
+                stderr=_STREAM_RELEASED_NOTE,
+                return_code=0,
+            )
         return ExecResult(
             stdout=stdout,
             stderr=None,
@@ -1457,6 +1556,16 @@ class StellaAgent(BaseInstalledAgent):
         # those values into `docker compose exec -e` argv. The secure runner
         # feeds one selected key through an anonymous stdin pipe and invokes
         # Stella directly, leaving neither a shell parent nor a tee process.
+        def _journal_reports_terminal_event() -> bool:
+            # The durable journal is host-visible while the run is live (it is
+            # what the arena streams), so Stella's own terminal `complete`
+            # event — the last line the pipeline writes before exiting — can
+            # prove the run finished even when the exec stream cannot EOF. A
+            # tail scan is enough: the event is terminal, and the compact
+            # serde encoding is byte-stable.
+            stream = self._read_log(_STREAM_EVENTS_NAME)
+            return bool(stream) and '"type":"complete"' in stream[-4096:]
+
         result = await _secure_exec_with_credential_fd(
             environment,
             command=command,
@@ -1465,6 +1574,7 @@ class StellaAgent(BaseInstalledAgent):
             verifier=verifier,
             expected_posture_json=self._engine_posture_json,
             posture_builder=self._build_engine_posture,
+            completion_probe=_journal_reports_terminal_event,
         )
 
         stdout = getattr(result, "stdout", None)
