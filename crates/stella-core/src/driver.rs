@@ -1098,9 +1098,9 @@ impl<'a> Engine<'a> {
         // this very step (#554).
         let revision = state.memos.revision;
         snapshot_result_identities(&state.messages, &mut state.memos.identities, revision);
-        // Latched, not recomputed per step (#1841): compaction and the
-        // manifest below must compare against the same number, and a budget
-        // that moves mid-turn defeats compaction's own hysteresis.
+        // Live while the calibration still answers identity, then latched at
+        // the first corrected value (#1841, #2133): compaction and the
+        // manifest below always compare against the same settled number.
         let fresh = self.effective_compaction_budget(state.calibration_model.as_deref());
         let sized = state.latch_effective_budget(fresh);
         let pass = self
