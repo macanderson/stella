@@ -573,3 +573,71 @@ async fn stellas_own_state_directory_is_never_announced() {
     assert_eq!(reg.mutations_recorded() - before, 1);
     assert_eq!(reg.files_touched().len(), 1);
 }
+
+/// A shell call that creates thousands of files records a bounded number of
+/// them and reports the rest as a count.
+///
+/// Measured on Terminal-Bench `sqlite-with-gcov` (2026-08-08): one `tar xzf`
+/// produced 2,211 touches, and recording them took 659 seconds of a
+/// 900-second task budget. Every trial of that arm timed out, none of them
+/// because the model was slow — model time was 45-164s. Recording a touch
+/// journals a mutation, which on a bound work journal costs several `git`
+/// invocations, so the price is per touch and the ceiling has to be on the
+/// count rather than on the bytes.
+///
+/// The remainder is announced rather than dropped: a bound applied in silence
+/// is indistinguishable from a workspace that did not change.
+#[tokio::test]
+async fn a_bulk_extraction_records_a_bounded_number_of_touches_and_says_so() {
+    let (dir, reg, mut rx) = announcing_fixture();
+    let overflow = 40;
+    let bulk = crate::shell_touch::MAX_RECORDED_TOUCHES + overflow;
+
+    let before = crate::shell_touch::WorkspaceProbe::capture(dir.path());
+    let extracted = dir.path().join("vendored");
+    std::fs::create_dir_all(&extracted).unwrap();
+    for i in 0..bulk {
+        std::fs::write(extracted.join(format!("f{i}.c")), "int main(void){}\n").unwrap();
+    }
+    let after = crate::shell_touch::WorkspaceProbe::capture(dir.path());
+
+    reg.record_probe_delta(
+        &before,
+        &after,
+        "bash",
+        &serde_json::json!({ "command": "tar xzf vendor/src.tar.gz" }),
+        None,
+    );
+
+    let changes = drain_changes(&mut rx);
+    let (summaries, files): (Vec<_>, Vec<_>) = changes
+        .iter()
+        .partition(|change| change.0.starts_with("… "));
+
+    assert_eq!(
+        files.len(),
+        crate::shell_touch::MAX_RECORDED_TOUCHES,
+        "individually recorded touches must stop at the ceiling"
+    );
+    assert_eq!(
+        summaries.len(),
+        1,
+        "the withheld remainder is announced once"
+    );
+    assert!(
+        summaries[0]
+            .0
+            .contains(&format!("{overflow} further path(s)")),
+        "the summary states how many were withheld: {:?}",
+        summaries[0].0
+    );
+    assert!(
+        !summaries[0].4,
+        "the summary stands for many files, so it carries no diff"
+    );
+    assert_eq!(
+        reg.files_touched().len(),
+        crate::shell_touch::MAX_RECORDED_TOUCHES,
+        "the ledger is bounded with the stream, not behind it"
+    );
+}

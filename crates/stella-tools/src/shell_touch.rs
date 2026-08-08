@@ -72,6 +72,28 @@ const MAX_CONTENT_BYTES: u64 = 256 * 1024;
 /// Total content budget across one snapshot.
 const MAX_TOTAL_CONTENT: u64 = 16 * 1024 * 1024;
 
+/// How many individual touches one probe delta may record before the rest are
+/// reported as a count.
+///
+/// The walk was already bounded ([`MAX_ENTRIES`]); recording what it found was
+/// not, and that is where a trial's budget went. Measured on Terminal-Bench
+/// `sqlite-with-gcov`, 2026-08-08: one `tar xzf` of the vendored SQLite
+/// tarball produced 2,211 touches, and recording them took **659 seconds of a
+/// 900-second task budget** — 70% of the trial spent watching itself extract
+/// an archive. All six trials of that arm timed out, none of them because the
+/// model was slow: model time was 45–164s against 660–790s inside that one
+/// tool call. The cost is per touch and mostly not the diff — each one journals
+/// a mutation, and a bound work journal spends several `git` invocations doing
+/// it.
+///
+/// 256 keeps every ordinary edit intact (the largest real refactor in this
+/// repository's history touches well under it) while capping the pathological
+/// case — an extraction, a `npm install`, a build that writes an object tree —
+/// at a bounded cost. Past it the delta is still *reported*, as a count rather
+/// than as files: the bound is disclosed, never silently applied, which is the
+/// same discipline [`WorkspaceProbe::saturated`] already follows for the walk.
+pub(crate) const MAX_RECORDED_TOUCHES: usize = 256;
+
 /// What one snapshot recorded about one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Fingerprint {

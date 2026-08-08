@@ -101,12 +101,25 @@ impl ToolRegistry {
         input: &Value,
         bus: Option<&HookBus>,
     ) {
+        let mut recorded = 0usize;
+        let mut withheld = 0usize;
         for touch in before.diff(after) {
             // The probe walks the tree itself, but its keys still go
             // through the naming gate before the ledger records them.
             if crate::resolve_within_root(&self.root, &touch.path).is_none() {
                 continue;
             }
+            // Counted before the work, not after: recording a touch journals a
+            // mutation, and on a bound work journal that is several `git`
+            // invocations. An unbounded delta therefore spends the turn's wall
+            // clock rather than its memory, which is why the ceiling is on the
+            // count of touches recorded and not on the bytes they carry. See
+            // [`crate::shell_touch::MAX_RECORDED_TOUCHES`] for the measurement.
+            if recorded >= crate::shell_touch::MAX_RECORDED_TOUCHES {
+                withheld += 1;
+                continue;
+            }
+            recorded += 1;
             // An unmeasurable update carries its own post-image as the
             // pre-image, yielding 0/0. The alternative — an empty
             // pre-image — would render a same-file rewrite as a
@@ -129,5 +142,35 @@ impl ToolRegistry {
                 bus,
             );
         }
+        if withheld > 0 {
+            self.announce_withheld_touches(recorded, withheld);
+        }
+    }
+
+    /// Say that a probe delta was capped, and by how much.
+    ///
+    /// A bound that is applied silently is indistinguishable from a workspace
+    /// that simply did not change — the failure mode the walk's own
+    /// `saturated` flag exists to avoid. This rides the same `FileChange`
+    /// stream as the touches it stands in for, so every consumer that counts
+    /// mutations (the deck's Files tab, the pipeline's diff-coverage gate)
+    /// sees the remainder without needing a new event variant, and carries no
+    /// diff because there is no single file it describes.
+    fn announce_withheld_touches(&self, recorded: usize, withheld: usize) {
+        let Some(events) = self.events() else {
+            return;
+        };
+        let _ = events.send(stella_protocol::AgentEvent::FileChange {
+            path: format!(
+                "… {withheld} further path(s) changed, not individually recorded \
+                 (probe records at most {recorded} per delta)"
+            ),
+            kind: stella_protocol::FileChangeKind::Modified,
+            added: 0,
+            removed: 0,
+            // No diff, because this line stands for many files rather than
+            // describing one — the same reason its counts are 0/0.
+            diff: None,
+        });
     }
 }
