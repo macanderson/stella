@@ -34,6 +34,49 @@ async fn runner_availability(tests: &dyn TestRunner) -> Vec<String> {
         .collect()
 }
 
+/// Per-call output ceiling for the witness author and repair turns (#2141,
+/// #2149).
+///
+/// A witness test is a short script and its authoring reply is a marker line
+/// plus that script; the largest legitimate authoring call observed on a
+/// settled flip was under 2k output tokens. Left uncapped, the turn inherits
+/// the worker's ceiling (131k on a measured run), and a reasoning-heavy model
+/// spent it: one `witness_repair` call streamed 36,224 output tokens over
+/// 965 seconds and rode a solved trial into Harbor's agent timeout, taking
+/// the whole verification record with it. This bounds each such call to a
+/// value comfortably above legitimate need yet far below that runaway; a call
+/// that exceeds it truncates and degrades honestly through the existing
+/// no-marker path, which frees the budget instead of consuming it. It only
+/// ever *lowers* a higher ceiling — an operator's tighter `max_output_tokens`
+/// still wins.
+///
+/// This is the **token** axis, and it composes with — never replaces — the
+/// **wall-clock** axis [`witness_repair_bound`] applies to the repair turn:
+/// a cap on emitted tokens cannot end a call that stalls without emitting
+/// any, and a latency ceiling cannot stop a fast runaway from spending the
+/// budget it was granted. Both are needed, and each turn should keep the
+/// bounds it has. The repair rung carries both today; the author rung still
+/// wants the wall-clock half (#2149).
+///
+/// Sized well clear of the reasoning budget that starves the 512/1024-token
+/// role caps in #2128 — reasoning is billed against this same ceiling, so a
+/// value near legitimate output alone would trade a runaway for a silently
+/// empty authoring reply.
+const WITNESS_MAX_OUTPUT_TOKENS: u32 = 16_384;
+
+/// Lower `config.max_output_tokens` to at most [`WITNESS_MAX_OUTPUT_TOKENS`],
+/// leaving a stricter operator value untouched. Pure so the min-not-raise
+/// contract is testable without a pipeline.
+fn bound_witness_output_tokens(mut config: EngineConfig) -> EngineConfig {
+    let bounded = config
+        .max_output_tokens
+        .map_or(WITNESS_MAX_OUTPUT_TOKENS, |existing| {
+            existing.min(WITNESS_MAX_OUTPUT_TOKENS)
+        });
+    config.max_output_tokens = Some(bounded);
+    config
+}
+
 /// Overlay one role's request shaping onto an engine config — the pure half
 /// of [`Pipeline::witness_engine_config`], so the field-by-field flow is
 /// testable without a pipeline. Only the knobs `EngineConfig` itself carries
@@ -218,10 +261,13 @@ impl<'a> Pipeline<'a> {
     /// It stays scoped to the raw verdict/guidance calls
     /// (`metered_raw_call`).
     pub(super) fn witness_engine_config(&self, surface: CandidateSurface<'_>) -> EngineConfig {
-        apply_role_shaping(
+        // The output ceiling (#2141) is applied *after* role shaping so it
+        // caps whatever the verifier overrides resolved to — an override can
+        // lower the bound but never raise it back above the witness ceiling.
+        bound_witness_output_tokens(apply_role_shaping(
             self.engine_config_for(surface),
             &self.config.role_overrides.verifier,
-        )
+        ))
     }
 
     /// What remains of the run's declared wall-clock allowance
@@ -890,5 +936,39 @@ mod tests {
         let untouched = apply_role_shaping(worker.clone(), &RoleCallOverrides::default());
         assert_eq!(untouched.temperature, worker.temperature);
         assert_eq!(untouched.max_output_tokens, worker.max_output_tokens);
+    }
+
+    /// #2141's witness: the witness author/repair output ceiling lowers a
+    /// too-high or absent `max_output_tokens` to the bound, and never raises
+    /// a stricter operator value. On `main` the turn inherits the worker's
+    /// ceiling and a single reasoning-heavy repair call can spend the whole
+    /// trial budget.
+    #[test]
+    fn the_witness_output_ceiling_only_ever_lowers() {
+        // The worker's 131k ceiling — the measured runaway's headroom — is
+        // brought down to the witness bound.
+        let from_worker = bound_witness_output_tokens(EngineConfig {
+            max_output_tokens: Some(131_072),
+            ..EngineConfig::default()
+        });
+        assert_eq!(
+            from_worker.max_output_tokens,
+            Some(WITNESS_MAX_OUTPUT_TOKENS)
+        );
+
+        // An absent ceiling (provider default) is given the bound outright.
+        let from_none = bound_witness_output_tokens(EngineConfig {
+            max_output_tokens: None,
+            ..EngineConfig::default()
+        });
+        assert_eq!(from_none.max_output_tokens, Some(WITNESS_MAX_OUTPUT_TOKENS));
+
+        // A stricter operator value stands — the bound is a ceiling, not a
+        // floor.
+        let from_stricter = bound_witness_output_tokens(EngineConfig {
+            max_output_tokens: Some(2_048),
+            ..EngineConfig::default()
+        });
+        assert_eq!(from_stricter.max_output_tokens, Some(2_048));
     }
 }
