@@ -560,8 +560,12 @@ class TestUnmeasuredUsageIsNotZeroUsage:
         column from a trial that genuinely ran for free."""
         metrics = MetricsReader().read(self._never_ran(tmp_path), "fix-git")
         assert metrics.tokens_in == 0, "the fixture is a trial with no telemetry"
-        assert metrics.usage_measured is False
+        # The behavioural assertion first, deliberately: on the old code this
+        # line reads `assert 0.0 is None` — a real flip — where leading with
+        # `usage_measured` would only ever report a missing attribute and
+        # prove nothing about what the number used to be (#2173's lesson).
         assert metrics.priced_cost is None, "unknown spend, not zero spend"
+        assert metrics.usage_measured is False
         assert metrics.unpriced_models == (), (
             "the price table is not missing a row here — sending an operator "
             "to edit PRICES for a trial that produced no tokens is noise"
@@ -575,8 +579,8 @@ class TestUnmeasuredUsageIsNotZeroUsage:
         why is the failure mode #2108 fixed for unpriced models, one reason
         over."""
         payload = MetricsReader().read(self._never_ran(tmp_path), "fix-git").to_json()
-        assert payload["usage_measured"] is False
         assert payload["priced_cost"] is None
+        assert payload["usage_measured"] is False
 
     def test_a_measured_trial_still_reports_its_cost(self, tmp_path: Path):
         """The guard must not blank a trial that really did spend: `None` is
@@ -622,8 +626,8 @@ class TestUnmeasuredUsageIsNotZeroUsage:
         )
         metrics = MetricsReader().read(trial_dir, "t")
         assert metrics.steps == 1, "the row itself ingested fine"
-        assert metrics.usage_measured is False
         assert metrics.priced_cost is None
+        assert metrics.usage_measured is False
 
     def test_the_seat_total_refuses_a_partial_priced_sum(self):
         """The second witness, and the match-total half of #2132.
