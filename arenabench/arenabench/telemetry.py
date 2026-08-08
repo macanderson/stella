@@ -319,6 +319,33 @@ class TrialMetrics:
     wasted_elapsed: float | None = None
 
     @property
+    def usage_measured(self) -> bool:
+        """Whether any source published usage for this trial at all (#2132).
+
+        ``False`` means **nothing measured this trial** — which is a different
+        fact from "it spent nothing", and pricing it as one is how a real
+        $0.79 became a confident ``$0.00`` in a cost comparison. The artifacts
+        cannot tell a trial that never launched from one whose stream was lost,
+        and the second kind is not hypothetical: usage can be dropped mid-run
+        (#1467) and a timed-out trial's writer can be reaped while it is still
+        appending (#2131).
+
+        Read off observed spend rather than off the presence of a file or a
+        row, for the same reason the zero-spend guard in :meth:`MetricsReader.read`
+        is: a ``step_usage`` whose token fields never arrived is exactly as
+        unmeasured as no ``step_usage`` at all, and only the numbers say so.
+        No real model call reports zero of everything, so "all counters zero"
+        is "unknown", never "free".
+        """
+        return bool(
+            self.tokens_in
+            or self.tokens_out
+            or self.cache_read
+            or self.cache_write
+            or self.total_cost
+        )
+
+    @property
     def cache_hit_rate(self) -> float | None:
         """Share of prompt tokens served from cache, 0-100.
 
@@ -398,6 +425,7 @@ class TrialMetrics:
                 round(self.priced_cost, 6) if self.priced_cost is not None else None
             ),
             "unpriced_models": list(self.unpriced_models),
+            "usage_measured": self.usage_measured,
             "cache_hit_rate": self.cache_hit_rate,
             "clock_time": round(self.clock_time, 2),
             "age_s": self.age_s,
@@ -716,7 +744,21 @@ class MetricsReader:
         # share would publish a cost that is confidently short, and missing
         # beats wrong here.
         by_model = (events or {}).get("by_model") or {}
-        if any(model for model in by_model):
+        if not metrics.usage_measured:
+            # Nothing measured this trial, so there is nothing to price and no
+            # rate is missing. The branches below would have run its zeroed
+            # counters through `trial_cost` and published `$0.00` — a confident
+            # measurement of "spent nothing" produced by the absence of any
+            # measurement at all, and the one number a cost comparison must
+            # never invent (#2132). `None` is the honest answer, and
+            # `usage_measured` beside it in `to_json` is the reason.
+            #
+            # No `unpriced_models` entry: the table is not missing a row, so
+            # naming a model here would send an operator to edit
+            # `pricing.PRICES` for a trial that produced no tokens — the same
+            # discipline as the queued-trial rule below.
+            metrics.priced_cost = None
+        elif any(model for model in by_model):
             subtotal = 0.0
             for model, bucket in by_model.items():
                 if not model:
@@ -831,12 +873,39 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         "total_cost": sum(t.total_cost for t in trials),
         # Comparable spend: every seat priced from the same table. `None` when
         # no trial had a priced model, so the column stays empty rather than
-        # reading as a free run.
+        # reading as a free run — and `None`, too, when any trial *did* spend
+        # tokens nobody could price.
+        #
+        # That second rule is the #2132 fix. This used to sum the priced share
+        # and publish it as the seat's cost, which silently dropped every
+        # unpriced trial: on match `cc00894779ff` the seat read `$1.94` against
+        # a true `$5.25` — 63% short, with nothing on the number saying it was
+        # a subset. It also contradicted the two rules either side of it. The
+        # per-trial reduction above already blanks a whole trial on one
+        # unpriced subtotal ("missing beats wrong"), `series.py`'s
+        # `_seat_outcomes` already null-poisons a seat, and the arena's cost
+        # tile already null-poisons across seats; `aggregate` was the single
+        # link in that chain that quietly filled the gap with nothing.
+        #
+        # A trial that measured *no* usage does not poison: it has no tokens to
+        # be short by, its whole row already reads empty, and blanking the
+        # column for every match with one crashed setup would trade a wrong
+        # number for no number at all. It is counted in `unmeasured_trials`
+        # instead, so the denominator of every total here stays visible.
         "priced_cost": (
-            sum(t.priced_cost for t in trials if t.priced_cost is not None)
-            if any(t.priced_cost is not None for t in trials)
-            else None
+            None
+            if any(t.priced_cost is None and t.usage_measured for t in trials)
+            else (
+                sum(t.priced_cost for t in trials if t.priced_cost is not None)
+                if any(t.priced_cost is not None for t in trials)
+                else None
+            )
         ),
+        # How many trials contributed no usage measurement at all — the
+        # denominator behind every token and cost total above. Absence of
+        # telemetry is not a measurement of zero (#2132), so a reader has to be
+        # able to see that "4736446 tokens" was summed over six of ten trials.
+        "unmeasured_trials": sum(1 for t in trials if not t.usage_measured),
         # Why the figure above is missing, when it is. A blank cost cell is
         # the symptom and this is the cause, carried in the same payload so
         # every reader of the totals — CLI, UI, a saved `results.json` — can
