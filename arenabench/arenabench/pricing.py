@@ -117,6 +117,20 @@ PRICES: dict[str, Price] = {
     # so leaving this row out would blank the whole trial's cost rather than
     # merely one role's share. Same numbers on both routes, per the catalog.
     "glm-4.5-air": Price(input=0.13, output=0.85, cache_read=0.025),
+    # Moonshot's Kimi K3, as OpenRouter serves it: `moonshotai/kimi-k3` quotes
+    # 0.000003 / 0.000015 per token with an `input_cache_read` of 0.0000003
+    # and no separate cache-write line (`/api/v1/models`, read 2026-08-07) —
+    # the usual "a write is an ordinary input token" shape, which is what
+    # `cache_write=None` means here. The same three numbers are carried by the
+    # Stella seed catalog (`crates/stella-model/src/catalog.rs`, the
+    # `moonshotai/kimi-k3` row), so the two tables agree by construction.
+    #
+    # No first-party row: Moonshot is not a provider any seat can be routed
+    # to (`moonshotai` appears in the catalog only as this OpenRouter entry's
+    # family), so a direct tier would be an unreachable guess. A route with no
+    # row of its own prices at the gateway tier, which errs against the seat
+    # rather than for it (#1498).
+    "kimi-k3": Price(input=3.0, output=15.0, cache_read=0.30),
     "claude-fable-5": Price(
         input=10.0, output=50.0, cache_read=1.0, cache_write=12.50
     ),
@@ -145,7 +159,21 @@ PRICES: dict[str, Price] = {
 }
 
 #: Routing prefixes that are ArenaBench's or Harbor's, never the provider's.
-_ROUTE_PREFIXES = ("openrouter/", "anthropic/", "zai/", "z-ai/", "openai/", "google/")
+#:
+#: Every vendor namespace a gateway slug can carry belongs here, or the bare id
+#: underneath it is unreachable: with ``moonshotai/`` missing, a ``kimi-k3``
+#: row existed for nothing, because no spelling any seat records
+#: (``moonshotai/kimi-k3``, ``openrouter/moonshotai/kimi-k3``) ever collapsed
+#: onto it (#2108).
+_ROUTE_PREFIXES = (
+    "openrouter/",
+    "anthropic/",
+    "zai/",
+    "z-ai/",
+    "openai/",
+    "google/",
+    "moonshotai/",
+)
 
 
 def _normalise(model: str) -> str:

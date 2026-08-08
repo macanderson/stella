@@ -401,6 +401,97 @@ class TestMetrics:
         assert metrics.priced_cost == pytest.approx(0.60 + 0.966)
 
 
+class TestUnpricedModelsAreNamed:
+    """A blank cost column has to say whose cost is blank (#2108).
+
+    Witness: on the old code a seat on an unpriced model produced
+    ``priced_cost = None`` and nothing else — no field, no line, no name — so
+    an entire kimi arm rendered no cost at all in a match billed as a cost
+    comparison, and stayed that way across every kimi match run to date. The
+    price rows are half the fix; being loud when the next model is missing is
+    the other half.
+    """
+
+    def test_a_kimi_seat_now_costs_a_real_number(self, tmp_path: Path):
+        """The bug exactly as observed on match `14d0127b8ca7`: a seat running
+        the OpenRouter Moonshot slug, whose comparable cost was blank."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(
+                    model="moonshotai/kimi-k3",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                    cached_input_tokens=0,
+                )
+            ],
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost == pytest.approx(3.0)
+        assert metrics.unpriced_models == ()
+
+    def test_an_unpriced_model_names_itself_beside_the_missing_cost(
+        self, tmp_path: Path
+    ):
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [usage(model="acme/mystery-1", cost_usd=3.0)],
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost is None, "missing still beats a guessed number"
+        assert metrics.unpriced_models == ("acme/mystery-1",)
+        assert metrics.to_json()["unpriced_models"] == ["acme/mystery-1"]
+
+    def test_every_missing_role_is_named_not_only_the_first(self, tmp_path: Path):
+        """One re-read, one edit: pricing stops at the first miss for the
+        *cost* (it is blank either way) but not for the diagnosis, or fixing a
+        pipeline seat would mean discovering its gaps one match at a time."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(model="zai/glm-5.2", input_tokens=1_000_000, output_tokens=0),
+                usage(role="verifier", model="acme/mystery-1", output_tokens=0),
+                usage(role="triage", model="acme/mystery-2", output_tokens=0),
+            ],
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost is None
+        assert set(metrics.unpriced_models) == {"acme/mystery-1", "acme/mystery-2"}
+
+    def test_a_trial_that_named_no_model_raises_no_warning(self, tmp_path: Path):
+        """A queued trial is unstarted, not unpriced. A warning naming nothing
+        is noise, and noise is what makes the real one easy to skip past."""
+        trial_dir = tmp_path / "job" / "t__1"
+        (trial_dir / "agent").mkdir(parents=True)
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.priced_cost is None
+        assert metrics.unpriced_models == ()
+
+    def test_the_totals_carry_the_names_so_a_reader_sees_the_cause(self):
+        """`aggregate` is what the CLI scoreboard, the arena UI and a saved
+        `results.json` all read. The name has to reach them, or the fix stops
+        at a field nothing displays."""
+        totals = aggregate(
+            [
+                TrialMetrics("a", "a__1", resolved=True, priced_cost=1.5),
+                TrialMetrics(
+                    "b", "b__1", resolved=True, unpriced_models=("moonshotai/kimi-k3",)
+                ),
+                TrialMetrics(
+                    "c", "c__1", resolved=True, unpriced_models=("moonshotai/kimi-k3",)
+                ),
+            ]
+        )
+        assert totals["unpriced_models"] == ["moonshotai/kimi-k3"]
+
+    def test_a_fully_priced_contestant_reports_no_names_at_all(self):
+        totals = aggregate([TrialMetrics("a", "a__1", resolved=True, priced_cost=1.5)])
+        assert totals["unpriced_models"] == []
+
+
 class TestAggregate:
     def test_solve_rate_divides_by_judged_not_attempted(self):
         """Dividing by attempted makes every contestant start near 0% and

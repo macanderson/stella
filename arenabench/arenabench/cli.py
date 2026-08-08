@@ -186,6 +186,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"({totals['passed']}/{totals['judged']})  {cost:>9}  "
             f"(self-reported ${totals['total_cost']:.2f})"
         )
+        # A blank cost column is a finding, not a formatting detail: it went
+        # unremarked across every kimi match because "unpriced" named nothing
+        # an operator could go fix (#2108). Naming the slug turns it into a
+        # one-line edit to `pricing.PRICES`.
+        for slug in totals.get("unpriced_models") or ():
+            print(f"    !! no pricing entry for {slug} — priced cost unavailable")
         if totals["judged"] == 0:
             worst = 1
     if args.results:

@@ -25,6 +25,12 @@ import { Tip } from "@/components/ui/tooltip";
  * - **An unmeasured quantity renders as `—`, never as zero.** Zero is a
  *   score; absence is not. `priced_cost` is null for an unpriced model, and
  *   wasted time is null until some trial has actually been replayed.
+ *
+ * A `—` still has to say *why*, though, or the honesty rule turns into
+ * invisibility: an entire kimi arm rendered no cost for weeks because the
+ * dash looked like every other dash (#2108). When the cost is unknown the
+ * tile's sub-line names the model with no price row, which is the one fact
+ * that turns a blank cell into a one-line fix.
  */
 function Stat({
   label,
@@ -73,8 +79,10 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
     let tokensOut = 0;
     let selfReported = 0;
     let priced: number | null = 0;
+    const unpriced = new Set<string>();
     for (const seat of seats) {
       const t = seat.totals;
+      for (const slug of t.unpriced_models || []) unpriced.add(slug);
       trials += t.trials || 0;
       judged += t.judged || 0;
       passed += t.passed || 0;
@@ -86,7 +94,17 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
         priced = t.priced_cost == null ? null : priced + t.priced_cost;
       }
     }
-    return { trials, judged, passed, running, tokensIn, tokensOut, selfReported, priced };
+    return {
+      trials,
+      judged,
+      passed,
+      running,
+      tokensIn,
+      tokensOut,
+      selfReported,
+      priced,
+      unpriced: [...unpriced].sort(),
+    };
   }, [seats]);
 
   // Solve rate over *judged* trials, not over every trial that exists: a
@@ -170,8 +188,20 @@ export function StatStrip({ snapshot }: { snapshot: Snapshot }) {
       <Stat
         label="cost"
         value={fmtMoney(totals.priced)}
-        sub="one price table, all seats"
-        blurb="Every seat's tokens priced through a single table, which is the only cost figure comparable across contestants. '—' means some model in this match is unpriced, so the total is unknown rather than lower."
+        sub={
+          totals.unpriced.length > 0
+            ? `no price for ${totals.unpriced.join(", ")}`
+            : "one price table, all seats"
+        }
+        tone={totals.unpriced.length > 0 ? "warn" : undefined}
+        blurb={
+          "Every seat's tokens priced through a single table, which is the only cost figure " +
+          "comparable across contestants. '—' means some model in this match is unpriced, so " +
+          "the total is unknown rather than lower" +
+          (totals.unpriced.length > 0
+            ? ` — no row in the shared price table for ${totals.unpriced.join(", ")}.`
+            : ".")
+        }
       />
       <Stat
         label="self-reported"
