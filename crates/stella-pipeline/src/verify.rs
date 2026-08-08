@@ -436,6 +436,20 @@ pub struct LadderInputs {
     /// Carried here so the ladder stays a pure function of one input value,
     /// exactly like [`Self::veto_warnings`].
     pub require_diff_coverage: bool,
+    /// The worker's own `verify_done` tool run printed `WITNESS CONFIRMED`
+    /// this candidate (#2129): a deterministic fail-on-baseline / pass-on-new
+    /// shadow run, observed off the turn's `ToolResult` stream. Distinct from
+    /// [`Self::flip_achieved`] because the pipeline's oracle tracks only its
+    /// own command; before this field, a confirmed `verify_done` flip and a
+    /// failing "no flip" fallback verdict coexisted in one trace.
+    pub verify_done_flip: bool,
+    /// Whether a tracked test command even existed this round (configured
+    /// `--test-command` or an authored witness). Configuration, not evidence,
+    /// like [`Self::veto_warnings`]: when `false`, "no flip" is a demand the
+    /// task structurally cannot meet (#2129 — a one-line `answer.txt`
+    /// deliverable has no tests to flip), and the fallback must not read the
+    /// absence as failure.
+    pub flip_evidence_obtainable: bool,
 }
 
 impl LadderInputs {
@@ -483,8 +497,14 @@ impl LadderInputs {
     /// is scored **unverified**, never failed: a run is not broken by the
     /// absence of a way to check it, and a Terminal-Bench trial that scored
     /// 1.0 against its own verifier has taken exactly this path.
+    ///
+    /// A worker-run `verify_done` confirmation counts as corroboration
+    /// (#2129): it is a deterministic tool observation — the witness failed
+    /// on the pinned baseline and passed on the change — not another model's
+    /// opinion, which is exactly the class of evidence this predicate exists
+    /// to demand.
     pub fn verifier_pass_stands_alone(&self) -> bool {
-        !self.flip_achieved && self.touched_tests_passed != Some(true)
+        !self.flip_achieved && self.touched_tests_passed != Some(true) && !self.verify_done_flip
     }
 
     /// Whether this turn provably did nothing: it dispatched no call that
@@ -994,16 +1014,41 @@ pub fn bound_forwarded_reasoning(text: &str) -> String {
 /// refutation, and it must not outrank the strongest deterministic evidence
 /// this crate has. Before this, a candidate whose flip was confirmed but
 /// whose diff ran over budget (routing it to the model verifier) was driven
-/// to `VerificationFailed` by a provider being down. With neither flip nor
-/// green tests the fallback still fails closed: the escalation existed
-/// because something was genuinely inconclusive, and a revision is the
-/// honest next move.
+/// to `VerificationFailed` by a provider being down. A worker-run
+/// `verify_done` confirmation is the same class of evidence and counts the
+/// same way (#2129): the oracle tracks only its own command, so before this
+/// a trace held `WITNESS CONFIRMED` and a failing "no flip" fallback verdict
+/// at once. With neither flip nor green tests the fallback still fails
+/// closed — **unless no tracked test command exists at all** (#2129): "no
+/// flip" is then a demand the task structurally cannot meet, and over a turn
+/// that produced observable work the fallback abstains upward instead
+/// (`passed: true` with nothing deterministic behind it, which
+/// [`LadderInputs::verifier_pass_stands_alone`] downgrades to an
+/// **unverified** score downstream — never a full pass). Failing that shape
+/// re-opened cleanly finished non-code tasks into loop-kills and timeouts.
 pub fn heuristic_fallback(inputs: &LadderInputs) -> Verdict {
-    let passed = inputs.flip_achieved || inputs.touched_tests_passed == Some(true);
+    // The abstention requires positive work signals: reaching this fallback
+    // already means the ladder found the turn observable, but the guard keeps
+    // this function honest as a pure value — all-dark inputs still FAIL.
+    let unmeetable_demand = !inputs.flip_evidence_obtainable
+        && (inputs.diff_lines > 0 || inputs.file_change_events > 0 || inputs.mutating_actions > 0);
+    let passed = inputs.flip_achieved
+        || inputs.verify_done_flip
+        || inputs.touched_tests_passed == Some(true)
+        || unmeetable_demand;
     let reasoning = if inputs.flip_achieved {
         "verifier unavailable; heuristic fallback passed on the observed fail→pass flip".to_string()
-    } else if passed {
+    } else if inputs.verify_done_flip {
+        "verifier unavailable; heuristic fallback passed on the worker's verify_done \
+         confirmation (witness failed on the pinned baseline, passed on the change)"
+            .to_string()
+    } else if inputs.touched_tests_passed == Some(true) {
         "verifier unavailable; heuristic fallback passed on green touched tests".to_string()
+    } else if passed {
+        "verifier unavailable; no tracked test command exists, so flip evidence is \
+         structurally unobtainable for this task — abstaining on the turn's observed \
+         work rather than failing it (scored unverified downstream)"
+            .to_string()
     } else {
         "verifier unavailable; heuristic fallback failed (no flip, touched tests not \
          confirmed green)"
