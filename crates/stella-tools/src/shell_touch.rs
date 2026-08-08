@@ -346,7 +346,7 @@ impl WorkspaceProbe {
     /// a path one side pruned and the other side saw is *unknowable*, not
     /// changed. Absent from `post` because a new rule now covers it is not a
     /// deletion; present in `post` because a rule was dropped is not a
-    /// creation. Both are skipped ([`Self::ignores`]) — a miss, never a
+    /// creation. Both are skipped (see the private `ignores`) — a miss, never a
     /// fabrication, because the probe never guesses.
     pub fn diff(&self, post: &Self) -> Vec<ShellTouch> {
         let mut touches = Vec::new();
