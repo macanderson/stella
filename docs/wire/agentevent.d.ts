@@ -10,6 +10,12 @@
 // A `"type"` value not listed here is NOT an error: it is an event from a
 // newer stella. Forward-compatible consumers keep such a line intact and move
 // on, exactly as `AgentEvent::Unknown` does on the Rust side.
+//
+// Every variant carries an optional `ts`: the wall-clock instant its sink wrote
+// the line, in milliseconds since the Unix epoch. It is stamped by the sink, not
+// by the event, so it is absent on any line recorded before the field existed —
+// treat it as optional forever, and clamp a negative delta, because a system
+// clock is not monotonic.
 
 /**
  * The semantic kind of one context block — one durable, individually
@@ -1091,18 +1097,38 @@ export interface VerdictEvidence {
  */
 export type AgentEvent = {
   name: StageKind;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "stage";
 } | {
   text: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "text";
 } | {
   delta: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "text_delta";
 } | {
   delta: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "reasoning";
 } | {
   call: ToolCall;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "tool_start";
 } | {
   call_id: string;
@@ -1116,11 +1142,19 @@ export type AgentEvent = {
    * it. `serde(default)` so streams recorded before this field parse.
    */
   speculated?: boolean;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "tool_result";
 } | {
   call_id: string;
   name: string;
   reason: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "speculation_discarded";
 } | {
   /**
@@ -1130,9 +1164,17 @@ export type AgentEvent = {
    */
   attempt: number;
   reason: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "retry";
 } | {
   text: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "steered";
 } | {
   /**
@@ -1148,6 +1190,10 @@ export type AgentEvent = {
    * Seconds between engine-side probes of the watched state.
    */
   poll_interval_secs: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "turn_parked";
 } | {
   /**
@@ -1161,6 +1207,10 @@ export type AgentEvent = {
    * `stella-protocol` never depends on `stella-core`).
    */
   reason: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "turn_woken";
 } | {
   /**
@@ -1189,6 +1239,10 @@ export type AgentEvent = {
    * cycle), or consecutive no-progress calls (stagnation) observed.
    */
   repeats: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   turn_instance: number;
   type: "loop_detected";
 } | {
@@ -1199,6 +1253,10 @@ export type AgentEvent = {
    */
   scope: BudgetScope;
   spent_usd: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "budget_denied";
 } | {
   /**
@@ -1227,6 +1285,10 @@ export type AgentEvent = {
    * reclassified as terminal.
    */
   retryable?: boolean;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   turn_instance: number;
   type: "retries_exhausted";
 } | {
@@ -1241,6 +1303,10 @@ export type AgentEvent = {
    * decision was about.
    */
   subject: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "policy_decision";
 } | {
   after_tokens: number;
@@ -1312,6 +1378,10 @@ export type AgentEvent = {
    */
   superseded?: number;
   superseded_blocks?: string[];
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "compaction";
 } | {
   limit_usd?: number | null;
@@ -1331,6 +1401,10 @@ export type AgentEvent = {
    */
   session_spent_usd?: number | null;
   spent_usd: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "budget_tick";
 } | {
   /**
@@ -1422,6 +1496,10 @@ export type AgentEvent = {
   role?: ModelCallRole;
   step: number;
   tool_calls: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "step_usage";
 } | {
   duration_ms: number;
@@ -1447,17 +1525,29 @@ export type AgentEvent = {
    */
   retries?: number | null;
   role: ModelCallRole;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "usage_incomplete";
 } | {
   cost_usd: number;
   met: boolean;
   reasoning: string;
   round: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "goal_verdict";
 } | {
   from: string;
   reason: string;
   to: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "provider_fallback";
 } | {
   /**
@@ -1469,6 +1559,10 @@ export type AgentEvent = {
   kind: FileChangeKind;
   path: string;
   removed?: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "file_change";
 } | {
   frames: ContextFrameRef[];
@@ -1485,6 +1579,10 @@ export type AgentEvent = {
   latency_ms?: number;
   provider_mix: ProviderShare[];
   tokens: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "context_recall";
   /**
    * The CGP usage report for this recall (`docs/spec/adaptive-context/context-reuse.md` §2):
@@ -1513,6 +1611,10 @@ export type AgentEvent = {
 } | {
   provider: string;
   superseded: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "context_write";
   upserts: number;
 } | {
@@ -1546,6 +1648,10 @@ export type AgentEvent = {
    * Estimated tokens at birth (the engine's estimator).
    */
   token_cost: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "block_registered";
 } | {
   /**
@@ -1598,22 +1704,42 @@ export type AgentEvent = {
   role: ModelCallRole;
   step: number;
   /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
+  /**
    * Monotonic per session — groups the steps of one `run_turn`.
    */
   turn_instance: number;
   type: "step_manifest";
 } | {
   step: ProofStep;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "proof";
 } | {
   evidence: VerdictEvidence;
   passed: boolean;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "verdict";
 } | {
   proposal: ScopeProposal;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "scope_review";
 } | {
   proposal: HunkProposal;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "hunk_review";
 } | {
   /**
@@ -1623,18 +1749,34 @@ export type AgentEvent = {
   id: string;
   options: string[];
   question: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "ask_user";
 } | {
   artifact_id: string;
   kind: MediaKind;
   state: MediaJobState;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "media_progress";
 } | {
   artifact: MediaArtifactRef;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "media_complete";
 } | {
   message: string;
   sha: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "commit";
 } | {
   /**
@@ -1649,21 +1791,41 @@ export type AgentEvent = {
    */
   number?: number | null;
   status: PrStatus;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "pr";
   url: string;
 } | {
   tasks: TaskItem[];
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "task_update";
 } | {
   phase: SubAgentPhase;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "sub_agent";
 } | {
   message: string;
   retryable: boolean;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "error";
 } | {
   cost_usd: number;
   model: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
   type: "complete";
 };
 

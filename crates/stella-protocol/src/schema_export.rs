@@ -80,10 +80,60 @@ pub struct UnsupportedSchema {
     pub detail: String,
 }
 
-/// The JSON Schema (2020-12) for [`AgentEvent`] and its whole payload graph.
+/// The JSON Schema (2020-12) for one line of the event stream: [`AgentEvent`]
+/// and its whole payload graph, plus the optional `ts` its sink stamps on.
+///
+/// `ts` is not a member of any variant — it is added at the write boundary by
+/// [`crate::journal::stamped_line`], because a stamp is a fact about a write and
+/// the engine that produces events owns no clock (#2111). But this artifact
+/// exists to describe *the bytes a consumer reads*, and those bytes carry the
+/// key. Omitting it would leave the one generated document a downstream
+/// implementer trusts silently short of the wire, which is the failure this
+/// module was built to prevent.
+///
+/// So it is attached here rather than derived, in one uniform pass over every
+/// variant, with its prose taken from [`crate::journal::TS_DESCRIPTION`] so the
+/// published contract and the Rust doc cannot drift. Attaching, not deriving,
+/// is the honest shape: `schemars` would only reproduce it by flattening an
+/// envelope into the root, which would cost the discriminated union — and with
+/// it `KnownTypeTag`, the one thing a forward-compatible consumer most needs.
 #[must_use]
 pub fn agent_event_schema() -> Value {
-    schemars::schema_for!(AgentEvent).to_value()
+    let mut schema = schemars::schema_for!(AgentEvent).to_value();
+    attach_journal_stamp(&mut schema);
+    schema
+}
+
+/// Declare `ts` as an optional property of every root variant.
+///
+/// Optional on purpose, and on every surface: a line recorded before the field
+/// existed has none, and `stella-serve` frames the event in an envelope that
+/// stamps its own. "May be present" is the only claim true of all three
+/// surfaces this schema covers.
+///
+/// Silent about a root that is not a `oneOf` of objects. Such a root cannot
+/// come from `AgentEvent` — the sole caller — and the exporter's own
+/// [`tag_literals`] already fails loudly on that shape, so a second bespoke
+/// error here would only duplicate a check that is better placed.
+fn attach_journal_stamp(schema: &mut Value) {
+    let property = serde_json::json!({
+        "description": crate::journal::TS_DESCRIPTION,
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer",
+    });
+    let Some(variants) = schema.get_mut("oneOf").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for variant in variants {
+        if let Some(properties) = variant
+            .get_mut("properties")
+            .and_then(Value::as_object_mut)
+            .filter(|properties| properties.contains_key("type"))
+        {
+            properties.insert("ts".to_string(), property.clone());
+        }
+    }
 }
 
 /// The schema, pretty-printed with a trailing newline.
@@ -126,6 +176,12 @@ const HEADER: &str = "\
 // A `\"type\"` value not listed here is NOT an error: it is an event from a
 // newer stella. Forward-compatible consumers keep such a line intact and move
 // on, exactly as `AgentEvent::Unknown` does on the Rust side.
+//
+// Every variant carries an optional `ts`: the wall-clock instant its sink wrote
+// the line, in milliseconds since the Unix epoch. It is stamped by the sink, not
+// by the event, so it is absent on any line recorded before the field existed —
+// treat it as optional forever, and clamp a negative delta, because a system
+// clock is not monotonic.
 ";
 
 /// Print TypeScript declarations for a schema produced by

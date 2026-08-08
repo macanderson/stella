@@ -153,10 +153,38 @@ it next, which may be a newer client that would have understood them.
   are unordered by definition. Compare parsed values, never raw lines.
 </Callout>
 
+## The `ts` stamp
+
+Every line carries an optional `ts`: the wall-clock instant the sink wrote it, in
+milliseconds since the Unix epoch (UTC).
+
+```json
+{"ts":1754582400123,"type":"tool_result","call_id":"c1","duration_ms":4200}
+```
+
+It is stamped by the *sink*, not carried by the event, and three consequences
+follow that a client has to hold:
+
+- **It is optional forever.** A line recorded before the field existed has none —
+  which is every archived `stella-events.jsonl` — so read it as
+  `ts ?? null`, never as a required key.
+- **It is not monotonic.** It comes from the system clock, so an NTP step can put
+  a later line before an earlier one. Clamp a negative delta to zero rather than
+  rendering it.
+- **It measures the write, not the event.** The same event published to two sinks
+  carries each sink's own instant. Use it for offsets within one stream; do not
+  align two streams to the millisecond with it.
+
+Durations remain the right tool for spans: `tool_result` and `step_usage` carry a
+`duration_ms` measured by the engine, which is exact where `ts` is only an
+anchor.
+
 ## What is *not* guaranteed
 
 - **Ordering between event types** beyond what the pipeline documents. `text_delta`
   lines interleave with other events.
+- **A monotonic `ts`.** See above: it is a wall clock, and it can repeat or move
+  backwards.
 - **That every event has a stable meaning to you.** `text_delta` is an explicit
   best-effort preview: the `text` event that follows carries the authoritative
   step text, and you must *replace* accumulated deltas with it rather than append
