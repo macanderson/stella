@@ -9,7 +9,7 @@ Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumad
 ## Brand
 
 Brand kit v1.0, **"the comet"**: a four-point star moving fast enough to leave
-a trail. One shape, one color — Phosphor Gold `#7C5CFF` on Ink `#080B1C`, warm
+a trail. One shape, one color — Nebula Violet `#7C5CFF` on Ink `#080B1C`, warm
 Paper for the light ground, JetBrains Mono as the only face. Quick rules:
 lowercase always; the comet flies left→right; gold is the signal, never the
 surface; small gold text on light grounds drops to gold-deep `#5133BE`.

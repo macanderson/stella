@@ -49,10 +49,10 @@ REPO = HERE.parents[2]
 # brand tokens — docs/brand/css/tokens.css is normative; these mirror it
 # ---------------------------------------------------------------------------
 
-GOLD = "#7C5CFF"  # Phosphor Gold — the comet, on every ground
+GOLD = "#7C5CFF"  # Nebula Violet — the comet, on every ground
 GOLD_DEEP = "#5133BE"  # small gold *text* on light surfaces only
 INK = "#080B1C"
-PAPER = "#EEF1FA"  # warm text on dark
+PAPER = "#EEF1FA"  # cool text on dark
 PAPER_BG = "#F6F7FB"  # light-mode surface
 MUTED_ON_DARK = "#9AA3C2"
 MUTED_ON_LIGHT = "#5C678F"

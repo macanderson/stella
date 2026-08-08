@@ -1,13 +1,13 @@
 ---
 id: brand
-title: "stella\* — brand kit v1.0"
+title: "stella\* — brand kit v2.0"
 status: living
 ---
 
-# stella\* — brand kit v1.0
+# stella\* — brand kit v2.0
 
 The comet: a four-point star moving fast enough to leave a trail.
-One shape, one color — Phosphor Gold `#7C5CFF` on Ink `#080B1C`.
+One shape, one color — Nebula Violet `#7C5CFF` on Ink `#080B1C`.
 
 **Start with `brand-guidelines.html`** — it explains everything below,
 adapts to light/dark, and works offline.

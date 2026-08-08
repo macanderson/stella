@@ -1,14 +1,14 @@
 /**
  * stella docs — the semantic layer.
  *
- * Brand system: brand kit v1.0, "the comet" — Phosphor Gold on Ink, warm Paper
+ * Brand system: brand kit v2.0, "the comet" — Nebula Violet on Ink, cool Paper
  * on the light side, JetBrains Mono as the one and only face (docs/brand/ is
  * the normative source). The product lives in a terminal, so the brand speaks
  * in monospace; there is no second family to fall back to, on purpose.
  *
  * Three rules the rest of the file obeys:
  *
- * Gold is the signal, never the surface. It appears where attention belongs —
+ * The nebula is the signal, never the surface. It appears where attention belongs —
  * the mark, the prompt, the active item, the primary action — and nowhere
  * else. If everything is gold, nothing is.
  *
@@ -73,7 +73,7 @@
   --stella-faint: var(--stella-muted-fg); /* 4.6:1 on paper-bg */
   --stella-mark: var(--stella-accent-text); /* small gold marks beside text */
 
-  /* The one primary action: a Phosphor Gold fill with an ink label. Gold is
+  /* The one primary action: a Nebula Violet fill with an ink label. Gold is
    * the signal — the CTA is the signal, so it is the one gold surface. */
   --stella-cta-bg: var(--stella-gold);
   --stella-cta-fg: var(--stella-ink);
@@ -727,7 +727,7 @@ html[data-home-nav="hidden"] #nd-nav {
  *
  * The terminal is ALWAYS ink, in both themes: the product lives in a dark
  * terminal, and the transcript is a window into it, not a panel of the page.
- * This is also the one place full-strength Phosphor Gold text appears on the
+ * This is also the one place full-strength Nebula Violet text appears on the
  * light page — because inside the window, the ground is ink.
  * ═════════════════════════════════════════════════════════════════════════ */
 

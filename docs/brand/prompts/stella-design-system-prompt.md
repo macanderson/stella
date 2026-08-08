@@ -14,13 +14,13 @@ Lockup = this mark + "stella" in JetBrains Mono ExtraBold, lowercase, tracking �
 
 ## color — hard tokens
 
-- **Phosphor Gold `#7C5CFF`** — THE brand color (CRT amber phosphor + the gold star). Primary buttons, focus rings, key accents, the mark. Never body text on light surfaces.
+- **Nebula Violet `#7C5CFF`** — THE brand color (CRT amber phosphor + the gold star). Primary buttons, focus rings, key accents, the mark. Never body text on light surfaces.
 - **gold-deep `#5133BE`** — gold for small text on light surfaces (3.79:1, AA-large only).
 - **Ink `#080B1C`** — dark surface. Never pure black. **Paper `#EEF1FA`** — text on dark. **Paper-bg `#F6F7FB`** — light surface.
 - Gold ramp 50→950: `#F2EFFF #E4DEFF #CFC5FF #B6A6FF #9A81FF #7C5CFF #6544E6 #5133BE #3D2694 #2A1A66 #170E3B`
-- Warm neutral ramp 50→950: `#F6F7FB #E6E9F2 #D2D7E6 #B9C0D6 #9AA3C2 #7E88AB #333C68 #333C68 #1E2547 #10142E #080B1C`
+- Cool neutral ramp 50→950: `#F6F7FB #E6E9F2 #D2D7E6 #B9C0D6 #9AA3C2 #7E88AB #5C678F #333C68 #1E2547 #10142E #080B1C`
 - Semantic (shadcn-style): primary = gold with ink foreground; ring = gold. Dark: background ink, card `#10142E`, border `#232A4D`, muted-foreground `#9AA3C2`, destructive `#E4573F`. Light: background `#F6F7FB`, card `#FDFDFF`, border `#DDE2F0`, muted-foreground `#5C678F`, destructive `#D4432F`.
-- Budget per view: surfaces + text ≈86%, secondary ≈10%, gold ≤4%. Gold is the signal, never the surface.
+- Budget per view: surfaces + text ≈86%, secondary ≈10%, gold ≤4%. The nebula is the signal, never the surface.
 - Contrast facts to respect: gold on ink 10.7:1 (AAA); gold on paper-bg 1.64:1 (decorative only — swap to gold-deep for text).
 
 ## typography
@@ -41,7 +41,7 @@ Nothing rotates, pulses, or bounces idly. Elements arrive fast and settle precis
 
 ## components to design
 
-Buttons (primary: gold fill, ink text; secondary: 1px outline; ghost), inputs with gold focus ring, terminal window (ink bg, three dots top-left, `$` prompt, blinking block cursor), code block with copy button, sticky nav with backdrop blur and the lockup at left, hero with a one-line install command inside a terminal window, benchmark section for Terminal-Bench 2.1 results (gold bar/line = stella, warm neutrals = competitors — gold never used for anything but stella), feature cards, comparison table, pricing cards, badge/chip in overline style, stat tiles with gold numerals ("2.1× faster"), toast/callout, tabs, docs layout (sidebar + prose column), footer with faint starfield texture.
+Buttons (primary: gold fill, ink text; secondary: 1px outline; ghost), inputs with gold focus ring, terminal window (ink bg, three dots top-left, `$` prompt, blinking block cursor), code block with copy button, sticky nav with backdrop blur and the lockup at left, hero with a one-line install command inside a terminal window, benchmark section for Terminal-Bench 2.1 results (gold bar/line = stella, cool neutrals = competitors — gold never used for anything but stella), feature cards, comparison table, pricing cards, badge/chip in overline style, stat tiles with gold numerals ("2.1× faster"), toast/callout, tabs, docs layout (sidebar + prose column), footer with faint starfield texture.
 
 ## pages
 

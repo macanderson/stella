@@ -21,7 +21,7 @@ import {
  * double up — the kit's own lockup SVG omits it for the same reason.
  *
  * Colours are literals or imported constants rather than CSS vars because
- * Satori resolves no cascade: Ink #080b1c, Paper #eef1fa, Phosphor Gold
+ * Satori resolves no cascade: Ink #080b1c, Paper #eef1fa, Nebula Violet
  * #7c5cff, muted #9aa3c2 (5.9:1 on ink). Keep the markup inside Satori's
  * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
  * filters (the trails are pre-flattened rounded rects for exactly this
