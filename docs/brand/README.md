@@ -29,6 +29,8 @@ pwa/               favicon.ico + png favicons · apple-touch · 192/512 +
 css/globals.css    shadcn/ui base for Tailwind v4 (oklch, light + .dark)
 css/tokens.css     framework-free brand tokens: ramps, type, motion, texture
 fonts/             JetBrains Mono woff2 (400/500/700/800) + OFL license
+brand-tokens.toml  color source for `pnpm generate-assets` — recolors
+                   pwa/, wallpapers/, and spinners/*.gif — see below
 ```
 
 Quick rules: lowercase always. Comet flies left→right. Gold is the signal,
@@ -71,3 +73,57 @@ Three things about that art are deliberate:
 - **The website renders its own OG card.** `website/src/app/opengraph-image.tsx`
   is the same composition through next/og, and it ships no binary. Changing the
   card here usually means changing it there too.
+
+## generated assets — pwa/, wallpapers/, spinners/\*.gif
+
+Unlike `social/`, these three families had no committed generator (#2224):
+a palette change meant hand-editing PNG/GIF pixels. `brand-tokens.toml` +
+`pnpm generate-assets` fixes that:
+
+```
+brew install oxipng           # lossless PNG re-encoder (MIT) — see below
+cd docs/brand
+pnpm install
+pnpm generate-assets          # recolor pwa/, wallpapers/, spinners/*.gif
+                               # + their website/ mirrors, in place
+pnpm check-assets             # verify committed files match the tokens;
+                               # exits 1 (no writes) if anything's stale
+```
+
+Needs `oxipng` (`brew install oxipng`) the same way `social/`'s generator
+needs `rsvg-convert`: pngjs (the npm PNG codec this pipeline decodes and
+recolors pixels with) has no optimizing encoder of its own — its default
+writer runs ~3x larger than the committed files on this kit's art — and the
+usual npm fix, `sharp`, bundles a `libvips` binary built `LGPL-3.0-or-later`,
+which fails this repo's (AGPL/commercial dual-licensed) dependency-review
+gate. `oxipng` is MIT-licensed and re-encodes losslessly over stdin/stdout,
+so it's an external tool dependency instead — see `scripts/lib/png.mjs`'s
+module doc.
+
+Edit `brand-tokens.toml` — the nebula gradient (violet→cyan) plus a dark and
+a light `{bg, fg}` — and re-run. Everything else about these files is
+untouched: **this recolors, it does not recompose.** None of the three
+families has a committed vector/composition source (glow, starfield, grid,
+animation timing were never checked in — only their rendered pixels were),
+so `scripts/generate-assets.mjs` decomposes each committed pixel into a
+brand-token basis (`scripts/lib/recolor.mjs` has the how and why) and
+re-renders it under the new tokens at the exact same position, opacity, and
+frame. Geometry, padding, the maskable safe-zone inset, and every spinner's
+animation timing are never read from `brand-tokens.toml` and never change —
+only fills do. `spinners/*.svg` are real committed sources, so those recolor
+by exact hex substitution instead of decomposition.
+
+Two things this does **not** cover, both inherited from the same root cause
+(no committed source for these families) rather than fixed by it — see
+#2224 for the open half:
+
+- **The comet mark itself is fixed.** `logo/svg/*.svg` (and the
+  `website/public/brand/*.svg` mirror `website/src/components/brand.tsx`
+  depends on) are never touched — per this file's second line, Nebula Violet
+  on Void *is* the identity, not a themeable default.
+- **Geometry still can't change.** A new safe-zone inset, a different
+  starfield density, a longer spinner reveal — none of that is possible
+  without first authoring real composition sources for wallpapers/PWA icons,
+  which `pnpm generate-assets` deliberately doesn't attempt: a from-scratch
+  recomposition could silently drift from the committed art with no source
+  to diff it against, which is worse than leaving the gap open.

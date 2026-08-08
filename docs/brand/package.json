@@ -1,0 +1,21 @@
+{
+  "name": "@stella/brand-kit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generator for the color-derived binaries in the stella brand kit (PWA icons, wallpapers, spinner GIFs) and their website mirrors.",
+  "packageManager": "pnpm@11.13.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "generate-assets": "node scripts/generate-assets.mjs",
+    "check-assets": "node scripts/generate-assets.mjs --check",
+    "test": "node --test 'scripts/**/*.test.mjs'"
+  },
+  "dependencies": {
+    "omggif": "1.0.10",
+    "pngjs": "7.0.0",
+    "smol-toml": "1.7.1"
+  }
+}
