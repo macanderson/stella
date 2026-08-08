@@ -35,8 +35,9 @@
 //! reflection write-back tags every episode whose turn touched files, admitting
 //! on it would re-open #2289 at full width — the same tagged notes on every
 //! prompt, forever. Overlap keeps its honest job as an RRF ranking signal
-//! ([`super::recall_scoped`]'s fusion), which orders the admissible rather
-//! than admitting; it earns evidence status back when a real per-query scope
+//! (it is one of the lists [`super::ranking::rrf_fuse`] folds), which orders
+//! the admissible rather than admitting; it earns evidence status back when a
+//! real per-query scope
 //! exists to make it conditional (#2333). Witness:
 //! `a_full_vocabulary_domain_scope_is_not_evidence`.
 //!
