@@ -66,14 +66,6 @@ use std::collections::HashMap;
 
 use crate::glob::match_glob;
 
-mod metadata;
-
-use metadata::metadata_from_frontmatter;
-pub use metadata::{
-    RuleEnforcement, RuleMetadata, RuleMetadataError, RuleOrigin, RuleRecordKind,
-    render_rule_metadata,
-};
-
 // Types (ports `rules/types.ts`)
 
 /// A machine-enforceable guard that blocks a tool call violating the rule
@@ -117,13 +109,6 @@ pub struct Rule {
     /// Where the rule came from (a file path, or any opaque source label —
     /// TS: `source: string`).
     pub source: String,
-    /// Optional, Git-reviewable context-as-code metadata. Metadata-free rules
-    /// remain first-class rules during the staged migration.
-    pub metadata: Option<RuleMetadata>,
-    /// Metadata issues retained alongside a still-loadable rule. Keeping
-    /// these separate lets a future read-only linter explain invalid metadata
-    /// without changing legacy prompt or guard behavior.
-    pub metadata_errors: Vec<RuleMetadataError>,
 }
 
 impl Rule {
@@ -343,10 +328,9 @@ fn guard_from(data: &HashMap<String, String>) -> Option<RuleGuard> {
 
 /// Why a rule file did not load at all.
 ///
-/// Distinct from [`RuleMetadataError`], which describes a rule that loaded with
-/// unusable metadata: these refuse the file. The distinction is the point —
-/// legacy metadata-free rules must keep working, so only a defect that makes the
-/// *rule itself* untrustworthy is fatal.
+/// These refuse the file, and that severity is the point: unknown frontmatter
+/// keys (including the retired context-as-code metadata keys) load inert, so
+/// only a defect that makes the *rule itself* untrustworthy is fatal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuleFileError {
     /// No frontmatter `name` and no usable filename stem.
@@ -410,18 +394,12 @@ pub fn rule_from_file_checked(path: &str, raw: &str) -> Result<Rule, RuleFileErr
     if fm.body.trim().is_empty() {
         return Err(RuleFileError::EmptyStatement);
     }
-    let (metadata, metadata_errors) = match metadata_from_frontmatter(&fm) {
-        Ok(metadata) => (metadata, Vec::new()),
-        Err(errors) => (None, errors),
-    };
     Ok(Rule {
         id,
         description: fm.data.get("description").cloned().unwrap_or_default(),
         text: fm.body.trim().to_string(),
         guard: guard_from(&fm.data),
         source: path.to_string(),
-        metadata,
-        metadata_errors,
     })
 }
 
