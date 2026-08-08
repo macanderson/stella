@@ -394,16 +394,18 @@ _SPEC_SUFFIXES = frozenset(
 )
 
 #: `from stella_harbor… import a, b as c` — the same pattern the per-seam check
-#: above uses, applied to the whole tree rather than one directory.
+#: above uses, applied to the whole tree rather than one directory. The leading
+#: run is horizontal whitespace only, unlike that one's `\s*`: `\s` spans
+#: newlines, which would put a match's start on a blank line above the import
+#: and report the wrong line number.
 _EMBEDDED_IMPORT = re.compile(
-    r"^\s*from\s+(stella_harbor(?:\.[\w.]+)?)\s+import\s+([^\n#]+)", re.MULTILINE
+    r"^[ \t]*from[ \t]+(stella_harbor(?:\.[\w.]+)?)[ \t]+import[ \t]+([^\n#]+)",
+    re.MULTILINE,
 )
 
 #: `--agent-import-path stella_harbor:StellaAgent`, and the packaging spelling
 #: of the same thing (`stella_harbor.secure_launcher:main`).
-_ENTRY_POINT_SPEC = re.compile(
-    r"\bstella_harbor(\.[A-Za-z_][\w.]*)?:([A-Za-z_]\w*)"
-)
+_ENTRY_POINT_SPEC = re.compile(r"\bstella_harbor(\.[A-Za-z_][\w.]*)?:([A-Za-z_]\w*)")
 
 
 class _Sweep(NamedTuple):
@@ -476,7 +478,9 @@ def _member(module: ModuleType, name: str) -> Any | None:
 def _attribute(obj: Any, parts: list[str]) -> Any | None:
     """Resolve a dotted chain off an already-bound object."""
     for part in parts:
-        found = _member(obj, part) if inspect.ismodule(obj) else getattr(obj, part, None)
+        found = (
+            _member(obj, part) if inspect.ismodule(obj) else getattr(obj, part, None)
+        )
         if found is None:
             return None
         obj = found
@@ -537,7 +541,9 @@ def _check_call(
         return False
 
     accepted = set(signature.parameters)
-    unknown = sorted({keyword.arg for keyword in node.keywords if keyword.arg} - accepted)
+    unknown = sorted(
+        {keyword.arg for keyword in node.keywords if keyword.arg} - accepted
+    )
     if unknown:
         problems.append(
             f"{where}:{node.lineno}: `{label}` is called with {unknown}, which "
@@ -553,7 +559,10 @@ def _check_call(
             1
             for p in parameters
             if p.kind
-            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
         )
         if len(node.args) > seats:
             problems.append(
@@ -638,7 +647,11 @@ def _sweep_python(
             chain = _dotted(node.func)
             if not chain or chain[0] not in bound:
                 continue
-            target = bound[chain[0]] if len(chain) == 1 else _attribute(bound[chain[0]], chain[1:])
+            target = (
+                bound[chain[0]]
+                if len(chain) == 1
+                else _attribute(bound[chain[0]], chain[1:])
+            )
             label = ".".join(chain)
             if target is None:
                 problems.append(
@@ -661,8 +674,13 @@ def _sweep_embedded(root: Path, problems: list[str]) -> tuple[int, set[str]]:
         if text is None or "stella_harbor" not in text:
             continue
         where = path.relative_to(root).as_posix()
-        for module_name, imported in _EMBEDDED_IMPORT.findall(text):
-            line = text[: text.index(f"from {module_name} import")].count("\n") + 1
+        for match in _EMBEDDED_IMPORT.finditer(text):
+            module_name, imported = match.group(1), match.group(2)
+            # From the match offset, not a search for the text: a script that
+            # imports twice from the same module would otherwise report both
+            # at the first one's line, and a wrong line number in a paid-run
+            # driver is a wrong file to open at 3am.
+            line = text.count("\n", 0, match.start()) + 1
             module = _import_module(module_name, f"{where}:{line}", problems)
             if module is None:
                 files.add(where)
