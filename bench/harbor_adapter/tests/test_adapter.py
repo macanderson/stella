@@ -297,6 +297,51 @@ class TestBuildCommand:
         assert cmd[-5:] == ["run", "--output-format", "stream-json", "--", "Fix the bug"]
         assert "--base-url" not in cmd  # not set
 
+    def test_bare_loop_arm_passes_no_pipeline_after_the_run_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The bare-loop arm exists at all: `--no-pipeline` reaches argv.
+
+        Without it there is no way to measure the raw step loop, so a match
+        comparing agent architectures silently measured the pipeline instead.
+        """
+        monkeypatch.setenv("STELLA_NO_PIPELINE", "1")
+        agent = _bare_agent()
+        agent.model_name = "openrouter/anthropic/claude-opus-5"
+
+        cmd = agent._build_command("Fix the bug")
+
+        assert "--no-pipeline" in cmd
+        # A flag OF `run`, never a global — clap rejects it before the subcommand.
+        assert cmd.index("--no-pipeline") > cmd.index("run")
+        assert cmd[-5:] == [
+            "--no-pipeline",
+            "--output-format",
+            "stream-json",
+            "--",
+            "Fix the bug",
+        ]
+
+    def test_pipeline_is_the_default_and_a_falsey_value_does_not_disable_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Absent or explicitly-off leaves the shipping configuration running.
+
+        `STELLA_NO_PIPELINE=false` must keep the pipeline ON: a selector spelled
+        to close must not open, the same discipline `STELLA_TRUST_PROJECT`
+        learned the hard way.
+        """
+        agent = _bare_agent()
+        agent.model_name = "openrouter/anthropic/claude-opus-5"
+
+        monkeypatch.delenv("STELLA_NO_PIPELINE", raising=False)
+        assert "--no-pipeline" not in agent._build_command("Fix the bug")
+
+        for spelled_off in ("false", "0", "no", "off", ""):
+            monkeypatch.setenv("STELLA_NO_PIPELINE", spelled_off)
+            cmd = agent._build_command("Fix the bug")
+            assert "--no-pipeline" not in cmd, spelled_off
+
     def test_env_overrides_and_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STELLA_MODEL", "zai/glm-5.2")
         monkeypatch.setenv("STELLA_BUDGET", "10.0")

@@ -186,6 +186,22 @@ _DURABLE_STREAM_ENV = "STELLA_DURABLE_STREAM_JSON_PATH"
 _ENGINE_CONFIG_ENV = "STELLA_ENGINE_CONFIG_JSON"
 _HANDOFF_MODE = "anonymous-fd"
 
+# Selects the raw step loop (`stella run --no-pipeline`) instead of the staged
+# pipeline. One flag settles all three management stages at once, because
+# triage, witness and verify ARE the pipeline — the bare loop has no stage to
+# turn off individually. This is the arm that measures the agent loop itself:
+# with the pipeline in, a board number folds worker capability together with
+# triage/witness/verdict behaviour, and #2128/#2129 showed those can dominate
+# it. Host-only, expressed purely as argv; nothing about it is forwarded into
+# the task container.
+_NO_PIPELINE_ENV = "STELLA_NO_PIPELINE"
+
+# Stella's own truthy vocabulary (`crates/stella-cli/src/settings.rs::truthy_flag`).
+# Matched exactly, and deliberately not "any non-empty value": a posture spelled
+# `STELLA_NO_PIPELINE=false` must leave the pipeline ON, the same way
+# `STELLA_TRUST_PROJECT=false` must not open the trust boundary.
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
 # Apply these *after* every ambient/Harbor-provided extra. A benchmark task is
 # untrusted input: it must not load a repository .env, opt itself into trusted
 # project settings/hooks, or route paid provider traffic through a task-chosen
@@ -258,6 +274,11 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # The third coupled ceiling (#1211 §6.2). Same bucket again: read on the
         # host, reaching Stella only inside the hashed posture.
         _MODEL_TIMEOUT_ENV,
+        # The bare-loop selector. Host-only for the same reason as the turn
+        # deadline above: read here, expressed as argv, never forwarded — and
+        # registered because the ambient check fails closed, so an unlisted
+        # selector refuses the run rather than quietly running the other arm.
+        _NO_PIPELINE_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
         # both so `build_sut.sh` builds to the same floor `preflight` asserts
         # against — keeping them apart is what let a glibc-2.35 binary reach five
@@ -1333,7 +1354,13 @@ class StellaAgent(BaseInstalledAgent):
         # instead of parsing as a flag. Without it, `stella run '- foo'`
         # exits 2 before the agent starts — one 2026-07-31 trial
         # (pytorch-model-recovery) died exactly this way and scored 0.
-        parts += ["run", "--output-format", "stream-json", "--", instruction]
+        parts += ["run"]
+        # A flag OF `run`, like `--output-format` and for the same reason
+        # (stella#1493): it is a promise about this one invocation, not a
+        # session-wide setting.
+        if self._bare_loop_requested():
+            parts += ["--no-pipeline"]
+        parts += ["--output-format", "stream-json", "--", instruction]
         return parts
 
     def _selected_provider_credentials(self) -> SelectedProviderCredentials:
@@ -1405,6 +1432,16 @@ class StellaAgent(BaseInstalledAgent):
         if budget is None or not str(budget).strip():
             return None
         return budget
+
+    def _bare_loop_requested(self) -> bool:
+        """Whether this arm runs the raw step loop instead of the pipeline.
+
+        Absent means the pipeline, which is what ``stella run`` does by default
+        — an arm has to ask for the bare loop, so a match that says nothing
+        measures the shipping configuration.
+        """
+        value = self._configured_value(_NO_PIPELINE_ENV)
+        return value is not None and value.strip().lower() in _TRUTHY_ENV_VALUES
 
     def _configured_turn_budget(self) -> str | None:
         """Resolve the turn deadline in seconds, or ``None`` for no deadline.
@@ -1558,6 +1595,9 @@ class StellaAgent(BaseInstalledAgent):
             budget_usd = _NO_BUDGET_CAP
         turn_budget_sec = getattr(self, "_turn_budget_sec", None)
         turn_budget_sec = turn_budget_sec or self._configured_turn_budget()
+        # Resolved the same way `_build_command` resolves it, so the manifest
+        # cannot disagree with the argv that ran.
+        bare_loop = self._bare_loop_requested()
         credential_handoff_mode = getattr(
             self, "_credential_handoff_mode", _HANDOFF_MODE
         )
@@ -1645,6 +1685,13 @@ class StellaAgent(BaseInstalledAgent):
             # The wall-clock half of the same disclosure (#2135).
             "stella_turn_budget_sec": turn_budget_sec or _NO_TASK_DEADLINE,
             "stella_output_format": "stream-json",
+            # Which loop actually ran. First-class rather than inferable,
+            # because the posture below still names a verifier and a triage
+            # author on a bare-loop arm — they are inputs the CLI ignores once
+            # `--no-pipeline` selects the raw step loop, and a manifest that
+            # only showed the posture would read as a pipeline run that simply
+            # never authored a witness (#2134's shape exactly).
+            "stella_loop_mode": "bare_step_loop" if bare_loop else "staged_pipeline",
             "stella_disable_reflection": reflection,
             "stella_reflection_policy": (
                 "disabled_for_ephemeral_benchmark"
