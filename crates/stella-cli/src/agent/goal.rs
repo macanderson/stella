@@ -110,6 +110,21 @@ pub(crate) async fn run_raw_one_shot(
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
     let mut presence = SessionPresence::announce(cfg, prompt, &registry);
+    // Probe the workspace once for this turn instead of twice per shell call.
+    //
+    // This is the bracket the staged pipeline has always armed and the raw
+    // step loop never did (#2337), which left `ToolRegistry::execute` on its
+    // per-call branch — the granularity `turn_probe`'s own doc comment says
+    // "would have spent the entire trial budget watching itself work". It
+    // measurably did: on Terminal-Bench's `sqlite-with-gcov`, one `tar xzf`
+    // of the vendored SQLite tarball cost ~500s of a 900s budget with nothing
+    // but tree walks to show for it.
+    //
+    // Settled in `close_event_stream` rather than after `run_turn` returns,
+    // because the turn's event sender dies inside it: the ledger would still
+    // be written, but every `FileChange` would be born into a closed channel
+    // and the journal would show a turn that touched nothing.
+    registry.begin_workspace_probe();
     let outcome = run_turn(
         &*provider,
         base_tools,

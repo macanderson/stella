@@ -73,7 +73,7 @@ use outcome::{
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
 pub(crate) use persistence::{
-    PersistOutcome, close_event_stream, persist_event, persist_event_detailed,
+    PersistOutcome, TurnBracket, close_event_stream, persist_event, persist_event_detailed,
     record_execution_end, spawn_renderer, warn_store_write_failed,
 };
 pub(crate) use presence::SessionPresence;
@@ -567,7 +567,7 @@ async fn run_pipeline_one_shot(
             cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
         });
     }
-    let rendered = close_event_stream(&registry, tx, renderer).await;
+    let rendered = close_event_stream(&registry, tx, renderer, TurnBracket::Leave).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
 
@@ -2143,7 +2143,7 @@ async fn run_turn(
     // channel, ending the renderer's `recv()` loop; awaiting it ensures every
     // already-queued event has actually printed before this function returns
     // (no events lost to a detached task racing process exit).
-    let rendered = close_event_stream(registry, tx, renderer).await;
+    let rendered = close_event_stream(registry, tx, renderer, TurnBracket::Settle).await;
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
 
