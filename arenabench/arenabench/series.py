@@ -97,7 +97,16 @@ def _seat_outcomes(metrics: dict[str, Any]) -> dict[str, Any]:
         judged += 1
         clock_time += m.clock_time or 0.0
         if priced is not None:
-            priced = None if m.priced_cost is None else priced + m.priced_cost
+            if m.priced_cost is not None:
+                priced += m.priced_cost
+            elif m.usage_measured:
+                # Spent tokens nobody could price: unknown, never smaller.
+                priced = None
+            # else: a trial nothing measured, skipped rather than poisoning the
+            # seat. It has no tokens to be short by, and since #2132 gave it
+            # `priced_cost = None` (it used to be a fabricated `0.0`),
+            # poisoning here would blank the trends cost for every match that
+            # contains one crashed setup.
         unpriced.update(m.unpriced_models)
         reason = m.outcome_reason() or "unlabelled"
         reasons[reason] = reasons.get(reason, 0) + 1
