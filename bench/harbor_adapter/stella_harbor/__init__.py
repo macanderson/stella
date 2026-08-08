@@ -174,6 +174,8 @@ _DEFAULT_BUDGET = "5.0"
 # recorded one" the same way. Deliberately not numeric: nothing downstream
 # should be able to read it as a ceiling that was in force.
 _NO_BUDGET_CAP = "unbounded"
+# The same discipline on the wall-clock axis (#2135; `turn_budget` says why).
+_NO_TASK_DEADLINE = "unarmed"
 _DEFAULT_DISABLE_REFLECTION = "1"
 _DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _ADAPTER_VERSION = "0.6.0"
@@ -817,6 +819,7 @@ class StellaAgent(BaseInstalledAgent):
     # `None` is "no per-trial cap", which is a real posture and not a missing
     # value — see `_configured_budget`.
     _budget_usd: str | None
+    _turn_budget_sec: str | None
     _credential_handoff_mode: str
     _host_credential_source: str
     _host_credential_name: str | None
@@ -1026,6 +1029,7 @@ class StellaAgent(BaseInstalledAgent):
         env = self._forwarded_env()
         self._disable_reflection = env["STELLA_DISABLE_REFLECTION"]
         self._budget_usd = self._configured_budget()
+        self._turn_budget_sec = self._configured_turn_budget()
         verifier = self._verifier_model()
         (
             self._engine_posture,
@@ -1405,18 +1409,13 @@ class StellaAgent(BaseInstalledAgent):
     def _configured_turn_budget(self) -> str | None:
         """Resolve the turn deadline in seconds, or ``None`` for no deadline.
 
-        Policy and parsing live in :mod:`stella_harbor.turn_budget`; this
-        supplies the two inputs and nothing else.
-
-        ``getattr`` rather than attribute access: Harbor constructs this class,
-        but the suite builds instances without running ``__init__`` — the same
-        reason ``_configured_value`` reaches for ``_resolved_env_vars`` this
-        way — and an adapter that only works when fully constructed is an
-        adapter whose deadline handling is untested.
+        Policy, parsing, precedence and the reason ``logs_dir`` is an input at
+        all (#2135) live in :mod:`stella_harbor.turn_budget`.
         """
         return _resolve_turn_budget(
             getattr(self, "_agent_timeout_sec", None),
             self._configured_value(_TURN_BUDGET_ENV),
+            getattr(self, "logs_dir", None),
         )
 
     def _forwarded_env(self) -> dict[str, str]:
@@ -1557,6 +1556,8 @@ class StellaAgent(BaseInstalledAgent):
             budget_usd = self._configured_budget()
         if budget_usd is None:
             budget_usd = _NO_BUDGET_CAP
+        turn_budget_sec = getattr(self, "_turn_budget_sec", None)
+        turn_budget_sec = turn_budget_sec or self._configured_turn_budget()
         credential_handoff_mode = getattr(
             self, "_credential_handoff_mode", _HANDOFF_MODE
         )
@@ -1641,6 +1642,8 @@ class StellaAgent(BaseInstalledAgent):
             "stella_base_url": base_url,
             "stella_provider_route_policy": provider_route_policy,
             "stella_budget_usd": budget_usd,
+            # The wall-clock half of the same disclosure (#2135).
+            "stella_turn_budget_sec": turn_budget_sec or _NO_TASK_DEADLINE,
             "stella_output_format": "stream-json",
             "stella_disable_reflection": reflection,
             "stella_reflection_policy": (

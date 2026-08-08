@@ -33,11 +33,48 @@ deadline has to come from the trial.
 comparator whose winning `regex-chess` run took 2,746s of wall clock on this
 same dataset. Stella was declining continuations roughly 3x too early, which
 turns a policy meant to save turns into one that ends them.
+
+## Why the agent kwarg alone was not enough (#2135)
+
+The two inputs above are both things a *caller* has to remember to supply, and
+in match `cc00894779ff` neither was: every trial's `config.json` records
+`agent.kwargs: {}`, and ArenaBench's `harbor run` command line
+(`arenabench/arenabench/runner.py`) passes no `--agent-kwarg` at all. So
+`resolve_turn_budget(None, None)` returned `None`, `--turn-budget` was omitted
+from argv, `Config::turn_budget` stayed `None`, and
+`stella_cli::runtime::one_shot_budget_guard` never called
+`BudgetGuard::set_task_deadline`. The whole #1481/#1503/#1507 mechanism was
+built, wired and armed-capable, and simply never armed — every timeout in that
+match was Harbor's own `AgentTimeoutError` SIGKILL at 900.0s.
+
+A supplied kwarg is therefore treated as the operator's explicit statement, not
+as the only channel. Harbor already writes the resolved trial configuration to
+`config.json` at the trial root — one level above the agent's `logs_dir`, as
+the first statement of `Trial.run()`, before the agent is started — and that
+document plus the task's own `task.toml` carry every input Harbor's own
+deadline arithmetic uses. [`discover_trial_deadline`] recomputes it from those
+two files, so the deadline is per-trial (the shape requirement above) and no
+runner has to remember anything.
+
+That recomputation mirrors `harbor/trial/trial.py` and is therefore coupled to
+a version of Harbor. It **fails open**, always: any missing, unreadable, or
+mis-shaped input reads as "no deadline known" and leaves the flag off, which is
+exactly the behaviour that shipped before this module existed. Guessing a
+deadline is the one outcome that is worse than not having one.
 """
 
 from __future__ import annotations
 
+import json
+import tomllib
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
+
+# Harbor's own filenames. `config.json` is the resolved trial configuration
+# (`TrialPaths.config_path`); `task.toml` is the task definition it points at.
+TRIAL_CONFIG_FILENAME = "config.json"
+TASK_CONFIG_FILENAME = "task.toml"
 
 # Host-side name for the deadline, forwarded to the CLI as `--turn-budget`.
 # Registered host-only in the adapter: it is read on the host and expressed as
@@ -85,16 +122,134 @@ def coerce_timeout_seconds(raw: Any) -> float | None:
     return seconds
 
 
+def coerce_timeout_multiplier(raw: Any) -> float | None:
+    """Parse a stated timeout multiplier, or ``None`` when none is stated.
+
+    Deliberately not [`coerce_timeout_seconds`]: Harbor selects a multiplier
+    with ``is not None``, so a stated ``0`` genuinely means "no time at all",
+    while a deadline of ``0`` means "no deadline known". Collapsing the two
+    would arm a full-length deadline against a trial Harbor kills on the
+    instant. Non-finite and unparseable still read as unstated — there is no
+    sane deadline to derive from a NaN.
+    """
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return value
+
+
+def trial_agent_deadline(
+    trial_config: Mapping[str, Any],
+    task_agent_timeout_sec: Any,
+) -> float | None:
+    """Recompute the wall clock Harbor will kill this trial's agent at. Pure.
+
+    A transcription of `harbor/trial/trial.py`'s own arithmetic::
+
+        base       = agent.override_timeout_sec or task.agent.timeout_sec
+        cap        = agent.max_timeout_sec or inf
+        multiplier = agent_timeout_multiplier ?? timeout_multiplier
+        deadline   = min(base, cap) * multiplier
+
+    Stated as one pure function over two already-loaded documents so the
+    arithmetic is testable without a trial directory, a task on disk, or
+    Harbor installed at all — and so the I/O half ([`discover_trial_deadline`])
+    holds nothing but reading and fail-open.
+
+    ``None`` whenever no base timeout is stated. An absent multiplier is
+    ``1.0`` because that is Harbor's own default for both fields; an absent
+    *deadline* is never defaulted.
+    """
+    agent = trial_config.get("agent")
+    agent = agent if isinstance(agent, Mapping) else {}
+    base = coerce_timeout_seconds(agent.get("override_timeout_sec"))
+    if base is None:
+        base = coerce_timeout_seconds(task_agent_timeout_sec)
+    if base is None:
+        return None
+    cap = coerce_timeout_seconds(agent.get("max_timeout_sec"))
+    if cap is not None:
+        base = min(base, cap)
+    multiplier = coerce_timeout_multiplier(trial_config.get("agent_timeout_multiplier"))
+    if multiplier is None:
+        multiplier = coerce_timeout_multiplier(trial_config.get("timeout_multiplier"))
+    if multiplier is None:
+        multiplier = 1.0
+    return base * multiplier
+
+
+def discover_trial_deadline(logs_dir: Any) -> float | None:
+    """Read the deadline Harbor resolved for THIS trial off the trial tree.
+
+    ``logs_dir`` is what Harbor hands the agent — ``TrialPaths.agent_dir`` —
+    and the trial's ``config.json`` is its immediate parent. Only that one
+    location is consulted: walking further up would eventually find *some*
+    other trial's or job's configuration and silently arm a deadline belonging
+    to a different run. A multi-step trial relocates the agent directory
+    afterwards, so its later layout is simply not discoverable here, and reads
+    as no deadline rather than as a wrong one.
+
+    Fail-open by construction. Every failure mode — no ``logs_dir``, no
+    ``config.json``, malformed JSON or TOML, a task path that no longer exists,
+    a Harbor whose schema has moved — returns ``None``, which omits the flag
+    and restores exactly the pre-#1161 behaviour.
+    """
+    if not logs_dir:
+        return None
+    try:
+        raw = (Path(logs_dir).parent / TRIAL_CONFIG_FILENAME).read_text(
+            encoding="utf-8"
+        )
+        trial_config = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(trial_config, Mapping):
+        return None
+    return trial_agent_deadline(trial_config, _task_agent_timeout(trial_config))
+
+
+def _task_agent_timeout(trial_config: Mapping[str, Any]) -> Any:
+    """The per-task ``[agent] timeout_sec`` the trial config points at.
+
+    ``None`` when the trial names no local task path — a dataset resolved from
+    a registry ref rather than an offline export has ``task.path: null``, and
+    the task definition is then not on this host at all.
+    """
+    task = trial_config.get("task")
+    path = task.get("path") if isinstance(task, Mapping) else None
+    if not path:
+        return None
+    try:
+        with open(Path(path) / TASK_CONFIG_FILENAME, "rb") as handle:
+            task_config = tomllib.load(handle)
+    except (OSError, ValueError):
+        return None
+    agent = task_config.get("agent")
+    return agent.get("timeout_sec") if isinstance(agent, Mapping) else None
+
+
 def resolve_turn_budget(
     agent_timeout_sec: Any = None,
     env_value: Any = None,
+    trial_logs_dir: Any = None,
 ) -> str | None:
     """Return the ``--turn-budget`` argv value, or ``None`` to omit the flag.
 
-    Precedence is deadline-first: Harbor's own per-trial ``agent_timeout_sec``
-    wins because it *is* the constraint being modelled, and an operator-set
-    ``STELLA_TURN_BUDGET`` is the fallback for a runner that cannot pass an
-    agent kwarg.
+    Precedence is deadline-first, most-specific-source-first:
+
+    1. ``agent_timeout_sec`` — the operator said it outright, via
+       ``--agent-kwarg agent_timeout_sec=<seconds>``.
+    2. The deadline discovered from this trial's own Harbor configuration
+       (``trial_logs_dir``). Same authority as (1) — it *is* Harbor's number —
+       but derived rather than stated, so an explicit kwarg still wins.
+    3. ``STELLA_TURN_BUDGET`` — a static operator fallback, last because one
+       value cannot be right for a dataset whose tasks carry different
+       timeouts.
 
     ``None`` leaves the continuation allowance a pure count — exactly the
     behaviour before #1161 — so a caller with no deadline is unaffected.
@@ -105,6 +260,8 @@ def resolve_turn_budget(
     than the misconfiguration it is.
     """
     deadline = coerce_timeout_seconds(agent_timeout_sec)
+    if deadline is None:
+        deadline = discover_trial_deadline(trial_logs_dir)
     if deadline is None:
         deadline = coerce_timeout_seconds(env_value)
     if deadline is None:
