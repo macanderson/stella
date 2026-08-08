@@ -305,13 +305,17 @@ def test_snapshot_waiting_outlasts_the_fixed_sleep_it_replaces(
     sup.start()
     try:
         wait_for_snapshots(trial, 2, what="of a deliberately slow capture", deadline=60.0)
+        # Read here, not after `stop()`: joining the watcher finishes a capture
+        # already in flight, which would hand the manifest an entry the pacing
+        # never waited for. The docker tests read the manifest mid-run for the
+        # same reason — that reading is what their assertions are sized from.
+        entries = load_manifest(trial)
     finally:
         sup.stop(timeout=20)
 
-    entries = load_manifest(trial)
     # What waiting on the condition collects.
     assert len(entries) >= 2
-    # What waiting on the clock collected: the "too few snapshots to bisect
-    # meaningfully" failure this test exists to keep fixed.
+    # What waiting on the clock would have collected from the very same run:
+    # the "too few snapshots to bisect meaningfully" failure of #2114.
     on_the_clock = [e for e in entries if e.at - started <= OLD_FIXED_SLEEP]
     assert len(on_the_clock) < 2, "the stubbed capture was not slow enough to starve a sleep"

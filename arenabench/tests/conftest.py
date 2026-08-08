@@ -34,10 +34,11 @@ from arenabench.snapshot import load_manifest
 
 MATCHES = Path(__file__).parent / "fixtures" / "matches"
 
-#: How long a snapshot wait tolerates before calling the host broken. Generous
-#: on purpose: the whole point of waiting on the manifest is that capture cost
-#: is not knowable in advance, so the only wrong deadline is a tight one.
-SNAPSHOT_DEADLINE = 180.0
+#: How long a snapshot wait tolerates before calling the host broken. Sized as
+#: roughly twenty times the dearest capture ever measured (5.6 s, against a
+#: 2.0 s interval, on the run that filed #2114), so it cannot lose a race a
+#: working host would eventually win — while still bounding a wedged one.
+SNAPSHOT_DEADLINE = 120.0
 
 
 def _unpack(archive: Path) -> None:
@@ -94,9 +95,13 @@ def _wait_for_snapshots(
         if count >= at_least:
             return count
         if time.monotonic() >= limit:
+            # Zero here is a different fault from "too few": the supervisor
+            # logs a capture that failed outright at debug level, so it is
+            # invisible unless the run asked for it (#2196).
             raise AssertionError(
                 f"only {count} of {at_least} snapshots {what} after "
-                f"{deadline:.0f}s — capture is not keeping up on this host"
+                f"{deadline:.0f}s — capture is not keeping up on this host, or "
+                f"stopped working; re-run with --log-cli-level=DEBUG to see which"
             )
         time.sleep(0.2)
 
