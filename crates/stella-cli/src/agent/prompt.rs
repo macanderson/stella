@@ -643,19 +643,30 @@ mod tests {
     /// fresh chance to break verified-working state.
     ///
     /// Neither prompt drew any line between reading and mutating, so pin the
-    /// shared literal verbatim in both — plus the three claims a later trim
-    /// would take first, so the assertion cannot pass against a hollowed-out
-    /// literal. The visibility claim is the load-bearing one: proportionality
-    /// that may be taken silently is just "skip verification" with a nicer
-    /// name, and this repository's whole contract is verified done, not
-    /// claimed done.
+    /// shared literal verbatim in both — plus each clause of the rule
+    /// separately, so the assertion cannot pass against a hollowed-out literal.
+    /// Both halves of the read/mutate distinction are pinned, not just the
+    /// mutating one: a trim that kept "a check that MUTATES … can break state"
+    /// and dropped the sentence naming what to do instead would leave a
+    /// prohibition with no cheaper rung to fall to, which is how a
+    /// proportionality rule turns into a reason to verify nothing.
+    ///
+    /// The visibility claim is the load-bearing one: proportionality that may
+    /// be taken silently is just "skip verification" with a nicer name, and
+    /// this repository's whole contract is verified done, not claimed done.
     #[test]
     fn both_prompts_size_verification_to_what_the_turn_changed() {
         let shared = verification_proportionality!();
         for claim in [
-            // The distinction the issue asks to encode: reading is nearly
-            // free, mutating the system under test carries restore-risk.
+            // The distinction the issue asks to encode, both halves of it:
+            // reading is nearly free, mutating the system under test carries
+            // restore-risk.
+            "only READS",
             "MUTATES the system under test",
+            // The mapping that makes it a rule rather than an observation —
+            // a no-op turn gets the cheap probe, a real change earns the
+            // end-to-end run.
+            "A turn that changed nothing gets the read-only probe",
             // The destructive half — a speculative reset of working state.
             "Never reset working state to \"pristine\"",
             // Degradation warns, never silently disables: the cheaper rung is
