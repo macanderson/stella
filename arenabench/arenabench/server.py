@@ -252,11 +252,14 @@ class ArenaServer:
         return {"branches": [b.to_json() for b in branches], "problem": None}
 
     def build_sut(self, payload: dict[str, Any]) -> Any:
-        """Start a build of the SUT at ``ref``, or report one already running.
+        """Start a build of the SUT at ``ref``, queueing behind a running one.
 
         Returns immediately with a build id; progress is polled. A release
         cross-compile takes minutes, and holding an HTTP request open for that
-        is how a launch path acquires new ways to fail.
+        is how a launch path acquires new ways to fail. A request for a commit
+        already running or queued returns that build's record; a distinct
+        commit gets its own ``queued`` record rather than being dropped
+        (#2138), so a twin match can request both its refs back to back.
         """
         ref = str(payload.get("ref") or "main").strip() or "main"
         return self.builder.start(ref)
