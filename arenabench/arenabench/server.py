@@ -212,6 +212,13 @@ class ArenaServer:
         # History first: finished matches on disk are listed before any new
         # one starts, so a restart never erases what the workspace remembers.
         self.runner.restore_from_disk()
+        #: When the disk sweep above last ran. `restore_from_disk` used to run
+        #: only here, so an arena never saw a match another process created
+        #: after it booted — and `arenabench run` is a separate process. The
+        #: only way to watch a new run was therefore to start another arena,
+        #: which is how one machine ended up with six of them over one
+        #: workspace. See `_refresh_from_disk`.
+        self._last_disk_sweep: float = time.monotonic()
         self.recorder_status: tuple[bool, str] = (False, "not checked")
         #: Owns SUT builds. One per server so a build survives the request
         #: that started it and can be polled from any later one.
@@ -393,7 +400,31 @@ class ArenaServer:
         """
         return series_payload(list(self.runner.matches.values()))
 
+    #: Shortest gap between disk sweeps driven by a request. The listing is
+    #: polled by every open browser tab, and the sweep stats every match
+    #: directory, so it is throttled rather than run per request. Two seconds
+    #: is below the UI's own refresh cadence, so a match still appears in the
+    #: list about as fast as it appears on disk.
+    DISK_SWEEP_INTERVAL_SECONDS = 2.0
+
+    def _refresh_from_disk(self) -> None:
+        """Pick up matches other processes created since the last sweep.
+
+        `arenabench run` writes its match into the same workspace from its own
+        process. Without this, only matches present when the arena booted were
+        ever listed, and the fix people reached for was another arena.
+        """
+        now = time.monotonic()
+        if now - self._last_disk_sweep < self.DISK_SWEEP_INTERVAL_SECONDS:
+            return
+        self._last_disk_sweep = now
+        try:
+            self.runner.restore_from_disk()
+        except Exception:  # a listing must survive one unreadable match dir
+            log.exception("disk sweep failed while listing matches")
+
     def list_matches(self) -> Any:
+        self._refresh_from_disk()
         return {
             "matches": [
                 {
@@ -415,6 +446,13 @@ class ArenaServer:
 
     def match(self, match_id: str) -> Any:
         match = self.runner.matches.get(match_id)
+        if match is None:
+            # Only on a miss, and only then: someone opening a link to a match
+            # this arena has not swept yet should get the match, not a 404 that
+            # sends them off to start another arena.
+            self._last_disk_sweep = 0.0
+            self._refresh_from_disk()
+            match = self.runner.matches.get(match_id)
         if match is None:
             raise KeyError(match_id)
         return match.snapshot()

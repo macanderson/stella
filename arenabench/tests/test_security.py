@@ -272,6 +272,48 @@ class TestLoopbackOnly:
         with pytest.raises(ValueError, match="different arena"):
             serve(tmp_path, host="127.0.0.1", port=8902)
 
+    def test_a_running_arena_lists_a_match_another_process_wrote(
+        self, tmp_path: Path
+    ):
+        """The reason six arenas existed: only startup ever read the store.
+
+        `arenabench run` writes its match from its own process, so an arena
+        that swept the store only at boot could never list it — and the fix
+        people reached for was another arena. Reusing one is only correct if
+        the one you reuse can see the run. Witness: without the sweep the
+        listing stays empty and the direct lookup 404s.
+        """
+        import json as _json
+
+        from arenabench.server import ArenaServer
+
+        arena = ArenaServer(tmp_path)
+        assert arena.list_matches()["matches"] == []
+
+        # Another process lands a match in the same workspace.
+        match_dir = tmp_path / "matches" / "abc123"
+        (match_dir / "jobs").mkdir(parents=True)
+        (match_dir / "spec.json").write_text(
+            _json.dumps(
+                {
+                    "id": "abc123",
+                    "name": "written by another process",
+                    "dataset": "terminal-bench-2.1",
+                    "tasks": ["fix-git"],
+                    "contestants": [
+                        {"name": "s", "agent": "stella", "engine": {"model": "m"}}
+                    ],
+                }
+            )
+        )
+
+        arena._last_disk_sweep = 0.0  # skip the poll throttle, not the sweep
+        listed = [m["id"] for m in arena.list_matches()["matches"]]
+        assert "abc123" in listed
+        # And the direct lookup resolves rather than 404ing someone off to
+        # start yet another arena.
+        assert isinstance(arena.match("abc123"), dict)
+
     def test_only_the_bound_address_is_an_acceptable_host_header(self):
         hosts = allowed_hosts("127.0.0.1", 8900)
         assert "127.0.0.1:8900" in hosts and "localhost:8900" in hosts
