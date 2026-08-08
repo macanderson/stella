@@ -218,28 +218,30 @@ check "reap-seats rejects a non-numeric --min-idle-secs" "$?" "1"
 # STUB_LINGER, one that dies mid-wait) — so classification has nothing to
 # consult but the log, which is the invariant under test.
 LAUNCH_STUB="$STUB_DIR/launcher"
-{
-  echo '#!/bin/sh'
-  echo 'case "$1" in'
-  echo '  -c) exit 0 ;;'
-  echo '  -)'
-  echo '    cat >/dev/null'
-  echo '    printf "%s\n" "$STUB_LOG_BODY" >> "$STUB_LOG"'
-  # The linger child's stdout is redirected for the same reason the reap
-  # test's orphan is: inherited, it would hold arena-run's $(...) pipe open
-  # for its whole lifetime.
-  echo '    if [ -n "${STUB_LINGER:-}" ]; then'
-  echo '      sleep "$STUB_LINGER" >/dev/null 2>&1 &'
-  echo '      pid=$!'
-  echo '    else'
-  echo '      sh -c ":" & pid=$!'
-  echo '      wait "$pid" 2>/dev/null'
-  echo '    fi'
-  echo '    echo "$pid 8964 ${STUB_LOG_OFFSET:-0} $STUB_LOG"'
-  echo '    ;;'
-  echo '  *) exit 0 ;;'
-  echo 'esac'
-} > "$LAUNCH_STUB"
+# A quoted delimiter keeps every line of the stub literal — the `$1`,
+# `$STUB_LOG` and `\n` below belong to the generated script, not to this
+# generator. The linger child's stdout is redirected for the same reason the
+# reap test's orphan is: inherited, it would hold arena-run's $(...) pipe open
+# for its whole lifetime.
+cat <<'STUB' > "$LAUNCH_STUB"
+#!/bin/sh
+case "$1" in
+  -c) exit 0 ;;
+  -)
+    cat >/dev/null
+    printf "%s\n" "$STUB_LOG_BODY" >> "$STUB_LOG"
+    if [ -n "${STUB_LINGER:-}" ]; then
+      sleep "$STUB_LINGER" >/dev/null 2>&1 &
+      pid=$!
+    else
+      sh -c ":" & pid=$!
+      wait "$pid" 2>/dev/null
+    fi
+    echo "$pid 8964 ${STUB_LOG_OFFSET:-0} $STUB_LOG"
+    ;;
+  *) exit 0 ;;
+esac
+STUB
 chmod +x "$LAUNCH_STUB"
 
 RUN_HOME="$(mktemp -d)"
