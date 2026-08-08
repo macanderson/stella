@@ -92,6 +92,8 @@ from .exit_cause import (
 )
 from .git_baseline import ensure_git, run_git_baseline
 from .locate import locate_binary as _locate_binary
+from .loop_mode import NO_PIPELINE_ENV, loop_argv, loop_mode_name
+from .loop_mode import is_truthy as _is_truthy
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
@@ -258,6 +260,8 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # The third coupled ceiling (#1211 §6.2). Same bucket again: read on the
         # host, reaching Stella only inside the hashed posture.
         _MODEL_TIMEOUT_ENV,
+        # The bare-loop selector; :mod:`loop_mode` says why it is host-only.
+        NO_PIPELINE_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
         # both so `build_sut.sh` builds to the same floor `preflight` asserts
         # against — keeping them apart is what let a glibc-2.35 binary reach five
@@ -350,13 +354,6 @@ _PROVIDER_ROUTE_CONFIG_ENV = frozenset(_PROVIDER_ADDRESS_ENV_VARS) | frozenset(
     }
 )
 _COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
-
-
-def _is_truthy(value: str | None) -> bool:
-    """Return whether a string environment variable represents truth."""
-    if not value:
-        return False
-    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _validated_public_base_url(value: str) -> str:
@@ -1333,7 +1330,8 @@ class StellaAgent(BaseInstalledAgent):
         # instead of parsing as a flag. Without it, `stella run '- foo'`
         # exits 2 before the agent starts — one 2026-07-31 trial
         # (pytorch-model-recovery) died exactly this way and scored 0.
-        parts += ["run", "--output-format", "stream-json", "--", instruction]
+        parts += ["run", *loop_argv(self._configured_value)]
+        parts += ["--output-format", "stream-json", "--", instruction]
         return parts
 
     def _selected_provider_credentials(self) -> SelectedProviderCredentials:
@@ -1645,6 +1643,8 @@ class StellaAgent(BaseInstalledAgent):
             # The wall-clock half of the same disclosure (#2135).
             "stella_turn_budget_sec": turn_budget_sec or _NO_TASK_DEADLINE,
             "stella_output_format": "stream-json",
+            # Which loop ran — not inferable from the posture below (#2134).
+            "stella_loop_mode": loop_mode_name(self._configured_value),
             "stella_disable_reflection": reflection,
             "stella_reflection_policy": (
                 "disabled_for_ephemeral_benchmark"

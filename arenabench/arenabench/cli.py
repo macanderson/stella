@@ -66,7 +66,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from .credentials import apply_saved_credentials, credentials_path, load_credentials
     from .monitor import MatchWatcher
     from .runner import MatchRunner
-    from .server import ArenaServer
+    from .server import ArenaServer, find_running_arena
 
     try:
         spec = load_match(Path(args.template).expanduser())
@@ -154,6 +154,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     match = runner.create(spec)
     runner.start(match)
+
+    # Name the arena already serving this workspace, if there is one. `run` is
+    # headless by contract and must not start a server, but it knows the match
+    # id and the operator's next question is always "where do I watch it" —
+    # answered previously by starting another arena and forgetting the port.
+    watch_port = find_running_arena(workspace, "127.0.0.1")
+    if watch_port is not None:
+        print(f"watch     : http://127.0.0.1:{watch_port}/matches/{match.id}")
+    else:
+        print(f"watch     : arenabench serve   (then open match {match.id})")
     # The built-in supervisor: the same rules `arenabench watch` runs from
     # another process, reported inline so a CI log shows a dead arm at the
     # minute it died rather than in the postmortem (#1480).
@@ -278,6 +288,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             port=args.port,
             open_browser=not args.no_browser,
             allow_remote=args.allow_remote,
+            reuse=not args.no_reuse,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -760,6 +771,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="permit a non-loopback --host; anyone who can reach it can spend "
              "your provider credits",
+    )
+    serve_parser.add_argument(
+        "--no-reuse",
+        action="store_true",
+        help="start a new arena even if one already serves this workspace "
+             "(default: reuse it and print its URL)",
     )
     serve_parser.set_defaults(func=_cmd_serve)
 
