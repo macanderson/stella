@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use stella_context::{
-    ContextDelta, ContextStore, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion,
+    Clock, ContextDelta, ContextStore, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion,
     HashEmbedder, NodeInput, NodeKind, RecallTier, SystemClock, format_rfc3339,
 };
 use stella_core::skills::{self, SelectionConfig, Skill};
@@ -188,12 +188,31 @@ impl LessonKind {
 /// One `stella run` is one task, so for the headless path this is exactly the
 /// right boundary. For a long REPL session it is an approximation, but a
 /// strictly better one than per-turn.
-fn default_task_id() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("session:{secs}-{}", std::process::id())
+///
+/// The pid stays (#2320). It is not a time source and it is not a task
+/// boundary — its only job is to keep two processes that start in the same
+/// second from minting one id, which governance would then count as a single
+/// task. Dropping it would buy reproducibility on a path that is never
+/// replayed, at the price of under-counting concurrent work. The deterministic
+/// half lives in [`deterministic_task_id`] instead, so the nondeterminism is
+/// confined to the constructor that wants it rather than shared by both.
+fn default_task_id(clock: &dyn Clock) -> String {
+    format!("session:{}-{}", clock.now_unix_secs(), std::process::id())
+}
+
+/// The task identity [`SessionMemory::open_with_clock`] mints: derived from the
+/// injected clock alone, so two sessions opened at the same instant agree.
+///
+/// Deliberately carries no pid. A caller reaching for the deterministic
+/// constructor is replaying a recorded engagement, where "which process am I"
+/// is not a question with an answer — and where two sessions minting the same
+/// id at the same instant is the property under test, not a collision.
+///
+/// Gated alongside its only caller, [`SessionMemory::open_with_clock`] — drop
+/// both gates together when the trace-replay harness lands (#2304).
+#[cfg(test)]
+fn deterministic_task_id(clock: &dyn Clock) -> String {
+    format!("session:{}", clock.now_unix_secs())
 }
 
 mod reflection;
@@ -270,6 +289,21 @@ pub struct SessionMemory {
     /// re-deriving it here would re-walk the rule directories and re-run the
     /// truth sweep on every turn.
     record_registry: Option<stella_core::records::Registry>,
+    /// The session's time source (#2320) — the only one the learning loop is
+    /// allowed to read.
+    ///
+    /// `stella-context` has shipped this port since the bi-temporal store
+    /// landed, and [`ContextStore::open_and_warm`] has always taken one; the
+    /// learning loop simply routed around it and called `SystemTime::now()` in
+    /// five places. That made every write here non-replayable, and one of the
+    /// five was [`SessionMemory::retire_failing_context`], whose `now` is the
+    /// instant the truth sweep judges TTLs against — so retirement could not be
+    /// tested at all, because the sweep always saw today.
+    ///
+    /// Production passes [`SystemClock`] through every existing constructor, so
+    /// this changes no shipped behaviour; it is the seam that lets a test
+    /// advance time on purpose.
+    clock: std::sync::Arc<dyn Clock>,
 }
 
 impl SessionMemory {
@@ -364,6 +398,48 @@ impl SessionMemory {
         warn: bool,
         include_workspace_skills: bool,
     ) -> Option<Self> {
+        let clock: std::sync::Arc<dyn Clock> = std::sync::Arc::new(SystemClock);
+        let task_id = default_task_id(clock.as_ref());
+        Self::open_inner(
+            workspace_root,
+            warn,
+            include_workspace_skills,
+            clock,
+            task_id,
+        )
+    }
+
+    /// Open a session whose every timestamp — the stamps on mined lessons, the
+    /// episode clock, the instant the truth sweep judges TTLs against, and the
+    /// default task id — comes from `clock` rather than the wall clock (#2320).
+    ///
+    /// Two sessions opened this way at the same instant write byte-identical
+    /// logs, which is what makes the learning loop replayable and what lets a
+    /// test place itself on either side of a TTL.
+    ///
+    /// **Test-gated until the trace-replay harness lands** (epic #2304,
+    /// `doc:trace-replay-learning-harness` §4). `stella-cli` is a bin-only
+    /// crate, so no external consumer could call this even in principle, and
+    /// leaving it on the production build would be dead code. Drop the gate in
+    /// the same commit that adds the replayer — the same discipline
+    /// [`SessionMemory::set_task_id`] is held to.
+    #[cfg(test)]
+    pub(crate) fn open_with_clock(
+        workspace_root: &Path,
+        warn: bool,
+        clock: std::sync::Arc<dyn Clock>,
+    ) -> Option<Self> {
+        let task_id = deterministic_task_id(clock.as_ref());
+        Self::open_inner(workspace_root, warn, false, clock, task_id)
+    }
+
+    fn open_inner(
+        workspace_root: &Path,
+        warn: bool,
+        include_workspace_skills: bool,
+        clock: std::sync::Arc<dyn Clock>,
+        task_id: String,
+    ) -> Option<Self> {
         // Ephemeral benchmark trials must neither recall task/user-planted
         // learning state nor create or migrate a context database that can
         // perturb the task under test. Reflection is separately pinned off
@@ -379,7 +455,7 @@ impl SessionMemory {
         match ContextStore::open_and_warm(
             &db_path,
             std::sync::Arc::new(HashEmbedder::default()),
-            std::sync::Arc::new(SystemClock),
+            clock.clone(),
         )
         .map(|store| store.with_tuning(retrieval.tuning()))
         {
@@ -408,8 +484,9 @@ impl SessionMemory {
                     ab_turn: 0,
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
-                    task_id: default_task_id(),
+                    task_id,
                     execution_id: None,
+                    clock,
                 })
             }
             Err(e) => {
@@ -564,10 +641,10 @@ impl SessionMemory {
             }
         }
 
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(started_unix_secs);
+        // The episode's end instant, from the session clock (#2320). `started`
+        // arrives as a parameter and always did, so a caller that knows when
+        // the turn began — a replayer, a test — now controls both ends.
+        let now_secs = self.clock.now_unix_secs();
         let mut episode = EpisodeInput::new(
             summary,
             format_rfc3339(started_unix_secs),
@@ -659,6 +736,15 @@ pub(crate) fn context_db_path(workspace_root: &Path) -> Result<PathBuf, String> 
 }
 
 /// Seconds since the Unix epoch — the episode timestamps' primitive.
+///
+/// This is the **ambient** wall clock, for callers outside a session that need
+/// a start instant to hand to [`SessionMemory::record_episode`] — the drivers
+/// in `agent.rs`, `agent/goal.rs` and `command_deck.rs`, which own no clock.
+/// [`SessionMemory`] itself no longer calls it (#2320): every timestamp the
+/// learning loop writes comes from [`SessionMemory::clock`], and the one value
+/// that still arrives from out here rides in as `started_unix_secs`, a
+/// parameter a replayer supplies. Reaching for this from inside a session would
+/// re-open the seam #2320 closed.
 pub(crate) fn unix_now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

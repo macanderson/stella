@@ -101,6 +101,12 @@ pub(crate) async fn reflect_routed(
         .await
 }
 
+/// `now` is the instant every lesson this call mines is stamped with, in Unix
+/// seconds. It is a parameter rather than a `SystemTime::now()` read because
+/// `occurred_at` is written verbatim into `reflections.jsonl`, which the skill
+/// and rule miners re-read — so a wall-clock read here made the whole mining
+/// log unreproducible (#2320). Callers inside a session pass
+/// `SessionMemory::clock`.
 pub async fn reflect_on_turn(
     provider: &dyn Provider,
     model_hint: &str,
@@ -109,6 +115,7 @@ pub async fn reflect_on_turn(
     domain_names: &[String],
     succeeded: bool,
     budget_limit: Option<f64>,
+    now: u64,
 ) -> Result<
     (ReflectionParse, Option<SelfReviewRow>, f64, Vec<AgentEvent>),
     crate::accounted_call::StandaloneCallError,
@@ -306,7 +313,7 @@ pub async fn reflect_on_turn(
     )
     .await?;
     Ok((
-        parse_lessons_checked(&accounted.result.text, domain_names),
+        parse_lessons_checked(&accounted.result.text, domain_names, now),
         parse_self_review(&accounted.result.text),
         accounted.cost_usd,
         accounted.events,
@@ -461,7 +468,9 @@ fn extract_lesson_array(text: &str) -> Option<Vec<ReflectionLesson>> {
     None
 }
 
-pub fn parse_lessons_checked(text: &str, allowed_domains: &[String]) -> ReflectionParse {
+/// `now` (Unix seconds) is stamped onto every lesson as `occurred_at`. See
+/// [`reflect_on_turn`] for why it is a parameter and not a clock read.
+pub fn parse_lessons_checked(text: &str, allowed_domains: &[String], now: u64) -> ReflectionParse {
     let Some(mut lessons) = extract_lesson_array(text) else {
         // An empty response is a legitimate "nothing to record". Anything else
         // is a response we failed to read, and the caller should say so.
@@ -471,10 +480,6 @@ pub fn parse_lessons_checked(text: &str, allowed_domains: &[String]) -> Reflecti
             ReflectionParse::Unreadable(text.chars().take(180).collect())
         };
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
     lessons.truncate(3);
     for lesson in &mut lessons {
         lesson.occurred_at = now;

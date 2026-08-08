@@ -5,6 +5,10 @@
 // #1221: the A/B recall control — its durable schedule, what a control turn
 // suppresses, and the attribution that separates the arms afterwards.
 mod ab_control;
+// #2320: the session clock. That the learning loop reads one injected time
+// source rather than the wall clock is the property replay rests on, and it is
+// what makes the truth sweep's TTL branch reachable from a test at all.
+mod determinism;
 mod path_token;
 mod quarantine;
 // Which sessions actually receive the volatile record channel — a separate
@@ -15,6 +19,11 @@ mod record_channel;
 mod skill_creation;
 
 use super::*;
+
+/// The instant these parsing tests stamp lessons with (#2320). They assert on
+/// what was parsed, never on when — the value only has to be fixed, so the
+/// suite cannot start depending on the day it runs.
+const PARSE_FIXED_NOW: u64 = 1_600_000_000;
 
 fn msg(role: MessageRole, content: &str) -> CompletionMessage {
     CompletionMessage {
@@ -672,14 +681,14 @@ fn unreadable_reflection_is_distinguished_from_having_nothing_to_say() {
 
     assert!(
         matches!(
-            parse_lessons_checked("", &[]),
+            parse_lessons_checked("", &[], PARSE_FIXED_NOW),
             ReflectionParse::Lessons(lessons) if lessons.is_empty()
         ),
         "an empty response is a legitimate 'nothing to record'"
     );
     assert!(
         matches!(
-            parse_lessons_checked("no json here", &[]),
+            parse_lessons_checked("no json here", &[], PARSE_FIXED_NOW),
             ReflectionParse::Unreadable(_)
         ),
         "prose with no array is a response we failed to read, not an empty one"
@@ -965,7 +974,7 @@ fn lessons_of(text: &str) -> Vec<crate::memory::ReflectionLesson> {
 }
 
 fn lessons_with(text: &str, allowed: &[String]) -> Vec<crate::memory::ReflectionLesson> {
-    match crate::memory::reflection::parse_lessons_checked(text, allowed) {
+    match crate::memory::reflection::parse_lessons_checked(text, allowed, PARSE_FIXED_NOW) {
         crate::memory::reflection::ReflectionParse::Lessons(lessons) => lessons,
         crate::memory::reflection::ReflectionParse::Unreadable(excerpt) => {
             panic!("expected a readable lesson array, got unreadable: {excerpt}")
