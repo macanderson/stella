@@ -114,6 +114,22 @@ static EDGE_SEQ: AtomicU64 = AtomicU64::new(0);
 /// nanos plus the static's ASLR-randomized address — not cryptographic, just
 /// distinct per process, which is all the v10 `UNIQUE` constraint needs
 /// backing for.
+///
+/// **Audited for the clock port (#2320): this is an identity nonce, not a time
+/// reading, and it deliberately stays off [`crate::Clock`].** The `SystemTime`
+/// read below never reaches a comparable field — nothing orders, ranges over or
+/// compares `edge.public_id`; the row's *time* is the separate `recorded_at`
+/// column, which callers already pass in as `now` and which the clock port does
+/// govern. Putting a fixed clock behind the nonce would only make two processes
+/// in one second mint from the same keyspace, which is the collision it exists
+/// to prevent.
+///
+/// Determinism note for replay harnesses: `public_id` is unreproducible anyway,
+/// and not because of this nonce. [`EDGE_SEQ`] is a process-global counter, so
+/// two replays of one trace *inside a single process* mint different ids for
+/// the same logical edge. An edge `public_id` is therefore never admissible in
+/// a replay summary compared for byte-identity — compare edge content, not edge
+/// identity (`doc:trace-replay-learning-harness` §4.2).
 fn process_nonce() -> u64 {
     static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *NONCE.get_or_init(|| {

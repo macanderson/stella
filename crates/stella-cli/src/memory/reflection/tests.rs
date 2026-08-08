@@ -24,6 +24,12 @@ use stella_protocol::{
     Provider, ProviderError, ReasoningEffort,
 };
 
+/// The instant these tests stamp lessons with. Fixed rather than read from the
+/// wall clock: `reflect_on_turn` takes its recording time as a parameter
+/// (#2320), and a test that passed `SystemClock` would be re-introducing the
+/// nondeterminism the parameter exists to remove.
+const REFLECTED_AT: u64 = 1_700_000_000;
+
 /// Records the prompt it is asked to complete — and the request's dispatch
 /// shape (effort, output cap) — then answers with a well-formed empty result
 /// so the caller's parsing path stays on its happy road: the request is what
@@ -84,6 +90,7 @@ async fn prompt_for(succeeded: bool) -> String {
         &["testing".to_string()],
         succeeded,
         None,
+        REFLECTED_AT,
     )
     .await
     .expect("the stub provider cannot fail");
@@ -178,6 +185,7 @@ async fn reflection_dispatches_low_effort_with_its_bounded_output_cap() {
         &["testing".to_string()],
         true,
         None,
+        REFLECTED_AT,
     )
     .await
     .expect("the stub provider cannot fail");

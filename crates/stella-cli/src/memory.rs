@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use stella_context::{
-    ContextDelta, ContextStore, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion,
+    Clock, ContextDelta, ContextStore, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion,
     HashEmbedder, NodeInput, NodeKind, RecallTier, SystemClock, format_rfc3339,
 };
 use stella_core::skills::{self, SelectionConfig, Skill};
@@ -183,17 +183,32 @@ impl LessonKind {
     }
 }
 
-/// A session-scoped task identity, distinct per process.
+/// A session-scoped task identity, distinct per concurrent session.
 ///
 /// One `stella run` is one task, so for the headless path this is exactly the
 /// right boundary. For a long REPL session it is an approximation, but a
 /// strictly better one than per-turn.
-fn default_task_id() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("session:{secs}-{}", std::process::id())
+///
+/// Both halves are now injected rather than read from the ambient process
+/// (#2320). The time comes from the session's [`Clock`], so a fixed clock
+/// yields a fixed id; `nonce` is whatever distinguishes this session from
+/// another running concurrently against the same workspace — see
+/// [`SessionMemory::session_nonce`].
+fn default_task_id(clock: &dyn Clock, nonce: &str) -> String {
+    format!("session:{}-{nonce}", clock.now_unix_secs())
+}
+
+/// What a production session uses for the [`default_task_id`] nonce.
+///
+/// The pid is kept here — and *only* here — because the nonce's whole job is
+/// to keep two stella processes started in the same second from filing their
+/// lessons under one task id, and governance counts distinct tasks. Dropping it
+/// outright would silently merge two concurrent sessions into one task, which
+/// is a governance undercount rather than a determinism win. Injecting it
+/// instead gets both properties: production is byte-identical to before, and a
+/// replay supplies its own nonce from the trace.
+fn process_session_nonce() -> String {
+    std::process::id().to_string()
 }
 
 mod reflection;
@@ -270,6 +285,20 @@ pub struct SessionMemory {
     /// re-deriving it here would re-walk the rule directories and re-run the
     /// truth sweep on every turn.
     record_registry: Option<stella_core::records::Registry>,
+    /// This session's time source — the only one the learning plane reads
+    /// (#2320).
+    ///
+    /// `stella-context` has shipped this port since the store was bi-temporal,
+    /// and `ContextStore::open_with` has always taken one; the CLI's learning
+    /// path was simply routing around it, reading `SystemTime::now()` at six
+    /// sites. That asymmetry had a cost beyond replay: `retire_failing_context`
+    /// stamps its truth sweep from here, so with a hardcoded system clock no
+    /// test could ever place a record past its TTL and watch it retire.
+    ///
+    /// Production hands this a [`SystemClock`] from every existing constructor,
+    /// so prompts stay byte-stable (invariant 7). A test or a trace replay hands
+    /// it a `FixedClock` through [`Self::open_with_clock`].
+    clock: std::sync::Arc<dyn Clock>,
 }
 
 impl SessionMemory {
@@ -277,6 +306,34 @@ impl SessionMemory {
     /// the store can't open — a session without memory beats no session.
     pub fn open(workspace_root: &Path, warn: bool) -> Option<Self> {
         Self::open_with_workspace_skills(workspace_root, warn, false)
+    }
+
+    /// Open the workspace's memory against a caller-supplied time source and
+    /// session nonce — the door a deterministic replay comes through (#2320).
+    ///
+    /// Every other constructor defaults to [`SystemClock`] and the pid, so
+    /// production behaviour is unchanged; this one exists so a harness can put
+    /// the whole learning plane on a clock it advances itself.
+    ///
+    /// Test-gated because `stella-cli` is a bin-only crate: there is no
+    /// external consumer that could call it, and shipping it unreachable would
+    /// be an `#[allow(dead_code)]` describing an API nothing can reach — the
+    /// same reasoning that gates [`Self::set_task_id`] below.
+    #[cfg(test)]
+    pub(crate) fn open_with_clock(
+        workspace_root: &Path,
+        warn: bool,
+        include_workspace_skills: bool,
+        clock: std::sync::Arc<dyn Clock>,
+        session_nonce: impl Into<String>,
+    ) -> Option<Self> {
+        Self::open_inner(
+            workspace_root,
+            warn,
+            include_workspace_skills,
+            clock,
+            session_nonce.into(),
+        )
     }
 
     /// Override the task boundary lessons are stamped with.
@@ -296,6 +353,13 @@ impl SessionMemory {
     #[cfg(test)]
     pub(crate) fn set_task_id(&mut self, task_id: impl Into<String>) {
         self.task_id = task_id.into();
+    }
+
+    /// This session's current instant, as the truth sweep and every lifecycle
+    /// predicate see it.
+    #[cfg(test)]
+    pub(crate) fn clock_now_rfc3339(&self) -> String {
+        self.clock.now_rfc3339()
     }
 
     #[cfg(test)]
@@ -364,6 +428,22 @@ impl SessionMemory {
         warn: bool,
         include_workspace_skills: bool,
     ) -> Option<Self> {
+        Self::open_inner(
+            workspace_root,
+            warn,
+            include_workspace_skills,
+            std::sync::Arc::new(SystemClock),
+            process_session_nonce(),
+        )
+    }
+
+    fn open_inner(
+        workspace_root: &Path,
+        warn: bool,
+        include_workspace_skills: bool,
+        clock: std::sync::Arc<dyn Clock>,
+        session_nonce: String,
+    ) -> Option<Self> {
         // Ephemeral benchmark trials must neither recall task/user-planted
         // learning state nor create or migrate a context database that can
         // perturb the task under test. Reflection is separately pinned off
@@ -379,7 +459,7 @@ impl SessionMemory {
         match ContextStore::open_and_warm(
             &db_path,
             std::sync::Arc::new(HashEmbedder::default()),
-            std::sync::Arc::new(SystemClock),
+            clock.clone(),
         )
         .map(|store| store.with_tuning(retrieval.tuning()))
         {
@@ -408,8 +488,9 @@ impl SessionMemory {
                     ab_turn: 0,
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
-                    task_id: default_task_id(),
+                    task_id: default_task_id(clock.as_ref(), &session_nonce),
                     execution_id: None,
+                    clock,
                 })
             }
             Err(e) => {
@@ -564,10 +645,7 @@ impl SessionMemory {
             }
         }
 
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(started_unix_secs);
+        let now_secs = self.clock.now_unix_secs();
         let mut episode = EpisodeInput::new(
             summary,
             format_rfc3339(started_unix_secs),
@@ -658,12 +736,18 @@ pub(crate) fn context_db_path(workspace_root: &Path) -> Result<PathBuf, String> 
         .map_err(|e| format!("cannot resolve private context state: {e}"))
 }
 
-/// Seconds since the Unix epoch — the episode timestamps' primitive.
+/// Seconds since the Unix epoch — the episode timestamps' primitive, read
+/// through the [`Clock`] port rather than `SystemTime` directly.
+///
+/// This is the *production* clock by construction, and deliberately so: its
+/// callers are the turn drivers (`agent.rs`, `agent/goal.rs`, `command_deck.rs`)
+/// that stamp when a real turn started, not the learning plane. A session's own
+/// timestamps come from its injected [`SessionMemory::clock`]; a replay supplies
+/// `started_unix_secs` from the trace and never calls this. Reading through the
+/// port anyway leaves exactly one spelling of "seconds since the epoch" in the
+/// crate, which is what stops the next wall-clock read growing back here.
 pub(crate) fn unix_now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    SystemClock.now_unix_secs()
 }
 
 #[cfg(test)]

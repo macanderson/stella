@@ -24,6 +24,19 @@ pub trait Clock: Send + Sync {
     fn now_rfc3339(&self) -> String {
         format_rfc3339(self.now_unix_secs())
     }
+
+    /// Milliseconds since the Unix epoch, for the callers that stamp a ledger
+    /// line finer than a second.
+    ///
+    /// The default derives from [`Self::now_unix_secs`], which is exactly right
+    /// for a deterministic clock: [`FixedClock`] is set in whole seconds, so a
+    /// sub-second component it never received would have to be invented, and an
+    /// invented digit is the one thing a replay cannot have. [`SystemClock`]
+    /// overrides it to keep the real sub-second precision its callers had
+    /// before the port existed.
+    fn now_unix_millis(&self) -> i64 {
+        self.now_unix_secs().saturating_mul(1_000)
+    }
 }
 
 /// The production clock, reading the system wall clock.
@@ -41,6 +54,13 @@ impl Clock for SystemClock {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0)
     }
+
+    fn now_unix_millis(&self) -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    }
 }
 
 /// A deterministic clock for tests and for callers that want to pin
@@ -53,7 +73,12 @@ pub struct FixedClock {
 
 impl FixedClock {
     /// Construct a clock frozen at `unix_secs`.
-    pub fn new(unix_secs: i64) -> Self {
+    ///
+    /// `const` so a test or a replay fixture can declare its instant as a
+    /// `const` item rather than build one per call — the instant is a property
+    /// of the fixture, and spelling it once is what keeps two assertions in the
+    /// same suite from silently disagreeing about "now".
+    pub const fn new(unix_secs: i64) -> Self {
         Self {
             secs: AtomicI64::new(unix_secs),
         }
@@ -165,6 +190,25 @@ mod tests {
         assert_eq!(clock.now_unix_secs(), 1_060);
         clock.set(42);
         assert_eq!(clock.now_rfc3339(), format_rfc3339(42));
+    }
+
+    #[test]
+    fn fixed_clock_millis_derive_from_its_seconds() {
+        // A deterministic clock must not invent a sub-second digit it was
+        // never given — that digit is precisely what a replay cannot reproduce.
+        let clock = FixedClock::new(1_600_000_000);
+        assert_eq!(clock.now_unix_millis(), 1_600_000_000_000);
+        clock.advance(1);
+        assert_eq!(clock.now_unix_millis(), 1_600_000_001_000);
+    }
+
+    #[test]
+    fn system_clock_millis_keep_subsecond_precision() {
+        // The override exists so ledger callers keep the precision they had
+        // before the port; the default would floor every stamp to `*000`.
+        let millis = SystemClock.now_unix_millis();
+        assert!(millis >= SystemClock.now_unix_secs().saturating_mul(1_000));
+        assert!(millis < (SystemClock.now_unix_secs() + 2).saturating_mul(1_000));
     }
 
     #[test]

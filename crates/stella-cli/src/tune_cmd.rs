@@ -141,13 +141,22 @@ fn run_effort(
 
     print_report(&report);
     // Always publish the receipt — a kept baseline is evidence too.
-    engine::publish_experiment(workspace_root, &report)?;
+    // `stella tune` is a human-driven command, so it stamps its ledger from
+    // the production clock. The parameter exists so the module holds no wall
+    // clock of its own (#2320).
+    engine::publish_experiment(workspace_root, &report, &stella_context::SystemClock)?;
 
     match &report.decision {
         Decision::Promote(p) => {
             if promote {
                 let chosen = engine::parse_effort(&p.winner.value)?;
-                let prior = engine::promote(workspace_root, scope, chosen, p)?;
+                let prior = engine::promote(
+                    workspace_root,
+                    scope,
+                    chosen,
+                    p,
+                    &stella_context::SystemClock,
+                )?;
                 println!(
                     "\n{} worker effort → {} (was {}) in {} settings.",
                     "promoted".green().bold(),
@@ -184,7 +193,7 @@ fn run_effort(
 }
 
 fn run_rollback(workspace_root: &Path) -> Result<(), String> {
-    match engine::rollback(workspace_root)? {
+    match engine::rollback(workspace_root, &stella_context::SystemClock)? {
         RollbackOutcome::Nothing => {
             println!("nothing to roll back — no effort promotion is in effect.");
         }

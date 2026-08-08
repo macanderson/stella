@@ -23,6 +23,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use stella_context::Clock;
 use stella_core::self_tuning::{
     ArmSamples, ArmStats, Decision, RewardWeights, RollbackRecord, SelectionConfig, TaskOutcome,
     reward, select_winner,
@@ -270,13 +271,17 @@ fn load_scope_engine_config(path: &Path) -> AgentEngineConfig {
         .unwrap_or_default()
 }
 
-/// Milliseconds since the Unix epoch (best-effort; `0` if the clock is before
-/// the epoch). Only used to timestamp ledger lines.
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+/// Milliseconds since the Unix epoch, read through the caller's clock
+/// (best-effort; `0` if that clock is before the epoch). Only used to timestamp
+/// ledger lines.
+///
+/// A parameter rather than a `SystemTime` read so this module holds no wall
+/// clock of its own (#2320). `stella tune` passes [`SystemClock`], keeping the
+/// sub-second precision the ledger always had — see
+/// [`stella_context::Clock::now_unix_millis`], whose default deliberately does
+/// not invent one for a fixed clock.
+fn now_ms(clock: &dyn Clock) -> u64 {
+    u64::try_from(clock.now_unix_millis()).unwrap_or(0)
 }
 
 /// Append one entry to the self-tuning ledger.
@@ -331,12 +336,13 @@ fn active_promotion(
 pub(crate) fn publish_experiment(
     workspace_root: &Path,
     report: &ExperimentReport,
+    clock: &dyn Clock,
 ) -> Result<(), String> {
     append_entry(
         workspace_root,
         &LedgerEntry::Experiment {
             report: Box::new(report.clone()),
-            at_ms: now_ms(),
+            at_ms: now_ms(clock),
         },
     )
 }
@@ -356,6 +362,7 @@ pub(crate) fn promote(
     scope: SettingsScope,
     chosen: ReasoningEffort,
     promotion: &stella_core::self_tuning::Promotion,
+    clock: &dyn Clock,
 ) -> Result<PriorState, String> {
     let path = scope.path(workspace_root)?;
     let mut cfg = load_scope_engine_config(&path);
@@ -384,7 +391,7 @@ pub(crate) fn promote(
             rollback: record,
             previous_effort_auto: prior_auto,
             scope,
-            at_ms: now_ms(),
+            at_ms: now_ms(clock),
         },
     )?;
 
@@ -409,7 +416,10 @@ pub(crate) enum RollbackOutcome {
 
 /// Revert the last effort promotion: restore the worker effort and the
 /// `effort_auto` value that were in place before it, in the scope it wrote.
-pub(crate) fn rollback(workspace_root: &Path) -> Result<RollbackOutcome, String> {
+pub(crate) fn rollback(
+    workspace_root: &Path,
+    clock: &dyn Clock,
+) -> Result<RollbackOutcome, String> {
     let Some((record, prior_auto, scope)) = active_promotion(workspace_root) else {
         return Ok(RollbackOutcome::Nothing);
     };
@@ -439,7 +449,7 @@ pub(crate) fn rollback(workspace_root: &Path) -> Result<RollbackOutcome, String>
             restored_value: record.previous_value.clone(),
             restored_effort_auto: prior_auto,
             scope,
-            at_ms: now_ms(),
+            at_ms: now_ms(clock),
         },
     )?;
 
@@ -457,6 +467,11 @@ mod tests {
     // than going through `project_config_path` (which prefers a stella.toml
     // when one exists).
     use crate::settings::project_settings_path;
+
+    /// The ledger clock these tests stamp `at_ms` from. A fixed clock rather
+    /// than [`stella_context::SystemClock`] so a ledger assertion can never
+    /// depend on when the suite ran (#2320).
+    const TEST_CLOCK: stella_context::FixedClock = stella_context::FixedClock::new(1_700_000_000);
 
     fn trial(reward: Option<f64>) -> BenchTrial {
         BenchTrial {
@@ -564,13 +579,13 @@ mod tests {
             &SelectionConfig::default(),
         );
         assert!(report.decision.is_promotion(), "clean win should promote");
-        publish_experiment(root, &report).unwrap();
+        publish_experiment(root, &report, &TEST_CLOCK).unwrap();
 
         let Decision::Promote(p) = &report.decision else {
             unreachable!()
         };
         let chosen = parse_effort(&p.winner.value).unwrap();
-        let prior = promote(root, SettingsScope::Project, chosen, p).unwrap();
+        let prior = promote(root, SettingsScope::Project, chosen, p, &TEST_CLOCK).unwrap();
         assert_eq!(prior.effort, None, "worker effort was unset before");
 
         let settings = project_settings_path(root);
@@ -588,7 +603,7 @@ mod tests {
         );
 
         // Rollback restores the prior (unset) worker effort.
-        match rollback(root).unwrap() {
+        match rollback(root, &TEST_CLOCK).unwrap() {
             RollbackOutcome::Restored { restored, .. } => assert_eq!(restored, None),
             RollbackOutcome::Nothing => panic!("expected a rollback"),
         }
@@ -599,7 +614,10 @@ mod tests {
         );
 
         // A second rollback is a no-op (the promotion is already reverted).
-        assert!(matches!(rollback(root).unwrap(), RollbackOutcome::Nothing));
+        assert!(matches!(
+            rollback(root, &TEST_CLOCK).unwrap(),
+            RollbackOutcome::Nothing
+        ));
     }
 
     #[test]
@@ -633,12 +651,13 @@ mod tests {
             SettingsScope::Project,
             parse_effort(&p.winner.value).unwrap(),
             p,
+            &TEST_CLOCK,
         )
         .unwrap();
         assert_eq!(prior.effort.as_deref(), Some("low"));
         assert_eq!(worker_effort_in(&settings).as_deref(), Some("high"));
 
-        rollback(root).unwrap();
+        rollback(root, &TEST_CLOCK).unwrap();
         assert_eq!(
             worker_effort_in(&settings).as_deref(),
             Some("low"),

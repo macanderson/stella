@@ -5,6 +5,9 @@
 // #1221: the A/B recall control — its durable schedule, what a control turn
 // suppresses, and the attribution that separates the arms afterwards.
 mod ab_control;
+// #2320: the learning plane's time comes from an injected clock, which is what
+// makes a replayed session reproducible and the truth sweep testable at all.
+mod clock_seam;
 mod path_token;
 mod quarantine;
 // Which sessions actually receive the volatile record channel — a separate
@@ -15,6 +18,10 @@ mod record_channel;
 mod skill_creation;
 
 use super::*;
+
+/// The instant lesson-parsing tests stamp `occurred_at` with. Fixed, because
+/// the parser now takes its clock reading as a parameter (#2320).
+const PARSED_AT: u64 = 1_700_000_000;
 
 fn msg(role: MessageRole, content: &str) -> CompletionMessage {
     CompletionMessage {
@@ -672,14 +679,14 @@ fn unreadable_reflection_is_distinguished_from_having_nothing_to_say() {
 
     assert!(
         matches!(
-            parse_lessons_checked("", &[]),
+            parse_lessons_checked("", &[], PARSED_AT),
             ReflectionParse::Lessons(lessons) if lessons.is_empty()
         ),
         "an empty response is a legitimate 'nothing to record'"
     );
     assert!(
         matches!(
-            parse_lessons_checked("no json here", &[]),
+            parse_lessons_checked("no json here", &[], PARSED_AT),
             ReflectionParse::Unreadable(_)
         ),
         "prose with no array is a response we failed to read, not an empty one"
@@ -965,7 +972,7 @@ fn lessons_of(text: &str) -> Vec<crate::memory::ReflectionLesson> {
 }
 
 fn lessons_with(text: &str, allowed: &[String]) -> Vec<crate::memory::ReflectionLesson> {
-    match crate::memory::reflection::parse_lessons_checked(text, allowed) {
+    match crate::memory::reflection::parse_lessons_checked(text, allowed, PARSED_AT) {
         crate::memory::reflection::ReflectionParse::Lessons(lessons) => lessons,
         crate::memory::reflection::ReflectionParse::Unreadable(excerpt) => {
             panic!("expected a readable lesson array, got unreadable: {excerpt}")

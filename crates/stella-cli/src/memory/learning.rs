@@ -71,6 +71,11 @@ impl SessionMemory {
             &self.domains.names(),
             succeeded,
             budget_limit,
+            // The session's clock, so a replayed turn stamps its lessons with
+            // the trace's instant rather than today's (#2320). Negative (i.e.
+            // pre-epoch) readings clamp to 0, matching the `unwrap_or(0)` the
+            // wall-clock read this replaced already did.
+            u64::try_from(self.clock.now_unix_secs()).unwrap_or(0),
         )
         .await
         {
@@ -440,12 +445,11 @@ impl SessionMemory {
     /// remove. Refusals are printed too — a sweep that silently declines to act
     /// on protected records reads as "nothing was failing", a different claim.
     fn retire_failing_context(&self, quiet: bool) {
-        let now = stella_context::format_rfc3339(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0) as i64,
-        );
+        // Through the session's clock, not the wall clock (#2320). This one
+        // line is why the seam is a defect fix and not only a harness
+        // prerequisite: the sweep used to always see today, so no test could
+        // place a record past its TTL and assert it retires.
+        let now = self.clock.now_rfc3339();
 
         // Deterministic validation first (#753): a memory whose path anchors
         // have ALL left the tree is stale by a reproducible check, needing no

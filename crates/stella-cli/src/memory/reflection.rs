@@ -101,6 +101,10 @@ pub(crate) async fn reflect_routed(
         .await
 }
 
+/// `recorded_at_unix_secs` is the instant every mined lesson's `occurred_at` is
+/// stamped with. It is a parameter rather than a wall-clock read so a session
+/// on a fixed clock produces a fixed log (#2320); callers pass their
+/// [`stella_context::Clock`]'s reading.
 pub async fn reflect_on_turn(
     provider: &dyn Provider,
     model_hint: &str,
@@ -109,6 +113,7 @@ pub async fn reflect_on_turn(
     domain_names: &[String],
     succeeded: bool,
     budget_limit: Option<f64>,
+    recorded_at_unix_secs: u64,
 ) -> Result<
     (ReflectionParse, Option<SelfReviewRow>, f64, Vec<AgentEvent>),
     crate::accounted_call::StandaloneCallError,
@@ -306,7 +311,7 @@ pub async fn reflect_on_turn(
     )
     .await?;
     Ok((
-        parse_lessons_checked(&accounted.result.text, domain_names),
+        parse_lessons_checked(&accounted.result.text, domain_names, recorded_at_unix_secs),
         parse_self_review(&accounted.result.text),
         accounted.cost_usd,
         accounted.events,
@@ -461,7 +466,13 @@ fn extract_lesson_array(text: &str) -> Option<Vec<ReflectionLesson>> {
     None
 }
 
-pub fn parse_lessons_checked(text: &str, allowed_domains: &[String]) -> ReflectionParse {
+/// Parse the model's lessons array, stamping each lesson's `occurred_at` with
+/// `now_unix_secs` — supplied by the caller's clock, never read here (#2320).
+pub fn parse_lessons_checked(
+    text: &str,
+    allowed_domains: &[String],
+    now_unix_secs: u64,
+) -> ReflectionParse {
     let Some(mut lessons) = extract_lesson_array(text) else {
         // An empty response is a legitimate "nothing to record". Anything else
         // is a response we failed to read, and the caller should say so.
@@ -471,13 +482,9 @@ pub fn parse_lessons_checked(text: &str, allowed_domains: &[String]) -> Reflecti
             ReflectionParse::Unreadable(text.chars().take(180).collect())
         };
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
     lessons.truncate(3);
     for lesson in &mut lessons {
-        lesson.occurred_at = now;
+        lesson.occurred_at = now_unix_secs;
         lesson.domains.retain(|domain| {
             allowed_domains
                 .iter()
