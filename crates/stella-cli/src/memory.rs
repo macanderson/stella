@@ -67,6 +67,12 @@ mod private_state;
 mod projection;
 pub(crate) mod proposals;
 mod recall;
+// #2304: the trace-replay learning harness — the learning machinery driven from
+// recorded traces with zero model calls. Test-only by construction: the crate is
+// bin-only, so an in-crate module is the only place this can reach
+// `SessionMemory` at all (`doc:trace-replay-learning-harness` §4).
+#[cfg(test)]
+pub(crate) mod replay;
 // Phase 4 (#715): reversible retirement of context that stops helping.
 pub(crate) mod retirement;
 pub(crate) mod rules_mining;
@@ -419,20 +425,38 @@ impl SessionMemory {
     /// logs, which is what makes the learning loop replayable and what lets a
     /// test place itself on either side of a TTL.
     ///
+    /// `include_workspace_skills` decides whether this session may write into
+    /// the workspace's own skills and rules directories — a *trusted project*,
+    /// in `open_for_session`'s terms. The replayer needs it true, and that is
+    /// not a convenience: with it false, `write_candidates` and `induce_rules`
+    /// both record their proposals and then decline to write a FILE (#737). A
+    /// replay of a whole corpus would behave perfectly correctly and build
+    /// nothing, which reads as a broken learner rather than as a session that
+    /// was never trusted to publish. Measured, not theorised — it is the
+    /// difference between the committed corpus producing two skills and a rule,
+    /// and producing zero.
+    ///
     /// **Test-gated until the trace-replay harness lands** (epic #2304,
     /// `doc:trace-replay-learning-harness` §4). `stella-cli` is a bin-only
     /// crate, so no external consumer could call this even in principle, and
-    /// leaving it on the production build would be dead code. Drop the gate in
-    /// the same commit that adds the replayer — the same discipline
-    /// [`SessionMemory::set_task_id`] is held to.
+    /// leaving it on the production build would be dead code. The harness is
+    /// itself `#[cfg(test)]` for exactly that reason, so the gate stays —
+    /// the same discipline [`SessionMemory::set_task_id`] is held to.
     #[cfg(test)]
     pub(crate) fn open_with_clock(
         workspace_root: &Path,
         warn: bool,
+        include_workspace_skills: bool,
         clock: std::sync::Arc<dyn Clock>,
     ) -> Option<Self> {
         let task_id = deterministic_task_id(clock.as_ref());
-        Self::open_inner(workspace_root, warn, false, clock, task_id)
+        Self::open_inner(
+            workspace_root,
+            warn,
+            include_workspace_skills,
+            clock,
+            task_id,
+        )
     }
 
     fn open_inner(

@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "description": "one engineer, one repository, six simulated months - a tool-registration convention re-encountered across four distinct tasks in four different wordings, a recurring `rg -n <pattern> <path>` shape, one unreadable reflection, and several unrelated one-off facts so the corpus stays multi-topic",
+  "workspace": {
+    "domains": [
+      "tools",
+      "model",
+      "engine",
+      "tui",
+      "process"
+    ],
+    "files": {
+      "crates/stella-tools/src/registry.rs": "// tool registry\n",
+      "crates/stella-core/src/driver.rs": "// the step loop\n",
+      "crates/stella-model/src/anthropic.rs": "// anthropic adapter\n",
+      "crates/stella-cli/src/agent.rs": "// agent wiring\n",
+      "crates/stella-tui/src/deck_render.rs": "// deck render\n",
+      "crates/stella-tui/src/views/engine.rs": "// engine view\n"
+    }
+  },
+  "sessions": [
+    {
+      "id": "s01",
+      "task_id": "add-the-mistral-adapter",
+      "turns": [
+        {
+          "at": 1700000000,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "Register the tool in crates/stella-tools/src/registry.rs",
+                "domains": [
+                  "tools"
+                ],
+                "kind": "domain"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"impl Tool\" crates/stella-tools/src/registry.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        },
+        {
+          "at": 1700003600,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "Provider adapters are one file per vendor under crates/stella-model/src",
+                "domains": [
+                  "model"
+                ],
+                "kind": "domain"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"complete_ref\" crates/stella-model/src/anthropic.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "id": "s02",
+      "task_id": "fix-the-budget-abort",
+      "turns": [
+        {
+          "at": 1701209600,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "Budget aborts happen only between model calls in crates/stella-core/src/driver.rs",
+                "domains": [
+                  "engine"
+                ],
+                "kind": "domain"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"budget\" crates/stella-core/src/driver.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        },
+        {
+          "at": 1701216800,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "Tool registration lives at crates/stella-tools/src/registry.rs",
+                "domains": [
+                  "tools"
+                ],
+                "kind": "domain"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"BudgetGuard\" crates/stella-cli/src/agent.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "id": "s03",
+      "task_id": "teach-the-deck-a-new-tab",
+      "turns": [
+        {
+          "at": 1704060800,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "Golden deck frames are regenerated with BLESS=1 under stella-tui",
+                "domains": [
+                  "tui"
+                ],
+                "kind": "process"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"TestBackend\" crates/stella-tui/src/deck_render.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        },
+        {
+          "at": 1704062600,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            }
+          ],
+          "reflection": {
+            "kind": "unreadable",
+            "text": "Let me think about what I learned. Actually, nothing much!"
+          },
+          "shell": [],
+          "succeeded": true
+        },
+        {
+          "at": 1704066200,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "Tools register through crates/stella-tools/src/registry.rs",
+                "domains": [
+                  "tools"
+                ],
+                "kind": "domain"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"Widget\" crates/stella-tui/src/views/engine.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "id": "s04",
+      "task_id": "audit-the-unwrap-census",
+      "turns": [
+        {
+          "at": 1708294400,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "Registered tools come from crates/stella-tools/src/registry.rs",
+                "domains": [
+                  "tools"
+                ],
+                "kind": "domain"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"unwrap\" crates/stella-core/src/driver.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        },
+        {
+          "at": 1708298000,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "A red gate is an automatic not-yet; run make gate before pushing",
+                "domains": [
+                  "process"
+                ],
+                "kind": "process"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"expect\" crates/stella-cli/src/agent.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "id": "s05",
+      "task_id": "trim-the-stale-memories",
+      "turns": [
+        {
+          "at": 1715379200,
+          "prompt": "work",
+          "transcript": [
+            {
+              "role": "user",
+              "content": "work"
+            },
+            {
+              "role": "assistant",
+              "content": "done"
+            }
+          ],
+          "reflection": {
+            "kind": "lessons",
+            "lessons": [
+              {
+                "lesson": "SSE parsing for Anthropic sits in crates/stella-model/src/anthropic.rs",
+                "domains": [
+                  "model"
+                ],
+                "kind": "domain"
+              }
+            ],
+            "provenance": "recorded"
+          },
+          "shell": [
+            {
+              "command": "rg -n \"data:\" crates/stella-model/src/anthropic.rs",
+              "succeeded": true
+            }
+          ],
+          "succeeded": true
+        }
+      ]
+    }
+  ]
+}

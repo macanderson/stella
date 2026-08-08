@@ -796,9 +796,9 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     assert!(matches!(load_mcp_plan(&cfg), McpPlan::Invalid(_)));
 }
 
-/// A `Config` selecting `provider_id` at its default model, with a dummy
-/// key. `build_provider` only constructs the adapter (no network call),
-/// so the key is never used.
+/// A `Config` selecting `provider_id` at its default model
+/// ([`Config::for_tests`] carries the shared offline defaults, including the
+/// "no --model given" posture — the flag-pinned case sets that explicitly).
 fn cfg_for(provider_id: &str) -> Config {
     let provider = PROVIDERS
         .iter()
@@ -806,34 +806,7 @@ fn cfg_for(provider_id: &str) -> Config {
         .unwrap_or_else(|| panic!("provider `{provider_id}` not in PROVIDERS"))
         .clone();
     let model_id = provider.default_model.to_string();
-    Config {
-        provider,
-        model_id,
-        turn_budget: None,
-        max_output_tokens: None,
-        plan_mode: false,
-        // The default posture for these tests is "no --model given", so the
-        // settings-driven wiring under test is the thing exercised. The
-        // flag-pinned case sets this explicitly.
-        model_pinned_by_flag: false,
-        durability: Default::default(),
-        create_worktrees: Default::default(),
-        api_key: ApiKey::new("dummy-key-unused-offline"),
-        credential_source: None,
-        workspace_root: std::path::PathBuf::from("/tmp"),
-        base_url_override: None,
-        hooks: None,
-        engine_settings: None,
-        engine_settings_trusted: false,
-        tool_policy: Default::default(),
-        enable_recap: false,
-        trace_capture: false,
-        reward_policy: stella_pipeline::reward::RewardPolicy::default(),
-        authority: crate::settings::AuthorityPolicy::default(),
-        credential_advisories: Vec::new(),
-        aux_credentials: Default::default(),
-        cache_ttl: None,
-    }
+    Config::for_tests(provider, model_id)
 }
 
 #[tokio::test]

@@ -427,3 +427,89 @@ parallel once 2 lands.
 - `doc:replay-golden-trajectories` — a different replay concern: event-stream
   drift for the pipeline, not learning formation. The two share the word
   "replay" and nothing else.
+
+---
+
+## 13. As built
+
+The plan above survived contact with the code; the sequencing did not. PR 1 (the
+clock seam) landed on its own as #2340 closing #2320, and PRs 2–4 land together
+here — the format, the assertions and the metrics are one module, and splitting
+an assertion suite from the replayer that exists only to run it produces a PR
+that tests nothing.
+
+This section records where the implementation departs from the plan, so the
+document stays true to the tree. **Everything here was measured by replaying the
+real loop; none of it is visible from reading any single module**, which is the
+harness earning its keep before it shipped.
+
+### 13.1 Four measurements that changed the fixtures
+
+1. **The dedup filter and the skill miner use the same metric at the same
+   threshold, so a corpus of natural repetitions builds nothing.**
+   `retain_unknown` drops a lesson at Jaccard `>= 0.5` against existing
+   memories, *before* the mining log is appended — so a dropped lesson never
+   becomes an observation and can never contribute an occurrence. The miner then
+   clusters at `min_similarity: 0.5`. For a cluster of three to form, three
+   lessons must be similar enough to cluster while staying dissimilar enough to
+   survive dedup. The band exists **only because the tokenizers differ**:
+   `stella_store::forget::tokens` keeps a path as one token and keeps stopwords,
+   while `stella_core::mining::terms` shatters the path into five terms and
+   drops them. Four naturally-varied phrasings of one convention mined **zero**
+   candidates; four written into the band mined a skill and a rule. Filed as
+   **#2358** — the committed corpus is worded around this defect, and that
+   workaround should not outlive it.
+2. **The foundry holes only a value-like argument.** `classify_argument` makes a
+   positional argument a parameter only if it is a path or a number, so
+   `cargo test -p <crate>` yields a different signature per crate and never
+   clusters, while `rg -n "<pattern>" <path>` clusters immediately. Correct — a
+   bareword is usually a subcommand — but a fixture varying a bareword measures
+   nothing.
+3. **A record's lineage embeds the workspace directory name.** `derive_set_id`
+   falls back to it with no git remote, so two replays into different temp dirs
+   produced different lineage ids for the same learned rule and assertion 8
+   failed. The harness names its workspace rather than narrowing the summary to
+   hide it: stripping the set id would have buried real nondeterminism behind a
+   shorter report.
+4. **`Path::starts_with` is lexical**, so `root/../escaped.txt` satisfies it and
+   the obvious seed-path guard passed a fixture that escapes. It walks
+   components now.
+
+### 13.2 Where the implementation diverges from §3, §4 and §5
+
+- **The replayer's loop is shorter than §4.1's.** Steps 5 and 6 (observation
+  extraction, rule induction) are already inside `reflect_and_record` —
+  `auto_create_skills_typed` runs uses extraction, the retirement sweep,
+  observation extraction, skill proposals and rule induction from one
+  observation pool. Driving them again would shadow the shipped path with a
+  second mechanism, and the harness would certify its own wiring.
+- **`open_with_clock` takes `include_workspace_skills`.** With it false,
+  `write_candidates` and `induce_rules` record their proposals and decline to
+  write a FILE (#737), so a replay builds nothing while behaving correctly.
+- **`TraceShell` and `TraceLesson` mirror the runtime types rather than reusing
+  them.** `ShellInvocation` has no serde impls, and a `ReflectionLesson` carries
+  `occurred_at`/`task_id`, which the replayer owns — a trace able to set them
+  could contradict its own clock, and every assertion about recency or
+  distinct-task counting would then be asserting the fixture.
+- **`TraceTurn` gained `forget` and `removed_files`.** Assertions 5 and 6 are
+  unreachable without them, and both model real events in an engagement.
+- **Assertion 6 asserts against `retirement::retired_ids`, not the store's live
+  nodes.** Retirement deliberately does not write `node.superseded_at`, because
+  staying retrievable by id is what separates retirement from forgetting. A test
+  asserting "the memory is gone" fails against a working sweep, and one
+  asserting "the count went down" re-specifies retirement as deletion.
+- **`turns-to-first` is exact for memories and tools, approximate for skills,
+  absent for rules.** Filed as **#2359**: a placeholder must not render like a
+  measurement.
+
+### 13.3 Still open
+
+- **#2358** — the dedup/mining threshold collision. The most consequential thing
+  the harness has found.
+- **#2359** — the placeholder metric.
+- **The corpus can prove the corpus.** §6's recurrence profile mitigates it and
+  does not remove it.
+- **Recall-ranking assertions remain scoped out**, inheriting #2288.
+- **#2321** — extracting the learning loop into a library crate would let the
+  harness be an ordinary integration test rather than a `#[cfg(test)]` module.
+- **The §7 adapter** is a separate change; §13 gains its half when it lands.
