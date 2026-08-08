@@ -125,7 +125,7 @@ use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
-pub(crate) use forwarder::spawn_forwarder;
+pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use scope_gate::DeckApprovalGate;
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
@@ -4242,8 +4242,7 @@ async fn run_lead_turn(
     // is still reading user input — so latch the flag that tells its prompt
     // arm to treat what arrives as the next turn, not a sidecar request.
     steering.mark_settling();
-    drop(tx);
-    let persistence_complete = forwarder.await.unwrap_or(false);
+    let persistence_complete = close_turn_stream(registry, tx, forwarder).await;
     claims.release_all();
 
     if let Some((store, id)) = &execution {
@@ -4450,8 +4449,7 @@ async fn run_lead_pipeline_turn(
     };
     // Same settle window as `run_lead_turn` — see `SteeringTap::mark_settling`.
     steering.mark_settling();
-    drop(tx);
-    let persistence_complete = forwarder.await.unwrap_or(false);
+    let persistence_complete = close_turn_stream(registry, tx, forwarder).await;
     claims.release_all();
 
     if let Some((store, id)) = &execution {
