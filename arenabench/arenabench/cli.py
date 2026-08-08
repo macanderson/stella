@@ -486,6 +486,19 @@ def _cmd_flip(args: argparse.Namespace) -> int:
             f"no snapshot passed ({result.snapshots} captured, "
             f"{result.probes} probed, {result.unknown} unknown)"
         )
+        # "No snapshot passed" reads as "the agent never solved it", so it must
+        # never be printed alone when capture is the thing that failed — that
+        # is how a solved trial gets recorded as a failure (#2196).
+        capture = result.capture
+        if capture is not None and capture.broke:
+            print(
+                f"warning: capture broke during this trial — "
+                f"{capture.snapshots} of {capture.attempts} attempt(s) landed, "
+                f"and the last one failed: {capture.reason}\n"
+                "         this trial was not fully measured; do not read the "
+                "absence of a flip as the agent never solving it",
+                file=sys.stderr,
+            )
         return 0
     print(
         f"flip at snapshot {result.flip_index}/{result.snapshots - 1} "

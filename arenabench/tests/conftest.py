@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from arenabench.snapshot import load_manifest
+from arenabench.snapshot import load_capture_status, load_manifest
 
 MATCHES = Path(__file__).parent / "fixtures" / "matches"
 
@@ -95,13 +95,21 @@ def _wait_for_snapshots(
         if count >= at_least:
             return count
         if time.monotonic() >= limit:
-            # Zero here is a different fault from "too few": the supervisor
-            # logs a capture that failed outright at debug level, so it is
-            # invisible unless the run asked for it (#2196).
+            # "Not keeping up" and "stopped working" are different faults, and
+            # this message used to be unable to tell them apart — it could only
+            # suggest re-running at DEBUG, because that was the only level the
+            # supervisor said anything at. It now records every capture attempt,
+            # so the fault names itself here instead of in a second run (#2196).
+            status = load_capture_status(trial_dir)
+            why = (
+                f"capture reports {status.state} after {status.attempts} attempt(s): "
+                f"{status.reason}"
+                if status is not None and status.reason
+                else "capture is not keeping up on this host"
+            )
             raise AssertionError(
                 f"only {count} of {at_least} snapshots {what} after "
-                f"{deadline:.0f}s — capture is not keeping up on this host, or "
-                f"stopped working; re-run with --log-cli-level=DEBUG to see which"
+                f"{deadline:.0f}s — {why}"
             )
         time.sleep(0.2)
 
