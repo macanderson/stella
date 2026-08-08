@@ -161,16 +161,16 @@ pub(crate) async fn run_raw_one_shot(
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        let mut report = m
-            .reflect_and_record(
-                &*provider,
-                &cfg.model_id,
-                &messages,
-                format != OutputFormat::Text,
-                outcome.is_ok(),
-                crate::agent::remaining_budget(&budget),
-            )
-            .await;
+        let mut report = crate::memory::reflect_routed(
+            m,
+            cfg,
+            &*provider,
+            &messages,
+            format != OutputFormat::Text,
+            outcome.is_ok(),
+            crate::agent::remaining_budget(&budget),
+        )
+        .await;
         settle_reflection_budget(&mut report, &mut budget);
         surface_reflection(&report, format);
     }
@@ -351,16 +351,16 @@ pub async fn run_goal_cmd(
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        let mut report = m
-            .reflect_and_record(
-                &*provider,
-                &cfg.model_id,
-                &messages,
-                false,
-                outcome.is_ok(),
-                crate::agent::remaining_budget(&budget),
-            )
-            .await;
+        let mut report = crate::memory::reflect_routed(
+            m,
+            cfg,
+            &*provider,
+            &messages,
+            false,
+            outcome.is_ok(),
+            crate::agent::remaining_budget(&budget),
+        )
+        .await;
         settle_reflection_budget(&mut report, &mut budget);
         surface_reflection(&report, OutputFormat::Text);
     }

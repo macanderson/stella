@@ -13,7 +13,7 @@
 //! prompt ──> recall_block_reported(): registry-routed recall (crate::contextgraph) + select_skills()
 //!            └─ volatile message AFTER the byte-stable system prefix (L-E8)
 //! turn runs …
-//! outcome ─> reflect_and_record(): one cheap model call -> 0-3 lessons
+//! outcome ─> reflect_routed(): one model call on the cheap (triage) tier -> 0-3 lessons
 //!            ├─ MemoryInput::reflection(...) -> context.db (domain-tagged)
 //!            ├─ appended to .stella/private/reflections.jsonl (the mining log)
 //!            └─ mine_skill_candidates over the log -> decide_auto_creation
@@ -200,6 +200,7 @@ mod reflection;
 pub use reflection::{
     ReflectionReport, reflect_on_turn, should_reflect_on, turn_warrants_reflection,
 };
+pub(crate) use reflection::{reflect_routed, reflection_tail};
 
 /// Session-scoped memory state: the context store, the CGP host that
 /// routes every recall (workspace memory + code graph as in-process CGP

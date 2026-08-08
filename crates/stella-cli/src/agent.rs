@@ -38,8 +38,8 @@ use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
 use crate::interactive::{InteractiveToolSet, SkillRegistry, default_ask_io};
 use crate::memory::{
-    ReflectionReport, SessionMemory, inject_recall_block, should_reflect_on,
-    turn_warrants_reflection,
+    ReflectionReport, SessionMemory, inject_recall_block, reflect_routed, reflection_tail,
+    should_reflect_on, turn_warrants_reflection,
 };
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
@@ -514,7 +514,7 @@ async fn run_pipeline_one_shot(
                 name: stella_protocol::StageKind::Reflect,
             });
         }
-        let mut reflect_transcript = messages.clone();
+        let mut reflect_transcript = reflection_tail(&messages);
         if let Ok(outcome) = &result
             && !outcome.final_text.trim().is_empty()
         {
@@ -530,19 +530,19 @@ async fn run_pipeline_one_shot(
                 "(files changed this turn: {changed})"
             )));
         }
-        let mut report = m
-            .reflect_and_record(
-                &*provider,
-                &cfg.model_id,
-                &reflect_transcript,
-                format != OutputFormat::Text,
-                matches!(
-                    &result,
-                    Ok(outcome) if matches!(outcome.status, PipelineStatus::Completed)
-                ),
-                remaining_budget(&budget),
-            )
-            .await;
+        let mut report = reflect_routed(
+            m,
+            cfg,
+            &*provider,
+            &reflect_transcript,
+            format != OutputFormat::Text,
+            matches!(
+                &result,
+                Ok(outcome) if matches!(outcome.status, PipelineStatus::Completed)
+            ),
+            remaining_budget(&budget),
+        )
+        .await;
         settle_reflection_budget(&mut report, &mut budget);
         if format == OutputFormat::StreamJson {
             for event in &report.events {
@@ -1188,16 +1188,16 @@ async fn reflect_on_interactive_turn<E: std::fmt::Display>(
         && turn_warrants_reflection(&messages[turn_start..])
         && let Some(m) = memory
     {
-        let mut report = m
-            .reflect_and_record(
-                provider,
-                &cfg.model_id,
-                messages,
-                false,
-                result.is_ok(),
-                remaining_budget(budget),
-            )
-            .await;
+        let mut report = reflect_routed(
+            m,
+            cfg,
+            provider,
+            messages,
+            false,
+            result.is_ok(),
+            remaining_budget(budget),
+        )
+        .await;
         settle_reflection_budget(&mut report, budget);
         surface_reflection(&report, OutputFormat::Text);
     }
