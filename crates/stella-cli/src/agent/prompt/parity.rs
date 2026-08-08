@@ -92,6 +92,10 @@ const SHARED_CONTRACTS: &[(&str, &str)] = &[
     ("tool_steering", tool_steering!()),
     ("scope_discipline", scope_discipline!()),
     ("measurement_discipline", measurement_discipline!()),
+    (
+        "verification_proportionality",
+        verification_proportionality!(),
+    ),
 ];
 
 /// Every static prompt, paired with its assembled bytes. Same derivation
