@@ -28,7 +28,7 @@
 //! the distinction between "I looked and saw nothing" and "I could not finish
 //! looking" is the one whose collapse caused #973.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::file_touch::{FileOp, normalize_workspace_path};
@@ -37,7 +37,10 @@ use crate::file_touch::{FileOp, normalize_workspace_path};
 /// otherwise dominate the walk. Deliberately short: build outputs (`target`,
 /// `dist`, `build`) are **not** here, because producing one is frequently the
 /// whole job and a probe that hides it would recreate the blindness this
-/// module exists to remove.
+/// module exists to remove. Inside a git repository the repository's own
+/// ignore rules take that role instead — see [`IgnorePolicy`] — which keeps
+/// this list about what can *never* matter rather than about what usually
+/// doesn't.
 const SKIP_DIRS: &[&str] = &[
     ".git",
     // Stella's own per-workspace state: the code-graph SQLite database and
@@ -94,6 +97,71 @@ const MAX_TOTAL_CONTENT: u64 = 16 * 1024 * 1024;
 /// same discipline [`WorkspaceProbe::saturated`] already follows for the walk.
 pub(crate) const MAX_RECORDED_TOUCHES: usize = 256;
 
+/// Whether one workspace walk consults the repository's own ignore rules.
+///
+/// The default is [`IgnorePolicy::SkipIgnored`] — the `ignore_gitignore`
+/// setting, which ships on: paths the workspace's own `.gitignore` excludes
+/// are never walked, fingerprinted, or recorded as touches, because the
+/// repository has already declared them uninteresting and their churn is what
+/// used to drown the walk (77% of recorded changes in a measured session were
+/// `target/` artifacts, and the walk saturated inside them before reaching
+/// real source). `"ignore_gitignore": "off"` in settings selects
+/// [`IgnorePolicy::WalkAll`], the unfiltered walk.
+///
+/// Outside a git repository the policy is inert — nothing is ignored, so the
+/// probe stays fully sighted. That preserves this module's stated posture on
+/// Terminal-Bench, where the task directory is not a repository and producing
+/// build output is frequently the whole job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IgnorePolicy {
+    /// Skip what the repository's own ignore rules exclude (the default).
+    #[default]
+    SkipIgnored,
+    /// Walk everything the filesystem shows, ignore rules notwithstanding.
+    WalkAll,
+}
+
+/// Everything the workspace's own repository ignores, as walk-relative paths.
+/// A wholly-ignored directory arrives collapsed to its topmost entry with a
+/// trailing slash (`target/`), so pruning at descent is an exact match.
+///
+/// One `git ls-files` per walk (measured ~30ms on a 20k-entry tree), and only
+/// when `root` itself hosts the repository (`root/.git` exists). That gate is
+/// correctness, not economy: without it a workspace that merely sits *under*
+/// someone else's repository — a scratch directory beneath a `$HOME` dotfiles
+/// repo whose `.gitignore` says `*` — would inherit ignore rules nobody wrote
+/// for it and the probe would go silently blind. Failures are absences, as
+/// everywhere in this module: no `git` on the host, or a directory that only
+/// looks like a repository, yields the empty set and an unfiltered walk.
+fn repo_ignored_paths(root: &Path) -> BTreeSet<String> {
+    if !root.join(".git").exists() {
+        return BTreeSet::new();
+    }
+    let Ok(output) = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--directory",
+            "--exclude-standard",
+        ])
+        .output()
+    else {
+        return BTreeSet::new();
+    };
+    if !output.status.success() {
+        return BTreeSet::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// What one snapshot recorded about one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Fingerprint {
@@ -131,19 +199,36 @@ pub struct WorkspaceProbe {
     /// The walk hit [`MAX_ENTRIES`] or [`MAX_DEPTH`]. The snapshot is a lower
     /// bound on the tree, so a path's *absence* from it proves nothing.
     saturated: bool,
+    /// What this walk's ignore rules excluded ([`repo_ignored_paths`]).
+    /// Carried on the snapshot because [`Self::diff`] needs it: a path absent
+    /// from one side may be *pruned* rather than *gone*, and the two must not
+    /// be confused when `.gitignore` itself changes between the walks.
+    ignored: BTreeSet<String>,
 }
 
 impl WorkspaceProbe {
-    /// Fingerprint `root`, holding content for files within budget.
+    /// Fingerprint `root`, holding content for files within budget, under the
+    /// default ignore policy ([`IgnorePolicy::SkipIgnored`]).
     ///
     /// Errors are absences, not failures: an unreadable directory is simply
     /// not described. A probe that refused to return on a permission error
     /// would turn a partially-visible workspace into no workspace at all.
     pub fn capture(root: &Path) -> Self {
-        let mut probe = Self::default();
+        Self::capture_with(root, IgnorePolicy::default())
+    }
+
+    /// [`Self::capture`] under an explicit ignore policy.
+    pub fn capture_with(root: &Path, policy: IgnorePolicy) -> Self {
+        let mut probe = Self {
+            ignored: match policy {
+                IgnorePolicy::SkipIgnored => repo_ignored_paths(root),
+                IgnorePolicy::WalkAll => BTreeSet::new(),
+            },
+            ..Self::default()
+        };
         let mut budget = MAX_TOTAL_CONTENT;
-        let mut stack = vec![(root.to_path_buf(), 0usize)];
-        while let Some((dir, depth)) = stack.pop() {
+        let mut stack = vec![(root.to_path_buf(), String::new(), 0usize)];
+        while let Some((dir, rel, depth)) = stack.pop() {
             if depth > MAX_DEPTH {
                 probe.saturated = true;
                 continue;
@@ -158,13 +243,30 @@ impl WorkspaceProbe {
                 }
                 let path = entry.path();
                 let Ok(meta) = entry.metadata() else { continue };
+                // The walk-relative key, threaded down the stack rather than
+                // re-derived per entry: `normalize_workspace_path`
+                // canonicalizes, which would cost a syscall per directory.
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let rel_child = if rel.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{rel}/{name}")
+                };
                 if meta.is_dir() {
-                    let name = entry.file_name();
-                    let name = name.to_string_lossy();
                     if SKIP_DIRS.contains(&name.as_ref()) {
                         continue;
                     }
-                    stack.push((path, depth + 1));
+                    // `--directory` collapses a wholly-ignored tree to its
+                    // topmost entry, so an exact match here prunes the whole
+                    // subtree without a prefix scan.
+                    if probe.ignored.contains(&format!("{rel_child}/")) {
+                        continue;
+                    }
+                    stack.push((path, rel_child, depth + 1));
+                    continue;
+                }
+                if probe.ignored.contains(&rel_child) {
                     continue;
                 }
                 // Symlinks are not followed: the target is either inside the
@@ -216,6 +318,22 @@ impl WorkspaceProbe {
         self.saturated
     }
 
+    /// Whether this snapshot's walk pruned `path` under its ignore rules —
+    /// either listed outright or covered by a collapsed `dir/` entry.
+    fn ignores(&self, path: &str) -> bool {
+        if self.ignored.contains(path) {
+            return true;
+        }
+        let mut end = path.len();
+        while let Some(pos) = path[..end].rfind('/') {
+            if self.ignored.contains(&path[..=pos]) {
+                return true;
+            }
+            end = pos;
+        }
+        false
+    }
+
     /// Attribute the difference between this (pre) snapshot and `post`.
     ///
     /// Deletions are reported **only** when both snapshots are complete. If
@@ -223,10 +341,18 @@ impl WorkspaceProbe {
     /// the second walk never reached, and reporting that as a deletion would
     /// invent a mutation that never happened — the failure mode this module
     /// exists to avoid, pointed the other way.
+    ///
+    /// The same discipline covers a `.gitignore` edited between the walks:
+    /// a path one side pruned and the other side saw is *unknowable*, not
+    /// changed. Absent from `post` because a new rule now covers it is not a
+    /// deletion; present in `post` because a rule was dropped is not a
+    /// creation. Both are skipped ([`Self::ignores`]) — a miss, never a
+    /// fabrication, because the probe never guesses.
     pub fn diff(&self, post: &Self) -> Vec<ShellTouch> {
         let mut touches = Vec::new();
         for (path, after) in &post.entries {
             match self.entries.get(path) {
+                None if self.ignores(path) => {}
                 None => touches.push(ShellTouch {
                     path: path.clone(),
                     op: FileOp::Create,
@@ -248,7 +374,7 @@ impl WorkspaceProbe {
         }
         if !self.saturated && !post.saturated {
             for (path, before) in &self.entries {
-                if !post.entries.contains_key(path) {
+                if !post.entries.contains_key(path) && !post.ignores(path) {
                     touches.push(ShellTouch {
                         path: path.clone(),
                         op: FileOp::Delete,
@@ -374,6 +500,9 @@ mod tests {
 
     /// Skipping `.git` is what keeps the probe affordable; skipping a build
     /// directory would hide the point of many tasks, so `target/` is walked.
+    /// (A directory that merely *contains* a `.git` entry is not a repository
+    /// — `git ls-files` refuses it — so the ignore consultation stays inert
+    /// here too and the walk is the unfiltered one.)
     #[test]
     fn vcs_metadata_is_skipped_but_build_output_is_not() {
         let dir = tempfile::tempdir().unwrap();
@@ -384,5 +513,84 @@ mod tests {
 
         let paths: Vec<_> = pre.diff(&post).into_iter().map(|t| t.path).collect();
         assert_eq!(paths, vec!["target/release/app".to_string()]);
+    }
+
+    fn git_init(root: &Path) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["init", "--quiet"])
+            .status()
+            .expect("git must be runnable in the test environment");
+        assert!(status.success(), "git init failed");
+    }
+
+    /// The `ignore_gitignore` default: inside a git repository the
+    /// repository's own rules decide what the probe walks, so churn in
+    /// ignored paths — a build tree, a scratch file — is invisible while a
+    /// source edit in the same delta stays attributed.
+    #[test]
+    fn gitignored_churn_is_invisible_when_the_workspace_is_a_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        write(dir.path(), ".gitignore", "target/\n*.scratchtmp\n");
+        let pre = WorkspaceProbe::capture(dir.path());
+        write(dir.path(), "target/debug/app.o", "object\n");
+        write(dir.path(), "probe-note.scratchtmp", "x\n");
+        write(dir.path(), "src/lib.rs", "pub fn f() {}\n");
+        let post = WorkspaceProbe::capture(dir.path());
+
+        let paths: Vec<_> = pre.diff(&post).into_iter().map(|t| t.path).collect();
+        assert_eq!(paths, vec!["src/lib.rs".to_string()]);
+    }
+
+    /// `"ignore_gitignore": "off"` restores the unfiltered walk.
+    #[test]
+    fn the_walk_all_policy_still_sees_ignored_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        write(dir.path(), ".gitignore", "target/\n");
+        let pre = WorkspaceProbe::capture_with(dir.path(), IgnorePolicy::WalkAll);
+        write(dir.path(), "target/debug/app.o", "object\n");
+        let post = WorkspaceProbe::capture_with(dir.path(), IgnorePolicy::WalkAll);
+
+        let paths: Vec<_> = pre.diff(&post).into_iter().map(|t| t.path).collect();
+        assert_eq!(paths, vec!["target/debug/app.o".to_string()]);
+    }
+
+    /// A rule *added* between the walks hides paths from the second walk;
+    /// their absence is pruning, not deletion, and inventing a mass deletion
+    /// here would be the probe fabricating the biggest delta of the session.
+    #[test]
+    fn a_gitignore_rule_added_mid_turn_does_not_fabricate_deletions() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        write(dir.path(), "target/debug/app.o", "object\n");
+        let pre = WorkspaceProbe::capture(dir.path());
+        write(dir.path(), ".gitignore", "target/\n");
+        let post = WorkspaceProbe::capture(dir.path());
+
+        let paths: Vec<_> = pre.diff(&post).into_iter().map(|t| t.path).collect();
+        assert_eq!(paths, vec![".gitignore".to_string()]);
+    }
+
+    /// The mirror image: a rule *dropped* between the walks makes paths
+    /// appear in the second walk that the first one pruned. The probe cannot
+    /// tell "newly created" from "was there all along", so it says nothing —
+    /// a miss, never a fabricated creation.
+    #[test]
+    fn a_gitignore_rule_dropped_mid_turn_does_not_fabricate_creations() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        write(dir.path(), ".gitignore", "target/\n");
+        write(dir.path(), "target/debug/app.o", "object\n");
+        let pre = WorkspaceProbe::capture(dir.path());
+        std::fs::remove_file(dir.path().join(".gitignore")).unwrap();
+        let post = WorkspaceProbe::capture(dir.path());
+
+        let touches = pre.diff(&post);
+        let paths: Vec<_> = touches.iter().map(|t| t.path.as_str()).collect();
+        assert_eq!(paths, vec![".gitignore"], "{touches:?}");
+        assert_eq!(touches[0].op, FileOp::Delete);
     }
 }
