@@ -5,6 +5,7 @@ import type { Cell, ContestantSnap, Snapshot } from "@/lib/types";
 import { fmtClock, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
 import { Tip } from "@/components/ui/tooltip";
+import { ProofBadge } from "@/components/arena/proof-badge";
 
 /**
  * The task table: one row per task, every contestant's numbers side by side,
@@ -163,6 +164,10 @@ export function TaskTable({ snapshot }: { snapshot: Snapshot }) {
               <th className="px-4 py-2 font-normal">task</th>
               <th className="px-2 py-2 font-normal">seat</th>
               <th className="px-2 py-2 font-normal">verdict</th>
+              {/* Beside the verdict on purpose: "did it pass" and "what says
+                  so" are two facts, and the second is the one a reader
+                  cannot reconstruct from anywhere else on this page. */}
+              <th className="px-2 py-2 font-normal">proof</th>
               {METRICS.map((m) => (
                 <th key={String(m.key)} className="px-2 py-2 text-right font-normal">
                   {m.label} <i className="not-italic text-line">{m.better === "lower" ? "↓" : "↑"}</i>
@@ -208,6 +213,9 @@ export function TaskTable({ snapshot }: { snapshot: Snapshot }) {
                           </Tip>
                         )}
                       </span>
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5">
+                      <ProofBadge proof={cell?.proof} />
                     </td>
                     {METRICS.map((metric) => {
                       const value = numeric(cell, metric.key);

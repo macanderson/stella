@@ -115,6 +115,25 @@ export interface Totals {
   wasted_time?: number | null;
   /** How many trials the wasted-time sum covers (`arenabench flip` runs). */
   flip_trials?: number;
+  /** Trials that published a proof rail at all — the denominator for every
+   *  count below. Zero for a seat with no pipeline (a Claude Code arm). */
+  rail_trials?: number;
+  /** Trials an authored witness or tracked command carried fail→pass. */
+  proven?: number;
+  /** Trials where a witness test was authored, accepted and pinned. */
+  witnessed?: number;
+  /** Every time a model believed it was finished and a test said otherwise,
+   *  whether or not it recovered. The reason the rail exists, as a number. */
+  wrong_guesses?: number;
+  /** Trials the oracle ran on and never passed — the rail catching a
+   *  premature "done", which is a success of the machinery, not a failure. */
+  refuted?: number;
+  /** Passing verdicts with nothing deterministic behind them. */
+  claimed_without_proof?: number;
+  /** Trials where proof was warranted and no witness could be authored. */
+  unproven?: number;
+  /** Trials whose verifier was the same model as the worker. */
+  self_graded?: number;
   // `string[]` rides in the index signature for `unpriced_models` alone. Every
   // *dimension* key is still numeric — `race.tsx` indexes by `dim.key` and
   // coerces with `Number` — and no dimension is or will be a list.
@@ -170,6 +189,92 @@ export interface Cell {
   flip_elapsed?: number | null;
   /** Seconds the trial kept running after it was already passing. */
   wasted_elapsed?: number | null;
+  /** What actually proved this trial. `null` for a seat with no Stella event
+   *  stream; absent only in payloads recorded before the rail was surfaced. */
+  proof?: TrialProof | null;
+}
+
+/** One observation of the tracked test command, in the order it happened. */
+export interface OracleRun {
+  /** `baseline` = the unmodified code, `candidate` = the agent's change. */
+  tree: string;
+  passed: boolean;
+  command: string;
+}
+
+/** Every model call one pipeline role made — the model that actually served
+ *  it, which is the only way to learn who authored a witness: the author
+ *  rides the verifier's resolution and is then filtered for independence
+ *  against the worker, so no config file can tell you. */
+export interface RoleCall {
+  role: string;
+  model: string;
+  calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+/**
+ * What actually proved a trial. Absent on a payload recorded before the rail
+ * was surfaced; `null` for a seat that publishes no Stella event stream at
+ * all — the absence of the machinery rather than a failure of it.
+ */
+export interface TrialProof {
+  /** The single badge. See `GRADE_COPY` in `proof-badge.tsx`. */
+  grade: string;
+
+  // was proof demanded at all?
+  warranted: boolean | null;
+  /** One of six fixed sentences when it was not — "documentation only; prose
+   *  has no runtime behavior to flip" and its siblings. */
+  warrant_reason: string;
+  diff_lines: number | null;
+
+  // was a witness authored?
+  /** A `witness` stage event was seen. Warranted-but-never-started is a
+   *  different failure from started-and-could-not-finish. */
+  stage_ran: boolean;
+  witness_authored: boolean;
+  witness_path: string;
+  witness_command: string;
+  witness_fingerprint: string;
+  /** Full, untruncated. Plural because authoring gets one repair attempt. */
+  witness_unavailable: string[];
+
+  // did it flip?
+  oracle_runs: OracleRun[];
+  /** Failing observations before the first pass — and all of them when none
+   *  passed, so `> 0` selects every trial where the model guessed wrong. */
+  failed_attempts: number;
+  flip_achieved: boolean | null;
+  tracked_command: string;
+  unstable_flip: boolean;
+  flip_refused: boolean;
+  witness_intact: boolean | null;
+  touched_tests_passed: boolean | null;
+
+  // what backed the verdict?
+  rung: string;
+  /** Whether a test was actually run and observed for this verdict. */
+  deterministic: boolean;
+  /** A passing verdict with nothing deterministic behind it. The honesty
+   *  trap: `unverifiable` and `waived` both publish `passed: true`, and a
+   *  model verdict is an assertion rather than an observation. */
+  claimed_without_proof: boolean;
+  verdict_passed: boolean | null;
+  verdict_summary: string;
+  /** Which honesty marker the summary carries, `""` for a plain claim. */
+  honesty: string;
+  assurance_witness: boolean | null;
+  assurance_verifier: boolean | null;
+  /** `false` means the run graded its own homework. */
+  verifier_independent: boolean | null;
+  diff_coverage: string;
+  verdict_degraded: string[];
+  verification_unavailable: string[];
+
+  roles: RoleCall[];
 }
 
 export interface TaskRow {

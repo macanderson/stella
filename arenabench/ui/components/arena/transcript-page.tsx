@@ -7,6 +7,7 @@ import { fmtClock, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ProofPanel } from "@/components/arena/proof-panel";
 
 /**
  * A trial's transcript as its own page: `/transcript?match=…&task=…&seat=…`.
@@ -47,7 +48,11 @@ const GROUPS: Array<{ key: string; label: string; kinds: string[] }> = [
   { key: "tool", label: "tools", kinds: ["tool"] },
   { key: "tool_result", label: "results", kinds: ["tool_result"] },
   { key: "usage", label: "usage", kinds: ["usage"] },
-  { key: "flow", label: "stages", kinds: ["stage", "proof", "verdict", "complete"] },
+  { key: "flow", label: "stages", kinds: ["stage", "complete"] },
+  // Its own group, not folded into "stages": the reason to filter a
+  // transcript down to the proof rail is to read the rail, and leaving it
+  // bundled with every stage rule means turning the stages off to see it.
+  { key: "proof", label: "proof", kinds: ["proof", "verdict"] },
 ];
 
 function groupOf(kind: string): string | null {
@@ -274,10 +279,64 @@ function Entry({
     return <div className="text-[10.5px] text-dim">{usageLine(entry)}</div>;
   }
 
-  if (entry.kind === "verdict" || entry.kind === "complete") {
+  if (entry.kind === "proof") {
+    // The proof rail inline, where it happened. Colour tracks what the step
+    // means for the claim rather than the step's name: an oracle that failed
+    // and a witness that could not be authored are both the rail *working*,
+    // so they are marked, not alarmed — but a reader must be able to spot
+    // them while scrolling.
+    const meta = (entry.meta || {}) as Record<string, unknown>;
+    const step = String(meta.step ?? "");
+    const bad = step === "witness_unavailable" || step === "verification_unavailable";
+    const failed = step === "oracle" && meta.passed === false;
+    const good = step === "witness_authored" || (step === "oracle" && meta.passed === true);
     return (
-      <div className="font-semibold text-ok">
-        {(entry.title ?? entry.kind) + (body ? ` — ${body}` : "")}
+      <div>
+        <span
+          className={cn(
+            "text-[11px] font-semibold",
+            good ? "text-ok" : bad || failed ? "text-warn" : "text-accent",
+          )}
+        >
+          ⊢ <Highlight text={entry.title ?? "proof"} query={query} />
+        </span>
+        {body && (
+          <div className="whitespace-pre-wrap break-words text-muted">
+            <Highlight text={body} query={query} />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (entry.kind === "verdict" || entry.kind === "complete") {
+    // A verdict is not automatically good news. `passed: true` also covers an
+    // `unverifiable` outcome and a `waived` one, so the tone follows the
+    // ladder rung — the field that actually separates a proven pass from an
+    // unexamined claim.
+    const meta = (entry.meta || {}) as Record<string, unknown>;
+    const rung = String(meta.rung ?? "");
+    const proven = rung === "submit_fast" || rung === "revise";
+    const passed = meta.passed === true;
+    return (
+      <div>
+        <span
+          className={cn(
+            "font-semibold",
+            entry.kind === "complete" || proven ? "text-ok" : passed ? "text-warn" : "text-bad",
+          )}
+        >
+          {entry.title ?? entry.kind}
+          {rung && <span className="pl-2 font-normal text-dim">rung: {rung}</span>}
+          {passed && !proven && (
+            <span className="pl-2 font-normal text-warn">nothing deterministic behind it</span>
+          )}
+        </span>
+        {body && (
+          <div className="whitespace-pre-wrap break-words text-muted">
+            <Highlight text={body} query={query} />
+          </div>
+        )}
       </div>
     );
   }
@@ -389,6 +448,10 @@ function TranscriptView({
     setThinkingOverrides({});
     setOpenResults({});
   }, [seatId, task]);
+
+  // Open by default, because it is the answer to the question that brought
+  // most readers here — the transcript below is the supporting detail.
+  const [proofOpen, setProofOpen] = React.useState(true);
 
   const visible = React.useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -599,6 +662,19 @@ function TranscriptView({
             </Button>
           ) : null}
         </div>
+      </div>
+
+      {/* The proof rail, above the transcript it summarises. A verdict says
+          whether the trial passed; only this says what claims that. */}
+      <div className="border-b border-line py-2">
+        <button
+          type="button"
+          onClick={() => setProofOpen((value) => !value)}
+          className="cursor-pointer pb-1.5 font-mono text-[11px] text-dim hover:text-muted"
+        >
+          {proofOpen ? "⏶" : "⏵"} proof
+        </button>
+        {proofOpen && <ProofPanel proof={cell?.proof} />}
       </div>
 
       <div

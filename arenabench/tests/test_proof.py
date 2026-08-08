@@ -507,6 +507,23 @@ def test_aggregate_rolls_the_rail_up(tmp_path: Path) -> None:
     assert totals["wrong_guesses"] == 2
 
 
+def test_a_seat_with_no_rail_scores_none_not_zero(tmp_path: Path) -> None:
+    """The zero would flatter, and in a benchmark that always favours somebody.
+
+    A seat with no pipeline has not "never claimed a pass without proof" — it
+    produced no evidence either way. Crowning it on a measurement it never
+    took would make the scoreboard reward the absence of the machinery it
+    exists to compare. Same discipline as `wasted_time`.
+    """
+    empty = tmp_path / "job" / "t1"
+    empty.mkdir(parents=True)
+    totals = aggregate([MetricsReader().read(empty, "a")])
+
+    assert totals["rail_trials"] == 0
+    assert totals["proven"] is None
+    assert totals["claimed_without_proof"] is None
+
+
 def test_transcript_renders_proof_entries(tmp_path: Path) -> None:
     """The regression this whole change exists to fix.
 

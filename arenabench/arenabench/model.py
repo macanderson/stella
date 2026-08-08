@@ -95,6 +95,14 @@ class Dimension:
 #: reported because an operator reconciling an invoice needs it, and it is
 #: labelled so nobody reads it as a comparison.
 #:
+#: ``proven`` and ``claimed_without_proof`` come from the proof rail
+#: (:mod:`.proof`) and are ``None`` for a seat that publishes none — every
+#: non-Stella arm. That is the same discipline ``wasted_time`` follows below
+#: and it matters more here, because the natural zero flatters: a seat with no
+#: rail has not "never claimed a pass without proof", it produced no evidence
+#: either way, and crowning it for that would be the scoreboard rewarding the
+#: absence of the very machinery it is trying to measure.
+#:
 #: ``wasted_time`` only exists for trials an operator replayed with
 #: ``arenabench flip`` — for everything else the aggregate is ``None``, which
 #: the leaderboard already reads as "no number, no crown". That is load-bearing:
@@ -107,6 +115,20 @@ DIMENSIONS: tuple[Dimension, ...] = (
         "higher",
         "%",
         "verifier rewards / trials completed",
+    ),
+    Dimension(
+        "proven",
+        "Proven",
+        "higher",
+        "",
+        "trials an authored witness or tracked command carried fail→pass",
+    ),
+    Dimension(
+        "claimed_without_proof",
+        "Unproven Claims",
+        "lower",
+        "",
+        "passing verdicts with nothing deterministic behind them",
     ),
     Dimension("clock_time", "Clock Time", "lower", "s", "wall-clock across all trials"),
     Dimension(

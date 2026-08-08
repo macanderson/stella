@@ -881,6 +881,11 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
     trials = list(trials)
     judged = [t for t in trials if t.resolved is not None]
     passed = [t for t in judged if t.resolved]
+    # Trials that published a proof rail at all. Its own subset, because the
+    # rail's denominator is not the match's: a seat with no pipeline
+    # contributes trials to every total above and none to the ones below.
+    rail = [t for t in trials if t.proof is not None]
+    rail_trials = len(rail)
     return {
         "trials": len(trials),
         "infrastructure": sum(1 for t in trials if t.infrastructure),
@@ -958,53 +963,47 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
         ),
         "flip_trials": sum(1 for t in trials if t.wasted_elapsed is not None),
         # -- the proof rail, rolled up ------------------------------------
-        # `proven` is the only one of these that is a *rate* worth reading on
-        # its own; the rest are counts, because their denominators differ.
-        # A seat that publishes no proof rail at all (every non-Stella arm)
-        # scores 0 on each, which is correct: it proved nothing, and the
-        # reason is that it has no machinery for it rather than that it
-        # tried and failed. `rail_trials` is that denominator.
-        "rail_trials": sum(1 for t in trials if t.proof is not None),
+        # `rail_trials` is the denominator every count below is over, and it
+        # is zero for every seat with no pipeline (a Claude Code arm).
+        #
+        # The two *dimensions* — `proven` and `claimed_without_proof` — are
+        # `None` rather than 0 at that denominator, for the same reason
+        # `wasted_time` is: a seat that publishes no rail did not "never
+        # claim without proof", it produced no evidence either way, and a
+        # zero there would crown it on a measurement it never took. The
+        # remaining keys stay numeric because they are read as diagnostics
+        # beside `rail_trials`, never crowned on their own.
+        "rail_trials": rail_trials,
         #: Trials where an authored witness or a tracked command went
         #: fail→pass. The only outcome that earns the word "done".
-        "proven": sum(
-            1 for t in trials if t.proof is not None and t.proof.grade in ("flip", "oracle")
+        "proven": (
+            sum(1 for t in rail if t.proof.grade in ("flip", "oracle"))
+            if rail_trials
+            else None
         ),
         #: Trials where a witness test was authored, accepted and pinned.
-        "witnessed": sum(
-            1 for t in trials if t.proof is not None and t.proof.witness_authored
-        ),
+        "witnessed": sum(1 for t in rail if t.proof.witness_authored),
         #: Summed :attr:`~arenabench.proof.TrialProof.failed_attempts` — every
         #: time a model believed it was finished and a test said otherwise,
         #: whether or not it went on to recover. The whole reason the rail
         #: exists, as one number.
-        "wrong_guesses": sum(
-            t.proof.failed_attempts for t in trials if t.proof is not None
-        ),
+        "wrong_guesses": sum(t.proof.failed_attempts for t in rail),
         #: Trials the oracle ran on and never passed. The rail catching a
         #: premature "done" is a *success* of the machinery, so this is
         #: deliberately not folded into a failure count.
-        "refuted": sum(
-            1 for t in trials if t.proof is not None and t.proof.grade == "refuted"
-        ),
+        "refuted": sum(1 for t in rail if t.proof.grade == "refuted"),
         #: Passing verdicts with nothing deterministic behind them. The
         #: honesty trap: `unverifiable` and `waived` both publish
         #: `passed: true`, and a model verdict is an assertion.
-        "claimed_without_proof": sum(
-            1 for t in trials if t.proof is not None and t.proof.claimed_without_proof
+        "claimed_without_proof": (
+            sum(1 for t in rail if t.proof.claimed_without_proof) if rail_trials else None
         ),
         #: Trials where proof was warranted and no witness could be authored.
         #: Each carries its own sentence saying why.
-        "unproven": sum(
-            1 for t in trials if t.proof is not None and t.proof.grade == "unproven"
-        ),
+        "unproven": sum(1 for t in rail if t.proof.grade == "unproven"),
         #: Trials whose verifier resolved to the same model as the worker —
         #: the run graded its own homework.
-        "self_graded": sum(
-            1
-            for t in trials
-            if t.proof is not None and t.proof.verifier_independent is False
-        ),
+        "self_graded": sum(1 for t in rail if t.proof.verifier_independent is False),
     }
 
 
