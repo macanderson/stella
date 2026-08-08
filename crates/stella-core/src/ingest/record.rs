@@ -653,6 +653,31 @@ impl Force {
     pub fn is_always_injected(self) -> bool {
         matches!(self, Self::Must | Self::Should)
     }
+
+    /// How strongly this force steers, as a rank: higher outranks lower.
+    ///
+    /// Spelled out rather than derived from the declaration order, even though
+    /// the variants happen to be declared strongest-first. A `derive(Ord)` here
+    /// would read *backwards* — `Must < Info` — and the one consumer that needs
+    /// this is a budget deciding which record to drop, where an inverted
+    /// comparison silently keeps the wrong one. The numbers are gaps, not
+    /// addresses: nothing may depend on their absolute values.
+    ///
+    /// Used by [`records::render`][r] to rank scarcity. The cached channel gets
+    /// the same ordering for free by grouping `must` before `should`, so this
+    /// exists to give the **volatile** channel the guarantee its sibling had
+    /// structurally — `may` outranks `info` there whatever precedence either one
+    /// declared.
+    ///
+    /// [r]: super::super::records::render
+    pub fn strength(self) -> u8 {
+        match self {
+            Self::Must => 3,
+            Self::Should => 2,
+            Self::May => 1,
+            Self::Info => 0,
+        }
+    }
 }
 
 /// How a violation is enforced.

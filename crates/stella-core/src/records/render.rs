@@ -284,7 +284,7 @@ fn bullet_lines(inputs: &[&RenderInput<'_>]) -> Vec<String> {
         .collect()
 }
 
-/// Which records fit, decided by precedence — the answer parallel to `inputs`.
+/// Which records fit, ranked by importance — the answer parallel to `inputs`.
 ///
 /// # Why this is not just the emit loop with a length check
 ///
@@ -295,21 +295,40 @@ fn bullet_lines(inputs: &[&RenderInput<'_>]) -> Vec<String> {
 /// [`RenderedChannel::dropped`] recorded it — and still wrong, because nothing
 /// about arriving later makes a record worth less.
 ///
-/// So scarcity is resolved here, ahead of and apart from rendering, in
-/// descending precedence. The sort is **stable**, so records that made no
-/// competing claim (equal precedence — including the `0` that
-/// [`Record::precedence`][p] gives the ones that declared none) keep load order
-/// and the block stays deterministic. The caller then emits the survivors in the
-/// order it was given: precedence settles *who*, never *where*, which is the
-/// same split `pack_to_budget` draws in `stella-context` — a band decides
-/// nothing until something has to be dropped.
+/// So scarcity is resolved here, ahead of and apart from rendering. The caller
+/// then emits the survivors in the order it was given: importance settles *who*,
+/// never *where*, which is the same split `pack_to_budget` draws in
+/// `stella-context` — a band decides nothing until something has to be dropped.
 ///
-/// A record too long for the space left is skipped rather than terminal: the
-/// walk continues, so a lower-precedence record still renders when the only
-/// thing outranking it could never have fit. That keeps the budget from being
-/// spent on nothing, and the skipped record is ledgered like any other drop.
+/// # Importance is force, then precedence
+///
+/// **Force first** ([`Force::strength`][s]), because force is the coarser claim
+/// and a `may` record outranks an `info` one whatever numbers they declared.
+/// This is free for the cached channel, whose grouping already spends the budget
+/// on `must` before `should` — it exists for the volatile channel, which had no
+/// such guarantee and where the sole production budget actually binds. Leaving
+/// that asymmetry in place would have made the drop order hostage to every
+/// authoring path agreeing with the force ordering, and one already did not:
+/// `precedence_for` in `stella-cli`'s ingest stamped `may = 15` below
+/// `info = 20`, which was inert while precedence only fed conflict detection and
+/// would have started evicting the stronger record the moment it also ranked
+/// scarcity.
+///
+/// **Precedence within a force**, which is where an author's own ranking
+/// applies. The sort is **stable**, so records that made no competing claim
+/// (equal on both — including the `0` that [`Record::precedence`][p] gives the
+/// ones that declared none) keep load order and the block stays deterministic.
+///
+/// # A record that cannot fit is skipped, not terminal
+///
+/// The walk continues past it, so a less important record still renders in space
+/// the more important one could not have used anyway. That keeps the budget from
+/// being held open for nothing; the skipped record is ledgered like any other
+/// drop. Note this is the one case where a lower-ranked record outlives a higher-
+/// ranked one, and it is a statement about size, not about worth.
 ///
 /// [p]: super::super::ingest::record::Record::precedence
+/// [s]: super::super::ingest::record::Force::strength
 fn survivors(
     inputs: &[&RenderInput<'_>],
     lines: &[String],
@@ -319,12 +338,18 @@ fn survivors(
     let Some(budget) = budget_chars else {
         return vec![true; inputs.len()];
     };
-    let mut by_precedence: Vec<usize> = (0..inputs.len()).collect();
-    by_precedence.sort_by_key(|&i| std::cmp::Reverse(inputs[i].record.record.precedence()));
+    let mut by_importance: Vec<usize> = (0..inputs.len()).collect();
+    by_importance.sort_by_key(|&i| {
+        let input = inputs[i];
+        std::cmp::Reverse((
+            effective_force(input.record, input.disposition).strength(),
+            input.record.record.precedence(),
+        ))
+    });
 
     let mut keep = vec![false; inputs.len()];
     let mut used = spent;
-    for i in by_precedence {
+    for i in by_importance {
         let Some(after) = used
             .checked_add(lines[i].len())
             .filter(|len| *len <= budget)
@@ -760,6 +785,73 @@ mod tests {
         );
         assert_eq!(out.rendered, vec!["strong"]);
         assert_eq!(out.dropped, vec!["weak"]);
+    }
+
+    #[test]
+    fn force_outranks_precedence_in_the_volatile_block_too() {
+        // The cached channel gets this from its grouping; the volatile channel
+        // has no grouping, so it has to be ranked in. These are the exact
+        // numbers `precedence_for` stamped on extracted records — `may` below
+        // `info` — which is what makes force-first a guarantee rather than a
+        // hope that every authoring path agrees with the force ordering.
+        let trivia = ranked(Force::Info, "ctx.a.b.trivia", "Informational.", 20);
+        let actionable = ranked(Force::May, "ctx.a.b.actionable", "Do the thing.", 15);
+        let select = Disposition::Select;
+        let out = render_channel(
+            &[input(&trivia, &select), input(&actionable, &select)],
+            Channel::Volatile,
+            Some(budget_for(1, &[&actionable])),
+        );
+        assert_eq!(
+            out.rendered,
+            vec!["actionable"],
+            "a `may` record must outrank an `info` one whatever precedence each declared"
+        );
+        assert_eq!(out.dropped, vec!["trivia"]);
+    }
+
+    #[test]
+    fn a_demoted_record_competes_at_the_force_it_renders_under() {
+        // A demoted `must` renders as `may`, so it must rank as `may` — reading
+        // the declared force here would let it outrank the volatile channel's
+        // own records on a claim the sweep already took away from it.
+        let demoted = ranked(Force::Must, "ctx.a.b.demoted", "Was binding.", 10);
+        let native = ranked(Force::May, "ctx.a.b.native", "Still relevant.", 90);
+        let stale = Disposition::SelectStale {
+            reason: "its truth probe no longer holds".to_string(),
+        };
+        let select = Disposition::Select;
+        let out = render_channel(
+            &[input(&demoted, &stale), input(&native, &select)],
+            Channel::Volatile,
+            Some(budget_for(1, &[&native])),
+        );
+        assert_eq!(
+            out.rendered,
+            vec!["native"],
+            "a demoted record ranks at its effective force, not its declared one"
+        );
+        assert_eq!(out.dropped, vec!["demoted"]);
+    }
+
+    #[test]
+    fn a_budget_nothing_reaches_changes_nothing() {
+        // The unbudgeted test proves `None` is inert; this proves a `Some` large
+        // enough to bind on nothing is inert too. Those are different code paths
+        // — `None` short-circuits, a generous `Some` walks the whole ranking —
+        // and only the second one is what production actually passes.
+        let (low, mid, high) = three_equal_length();
+        let select = Disposition::Select;
+        let inputs = [
+            input(&low, &select),
+            input(&mid, &select),
+            input(&high, &select),
+        ];
+        let unbudgeted = render_channel(&inputs, Channel::Volatile, None);
+        let generous = render_channel(&inputs, Channel::Volatile, Some(usize::MAX));
+        assert_eq!(generous, unbudgeted);
+        assert_eq!(generous.rendered, vec!["aa", "bb", "cc"]);
+        assert!(generous.dropped.is_empty());
     }
 
     #[test]
