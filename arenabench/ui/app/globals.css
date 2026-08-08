@@ -37,9 +37,9 @@
    next-themes stamps `.dark` on <html> before first paint anyway. */
 
 :root {
-  --background: #f2efe7;   /* Paper, as a surface */
+  --background: #f6f7fb;   /* Paper, as a surface */
   --panel:      #faf8f2;
-  --panel-2:    #e9e5da;
+  --panel-2:    #dde2f0;
   --line:       #d8d3c4;
   --line-soft:  #e4e0d3;
   --foreground: #1c1b16;

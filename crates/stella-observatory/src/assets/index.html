@@ -53,6 +53,18 @@
   --accent-wash:rgba(124,92,255,.09);   /* violet @9% — hover / selected fill  */
   --accent-edge:rgba(124,92,255,.42);   /* violet @42% — chip + badge edges    */
   --sunken:rgba(5,7,26,.55);            /* --void @55% — inset wells           */
+  /* The text that goes ON an accent fill, in EITHER theme — so it is defined
+     once here and never re-declared in the light blocks. An accent fill is
+     violet in both themes, and paper on violet measures 3.10:1 while ink on
+     violet measures 5.81:1, so the fill's legibility comes from pairing it
+     with ink and never from a second accent hue.
+
+     This token was *used* by `.tf button[aria-checked="true"]` and
+     `.ctx-row button.on` before it was ever declared, so `var(--ink)` did not
+     resolve and both controls inherited their colour onto an accent fill —
+     which is the precise failure `tests/light_mode.rs` was written to catch.
+     The test named the token; nothing defined it. */
+  --ink:#0B0E1A;
   /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
      an interactive component; no token in the ground ramp reaches it —
      --hairline-strong measures 1.48:1 on --surface. --text-3 does (5.38:1),
@@ -98,30 +110,30 @@
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     color-scheme:light;
-    --void:#E9E5DA; --ground:#F2EFE7; --surface:#FAF8F2; --raised:#FFFFFF;
-    --hairline:#E4E0D3; --hairline-strong:#D8D3C4;
-    --gold:#835B00; --gold-bright:#A37200; --gold-deep:#523900;
-    --text:#1C1B16; --text-2:#5D5A50; --text-3:#66625A;
-    --ok:#1A713D; --warn:#796000; --bad:#B53139;
-    --c1:#796000; --c2:#7048A8; --c3:#BA2358; --c4:#0A6C7E;
-    --neutral-mark:#66625A;
-    --accent-wash:rgba(131,91,0,.10);
-    --accent-edge:rgba(131,91,0,.38);
-    --sunken:rgba(28,27,22,.05);        /* --text @5% — inset wells */
+    --void:#DDE2F0; --ground:#F6F7FB; --surface:#FDFDFF; --raised:#FFFFFF;
+    --hairline:#DDE2F0; --hairline-strong:#C3CBE0;
+    --nebula:#5133BE; --nebula-bright:#7C5CFF; --nebula-deep:#3D2694;
+    --text:#0B0E1A; --text-2:#5C678F; --text-3:#646E97;
+    --ok:#16744F; --warn:#8A5405; --bad:#C81E3E;
+    --c1:#3F6212; --c2:#A21CAF; --c3:#A6185C; --c4:#1D4ED8;
+    --neutral-mark:#646E97;
+    --accent-wash:rgba(81,51,190,.10);
+    --accent-edge:rgba(81,51,190,.38);
+    --sunken:rgba(11,14,26,.05);        /* --text @5% — inset wells */
   }
 }
 :root[data-theme="light"]{
   color-scheme:light;
-  --void:#E9E5DA; --ground:#F2EFE7; --surface:#FAF8F2; --raised:#FFFFFF;
-  --hairline:#E4E0D3; --hairline-strong:#D8D3C4;
-  --gold:#835B00; --gold-bright:#A37200; --gold-deep:#523900;
-  --text:#1C1B16; --text-2:#5D5A50; --text-3:#66625A;
-  --ok:#1A713D; --warn:#796000; --bad:#B53139;
-  --c1:#796000; --c2:#7048A8; --c3:#BA2358; --c4:#0A6C7E;
-  --neutral-mark:#66625A;
-  --accent-wash:rgba(131,91,0,.10);
-  --accent-edge:rgba(131,91,0,.38);
-  --sunken:rgba(28,27,22,.05);
+  --void:#DDE2F0; --ground:#F6F7FB; --surface:#FDFDFF; --raised:#FFFFFF;
+  --hairline:#DDE2F0; --hairline-strong:#C3CBE0;
+  --nebula:#5133BE; --nebula-bright:#7C5CFF; --nebula-deep:#3D2694;
+  --text:#0B0E1A; --text-2:#5C678F; --text-3:#646E97;
+  --ok:#16744F; --warn:#8A5405; --bad:#C81E3E;
+  --c1:#3F6212; --c2:#A21CAF; --c3:#A6185C; --c4:#1D4ED8;
+  --neutral-mark:#646E97;
+  --accent-wash:rgba(81,51,190,.10);
+  --accent-edge:rgba(81,51,190,.38);
+  --sunken:rgba(11,14,26,.05);
 }
 
 /* ── Reset & base ─────────────────────────────────────────────────────── */
