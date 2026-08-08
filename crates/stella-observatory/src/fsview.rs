@@ -374,8 +374,25 @@ pub fn explorations(workspace_root: &Path) -> Value {
     json!(rows)
 }
 
+/// The handle `stella context list` prints beside a record, derived from its
+/// lineage: `ctx.stella.rust-toolchain-pin` under set `stella` reads back as
+/// `rust-toolchain-pin`. A lineage that does not carry the set's prefix is its
+/// own handle, so an externally-authored record still names itself.
+fn record_handle(lineage_id: &str, set_id: &str) -> String {
+    let prefix = format!("ctx.{set_id}.");
+    lineage_id
+        .strip_prefix(&prefix)
+        .unwrap_or(lineage_id)
+        .to_string()
+}
+
 /// One card per `[[record]]` entry in a published context record TOML file
 /// (`ctx.stella.*.toml`), carrying the fields the Rules panel shows.
+///
+/// Cards carry the same `name`/`snippet`/`modified_unix` shape a markdown card
+/// does, because the page renders one list from both and reads those three
+/// keys; the record-only fields ride alongside so the panel can show what
+/// actually steers (force, enforcement) rather than just a title.
 ///
 /// Malformed files, and files without a `[[record]]` array, contribute no
 /// cards rather than erroring — this is a best-effort dashboard view, not a
@@ -390,6 +407,9 @@ fn toml_record_cards(path: &Path) -> Vec<Value> {
     let Some(records) = parsed.get("record").and_then(|r| r.as_array()) else {
         return Vec::new();
     };
+    let set_id = parsed.get("set_id").and_then(|v| v.as_str()).unwrap_or("");
+    let modified_unix = mtime_unix(path);
+    let bytes = file_len(path);
     records
         .iter()
         .filter_map(|record| {
@@ -418,6 +438,10 @@ fn toml_record_cards(path: &Path) -> Vec<Value> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             Some(json!({
+                "name": record_handle(&lineage_id, set_id),
+                "snippet": snippet(statement, 400),
+                "bytes": bytes,
+                "modified_unix": modified_unix,
                 "lineage_id": lineage_id,
                 "kind": kind,
                 "statement": statement,
@@ -429,9 +453,23 @@ fn toml_record_cards(path: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// Filenames under `.stella/rules/` that carry a rule extension but are not
+/// rules. Mirrors `RESERVED_RULE_FILENAMES` in `stella-cli`'s rule loader
+/// (`crates/stella-cli/src/rules.rs`) — `governance.toml` sets the governance
+/// mode, and reading it as a record would show the dashboard a rule the engine
+/// never loads. `promotions.jsonl` needs no entry: its extension is not one we
+/// read.
+const RESERVED_RULE_FILENAMES: &[&str] = &["governance.toml"];
+
 /// Rule files: `.stella/rules/*.md` and the published context records at
 /// `.stella/rules/ctx.stella.*.toml` (the db-promoted rules live in
 /// [`crate::db::Observatory::memory`]'s payload).
+///
+/// Both extensions are read because the engine reads both — `RULE_EXTENSIONS`
+/// in `stella-cli`'s loader is `["md", "toml"]`. Serving only markdown made
+/// the panel under-report what actually steers the session, which for a
+/// workspace whose whole steering policy is published as TOML records meant an
+/// empty panel beside two enforced rules.
 pub fn rules_files(workspace_root: &Path) -> Value {
     let dir = workspace_root.join(".stella/rules");
     let mut rows = markdown_cards(&dir, 400);
@@ -443,8 +481,16 @@ pub fn rules_files(workspace_root: &Path) -> Value {
         if path.extension().is_none_or(|e| e != "toml") {
             continue;
         }
+        let reserved = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| RESERVED_RULE_FILENAMES.contains(&n));
+        if reserved {
+            continue;
+        }
         rows.extend(toml_record_cards(&path));
     }
+    rows.sort_by_key(|r| -r["modified_unix"].as_i64().unwrap_or(0));
     json!(rows)
 }
 
@@ -706,6 +752,9 @@ tags       = ["testing", "pins"]
         .unwrap();
 
         std::fs::write(rules_dir.join("hand-written.md"), "# A rule\nSome body text.").unwrap();
+        // Carries a rule extension but is not a rule; the engine's loader
+        // reserves it and so must this view.
+        std::fs::write(rules_dir.join("governance.toml"), "mode = \"regulated\"\n").unwrap();
 
         let rows = rules_files(dir.path());
         let rows = rows.as_array().expect("rules_files returns an array");
@@ -719,6 +768,25 @@ tags       = ["testing", "pins"]
         assert_eq!(toml_card["tags"], serde_json::json!(["testing", "pins"]));
         assert_eq!(toml_card["steering_force"], "must");
         assert_eq!(toml_card["enforcement_mode"], "hard");
+
+        // The page renders one list from both kinds and reads these three keys
+        // off every row, so a record card without them renders blank — the
+        // failure no Rust gate can see.
+        assert_eq!(
+            toml_card["name"], "test-rule",
+            "handle, as `stella context list` prints it"
+        );
+        assert_eq!(toml_card["snippet"], "Tests must pin something.");
+        assert!(
+            toml_card["modified_unix"].as_i64().is_some(),
+            "modified_unix: {:?}",
+            toml_card["modified_unix"]
+        );
+
+        assert!(
+            !rows.iter().any(|r| r["name"] == "governance"),
+            "governance.toml is reserved, not a record: {rows:?}"
+        );
 
         let md_card = rows
             .iter()
