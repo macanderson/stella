@@ -86,15 +86,25 @@ start_dockerd() {
 
 export_ssm_credentials() {
     # Missing credentials are not fatal here: `arenabench run` itself
-    # refuses a seat whose declared credentials are absent, which is the
-    # better error surface.
-    local pairs
+    # refuses a seat whose declared credentials are absent, and that refusal
+    # names the seat and the variable, which is the better error surface.
+    #
+    # Why the credentials could not be read is reported, though. Discarding
+    # this stderr once turned a one-line IAM gap — the role could list the
+    # SecureStrings but had no kms:Decrypt to read them, so
+    # `--with-decryption` failed wholesale — into "no SSM credentials
+    # readable; continuing", and the AccessDeniedException underneath it
+    # reached nobody. A whole 40-trial match died of it twice.
+    local pairs problem
     if ! pairs=$(aws ssm get-parameters-by-path \
         --path /arenabench --with-decryption \
-        --query 'Parameters[].[Name,Value]' --output text 2>/dev/null); then
-        log "no SSM credentials readable; continuing"
+        --query 'Parameters[].[Name,Value]' --output text 2>/tmp/ssm-error); then
+        problem=$(tr '\n' ' ' </tmp/ssm-error 2>/dev/null)
+        rm -f /tmp/ssm-error
+        log "no SSM credentials readable: ${problem:0:400}"
         return 0
     fi
+    rm -f /tmp/ssm-error
     while IFS=$'\t' read -r name value; do
         [ -n "$name" ] || continue
         local key
