@@ -2,7 +2,8 @@
 //! touched-tests observation that feeds the flip oracle (#860 typed
 //! outcomes), the lint delta behind the regression veto (#861), and the
 //! working-tree diff observation (`gather_diff`/`absorb_probe`) with the
-//! honest-empty-diff discipline around it.
+//! honest-empty-diff discipline around it, bounded in what it READS by
+//! [`UNTRACKED_RENDER_BUDGET`] (#2110) without loosening what it counts.
 //! A child module of `pipeline` so the private candidate types stay
 //! reachable, split out to keep the orchestrator under the size gate.
 
