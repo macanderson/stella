@@ -15,13 +15,17 @@ import pytest
 
 pytest.importorskip("harbor", reason="Harbor is required to import the adapter")
 
+# The #2135 helpers are reached as `turn_budget.<name>` at each call site
+# rather than imported by name, deliberately: a `from … import` of a symbol a
+# tree does not have is a COLLECTION error, which fails the whole file at once
+# and proves only that a name is missing. Reached this way, each test fails on
+# its own — the behavioural witness on its assertion about the argv the adapter
+# builds, which is the fact #2135 is about.
+from stella_harbor import turn_budget  # noqa: E402 - after importorskip by design
 from stella_harbor.turn_budget import (  # noqa: E402 - after importorskip by design
     TEARDOWN_SEC,
-    coerce_timeout_multiplier,
     coerce_timeout_seconds,
-    discover_trial_deadline,
     resolve_turn_budget,
-    trial_agent_deadline,
 )
 
 from .test_adapter import _bare_agent  # noqa: E402 - after importorskip by design
@@ -327,33 +331,33 @@ class TestDiscoveryFailsOpenNeverGuesses:
     """
 
     def test_no_logs_dir_at_all(self) -> None:
-        assert discover_trial_deadline(None) is None
-        assert discover_trial_deadline("") is None
+        assert turn_budget.discover_trial_deadline(None) is None
+        assert turn_budget.discover_trial_deadline("") is None
 
     def test_a_trial_directory_with_no_config(self, tmp_path: Path) -> None:
         logs_dir = tmp_path / "trial" / "agent"
         logs_dir.mkdir(parents=True)
-        assert discover_trial_deadline(logs_dir) is None
+        assert turn_budget.discover_trial_deadline(logs_dir) is None
 
     def test_a_config_that_is_not_json(self, tmp_path: Path) -> None:
         logs_dir = _trial_tree(tmp_path)
         (logs_dir.parent / "config.json").write_text("{not json", encoding="utf-8")
-        assert discover_trial_deadline(logs_dir) is None
+        assert turn_budget.discover_trial_deadline(logs_dir) is None
 
     def test_a_task_that_is_not_on_this_host(self, tmp_path: Path) -> None:
         """A registry-resolved dataset records ``task.path: null``."""
         logs_dir = _trial_tree(
             tmp_path, trial_config={"task": {"path": None, "source": "registry"}}
         )
-        assert discover_trial_deadline(logs_dir) is None
+        assert turn_budget.discover_trial_deadline(logs_dir) is None
 
     def test_a_task_directory_with_no_task_toml(self, tmp_path: Path) -> None:
-        assert discover_trial_deadline(_trial_tree(tmp_path, task_timeout_sec=None)) is None
+        assert turn_budget.discover_trial_deadline(_trial_tree(tmp_path, task_timeout_sec=None)) is None
 
     def test_a_task_toml_that_is_not_toml(self, tmp_path: Path) -> None:
         logs_dir = _trial_tree(tmp_path)
         (tmp_path / "task" / "task.toml").write_text("[[[", encoding="utf-8")
-        assert discover_trial_deadline(logs_dir) is None
+        assert turn_budget.discover_trial_deadline(logs_dir) is None
 
     def test_a_multi_step_layout_reads_as_unknown_not_as_a_sibling_trial(
         self, tmp_path: Path
@@ -366,30 +370,30 @@ class TestDiscoveryFailsOpenNeverGuesses:
         logs_dir = _trial_tree(tmp_path)
         deeper = logs_dir.parent / "steps" / "step-1" / "agent"
         deeper.mkdir(parents=True)
-        assert discover_trial_deadline(deeper) is None
+        assert turn_budget.discover_trial_deadline(deeper) is None
 
 
 class TestTrialDeadlineArithmeticMirrorsHarbor:
     """`harbor/trial/trial.py`'s own formula, pure and without a trial tree."""
 
     def test_the_task_timeout_is_the_base(self) -> None:
-        assert trial_agent_deadline({}, 900.0) == 900.0
+        assert turn_budget.trial_agent_deadline({}, 900.0) == 900.0
 
     def test_an_override_replaces_the_task_timeout(self) -> None:
         config = {"agent": {"override_timeout_sec": 1200.0}}
-        assert trial_agent_deadline(config, 900.0) == 1200.0
+        assert turn_budget.trial_agent_deadline(config, 900.0) == 1200.0
 
     def test_a_cap_lowers_but_never_raises(self) -> None:
-        assert trial_agent_deadline({"agent": {"max_timeout_sec": 600.0}}, 900.0) == 600.0
-        assert trial_agent_deadline({"agent": {"max_timeout_sec": 3600.0}}, 900.0) == 900.0
+        assert turn_budget.trial_agent_deadline({"agent": {"max_timeout_sec": 600.0}}, 900.0) == 600.0
+        assert turn_budget.trial_agent_deadline({"agent": {"max_timeout_sec": 3600.0}}, 900.0) == 900.0
 
     def test_the_agent_multiplier_wins_over_the_global_one(self) -> None:
         config = {"timeout_multiplier": 3.0, "agent_timeout_multiplier": 2.0}
-        assert trial_agent_deadline(config, 900.0) == 1800.0
-        assert trial_agent_deadline({"timeout_multiplier": 3.0}, 900.0) == 2700.0
+        assert turn_budget.trial_agent_deadline(config, 900.0) == 1800.0
+        assert turn_budget.trial_agent_deadline({"timeout_multiplier": 3.0}, 900.0) == 2700.0
 
     def test_no_stated_base_is_no_deadline(self) -> None:
-        assert trial_agent_deadline({"timeout_multiplier": 2.0}, None) is None
+        assert turn_budget.trial_agent_deadline({"timeout_multiplier": 2.0}, None) is None
 
     def test_a_stated_zero_multiplier_is_no_time_not_a_missing_multiplier(
         self,
@@ -400,14 +404,14 @@ class TestTrialDeadlineArithmeticMirrorsHarbor:
         "unstated" would arm a full-length deadline against a run that has
         none, so the two parsers are deliberately different.
         """
-        assert trial_agent_deadline({"agent_timeout_multiplier": 0}, 900.0) == 0.0
+        assert turn_budget.trial_agent_deadline({"agent_timeout_multiplier": 0}, 900.0) == 0.0
         assert resolve_turn_budget(None, None, None) is None
-        assert coerce_timeout_multiplier(0) == 0.0
+        assert turn_budget.coerce_timeout_multiplier(0) == 0.0
         assert coerce_timeout_seconds(0) is None
 
     @pytest.mark.parametrize("raw", [None, True, False, "", "abc", "nan", "inf"])
     def test_a_multiplier_that_is_not_a_number_is_unstated(self, raw: object) -> None:
-        assert coerce_timeout_multiplier(raw) is None
+        assert turn_budget.coerce_timeout_multiplier(raw) is None
 
 
 class TestResolveTurnBudgetIsPure:
