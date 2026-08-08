@@ -241,6 +241,38 @@ def plan_trials(spec: MatchSpec) -> tuple[TrialPlan, ...]:
     return tuple(plans)
 
 
+def pin_slice_to_commit(spec: MatchSpec, sut: SutBinary | None) -> MatchSpec:
+    """Rewrite a symbolic SUT pin to the commit the executor resolved.
+
+    The runner image carries a staged binary and no Stella source, by
+    design — ArenaBench fetches its system under test, it does not vendor
+    it. A slice that still says ``sut_ref = "main"`` therefore asks the
+    container to resolve a branch it has no repository for, and
+    ``create_match`` correctly refuses the seat rather than guess.
+
+    Resolving once here and shipping the *commit* is the same discipline
+    #2098 established within one machine, extended across the boundary to
+    the trial: one observation of what the floating ref meant, shared by the
+    binary in S3, the ``SUT_COMMIT`` the entrypoint stages, and the pin the
+    match declares. Clearing the pin instead would also run, but it records
+    the trial as unverified provenance when the commit is known exactly —
+    trading a fact for a blank.
+
+    Seats pinned to their own ref (per-seat pins, #2082) are left alone:
+    only the executor's own resolution may be substituted, and it resolved
+    the match-level ref.
+    """
+    if sut is None:
+        return spec
+    contestants = tuple(
+        replace(c, sut_ref=sut.commit)
+        if c.agent == "stella" and c.sut_ref in (None, spec.sut_ref)
+        else c
+        for c in spec.contestants
+    )
+    return replace(spec, sut_ref=sut.commit, contestants=contestants)
+
+
 def slice_spec(spec: MatchSpec, plan: TrialPlan) -> MatchSpec:
     """The one-trial match a plan's Batch job actually runs.
 
@@ -554,6 +586,10 @@ class CloudExecutor:
         batch = self._client("batch")
         bucket = self.bucket()
         prefix = f"runs/{run_id}"
+
+        # Ship the resolved commit, never the symbolic ref: the container has
+        # no Stella checkout to resolve one against.
+        spec = pin_slice_to_commit(spec, sut)
 
         s3.put_object(
             Bucket=bucket,

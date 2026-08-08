@@ -290,14 +290,26 @@ def resolve_ref(ref: str, repo: Path | None = None) -> str:
 
     A full SHA and an explicitly-qualified ref (``origin/main``) are used as
     given; only a bare name gets the ``origin/`` preference.
+
+    A full SHA needs no checkout, because there is nothing left to resolve —
+    it *is* the answer, and asking git to confirm it would only report
+    whether this particular clone happens to have fetched that object yet.
+    That distinction is what lets a runner with a staged binary and no
+    Stella source honour a pin: the cloud executor resolves the symbolic ref
+    once at submit time and pins the slice to the commit, so the container
+    never re-resolves anything (the #2098 discipline, applied across the
+    machine boundary). A bare branch name still requires a repository, and
+    still says so.
     """
+    safe = _safe_ref(ref)
+    if _FULL_SHA.match(safe) and repo is None and stella_repo() is None:
+        return safe
     repo = repo or stella_repo()
     if repo is None:
         raise SutUnavailableError(
             "no Stella checkout found — set "
             f"{STELLA_REPO_ENV} to the repository root"
         )
-    safe = _safe_ref(ref)
     candidates = [safe] if (_FULL_SHA.match(safe) or "/" in safe) else [
         f"origin/{safe}",
         safe,
