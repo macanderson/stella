@@ -19,6 +19,7 @@
 
 use super::verification_hardening::{ScriptedLint, lint_error};
 use super::*;
+use stella_protocol::FinishReason;
 
 /// What one scenario pins. `roles` is the full ordered model-call sequence
 /// (from `StepManifest` events) — order matters, because "verifier before

@@ -66,7 +66,7 @@ impl<'a> Pipeline<'a> {
         &self,
         state: &CandidateState,
         touched_tests_passed: Option<bool>,
-        flip_evidence_obtainable: bool,
+        no_test_surface: bool,
     ) -> LadderInputs {
         LadderInputs {
             flip_achieved: state.oracle.is_flipped(),
@@ -83,7 +83,7 @@ impl<'a> Pipeline<'a> {
             diff_coverage: DiffCoverage::Unmeasured,
             require_diff_coverage: self.config.require_diff_coverage,
             verify_done_flip: state.signals.verify_done_confirmations > 0,
-            flip_evidence_obtainable,
+            no_test_surface,
         }
     }
 

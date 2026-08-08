@@ -443,13 +443,17 @@ pub struct LadderInputs {
     /// own command; before this field, a confirmed `verify_done` flip and a
     /// failing "no flip" fallback verdict coexisted in one trace.
     pub verify_done_flip: bool,
-    /// Whether a tracked test command even existed this round (configured
-    /// `--test-command` or an authored witness). Configuration, not evidence,
-    /// like [`Self::veto_warnings`]: when `false`, "no flip" is a demand the
-    /// task structurally cannot meet (#2129 — a one-line `answer.txt`
-    /// deliverable has no tests to flip), and the fallback must not read the
-    /// absence as failure.
-    pub flip_evidence_obtainable: bool,
+    /// Positive claim that this round had NO tracked test command at all —
+    /// neither a configured `--test-command` nor an authored witness — so
+    /// "no flip" is a demand the task structurally cannot meet (#2129: a
+    /// one-line `answer.txt` deliverable has no tests to flip).
+    ///
+    /// Configuration, not evidence, like [`Self::veto_warnings`]. Phrased as
+    /// the *dispensation* rather than the capability so `Default` denies it:
+    /// this is the one field that can turn a fallback FAIL into an
+    /// abstention, and a caller that forgets to set it must get the
+    /// conservative answer, never the permissive one.
+    pub no_test_surface: bool,
 }
 
 impl LadderInputs {
@@ -1030,7 +1034,7 @@ pub fn heuristic_fallback(inputs: &LadderInputs) -> Verdict {
     // The abstention requires positive work signals: reaching this fallback
     // already means the ladder found the turn observable, but the guard keeps
     // this function honest as a pure value — all-dark inputs still FAIL.
-    let unmeetable_demand = !inputs.flip_evidence_obtainable
+    let unmeetable_demand = inputs.no_test_surface
         && (inputs.diff_lines > 0 || inputs.file_change_events > 0 || inputs.mutating_actions > 0);
     let passed = inputs.flip_achieved
         || inputs.verify_done_flip

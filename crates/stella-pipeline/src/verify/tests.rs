@@ -753,7 +753,6 @@ fn a_verify_done_confirmation_rescues_the_fallback_like_a_flip() {
         flip_achieved: false,
         touched_tests_passed: None,
         verify_done_flip: true,
-        flip_evidence_obtainable: true,
         diff_lines: 5,
         diff_budget: 100,
         diff_available: true,
@@ -775,7 +774,6 @@ fn a_verify_done_confirmation_rescues_the_fallback_like_a_flip() {
     assert!(
         !heuristic_fallback(&LadderInputs {
             verify_done_flip: false,
-            flip_evidence_obtainable: true,
             diff_lines: 5,
             diff_budget: 100,
             diff_available: true,
@@ -801,17 +799,17 @@ fn a_verify_done_confirmation_rescues_the_fallback_like_a_flip() {
 /// inputs, so the caller scores the candidate `Unverified`.
 #[test]
 fn an_unobtainable_flip_demand_abstains_instead_of_failing() {
-    let no_test_surface = LadderInputs {
+    let untestable = LadderInputs {
         flip_achieved: false,
         touched_tests_passed: None,
-        flip_evidence_obtainable: false,
+        no_test_surface: true,
         diff_lines: 3,
         diff_budget: 100,
         diff_available: true,
         mutating_actions: 2,
         ..Default::default()
     };
-    let verdict = heuristic_fallback(&no_test_surface);
+    let verdict = heuristic_fallback(&untestable);
     assert!(
         verdict.passed,
         "a demand the task cannot meet must not read as the task failing"
@@ -822,7 +820,7 @@ fn an_unobtainable_flip_demand_abstains_instead_of_failing() {
         verdict.reasoning
     );
     assert!(
-        no_test_surface.verifier_pass_stands_alone(),
+        untestable.verifier_pass_stands_alone(),
         "nothing deterministic backs this, so it scores unverified downstream"
     );
 
@@ -830,8 +828,8 @@ fn an_unobtainable_flip_demand_abstains_instead_of_failing() {
     // genuine failure to produce what the task COULD have produced.
     assert!(
         !heuristic_fallback(&LadderInputs {
-            flip_evidence_obtainable: true,
-            ..no_test_surface
+            no_test_surface: false,
+            ..untestable
         })
         .passed
     );
@@ -839,11 +837,15 @@ fn an_unobtainable_flip_demand_abstains_instead_of_failing() {
     // command still fails closed rather than passing on emptiness.
     assert!(
         !heuristic_fallback(&LadderInputs {
-            flip_evidence_obtainable: false,
+            no_test_surface: true,
             ..LadderInputs::default()
         })
         .passed
     );
+    // The dispensation is opt-in by construction: the all-dark default must
+    // never be the permissive input, because a caller that forgets this
+    // field would then silently buy an abstention.
+    assert!(!LadderInputs::default().no_test_surface);
 }
 
 #[test]

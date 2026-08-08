@@ -447,31 +447,25 @@ mod tests {
     /// for any other reason is a model declining, which more room cannot fix.
     #[test]
     fn only_an_empty_length_stop_counts_as_starvation() {
-        let base = CompletionResult {
-            text: String::new(),
-            finish_reason: Some(FinishReason::Length),
-            ..CompletionResult::default()
-        };
-        assert!(starved_of_output(&base));
+        fn result(text: &str, finish_reason: Option<FinishReason>) -> CompletionResult {
+            CompletionResult {
+                text: text.to_string(),
+                tool_calls: Vec::new(),
+                usage: stella_protocol::CompletionUsage::default(),
+                model: "scripted".into(),
+                cost_usd: 0.0,
+                finish_reason,
+            }
+        }
+        let length = Some(FinishReason::Length);
+        assert!(starved_of_output(&result("", length)));
         assert!(
-            starved_of_output(&CompletionResult {
-                text: "   \n ".into(),
-                ..base.clone()
-            }),
+            starved_of_output(&result("   \n ", length)),
             "whitespace is not an answer"
         );
-        assert!(!starved_of_output(&CompletionResult {
-            text: "PASS — looks right".into(),
-            ..base.clone()
-        }));
-        assert!(!starved_of_output(&CompletionResult {
-            finish_reason: Some(FinishReason::Stop),
-            ..base.clone()
-        }));
-        assert!(!starved_of_output(&CompletionResult {
-            finish_reason: None,
-            ..base
-        }));
+        assert!(!starved_of_output(&result("PASS — looks right", length)));
+        assert!(!starved_of_output(&result("", Some(FinishReason::Stop))));
+        assert!(!starved_of_output(&result("", None)));
     }
 
     /// A retry is bought only when more room could change the answer.

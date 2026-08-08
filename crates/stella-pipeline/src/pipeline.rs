@@ -2092,7 +2092,7 @@ impl<'a> Pipeline<'a> {
                 }
             }
             let mut inputs =
-                self.ladder_inputs(&state, touched_tests_passed, effective_cmd.is_some());
+                self.ladder_inputs(&state, touched_tests_passed, effective_cmd.is_none());
 
             // Pre-submit audit (#859, #861): a deterministic pass is about
             // to be credited, so spend the two cheap checks that can refute
