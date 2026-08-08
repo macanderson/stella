@@ -69,6 +69,23 @@ plant() {
   git -C "$1" add -A
 }
 
+# Overwrite the baseline. $1 = repo, then one "<ceiling> <path>" per entry.
+set_baseline() {
+  local dir="$1"
+  shift
+  {
+    printf '# test baseline\n'
+    for entry in "$@"; do printf '%s\n' "$entry"; done
+  } >"$dir/scripts/file-size-baseline.txt"
+}
+
+# $1 = repo, $2 = message. The skew cases need real commits: the guard reads
+# the BASE tree, and there is no base without history.
+commit() {
+  git -C "$1" add -A
+  git -C "$1" commit -q -m "$2"
+}
+
 # want <name> <expect-pass|expect-fail> <repo> [substring]
 want() {
   local name="$1" expect="$2" dir="$3" sub="${4:-}" out rc
@@ -138,6 +155,85 @@ want "N1 files under the limit in every language pass" expect-pass "$r"
 r="$(new_repo "unwatched")"
 plant "$r" "docs/huge.md" 4000
 want "N2 an unwatched language is left alone" expect-pass "$r"
+
+# ── The baseline skew: judging the CHANGE, not the tree (#2004) ───────────────
+#
+# Three times running (#1761, #1782, #2003) two PRs that each wrote the shared
+# baseline CORRECTLY composed into a red `main`, and every subsequent PR
+# inherited a failure it did not cause. These cases reconstruct that skew from
+# scratch — two commits in a throwaway repo, no reliance on this repository's
+# real history — and pin both directions of the rule.
+#
+# B1 and B2 are the witnesses: each FAILS under the old whole-tree check and
+# passes now. B3 and B4 are what stop the fix from being a hole, and B4 is the
+# one that matters most — it is the case a naive "already over at the base, so
+# ignore it" rule would wave through, turning inherited drift into a standing
+# licence to bloat. That would be strictly worse than the red main this fixes,
+# so the rule takes max(ceiling, size at base) rather than either alone.
+
+# The observed shape: a sibling's regeneration, computed against a main that
+# lacked this file's growth, writes a ceiling one line low. The file itself is
+# untouched here — it did not grow, the ceiling moved down underneath it.
+r="$(new_repo "skew_ceiling_lowered")"
+plant "$r" "src/big.rs" 1600
+set_baseline "$r" "1600 src/big.rs"
+commit "$r" "base: the ceiling matches the file"
+set_baseline "$r" "1599 src/big.rs"
+commit "$r" "head: a sibling's stale regeneration lowers the ceiling"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "B1 a ceiling lowered under an untouched file is not this change's failure" \
+  expect-pass "$r"
+unset FILE_SIZE_BASE_REF
+
+# The already-landed instance: `main` is over its ceiling before this change
+# exists, and the change touches something else entirely. This is PR #1992,
+# which sat blocked with a tree byte-identical to main.
+r="$(new_repo "skew_already_over")"
+plant "$r" "src/big.rs" 1600
+set_baseline "$r" "1599 src/big.rs"
+commit "$r" "base: main already carries the drift"
+plant "$r" "src/unrelated.rs" 10
+commit "$r" "head: an unrelated change walks past it"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "B2 inherited drift does not fail a change that touched something else" \
+  expect-pass "$r"
+unset FILE_SIZE_BASE_REF
+
+# The bloat the ratchet exists to block, with its message unchanged.
+r="$(new_repo "genuine_growth")"
+plant "$r" "src/big.rs" 1600
+set_baseline "$r" "1600 src/big.rs"
+commit "$r" "base"
+plant "$r" "src/big.rs" 1650
+commit "$r" "head: grow a god file past its ceiling"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "B3 a change that genuinely grows a god file still fails" \
+  expect-fail "$r" "src/big.rs grew to 1650 lines, over its baseline ceiling of 1600 (+50)"
+unset FILE_SIZE_BASE_REF
+
+# Drift must not become a licence: the base is ALREADY over its ceiling, and
+# this change grows the file another 50 lines on top. Passing this would be
+# worse than the bug being fixed.
+r="$(new_repo "growth_on_drift")"
+plant "$r" "src/big.rs" 1600
+set_baseline "$r" "1599 src/big.rs"
+commit "$r" "base: already drifted"
+plant "$r" "src/big.rs" 1650
+commit "$r" "head: grow it further still"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "B4 growth on top of inherited drift still fails" \
+  expect-fail "$r" "src/big.rs grew to 1650"
+unset FILE_SIZE_BASE_REF
+
+# No base to compare against — a root commit, a shallow clone, a repository
+# with no origin. The guard must get STRICTER, never weaker, when it cannot
+# tell what the change inherited.
+r="$(new_repo "no_base")"
+plant "$r" "src/big.rs" 1600
+set_baseline "$r" "1599 src/big.rs"
+commit "$r" "the only commit: nothing to compare against"
+want "B5 an unresolvable base falls back to the strict whole-tree check" \
+  expect-fail "$r" "src/big.rs grew to 1600"
 
 echo
 echo "passed ${pass}, failed ${fail}"
