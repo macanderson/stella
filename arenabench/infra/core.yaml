@@ -553,7 +553,17 @@ Resources:
                   - ssm:GetParameter
                   - ssm:GetParameters
                   - ssm:GetParametersByPath
-                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/arenabench/*
+                # Both ARNs are required and they are not redundant.
+                # GetParameter authorizes against the parameter it returns
+                # (the /* form), but GetParametersByPath authorizes against
+                # the *path being listed* — `parameter/arenabench`, with no
+                # trailing slash — which `/*` does not match. Granting only
+                # the children denies the very call the runner makes, and the
+                # AccessDeniedException names the bare path, not the child,
+                # which is the tell.
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/arenabench
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/arenabench/*
               # Reading a SecureString is two authorizations, not one: SSM
               # returns the ciphertext and KMS decrypts it. Without this the
               # role can *list* every credential and read none of them, and
