@@ -753,6 +753,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     watch_parser.set_defaults(func=_cmd_watch)
 
+    # The AWS Batch executor registers its own verb tree; everything cloud
+    # lives in .cloud (boto3 stays a lazy, optional import there).
+    from .cloud import register_cli as _register_cloud_cli
+
+    _register_cloud_cli(subparsers)
+
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)
     return int(args.func(args))
