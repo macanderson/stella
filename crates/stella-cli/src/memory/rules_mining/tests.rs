@@ -256,7 +256,9 @@ fn writing_never_clobbers_an_existing_rule_file() {
         score: 30,
     };
     assert!(
-        write_rule(dir.path(), &candidate).is_none(),
+        write_rule(dir.path(), &candidate)
+            .expect("an existing file is a skip, not an error")
+            .is_none(),
         "the writer claimed to write over an existing file"
     );
     assert_eq!(
