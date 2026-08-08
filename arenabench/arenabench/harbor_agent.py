@@ -185,6 +185,17 @@ def _engine_from_env() -> Engine | None:
     return Engine.from_json(parsed) if isinstance(parsed, dict) else None
 
 
+class StellaAdapterMissingError(ImportError):
+    """``stella_harbor`` is not importable in this process.
+
+    An :class:`ImportError` subclass so existing ``except ImportError`` paths
+    still catch it, and *named* so it can be recognised downstream:
+    :data:`arenabench.telemetry.INFRASTRUCTURE_FAILURES` treats it as an
+    operational abort, because a seat whose adapter never loaded did not lose
+    a contest — it never entered one.
+    """
+
+
 def _load_base_agent() -> type:
     """Import ``stella_harbor.StellaAgent`` with a legible failure.
 
@@ -195,7 +206,7 @@ def _load_base_agent() -> type:
     try:
         from stella_harbor import StellaAgent
     except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise ImportError(
+        raise StellaAdapterMissingError(
             "arenabench's Stella contestant needs the `stella_harbor` adapter "
             "on PYTHONPATH. Point ARENABENCH_STELLA_ADAPTER at "
             "<stella>/bench/harbor_adapter, or install it with "
@@ -204,10 +215,34 @@ def _load_base_agent() -> type:
     return StellaAgent
 
 
+def _unavailable_base(exc: ImportError) -> type:
+    """A stand-in base that keeps this module importable and refuses to run.
+
+    ``object`` was the previous stand-in, and it discarded the error built
+    three lines above it. ``ArenaStellaAgent(...)`` then raised
+    ``TypeError: ArenaStellaAgent() takes no arguments`` inside the Harbor
+    subprocess — a message naming neither the cause nor the fix — on a path
+    where Harbor **exits 0**, so the arena recorded a seat that was *done*
+    with zero steps and no model call, indistinguishable in the match UI from
+    an agent that ran and failed the task (#2192, observed on matches
+    ``44c124e06ef7`` and ``3ca70da630ed``).
+
+    Refusing at construction keeps the importability this fallback exists for
+    — constants, type checking, test collection — while making the failure
+    loud exactly where it matters.
+    """
+
+    class _StellaAdapterUnavailable:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise exc
+
+    return _StellaAdapterUnavailable
+
+
 try:  # pragma: no cover - exercised by whichever environment imports this
     _Base = _load_base_agent()
-except ImportError:  # pragma: no cover
-    _Base = object
+except ImportError as _exc:  # pragma: no cover
+    _Base = _unavailable_base(_exc)
 
 
 class ArenaStellaAgent(_Base):  # type: ignore[misc,valid-type]
