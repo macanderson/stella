@@ -536,7 +536,7 @@ fn witness_prompt_carries_goal_structure_recall_and_marker() {
         id: None,
         content_digest: None,
     }];
-    let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", &[]);
+    let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs", &[], "");
     assert!(p.contains("fix the retry bug"));
     assert!(p.contains("src/"));
     assert!(p.contains("memory: retries"));
@@ -607,7 +607,7 @@ fn repair_prompt_names_the_passing_command() {
 #[test]
 fn probed_runner_availability_reaches_the_author_as_a_constraint() {
     let available = vec!["cargo".to_string(), "pytest".to_string()];
-    let p = witness_prompt("add a parser", &[], "Cargo.toml", &available);
+    let p = witness_prompt("add a parser", &[], "Cargo.toml", &available, "");
     assert!(
         p.contains("Test runners available in this workspace"),
         "{p}"
@@ -618,7 +618,7 @@ fn probed_runner_availability_reaches_the_author_as_a_constraint() {
         "a constraint, not a hint: {p}"
     );
 
-    let bare = witness_prompt("add a parser", &[], "Cargo.toml", &[]);
+    let bare = witness_prompt("add a parser", &[], "Cargo.toml", &[], "");
     assert!(
         !bare.contains("Test runners available in this workspace"),
         "no probes, no section: {bare}"
@@ -705,7 +705,13 @@ fn sh_witness_paths_declare_intent() {
 /// container writes a pytest file otherwise.
 #[test]
 fn a_shell_only_workspace_prompts_a_shell_witness() {
-    let sh_only = witness_prompt("secure nginx", &[], "etc/nginx.conf", &["sh".to_string()]);
+    let sh_only = witness_prompt(
+        "secure nginx",
+        &[],
+        "etc/nginx.conf",
+        &["sh".to_string()],
+        "",
+    );
     assert!(sh_only.contains("NO language test framework"), "{sh_only}");
     assert!(sh_only.contains("TEST_COMMAND: sh"), "{sh_only}");
 
@@ -714,9 +720,46 @@ fn a_shell_only_workspace_prompts_a_shell_witness() {
         &[],
         "Cargo.toml",
         &["cargo".to_string(), "sh".to_string()],
+        "",
     );
     assert!(
         !with_cargo.contains("NO language test framework"),
         "a real toolchain must keep the ordinary guidance: {with_cargo}"
     );
+}
+
+/// #2130's prompt half: the author is TOLD the frame it is authoring in.
+///
+/// The goal routinely phrases deliverables in the project's absolute paths
+/// (`/app/ssl/server.crt`), and the author has no other way to learn that its
+/// test will be run inside a copy of the tree rooted elsewhere — so it wrote
+/// them down, producing a witness that failed identically for every change.
+/// The section names the root, so the translation is mechanical; the enforced
+/// half is `frame::screen_witness_frame` at the create boundary.
+#[test]
+fn the_author_is_told_the_tree_its_test_will_run_in() {
+    let framed = witness_prompt("create /app/ssl/server.crt", &[], "", &[], "/app");
+    assert!(
+        framed.contains("Where your test runs"),
+        "the frame must be stated: {framed}"
+    );
+    assert!(
+        framed.contains("`/app`"),
+        "and must name the project root the goal is phrased in: {framed}"
+    );
+    assert!(
+        framed.contains("`ssl/server.crt`"),
+        "with the translation spelled out: {framed}"
+    );
+
+    // A root that frames nothing states nothing — `frame::framing_root` is
+    // the single answer both halves read, so prose and enforcement cannot
+    // drift apart.
+    for rootless in ["", "/", "."] {
+        let bare = witness_prompt("create ssl/server.crt", &[], "", &[], rootless);
+        assert!(
+            !bare.contains("Where your test runs"),
+            "root {rootless:?} frames nothing, so no section: {bare}"
+        );
+    }
 }
