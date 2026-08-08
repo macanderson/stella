@@ -421,6 +421,27 @@
       "status": "proposed",
       "title": "Self-driving campaigns \u2014 the manifest, the twin arena, and the foundry loop"
     },
+    "self-driving-missions": {
+      "path": "docs/spec/self-driving-missions.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "status": "proposed",
+      "title": "Self-driving missions \u2014 the objective schema, the improvement contract, and the session scorecard"
+    },
     "semantic-resolution-bridge": {
       "path": "docs/spec/semantic-resolution-bridge.md",
       "status": "implemented",

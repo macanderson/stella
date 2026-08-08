@@ -5,6 +5,10 @@
 // #1221: the A/B recall control — its durable schedule, what a control turn
 // suppresses, and the attribution that separates the arms afterwards.
 mod ab_control;
+// #2320: the session clock. That the learning loop reads one injected time
+// source rather than the wall clock is the property replay rests on, and it is
+// what makes the truth sweep's TTL branch reachable from a test at all.
+mod determinism;
 mod path_token;
 mod quarantine;
 // Which sessions actually receive the volatile record channel — a separate
@@ -650,7 +654,17 @@ fn parse_lessons_drops_invented_domains_and_caps_at_three() {
         vec!["API"],
         "case-insensitive match kept"
     );
-    assert!(lessons[0].occurred_at > 0);
+    // The parser deliberately stamps NO instant (#2320). It used to assert
+    // `occurred_at > 0` here, back when `parse_lessons_checked` read the wall
+    // clock — the read that made the mining log unreproducible. Stamping is now
+    // the session's, in `reflect_and_record`'s existing task-id pass, and is
+    // pinned end to end in `memory::tests::determinism`. Asserting the zero
+    // keeps that boundary honest: a clock creeping back into the parser would
+    // fail here rather than pass quietly.
+    assert_eq!(
+        lessons[0].occurred_at, 0,
+        "parsing assigns no instant — the session does"
+    );
 }
 
 #[test]
