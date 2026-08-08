@@ -84,6 +84,8 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/portability.py",
     "bench/harbor_adapter/stella_harbor/posture.py",
     "bench/harbor_adapter/stella_harbor/secure_launcher.py",
+    "bench/harbor_adapter/stella_harbor/stream_release.py",
+    "bench/harbor_adapter/stella_harbor/telemetry_export.py",
     "bench/harbor_adapter/stella_harbor/turn_budget.py",
 )
 _FIXED_READINESS_SOURCE_PATHS = (
