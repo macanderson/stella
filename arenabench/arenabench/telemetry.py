@@ -279,6 +279,13 @@ class TrialMetrics:
     #: List-price cost recomputed from this trial's own token counts using one
     #: shared table. ``None`` when the model is unpriced — missing beats wrong.
     priced_cost: float | None = None
+    #: The model ids this trial ran that :mod:`.pricing` has no row for — the
+    #: *reason* :attr:`priced_cost` is ``None``, carried beside it. Missing
+    #: beats wrong, but missing and unexplained is how an entire arm's cost
+    #: column read blank across every kimi match without anyone noticing
+    #: (#2108). Empty whenever the cost is known, so a non-empty tuple is
+    #: always something an operator can act on: add the row, re-read.
+    unpriced_models: tuple[str, ...] = ()
     clock_time: float = 0.0
     #: Seconds since the trial last wrote any :data:`LIVENESS_NAMES`
     #: artifact — its liveness, whichever files this arm happens to write.
@@ -390,6 +397,7 @@ class TrialMetrics:
             "priced_cost": (
                 round(self.priced_cost, 6) if self.priced_cost is not None else None
             ),
+            "unpriced_models": list(self.unpriced_models),
             "cache_hit_rate": self.cache_hit_rate,
             "clock_time": round(self.clock_time, 2),
             "age_s": self.age_s,
@@ -681,6 +689,23 @@ class MetricsReader:
                         break
             return price
 
+        def seat_label() -> str:
+            """What to call this trial's model when nothing could price it.
+
+            The same candidates :func:`single_rate` tries, in the same order,
+            so the name a reader is told to go add a row for is the one the
+            lookup actually failed on.
+            """
+            for name in (qualified, configured, *metrics.models):
+                if name:
+                    return str(name)
+            return ""
+
+        # Every id the shared table had no row for. Collected rather than
+        # counted: the operator's next move is to add those rows, and a bare
+        # "unpriced" tells them nothing about which (#2108).
+        unpriced: list[str] = []
+
         # A pipeline seat runs several models at several rates — worker,
         # verifier, triage — so where the stream says which model each step
         # used, each model's subtotal is priced at its own rate and the trial
@@ -692,7 +717,7 @@ class MetricsReader:
         # beats wrong here.
         by_model = (events or {}).get("by_model") or {}
         if any(model for model in by_model):
-            total = 0.0
+            subtotal = 0.0
             for model, bucket in by_model.items():
                 if not model:
                     price = single_rate()  # steps that named no model
@@ -701,10 +726,14 @@ class MetricsReader:
                 else:
                     price = price_for(model)  # no route fact: gateway tier
                 if price is None:
-                    total = None
-                    break
-                total += trial_cost(price, **bucket)
-            metrics.priced_cost = total
+                    # Scanning continues past the first miss on purpose: the
+                    # cost is blanked either way, and naming every missing row
+                    # makes one edit to `pricing.PRICES` enough to price the
+                    # trial rather than uncovering the next gap on a re-read.
+                    unpriced.append(model or seat_label())
+                    continue
+                subtotal += trial_cost(price, **bucket)
+            metrics.priced_cost = None if unpriced else subtotal
         else:
             # ATIF-only trials publish grand totals and a single model; a
             # stream that never named one is priced the same way.
@@ -717,6 +746,14 @@ class MetricsReader:
                     cache_read=metrics.cache_read,
                     cache_write=metrics.cache_write,
                 )
+            else:
+                unpriced.append(seat_label())
+        # Deduplicated, order preserved, and empty names dropped — a queued
+        # trial that has not named a model yet is unstarted, not unpriced, and
+        # must not raise a warning an operator cannot act on.
+        metrics.unpriced_models = tuple(
+            dict.fromkeys(name for name in unpriced if name)
+        )
 
         # A running trial has no finish timestamp, so wall clock has to come
         # from its artifacts' own span rather than from Harbor. The earliest
@@ -800,6 +837,13 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
             if any(t.priced_cost is not None for t in trials)
             else None
         ),
+        # Why the figure above is missing, when it is. A blank cost cell is
+        # the symptom and this is the cause, carried in the same payload so
+        # every reader of the totals — CLI, UI, a saved `results.json` — can
+        # say "no pricing entry for X" instead of showing an empty column and
+        # letting a whole arm's spend go unnoticed (#2108). Sorted so the
+        # payload is deterministic.
+        "unpriced_models": sorted({name for t in trials for name in t.unpriced_models}),
         "cache_hit_rate": (
             sum(t.cache_read for t in trials) / sum(t.tokens_in for t in trials) * 100.0
             if sum(t.tokens_in for t in trials) > 0

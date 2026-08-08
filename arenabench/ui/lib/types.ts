@@ -95,6 +95,11 @@ export interface Totals {
   total_cost: number;
   /** Every seat's tokens through one price table. `null` = model unpriced. */
   priced_cost: number | null;
+  /** Model ids this seat ran that the shared price table has no row for — the
+   *  reason `priced_cost` is null, so a blank cost cell can name its cause
+   *  instead of reading as "free" (#2108). Empty whenever the cost is known;
+   *  absent only in payloads recorded before the field existed. */
+  unpriced_models?: string[];
   tokens_in: number;
   tokens_out: number;
   cache_read: number;
@@ -105,7 +110,10 @@ export interface Totals {
   wasted_time?: number | null;
   /** How many trials the wasted-time sum covers (`arenabench flip` runs). */
   flip_trials?: number;
-  [key: string]: number | null | undefined;
+  // `string[]` rides in the index signature for `unpriced_models` alone. Every
+  // *dimension* key is still numeric — `race.tsx` indexes by `dim.key` and
+  // coerces with `Number` — and no dimension is or will be a list.
+  [key: string]: number | string[] | null | undefined;
 }
 
 export interface ContestantSnap {
@@ -178,6 +186,8 @@ export interface SeriesOutcomes {
   clock_time: number;
   priced_cost: number | null;
   priced_cost_per_solve: number | null;
+  /** Which models the two figures above have no rate for (#2108). */
+  unpriced_models?: string[];
 }
 
 export interface SeriesTaskVerdict {
