@@ -132,11 +132,19 @@ class SutUnavailableError(RuntimeError):
     """No Stella checkout, or git could not answer."""
 
 
+def arenabench_home() -> Path:
+    """The arena's own state directory, honouring ``ARENABENCH_HOME``.
+
+    One definition, because every staged artifact hangs off it — SUT binaries
+    here, harbor-adapter sources in :mod:`arenabench.adapter`.
+    """
+    home = os.environ.get("ARENABENCH_HOME")
+    return Path(home).expanduser() if home else Path.home() / ".arenabench"
+
+
 def sut_root() -> Path:
     """Where staged SUT binaries live, honouring ``ARENABENCH_HOME``."""
-    home = os.environ.get("ARENABENCH_HOME")
-    base = Path(home).expanduser() if home else Path.home() / ".arenabench"
-    return base / "sut"
+    return arenabench_home() / "sut"
 
 
 def _discovered_repo(start: Path | None = None) -> Path | None:
