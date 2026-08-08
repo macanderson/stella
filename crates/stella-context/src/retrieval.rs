@@ -567,8 +567,10 @@ impl From<RecallResult> for ContextQueryResult {
 ///   uses of a scope that does not vary per turn.
 /// - [`query`](Self::query) is what *this* goal selected — in the CLI, the
 ///   domains of the workspace files the goal named. It is the only one that may
-///   serve as admission **evidence**, and only when it genuinely narrows
-///   ([`evidence::scope_is_query_conditional`]).
+///   serve as admission **evidence**, and then only when it is a non-empty
+///   **proper subset** of `session` (`evidence::scope_is_query_conditional`,
+///   crate-private). A scope equal to the vocabulary has narrowed nothing and
+///   admits nothing.
 ///
 /// Collapsing them was the #2289 regression: judged against the session scope,
 /// "shares a domain with the query" is just "is tagged", so the gate admitted
