@@ -102,7 +102,7 @@ impl Tool for ProjectOverview {
 /// fresh session before the background build finishes, or a tree with no
 /// files the indexer has a grammar for (an eight-trial bench run rendered
 /// this block in zero worker prompts for exactly that reason) — it degrades
-/// to [`listing_orientation_block`], one bounded `read_dir` of the root,
+/// to `listing_orientation_block`, one bounded `read_dir` of the root,
 /// instead of silently vanishing.
 ///
 /// Deliberately the complement of the script index (which the prompt already
