@@ -585,5 +585,122 @@ pub(crate) fn publication_path(
     Some(dir.join(format!("{lineage}.toml")))
 }
 
+/// Serialize `record` as a one-record context file at `path`, refusing to
+/// overwrite. `create_new` rather than a separate exists-check because every
+/// caller's pre-check is advisory and racy, and this is the write that must
+/// not destroy somebody's reviewed file (the posture #737 established for the
+/// mined-rule writer).
+pub(crate) fn write_record(
+    path: &Path,
+    set_id: &str,
+    record: &stella_core::ingest::record::Record,
+) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    let file = stella_core::ingest::record::ContextFile {
+        schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
+        set_id: set_id.to_string(),
+        ingest_run_id: None,
+        defaults: None,
+        records: vec![record.clone()],
+        proposals: Vec::new(),
+    };
+    let body =
+        toml::to_string_pretty(&file).map_err(|e| format!("cannot serialize the record: {e}"))?;
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                format!(
+                    "{} already exists — refusing to overwrite a published record",
+                    path.display()
+                )
+            } else {
+                format!("cannot write {}: {e}", path.display())
+            }
+        })?;
+    use std::io::Write as _;
+    out.write_all(body.as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// Build and stamp the context record an inference-derived rule publishes —
+/// the shared shape behind `stella memory promote` and the mined-rule
+/// writers, so every code path that once minted a legacy `.md` rule emits
+/// the ratified TOML surface (ADR 0011) instead.
+///
+/// The record is advisory by construction: origin `inferred`, steering
+/// `should` (cached prefix, like the rules it replaces), no enforcement
+/// section — an inferred directive may not start blocking, and the guard a
+/// miner inferred is deliberately not carried over (#714's stripping seam).
+///
+/// The statement is refused when it would fail `stella context validate`'s
+/// one-sentence shape check: publishing a record the workspace's own CI then
+/// flags would turn a promotion into a red gate.
+pub(crate) fn inferred_rule_record(
+    set_id: &str,
+    suffix: &str,
+    statement: &str,
+    source_kind: &str,
+    source_uri: &str,
+) -> Result<stella_core::ingest::record::Record, String> {
+    use stella_core::context_record::{Origin, RecordStatus};
+    use stella_core::ingest::record as rec;
+    // A dot-prefixed workspace directory (or any set id with stray dots) would
+    // put an empty segment in the lineage (`ctx..foo.bar`); normalize rather
+    // than publish a malformed lineage.
+    let set_id = set_id.trim_matches('.');
+    let set_id = if set_id.is_empty() {
+        "workspace"
+    } else {
+        set_id
+    };
+    let statement = statement.trim();
+    if statement.is_empty() {
+        return Err("the rule statement is empty".to_string());
+    }
+    if stella_core::records::validate::statement_reads_as_pasted(statement) {
+        return Err(format!(
+            "the content spans {} characters over {} lines, but a context record's statement is \
+             a single sentence (`stella context validate` would flag it) — distill the wording \
+             first",
+            statement.chars().count(),
+            statement.lines().count()
+        ));
+    }
+    let mut record = rec::Record {
+        lineage_id: format!("ctx.{set_id}.{suffix}"),
+        record_id: None,
+        record_hash: None,
+        kind: rec::RecordKind::Rule,
+        statement: statement.to_string(),
+        tags: vec!["inferred".to_string()],
+        origin: Some(Origin::Inferred),
+        sharing_scope: Some(rec::SharingScope::Repository),
+        status: Some(RecordStatus::Active),
+        provenance: Some(rec::Provenance {
+            source_kind: Some(source_kind.to_string()),
+            source_uri: Some(source_uri.to_string()),
+            ..Default::default()
+        }),
+        steering: Some(rec::Steering {
+            force: rec::Force::Should,
+            precedence: None,
+            applies_to: None,
+        }),
+        enforcement: None,
+        truth: None,
+        links: Vec::new(),
+    };
+    record
+        .stamp(&rec::Defaults::default())
+        .map_err(|e| format!("cannot stamp the record: {e}"))?;
+    Ok(record)
+}
+
 #[cfg(test)]
 mod tests;

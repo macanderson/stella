@@ -34,11 +34,13 @@ use std::path::Path;
 
 use colored::Colorize;
 
-use stella_core::ingest::record::{ContextFile, Record, SharingScope};
+use stella_core::ingest::record::SharingScope;
 use stella_core::records::{Decision, DecisionEvent, decision};
 
 use super::{FoundProposal, read_proposals, resolve_candidate, verdict_label};
-use crate::context_records::{append_decision, now_rfc3339, publication_path, read_decisions};
+use crate::context_records::{
+    append_decision, now_rfc3339, publication_path, read_decisions, write_record,
+};
 
 /// `stella context review`.
 pub fn run_review(root: &Path, show_all: bool) -> Result<(), String> {
@@ -349,24 +351,6 @@ pub fn run_ignore(
 }
 
 /// Write one record as a published context file.
-fn write_record(path: &Path, set_id: &str, record: &Record) -> Result<(), String> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
-    let file = ContextFile {
-        schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
-        set_id: set_id.to_string(),
-        ingest_run_id: None,
-        defaults: None,
-        records: vec![record.clone()],
-        proposals: Vec::new(),
-    };
-    let body =
-        toml::to_string_pretty(&file).map_err(|e| format!("cannot serialize the record: {e}"))?;
-    std::fs::write(path, body).map_err(|e| format!("cannot write {}: {e}", path.display()))
-}
-
 /// Who is deciding. A local username is enough for solo mode; team mode carries a
 /// real identity through Git authorship instead.
 pub(crate) fn actor() -> String {
