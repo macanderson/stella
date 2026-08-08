@@ -502,7 +502,34 @@ harness earning its keep before it shipped.
   absent for rules.** Filed as **#2359**: a placeholder must not render like a
   measurement.
 
-### 13.3 Still open
+### 13.3 The adapter, as built
+
+Option (b), as §7.2 recommends. Every turn it emits carries a **fourth
+`ScriptedReflection` arm, `NotRecorded`**, and the replayer skips the model
+boundary entirely for it. The arm exists because every other spelling is a claim
+the source does not support: an empty `Lessons` array asserts the model had
+nothing to say, and `Unreadable` asserts it said something unparseable — the
+second would also fabricate starvation and corrupt assertion 7's own metric,
+across sixteen thousand turns. `turns_not_recorded` is counted separately, so a
+corpus that was never asked does not read as a learner that stayed idle.
+
+The privacy gate lands where the risk actually is. Under option (b) no
+*statements* are derived, so there is no proposal to run through `gate_proposal`
+/ `quarantine_for`; the highest-risk field the adapter touches is the **shell
+command**. So `redact_secrets` runs on every command, and the gate is *stricter*
+than quarantine: a command whose redaction fired is **dropped**, not kept with a
+`[redacted]` hole in it. The redactor's prefix list is a good filter rather than
+a complete one, and a command carrying a credential was never going to be a
+recurring shape worth minting a tool from — the foundry loses nothing, and the
+gate keeps its margin.
+
+Measured against the real corpus on 2026-08-08: **496 project directories** (up
+from the 485 §7 recorded — consistent with the rolling window, and the reason a
+derived trace can never be a committed fixture); a 20-project sample adapted to
+**16,664 turns carrying 17,343 shell commands**, every trace passing the
+loader's contract.
+
+### 13.4 Still open
 
 - **#2358** — the dedup/mining threshold collision. The most consequential thing
   the harness has found.
@@ -512,4 +539,3 @@ harness earning its keep before it shipped.
 - **Recall-ranking assertions remain scoped out**, inheriting #2288.
 - **#2321** — extracting the learning loop into a library crate would let the
   harness be an ordinary integration test rather than a `#[cfg(test)]` module.
-- **The §7 adapter** is a separate change; §13 gains its half when it lands.
