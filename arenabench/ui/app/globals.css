@@ -46,7 +46,7 @@
   --muted:      #6e6a5f;
   --dim:        #98948a;
 
-  --accent:     #a37200;   /* gold that passes contrast on light */
+  --accent:     #5133be;   /* gold that passes contrast on light */
   --ok:         #1c7c43;
   --bad:        #c0343c;
   --warn:       #8a6d00;
@@ -57,22 +57,22 @@
 
   /* Seat colours arrive as data (each contestant carries a hex). As fills
      they work on both schemes; as *text* on paper they need ink mixed in. */
-  --seat-fg: color-mix(in srgb, var(--seat, #a37200) 62%, #1c1b16);
+  --seat-fg: color-mix(in srgb, var(--seat, #5133be) 62%, #1c1b16);
 
   --glow-gold: 0 0 24px rgb(163 114 0 / 0.18), 0 0 96px rgb(163 114 0 / 0.08);
 }
 
 .dark {
-  --background: #0b0b0c;   /* Ink: the terminal, not pure black */
+  --background: #080b1c;   /* Ink: the terminal, not pure black */
   --panel:      #131315;
   --panel-2:    #1a1a1d;
   --line:       #232327;
   --line-soft:  #17171a;
-  --foreground: #f4f1ea;   /* Paper, as text */
+  --foreground: #eef1fa;   /* Paper, as text */
   --muted:      #9b9890;
   --dim:        #6e6a5f;
 
-  --accent:     #ffb000;   /* Phosphor Gold — the only owned colour */
+  --accent:     #7c5cff;   /* Phosphor Gold — the only owned colour */
   --ok:         #5ce68a;
   --bad:        #f2545b;
   --warn:       #ffe066;
@@ -81,7 +81,7 @@
   --acc-rose:   #ff6b9d;
   --acc-citron: #ffe066;
 
-  --seat-fg: var(--seat, #ffb000);
+  --seat-fg: var(--seat, #7c5cff);
 
   --glow-gold: 0 0 24px rgb(255 176 0 / 0.28), 0 0 96px rgb(255 176 0 / 0.12);
 }
@@ -105,8 +105,8 @@
   --color-acc-citron: var(--acc-citron);
 
   /* Gold as a FILL is the same in both schemes; ink is what sits on it. */
-  --color-gold: #ffb000;
-  --color-ink: #0b0b0c;
+  --color-gold: #7c5cff;
+  --color-ink: #080b1c;
 
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
