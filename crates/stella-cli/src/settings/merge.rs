@@ -198,6 +198,11 @@ impl Settings {
         if let Some(trace) = scope.trace_capture {
             self.trace_capture = Some(trace);
         }
+        // Same explicit-listing rule again. Absence keeps the lower scope's
+        // answer (or the on-by-default), it never resets it.
+        if let Some(ignore) = scope.ignore_gitignore {
+            self.ignore_gitignore = Some(ignore);
+        }
         // Appearance (`ui.theme`): whole-block last-wins — a higher-precedence
         // scope that declares `ui` replaces the lower one's. Personal
         // preference, no credential/egress authority, so no trust restoration.
