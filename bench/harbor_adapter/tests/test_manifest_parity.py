@@ -39,8 +39,10 @@ text, and says which literal to edit when the path moves.
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.util
 import inspect
+import re
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -55,7 +57,10 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_MAKE_MANIFEST = _REPO_ROOT / "bench" / "evidence" / "make_manifest.py"
+_EVIDENCE = _REPO_ROOT / "bench" / "evidence"
+_MAKE_MANIFEST = _EVIDENCE / "make_manifest.py"
+#: Shell drivers that embed Python importing the adapter in a heredoc.
+_EVIDENCE_RUN = _EVIDENCE / "run"
 
 #: Callee name in `make_manifest.py` → the live function it must bind to.
 _CALLEES = {
@@ -230,6 +235,49 @@ def test_the_manifest_blocks_bind_against_the_live_adapter(
     assert assurance["tiers"]["verifier_model"] == verifier
     assert assurance["tiers"]["arm"] == (
         "witness-off" if verifier is None else "witness-on"
+    )
+
+
+def test_every_adapter_name_the_run_scripts_import_still_exists() -> None:
+    """The same rename, one seam further out — `witness_ab.sh` (#2182).
+
+    `#1394` renamed `_validated_witness_author` to `_validated_verifier` and
+    left the witness A/B driver importing the old name inside a heredoc. Under
+    `ARM=on` that is an `ImportError` behind `|| exit 1`, so the *treatment*
+    arm refuses to launch at all — the same shape as the manifest crash, in the
+    one script whose whole job is to produce the witness-on number.
+
+    Shell is not parseable as Python, so this reads the `from stella_harbor…
+    import …` lines textually. That is enough: the failure being pinned is a
+    name that no longer resolves, and the name is right there in the text.
+    """
+    if not _EVIDENCE_RUN.is_dir():
+        pytest.skip(
+            f"{_EVIDENCE_RUN} is not present in this checkout; if it moved, "
+            "correct `_EVIDENCE_RUN` in this file"
+        )
+    pattern = re.compile(
+        r"^\s*from\s+(stella_harbor(?:\.[\w.]+)?)\s+import\s+([^\n#]+)", re.MULTILINE
+    )
+    checked = 0
+    for script in sorted(_EVIDENCE_RUN.rglob("*.sh")):
+        text = script.read_text(encoding="utf-8")
+        for module_name, imported in pattern.findall(text):
+            module = importlib.import_module(module_name)
+            for name in (part.strip() for part in imported.split(",")):
+                bare = name.split(" as ")[0].strip()
+                if not bare or bare == "*":
+                    continue
+                checked += 1
+                assert hasattr(module, bare), (
+                    f"{script.relative_to(_REPO_ROOT)} imports `{bare}` from "
+                    f"`{module_name}`, which no longer defines it. The import "
+                    "sits behind `|| exit 1`, so the arm this script drives "
+                    "refuses to launch (#2182)"
+                )
+    assert checked, (
+        f"no `from stella_harbor … import …` line was found under "
+        f"{_EVIDENCE_RUN} — this check has stopped reading its subject"
     )
 
 
