@@ -39,9 +39,20 @@
 //! lexical screen the `create_witness_test` boundary applies to the authored
 //! bytes, so a vacuous artifact is refused inside the author's own turn rather
 //! than after a baseline run and a repair turn have been paid for (#863).
+//!
+//! # And could fail for a reason the work can fix
+//!
+//! The other way an artifact fails now and always is a **path frame** error:
+//! assertions written against the project's own absolute paths, while the
+//! oracle runs the test inside an isolated copy rooted somewhere else. Such a
+//! witness answers the same failure for every change, correct or not.
+//! [`frame::screen_witness_frame`] refuses it at the same boundary and for the
+//! same reason (#2130), and [`witness_prompt`] states the frame up front so
+//! the author can translate the goal's paths itself.
 
 pub mod airlock;
 pub mod density;
+pub mod frame;
 pub mod warrant;
 
 use std::collections::HashMap;
@@ -719,6 +730,13 @@ pub const WITNESS_SYSTEM_PROMPT: &str = "You are the WITNESS AUTHOR for a coding
      and .NET may use their filename conventions.\n\
      - The test must fail NOW for the RIGHT reason (it exercises the missing/broken \
      behavior), not because of a typo, a missing import, or a harness error.\n\
+     - NAME EVERY FILE IN THE PROJECT BY A PATH RELATIVE TO THE WORKING DIRECTORY. Your \
+     test runs inside an isolated COPY of the project tree, rooted at a directory that is \
+     neither the project's own root nor the one you are reading now — so an absolute path \
+     into the project reads a tree the work under test never touches, fails identically for \
+     every change, and is REFUSED at creation. If the goal names a file absolutely, strip \
+     the project root and assert on the remainder. Absolute paths to the MACHINE \
+     (`/bin/sh`, `/usr/bin/openssl`) are fine; those are not the tree under test.\n\
      - ASSERT on a value the goal decides. A test with no assertions, one comparing \
      constants (`assert_eq!(2, 2)`), one comparing a value to itself, or a bare \
      `#[should_panic]` / `raises(Exception)` is REFUSED at creation — each of those \
@@ -746,11 +764,25 @@ pub const WITNESS_SYSTEM_PROMPT: &str = "You are the WITNESS AUTHOR for a coding
 /// role cannot execute anything, so this is the one fact about the toolchain
 /// it can be GIVEN rather than left to infer — and the pipeline enforces the
 /// choice afterwards, so the section is a constraint, not a hint.
+///
+/// `workspace_root` is the project's own absolute root — the frame the GOAL
+/// is phrased in, and the one the author cannot otherwise learn (#2130). It
+/// is stated so the author can translate `"<root>/ssl/server.crt"` into the
+/// `ssl/server.crt` its test will actually be run against; the enforced half
+/// is [`frame::screen_witness_frame`] at the create boundary. Empty or
+/// relative, the section is omitted rather than guessed at — there is then
+/// nothing true to say about the mapping.
+///
+/// Deliberately the project root and NOT the authoring snapshot's path: the
+/// snapshot's directory carries a pid and a sequence number, so naming it
+/// would put per-run noise into a prompt that wants to cache (invariant 7),
+/// and it is not the root the goal's paths are written against anyway.
 pub fn witness_prompt(
     goal: &str,
     recall: &[RecalledFrame],
     repo_structure: &str,
     available_runners: &[String],
+    workspace_root: &str,
 ) -> String {
     let mut s = String::new();
     if !available_runners.is_empty() {
@@ -801,6 +833,22 @@ pub fn witness_prompt(
             s.push_str(f.content.trim());
             s.push('\n');
         }
+    }
+    // Last before the goal, because it is how the goal must be READ: the goal
+    // routinely phrases deliverables in this root's absolute paths, and the
+    // test is run somewhere else entirely (#2130).
+    if let Some(root) = frame::framing_root(workspace_root) {
+        s.push_str(&format!(
+            "\n## Where your test runs — paths are RELATIVE\nThis project's own root is \
+             `{root}`, and the goal below may name files under it absolutely. Your test is \
+             NOT run there: it is run inside an isolated copy of this tree, with the working \
+             directory at that copy's root, and the copy the flip is verified in is a \
+             different directory again. So translate every project path out of `{root}` and \
+             assert on the remainder — the goal's `{root}/ssl/server.crt` is \
+             `ssl/server.crt` to you. An absolute path into the project is refused when you \
+             create the file; absolute paths to the machine (`/bin/sh`, `/usr/bin/openssl`) \
+             are fine.\n"
+        ));
     }
     s.push_str("\n## Goal\n");
     s.push_str(goal.trim());

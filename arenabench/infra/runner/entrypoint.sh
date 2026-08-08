@@ -31,12 +31,37 @@ cleanup_dockerd() {
     [ -n "${JOB_SLUG:-}" ] && rm -rf "/scratch/$JOB_SLUG" 2>/dev/null || true
 }
 
+assert_sole_dockerd() {
+    # Batch runs EC2 jobs with ECS `networkMode: host`, so a second trial
+    # placed on this instance would share our network namespace — and
+    # Docker's filter chains are named globally within a namespace. The
+    # second dockerd then dies on `DOCKER-BRIDGE: Chain already exists`
+    # after a 60-second wait, reported as fifty lines of daemon log that
+    # name neither the neighbour nor the placement that created it.
+    #
+    # The job definition and both compute environments size a trial to the
+    # whole instance so this cannot happen; this is the backstop for the
+    # ways that guarantee can be bypassed anyway — a submit-time
+    # `--vcpus` override, a hand-written job definition, a compute
+    # environment edited to allow a larger instance type. Refusing here
+    # costs one iptables read and turns a mystifying crash into its cause.
+    if iptables -w -t filter -n -L DOCKER-BRIDGE >/dev/null 2>&1; then
+        log "FATAL: another dockerd already owns this network namespace."
+        log "  Batch uses host networking, so two trials on one instance"
+        log "  share it and only the first dockerd can start. Give this"
+        log "  trial the whole instance (4 vCPU on m6i.xlarge) or give each"
+        log "  dockerd its own netns. See TrialTopology in infra/core.yaml."
+        return 1
+    fi
+}
+
 start_dockerd() {
+    assert_sole_dockerd || return 1
     # Overlayfs cannot nest: with /var/lib/docker on the container's own
     # overlay root, the inner dockerd's mounts fail with EINVAL. The job
     # definition mounts a host-path volume at /scratch; a per-job
-    # subdirectory there gives each concurrent trial its own storage on a
-    # real filesystem, cleaned up on exit to free the shared instance disk.
+    # subdirectory there gives this trial storage on a real filesystem,
+    # cleaned up on exit so a reused instance starts clean.
     local data_root=/var/lib/docker
     if [ -d /scratch ]; then
         JOB_SLUG=$(printf '%s' "$JOB_ID" | tr -c 'A-Za-z0-9_-' '_')

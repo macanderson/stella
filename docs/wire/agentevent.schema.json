@@ -1708,6 +1708,12 @@
         "name": {
           "$ref": "#/$defs/StageKind"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "stage",
           "type": "string"
@@ -1724,6 +1730,12 @@
       "properties": {
         "text": {
           "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "text",
@@ -1742,6 +1754,12 @@
         "delta": {
           "type": "string"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "text_delta",
           "type": "string"
@@ -1759,6 +1777,12 @@
         "delta": {
           "type": "string"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "reasoning",
           "type": "string"
@@ -1775,6 +1799,12 @@
       "properties": {
         "call": {
           "$ref": "#/$defs/ToolCall"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "tool_start",
@@ -1806,6 +1836,12 @@
           "description": "True when this result was produced by speculative execution: the\ncall was read-only and began executing while the model was still\nstreaming the rest of its response, so `duration_ms` (the real\nexecution time) overlapped the model call instead of following\nit. `serde(default)` so streams recorded before this field parse.",
           "type": "boolean"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "tool_result",
           "type": "string"
@@ -1830,6 +1866,12 @@
         },
         "reason": {
           "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "speculation_discarded",
@@ -1856,6 +1898,12 @@
         "reason": {
           "type": "string"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "retry",
           "type": "string"
@@ -1873,6 +1921,12 @@
       "properties": {
         "text": {
           "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "steered",
@@ -1904,6 +1958,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "turn_parked",
           "type": "string"
@@ -1929,6 +1989,12 @@
         "reason": {
           "description": "`\"changed\"` | `\"deadline_expired\"` — mirrors\n`stella-core::waiting::WakeReason` (kept as a string here so\n`stella-protocol` never depends on `stella-core`).",
           "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "turn_woken",
@@ -1967,6 +2033,12 @@
         "repeats": {
           "description": "Consecutive identical calls (exact repeat), full cycles (short\ncycle), or consecutive no-progress calls (stagnation) observed.",
           "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -2009,6 +2081,12 @@
           "format": "double",
           "type": "number"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "budget_denied",
           "type": "string"
@@ -2044,6 +2122,12 @@
           "description": "Whether the LAST attempt's error was of a retryable class —\nmirrors the paired [`AgentEvent::Error`]'s `retryable` field,\ncomputed from the same `ProviderError::is_retryable()` call.\n`false` means retrying again could never have helped: the\nclearest case is `ProviderError::Auth` failing on attempt 1,\nwhere `attempts` is 1 and no retry was ever attempted despite\nthis event's name (#926) — a receipts/telemetry consumer that\nonly sees `RetriesExhausted` would otherwise record a\nreliability incident for what is really a bad credential.\n`#[serde(default = \"retries_exhausted_retryable_default\")]`:\nevent logs recorded before this field existed predate the\ndistinction, so on replay they read as \"genuinely retryable\"\n— the pre-#926 behavior — rather than being silently\nreclassified as terminal.",
           "type": "boolean"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "turn_instance": {
           "format": "uint32",
           "minimum": 0,
@@ -2075,6 +2159,12 @@
         "subject": {
           "description": "The tool name, capability, or workspace-relative path the\ndecision was about.",
           "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "policy_decision",
@@ -2185,6 +2275,12 @@
           },
           "type": "array"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "compaction",
           "type": "string"
@@ -2233,6 +2329,12 @@
         "spent_usd": {
           "format": "double",
           "type": "number"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "budget_tick",
@@ -2347,6 +2449,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "step_usage",
           "type": "string"
@@ -2406,6 +2514,12 @@
         "role": {
           "$ref": "#/$defs/ModelCallRole"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "usage_incomplete",
           "type": "string"
@@ -2439,6 +2553,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "goal_verdict",
           "type": "string"
@@ -2464,6 +2584,12 @@
         },
         "to": {
           "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "provider_fallback",
@@ -2506,6 +2632,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "file_change",
           "type": "string"
@@ -2542,6 +2674,12 @@
         },
         "tokens": {
           "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -2584,6 +2722,12 @@
         },
         "superseded": {
           "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -2639,6 +2783,12 @@
         "token_cost": {
           "description": "Estimated tokens at birth (the engine's estimator).",
           "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -2716,6 +2866,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "turn_instance": {
           "description": "Monotonic per session — groups the steps of one `run_turn`.",
           "format": "uint32",
@@ -2747,6 +2903,12 @@
         "step": {
           "$ref": "#/$defs/ProofStep"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "proof",
           "type": "string"
@@ -2767,6 +2929,12 @@
         "passed": {
           "type": "boolean"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "verdict",
           "type": "string"
@@ -2785,6 +2953,12 @@
         "proposal": {
           "$ref": "#/$defs/ScopeProposal"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "scope_review",
           "type": "string"
@@ -2801,6 +2975,12 @@
       "properties": {
         "proposal": {
           "$ref": "#/$defs/HunkProposal"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "hunk_review",
@@ -2829,6 +3009,12 @@
         "question": {
           "type": "string"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "ask_user",
           "type": "string"
@@ -2854,6 +3040,12 @@
         "state": {
           "$ref": "#/$defs/MediaJobState"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "media_progress",
           "type": "string"
@@ -2872,6 +3064,12 @@
       "properties": {
         "artifact": {
           "$ref": "#/$defs/MediaArtifactRef"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "media_complete",
@@ -2892,6 +3090,12 @@
         },
         "sha": {
           "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "commit",
@@ -2931,6 +3135,12 @@
         "status": {
           "$ref": "#/$defs/PrStatus"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "pr",
           "type": "string"
@@ -2955,6 +3165,12 @@
           },
           "type": "array"
         },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "type": {
           "const": "task_update",
           "type": "string"
@@ -2971,6 +3187,12 @@
       "properties": {
         "phase": {
           "$ref": "#/$defs/SubAgentPhase"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "sub_agent",
@@ -2991,6 +3213,12 @@
         },
         "retryable": {
           "type": "boolean"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "error",
@@ -3013,6 +3241,12 @@
         },
         "model": {
           "type": "string"
+        },
+        "ts": {
+          "description": "Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "type": {
           "const": "complete",

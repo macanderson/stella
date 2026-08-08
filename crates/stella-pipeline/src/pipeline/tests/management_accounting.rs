@@ -267,7 +267,7 @@ async fn late_verdict_is_abandoned_and_falls_back_to_the_heuristic() {
 
     let verdict = pipeline
         .verifier(
-            &mut super::super::verifier_stage::VerdictDegradation::new(1),
+            &super::super::verifier_stage::VerdictDegradation::new(1),
             prompt,
             &inputs,
             &mut Spend {
@@ -529,6 +529,13 @@ impl Provider for BoundsProvider {
 /// full ceiling once the CLI seeds it) and an unset effort, which leaves the
 /// provider's default (high) reasoning allowance burning thinking tokens on a
 /// classification. The chokepoint must pin the bounded shape instead.
+///
+/// The wire number is that three-line output contract (512) PLUS the
+/// reasoning headroom every capped role now carries (#2128). The bare
+/// contract was what shipped, and on a reasoning model it is a cap spent
+/// entirely on thinking: across match `cc00894779ff` every triage call
+/// returned `finish_reason: length` with empty text, silently collapsing the
+/// research/plan/scope/witness stages onto their defaults.
 #[tokio::test]
 async fn triage_dispatches_with_pinned_management_bounds() {
     let provider = BoundsProvider::new(vec![text_result("single")]);
@@ -576,9 +583,10 @@ async fn triage_dispatches_with_pinned_management_bounds() {
 
     assert_eq!(
         provider.bounds(),
-        vec![(Some(512), Some(stella_protocol::ReasoningEffort::Low))],
-        "the triage dispatch must carry the pinned management bounds, not \
-         fall through to the worker-tier allowance"
+        vec![(Some(4608), Some(stella_protocol::ReasoningEffort::Low))],
+        "the triage dispatch must carry the pinned management bounds — its \
+         512-token output contract plus reasoning headroom — and neither fall \
+         through to the worker-tier allowance nor starve a reasoning model"
     );
 }
 

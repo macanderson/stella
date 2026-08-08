@@ -92,12 +92,6 @@ from .exit_cause import (
 )
 from .git_baseline import ensure_git, run_git_baseline
 from .locate import locate_binary as _locate_binary
-from .metrics import (
-    _extract_metrics,
-    _load_json_object,
-    _sum_step_usage,  # noqa: F401 — re-exported for tests/test_adapter.py
-    _valid_nonnegative_number,
-)
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
@@ -112,7 +106,7 @@ from .posture import (
     PostureBuilder,
     _benchmark_assurance_tiers,
     _benchmark_engine_posture,
-    fold_witness_observations,
+    assurance_tiers_from_posture,
     resolve_candidates,
     resolve_verifier_evidence_demand,
     resolve_max_revisions,
@@ -120,8 +114,15 @@ from .posture import (
     resolve_triage_model,
     resolve_worker_effort,
 )
-from .stream_release import communicate_with_release, journal_reports_completion
+from .stream_envelope import (
+    _extract_metrics,
+    _load_json_object,
+    _stream_to_envelope,
+    _sum_step_usage,  # noqa: F401 — re-exported for tests/test_adapter.py
+)
+from .stream_release import journal_reports_completion
 from .telemetry_export import PRIVATE_TELEMETRY_DIR, export_private_telemetry
+from .timeout_reap import exec_with_agent_reap
 from .turn_budget import (
     TURN_BUDGET_ENV as _TURN_BUDGET_ENV,
 )
@@ -173,6 +174,8 @@ _DEFAULT_BUDGET = "5.0"
 # recorded one" the same way. Deliberately not numeric: nothing downstream
 # should be able to read it as a ceiling that was in force.
 _NO_BUDGET_CAP = "unbounded"
+# The same discipline on the wall-clock axis (#2135; `turn_budget` says why).
+_NO_TASK_DEADLINE = "unarmed"
 _DEFAULT_DISABLE_REFLECTION = "1"
 _DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _ADAPTER_VERSION = "0.6.0"
@@ -693,8 +696,8 @@ async def _secure_exec_with_credential_fd(
         if callable(test_hook):
             return await test_hook(command=command, env=env, stdin=bytes(wire))
 
-        compose = _compose_base_argv(environment)
-        compose.extend(["exec", "-T"])
+        compose_base = _compose_base_argv(environment)
+        compose = [*compose_base, "exec", "-T"]
 
         cwd = getattr(environment.task_env_config, "workdir", None)
         if cwd:
@@ -726,14 +729,9 @@ async def _secure_exec_with_credential_fd(
                 "selected provider credential remains in Docker's host environment"
             )
 
-        process = await asyncio.create_subprocess_exec(
-            *compose,
-            env=host_env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        return await exec_with_agent_reap(
+            compose, compose_base, host_env, wire, completion_probe, _INSTALL_PATH
         )
-        return await communicate_with_release(process, wire, completion_probe)
     finally:
         for index in range(len(wire)):
             wire[index] = 0
@@ -797,168 +795,6 @@ def _embedded_source_commit(version_text: str) -> str | None:
     return match.group(1).lower() if match is not None else None
 
 
-def _json_dicts_from_line(line: str) -> list[dict[str, Any]]:
-    """Decode complete JSON objects from one otherwise noisy stream line."""
-    stripped = line.strip()
-    if not stripped:
-        return []
-    try:
-        value = json.loads(stripped)
-    except json.JSONDecodeError:
-        value = None
-    if isinstance(value, dict):
-        return [value]
-    if value is not None:
-        return []
-
-    decoder = json.JSONDecoder()
-    objects: list[dict[str, Any]] = []
-    position = 0
-    while True:
-        start = stripped.find("{", position)
-        if start < 0:
-            break
-        try:
-            candidate, end = decoder.raw_decode(stripped, start)
-        except json.JSONDecodeError:
-            position = start + 1
-            continue
-        if isinstance(candidate, dict):
-            objects.append(candidate)
-        position = max(end, start + 1)
-    return objects
-
-
-def _stream_to_envelope(
-    text: str | None,
-    *,
-    process_returned: bool = False,
-) -> dict[str, Any] | None:
-    """Build a best-effort Stella envelope from durable stream-json output.
-
-    Non-JSON diagnostics and a truncated final line are ignored, but counted.
-    Only top-level objects with a string ``type`` are Stella events. A process
-    that did not return normally is explicitly marked interrupted unless a
-    ``complete`` event proves completion; no missing terminal values are
-    inferred.
-    """
-    if not text:
-        return None
-
-    events: list[dict[str, Any]] = []
-    diagnostic_lines = 0
-    ignored_json_objects = 0
-    for line in text.splitlines():
-        line_events = 0
-        objects = _json_dicts_from_line(line)
-        for candidate in objects:
-            if isinstance(candidate.get("type"), str):
-                events.append(candidate)
-                line_events += 1
-            else:
-                ignored_json_objects += 1
-        if line.strip() and line_events == 0:
-            diagnostic_lines += 1
-
-    if not events:
-        return None
-
-    last_terminal: dict[str, Any] | None = None
-    last_error: dict[str, Any] | None = None
-    last_text: str | None = None
-    last_model: str | None = None
-    usage_costs: list[float] = []
-    usage_cost_complete = True
-    usage_count = 0
-    complete_count = 0
-    error_count = 0
-
-    for event in events:
-        event_type = event.get("type")
-        if event_type == "step_usage":
-            usage_count += 1
-            model = event.get("model")
-            if isinstance(model, str) and model:
-                last_model = model
-            cost = event.get("cost_usd")
-            if _valid_nonnegative_number(cost):
-                usage_costs.append(float(cost))
-            else:
-                usage_cost_complete = False
-        elif event_type == "text":
-            fragment = event.get("delta")
-            if fragment is None:
-                fragment = event.get("text")
-            if isinstance(fragment, str):
-                last_text = fragment
-        elif event_type == "error":
-            error_count += 1
-            last_error = event
-            last_terminal = event
-        elif event_type == "complete":
-            complete_count += 1
-            last_terminal = event
-            model = event.get("model")
-            if isinstance(model, str) and model:
-                last_model = model
-
-    terminal_type = last_terminal.get("type") if last_terminal else None
-    stream_complete = terminal_type == "complete" or (
-        process_returned and terminal_type == "error"
-    )
-    if terminal_type == "complete":
-        status = "completed"
-    elif process_returned and terminal_type == "error":
-        status = "aborted"
-    else:
-        status = "interrupted"
-
-    complete_cost = (
-        last_terminal.get("cost_usd")
-        if terminal_type == "complete" and last_terminal is not None
-        else None
-    )
-    if _valid_nonnegative_number(complete_cost):
-        total_cost: float | None = float(complete_cost)
-        cost_source = "complete_event"
-    elif usage_count and usage_cost_complete:
-        total_cost = sum(usage_costs)
-        cost_source = "summed_step_usage"
-    else:
-        total_cost = None
-        cost_source = "unknown"
-
-    reason = None
-    if last_error is not None and isinstance(last_error.get("message"), str):
-        reason = last_error["message"]
-
-    # Stella's own account of its verification ladder, folded into fields an
-    # analysis can read. See `posture.fold_witness_observations`.
-    witness = fold_witness_observations(events)
-
-    return {
-        "status": status,
-        "text": last_text,
-        "cost_usd": total_cost,
-        "reason": reason,
-        "model": last_model,
-        "events": events,
-        "_stella_stream": {
-            "event_count": len(events),
-            "diagnostic_lines": diagnostic_lines,
-            "ignored_json_objects": ignored_json_objects,
-            "terminal_event": terminal_type,
-            "stream_complete": stream_complete,
-            "process_returned": process_returned,
-            "step_usage_count": usage_count,
-            "complete_event_count": complete_count,
-            "error_event_count": error_count,
-            "cost_source": cost_source,
-            **witness,
-        },
-    }
-
-
 class StellaAgent(BaseInstalledAgent):
     """Run the Stella coding CLI as a Harbor installed agent."""
 
@@ -983,6 +819,7 @@ class StellaAgent(BaseInstalledAgent):
     # `None` is "no per-trial cap", which is a real posture and not a missing
     # value — see `_configured_budget`.
     _budget_usd: str | None
+    _turn_budget_sec: str | None
     _credential_handoff_mode: str
     _host_credential_source: str
     _host_credential_name: str | None
@@ -1192,18 +1029,20 @@ class StellaAgent(BaseInstalledAgent):
         env = self._forwarded_env()
         self._disable_reflection = env["STELLA_DISABLE_REFLECTION"]
         self._budget_usd = self._configured_budget()
+        self._turn_budget_sec = self._configured_turn_budget()
         verifier = self._verifier_model()
-        self._verifier_model_value = verifier
         (
             self._engine_posture,
             self._engine_posture_json,
             self._engine_posture_sha256,
         ) = self._build_engine_posture(configured_model, verifier=verifier)
+        # From the posture, never the selector beside it (#2134).
         (
             self._assurance_tiers,
             self._assurance_tiers_json,
             self._assurance_tiers_sha256,
-        ) = _benchmark_assurance_tiers(configured_model, verifier=verifier)
+        ) = assurance_tiers_from_posture(self._engine_posture)
+        self._verifier_model_value = self._assurance_tiers.get("verifier_model")
         # Highest precedence, after ambient and all Harbor extra env. A task
         # cannot replace this with its own routing or request-effort config.
         env[_ENGINE_CONFIG_ENV] = self._engine_posture_json
@@ -1570,18 +1409,13 @@ class StellaAgent(BaseInstalledAgent):
     def _configured_turn_budget(self) -> str | None:
         """Resolve the turn deadline in seconds, or ``None`` for no deadline.
 
-        Policy and parsing live in :mod:`stella_harbor.turn_budget`; this
-        supplies the two inputs and nothing else.
-
-        ``getattr`` rather than attribute access: Harbor constructs this class,
-        but the suite builds instances without running ``__init__`` — the same
-        reason ``_configured_value`` reaches for ``_resolved_env_vars`` this
-        way — and an adapter that only works when fully constructed is an
-        adapter whose deadline handling is untested.
+        Policy, parsing, precedence and the reason ``logs_dir`` is an input at
+        all (#2135) live in :mod:`stella_harbor.turn_budget`.
         """
         return _resolve_turn_budget(
             getattr(self, "_agent_timeout_sec", None),
             self._configured_value(_TURN_BUDGET_ENV),
+            getattr(self, "logs_dir", None),
         )
 
     def _forwarded_env(self) -> dict[str, str]:
@@ -1722,6 +1556,8 @@ class StellaAgent(BaseInstalledAgent):
             budget_usd = self._configured_budget()
         if budget_usd is None:
             budget_usd = _NO_BUDGET_CAP
+        turn_budget_sec = getattr(self, "_turn_budget_sec", None)
+        turn_budget_sec = turn_budget_sec or self._configured_turn_budget()
         credential_handoff_mode = getattr(
             self, "_credential_handoff_mode", _HANDOFF_MODE
         )
@@ -1749,18 +1585,16 @@ class StellaAgent(BaseInstalledAgent):
         assurance_tiers_json = getattr(self, "_assurance_tiers_json", None)
         assurance_tiers_sha256 = getattr(self, "_assurance_tiers_sha256", None)
         # An outer timeout can reach this hook before run() built the posture.
-        # Reconstruct the declaration from the same inputs rather than leaving
-        # the arm unstated on exactly the trials most likely to be re-read.
+        # Reconstruct from the recorded posture — or, failing that, the same
+        # overridable builder — rather than leave the arm unstated (#2134).
         if assurance_tiers is None:
             try:
-                (
-                    assurance_tiers,
-                    assurance_tiers_json,
-                    assurance_tiers_sha256,
-                ) = _benchmark_assurance_tiers(
-                    self._effective_model(),
-                    verifier=self._verifier_model(),
-                )
+                declared = engine_posture or self._build_engine_posture(
+                    self._effective_model(), verifier=self._verifier_model()
+                )[0]
+                tiers = assurance_tiers_from_posture(declared)
+                assurance_tiers, assurance_tiers_json, assurance_tiers_sha256 = tiers
+                verifier_model = verifier_model or assurance_tiers["verifier_model"]
             except (ValueError, RuntimeError):
                 assurance_tiers = None
         assurance_arm = (
@@ -1808,6 +1642,8 @@ class StellaAgent(BaseInstalledAgent):
             "stella_base_url": base_url,
             "stella_provider_route_policy": provider_route_policy,
             "stella_budget_usd": budget_usd,
+            # The wall-clock half of the same disclosure (#2135).
+            "stella_turn_budget_sec": turn_budget_sec or _NO_TASK_DEADLINE,
             "stella_output_format": "stream-json",
             "stella_disable_reflection": reflection,
             "stella_reflection_policy": (

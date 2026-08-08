@@ -15,14 +15,26 @@ use stella_protocol::{ToolOutput, ToolSchema};
 /// file ever exists (the repair turn's "rewrite the test" depends on this).
 pub(super) struct WitnessToolExecutor {
     root: PathBuf,
+    /// Absolute roots the authored source must not anchor itself to (#2130):
+    /// the session's own workspace root — the frame the goal's paths are
+    /// written in — and this snapshot's root, which the graft leaves behind.
+    /// Ordered session-first, because that is the spelling an author copies
+    /// out of the goal and so the one worth naming in the refusal.
+    tree_roots: Vec<String>,
     reads: Arc<dyn ToolExecutor>,
     created_path: Mutex<Option<String>>,
 }
 
 impl WitnessToolExecutor {
-    pub(super) fn new(root: PathBuf, reads: Arc<dyn ToolExecutor>) -> Self {
+    pub(super) fn new(root: PathBuf, session_root: &Path, reads: Arc<dyn ToolExecutor>) -> Self {
+        let mut tree_roots = vec![session_root.display().to_string()];
+        let snapshot = root.display().to_string();
+        if !tree_roots.contains(&snapshot) {
+            tree_roots.push(snapshot);
+        }
         Self {
             root,
+            tree_roots,
             reads,
             created_path: Mutex::new(None),
         }
@@ -67,6 +79,19 @@ impl WitnessToolExecutor {
             stella_pipeline::witness::density::screen_witness_source(&path, content)
         {
             return Self::denied("create_witness_test", vacuous);
+        }
+        // The path-frame screen (#2130), here for exactly the reasons the
+        // density screen is: the author is told the frame in its prompt, and
+        // prose is guidance — this is the enforcement, at the one boundary
+        // witness bytes take to disk. A witness that hardcodes the project's
+        // absolute paths is unsatisfiable by construction (the oracle runs it
+        // inside a copy of the tree rooted elsewhere), and refusing it here
+        // costs the author nothing: the one-create claim below is untaken, so
+        // it revises in-turn against a message that names the relative form.
+        if let Err(misframed) =
+            stella_pipeline::witness::frame::screen_witness_frame(&self.tree_roots, content)
+        {
+            return Self::denied("create_witness_test", misframed);
         }
 
         let mut claimed = self
@@ -401,10 +426,18 @@ mod tests {
     use stella_tools::{RegistryOptions, ToolRegistry};
 
     async fn witness_executor(root: &Path) -> WitnessToolExecutor {
+        witness_executor_for(root, root).await
+    }
+
+    /// The two-tree shape the production path always has (#2130): the author
+    /// stands in a snapshot while the goal's paths are phrased against the
+    /// session's own root. `witness_executor` collapses them because the tests
+    /// that use it are about file mechanics, where the distinction is noise.
+    async fn witness_executor_for(root: &Path, session_root: &Path) -> WitnessToolExecutor {
         let registry: Arc<dyn ToolExecutor> = Arc::new(
             ToolRegistry::new_detected(root.to_path_buf(), RegistryOptions::default()).await,
         );
-        WitnessToolExecutor::new(root.to_path_buf(), registry)
+        WitnessToolExecutor::new(root.to_path_buf(), session_root, registry)
     }
 
     /// A witness body that would really witness something, tagged so the tests
@@ -593,6 +626,113 @@ mod tests {
         assert!(root.path().join("tests/real_witness.rs").exists());
     }
 
+    /// #2130's witness: a witness anchored to a tree it will not run in is
+    /// refused at the boundary, and the author still has its create.
+    ///
+    /// This is the `openssl-selfsigned-cert` shape (match `cc00894779ff`): the
+    /// goal named `/app/ssl/server.crt`, so the author wrote that down, and the
+    /// oracle ran the script inside the candidate copy — where it failed
+    /// identically for every change, correct or not, and rode a finished trial
+    /// into its timeout at reward 0. On `main` this artifact is ACCEPTED and
+    /// reaches disk; here it never does, and the refusal hands back the
+    /// relative form. Both roots are refused: anchoring to the snapshot the
+    /// author is standing in is just as unsatisfiable, because the graft moves
+    /// the test into a different candidate before the oracle sees it.
+    #[tokio::test]
+    async fn a_witness_anchored_to_a_tree_it_will_not_run_in_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let tools = witness_executor_for(root.path(), Path::new("/app")).await;
+
+        let misframed = format!(
+            "#!/bin/sh\nset -e\nSSL_DIR=/app/ssl\ntest -f \"$SSL_DIR/server.crt\"\n\
+             test -f {}/ssl/server.key\n",
+            root.path().display()
+        );
+        let output = tools
+            .execute(
+                "create_witness_test",
+                &serde_json::json!({"path": "witness_ssl_cert.sh", "content": misframed}),
+            )
+            .await;
+        match &output {
+            ToolOutput::Error { message } => {
+                assert!(
+                    message.contains("/app/ssl"),
+                    "the refusal must quote what was written: {message}"
+                );
+                assert!(
+                    message.contains("`ssl`"),
+                    "and hand back the relative form: {message}"
+                );
+            }
+            ToolOutput::Ok { .. } => {
+                panic!("a witness pinned to the project root can never pass its oracle")
+            }
+        }
+        assert!(
+            !root.path().join("witness_ssl_cert.sh").exists(),
+            "the misframed artifact must never reach disk"
+        );
+
+        // The snapshot's own root is refused too — the artifact is grafted
+        // into a different candidate before the flip is observed.
+        let snapshot_pinned = format!(
+            "#!/bin/sh\ntest -f {}/ssl/server.crt\n",
+            root.path().display()
+        );
+        assert!(
+            tools
+                .execute(
+                    "create_witness_test",
+                    &serde_json::json!({"path": "witness_ssl_cert.sh", "content": snapshot_pinned}),
+                )
+                .await
+                .is_error(),
+            "the authoring snapshot is not the tree the oracle runs in either"
+        );
+
+        // Neither refusal consumed the one create: the correctly framed
+        // rewrite lands on the very next attempt, in the same turn.
+        let output = tools
+            .execute(
+                "create_witness_test",
+                &serde_json::json!({
+                    "path": "witness_ssl_cert.sh",
+                    "content": "#!/bin/sh\nset -e\ntest -f ssl/server.crt\ntest -f ssl/server.key\n",
+                }),
+            )
+            .await;
+        assert!(
+            matches!(output, ToolOutput::Ok { .. }),
+            "the relative rewrite must be accepted after the refusals: {output:?}"
+        );
+        assert!(root.path().join("witness_ssl_cert.sh").exists());
+    }
+
+    /// The screen refuses the tree under test and nothing else: a witness
+    /// legitimately names its interpreter and the tools it shells out to, and
+    /// an infra deliverable outside the workspace root is not the copied tree.
+    #[tokio::test]
+    async fn machine_paths_stay_available_to_the_witness_author() {
+        let root = tempfile::tempdir().unwrap();
+        let tools = witness_executor_for(root.path(), Path::new("/app")).await;
+
+        let output = tools
+            .execute(
+                "create_witness_test",
+                &serde_json::json!({
+                    "path": "witness_nginx.sh",
+                    "content": "#!/bin/sh\nset -e\ntest -x /usr/sbin/nginx\n\
+                                grep -q 'ssl_protocols TLSv1.3' /etc/nginx/nginx.conf\n",
+                }),
+            )
+            .await;
+        assert!(
+            matches!(output, ToolOutput::Ok { .. }),
+            "machine and out-of-tree paths must stay usable: {output:?}"
+        );
+    }
+
     /// #1792's witness: the blind author can discover the tree by name —
     /// `glob` is offered and executes root-confined, and its results pass
     /// the same credential exclusion as the read path, so discovery never
@@ -694,7 +834,7 @@ mod tests {
             registry,
             stella_tools::policy::ToolPolicy::from_switches([("read_file".to_string(), false)]),
         ));
-        let tools = WitnessToolExecutor::new(root.path().to_path_buf(), policied);
+        let tools = WitnessToolExecutor::new(root.path().to_path_buf(), root.path(), policied);
 
         let names: Vec<_> = tools
             .schemas()

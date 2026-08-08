@@ -132,6 +132,60 @@ class TestRoutePricing:
 
 
 
+class TestKimiPricing:
+    """The Moonshot arm of the 2026-08-07 head-to-heads (#2108).
+
+    Witness: on the old table no ``kimi`` id had a row at all, so a seat
+    running ``moonshotai/kimi-k3`` aggregated ``priced_cost = None`` and the
+    arena's cost column was blank for that whole arm — beside a GLM arm that
+    showed $0.56, in a match billed as a cost comparison.
+
+    Rates: OpenRouter's ``/api/v1/models``, read 2026-08-07 — ``prompt``
+    0.000003 and ``completion`` 0.000015 per token, ``input_cache_read``
+    0.0000003, no ``input_cache_write`` line. The Stella catalog
+    (``crates/stella-model/src/catalog.rs``) carries the same three numbers.
+    """
+
+    def test_the_gateway_rate_is_the_pinned_one(self):
+        price = price_for("kimi-k3")
+        assert price is not None
+        assert (price.input, price.output, price.cache_read) == (3.0, 15.0, 0.30)
+        # No separate write line: a cache write is an ordinary input token.
+        assert price.cache_write is None
+
+    def test_every_spelling_a_seat_records_resolves_to_that_rate(self):
+        """The bare row alone fixes nothing: `moonshotai/` was not a known
+        routing prefix, so no id any seat actually records — the OpenRouter
+        slug, or Harbor's fully qualified form — collapsed onto it. Each
+        spelling is asserted against the *rate*, never merely against the
+        others: three `None`s are equal too, which is the shape this whole
+        class exists to catch."""
+        for spelling in ("kimi-k3", "moonshotai/kimi-k3", "openrouter/moonshotai/kimi-k3"):
+            price = price_for(spelling)
+            assert price is not None, spelling
+            assert (price.input, price.output) == (3.0, 15.0), spelling
+
+    def test_a_recorded_moonshot_route_prices_at_the_gateway_tier(self):
+        """No first-party row exists, because no seat can be routed direct to
+        Moonshot — the catalog knows `moonshotai` only as this OpenRouter
+        entry's family. A route with no row of its own takes the gateway rate,
+        which errs against the seat rather than for it (#1498)."""
+        assert price_for_route("moonshotai/kimi-k3") is not None
+        assert price_for_route("moonshotai/kimi-k3") == price_for("kimi-k3")
+        assert price_on_route("openrouter", "moonshotai/kimi-k3") == price_for("kimi-k3")
+
+    def test_a_kimi_trials_tokens_cost_a_real_number(self):
+        """The end of the bug as it was observed: token counts in, a figure
+        out, where the whole arm used to render nothing."""
+        cost = trial_cost(
+            price_for("moonshotai/kimi-k3"),
+            tokens_in=1_000_000,
+            tokens_out=100_000,
+            cache_read=600_000,
+        )
+        assert cost == pytest.approx(0.4 * 3.0 + 0.6 * 0.30 + 0.1 * 15.0)
+
+
 class TestSonnet5Pricing:
     """The model both seats of the kvk matches actually ran (2026-08-06).
 

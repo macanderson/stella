@@ -391,7 +391,18 @@ impl<'a> Pipeline<'a> {
             // authors nothing), so there is never a configured command to
             // offer. The probed availability set is the toolchain fact the
             // author gets instead.
-            CompletionMessage::user(witness_prompt(goal, frames, &structure, &available)),
+            // The SESSION's root, never the authoring snapshot's: it is the
+            // frame the goal's absolute paths are written in, and the one the
+            // author must translate out of (#2130). `engine.cwd` is that root
+            // by construction — every candidate surface overrides its own copy
+            // in `engine_config_for`, and this config is the untouched base.
+            CompletionMessage::user(witness_prompt(
+                goal,
+                frames,
+                &structure,
+                &available,
+                &self.config.engine.cwd,
+            )),
         ];
         // Both tallies are local and discarded, on the same reasoning: they
         // measure the *witness author*, and the ladder's channels are about

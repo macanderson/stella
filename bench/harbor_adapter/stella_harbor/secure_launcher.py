@@ -81,12 +81,13 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/host_attestation.py",
     "bench/harbor_adapter/stella_harbor/live_feed.py",
     "bench/harbor_adapter/stella_harbor/locate.py",
-    "bench/harbor_adapter/stella_harbor/metrics.py",
     "bench/harbor_adapter/stella_harbor/portability.py",
     "bench/harbor_adapter/stella_harbor/posture.py",
     "bench/harbor_adapter/stella_harbor/secure_launcher.py",
+    "bench/harbor_adapter/stella_harbor/stream_envelope.py",
     "bench/harbor_adapter/stella_harbor/stream_release.py",
     "bench/harbor_adapter/stella_harbor/telemetry_export.py",
+    "bench/harbor_adapter/stella_harbor/timeout_reap.py",
     "bench/harbor_adapter/stella_harbor/turn_budget.py",
 )
 _FIXED_READINESS_SOURCE_PATHS = (

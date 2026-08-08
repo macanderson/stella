@@ -22,6 +22,24 @@ format. They share one TypeScript printer
 (`stella_protocol::schema_export`), so there is one subset of JSON Schema to
 keep in step rather than two.
 
+## The one attached property, and why it is not derived
+
+Every `AgentEvent` variant in `agentevent.schema.json` carries an optional
+`ts`: the wall-clock instant, in Unix-epoch milliseconds, at which the sink
+wrote that line (#2111). It is not a member of any variant — it is applied at
+the write boundary by `stella_protocol::journal::stamped_line`, because a stamp
+is a fact about a *write*, the same event reaches more than one sink, and the
+engine that produces events owns no clock.
+
+`schemars` therefore cannot derive it, and `schema_export::attach_journal_stamp`
+adds it in one uniform pass instead, with its prose taken from
+`journal::TS_DESCRIPTION` so the published text and the Rust doc are one string.
+The alternative — flattening an envelope struct into the schema root — would
+have cost the discriminated union, and with it `KnownTypeTag`, which is the one
+thing a forward-compatible consumer most needs. Optional on every surface is the
+only claim true of all three: a line recorded before the field existed has none,
+and `stella-serve` frames the event in an envelope that stamps its own.
+
 ## The one hand-written line, and why it is safe
 
 `seq` is added by the transport at delivery time, not by the engine, so no

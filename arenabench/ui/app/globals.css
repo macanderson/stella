@@ -52,8 +52,8 @@
   --warn:       #8a6d00;
   --acc-cyan:   #0b7285;
   --acc-violet: #7048a8;
-  --acc-rose:   #c2255c;
-  --acc-citron: #8a6d00;
+  --acc-rose:   #ba2358;
+  --acc-citron: #796000;
 
   /* Seat colours arrive as data (each contestant carries a hex). As fills
      they work on both schemes; as *text* on paper they need ink mixed in. */

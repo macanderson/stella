@@ -13,13 +13,18 @@ is deliberately NOT released — a hung pipeline must stay visible as a timeout
 rather than be dressed up as a finished trial (#2110 stays loud).
 
 Nothing inside the container is ever signalled: only the **client** process is
-terminated, so daemons the verifier will probe stay up.
+terminated, so daemons the verifier will probe stay up. That is the contract
+of the *completion* branch specifically — a run that never proved completion
+is reaped in the container by :mod:`stella_harbor.timeout_reap` (#2131), which
+shares this module's client teardown and adds the half a proxy cannot do.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import signal
 from collections.abc import Callable
 
 from harbor.environments.base import ExecResult
@@ -42,6 +47,60 @@ STREAM_RELEASED_NOTE = (
     "a process the agent left running held the stream open past Stella's "
     "exit (#2122)"
 )
+
+#: Seconds the client is given to honour each signal of the teardown
+#: escalation. Docker's exec client exits promptly once it stops proxying, so
+#: this is a ceiling on a pathological client, not a routine cost.
+_CLIENT_SIGNAL_GRACE_SECONDS = 5.0
+
+
+def _signal_client(
+    process: asyncio.subprocess.Process, signal_number: int
+) -> None:
+    """Signal the client's process group when it leads one, else the client.
+
+    ``docker compose`` can leave helper children of its own behind, and
+    signalling only the leader reaps the leader while orphaning the rest — so
+    the group is the correct unit whenever the client owns one, which it does
+    when it was spawned with ``start_new_session=True``.
+
+    The leadership check is a safety interlock, not an optimization: a client
+    that leads no session of its own sits in the *harness's* process group, and
+    a group signal there would kill the benchmark run itself. Signalling the
+    single process is always correct; signalling the group is only sometimes
+    correct, so it has to be proven first.
+    """
+    with contextlib.suppress(OSError):
+        if os.getpgid(process.pid) == process.pid:
+            os.killpg(process.pid, signal_number)
+            return
+    with contextlib.suppress(ProcessLookupError):
+        process.send_signal(signal_number)
+
+
+async def terminate_client(
+    process: asyncio.subprocess.Process,
+    *,
+    grace_seconds: float = _CLIENT_SIGNAL_GRACE_SECONDS,
+) -> None:
+    """Escalate ``SIGTERM`` → ``SIGKILL`` against the client, and reap it.
+
+    Reaping is the point of the final ``wait()``: an exited child that nothing
+    waits on stays a zombie for as long as the harness lives, and a benchmark
+    run performs one of these per timed-out trial.
+
+    Nothing inside the container is signalled from here — the client is a
+    proxy, and killing a proxy does not stop what it was proxying for. The
+    container side belongs to :mod:`stella_harbor.timeout_reap`.
+    """
+    if process.returncode is not None:
+        return
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        _signal_client(process, signal_number)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=grace_seconds)
+            return
+    await process.wait()
 
 
 def journal_reports_completion(stream: str | None) -> bool:
@@ -132,13 +191,7 @@ async def communicate_with_release(
             process, wire, completion_probe
         )
     except BaseException:
-        if process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
+        await terminate_client(process)
         raise
     stdout = stdout_bytes.decode(errors="replace") if stdout_bytes else None
     if released:

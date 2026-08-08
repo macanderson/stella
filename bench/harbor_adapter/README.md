@@ -482,12 +482,23 @@ Every result exposes manifest-ready metadata keys:
   `stella_engine_posture_json`, and `stella_engine_posture_sha256`.
 - `stella_assurance_arm` (`witness-off` / `witness-on`),
   `stella_assurance_tiers` + its version, JSON and SHA-256, and
-  `stella_witness_author_model` — **which verification tiers the posture
+  `stella_verifier_model` — **which verification tiers the posture
   declares** (#1007). Paired with `stella_witness_authored_state`
   (`authored` / `unavailable` / `not_reported`) and the `stella_stream`
   witness counters, which report what this trial's proof stream actually
   observed. Declared and observed are different claims, so both are recorded:
   a run must never disable a tier discoverably only by grepping trajectories.
+
+  The declaration is derived from the **resolved engine posture**, never from
+  the host-side selector beside it, and it resolves each role the way the
+  engine does — `agents.<role>.model` > `pipeline_<role>_model` >
+  `default_model` (`AgentEngineConfig::model_for`). Both halves are #2134: a
+  harness that pins the verifier through the `_build_engine_posture` seam —
+  ArenaBench's roles config does — reaches the engine without touching
+  `STELLA_WITNESS_AUTHOR_MODEL`, and a run declared `witness-off` while
+  kimi-k3 graded its verdicts. `authored_witness_off_reason` names the two
+  models the roles resolved to and the posture keys they came from, so the
+  reason is checkable against the posture printed beside it.
 - `stella_self_verdict_state` (`passed` / `failed` / `not_reported`), plus
   `self_verdict_passed`, `self_verdict_deterministic` and `self_verdict_count`
   in `stella_stream` — **what Stella claimed about its own work** (#1284). The

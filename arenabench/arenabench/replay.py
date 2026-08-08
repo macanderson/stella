@@ -39,6 +39,7 @@ from .snapshot import (
     bisect_first_pass,
     confirm_first_pass,
     detect_workspace,
+    load_capture_status,
     load_manifest,
     read_task_image,
     summarise_flip,
@@ -250,8 +251,14 @@ def replay_flip(
     if shutil.which("git") is None:
         raise ReplayError("git is not available on this host; replay applies patches locally")
     entries = load_manifest(trial_dir)
+    # Read before the emptiness check so the error can say *why* the manifest
+    # is empty. "No snapshots captured" on its own is the sentence that used to
+    # send an operator looking for a slow host when capture had in fact been
+    # failing outright and saying so only at `debug` (#2196).
+    capture = load_capture_status(trial_dir)
     if not entries:
-        raise ReplayError(f"no snapshots captured for {trial_dir.name}")
+        why = f": {capture.reason}" if capture is not None and capture.reason else ""
+        raise ReplayError(f"no snapshots captured for {trial_dir.name}{why}")
     image = read_task_image(task_dir)
     if not image:
         raise ReplayError(f"no docker_image in {task_dir / 'task.toml'}")
@@ -291,6 +298,7 @@ def replay_flip(
         answer,
         probes=len(seen),
         unknown=sum(1 for v in seen.values() if v is None),
+        capture=capture,
     )
     try:
         (trial_dir / FLIP_NAME).write_text(

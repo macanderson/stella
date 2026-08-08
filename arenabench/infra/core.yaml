@@ -391,9 +391,12 @@ Resources:
         MinvCpus: 0
         DesiredvCpus: 0
         MaxvCpus: !Ref OnDemandMaxvCpus
+        # Exactly one size, and it is the trial's size on purpose: a trial
+        # requests 4 vCPU, an m6i.xlarge *has* 4 vCPU, so Batch can never
+        # place two trials on one instance. That is a correctness
+        # requirement, not a tuning choice — see TrialTopology below.
         InstanceTypes:
-          - m6i
-          - c6i
+          - m6i.xlarge
         Subnets: !Ref SubnetIds
         SecurityGroupIds:
           - !Ref BatchSecurityGroup
@@ -418,9 +421,10 @@ Resources:
         MinvCpus: 0
         DesiredvCpus: 0
         MaxvCpus: !Ref SpotMaxvCpus
+        # One trial per instance here too: the netns collision is a property
+        # of the runner, not of the purchase model.
         InstanceTypes:
-          - m6i
-          - c6i
+          - m6i.xlarge
         Subnets: !Ref SubnetIds
         SecurityGroupIds:
           - !Ref BatchSecurityGroup
@@ -535,6 +539,25 @@ Resources:
                   - ssm:GetParameters
                   - ssm:GetParametersByPath
                 Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/arenabench/*
+              # Every credential under /arenabench is a SecureString, and
+              # reading one is two authorizations, not one: SSM returns the
+              # ciphertext and KMS decrypts it. Without this the job is
+              # allowed to fetch a parameter it can never read, and the
+              # failure surfaces nowhere near its cause — the run's eight
+              # trials each staged the SUT, then died exit 2 on "required
+              # environment variables are not set: any of OPENROUTER_API_KEY",
+              # which reads as a match-file mistake rather than an IAM one.
+              # `kms:ViaService` keeps the grant to decryption performed on
+              # this role's behalf BY Parameter Store: the job can read the
+              # secrets it is entitled to and cannot use the key for anything
+              # else. The alias is the account's AWS-managed SSM key, whose
+              # own key policy already requires the caller be in this account.
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
 
   TrialJobDefinition:
     Type: AWS::Batch::JobDefinition
@@ -554,7 +577,8 @@ Resources:
         # The inner dockerd cannot stack overlayfs on the container's own
         # overlay root (EINVAL); it needs a data root on a real filesystem.
         # The entrypoint carves a per-job subdirectory under this host
-        # volume so concurrent trials on one instance never share storage.
+        # volume, which also keeps a crashed job from stranding storage that
+        # the next job on a reused instance would inherit.
         Volumes:
           - Name: dind-scratch
             Host:
@@ -562,11 +586,32 @@ Resources:
         MountPoints:
           - SourceVolume: dind-scratch
             ContainerPath: /scratch
+        # TrialTopology: one trial per EC2 instance, enforced from both ends.
+        #
+        # Batch runs EC2 jobs with ECS `networkMode: host`, so every trial
+        # container on an instance shares the *host* network namespace. A
+        # trial boots its own dockerd, and Docker's filter chains
+        # (DOCKER-BRIDGE, DOCKER-FORWARD, ...) are globally-named per
+        # namespace: the first dockerd creates them and every later one dies
+        # with `iptables: Chain already exists`. Storage isolation (above)
+        # does not help, because the namespace is what is shared.
+        #
+        # So the request below is deliberately the *whole* m6i.xlarge —
+        # 4 of its 4 vCPUs — which is what makes double-placement
+        # unrepresentable rather than merely unlikely. The compute
+        # environments pin that one instance size for the same reason.
+        # Lowering either number without giving each dockerd its own network
+        # namespace reintroduces the collision.
+        #
+        # This costs nothing: m6i pricing is linear in size, so 4 xlarge
+        # instances and 1 m6i.4xlarge bill the same per vCPU-hour, and one
+        # trial per box additionally removes the CPU contention that skews
+        # timeout-bound tasks when two agents race on one instance.
         ResourceRequirements:
           - Type: VCPU
-            Value: "2"
+            Value: "4"
           - Type: MEMORY
-            Value: "7168"
+            Value: "15360"
         Command:
           - smoke
         Environment:
