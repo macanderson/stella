@@ -28,6 +28,13 @@ use super::*;
 // byte-stable-prefix property (L-E8) a runtime `format!` would give up. One
 // shared literal, embedded verbatim by both prompts, is also what keeps the two
 // copies from drifting the way the catalogue's did (#450).
+//
+// ADDING A CONTRACT: embed it in BOTH prompts below, and add its row to
+// `SHARED_CONTRACTS` in `prompt/parity.rs`. That module derives the set of
+// contracts from this file's own source, so it fails by name on either
+// omission — the coupling used to hold by convention alone, and a contract
+// reaching `SYSTEM_PROMPT` only is invisible to `stella run` and to every
+// bench measurement, which read `PIPELINE_SYSTEM_PROMPT` (#2231).
 
 /// The cross-tool steering shared by both static prompts — what the generated
 /// schemas cannot say. No trailing newline: each prompt continues with its own
