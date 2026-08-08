@@ -556,52 +556,6 @@ impl From<RecallResult> for ContextQueryResult {
     }
 }
 
-/// The two domain scopes one recall runs under.
-///
-/// They are separate because they answer different questions and cannot share
-/// a value without one of them becoming wrong:
-///
-/// - [`session`](Self::session) is the workspace vocabulary the session opened
-///   with. It **filters** (a node tagged exclusively outside it is not a
-///   candidate) and it **ranks** (overlap is an RRF list). Both are correct
-///   uses of a scope that does not vary per turn.
-/// - [`query`](Self::query) is what *this* goal selected — in the CLI, the
-///   domains of the workspace files the goal named. It is the only one that may
-///   serve as admission **evidence**, and then only when it is a non-empty
-///   **proper subset** of `session` (`evidence::scope_is_query_conditional`,
-///   crate-private). A scope equal to the vocabulary has narrowed nothing and
-///   admits nothing.
-///
-/// Collapsing them was the #2289 regression: judged against the session scope,
-/// "shares a domain with the query" is just "is tagged", so the gate admitted
-/// every tagged node on every prompt. Narrowing `session` to fix that would
-/// have been worse — it also drives `node_ids_excluded_by_scope`, so a
-/// narrower value silently starts *suppressing* memories rather than merely
-/// declining to admit them. Hence two fields, not one.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RecallScope {
-    /// The session's domain vocabulary. Empty means the whole workspace.
-    pub session: Vec<String>,
-    /// The domains this query selected. Empty means the query narrowed
-    /// nothing, which disarms the domain evidence channel.
-    pub query: Vec<String>,
-}
-
-impl RecallScope {
-    /// A scope with no per-query narrowing: filters and ranks by `session`,
-    /// and cannot admit on domain overlap.
-    ///
-    /// This is the honest default for any caller that has no way to derive a
-    /// per-query scope, which is every caller except the CLI's
-    /// `ScopedStore::query`.
-    pub fn session_only(session: &[String]) -> Self {
-        Self {
-            session: session.to_vec(),
-            query: Vec::new(),
-        }
-    }
-}
-
 impl ContextStore {
     /// Hybrid retrieval with no domain scope — grounding drawn from the whole
     /// workspace. The CGP-shaped `ContextProvider::query` adapts this down to
@@ -944,29 +898,7 @@ fn recall_blocking(
     } else {
         domains_by_node(conn)?
     };
-    let no_domains: Vec<String> = Vec::new();
-    let domain_ranked: Vec<i64> = if query_domains.is_empty() {
-        Vec::new()
-    } else {
-        let mut scored: Vec<(i64, usize)> = metas
-            .iter()
-            .filter_map(|m| {
-                let overlap = scoped_domains
-                    .get(&m.id)
-                    .unwrap_or(&no_domains)
-                    .iter()
-                    .filter(|d| query_domains.contains(d.as_str()))
-                    .count();
-                (overlap > 0).then_some((m.id, overlap))
-            })
-            .collect();
-        // Descending overlap, ties on node id: `nodes` arrives in SQLite's
-        // unordered scan order, and overlap counts collide constantly (most
-        // tagged nodes carry exactly one domain), so ordering by overlap
-        // alone would hand equally-tagged nodes a different rank each run.
-        scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        scored.into_iter().map(|(id, _)| id).collect()
-    };
+    let domain_ranked = scope::overlap_ranking(&metas, &scoped_domains, &query_domains);
 
     // 4. Coverage gate (`L-C6`). Below threshold the vector signal is too
     //    weak to trust; rather than dress fused graph/recency hits up as
@@ -1136,17 +1068,7 @@ fn recall_blocking(
             // hand, never a second scan.
             let domain_evidence: Vec<i64> =
                 if evidence::scope_is_query_conditional(&q.query_scope, &q.domains) {
-                    let selected: HashSet<&str> =
-                        q.query_scope.iter().map(String::as_str).collect();
-                    metas
-                        .iter()
-                        .filter(|m| {
-                            scoped_domains.get(&m.id).is_some_and(|tags| {
-                                tags.iter().any(|d| selected.contains(d.as_str()))
-                            })
-                        })
-                        .map(|m| m.id)
-                        .collect()
+                    scope::evidence_ids(&metas, &scoped_domains, &q.query_scope)
                 } else {
                     Vec::new()
                 };
@@ -1241,6 +1163,8 @@ fn recall_blocking(
     let kept_ids: Vec<i64> = kept.iter().map(|r| r.meta.id).collect();
     let bodies = nodes_by_ids(conn, &kept_ids, q.as_of.as_deref())?;
     let tags = candidate_domains(conn, &kept_ids, &scoped_domains, &query_domains)?;
+    // An untagged frame carries an empty domain list, not a missing one.
+    let no_domains: Vec<String> = Vec::new();
     let mut frames = Vec::with_capacity(kept.len());
     for candidate in &kept {
         // A row that vanished between packing and serving is skipped rather
@@ -1503,6 +1427,9 @@ fn term_pass(
 
 mod evidence;
 mod ranking;
+mod scope;
+
+pub use scope::RecallScope;
 
 pub(crate) use ranking::{
     MmrItem, cosine, cosine_blob, coverage_score, dedup_by_content_hash, mmr_select,
