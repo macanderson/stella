@@ -57,9 +57,10 @@ pub(super) fn step_prompt(index: usize, total: usize, description: &str) -> Stri
 
 /// Words that turn the declaration into its own denial (#2104).
 ///
-/// Compared against the payload's first word — the run of alphanumerics that
-/// punctuation *terminates* — with case folded, never as a prefix: `nothing
-/// left to do` is a genuine completion and must not be read as `not`.
+/// Compared against the payload's first word — the run of letters, digits and
+/// [`APOSTROPHES`] that other punctuation *terminates* — with case folded,
+/// never as a prefix: `nothing left to do` is a genuine completion and must
+/// not be read as `not`.
 const NEGATION_OPENERS: &[&str] = &[
     "no",
     "not",
@@ -72,6 +73,17 @@ const NEGATION_OPENERS: &[&str] = &[
     "partially",
     "partial",
 ];
+
+/// The code points a model actually types inside a contraction.
+///
+/// One list, because assuming ASCII here is how the screen below has failed
+/// twice: `no—steps` slipped through when an em dash was treated as part of
+/// the word, and `isn’t` slipped through when `U+2019` — which a model emits
+/// as readily as `'`, and which appears in the very reply that motivated this
+/// screen — terminated the word early and left the harmless `isn`. Every
+/// apostrophe folds to `'` before the contraction test, so the test itself
+/// stays one comparison.
+const APOSTROPHES: &[char] = &['\'', '\u{2019}', '\u{02BC}'];
 
 /// Whether a completed step turn declared the whole goal finished.
 ///
@@ -112,10 +124,21 @@ pub(super) fn goal_declared_complete(text: &str) -> bool {
 }
 
 /// Whether one line is an affirmative close-out declaration.
+///
+/// The marker is a **token**, not a prefix. A letter fused to it shifts the
+/// payload past the denial the polarity screen exists to read: on
+/// `PLAN COMPLETED: no, steps 2-10 remain` the payload is `D: no, …`, whose
+/// first word is `d`, so the whole axis is void and the denial closes the
+/// plan. Requiring a non-alphanumeric (or nothing) after the marker costs at
+/// most the redundant walk this module exists to avoid, which is the cheap
+/// side of the asymmetry [`goal_declared_complete`] documents.
 fn declares_completion(line: &str) -> bool {
     let Some(payload) = line.trim_start().strip_prefix(PLAN_COMPLETE_MARKER) else {
         return false;
     };
+    if payload.starts_with(char::is_alphanumeric) {
+        return false;
+    }
     !opens_with_negation(payload)
 }
 
@@ -140,7 +163,8 @@ fn opens_with_negation(payload: &str) -> bool {
     }
     let word: String = opener
         .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '\'')
+        .take_while(|c| c.is_alphanumeric() || APOSTROPHES.contains(c))
+        .map(|c| if APOSTROPHES.contains(&c) { '\'' } else { c })
         .flat_map(char::to_lowercase)
         .collect();
     // `isn't`, `doesn't`, `hasn't` — the contraction carries the negation.
@@ -221,6 +245,57 @@ mod tests {
                 "should not close the plan: {denial}"
             );
         }
+    }
+
+    /// The same failure as the fused-punctuation case above, one code point
+    /// over: a word scan admitting only ASCII `'` stopped at `U+2019` and read
+    /// `isn’t` as the harmless `isn`, so the denial closed the plan. Models
+    /// type typographic punctuation by default — the reply that motivated this
+    /// whole screen used an em dash.
+    #[test]
+    fn a_denial_written_with_a_typographic_apostrophe_is_still_a_denial() {
+        for denial in [
+            "PLAN COMPLETE: isn\u{2019}t done, one step left.",
+            "PLAN COMPLETE: doesn\u{2019}t cover steps 2-10.",
+            "PLAN COMPLETE: won\u{2019}t be done until nginx is configured.",
+            "PLAN COMPLETE: hasn\u{02bc}t started step 4.",
+        ] {
+            assert!(
+                !goal_declared_complete(denial),
+                "should not close the plan: {denial}"
+            );
+        }
+    }
+
+    /// The marker is a token, not a prefix. A letter fused to it shifted the
+    /// payload past the denial — `PLAN COMPLETED: no, …` left the first word
+    /// `d` — so the polarity axis was void wherever this fired.
+    #[test]
+    fn a_word_fused_to_the_marker_is_not_a_declaration() {
+        assert!(!goal_declared_complete(
+            "PLAN COMPLETED: no, steps 2-10 remain."
+        ));
+        assert!(!goal_declared_complete("PLAN COMPLETENESS: 1 of 10 steps."));
+        // The punctuation that does follow the marker in practice still declares.
+        assert!(goal_declared_complete("PLAN COMPLETE: all ten steps done."));
+        assert!(goal_declared_complete(
+            "PLAN COMPLETE \u{2014} all ten steps done."
+        ));
+        assert!(goal_declared_complete("PLAN COMPLETE"));
+    }
+
+    /// `no` opening the payload is read as a denial even though an affirmative
+    /// reading exists (`no further work needed`). Deliberate, and pinned so it
+    /// is not "fixed" into a hole later: the two errors are not symmetric — a
+    /// missed declaration costs the redundant walk this module exists to
+    /// avoid, a spurious one cost a whole trial (#2104). `none` is not an
+    /// opener, so the unambiguous phrasing still closes the plan.
+    #[test]
+    fn an_ambiguous_no_is_read_as_a_denial() {
+        assert!(!goal_declared_complete(
+            "PLAN COMPLETE: no further work needed."
+        ));
+        assert!(goal_declared_complete("PLAN COMPLETE: none remaining."));
     }
 
     /// The negation screen matches whole words, so a completion whose first
