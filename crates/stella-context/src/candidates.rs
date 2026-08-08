@@ -12,8 +12,9 @@
 //! - [`nodes_by_ids`], [`vectors_for_ids`], and [`domains_for_nodes`] fetch the
 //!   bodies, vectors, and tags of the candidates that survived the cut — and
 //!   nothing else.
-//! - [`scan_lexical`] streams the weak-coverage fallback's scan instead of
-//!   materializing the corpus to search it.
+//! - [`scan_terms`] streams the term pass (the weak-coverage fallback's scan,
+//!   now also the evidence gate's) instead of materializing the corpus to
+//!   search it.
 //!
 //! The pipeline that composes them is [`crate::retrieval`].
 
@@ -85,7 +86,7 @@ pub struct NodeMeta {
 
 /// Record body bytes crossing the SQLite boundary (test builds only). Counted
 /// here rather than in `store::map_node_row` so the tally covers exactly the
-/// loaders recall can reach — `nodes_by_ids` and `scan_lexical` are the only two
+/// loaders recall can reach — `nodes_by_ids` and `scan_terms` are the only two
 /// that move a body — and not the store's unrelated single-row readers.
 #[inline]
 fn count_content_bytes(len: usize) {
@@ -145,26 +146,26 @@ pub(crate) fn live_node_metas(
     Ok(out)
 }
 
-/// Stream every live node's label and body past `score`, keeping only the ids
-/// it scores — the lexical fallback's scan (`L-C6`) with no corpus-sized
-/// retention.
+/// Stream every live node's label and body past `observe` — the term pass
+/// behind both the lexical fallback (`L-C6`) and the evidence gate's
+/// distinctive-match channel (#2289), with no corpus-sized retention.
 ///
-/// `score` sees each body **borrowed out of the row buffer**, one row at a time,
-/// so the fallback matches on exactly the same bytes it always did while the
-/// peak live heap stays one row instead of every body in the workspace. It ran
-/// over a fully-materialized `Vec<NodeRow>` before, which is what made a
-/// weak-coverage turn the most expensive kind.
-pub(crate) fn scan_lexical(
+/// `observe` sees each body **borrowed out of the row buffer**, one row at a
+/// time, so the pass matches on exactly the same bytes the fallback always
+/// did while the peak live heap stays one row instead of every body in the
+/// workspace. What accumulates is the caller's — per-term document
+/// frequencies and per-node matched-term sets, both bounded by the query's
+/// term count, never by the corpus.
+pub(crate) fn scan_terms(
     conn: &Connection,
     excluded: &std::collections::HashSet<i64>,
     as_of: Option<&str>,
-    mut score: impl FnMut(&str, &str) -> Option<f32>,
-) -> Result<Vec<(i64, f32)>, ContextError> {
+    mut observe: impl FnMut(i64, &str, &str),
+) -> Result<(), ContextError> {
     let mut stmt = conn.prepare(&format!(
         "SELECT id, display_name, content FROM node n WHERE {NODE_AS_OF}"
     ))?;
     let mut rows = stmt.query(params![as_of])?;
-    let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         let id: i64 = row.get(0)?;
         if excluded.contains(&id) {
@@ -173,11 +174,9 @@ pub(crate) fn scan_lexical(
         let display_name = row.get_ref(1)?.as_str().map_err(rusqlite::Error::from)?;
         let content = row.get_ref(2)?.as_str().map_err(rusqlite::Error::from)?;
         count_content_bytes(content.len());
-        if let Some(s) = score(display_name, content) {
-            out.push((id, s));
-        }
+        observe(id, display_name, content);
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Full node rows for `ids` — the bodies recall fetches *after* the candidate
