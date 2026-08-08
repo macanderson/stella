@@ -492,6 +492,193 @@ class TestUnpricedModelsAreNamed:
         assert totals["unpriced_models"] == []
 
 
+class TestUnmeasuredUsageIsNotZeroUsage:
+    """Absence of telemetry is not a measurement of zero (#2132).
+
+    Two witnesses for two halves of one habit. Per trial, a trial that
+    published no usage at all was priced at a confident ``$0.00`` — four of
+    the ten trials in match ``cc00894779ff`` are that shape, artifacts under
+    ``~/.arenabench/matches/cc00894779ff/``: an ``agent/`` directory holding
+    nothing but ``setup``, ``agent_result: null``, and a ``RuntimeError``.
+    Per seat, ``aggregate`` summed the priced share of the trials and
+    published it as the seat's comparable cost; on that same match it read
+    ``$1.94`` against a true ``$5.25``, 63% short and unmarked.
+
+    The discriminating condition for the seat half is that the match is
+    *mixed*: an all-priced seat totalled correctly and a wholly unpriced one
+    reported ``None``, so only a seat holding both kinds of trial was ever
+    wrong — which is exactly what a pipeline seat produces the moment one
+    role runs a model the shared table has no row for.
+    """
+
+    @staticmethod
+    def _never_ran(tmp_path: Path) -> Path:
+        """A trial Harbor tore down before the agent wrote anything.
+
+        Modelled on `fix-git__yPKRSwX` in match `cc00894779ff`: `result.json`
+        with an exception and no `agent_result`, an `agent/` directory holding
+        only Harbor's own `setup`, and a seat manifest naming a model the
+        price table *does* have a row for — which is what turned "nothing to
+        price" into "priced at zero".
+        """
+        trial_dir = tmp_path / "job" / "fix-git__1"
+        (trial_dir / "agent" / "setup").mkdir(parents=True)
+        (trial_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "config": {"agent": {"model_name": "openrouter/z-ai/glm-5.2"}},
+                    "agent_result": None,
+                    "exception_info": {
+                        "exception_type": "RuntimeError",
+                        "exception_message": "container teardown",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        seat_manifest_path(trial_dir.parent).write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "contestant": "seat",
+                    "agent": "stella",
+                    "api": "openrouter",
+                    "model": "z-ai/glm-5.2",
+                    "qualified_model": "openrouter/z-ai/glm-5.2",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return trial_dir
+
+    def test_a_trial_that_measured_nothing_is_not_priced_at_zero(
+        self, tmp_path: Path
+    ):
+        """The witness. On the old code this trial reported `priced_cost` of
+        exactly `0.0` — a measurement of "spent nothing" manufactured out of
+        the absence of any measurement, and indistinguishable in the cost
+        column from a trial that genuinely ran for free."""
+        metrics = MetricsReader().read(self._never_ran(tmp_path), "fix-git")
+        assert metrics.tokens_in == 0, "the fixture is a trial with no telemetry"
+        # The behavioural assertion first, deliberately: on the old code this
+        # line reads `assert 0.0 is None` — a real flip — where leading with
+        # `usage_measured` would only ever report a missing attribute and
+        # prove nothing about what the number used to be (#2173's lesson).
+        assert metrics.priced_cost is None, "unknown spend, not zero spend"
+        assert metrics.usage_measured is False
+        assert metrics.unpriced_models == (), (
+            "the price table is not missing a row here — sending an operator "
+            "to edit PRICES for a trial that produced no tokens is noise"
+        )
+
+    def test_the_cell_payload_says_the_zeroes_were_never_measured(
+        self, tmp_path: Path
+    ):
+        """`to_json` is the whole API surface: the arena cell, the SSE stream
+        and a saved `results.json` all read it. A null cost that cannot say
+        why is the failure mode #2108 fixed for unpriced models, one reason
+        over."""
+        payload = MetricsReader().read(self._never_ran(tmp_path), "fix-git").to_json()
+        assert payload["priced_cost"] is None
+        assert payload["usage_measured"] is False
+
+    def test_a_measured_trial_still_reports_its_cost(self, tmp_path: Path):
+        """The guard must not blank a trial that really did spend: `None` is
+        only ever the answer for a trial nothing measured."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(
+                    model="z-ai/glm-5.2",
+                    input_tokens=1_000_000,
+                    output_tokens=0,
+                    cached_input_tokens=0,
+                    cache_write_tokens=0,
+                )
+            ],
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.usage_measured is True
+        assert metrics.priced_cost is not None and metrics.priced_cost > 0
+
+    def test_a_step_that_reported_no_tokens_counts_as_unmeasured(
+        self, tmp_path: Path
+    ):
+        """Read off observed spend, not off the presence of a row.
+
+        A `step_usage` whose token fields never arrived (#1467's dropped
+        usage; #2131's reaped writer) is exactly as unmeasured as no
+        `step_usage` at all — and a stream full of them is how a trial with
+        real steps and tools shows an all-zero usage row."""
+        trial_dir = tmp_path / "job" / "t__1"
+        write_events(
+            trial_dir / "agent" / "stella-events.jsonl",
+            [
+                usage(
+                    input_tokens=0,
+                    output_tokens=0,
+                    cached_input_tokens=0,
+                    cache_write_tokens=0,
+                    cost_usd=0.0,
+                )
+            ],
+        )
+        metrics = MetricsReader().read(trial_dir, "t")
+        assert metrics.steps == 1, "the row itself ingested fine"
+        assert metrics.priced_cost is None
+        assert metrics.usage_measured is False
+
+    def test_the_seat_total_refuses_a_partial_priced_sum(self):
+        """The second witness, and the match-total half of #2132.
+
+        On the old code this returned `1.5` — the priced share published as
+        the seat's comparable cost, with the unpriced trial's real tokens
+        contributing nothing and no marker saying so. That is how match
+        `cc00894779ff` reported `$1.94` for an arm that spent `$5.25`."""
+        totals = aggregate(
+            [
+                TrialMetrics("a", "a__1", resolved=True, tokens_in=10, priced_cost=1.5),
+                TrialMetrics(
+                    "b",
+                    "b__1",
+                    resolved=True,
+                    tokens_in=1_000_000,
+                    priced_cost=None,
+                    unpriced_models=("acme/mystery-1",),
+                ),
+            ]
+        )
+        assert totals["priced_cost"] is None, "a subset is not a total"
+        assert totals["unpriced_models"] == ["acme/mystery-1"]
+
+    def test_an_unmeasured_trial_does_not_blank_the_seats_cost(self):
+        """The line the poison stops at. A trial with no tokens has no spend
+        to be short by, and blanking the column for every match containing one
+        crashed setup would trade a wrong number for no number at all — so it
+        is counted, not poisoned."""
+        totals = aggregate(
+            [
+                TrialMetrics("a", "a__1", resolved=True, tokens_in=10, priced_cost=1.5),
+                TrialMetrics("b", "b__1", resolved=False, priced_cost=None),
+            ]
+        )
+        assert totals["priced_cost"] == pytest.approx(1.5)
+        assert totals["unmeasured_trials"] == 1
+
+    def test_the_totals_name_how_many_trials_measured_nothing(self):
+        """The denominator behind every token and cost figure in the totals."""
+        totals = aggregate(
+            [
+                TrialMetrics("a", "a__1", resolved=True, tokens_in=10, priced_cost=1.5),
+                TrialMetrics("b", "b__1", resolved=False),
+                TrialMetrics("c", "c__1", resolved=False),
+            ]
+        )
+        assert totals["trials"] == 3
+        assert totals["unmeasured_trials"] == 2
+
+
 class TestAggregate:
     def test_solve_rate_divides_by_judged_not_attempted(self):
         """Dividing by attempted makes every contestant start near 0% and
@@ -510,13 +697,18 @@ class TestAggregate:
     def test_no_judged_trials_is_zero_not_a_crash(self):
         assert aggregate([])["solve_rate"] == 0.0
 
-    def test_priced_cost_sums_only_the_trials_that_have_one(self):
+    def test_priced_cost_refuses_a_partial_sum_but_still_totals_the_rest(self):
+        """Renamed from `test_priced_cost_sums_only_the_trials_that_have_one`,
+        which asserted the #2132 defect: trial `b` really spent (its
+        `total_cost` says 9.0) and could not be priced, so summing only `a`
+        published a comparable cost that was confidently short. `total_cost`
+        is unaffected — it is each agent's own number and never compared."""
         trials = [
             TrialMetrics("a", "a__1", resolved=True, total_cost=9.0, priced_cost=1.5),
             TrialMetrics("b", "b__1", resolved=True, total_cost=9.0, priced_cost=None),
         ]
         totals = aggregate(trials)
-        assert totals["priced_cost"] == pytest.approx(1.5)
+        assert totals["priced_cost"] is None
         assert totals["total_cost"] == pytest.approx(18.0)
 
     def test_a_wholly_unpriced_contestant_reports_no_cost_at_all(self):
