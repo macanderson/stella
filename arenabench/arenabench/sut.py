@@ -66,6 +66,7 @@ __all__ = [
     "drift_between",
     "embedded_commit",
     "list_branches",
+    "repo_problem",
     "resolve_pin",
     "resolve_ref",
     "staged_commits",
@@ -111,6 +112,21 @@ _FULL_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 #: whitespace, no `..`, and nothing outside a conservative character set.
 _SAFE_REF = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,200}\Z")
 
+#: Where this package sits on disk — the anchor :func:`_discovered_repo` walks
+#: up from. Bound once at import, and read through the module attribute so a
+#: test can point the walk somewhere that is deliberately not a checkout.
+_PACKAGE_DIR = Path(__file__).resolve().parent
+
+#: Files that identify a tree as *this* repository rather than whatever git
+#: checkout the arena happens to be installed inside. Both are sources
+#: :mod:`arenabench.catalog` reads at runtime, so matching them means the
+#: discovery is self-validating: a tree that has them is one the arena can
+#: actually do its job against.
+_STELLA_MARKERS = (
+    Path("crates") / "stella-model" / "src" / "catalog.rs",
+    Path("bench") / "harbor_adapter" / "stella_harbor" / "posture.py",
+)
+
 
 class SutUnavailableError(RuntimeError):
     """No Stella checkout, or git could not answer."""
@@ -123,6 +139,70 @@ def sut_root() -> Path:
     return base / "sut"
 
 
+def _discovered_repo(start: Path | None = None) -> Path | None:
+    """The Stella checkout this very module is running out of, if any.
+
+    The arena lives *inside* the repository it measures (``<repo>/arenabench``),
+    so ``python -m arenabench serve`` from a clone is the ordinary development
+    launch — and it was the one launch that could not answer "which Stella?",
+    because neither environment variable is set on that path. Walking up from
+    the package's own location closes that with no new configuration, and ties
+    the answer to the code that is executing rather than to an ambient
+    directory: two arenas on one machine then resolve refs against the
+    checkouts they were each installed from, which is the honest answer for a
+    tool whose whole job is saying which commit ran.
+
+    Both markers are files :mod:`arenabench.catalog` itself reads, so a tree
+    carrying them is by construction one this arena can work against — an
+    unrelated git repository (the arena pip-installed into some other project's
+    virtualenv) matches neither and is correctly declined rather than claimed.
+    """
+    anchor = start if start is not None else _PACKAGE_DIR
+    for candidate in [anchor, *anchor.parents]:
+        if (candidate / ".git").exists() and all(
+            (candidate / marker).exists() for marker in _STELLA_MARKERS
+        ):
+            return candidate
+    return None
+
+
+def _repo_search() -> tuple[Path | None, str | None]:
+    """The checkout and, when there is none, why — for callers that report.
+
+    Kept as one function because the two answers must never disagree: a
+    message that says "not configured" to someone who *did* configure it is
+    how a five-second fix becomes an afternoon.
+    """
+    explicit = os.environ.get(STELLA_REPO_ENV)
+    if explicit:
+        candidate = Path(explicit).expanduser()
+        if (candidate / ".git").exists():
+            return candidate, None
+        return None, (
+            f"{STELLA_REPO_ENV} is set to {candidate}, but that is not a git "
+            "checkout — point it at the repository root."
+        )
+    adapter = os.environ.get("ARENABENCH_STELLA_ADAPTER")
+    above_adapter: Path | None = None
+    if adapter:
+        above_adapter = Path(adapter).expanduser().resolve().parent.parent
+        if (above_adapter / ".git").exists():
+            return above_adapter, None
+    discovered = _discovered_repo()
+    if discovered is not None:
+        return discovered, None
+    if above_adapter is not None:
+        return None, (
+            f"ARENABENCH_STELLA_ADAPTER names {adapter}, but the repository "
+            f"root above it ({above_adapter}) is not a git checkout — set "
+            f"{STELLA_REPO_ENV} to the repository root."
+        )
+    return None, (
+        "no Stella checkout is configured, and the arena is not running from "
+        f"inside one. Set {STELLA_REPO_ENV} to the repository root."
+    )
+
+
 def stella_repo() -> Path | None:
     """The Stella checkout to resolve refs against, or ``None``.
 
@@ -130,18 +210,18 @@ def stella_repo() -> Path | None:
     to run a Stella seat (``ARENABENCH_STELLA_ADAPTER`` points at
     ``<repo>/bench/harbor_adapter``) names the repository two levels up, so a
     rig that can run Stella at all can usually answer this without new
-    configuration.
+    configuration. Failing both, :func:`_discovered_repo` asks whether this
+    arena is itself running out of a checkout.
     """
-    explicit = os.environ.get(STELLA_REPO_ENV)
-    if explicit:
-        candidate = Path(explicit).expanduser()
-        return candidate if (candidate / ".git").exists() else None
-    adapter = os.environ.get("ARENABENCH_STELLA_ADAPTER")
-    if adapter:
-        candidate = Path(adapter).expanduser().resolve().parent.parent
-        if (candidate / ".git").exists():
-            return candidate
-    return None
+    return _repo_search()[0]
+
+
+def repo_problem() -> str | None:
+    """Why :func:`stella_repo` found nothing, phrased for whoever must fix it.
+
+    ``None`` when a checkout was found.
+    """
+    return _repo_search()[1]
 
 
 def _git(repo: Path, *args: str, timeout: float = 30.0) -> str:
@@ -293,10 +373,7 @@ def resolve_ref(ref: str, repo: Path | None = None) -> str:
     """
     repo = repo or stella_repo()
     if repo is None:
-        raise SutUnavailableError(
-            "no Stella checkout found — set "
-            f"{STELLA_REPO_ENV} to the repository root"
-        )
+        raise SutUnavailableError(f"cannot resolve {ref!r}: {repo_problem()}")
     safe = _safe_ref(ref)
     candidates = [safe] if (_FULL_SHA.match(safe) or "/" in safe) else [
         f"origin/{safe}",
@@ -772,13 +849,9 @@ def sut_status(ref: str = "main") -> dict[str, Any]:
         "ready": False,
         "problem": None,
     }
-    repo = stella_repo()
+    repo, why = _repo_search()
     if repo is None:
-        out["problem"] = (
-            "no Stella checkout is configured, so the arena cannot say which "
-            f"commit a Stella seat would run. Set {STELLA_REPO_ENV} to the "
-            "repository root."
-        )
+        out["problem"] = f"the arena cannot say which commit it would run: {why}"
         legacy = legacy_staged()
         out["legacy"] = legacy.to_json() if legacy else None
         return out
