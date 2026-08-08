@@ -274,6 +274,45 @@ read -r PID PORT LOG_OFFSET LOG <<<"$LAUNCH"
 # another session already holds the one you asked for.
 sleep 2
 if ! kill -0 "$PID" 2>/dev/null; then
+  # An immediate exit is a crash today. It will not always be: `serve` is
+  # growing the ability to hand off to an arena already serving this workspace
+  # and exit on purpose (#2322). So ask what is actually true instead of
+  # assuming — probe /api/health, which reports the workspace each arena is
+  # serving, and report a handoff as a handoff. The holder's pid and cwd are
+  # printed with it, because "an arena is serving this workspace" and "YOUR
+  # arena is serving it" are different claims and only the second is good news.
+  HANDOFF="$(
+    "$PY" - "$ARENA_HOME" "$PORT" "$DEFAULT_PORT" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+import urllib.request
+
+home = os.path.realpath(sys.argv[1])
+ports = [int(sys.argv[2])] + list(range(int(sys.argv[3]), int(sys.argv[3]) + 40))
+for port in dict.fromkeys(ports):
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/health", timeout=0.4
+        ) as response:
+            payload = json.load(response)
+    except Exception:
+        continue
+    if os.path.realpath(payload.get("workspace", "")) == home:
+        print(port)
+        break
+PY
+  )"
+  if [ -n "$HANDOFF" ]; then
+    printf '%s✔ an arena is already serving this workspace%s  http://127.0.0.1:%s/\n' \
+      "$green" "$reset" "$HANDOFF"
+    if command -v lsof >/dev/null 2>&1; then
+      lsof -iTCP:"$HANDOFF" -sTCP:LISTEN -Pn >&2 2>/dev/null || true
+    fi
+    printf '  %sthis launch handed off to it rather than binding a second port;\n' "$dim"
+    printf '  make kill-arena then make run-arena for one wired to THIS checkout%s\n' "$reset"
+    exit 0
+  fi
   printf '%sserver pid %s died within 2s. Its output:%s\n' "$red" "$PID" "$reset" >&2
   tail -c "+$(( LOG_OFFSET + 1 ))" "$LOG" 2>/dev/null | tail -n 30 >&2
   exit 1
