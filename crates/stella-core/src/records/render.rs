@@ -38,6 +38,16 @@
 //! [`MissingContextKind::NotRendered`][nr], and it can only be recorded by whoever
 //! did the dropping.
 //!
+//! # Order and scarcity are two questions
+//!
+//! Records render in the order the caller gave them, which for the cached channel
+//! must not vary across turns. *Which* records render is asked only when a budget
+//! binds, and answered by declared precedence rather than by position — a record
+//! is not worth less for having loaded later. [`survivors`] resolves that ahead of
+//! rendering, so the two answers cannot drift into each other; with budget to
+//! spare it admits everything and the block is byte-for-byte what load order alone
+//! would have produced.
+//!
 //! [cited]: super::super::context_record::context_use::ContextUseKind::Cited
 //! [nr]: super::super::context_record::context_use::MissingContextKind
 
@@ -98,6 +108,8 @@ pub struct RenderedChannel {
     pub rendered: Vec<String>,
     /// Handles the budget dropped after selection. These are `selected` but **not**
     /// `rendered` — the silent gap `MissingContextKind::NotRendered` names.
+    ///
+    /// Chosen by ascending precedence, not by position: see [`survivors`].
     pub dropped: Vec<String>,
 }
 
@@ -143,6 +155,12 @@ fn effective_force(record: &LoadedRecord, disposition: &Disposition) -> Force {
 /// Records are emitted in the order given. The caller controls that order, and for
 /// the cached channel it must be stable across turns (see [`super::assign_handles`]
 /// on why handles do not depend on load order).
+///
+/// **Which records are emitted is a separate question from their order**, and the
+/// budget is the only thing that ever asks it — see [`survivors`]. With budget to
+/// spare the two questions collapse and every record renders where it was given;
+/// under pressure the least important record loses its place rather than the
+/// last-loaded one.
 pub fn render_channel(
     inputs: &[RenderInput<'_>],
     channel: Channel,
@@ -168,28 +186,38 @@ pub fn render_channel(
 }
 
 /// `## Workspace rules`, grouped `### Must` then `### Should`.
+///
+/// Force outranks precedence here, and the grouping is what makes that true: the
+/// `must` section is laid out first and so meets the budget first, leaving
+/// `should` to compete for the remainder. Precedence then ranks within a group,
+/// which is the only place it has anything left to decide.
 fn render_cached(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> RenderedChannel {
     let mut out = RenderedChannel {
         text: CACHED_HEADING.to_string(),
         ..RenderedChannel::default()
     };
     for (force, heading) in [(Force::Must, "### Must"), (Force::Should, "### Should")] {
-        let group: Vec<&&RenderInput<'_>> = inputs
+        let group: Vec<&RenderInput<'_>> = inputs
             .iter()
+            .copied()
             .filter(|input| effective_force(input.record, input.disposition) == force)
             .collect();
         if group.is_empty() {
             continue;
         }
         let mut section = format!("\n\n{heading}");
+        let lines = bullet_lines(&group);
+        // The heading counts against the budget whether or not the section is
+        // ultimately written — a group that fits nothing has already been
+        // charged for it, which is the conservative direction.
+        let keep = survivors(&group, &lines, out.text.len() + section.len(), budget_chars);
         let mut wrote_any = false;
-        for input in group {
-            let line = format!("\n{}", bullet(input));
-            if over_budget(&out.text, &section, &line, budget_chars) {
+        for ((input, line), keep) in group.iter().zip(&lines).zip(keep) {
+            if !keep {
                 out.dropped.push(input.record.handle.clone());
                 continue;
             }
-            section.push_str(&line);
+            section.push_str(line);
             out.rendered.push(input.record.handle.clone());
             wrote_any = true;
         }
@@ -214,13 +242,14 @@ fn render_volatile(inputs: &[&RenderInput<'_>], budget_chars: Option<usize>) -> 
         ..RenderedChannel::default()
     };
     let header_len = out.text.len();
-    for input in inputs {
-        let line = format!("\n{}", bullet(input));
-        if over_budget(&out.text, "", &line, budget_chars) {
+    let lines = bullet_lines(inputs);
+    let keep = survivors(inputs, &lines, header_len, budget_chars);
+    for ((input, line), keep) in inputs.iter().zip(&lines).zip(keep) {
+        if !keep {
             out.dropped.push(input.record.handle.clone());
             continue;
         }
-        out.text.push_str(&line);
+        out.text.push_str(line);
         out.rendered.push(input.record.handle.clone());
     }
     if out.text.len() == header_len {
@@ -242,9 +271,69 @@ fn bullet(input: &RenderInput<'_>) -> String {
     format!("- {statement} ^{}{suffix}", input.record.handle)
 }
 
-/// Whether appending `line` would exceed the channel budget.
-fn over_budget(text: &str, pending: &str, line: &str, budget_chars: Option<usize>) -> bool {
-    budget_chars.is_some_and(|budget| text.len() + pending.len() + line.len() > budget)
+/// The rendered line for each input, in the order given.
+///
+/// Materialized up front because [`survivors`] has to weigh the lines in one
+/// order and the caller emits them in another; formatting twice would be the
+/// kind of duplication that lets the two orders disagree about a record's size.
+fn bullet_lines(inputs: &[&RenderInput<'_>]) -> Vec<String> {
+    inputs
+        .iter()
+        .map(|input| format!("\n{}", bullet(input)))
+        .collect()
+}
+
+/// Which records fit, decided by precedence — the answer parallel to `inputs`.
+///
+/// # Why this is not just the emit loop with a length check
+///
+/// It used to be, and that made the budget's victim a function of **load
+/// order**: the first-loaded records took the space and whatever came last was
+/// ledgered as `dropped`, so a `precedence = 80` record could lose its place to
+/// a `precedence = 40` one from an earlier file (#2299). The drop was honest —
+/// [`RenderedChannel::dropped`] recorded it — and still wrong, because nothing
+/// about arriving later makes a record worth less.
+///
+/// So scarcity is resolved here, ahead of and apart from rendering, in
+/// descending precedence. The sort is **stable**, so records that made no
+/// competing claim (equal precedence — including the `0` that
+/// [`Record::precedence`][p] gives the ones that declared none) keep load order
+/// and the block stays deterministic. The caller then emits the survivors in the
+/// order it was given: precedence settles *who*, never *where*, which is the
+/// same split `pack_to_budget` draws in `stella-context` — a band decides
+/// nothing until something has to be dropped.
+///
+/// A record too long for the space left is skipped rather than terminal: the
+/// walk continues, so a lower-precedence record still renders when the only
+/// thing outranking it could never have fit. That keeps the budget from being
+/// spent on nothing, and the skipped record is ledgered like any other drop.
+///
+/// [p]: super::super::ingest::record::Record::precedence
+fn survivors(
+    inputs: &[&RenderInput<'_>],
+    lines: &[String],
+    spent: usize,
+    budget_chars: Option<usize>,
+) -> Vec<bool> {
+    let Some(budget) = budget_chars else {
+        return vec![true; inputs.len()];
+    };
+    let mut by_precedence: Vec<usize> = (0..inputs.len()).collect();
+    by_precedence.sort_by_key(|&i| std::cmp::Reverse(inputs[i].record.record.precedence()));
+
+    let mut keep = vec![false; inputs.len()];
+    let mut used = spent;
+    for i in by_precedence {
+        let Some(after) = used
+            .checked_add(lines[i].len())
+            .filter(|len| *len <= budget)
+        else {
+            continue;
+        };
+        used = after;
+        keep[i] = true;
+    }
+    keep
 }
 
 #[cfg(test)]
@@ -277,6 +366,43 @@ mod tests {
         let mut loaded = loaded_from(record);
         loaded.handle = lineage.rsplit('.').next().unwrap_or(lineage).to_string();
         loaded
+    }
+
+    /// [`at`] with a declared precedence — the claim that decides who survives a
+    /// budget. `at` leaves every record at the builder's default, so the tests
+    /// above exercise the equal-precedence path and must be unaffected by any of
+    /// this.
+    fn ranked(force: Force, lineage: &str, statement: &str, precedence: u32) -> LoadedRecord {
+        let mut loaded = at(force, lineage, statement);
+        loaded
+            .record
+            .steering
+            .as_mut()
+            .expect("`at` builds every record with a steering block")
+            .precedence = Some(precedence);
+        loaded
+    }
+
+    /// Three same-length bullets, so a budget expressed in characters admits a
+    /// count rather than a particular record, and the tests never hardcode a
+    /// byte total.
+    fn three_equal_length() -> (LoadedRecord, LoadedRecord, LoadedRecord) {
+        (
+            ranked(Force::Info, "ctx.a.b.aa", "Alpha statement.", 10),
+            ranked(Force::Info, "ctx.a.b.bb", "Bravo statement.", 50),
+            ranked(Force::Info, "ctx.a.b.cc", "Cocoa statement.", 90),
+        )
+    }
+
+    /// The budget that fits exactly `n` of the same-length bullets.
+    fn budget_for(n: usize, records: &[&LoadedRecord]) -> usize {
+        let select = Disposition::Select;
+        let inputs: Vec<RenderInput<'_>> = records
+            .iter()
+            .take(n)
+            .map(|record| input(record, &select))
+            .collect();
+        render_channel(&inputs, Channel::Volatile, None).text.len()
     }
 
     #[test]
@@ -485,6 +611,180 @@ mod tests {
             "a record the budget dropped is `selected` but not `rendered` — the ledger \
              cannot tell those apart unless the renderer says so"
         );
+    }
+
+    // Who the budget drops (#2299). Precedence answers that and nothing else —
+    // the order records render in is still the order they were given.
+
+    #[test]
+    fn the_budget_drops_the_least_important_record_not_the_last_one() {
+        // The shape from the field: the weaker claim loads first and used to
+        // take the space on that alone.
+        let weak = ranked(Force::Info, "ctx.a.b.weak", "Weaker claim.", 40);
+        let strong = ranked(Force::Info, "ctx.a.b.strong", "Stronger claim.", 80);
+        let select = Disposition::Select;
+        let out = render_channel(
+            &[input(&weak, &select), input(&strong, &select)],
+            Channel::Volatile,
+            Some(budget_for(1, &[&strong])),
+        );
+        assert_eq!(out.rendered, vec!["strong"]);
+        assert_eq!(
+            out.dropped,
+            vec!["weak"],
+            "arriving earlier is not a reason to outrank a record that declared \
+             itself more important"
+        );
+    }
+
+    #[test]
+    fn survivors_render_in_load_order_not_in_precedence_order() {
+        // Load order and precedence order disagree about the two survivors, so
+        // this fails if selection is allowed to leak into layout.
+        let (low, mid, high) = three_equal_length();
+        let select = Disposition::Select;
+        let out = render_channel(
+            &[
+                input(&low, &select),
+                input(&mid, &select),
+                input(&high, &select),
+            ],
+            Channel::Volatile,
+            Some(budget_for(2, &[&low, &mid])),
+        );
+        assert_eq!(
+            out.rendered,
+            vec!["bb", "cc"],
+            "precedence chose the survivors; the caller's order places them"
+        );
+        assert_eq!(out.dropped, vec!["aa"]);
+    }
+
+    #[test]
+    fn an_unbudgeted_block_is_byte_identical_whatever_the_precedences() {
+        // The claim that makes this change safe to ship: precedence decides
+        // nothing until something has to be dropped, so a block under no
+        // pressure is what load order alone would have produced.
+        let (low, mid, high) = three_equal_length();
+        let flat = [
+            at(Force::Info, "ctx.a.b.aa", "Alpha statement."),
+            at(Force::Info, "ctx.a.b.bb", "Bravo statement."),
+            at(Force::Info, "ctx.a.b.cc", "Cocoa statement."),
+        ];
+        let select = Disposition::Select;
+        let ranked_block = render_channel(
+            &[
+                input(&low, &select),
+                input(&mid, &select),
+                input(&high, &select),
+            ],
+            Channel::Volatile,
+            None,
+        );
+        let flat_block = render_channel(
+            &[
+                input(&flat[0], &select),
+                input(&flat[1], &select),
+                input(&flat[2], &select),
+            ],
+            Channel::Volatile,
+            None,
+        );
+        assert_eq!(ranked_block, flat_block);
+    }
+
+    #[test]
+    fn equal_precedence_still_loses_in_load_order() {
+        // Records that made no competing claim must break their tie the way
+        // they always did, or the block stops being deterministic.
+        let first = at(Force::Info, "ctx.a.b.aa", "Alpha statement.");
+        let second = at(Force::Info, "ctx.a.b.bb", "Bravo statement.");
+        let third = at(Force::Info, "ctx.a.b.cc", "Cocoa statement.");
+        let select = Disposition::Select;
+        let out = render_channel(
+            &[
+                input(&first, &select),
+                input(&second, &select),
+                input(&third, &select),
+            ],
+            Channel::Volatile,
+            Some(budget_for(2, &[&first, &second])),
+        );
+        assert_eq!(out.rendered, vec!["aa", "bb"]);
+        assert_eq!(out.dropped, vec!["cc"]);
+    }
+
+    #[test]
+    fn a_record_too_long_to_fit_does_not_starve_the_ones_that_do() {
+        // Outranking everything is not the same as fitting. The walk skips the
+        // record it cannot place and keeps going, so the budget buys context
+        // instead of being held open for something that was never going to fit.
+        let huge = ranked(
+            Force::Info,
+            "ctx.a.b.huge",
+            "A statement far too long to fit in the space this budget leaves.",
+            99,
+        );
+        let small = ranked(Force::Info, "ctx.a.b.small", "Short.", 1);
+        let select = Disposition::Select;
+        let out = render_channel(
+            &[input(&huge, &select), input(&small, &select)],
+            Channel::Volatile,
+            Some(budget_for(1, &[&small])),
+        );
+        assert_eq!(out.rendered, vec!["small"]);
+        assert_eq!(
+            out.dropped,
+            vec!["huge"],
+            "the record that could not fit is ledgered, not silently skipped"
+        );
+    }
+
+    #[test]
+    fn the_cached_budget_drops_by_precedence_too() {
+        // The same defect lived in both renderers; fixing one would have left a
+        // must-record losing its place in the prefix for having loaded first.
+        let weak = ranked(Force::Must, "ctx.a.b.weak", "Weaker claim.", 40);
+        let strong = ranked(Force::Must, "ctx.a.b.strong", "Stronger claim.", 80);
+        let select = Disposition::Select;
+        let full = render_channel(
+            &[input(&weak, &select), input(&strong, &select)],
+            Channel::Cached,
+            None,
+        );
+        let out = render_channel(
+            &[input(&weak, &select), input(&strong, &select)],
+            Channel::Cached,
+            Some(full.text.len() - 1),
+        );
+        assert_eq!(out.rendered, vec!["strong"]);
+        assert_eq!(out.dropped, vec!["weak"]);
+    }
+
+    #[test]
+    fn force_outranks_precedence_in_the_cached_block() {
+        // Precedence ranks within a force group, never across one: `must` is
+        // the coarser statement of importance and the grouping already spends
+        // the budget on it first.
+        let should = ranked(Force::Should, "ctx.a.b.should", "Advisory claim.", 90);
+        let must = ranked(Force::Must, "ctx.a.b.must", "Binding claim.", 10);
+        let select = Disposition::Select;
+        let full = render_channel(
+            &[input(&should, &select), input(&must, &select)],
+            Channel::Cached,
+            None,
+        );
+        let out = render_channel(
+            &[input(&should, &select), input(&must, &select)],
+            Channel::Cached,
+            Some(full.text.len() - 1),
+        );
+        assert_eq!(
+            out.rendered,
+            vec!["must"],
+            "a precedence-90 advisory must not displace a binding rule"
+        );
+        assert_eq!(out.dropped, vec!["should"]);
     }
 
     #[test]

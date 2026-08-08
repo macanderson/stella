@@ -323,6 +323,27 @@ impl Record {
     pub fn on_expiry(&self) -> Option<&str> {
         self.truth.as_ref()?.on_expiry.as_deref()
     }
+
+    /// This record's declared [`Steering::precedence`], or `0` when it declared
+    /// none.
+    ///
+    /// The default is the floor rather than a midpoint on purpose: an
+    /// undeclared precedence is an author who did not make a claim, and the
+    /// two consumers — conflict detection ([`records::validate`][v]) and the
+    /// budget's drop order ([`records::render`][r]) — must read that silence
+    /// the same way. It lives here because it did not: the accessor existed
+    /// privately in `validate`, so the second consumer would otherwise have
+    /// spelled the default a second time, and a default in two places is one
+    /// edit away from two different answers to "which record wins".
+    ///
+    /// [v]: super::super::records::validate
+    /// [r]: super::super::records::render
+    pub fn precedence(&self) -> u32 {
+        self.steering
+            .as_ref()
+            .and_then(|steering| steering.precedence)
+            .unwrap_or(0)
+    }
 }
 
 /// Normalize a lineage id into the id-body slug (`ctx.acme.web.pkg-manager` →
@@ -349,7 +370,26 @@ fn slug(lineage_id: &str) -> String {
 pub struct Steering {
     /// The steering force / injection channel.
     pub force: Force,
-    /// Tie-break precedence when two records conflict (higher wins).
+    /// Which record wins when two of them cannot both have their way (higher
+    /// wins). Absent means `0` — see [`Record::precedence`][p].
+    ///
+    /// Two situations ask that question, and both read this field:
+    ///
+    /// - **A conflict.** Two records matching the same paths with different
+    ///   enforcement. A difference here is the designed resolution, so
+    ///   [`records::validate`][v] reports the overlap only at *equal*
+    ///   precedence.
+    /// - **Scarcity.** More applicable records than the channel budget fits.
+    ///   [`records::render`][r] drops ascending-precedence first, so the least
+    ///   important record is the one that loses its place.
+    ///
+    /// It ranks nothing outside those two: with budget to spare every selected
+    /// record renders, in the order it was given, exactly as if this field were
+    /// absent.
+    ///
+    /// [p]: Record::precedence
+    /// [v]: super::super::records::validate
+    /// [r]: super::super::records::render
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precedence: Option<u32>,
     /// When the record applies. Drives per-turn selection on the volatile
