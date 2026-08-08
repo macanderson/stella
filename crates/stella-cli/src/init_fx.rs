@@ -452,13 +452,20 @@ mod tests {
             Some(crate::tui::token_rgb(theme::TEXT_TERTIARY))
         );
         assert_eq!(Ink::Shell.rgb(), Some(crate::tui::token_rgb(theme::ORCHID)));
-        // And the star/flame pair stays warm — the comet's Phosphor Gold is
-        // r > g > b — so the cinematic can never drift back to the retired
-        // electric blue while still passing. (This clause read "cool, not
-        // warm" under the blue identity; the comet inverts it.)
+        // And the star/flame pair stays cool — the Nebula's violet stops are
+        // blue-dominant — so the cinematic can never drift back to the retired
+        // Phosphor Gold while still passing. The clause has now read all three
+        // ways: cool under the blue identity, warm under the comet, and cool
+        // again under the Nebula, which demoted gold from *the brand* to a
+        // rationed north point. It is the direction that keeps changing, not
+        // the rule: the pair must match whatever the brand currently is, and
+        // must never silently be the palette it just retired.
         for ink in [Ink::Flame, Ink::StarBright] {
             let (r, g, b) = ink.rgb().expect("colored inks carry rgb");
-            assert!(r > g && g > b, "{ink:?} must read warm gold, not cool");
+            assert!(
+                b > r && b > g,
+                "{ink:?} must read cool nebula, not warm gold"
+            );
         }
     }
 
