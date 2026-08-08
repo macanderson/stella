@@ -272,51 +272,56 @@ read -r PID PORT LOG_OFFSET LOG <<<"$LAUNCH"
 # The authority on "did it start" is this pid, not the port. A port answering
 # proves only that SOME server is listening — which is exactly the trap when
 # another session already holds the one you asked for.
-sleep 2
-if ! kill -0 "$PID" 2>/dev/null; then
-  # An immediate exit is a crash today. It will not always be: `serve` is
-  # growing the ability to hand off to an arena already serving this workspace
-  # and exit on purpose (#2322). So ask what is actually true instead of
-  # assuming — probe /api/health, which reports the workspace each arena is
-  # serving, and report a handoff as a handoff. The holder's pid and cwd are
-  # printed with it, because "an arena is serving this workspace" and "YOUR
-  # arena is serving it" are different claims and only the second is good news.
-  HANDOFF="$(
-    "$PY" - "$ARENA_HOME" "$PORT" "$DEFAULT_PORT" <<'PY' 2>/dev/null
-import json
-import os
-import sys
-import urllib.request
-
-home = os.path.realpath(sys.argv[1])
-ports = [int(sys.argv[2])] + list(range(int(sys.argv[3]), int(sys.argv[3]) + 40))
-for port in dict.fromkeys(ports):
-    try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/api/health", timeout=0.4
-        ) as response:
-            payload = json.load(response)
-    except Exception:
-        continue
-    if os.path.realpath(payload.get("workspace", "")) == home:
-        print(port)
-        break
-PY
+#
+# And the authority on WHY it exited is the child's own log, never the state
+# of the box. A quick exit is either a crash or `serve` finding an arena
+# already serving this workspace and exiting on purpose (#2322) — and probing
+# cannot tell those apart: the workspace defaults to ~/.arenabench for every
+# checkout on the machine, so "some arena serves this workspace" is usually
+# true here even while this launch lies dead of an unrelated crash, and a
+# probe would bury the one traceback that explains it under a green checkmark.
+# (It also fails the other way: serve's discovery sweep is bounded at 8905,
+# while arenas have really ended up on 8917 and 8933 — a probe that looks
+# further would report a handoff serve never made.) On the handoff path serve
+# prints "(already serving this workspace)" with the arena's URL, and stdout
+# is wired to the log, so the marker inside THIS launch's slice is the one
+# signal that cannot be describing some other process. An exit status was
+# never on offer: the child was start_new_session'd and its spawner has
+# already exited, so it was reparented before this shell could wait on it.
+report_dead_server() {
+  local slice handoff_line handoff_url handoff_port
+  slice="$(tail -c "+$(( LOG_OFFSET + 1 ))" "$LOG" 2>/dev/null)"
+  handoff_line="$(
+    printf '%s\n' "$slice" | awk '/already serving this workspace/ { print; exit }'
   )"
-  if [ -n "$HANDOFF" ]; then
-    printf '%s✔ an arena is already serving this workspace%s  http://127.0.0.1:%s/\n' \
-      "$green" "$reset" "$HANDOFF"
-    if command -v lsof >/dev/null 2>&1; then
-      lsof -iTCP:"$HANDOFF" -sTCP:LISTEN -Pn >&2 2>/dev/null || true
-    fi
+  if [ -n "$handoff_line" ]; then
+    handoff_url="$(
+      printf '%s\n' "$handoff_line" |
+        awk 'match($0, /http:\/\/[^ ]+/) { print substr($0, RSTART, RLENGTH); exit }'
+    )"
+    printf '%s✔ an arena is already serving this workspace%s  %s\n' \
+      "$green" "$reset" "${handoff_url:-(url not logged — see $LOG)}"
+    handoff_port="${handoff_url##*:}"
+    handoff_port="${handoff_port%%/*}"
+    case "$handoff_port" in
+      ''|*[!0-9]*) ;;
+      *)
+        if command -v lsof >/dev/null 2>&1; then
+          lsof -iTCP:"$handoff_port" -sTCP:LISTEN -Pn >&2 2>/dev/null || true
+        fi ;;
+    esac
     printf '  %sthis launch handed off to it rather than binding a second port;\n' "$dim"
     printf '  make kill-arena then make run-arena for one wired to THIS checkout%s\n' "$reset"
     exit 0
   fi
-  printf '%sserver pid %s died within 2s. Its output:%s\n' "$red" "$PID" "$reset" >&2
-  tail -c "+$(( LOG_OFFSET + 1 ))" "$LOG" 2>/dev/null | tail -n 30 >&2
+  printf '%sserver pid %s died before it was ready. Its output:%s\n' \
+    "$red" "$PID" "$reset" >&2
+  printf '%s\n' "$slice" | tail -n 30 >&2
   exit 1
-fi
+}
+
+sleep 2
+kill -0 "$PID" 2>/dev/null || report_dead_server
 
 if tail -c "+$(( LOG_OFFSET + 1 ))" "$LOG" 2>/dev/null | grep -q "Traceback"; then
   printf '%swarning: pid %s is alive but logged a traceback:%s\n' "$yellow" "$PID" "$reset" >&2
@@ -337,6 +342,11 @@ if command -v curl >/dev/null 2>&1; then
     tries=$(( tries - 1 ))
   done
 fi
+
+# A death during the wait is the same question as a death at the 2s mark, and
+# it gets the same answer from the same place. Without this, a server that
+# outlived the first check and then crashed was announced as serving.
+kill -0 "$PID" 2>/dev/null || report_dead_server
 
 printf '\n%s✔ arenabench serving%s  %s\n' "$green" "$reset" "$URL"
 printf '  pid %s   log %s\n' "$PID" "$LOG"
