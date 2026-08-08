@@ -357,7 +357,7 @@ class TestCheckoutDiscovery:
 
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._spec(head))
-        runner._launch(match, match.spec.contestants[0])
+        runner._launch(match, match.spec.contestants[0], runner.resolve_harbor(match))
 
         roots = captured[0]["env"]["PYTHONPATH"].split(os.pathsep)
         assert str(repo / "bench" / "harbor_adapter") in roots
@@ -781,8 +781,9 @@ class TestTwoSeatsRaceTwoBuilds:
 
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._two_seat_spec(head, other))
+        resolution = runner.resolve_harbor(match)
         runs = {
-            contestant.id: runner._launch(match, contestant)
+            contestant.id: runner._launch(match, contestant, resolution)
             for contestant in match.spec.contestants
         }
 
@@ -810,7 +811,7 @@ class TestTwoSeatsRaceTwoBuilds:
 
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._two_seat_spec(head, other))
-        record = runner_module._provenance_for(match)
+        record = runner_module._provenance_for(match, runner.resolve_harbor(match))
 
         assert record.sut_seats["champ"]["commit"] == head
         assert record.sut_seats["chall"]["commit"] == other
@@ -877,7 +878,7 @@ class TestAPinIsObservedOnce:
 
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._stella_spec(built))
-        run = runner._launch(match, match.spec.contestants[0])
+        run = runner._launch(match, match.spec.contestants[0], runner.resolve_harbor(match))
 
         assert run.error == ""
         assert captured[0]["env"]["STELLA_BINARY"] == str(binary)
@@ -905,7 +906,7 @@ class TestAPinIsObservedOnce:
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._stella_spec("main"))
         with pytest.raises(sut.SutUnavailableError) as refusal:
-            runner._launch(match, match.spec.contestants[0])
+            runner._launch(match, match.spec.contestants[0], runner.resolve_harbor(match))
         assert "moved since the build" in str(refusal.value)
         assert built[:8] in str(refusal.value)
         assert captured == [], "a refused trial must launch nothing at all"
@@ -933,8 +934,10 @@ class TestAPinIsObservedOnce:
         monkeypatch.setattr(sut, "resolve_ref", moving)
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(self._stella_spec("main"))
-        match.provenance = runner_module._provenance_for(match)
-        run = runner._launch(match, match.spec.contestants[0])
+        match.provenance = runner_module._provenance_for(
+            match, runner.resolve_harbor(match)
+        )
+        run = runner._launch(match, match.spec.contestants[0], runner.resolve_harbor(match))
 
         assert run.error == ""
         recorded = match.provenance.sut_seats["st"]["commit"]

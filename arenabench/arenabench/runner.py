@@ -109,12 +109,14 @@ def _base_environment() -> dict[str, str]:
     return env
 
 
-def _provenance_for(match: Match) -> provenance.Provenance:
+def _provenance_for(
+    match: Match, resolved: harbor.Resolution | None
+) -> provenance.Provenance:
     """The apparatus this match is about to run on.
 
-    Harbor is asked for its version here rather than trusted from config: the
-    binary on PATH can change between one match and the next, and the record
-    has to say what actually graded *these* trials.
+    Harbor is recorded from the resolution rather than trusted from config:
+    the binary on PATH can change between one match and the next, and the
+    record has to say what actually graded *these* trials.
 
     The SUT half reads the **same pin observation the launch reads**
     (:meth:`Match.sut_pin_for`), not a second resolution of the same ref:
@@ -126,14 +128,20 @@ def _provenance_for(match: Match) -> provenance.Provenance:
     """
     from . import __version__
 
-    try:
-        binary = harbor.harbor_bin(match.spec.dataset)
-        version: str | None = harbor.harbor_version(binary)
-    except harbor.HarborUnavailableError:
-        # The launch below will fail and say so properly. The record still
-        # gets written, unknown rather than absent, so a half-started match
-        # is not mistaken later for one that ran on the current Harbor.
+    # The Harbor half takes the *same resolution the launch will use*, for the
+    # reason the SUT half does: resolving twice records an apparatus that was
+    # never the one that ran. Harbor resolution can now end at a binary nobody
+    # named — one discovered in a lane virtualenv, or one installed on the
+    # spot — so a second independent lookup here would have written down the
+    # PATH Harbor while a different one did the grading.
+    if resolved is None:
+        # Resolution failed; the launch below fails too and says so properly.
+        # The record is still written, unknown rather than absent, so a
+        # half-started match is not mistaken later for one that ran on the
+        # current Harbor.
         version, binary = None, ""
+    else:
+        version, binary = resolved.version, resolved.binary
 
     sut_seats: dict[str, dict[str, str]] = {}
     for contestant in match.spec.contestants:
@@ -630,16 +638,37 @@ class MatchRunner:
         match.status = "running"
         match.started_at = time.time()
 
+        # Resolve Harbor once, for the whole match, before anything else needs
+        # an answer. Three things follow from doing it here rather than inside
+        # each seat's launch: provenance records the binary that actually
+        # grades (below), a Harbor that has to be installed is installed once
+        # instead of once per seat, and a machine-wide problem is reported as
+        # one fact about the match instead of N identical seat errors.
+        #
+        # The failure is carried rather than raised, so a Harbor that cannot
+        # be resolved still surfaces exactly where it did before — against
+        # each seat, next to that seat's other launch errors.
+        resolved: harbor.Resolution | None = None
+        harbor_error: Exception | None = None
+        try:
+            resolved = self.resolve_harbor(match)
+        except (harbor.HarborUnavailableError, harbor.HarborTooOldError) as exc:
+            harbor_error = exc
+
         # Record the apparatus before the first trial, not after the last one:
         # a match that is killed mid-run still produced trials, and a trial
         # whose grading stack is unrecorded cannot be compared to anything
         # later (see `arenabench.provenance`).
-        match.provenance = _provenance_for(match)
+        match.provenance = _provenance_for(match, resolved)
         provenance.write_match(match.workspace, match.provenance)
 
         for contestant in match.spec.contestants:
             try:
-                run = self._launch(match, contestant)
+                if resolved is None:
+                    raise harbor_error or harbor.HarborUnavailableError(
+                        "harbor was not resolved for this match"
+                    )
+                run = self._launch(match, contestant, resolved)
             except Exception as exc:  # a bad seat must not abort the match
                 log.exception("failed to launch %s", contestant.name)
                 run = ContestantRun(
@@ -675,7 +704,21 @@ class MatchRunner:
             target=self._await_completion, args=(match,), daemon=True
         ).start()
 
-    def _launch(self, match: Match, contestant: Contestant) -> ContestantRun:
+    def resolve_harbor(self, match: Match) -> harbor.Resolution:
+        """The one Harbor this match's seats will all be graded by.
+
+        Deliberately not a default argument on :meth:`_launch`: a parameter
+        that quietly resolves again when omitted is how provenance came to
+        record an apparatus that never ran (#2098). Every caller says which
+        resolution it means, and there is exactly one per match.
+        """
+        return harbor.resolve_for_dataset(
+            match.spec.dataset, match.dataset.min_harbor, match.dataset.title
+        )
+
+    def _launch(
+        self, match: Match, contestant: Contestant, resolved: harbor.Resolution
+    ) -> ContestantRun:
         spec = resolve_agent(contestant.agent)
         job_name = f"{match.spec.id}-{contestant.slug}"
         job_dir = match.jobs_root / job_name
@@ -698,17 +741,14 @@ class MatchRunner:
         for knob in spec.unhonoured(contestant.engine):
             run.warnings.append(f"{spec.title} ignores {knob}")
 
-        # Resolve Harbor — per dataset, so one server can pin the audited
-        # 0.6.1 for Terminal-Bench while Frontier-Bench runs its 0.20.0 venv —
-        # and check it is new enough to grade THIS dataset before anything is
-        # launched. A Harbor that predates a task setting discards it and
-        # produces a complete run with a wrong score, so this is a refusal,
-        # not a warning (see `arenabench.harbor`).
-        harbor_exe = harbor.harbor_bin(match.spec.dataset)
-        harbor.require_for_dataset(
-            match.dataset.min_harbor, match.dataset.title, binary=harbor_exe
-        )
-        run.notes.append(f"harbor {harbor.harbor_version(harbor_exe)} ({harbor_exe})")
+        # Harbor was resolved once for the whole match, per dataset — so one
+        # server can pin the audited 0.6.1 for Terminal-Bench while
+        # Frontier-Bench runs a 0.20.0 it found or installed — and already
+        # checked against this dataset's floor. The note records which binary
+        # and how it was chosen, because resolution can legitimately land
+        # somewhere nobody named (see `arenabench.harbor`).
+        harbor_exe = resolved.binary
+        run.notes.append(resolved.note)
 
         # Prefer an offline export. Given a registry ref, Harbor resolves
         # every task against its backend at run time, and one failed lookup
