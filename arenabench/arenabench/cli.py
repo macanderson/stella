@@ -25,6 +25,7 @@ from .recorder import IMAGE_TAG, build_image, docker_available, image_present
 from .registry import DEFAULT_REGISTRY, export_root, sample_tasks
 from .replay import ReplayError, replay_flip
 from .server import default_workspace, serve
+from .telemetry import EVENTS_NAME, MetricsReader, TrialMetrics, aggregate
 
 __all__ = ["main"]
 
@@ -457,6 +458,98 @@ def _task_dir_for(trial_dir: Path) -> Path | None:
     return Path(str(path)) if path else None
 
 
+#: Grade -> the one-word reading, for the terminal's narrow column.
+_GRADE_GLYPH: dict[str, str] = {
+    "flip": "flip",
+    "oracle": "oracle",
+    "refuted": "refuted",
+    "unproven": "unproven",
+    "waived": "waived",
+    "unwarranted": "not due",
+    "model": "model",
+    "heuristic": "heuristic",
+    "none": "-",
+}
+
+
+def _cmd_proof(args: argparse.Namespace) -> int:
+    """Print the proof rail of every trial under a path.
+
+    The terminal twin of the web UI's proof column, and the surface that
+    actually gets used on the benchmark rig, which has no browser. Accepts a
+    match directory, a job directory or a single trial: everything containing
+    a Stella event stream underneath it is read.
+    """
+    root = Path(args.path).expanduser().resolve()
+    if not root.is_dir():
+        print(f"no such directory: {root}", file=sys.stderr)
+        return 1
+
+    reader = MetricsReader()
+    trials: list[tuple[str, TrialMetrics]] = []
+    for events in sorted(root.rglob(EVENTS_NAME)):
+        trial_dir = events.parent.parent
+        metrics = reader.read(trial_dir, trial_dir.name)
+        if metrics.proof is not None:
+            trials.append((trial_dir.name, metrics))
+
+    if not trials:
+        print(f"no Stella event stream under {root}", file=sys.stderr)
+        return 1
+
+    width = min(46, max(len(name) for name, _ in trials))
+    print(f"{'trial':<{width}}  {'grade':<10} {'witness':<8} {'oracle':<10} wrong  rung")
+    for name, metrics in trials:
+        proof = metrics.proof
+        assert proof is not None  # filtered above
+        # `+` passed, `-` failed, in the order observed. "never ran" gets its
+        # own token: a lone `-` would otherwise read as one failing run, and
+        # an oracle that never ran is the absence of the measurement rather
+        # than a failing one.
+        strip = "".join("+" if run.passed else "-" for run in proof.oracle_runs)
+        strip = strip or "(none)"
+        print(
+            f"{name[:width]:<{width}}  {_GRADE_GLYPH.get(proof.grade, proof.grade):<10} "
+            f"{'yes' if proof.witness_authored else 'no':<8} {strip[:10]:<10} "
+            f"{proof.failed_attempts:<5}  {proof.rung or '-'}"
+        )
+
+    totals = aggregate([m for _, m in trials])
+    print(
+        f"\n{totals['rail_trials']} trial(s) with a rail · "
+        f"{totals['proven']} proven · {totals['witnessed']} witnessed · "
+        f"{totals['wrong_guesses']} wrong guess(es) · "
+        f"{totals['refuted']} refuted · "
+        f"{totals['claimed_without_proof']} claimed without proof"
+    )
+
+    for name, metrics in trials:
+        proof = metrics.proof
+        assert proof is not None
+        reasons = [
+            *(("no witness", text) for text in proof.witness_unavailable),
+            *(("unverifiable", text) for text in proof.verification_unavailable),
+            *(("degraded", text) for text in proof.verdict_degraded),
+        ]
+        # The roster is only worth printing where the rail did something: a
+        # model-verdict trial's roster is the same two rows on every task.
+        pivotal = proof.witness_authored or bool(reasons) or proof.oracle_runs
+        if not (args.full or pivotal):
+            continue
+        print(f"\n── {name} ── {proof.grade}")
+        if proof.witness_authored:
+            print(f"   witness   {proof.witness_path}  ({proof.witness_command})")
+        if proof.tracked_command:
+            print(f"   command   {proof.tracked_command}")
+        for role in proof.roles:
+            print(f"   {role.role:<16} {role.model}  ×{role.calls}")
+        for label, text in reasons:
+            print(f"   {label}: {text}")
+        if args.full and proof.verdict_summary:
+            print(f"   verdict: {proof.verdict_summary}")
+    return 0
+
+
 def _cmd_flip(args: argparse.Namespace) -> int:
     trial_dir = Path(args.trial_dir).expanduser().resolve()
     if not trial_dir.is_dir():
@@ -725,6 +818,21 @@ def main(argv: list[str] | None = None) -> int:
         "flip",
         help="find when a trial started passing, and what it did afterwards",
     )
+    proof_parser = subparsers.add_parser(
+        "proof",
+        help="what proved each trial: the witness, the oracle flip, and who ran",
+    )
+    proof_parser.add_argument(
+        "path",
+        help="a match, job or trial directory — every event stream underneath is read",
+    )
+    proof_parser.add_argument(
+        "--full",
+        action="store_true",
+        help="print the roster and verdict summary for every trial, not only "
+             "the ones where the rail did something",
+    )
+    proof_parser.set_defaults(func=_cmd_proof)
     flip_parser.add_argument("trial_dir", help="a trial directory containing arena/snapshots")
     flip_parser.add_argument(
         "--task-dir",

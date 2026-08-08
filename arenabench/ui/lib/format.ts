@@ -36,6 +36,18 @@ export function fmtPct(value: unknown): string {
   return (Number(value) || 0).toFixed(0) + "%";
 }
 
+// A plain count of trials, drawn as absent when it was never measured — the
+// third time this discipline has had to be written down here, after fmtMoney
+// and fmtClock (#1599). It matters most for the proof dimensions: a seat with
+// no pipeline has `proven` and `claimed_without_proof` of null, and rendering
+// either as `0` would show it tied on "never claimed a pass without proof"
+// with a seat that genuinely never did. `fmtTokens` cannot be reused — it
+// abbreviates past a thousand, and 1.2k is not a number of trials.
+export function fmtCount(value: unknown): string {
+  if (value == null) return "—";
+  return String(Math.round(Number(value) || 0));
+}
+
 export function fmtDim(key: string, value: unknown): string {
   switch (key) {
     case "solve_rate":
@@ -46,6 +58,9 @@ export function fmtDim(key: string, value: unknown): string {
     case "priced_cost":
     case "total_cost":
       return fmtMoney(value);
+    case "proven":
+    case "claimed_without_proof":
+      return fmtCount(value);
     default:
       return fmtTokens(value);
   }

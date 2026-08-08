@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from arenabench.cli import main
 from arenabench.proof import distill
 from arenabench.telemetry import MetricsReader, TranscriptReader, aggregate
 
@@ -559,6 +560,42 @@ def test_transcript_verdict_body_is_the_evidence_summary(tmp_path: Path) -> None
     assert "flip oracle: fail→pass" in verdict["body"]
     assert verdict["meta"]["rung"] == "submit_fast"
     assert verdict["meta"]["flip_achieved"] is True
+
+
+def test_cli_prints_the_rail(tmp_path: Path, capsys) -> None:
+    """The terminal twin. It is the surface the benchmark rig actually has."""
+    _trial(tmp_path, "nginx__abc", FLIP_STREAM)
+
+    assert main(["proof", str(tmp_path)]) == 0
+
+    out = capsys.readouterr().out
+    assert "flip" in out
+    # `-` failed, `+` passed, in the order observed.
+    assert "-++" in out
+    assert "witness_check.sh" in out
+    assert "witness_author" in out and "z-ai/glm-5.2" in out
+    assert "1 proven" in out
+
+
+def test_cli_distinguishes_an_oracle_that_never_ran(tmp_path: Path, capsys) -> None:
+    """A lone `-` would read as one failing run.
+
+    An oracle that never ran is the absence of the measurement, not a failing
+    one, and in a benchmark that difference always favours somebody.
+    """
+    _trial(
+        tmp_path,
+        "t1",
+        [_verdict(True, "looks right", rung="model_verdict", flip_achieved=False)],
+    )
+
+    main(["proof", str(tmp_path)])
+
+    assert "(none)" in capsys.readouterr().out
+
+
+def test_cli_rejects_a_path_with_no_event_stream(tmp_path: Path) -> None:
+    assert main(["proof", str(tmp_path)]) == 1
 
 
 def test_proof_reasons_are_never_truncated(tmp_path: Path) -> None:
