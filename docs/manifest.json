@@ -516,6 +516,25 @@
       "status": "living",
       "title": "Stella Threat Model"
     },
+    "trace-replay-learning-harness": {
+      "path": "docs/spec/trace-replay-learning-harness.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "status": "proposed",
+      "title": "The trace-replay learning harness \u2014 drive the learning machinery from recorded traces, with zero model calls"
+    },
     "verification-gate": {
       "path": "docs/spec/verification-gate.md",
       "status": "living",
