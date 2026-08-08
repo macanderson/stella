@@ -218,15 +218,12 @@ check "reap-seats rejects a non-numeric --min-idle-secs" "$?" "1"
 # STUB_LINGER, one that dies mid-wait) — so classification has nothing to
 # consult but the log, which is the invariant under test.
 LAUNCH_STUB="$STUB_DIR/launcher"
-# A quoted heredoc, not a run of `echo '…'`: every line below is literal text
-# for the generated stub, and the quoted delimiter says so once instead of
-# per line. shellcheck read the echo form as sixteen accidental single-quote
-# mistakes (SC2016/SC2028) and failed the gate for the whole repository.
-#
-# The linger child's stdout is redirected inside the stub for the same reason
-# the reap test's orphan is: inherited, it would hold arena-run's $(...) pipe
-# open for its whole lifetime.
-cat <<'LAUNCH_STUB_BODY' > "$LAUNCH_STUB"
+# A quoted delimiter keeps every line of the stub literal — the `$1`,
+# `$STUB_LOG` and `\n` below belong to the generated script, not to this
+# generator. The linger child's stdout is redirected for the same reason the
+# reap test's orphan is: inherited, it would hold arena-run's $(...) pipe open
+# for its whole lifetime.
+cat <<'STUB' > "$LAUNCH_STUB"
 #!/bin/sh
 case "$1" in
   -c) exit 0 ;;
@@ -244,7 +241,7 @@ case "$1" in
     ;;
   *) exit 0 ;;
 esac
-LAUNCH_STUB_BODY
+STUB
 chmod +x "$LAUNCH_STUB"
 
 RUN_HOME="$(mktemp -d)"
