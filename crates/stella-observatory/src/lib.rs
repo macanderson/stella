@@ -376,6 +376,8 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             serde_json::json!({
                 "db": db,
                 "files": fsview::rules_files(root),
+                "promotions": fsview::promotions(root),
+                "governance_mode": fsview::governance_mode(root),
             })
         }),
         "/api/reflections" => obs.reflection_ratings().map(|ratings| {
