@@ -180,20 +180,21 @@ pub(crate) fn workspace_rules_dir(workspace_root: &Path) -> std::path::PathBuf {
 /// Publish a mined rule as a TOML context record under `.stella/rules/`,
 /// never clobbering.
 ///
-/// Returns the path when a file was actually written. The no-clobber posture
-/// checks the **filesystem** rather than a loaded list: the rules loader
-/// silently skips unreadable files and directories, so a list-membership test
-/// would have the same blind spot
-/// [#737](https://github.com/macanderson/stella/issues/737) describes on the
-/// skills side — and the write itself is `create_new` inside
+/// `Ok(Some(path))` when a file was written; `Ok(None)` when one already
+/// exists (on either the record surface or the retired markdown one — that
+/// file still loads, and a TOML twin would double-inject it); `Err` when the
+/// record cannot be built or written, which the caller must surface rather
+/// than fold into "already exists". The no-clobber posture checks the
+/// **filesystem** rather than a loaded list: the rules loader silently skips
+/// unreadable files and directories, so a list-membership test would have the
+/// same blind spot [#737](https://github.com/macanderson/stella/issues/737)
+/// describes on the skills side — and the write itself is `create_new` inside
 /// [`crate::context_records::write_record`], because the exists checks here
-/// are advisory and racy. A lesson that already minted a rule under the
-/// retired markdown surface is skipped too: that file still loads, and a TOML
-/// twin would double-inject it.
+/// are advisory and racy.
 pub(crate) fn write_rule(
     workspace_root: &Path,
     candidate: &RuleCandidate,
-) -> Option<std::path::PathBuf> {
+) -> Result<Option<std::path::PathBuf>, String> {
     let candidate = without_inferred_guard(candidate.clone());
     let set_id = crate::ingest_cmd::derive_set_id(workspace_root);
     let record = crate::context_records::inferred_rule_record(
@@ -202,21 +203,25 @@ pub(crate) fn write_rule(
         &candidate.text,
         "observation",
         &format!("proposal:rule:{}", candidate.id),
-    )
-    .ok()?;
+    )?;
     if workspace_rules_dir(workspace_root)
         .join(format!("{}.md", candidate.id))
         .exists()
     {
-        return None;
+        return Ok(None);
     }
-    let path = crate::context_records::publication_path(
+    let Some(path) = crate::context_records::publication_path(
         workspace_root,
         stella_core::ingest::record::SharingScope::Repository,
         &record.lineage_id,
-    )?;
-    crate::context_records::write_record(&path, &set_id, &record).ok()?;
-    Some(path)
+    ) else {
+        return Err("cannot determine where to publish this record".to_string());
+    };
+    if path.exists() {
+        return Ok(None);
+    }
+    crate::context_records::write_record(&path, &set_id, &record)?;
+    Ok(Some(path))
 }
 
 #[cfg(test)]

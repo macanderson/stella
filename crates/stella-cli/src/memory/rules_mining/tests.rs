@@ -114,7 +114,9 @@ fn a_written_rule_file_is_prompt_only() {
         }),
         score: 30,
     };
-    let path = write_rule(dir.path(), &candidate).expect("written");
+    let path = write_rule(dir.path(), &candidate)
+        .expect("publishable")
+        .expect("written");
     assert_eq!(
         path.extension().and_then(|e| e.to_str()),
         Some("toml"),
@@ -302,7 +304,9 @@ fn mined_rules_land_where_the_loader_reads() {
         guard: None,
         score: 30,
     };
-    write_rule(dir.path(), &candidate).expect("written");
+    write_rule(dir.path(), &candidate)
+        .expect("publishable")
+        .expect("written");
 
     // The unfiltered loader keys raw files by filename, and a record file's
     // name is its lineage — assert the lesson landed under it, which is the
