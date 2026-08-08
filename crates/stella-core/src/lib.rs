@@ -84,7 +84,7 @@ pub use rules::{
 // which is most of why it shipped unwired. Mirrors the `skills::` exports below.
 pub use rules::{
     EvidenceSource, MineConfig, RawObservation, RuleCandidate, RuleEvidence, decide_promotion,
-    mine_candidates, render_rule_markdown,
+    mine_candidates,
 };
 pub use skills::{
     AutoCreateConfig, AutoCreateDecision, AutoCreateSkip, InstallDecision, LoadSkillsOptions,
