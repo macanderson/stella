@@ -510,6 +510,58 @@ fn session_flags_parse_before_subcommand() {
     assert_eq!(cli.globals.budget, Some(2.5));
 }
 
+/// **Witness (#2142).** The supervised child's env telegram parses.
+///
+/// `daemon::launch` tells its child to do the work through
+/// `STELLA_FOREGROUND=1`, and clap's inferred `bool` parser accepts only the
+/// literals `true`/`false` — so every supervised child died in argument
+/// parsing (`error: invalid value '1' for '--foreground'`) before it ran a
+/// turn, and the launching terminal streamed the corpse. The default posture
+/// on a TTY is supervision, which made this the default path. The
+/// environment is a boolean channel with more than two spellings; parse it
+/// like one, for `--detach`'s `STELLA_DETACH` identically.
+#[test]
+fn the_supervision_env_vars_accept_the_boolean_spellings_the_shell_uses() {
+    let _lock = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_FOREGROUND", "STELLA_DETACH"]);
+
+    // The exact telegram `daemon::launch` sends its child.
+    unsafe { std::env::set_var("STELLA_FOREGROUND", "1") };
+    unsafe { std::env::remove_var("STELLA_DETACH") };
+    let cli = Cli::try_parse_from(["stella", "run", "hi"])
+        .expect("the supervisor's own child telegram must parse");
+    assert!(cli.globals.foreground);
+    assert!(!cli.globals.detach);
+
+    // `0` is off, not a parse error — and the other shell spellings, both
+    // directions, on both vars.
+    unsafe { std::env::set_var("STELLA_FOREGROUND", "0") };
+    unsafe { std::env::set_var("STELLA_DETACH", "on") };
+    let cli = Cli::try_parse_from(["stella", "run", "hi"])
+        .expect("0 and on are boolean spellings, not errors");
+    assert!(!cli.globals.foreground);
+    assert!(cli.globals.detach);
+
+    // Present-but-empty is a shell's "not set", not a fatal parse error.
+    unsafe { std::env::set_var("STELLA_FOREGROUND", "") };
+    unsafe { std::env::remove_var("STELLA_DETACH") };
+    let cli = Cli::try_parse_from(["stella", "run", "hi"]).expect("empty means unset");
+    assert!(!cli.globals.foreground);
+
+    // The bare flag needs no value and beats a contradicting environment.
+    unsafe { std::env::set_var("STELLA_FOREGROUND", "0") };
+    let cli = Cli::try_parse_from(["stella", "run", "hi", "--foreground"])
+        .expect("the command line wins over the environment");
+    assert!(cli.globals.foreground);
+
+    // Garbage is still refused by name, never silently read as true.
+    unsafe { std::env::set_var("STELLA_FOREGROUND", "banana") };
+    assert!(
+        Cli::try_parse_from(["stella", "run", "hi"]).is_err(),
+        "an unrecognized spelling must be refused, not guessed at"
+    );
+}
+
 /// #1493's witness. `--output-format` is a promise about what reaches
 /// stdout, so it exists only on the commands that keep it. Under the old
 /// `global = true` declaration every invocation below parsed cleanly and
