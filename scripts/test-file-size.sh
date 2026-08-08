@@ -235,6 +235,26 @@ commit "$r" "the only commit: nothing to compare against"
 want "B5 an unresolvable base falls back to the strict whole-tree check" \
   expect-fail "$r" "src/big.rs grew to 1600"
 
+# The shape CI actually runs, with NO explicit base: on a `pull_request` event
+# the checkout is `refs/pull/N/merge`, so HEAD is a merge commit and the guard
+# must find HEAD^1 — the base branch tip — by itself. B1-B4 all pass the base
+# in by hand, so without this case the rung that matters most in production is
+# the one rung nothing exercises.
+r="$(new_repo "merge_checkout")"
+plant "$r" "src/big.rs" 1600
+set_baseline "$r" "1600 src/big.rs"
+commit "$r" "root"
+trunk="$(git -C "$r" rev-parse --abbrev-ref HEAD)"
+git -C "$r" checkout -q -b feature
+plant "$r" "src/unrelated.rs" 10
+commit "$r" "the PR: an unrelated change"
+git -C "$r" checkout -q "$trunk"
+set_baseline "$r" "1599 src/big.rs"
+commit "$r" "the base branch drifts while the PR is open"
+git -C "$r" merge -q --no-ff -m "Merge feature" feature
+want "B6 a refs/pull/N/merge checkout finds its base branch tip unaided" \
+  expect-pass "$r"
+
 echo
 echo "passed ${pass}, failed ${fail}"
 [ "$fail" -eq 0 ]
