@@ -129,6 +129,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"  {line}", file=sys.stderr)
         return 2
 
+    # The same SUT preflight the server runs in `create_match`, which this
+    # path never consulted: #2098's reproduction entered exactly here, a
+    # template whose default `main` had moved since the build, and the match
+    # launched anyway. Refusing before any container starts is the contract.
+    from .sut import sut_problem_for
+
+    sut_problem = sut_problem_for(spec)
+    if sut_problem:
+        print("error: the match cannot run the Stella it declares:", file=sys.stderr)
+        print(f"  {sut_problem}", file=sys.stderr)
+        return 2
+
     workspace = Path(args.workspace).expanduser()
     arena = ArenaServer(workspace)
     runner: MatchRunner = arena.runner
@@ -752,6 +764,12 @@ def main(argv: list[str] | None = None) -> int:
              "(default: 10)",
     )
     watch_parser.set_defaults(func=_cmd_watch)
+
+    # The AWS Batch executor registers its own verb tree; everything cloud
+    # lives in .cloud (boto3 stays a lazy, optional import there).
+    from .cloud import register_cli as _register_cloud_cli
+
+    _register_cloud_cli(subparsers)
 
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)

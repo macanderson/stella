@@ -94,6 +94,7 @@ from .exit_cause import (
     probe_sigkill_cause,
 )
 from .git_baseline import ensure_git, run_git_baseline
+from .locate import locate_binary as _locate_binary
 from .portability import raise_for_loader_failure
 from .posture import (
     _ASSURANCE_TIERS_VERSION,
@@ -136,8 +137,8 @@ except ImportError:  # pragma: no cover - depends on the installed Harbor versio
         return fn
 
 
-# Installation paths (inside the task container).
-_BINARY_NAME = "stella"
+# Installation paths (inside the task container). The binary's name (and how
+# it is located on the host) lives in ``.locate``.
 _INSTALL_PATH = "/usr/local/bin/stella"
 _REMOTE_TMP = "/tmp/stella-upload"
 
@@ -854,17 +855,6 @@ async def _secure_exec_with_credential_fd(
             wire[index] = 0
 
 
-def _cached_binary(name: str) -> Path | None:
-    """Return the first executable named ``name`` found on ``PATH``, or None."""
-    for path in os.environ.get("PATH", "").split(os.pathsep):
-        if not path:
-            continue
-        candidate = Path(path) / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate
-    return None
-
-
 def _sha256_file(path: Path) -> str:
     """Return the full SHA-256 digest of a host binary."""
     digest = hashlib.sha256()
@@ -921,45 +911,6 @@ def _embedded_source_commit(version_text: str) -> str | None:
     """Extract the full compile-time STELLA_BUILD_GIT_SHA from `--version`."""
     match = re.search(r"-dev\.([0-9a-fA-F]{40})(?:\s|$)", version_text)
     return match.group(1).lower() if match is not None else None
-
-
-def _locate_binary() -> Path:
-    """Find the Stella binary on the host.
-
-    Resolution order: explicit ``STELLA_BINARY`` env var, then ``stella`` on
-    ``PATH``, then ``./target/release/stella`` walking up from the current
-    working directory. Never imported at module load — only ``install`` calls
-    this, so importing the adapter never requires Stella to be present.
-    """
-    explicit = os.environ.get("STELLA_BINARY")
-    if explicit:
-        binary = Path(explicit)
-        if not binary.is_file():
-            raise FileNotFoundError(
-                f"STELLA_BINARY={explicit!r} does not point at a file"
-            )
-        return binary
-
-    on_path = _cached_binary(_BINARY_NAME)
-    if on_path is not None:
-        return on_path
-
-    cwd = Path.cwd()
-    while True:
-        candidate = cwd / "target" / "release" / _BINARY_NAME
-        if candidate.is_file():
-            return candidate
-        if cwd == cwd.parent:  # reached filesystem root
-            break
-        cwd = cwd.parent
-
-    raise FileNotFoundError(
-        f"cannot find the {_BINARY_NAME!r} binary. For development, build "
-        "with `cargo build --release -p stella-cli` (produces "
-        "./target/release/stella) or put it on PATH. For a claim run, use "
-        "the README's full-SHA-stamped x86_64 Linux build and set "
-        "STELLA_BINARY=/path/to/stella."
-    )
 
 
 def _sum_step_usage(events: list[Any]) -> dict[str, int]:

@@ -80,6 +80,11 @@ _SCRUBBED_EXACT = frozenset(
         "CLAUDE_CODE_OAUTH_TOKEN",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
+        # The pin marker `_agent_environment` sets for a pinned Stella seat
+        # (#2098). Only the runner may assert a trial is pinned: an ambient
+        # copy in the operator's shell would make the adapter fail an
+        # honestly-unpinned run closed.
+        "ARENABENCH_SUT_COMMIT",
     }
 )
 
@@ -110,6 +115,14 @@ def _provenance_for(match: Match) -> provenance.Provenance:
     Harbor is asked for its version here rather than trusted from config: the
     binary on PATH can change between one match and the next, and the record
     has to say what actually graded *these* trials.
+
+    The SUT half reads the **same pin observation the launch reads**
+    (:meth:`Match.sut_pin_for`), not a second resolution of the same ref:
+    resolving twice is how provenance once recorded a commit that was never
+    the binary actually run — ``main`` moved between the two calls (#2098).
+    Per seat, because two Stella seats may pin two builds (#2082); failure
+    leaves a seat's commit empty — unknown, never guessed, for the same
+    reason ``harbor_version`` is.
     """
     from . import __version__
 
@@ -122,17 +135,26 @@ def _provenance_for(match: Match) -> provenance.Provenance:
         # is not mistaken later for one that ran on the current Harbor.
         version, binary = None, ""
 
-    # The SUT half, resolved the same way the launch resolves it so the record
-    # names the binary that actually ran. Failure leaves both fields empty —
-    # unknown, never guessed, for the same reason `harbor_version` is.
-    sut_commit, sut_sha256 = "", ""
-    if match.spec.sut_ref:
-        try:
-            sut_commit = sut.resolve_ref(match.spec.sut_ref)
-            staged = sut.binary_for(sut_commit)
-            sut_sha256 = staged.sha256 if staged else ""
-        except sut.SutUnavailableError:
-            sut_commit = ""
+    sut_seats: dict[str, dict[str, str]] = {}
+    for contestant in match.spec.contestants:
+        if contestant.agent != "stella":
+            continue
+        pin = match.sut_pin_for(contestant)
+        sut_seats[contestant.id] = {
+            "name": contestant.name,
+            "ref": pin.ref,
+            "commit": pin.commit,
+            "sha256": pin.staged.sha256 if pin.staged else "",
+        }
+    # The single legacy fields stay filled only while they are true: one
+    # distinct identity across every Stella seat. Seats that diverge — or a
+    # pinned seat racing an unpinned one — leave them empty, and the per-seat
+    # record above is the truth.
+    identities = {(s["commit"], s["sha256"]) for s in sut_seats.values()}
+    if len(identities) == 1 and next(iter(identities))[0]:
+        sut_commit, sut_sha256 = next(iter(identities))
+    else:
+        sut_commit, sut_sha256 = "", ""
 
     return provenance.Provenance(
         dataset_key=match.spec.dataset,
@@ -143,6 +165,7 @@ def _provenance_for(match: Match) -> provenance.Provenance:
         sut_ref=match.spec.sut_ref,
         sut_commit=sut_commit,
         sut_sha256=sut_sha256,
+        sut_seats=sut_seats,
         arenabench_version=__version__,
         source=provenance.SOURCE_RECORDED,
     )
@@ -212,6 +235,24 @@ class Match:
         self._watcher = MatchWatcher(self.workspace)
         self._detections: list[Detection] = []
         self._lock = threading.Lock()
+        #: One pin observation per declared ref, for this match's lifetime.
+        self._sut_pins: dict[str, sut.ResolvedPin] = {}
+
+    def sut_pin_for(self, contestant: Contestant) -> sut.ResolvedPin:
+        """This seat's SUT pin, resolved **once per ref per match**.
+
+        Provenance and the launch both read this, which is the #2098 fix:
+        each used to call ``resolve_ref`` independently, minutes apart, and a
+        floating ref like ``main`` could mean two different commits to the
+        two of them. Cached by the declared ref rather than the seat, so two
+        seats inheriting one ref also share one observation.
+        """
+        ref = self.spec.sut_ref_for(contestant)
+        pin = self._sut_pins.get(ref)
+        if pin is None:
+            pin = sut.resolve_pin(ref)
+            self._sut_pins[ref] = pin
+        return pin
 
     # -- reading ----------------------------------------------------------
 
@@ -730,9 +771,10 @@ class MatchRunner:
                 "env keys ignored — a seat may carry credentials and endpoints "
                 "only: " + ", ".join(ignored)
             )
+        pin = match.sut_pin_for(contestant) if contestant.agent == "stella" else None
         env = _base_environment()
         env.update(seat_env)
-        env.update(self._agent_environment(contestant, run, match.spec.sut_ref))
+        env.update(self._agent_environment(contestant, run, pin))
 
         # The seat's launch record — the only artifact that can say which
         # route this job's trials were actually served by. `launch_model`
@@ -751,6 +793,13 @@ class MatchRunner:
             "launch_model": launch_model(contestant),
             "base_url": contestant.engine.base_url,
         }
+        if pin is not None:
+            # Which Stella THIS seat launched — the per-seat half of #2082.
+            # The same observation provenance recorded, so the two artifacts
+            # cannot disagree about what a floating ref meant.
+            record["sut_ref"] = pin.ref
+            record["sut_commit"] = pin.commit
+            record["sut_sha256"] = pin.staged.sha256 if pin.staged else ""
         try:
             seat_manifest_path(job_dir).write_text(
                 json.dumps(record, indent=2) + "\n", encoding="utf-8"
@@ -816,9 +865,16 @@ class MatchRunner:
         return env
 
     def _agent_environment(
-        self, contestant: Contestant, run: ContestantRun, sut_ref: str = ""
+        self,
+        contestant: Contestant,
+        run: ContestantRun,
+        pin: sut.ResolvedPin | None = None,
     ) -> dict[str, str]:
-        """Agent-specific environment, layered over the operator's ``.env``."""
+        """Agent-specific environment, layered over the operator's ``.env``.
+
+        ``pin`` is the seat's SUT pin as :meth:`Match.sut_pin_for` observed it
+        — already resolved, never re-resolved here (#2098).
+        """
         spec = resolve_agent(contestant.agent)
         env: dict[str, str] = {}
         if spec.extra_env:
@@ -863,24 +919,32 @@ class MatchRunner:
             roots.append(existing)
         env["PYTHONPATH"] = os.pathsep.join(roots)
 
-        # Which Stella actually runs. A pinned `sut_ref` resolves to a commit
-        # and the binary built from *that* commit is used; the ambient
-        # STELLA_BINARY is only the fallback for an explicitly unpinned match.
-        # `ArenaServer.create_match` has already refused a pinned match with no
-        # matching build, so reaching here with a pin means the binary exists.
-        if sut_ref:
-            try:
-                commit = sut.resolve_ref(sut_ref)
-                staged = sut.binary_for(commit)
-            except sut.SutUnavailableError:
-                staged = None
-            if staged is not None:
-                env["STELLA_BINARY"] = str(staged.path)
-                run.notes.append(
-                    f"stella {commit[:8]} ({sut_ref}) "
-                    f"sha256:{staged.sha256[:12] or 'unrecorded'}"
+        # Which Stella actually runs. A pinned seat runs the binary built from
+        # the commit its pin resolved to; the ambient STELLA_BINARY is only
+        # the fallback for an explicitly *unpinned* seat. A pin that cannot be
+        # honoured — the ref moved since the build, the resolution failed —
+        # refuses the trial outright rather than degrading into the unpinned
+        # path: `create_match`'s preflight refuses this exact condition, and
+        # the launch falling through it instead once handed the operator's
+        # native macOS dev build (via `_locate_binary`'s PATH tier) to every
+        # Linux task container (#2098).
+        if pin is not None and pin.pinned:
+            problem = sut.broken_pin_problem(pin)
+            if problem or pin.staged is None:
+                raise sut.SutUnavailableError(
+                    problem
+                    or f"no staged binary for pinned commit {pin.commit[:8]}"
                 )
-                return env
+            env["STELLA_BINARY"] = str(pin.staged.path)
+            # The pin travels with the trial: `stella_harbor._locate_binary`
+            # refuses its PATH/cwd tiers when this is set but STELLA_BINARY
+            # is lost, so a broken pin fails closed at that layer too.
+            env["ARENABENCH_SUT_COMMIT"] = pin.commit
+            run.notes.append(
+                f"stella {pin.commit[:8]} ({pin.ref}) "
+                f"sha256:{pin.staged.sha256[:12] or 'unrecorded'}"
+            )
+            return env
 
         binary = os.environ.get("STELLA_BINARY")
         if binary:

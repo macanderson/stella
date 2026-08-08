@@ -198,6 +198,20 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
             else:
                 declared = _declared_env(env_raw, problems, where)
 
+        seat_sut = entry.get("sut_ref")
+        if seat_sut is not None:
+            if not isinstance(seat_sut, str):
+                problems.append(f"{where}: sut_ref must be a string git ref")
+                seat_sut = None
+            elif agent and agent != "stella":
+                # Refused at parse for the same reason `MatchSpec.validate`
+                # refuses it: a pin nothing reads is a template claiming to
+                # race a build it never runs (#2082).
+                problems.append(
+                    f"{where}: sut_ref applies only to a stella seat — "
+                    f"{agent!r} runs no Stella binary"
+                )
+
         contestants.append(
             Contestant(
                 id=str(entry.get("id") or f"seat{seat + 1}"),
@@ -207,8 +221,14 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
                 env={},  # never values from a file — see module docstring
                 color=str(entry.get("color") or ARENA_COLORS[seat % len(ARENA_COLORS)]),
                 required_env=declared,
+                sut_ref=seat_sut.strip() if isinstance(seat_sut, str) else None,
             )
         )
+
+    match_sut = match_table.get("sut_ref")
+    if match_sut is not None and not isinstance(match_sut, str):
+        problems.append("match.sut_ref must be a string git ref")
+        match_sut = None
 
     if problems:
         raise MatchTemplateError(problems)
@@ -227,6 +247,10 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
             "agent_timeout_multiplier": match_table.get("agent_timeout_multiplier", 1.0),
             "capture_snapshots": match_table.get("capture_snapshots", False),
             "snapshot_interval": match_table.get("snapshot_interval", 30.0),
+            # Absent means `main` (MatchSpec.from_json's contract), never the
+            # opt-out: a committed template that ran the project's default
+            # branch before this key existed must keep meaning that (#2082).
+            "sut_ref": match_sut,
         }
     )
     return replace(spec, contestants=tuple(contestants))
@@ -308,6 +332,11 @@ def match_to_toml_dict(spec: MatchSpec) -> dict[str, Any]:
             "agent_timeout_multiplier": spec.agent_timeout_multiplier,
             "capture_snapshots": spec.capture_snapshots,
             "snapshot_interval": spec.snapshot_interval,
+            # Written unconditionally: a template that omits the pin means
+            # `main`, and the GUI's "download this match" dropping the pin was
+            # exactly how a committed file silently ran a different Stella
+            # than the match it came from (#2082).
+            "sut_ref": spec.sut_ref,
         },
         "contestant": [
             {
@@ -315,6 +344,10 @@ def match_to_toml_dict(spec: MatchSpec) -> dict[str, Any]:
                 "name": c.name,
                 "agent": c.agent,
                 "color": c.color,
+                # The override round-trips only when the seat declared one:
+                # `None` (inherit) has no TOML spelling, and inventing one
+                # would freeze the match default into every seat.
+                **({"sut_ref": c.sut_ref} if c.sut_ref is not None else {}),
                 # The declaration round-trips; values never exist to round-trip.
                 **({"env": {"required": list(c.required_env)}} if c.required_env else {}),
                 "engine": {
@@ -379,6 +412,12 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
         "# the tests started passing and how long the agent kept going afterwards.",
         _line("capture_snapshots", spec.capture_snapshots),
         _line("snapshot_interval", spec.snapshot_interval),
+        "# Which Stella the seats under test run: a git ref, resolved to a commit",
+        "# at launch and recorded in provenance.json. Pin a full commit id for a",
+        '# result that names its own code; "" runs whatever STELLA_BINARY points',
+        "# at, recorded as unverified. A seat may override this with its own",
+        "# sut_ref line — that is how two Stella builds race the same tasks.",
+        _line("sut_ref", spec.sut_ref),
         "",
     ]
 
@@ -390,6 +429,13 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
             _line("name", contestant.name),
             _line("agent", contestant.agent),
             _line("color", contestant.color),
+        ]
+        if contestant.sut_ref is not None:
+            out += [
+                "# This seat's own Stella build, overriding [match] sut_ref.",
+                _line("sut_ref", contestant.sut_ref),
+            ]
+        out += [
             "",
             "  [contestant.engine]",
         ]

@@ -57,6 +57,23 @@ macro_rules! scope_discipline {
     };
 }
 
+/// The evidence contract shared by both static prompts: a number produced by
+/// a command chain that errored is not a measurement. Born from a real TB2.1
+/// bench trace (`git-multibranch`, #1957): a timing read came back EMPTY
+/// because `bc` was not installed (`bc: command not found` on stderr) and the
+/// worker concluded "well under 3 seconds" anyway; a probe printed
+/// `archive+extract time: 70 ms` over a stderr carrying `fatal: detected
+/// dubious ownership` then `tar: This does not look like a tar archive` —
+/// 70 ms was the time to FAIL, cited as proof the hook is fast. Both slipped
+/// through because the compound command exited 0. One shared literal,
+/// embedded verbatim by both prompts, same as `tool_steering!` and for the
+/// same anti-drift reason (#450).
+macro_rules! measurement_discipline {
+    () => {
+        r#"Measurements: a number you cite as evidence is VOID if any command in the chain that produced it reported an error — a `command not found`, a `fatal:`, an empty capture, a failure on stderr — even when the overall exit code is 0 (a pipeline's exit code is its last command's, and a failed command substitution does not propagate). An errored probe measured the time to fail, not the thing you named. Fix the error and re-measure, or report the quantity as unmeasured; never cite the number."#
+    };
+}
+
 pub(crate) const SYSTEM_PROMPT: &str = concat!(
     r#"You are Stella, a fast terminal coding agent. You help the user with software engineering tasks by reading files, writing code, running commands, and searching the codebase.
 
@@ -66,6 +83,10 @@ pub(crate) const SYSTEM_PROMPT: &str = concat!(
 
 "#,
     scope_discipline!(),
+    r#"
+
+"#,
+    measurement_discipline!(),
     r#"
 
 Rules:
@@ -90,6 +111,10 @@ pub(crate) const PIPELINE_SYSTEM_PROMPT: &str = concat!(
 
 "#,
     scope_discipline!(),
+    r#"
+
+"#,
+    measurement_discipline!(),
     r#"
 
 Methodology (always follow in order):
@@ -544,6 +569,32 @@ mod tests {
             assert!(
                 prompt.contains(shared),
                 "{label} does not embed the shared scope-discipline block verbatim"
+            );
+        }
+    }
+
+    /// Witness for the voided-measurement defect (#1957): in a TB2.1
+    /// `git-multibranch` run the worker twice accepted a broken measurement
+    /// because the compound command exited 0 — a timing read that came back
+    /// empty (`bc: command not found` on stderr) became "well under 3
+    /// seconds", and a probe's `archive+extract time: 70 ms` was cited as
+    /// proof a hook is fast while its stderr carried `fatal: detected
+    /// dubious ownership` then `tar: This does not look like a tar archive`,
+    /// so 70 ms was the time to fail. Neither prompt said a word about
+    /// invalidating such evidence; pin the shared literal verbatim in both,
+    /// plus its "unmeasured" escape hatch so the assertion cannot pass
+    /// vacuously against an emptied literal.
+    #[test]
+    fn both_prompts_void_measurements_whose_producing_command_errored() {
+        let shared = measurement_discipline!();
+        assert!(
+            shared.contains("unmeasured"),
+            "the shared literal must offer the honest alternative to citing a broken number"
+        );
+        for (label, prompt) in PROMPTS {
+            assert!(
+                prompt.contains(shared),
+                "{label} does not embed the shared measurement-discipline block verbatim"
             );
         }
     }

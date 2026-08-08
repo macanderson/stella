@@ -37,7 +37,6 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
     HOST_CREDENTIAL_BUNDLE_FD_ENV,
     StellaAgent,
     _benchmark_engine_posture,
-    _cached_binary,
     _extract_metrics,
     _is_truthy,
     _load_json_object,
@@ -54,6 +53,7 @@ from stella_harbor.credential_bundle import (  # noqa: E402
     HOST_CREDENTIAL_SOURCE,
     create_anonymous_credential_bundle,
 )
+from stella_harbor.locate import _cached_binary  # noqa: E402
 
 
 def _bare_agent() -> StellaAgent:

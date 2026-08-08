@@ -393,6 +393,15 @@ class Contestant:
     #: holding none of them refuses to start rather than score a silent 0.0
     #: (#1777).
     required_env: tuple[str, ...] = ()
+    #: Which Stella *this seat* runs, overriding the match-level
+    #: :attr:`MatchSpec.sut_ref`. ``None`` inherits the match default; ``""``
+    #: opts this seat out of pinning; anything else is a git ref resolved to a
+    #: commit at launch. Per-seat because a champion-vs-challenger match is two
+    #: Stella builds racing the same tasks (#2082) — builds are cached by
+    #: commit, so the second pin costs one extra build, never a rewrite. Only
+    #: meaningful on a ``stella`` seat; :meth:`MatchSpec.validate` refuses it
+    #: anywhere else rather than ignoring it in silence.
+    sut_ref: str | None = None
 
     @property
     def slug(self) -> str:
@@ -415,6 +424,7 @@ class Contestant:
             "ignored_env_keys": list(self.ignored_env),
             "required_env": list(self.required_env),
             "color": self.color,
+            "sut_ref": self.sut_ref,
         }
 
     @classmethod
@@ -459,6 +469,13 @@ class Contestant:
             ignored_env=tuple(ignored),
             required_env=tuple(
                 item for item in declared if is_credential_name(item)
+            ),
+            # Absent means *inherit the match default*, which is a different
+            # thing from the empty string's explicit opt-out — collapsing the
+            # two would turn every seat written before this field existed into
+            # one that silently accepts any binary (#2082).
+            sut_ref=(
+                None if raw.get("sut_ref") is None else str(raw["sut_ref"]).strip()
             ),
         )
 
@@ -574,6 +591,16 @@ class MatchSpec:
             ),
         )
 
+    def sut_ref_for(self, contestant: Contestant) -> str:
+        """The ref this seat's Stella is pinned to, inheritance resolved.
+
+        The one seam every consumer resolves a seat's pin through — the
+        preflight refusal, the launch, and the provenance record must all
+        answer "which Stella does seat N run" identically, or two of them can
+        disagree about what a match measured (#2082, #2098).
+        """
+        return self.sut_ref if contestant.sut_ref is None else contestant.sut_ref
+
     def validate(self) -> list[str]:
         """Every problem with this spec, so the UI can show them all at once."""
         problems: list[str] = []
@@ -588,6 +615,13 @@ class MatchSpec:
             seen.add(contestant.slug)
             if not contestant.engine.model:
                 problems.append(f"{contestant.name}: no model selected")
+            if contestant.sut_ref is not None and contestant.agent != "stella":
+                # Refused rather than ignored: a pin nothing reads would let a
+                # template claim to race a build it never runs (#2082).
+                problems.append(
+                    f"{contestant.name}: sut_ref applies only to a stella "
+                    f"seat — {contestant.agent!r} runs no Stella binary"
+                )
         return problems
 
 

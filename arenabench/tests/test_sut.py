@@ -12,14 +12,19 @@ which Stella it measured.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from arenabench import runner as runner_module
 from arenabench import sut
 from arenabench.model import MatchSpec
 from arenabench.provenance import Provenance
+from arenabench.registry import DEFAULT_REGISTRY
+from arenabench.runner import MatchRunner
+from arenabench.telemetry import seat_manifest_path
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -488,3 +493,328 @@ class TestProvenanceRecordsTheSut:
             "abc123",
             "def",
         )
+
+
+class TestProvenanceRecordsEverySeat:
+    """One match may race two Stella builds; the record must carry both (#2082)."""
+
+    SEATS = {
+        "champ": {"name": "champion", "ref": "a" * 40, "commit": "a" * 40, "sha256": "x"},
+        "chall": {"name": "challenger", "ref": "b" * 40, "commit": "b" * 40, "sha256": "y"},
+    }
+
+    def _record(self) -> Provenance:
+        return Provenance(
+            dataset_key="terminal-bench-2.1",
+            dataset_digest="sha256:7d7bdc1c",
+            harbor_version="0.6.1",
+            sut_seats=dict(self.SEATS),
+        )
+
+    def test_per_seat_records_round_trip(self):
+        again = Provenance.from_json(self._record().to_json())
+        assert again.sut_seats == self.SEATS
+
+    def test_a_two_twin_match_names_both_commits_in_its_key(self):
+        key = self._record().comparability_key
+        assert "a" * 8 in key and "b" * 8 in key, (
+            "a key naming one commit invites a two-twin match into a "
+            "single-SUT average"
+        )
+
+    def test_arm_level_keys_differ_only_in_the_sut_half(self):
+        record = self._record()
+        champ = record.comparability_key_for("champ")
+        chall = record.comparability_key_for("chall")
+        assert champ != chall
+        assert champ.rsplit("/", 1)[0] == chall.rsplit("/", 1)[0], (
+            "two arms of one match share the whole apparatus; only the "
+            "stella<commit> half may differ"
+        )
+        assert champ.endswith(f"stella{'a' * 8}")
+        assert chall.endswith(f"stella{'b' * 8}")
+
+    def test_a_legacy_record_keeps_its_single_field_key(self):
+        legacy = Provenance(
+            dataset_key="terminal-bench-2.1",
+            dataset_digest="sha256:7d7bdc1c",
+            harbor_version="0.6.1",
+            sut_commit="6c345532aaaa",
+        )
+        assert "stella6c345532" in legacy.comparability_key
+        assert legacy.comparability_key_for("anything").endswith("stella6c345532")
+
+
+def _stub_harbor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same three answers `test_arena._fake_harbor` stubs, for `_launch`."""
+    monkeypatch.setattr(
+        "arenabench.harbor.harbor_bin", lambda dataset_key=None: "/usr/bin/harbor"
+    )
+    monkeypatch.setattr(
+        "arenabench.harbor.harbor_version", lambda binary=None: "0.20.0"
+    )
+    monkeypatch.setattr(
+        "arenabench.harbor.supports_agent_import_path", lambda binary=None: False
+    )
+
+
+def _capture_popen(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """Capture every (command, env) the *launch* hands Popen.
+
+    Only the stubbed Harbor binary is intercepted: `arenabench.runner` imports
+    the shared ``subprocess`` module, so a blanket patch would also break the
+    real ``git`` subprocesses the pin resolution runs mid-launch.
+    """
+    captured: list[dict] = []
+    real_popen = subprocess.Popen
+
+    class _Recorder:
+        def __init__(self, command, **kwargs):
+            captured.append({"command": command, "env": kwargs.get("env") or {}})
+            self.returncode = None
+
+        def poll(self):
+            return None
+
+    def dispatch(command, **kwargs):
+        if command and command[0] == "/usr/bin/harbor":
+            return _Recorder(command, **kwargs)
+        return real_popen(command, **kwargs)
+
+    monkeypatch.setattr("arenabench.runner.subprocess.Popen", dispatch)
+    return captured
+
+
+class TestTwoSeatsRaceTwoBuilds:
+    """#2082: a champion-vs-challenger match is two Stella builds on one grid."""
+
+    def _stage(self, commit: str) -> Path:
+        directory = sut.sut_root() / commit
+        directory.mkdir(parents=True, exist_ok=True)
+        binary = directory / "stella"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        (directory / "sut_commit.txt").write_text(commit)
+        (directory / "binary_sha256.txt").write_text(f"sha-of-{commit[:8]}")
+        return binary
+
+    def _two_seat_spec(self, ref_a: str, ref_b: str) -> MatchSpec:
+        return MatchSpec.from_json(
+            {
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["fix-git"],
+                "sut_ref": ref_a,
+                "contestants": [
+                    {
+                        "id": "champ",
+                        "name": "champion",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "m"},
+                    },
+                    {
+                        "id": "chall",
+                        "name": "challenger",
+                        "agent": "stella",
+                        "sut_ref": ref_b,
+                        "engine": {"api": "openrouter", "model": "m"},
+                    },
+                ],
+            }
+        )
+
+    def test_each_seats_pin_is_checked_independently(self, repo: Path):
+        head = _git(repo, "rev-parse", "origin/main")
+        unbuilt = _git(repo, "rev-parse", "refs/heads/main")
+        self._stage(head)
+        problem = sut.sut_problem_for(self._two_seat_spec(head, unbuilt))
+        assert problem is not None
+        assert "challenger" in problem, "the refusal must name the seat"
+        assert "champion" not in problem, (
+            "the seat whose build exists must not be blamed for the one whose "
+            "build does not"
+        )
+
+    def test_both_builds_present_permit_the_launch(self, repo: Path):
+        head = _git(repo, "rev-parse", "origin/main")
+        other = _git(repo, "rev-parse", "refs/heads/main")
+        self._stage(head)
+        self._stage(other)
+        assert sut.sut_problem_for(self._two_seat_spec(head, other)) is None
+
+    def test_two_seats_launch_two_binaries_and_record_them(
+        self, repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Verify (#2082): two pinned refs launch two STELLA_BINARY values,
+        provable from the `.seat.json` launch records."""
+        head = _git(repo, "rev-parse", "origin/main")
+        other = _git(repo, "rev-parse", "refs/heads/main")
+        binary_a = self._stage(head)
+        binary_b = self._stage(other)
+        _stub_harbor(monkeypatch)
+        captured = _capture_popen(monkeypatch)
+
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(self._two_seat_spec(head, other))
+        runs = {
+            contestant.id: runner._launch(match, contestant)
+            for contestant in match.spec.contestants
+        }
+
+        assert captured[0]["env"]["STELLA_BINARY"] == str(binary_a)
+        assert captured[1]["env"]["STELLA_BINARY"] == str(binary_b)
+
+        records = {
+            seat_id: json.loads(
+                seat_manifest_path(run.job_dir).read_text(encoding="utf-8")
+            )
+            for seat_id, run in runs.items()
+        }
+        assert records["champ"]["sut_commit"] == head
+        assert records["chall"]["sut_commit"] == other
+        assert records["champ"]["sut_sha256"] != records["chall"]["sut_sha256"]
+
+    def test_provenance_records_both_commits(
+        self, repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        head = _git(repo, "rev-parse", "origin/main")
+        other = _git(repo, "rev-parse", "refs/heads/main")
+        self._stage(head)
+        self._stage(other)
+        _stub_harbor(monkeypatch)
+
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(self._two_seat_spec(head, other))
+        record = runner_module._provenance_for(match)
+
+        assert record.sut_seats["champ"]["commit"] == head
+        assert record.sut_seats["chall"]["commit"] == other
+        assert head[:8] in record.comparability_key
+        assert other[:8] in record.comparability_key
+        # No single match-level commit is true of a diverged match.
+        assert record.sut_commit == ""
+
+
+class TestAPinIsObservedOnce:
+    """#2098: the two halves of a pin must see one value of a floating ref.
+
+    `SutBuilder.start` and `_agent_environment` each called `resolve_ref`
+    independently, minutes apart; when `main` moved between the calls the
+    launch found no staged binary and silently degraded to the ambient/PATH
+    tier — which uploaded the operator's native macOS build into Linux task
+    containers. The reproduction is pinned here with a resolver that moves
+    the ref between calls, exactly as the real repository did.
+    """
+
+    def _stage(self, commit: str) -> Path:
+        directory = sut.sut_root() / commit
+        directory.mkdir(parents=True, exist_ok=True)
+        binary = directory / "stella"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        (directory / "sut_commit.txt").write_text(commit)
+        (directory / "binary_sha256.txt").write_text("deadbeef")
+        return binary
+
+    def _stella_spec(self, ref: str) -> MatchSpec:
+        return MatchSpec.from_json(
+            {
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["fix-git"],
+                "sut_ref": ref,
+                "contestants": [
+                    {
+                        "id": "st",
+                        "name": "seat",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "m"},
+                    }
+                ],
+            }
+        )
+
+    def _advance_origin(self, repo: Path) -> None:
+        origin = repo.parent / "origin"
+        (origin / "a.txt").write_text("moved")
+        _git(origin, "commit", "-qam", "moved while building")
+        _git(repo, "fetch", "-q", "origin")
+
+    def test_a_commit_pin_survives_the_branch_moving(
+        self, repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Verify (c): built, origin advanced, pinned to the built commit —
+        the match runs the original binary, unaffected by the drift."""
+        built = _git(repo, "rev-parse", "origin/main")
+        binary = self._stage(built)
+        self._advance_origin(repo)
+        _stub_harbor(monkeypatch)
+        captured = _capture_popen(monkeypatch)
+
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(self._stella_spec(built))
+        run = runner._launch(match, match.spec.contestants[0])
+
+        assert run.error == ""
+        assert captured[0]["env"]["STELLA_BINARY"] == str(binary)
+        assert captured[0]["env"]["ARENABENCH_SUT_COMMIT"] == built
+
+    def test_a_drifted_branch_pin_refuses_rather_than_falling_through(
+        self, repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Verify (d): built, origin advanced, pinned to the bare branch —
+        refuse naming the drift; never launch on the ambient/PATH tier."""
+        built = _git(repo, "rev-parse", "origin/main")
+        self._stage(built)
+        self._advance_origin(repo)
+        _stub_harbor(monkeypatch)
+        captured = _capture_popen(monkeypatch)
+        # An ambient binary is available; falling through to it is the bug.
+        decoy = tmp_path / "ambient-stella"
+        decoy.write_text("#!/bin/sh\n")
+        monkeypatch.setenv(sut.STELLA_BINARY_ENV, str(decoy))
+
+        preflight = sut.sut_problem_for(self._stella_spec("main"))
+        assert preflight is not None
+        assert "behind" in preflight, "the refusal must name the drift"
+
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(self._stella_spec("main"))
+        with pytest.raises(sut.SutUnavailableError) as refusal:
+            runner._launch(match, match.spec.contestants[0])
+        assert "moved since the build" in str(refusal.value)
+        assert built[:8] in str(refusal.value)
+        assert captured == [], "a refused trial must launch nothing at all"
+
+    def test_provenance_and_launch_read_the_same_observation(
+        self, repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The mechanism itself: a resolver that moves the ref between calls
+        must not be able to hand provenance one commit and the launch another.
+        """
+        built = _git(repo, "rev-parse", "origin/main")
+        moved = _git(repo, "rev-parse", "refs/heads/main")
+        binary = self._stage(built)
+        _stub_harbor(monkeypatch)
+        captured = _capture_popen(monkeypatch)
+
+        calls: list[str] = []
+
+        def moving(ref: str, repo_path=None):
+            calls.append(ref)
+            # First observation: the built tip. Every later one: the ref has
+            # moved — exactly the 2026-08-07 reproduction.
+            return built if len(calls) == 1 else moved
+
+        monkeypatch.setattr(sut, "resolve_ref", moving)
+        runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
+        match = runner.create(self._stella_spec("main"))
+        match.provenance = runner_module._provenance_for(match)
+        run = runner._launch(match, match.spec.contestants[0])
+
+        assert run.error == ""
+        recorded = match.provenance.sut_seats["st"]["commit"]
+        launched = captured[0]["env"]["ARENABENCH_SUT_COMMIT"]
+        assert recorded == launched == built, (
+            "provenance and the launch observed different values of one "
+            "floating ref — the exact #2098 race"
+        )
+        assert captured[0]["env"]["STELLA_BINARY"] == str(binary)
