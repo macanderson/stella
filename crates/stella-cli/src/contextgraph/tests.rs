@@ -352,7 +352,7 @@ async fn the_session_host_registers_both_in_tree_providers() {
     let store = ContextStore::open(dir.path().join("context.db")).expect("store");
     let host = session_host(
         Arc::new(store),
-        vec![],
+        Domains::default(),
         dir.path().to_path_buf(),
         no_suppression(),
     );
@@ -383,7 +383,12 @@ async fn seeded_store(dir: &tempfile::TempDir) -> Arc<ContextStore> {
 async fn recall_routes_through_the_plane_registry_to_the_store() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = seeded_store(&dir).await;
-    let host = session_host(store, vec![], dir.path().to_path_buf(), no_suppression());
+    let host = session_host(
+        store,
+        Domains::default(),
+        dir.path().to_path_buf(),
+        no_suppression(),
+    );
     let mut q = query(5, 4_000);
     q.query_text = Some("open the sqlite connection in wal mode".to_string());
     // Host → workspace-memory → plane registry → store: the full
@@ -429,7 +434,11 @@ impl PlaneProvider for PlaneScripted {
 #[tokio::test]
 async fn the_plane_fans_out_and_kind_routes_across_registered_providers() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let mut plane = memory_plane(seeded_store(&dir).await, vec![], no_suppression());
+    let mut plane = memory_plane(
+        seeded_store(&dir).await,
+        Domains::default(),
+        no_suppression(),
+    );
     let mut graph_frame = frame("plane-graph", 0.9, 10);
     graph_frame.kind = contextgraph_types::FrameKind::Graph;
     plane.register(Arc::new(PlaneScripted {
@@ -542,7 +551,7 @@ async fn workspace_memory_provider_is_cgp_conformant() {
     // `workspace-memory` provider: the store behind the plane registry,
     // advertising the kinds and the `verify` capability it ships with.
     let provider = MemoryProvider {
-        plane: memory_plane(store, vec![], no_suppression()),
+        plane: memory_plane(store, Domains::default(), no_suppression()),
         info: local_info("workspace-memory"),
         caps: memory_capabilities(),
     };
@@ -582,7 +591,12 @@ async fn workspace_memory_provider_is_cgp_conformant() {
 async fn workspace_memory_verifies_its_own_frames_and_refuses_a_foreign_digest() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = probe_seeded_store(&dir).await;
-    let host = session_host(store, vec![], dir.path().to_path_buf(), no_suppression());
+    let host = session_host(
+        store,
+        Domains::default(),
+        dir.path().to_path_buf(),
+        no_suppression(),
+    );
 
     let mut q = query(5, 4_000);
     q.query_text = Some("conformance probe".to_string());
@@ -973,7 +987,7 @@ async fn the_in_tree_providers_still_declare_no_egress() {
     let store = ContextStore::open(dir.path().join("context.db")).expect("store");
     let host = session_host(
         Arc::new(store),
-        vec![],
+        Domains::default(),
         dir.path().to_path_buf(),
         no_suppression(),
     );
@@ -1204,5 +1218,126 @@ fn the_host_record_layer_spells_representations_the_way_the_protocol_does() {
             wire_json,
             "stella-core's `{record:?}::as_str()` disagrees with CGP's wire spelling"
         );
+    }
+}
+
+/// The per-query domain scope derivation (#2333) — the half of the domain
+/// evidence channel that lives on this side of the store boundary. The store
+/// enforces "a scope may only admit if it narrows"; this decides *what* the
+/// query narrowed to, and getting it wrong is how the rung silently
+/// degenerates back into "is this node tagged at all".
+mod query_domain_scope_derivation {
+    use super::*;
+    use crate::domains::Domain;
+
+    fn taxonomy() -> Domains {
+        Domains {
+            version: 1,
+            inferred_by: "test".to_string(),
+            domains: vec![
+                Domain {
+                    name: "retrieval".to_string(),
+                    description: String::new(),
+                    paths: vec!["crates/stella-context".to_string()],
+                },
+                Domain {
+                    name: "tui".to_string(),
+                    description: String::new(),
+                    paths: vec!["crates/stella-tui".to_string()],
+                },
+                Domain {
+                    name: "bench".to_string(),
+                    description: String::new(),
+                    paths: vec!["bench".to_string()],
+                },
+            ],
+        }
+    }
+
+    fn anchors(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn a_goal_naming_one_area_selects_that_areas_domain() {
+        assert_eq!(
+            query_domain_scope(
+                &taxonomy(),
+                &anchors(&["crates/stella-context/src/retrieval.rs"])
+            ),
+            vec!["retrieval".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_scope_is_the_union_over_the_anchors_sorted_and_deduped() {
+        // Two files in one domain contribute it once; a third file adds a
+        // second domain. Sorted, so a goal naming the same files in a
+        // different order yields a byte-identical scope — the determinism
+        // discipline invariant 7 keeps for everything that feeds a prompt.
+        let scope = query_domain_scope(
+            &taxonomy(),
+            &anchors(&[
+                "crates/stella-tui/src/deck_ui.rs",
+                "crates/stella-context/src/warm.rs",
+                "crates/stella-context/src/retrieval.rs",
+            ]),
+        );
+        assert_eq!(scope, vec!["retrieval".to_string(), "tui".to_string()]);
+    }
+
+    #[test]
+    fn a_goal_naming_no_files_selects_nothing() {
+        // Which disarms the channel rather than opening it: an empty scope is
+        // refused by `scope_is_query_conditional`, so such a recall admits on
+        // the other channels alone.
+        assert!(query_domain_scope(&taxonomy(), &[]).is_empty());
+    }
+
+    #[test]
+    fn an_anchor_owned_by_no_domain_contributes_nothing() {
+        assert!(
+            query_domain_scope(&taxonomy(), &anchors(&["README.md", "scripts/gate.sh"])).is_empty()
+        );
+    }
+
+    #[test]
+    fn an_anchor_in_an_unrecognized_spelling_narrows_less_never_more() {
+        // Anchors are workspace-relative paths in production
+        // (`goal_path_anchors`). A `file://` URI or an absolute path matches
+        // no prefix and drops out of the scope. That is the safe direction: a
+        // smaller scope can only make the gate more reluctant to admit, where
+        // a wrongly-widened one walks back toward the #2289 degeneracy.
+        assert!(
+            query_domain_scope(
+                &taxonomy(),
+                &anchors(&[
+                    "file:///repo/crates/stella-context/src/retrieval.rs",
+                    "/abs/crates/stella-context/src/retrieval.rs",
+                ])
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_goal_touching_every_domain_narrows_nothing() {
+        // The degenerate case reached from this side: a sweeping goal naming a
+        // file in every domain derives the whole vocabulary, which the store
+        // then refuses as evidence. Pinned on both sides of the boundary
+        // because the two halves have to agree on it — this is the exact
+        // predicate that shipped inverted.
+        let taxonomy = taxonomy();
+        let scope = query_domain_scope(
+            &taxonomy,
+            &anchors(&[
+                "crates/stella-context/src/retrieval.rs",
+                "crates/stella-tui/src/deck_ui.rs",
+                "bench/harness.py",
+            ]),
+        );
+        let mut vocabulary = taxonomy.names();
+        vocabulary.sort();
+        assert_eq!(scope, vocabulary, "the scope IS the vocabulary");
     }
 }
