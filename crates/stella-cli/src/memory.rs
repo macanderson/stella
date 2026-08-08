@@ -469,7 +469,10 @@ impl SessionMemory {
                 let store = std::sync::Arc::new(store);
                 let host = crate::contextgraph::session_host(
                     store.clone(),
-                    domains.names(),
+                    // The whole taxonomy, not just its names: the provider
+                    // derives each query's own domain scope from the goal's
+                    // anchors, which needs the path prefixes (#2333).
+                    domains.clone(),
                     workspace_root.to_path_buf(),
                     suppression::suppression_reader(workspace_root, store.clone()),
                 );

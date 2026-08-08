@@ -53,10 +53,11 @@ use contextgraph_types::{
     canonical_order,
 };
 use stella_context::{
-    ContextError, ContextProvider as PlaneProvider, ContextStore, ProviderRegistry,
+    ContextError, ContextProvider as PlaneProvider, ContextStore, ProviderRegistry, RecallScope,
 };
 use stella_protocol::{ContextProviderUsage, ContextUsage};
 
+use crate::domains::Domains;
 use crate::settings::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 
 mod suppression;
@@ -88,10 +89,44 @@ fn local_info(name: &str) -> ProviderInfo {
 /// CGP's `ContextQuery` is workspace-agnostic, and which taxonomy applies is
 /// exactly the kind of local knowledge a provider owns. Identity and
 /// capabilities are the store's own provider declarations.
+///
+/// It holds the whole [`Domains`] taxonomy rather than just its names because
+/// the names alone cannot answer the per-query question: deriving *which*
+/// domains this goal selected needs the path prefixes
+/// ([`Domains::domains_for_path`]), and that derivation is what lets domain
+/// overlap be admission evidence instead of a restatement of "is tagged"
+/// (#2333). Keeping it provider-internal also keeps the wire contract clean —
+/// `ContextQuery` stays workspace-agnostic.
 struct ScopedStore {
     store: Arc<ContextStore>,
-    domains: Vec<String>,
+    domains: Domains,
     suppression: SuppressionReader,
+}
+
+/// The domains *this* goal selected: the union of the domains owning each
+/// workspace file the goal named.
+///
+/// Anchors are workspace-relative paths (`goal_path_anchors`, which is the
+/// only production producer), which is exactly what
+/// [`Domains::domains_for_path`] consumes. An anchor in any other spelling —
+/// an absolute path, a `file://` URI from some future external host — matches
+/// no prefix and contributes nothing, so an unrecognized anchor narrows the
+/// scope less and can only make the gate *more* reluctant to admit. That is
+/// the safe direction, and the reason this needs no URI parsing.
+///
+/// Sorted and deduplicated so the scope is byte-stable across turns that name
+/// the same files in a different order.
+fn query_domain_scope(domains: &Domains, anchors: &[String]) -> Vec<String> {
+    let mut selected: Vec<String> = Vec::new();
+    for anchor in anchors {
+        for name in domains.domains_for_path(anchor) {
+            if !selected.contains(&name) {
+                selected.push(name);
+            }
+        }
+    }
+    selected.sort();
+    selected
 }
 
 #[async_trait]
@@ -111,9 +146,13 @@ impl PlaneProvider for ScopedStore {
         // state at all. Surfacing everything is the one outcome that is
         // definitely wrong.
         let excluded = (self.suppression)().map_err(ContextError::InvalidInput)?;
+        let scope = RecallScope {
+            session: self.domains.names(),
+            query: query_domain_scope(&self.domains, &query.anchors),
+        };
         Ok(self
             .store
-            .recall_scoped_excluding(query, &self.domains, &excluded)
+            .recall_scoped_excluding(query, &scope, &excluded)
             .await?
             .into())
     }
@@ -132,7 +171,7 @@ impl PlaneProvider for ScopedStore {
 /// registering here, not by editing the host adapter.
 fn memory_plane(
     store: Arc<ContextStore>,
-    domains: Vec<String>,
+    domains: Domains,
     suppression: SuppressionReader,
 ) -> ProviderRegistry {
     let mut plane = ProviderRegistry::new();
@@ -269,7 +308,7 @@ impl ContextProvider for GraphProvider {
 /// [`recall_via_host`]. Built once per session by `SessionMemory`.
 pub fn session_host(
     store: Arc<ContextStore>,
-    domains: Vec<String>,
+    domains: Domains,
     workspace_root: PathBuf,
     suppression: SuppressionReader,
 ) -> Host {

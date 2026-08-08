@@ -80,8 +80,8 @@ pub use retrieval::{
     DEFAULT_ANN_ENABLED, DEFAULT_ANN_PROBES, DEFAULT_COVERAGE_TOPK, DEFAULT_LEXICAL_LIMIT,
     DEFAULT_MAX_VECTOR_SEEDS, DEFAULT_MIN_COVERAGE, DEFAULT_MMR_CANDIDATE_MULTIPLE,
     DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_REQUIRE_EVIDENCE, DEFAULT_RRF_K,
-    DropReason, DroppedFrame, RECALL_TIER_PROVENANCE_KIND, RecallResult, RecallTier, RecallTuning,
-    SELECTION_PROVENANCE_KIND, SelectionReason, is_lexical_fallback,
+    DropReason, DroppedFrame, RECALL_TIER_PROVENANCE_KIND, RecallResult, RecallScope, RecallTier,
+    RecallTuning, SELECTION_PROVENANCE_KIND, SelectionReason, is_lexical_fallback,
 };
 pub use store::ledger::{AppendOutcome, LedgerAppend, LedgerRecord};
 pub use store::{
