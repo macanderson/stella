@@ -37,6 +37,18 @@ task it was measuring. This one is invisible to the agent and to the verifier.
 Capture is opt-in and degrades to nothing. No Docker, no git in the image, or a
 container that vanishes mid-sweep yields a trial with no snapshots and a
 warning — never a failed run. Measurement must not be able to cost a benchmark.
+
+**Degrading to nothing is not the same as saying nothing.** That warning was
+only ever emitted by the *start* side; a capture that failed after a clean
+start was logged at ``debug``, and a capture that returned an empty sha was
+logged nowhere at all — so a broken capture and a slow host were the same
+observable, an empty manifest. Since replay reads an empty manifest as
+``flip_index=None``, and an operator reads *that* as "the agent never solved
+it", the silence could record a solved trial as a failure. Every capture
+attempt now leaves an outcome in :class:`CaptureStatus`
+(``arena/snapshots/capture.json``), a trial that captured nothing says so once
+at ``error``, and the record rides into ``flip.json`` so nothing downstream has
+to guess (#2196).
 """
 
 from __future__ import annotations
@@ -49,15 +61,17 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 __all__ = [
     "SNAPSHOT_DIRNAME",
+    "CaptureStatus",
     "FlipResult",
     "SnapshotEntry",
     "SnapshotSupervisor",
     "bisect_first_pass",
+    "load_capture_status",
     "load_manifest",
     "read_task_image",
 ]
@@ -68,6 +82,10 @@ log = logging.getLogger("arenabench.snapshot")
 SNAPSHOT_DIRNAME = "arena/snapshots"
 
 MANIFEST_NAME = "manifest.jsonl"
+
+#: Beside the manifest: why the manifest looks the way it does. See
+#: :class:`CaptureStatus`.
+CAPTURE_STATUS_NAME = "capture.json"
 
 #: The snapshot repository lives here, inside the container but outside the
 #: workspace, so the workspace is never modified. See the module docstring.
@@ -173,6 +191,132 @@ def load_manifest(trial_dir: Path) -> list[SnapshotEntry]:
     return sorted(entries, key=lambda e: e.index)
 
 
+# ---------------------------------------------------------------------------
+# What capture actually did
+# ---------------------------------------------------------------------------
+
+#: The supervisor has seen the trial but capture has not begun yet.
+CAPTURE_STARTING = "starting"
+#: Capture is live and the last attempt landed a snapshot.
+CAPTURE_CAPTURING = "capturing"
+#: Capture ran until the trial (or the run) ended. The manifest is what it got.
+CAPTURE_COMPLETE = "complete"
+#: Capture began and then broke; :attr:`CaptureStatus.reason` says how.
+CAPTURE_FAILED = "failed"
+#: Capture never began — no container, no workspace directory, or no git.
+CAPTURE_UNAVAILABLE = "unavailable"
+
+#: States that mean capture is over and will not resume for this trial.
+TERMINAL_CAPTURE_STATES = (CAPTURE_COMPLETE, CAPTURE_FAILED, CAPTURE_UNAVAILABLE)
+
+
+@dataclass(frozen=True)
+class CaptureStatus:
+    """Why a trial's snapshot manifest looks the way it does.
+
+    The manifest records what capture *achieved*, and nothing recorded what it
+    *attempted*. So a short manifest — or an absent one — read identically
+    whether the trial was short, the host was slow, or capture broke on its
+    first attempt and then retried in silence for the rest of the run. Those
+    are opposite conclusions about the same benchmark trial, and the last one
+    is the dangerous one: replay reads an empty manifest as ``flip_index=None``
+    and an operator reads *that* as "the agent never solved it", which converts
+    a solved trial into a failure in the benchmark record (#2196).
+
+    This is the record that separates them, written beside the manifest as
+    ``arena/snapshots/capture.json`` so it survives the run and is readable by
+    anything that later reads the manifest. It is deliberately a *record*, not
+    an alarm: capture degrades to nothing by design (see the module docstring),
+    and measurement must not be able to cost a benchmark.
+    """
+
+    #: The trial directory's name, so a record read on its own still says who.
+    trial: str
+    #: One of the ``CAPTURE_*`` constants above.
+    state: str
+    #: Snapshots that reached the manifest.
+    snapshots: int
+    #: Capture attempts made, landed or lost. ``attempts - snapshots`` is the
+    #: measurement that was tried for and did not survive.
+    attempts: int
+    #: Consecutive failures at the moment this was written; zero after any
+    #: attempt that landed.
+    failures: int
+    #: The last failure, in full. Never truncated here — the truncated half is
+    #: usually the part that matters.
+    reason: str
+    #: Unix time this record was last written.
+    at: float
+
+    @property
+    def captured_nothing(self) -> bool:
+        """No snapshot ever reached the manifest, so there is nothing to replay.
+
+        The question a downstream consumer has to ask before reading
+        ``flip_index=None`` as "never solved": a trial that was never measured
+        cannot answer it either way.
+        """
+        return self.snapshots <= 0
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "trial": self.trial,
+            "state": self.state,
+            "snapshots": self.snapshots,
+            "attempts": self.attempts,
+            "failures": self.failures,
+            "reason": self.reason,
+            "at": self.at,
+        }
+
+    @staticmethod
+    def from_json(raw: dict[str, object]) -> CaptureStatus | None:
+        try:
+            return CaptureStatus(
+                trial=str(raw["trial"]),
+                state=str(raw["state"]),
+                snapshots=int(raw["snapshots"]),  # type: ignore[arg-type]
+                attempts=int(raw.get("attempts") or 0),  # type: ignore[arg-type]
+                failures=int(raw.get("failures") or 0),  # type: ignore[arg-type]
+                reason=str(raw.get("reason") or ""),
+                at=float(raw.get("at") or 0.0),  # type: ignore[arg-type]
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+
+def load_capture_status(trial_dir: Path) -> CaptureStatus | None:
+    """The capture record for a trial, or ``None`` if there is none.
+
+    ``None`` is not "capture was fine": it is a trial captured before this
+    record existed, or one no supervisor ever looked at. Callers that need to
+    know whether a flip is trustworthy must treat it as *unknown* rather than
+    as consent.
+    """
+    path = trial_dir / SNAPSHOT_DIRNAME / CAPTURE_STATUS_NAME
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return CaptureStatus.from_json(raw) if isinstance(raw, dict) else None
+
+
+def write_capture_status(trial_dir: Path, status: CaptureStatus) -> None:
+    """Record what capture is doing, best-effort.
+
+    Written whole on every change rather than appended to, because the
+    interesting read is always the latest one and a torn tail would cost the
+    record its meaning. A failure to write is logged and swallowed: the whole
+    point of this record is a run that keeps going.
+    """
+    path = trial_dir / SNAPSHOT_DIRNAME / CAPTURE_STATUS_NAME
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(status.to_json(), indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - reporting must not fail a run
+        log.warning("could not write the capture record for %s: %s", trial_dir.name, exc)
+
+
 def read_task_image(task_dir: Path) -> str | None:
     """The docker image a task runs in, read from its ``task.toml``.
 
@@ -269,6 +413,14 @@ class FlipResult:
     probes: int
     #: Snapshots that could not be probed at all.
     unknown: int
+    #: What capture did for this trial, when a record exists (#2196).
+    #:
+    #: Rides along in ``flip.json`` because ``flip_index=None`` is not one
+    #: finding but two: "the agent never solved it" and "capture never worked,
+    #: so this trial was never measured". Reading the second as the first
+    #: records a solved trial as a failure. ``None`` means the trial predates
+    #: the record — unknown, never a clean bill of health.
+    capture: CaptureStatus | None = None
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -278,6 +430,7 @@ class FlipResult:
             "snapshots": self.snapshots,
             "probes": self.probes,
             "unknown": self.unknown,
+            "capture": self.capture.to_json() if self.capture is not None else None,
         }
 
 
@@ -287,6 +440,7 @@ def summarise_flip(
     *,
     probes: int,
     unknown: int,
+    capture: CaptureStatus | None = None,
 ) -> FlipResult:
     """Turn a flip index into the durations an operator actually reads."""
     flip_elapsed: float | None = None
@@ -301,6 +455,7 @@ def summarise_flip(
         snapshots=len(entries),
         probes=probes,
         unknown=unknown,
+        capture=capture,
     )
 
 
@@ -407,10 +562,20 @@ class SnapshotSupervisor:
     interval: float = 30.0
     poll_interval: float = 2.0
     max_start_attempts: int = 3
+    #: Consecutive failed captures before a trial is retired. The start side
+    #: has always given up (``max_start_attempts``); the capture side used to
+    #: retry forever, so a container that went away mid-trial was still paying
+    #: a ``docker exec`` — and its 180 s timeout — every interval for the rest
+    #: of the run. Reset by any capture that lands, so a host that merely
+    #: stumbles is never retired.
+    max_capture_attempts: int = 5
 
     _active: dict[Path, _Capture] = field(default_factory=dict, init=False)
     _finished: set[Path] = field(default_factory=set, init=False)
     _failures: dict[Path, int] = field(default_factory=dict, init=False)
+    _capture_failures: dict[Path, int] = field(default_factory=dict, init=False)
+    _status: dict[Path, CaptureStatus] = field(default_factory=dict, init=False)
+    _finalised: set[Path] = field(default_factory=set, init=False)
     _last: dict[Path, float] = field(default_factory=dict, init=False)
     _thread: threading.Thread | None = field(default=None, init=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False)
@@ -434,12 +599,31 @@ class SnapshotSupervisor:
             thread.join(timeout=timeout)
         self._thread = None
         with self._lock:
+            pending = list(self._status)
             self._active.clear()
+        # A run can end while trials are still live — an abort, the wall clock,
+        # or `result.json` simply never arriving. Closing their records here is
+        # what stops "capture was still going" from being read later as
+        # "capture finished and found nothing".
+        for trial_dir in pending:
+            self._finalise(trial_dir)
 
     @property
     def active_count(self) -> int:
         with self._lock:
             return len(self._active)
+
+    def unmeasured(self) -> list[CaptureStatus]:
+        """Every trial whose capture produced no snapshots at all.
+
+        The machine-readable half of the loud line :meth:`_finalise` logs. A
+        caller holding this list knows which trials' ``flip_index=None`` means
+        "never measured" rather than "never solved", and can refuse to score
+        them instead of recording a solved trial as a failure (#2196).
+        """
+        with self._lock:
+            statuses = list(self._status.values())
+        return [s for s in statuses if s.captured_nothing]
 
     # -- internals --------------------------------------------------------
 
@@ -474,6 +658,7 @@ class SnapshotSupervisor:
                 with self._lock:
                     self._active.pop(trial_dir, None)
                 self._finished.add(trial_dir)
+                self._finalise(trial_dir)
                 return
             if time.monotonic() - self._last.get(trial_dir, 0.0) >= self.interval:
                 self._snapshot(trial_dir, capture)
@@ -482,16 +667,162 @@ class SnapshotSupervisor:
         if finished or not (trial_dir / "agent").is_dir():
             if finished:
                 self._finished.add(trial_dir)
+                # Only if a record exists: a trial capture never looked at is
+                # not a trial capture failed on, and inventing a record for it
+                # would be its own false signal.
+                self._finalise(trial_dir)
             return
         self._begin(trial_dir)
+
+    # -- the capture record ------------------------------------------------
+
+    def _status_for(self, trial_dir: Path) -> CaptureStatus:
+        with self._lock:
+            status = self._status.get(trial_dir)
+        return status or CaptureStatus(
+            trial=trial_dir.name,
+            state=CAPTURE_STARTING,
+            snapshots=0,
+            attempts=0,
+            failures=0,
+            reason="",
+            at=time.time(),
+        )
+
+    def _write_status(self, trial_dir: Path, status: CaptureStatus) -> None:
+        """Update the record in memory and on disk. Never called under the lock."""
+        with self._lock:
+            self._status[trial_dir] = status
+        write_capture_status(trial_dir, status)
+
+    def _finalise(self, trial_dir: Path) -> None:
+        """Close a trial's capture record, loudly when it measured nothing.
+
+        A trial that captured zero snapshots is a broken measurement, not a
+        quiet edge case: replay has no manifest to search, reports
+        ``flip_index=None``, and an operator reads that as "the agent never
+        solved it". Saying so once at ``error`` — and leaving the same fact in
+        ``capture.json`` for anything reading afterwards — is the difference
+        between a wrong benchmark number and a line naming the reason.
+
+        Never raises and never aborts the run: the module's standing invariant
+        is that measurement must not be able to cost a benchmark.
+        """
+        if trial_dir in self._finalised or trial_dir not in self._status:
+            return
+        self._finalised.add(trial_dir)
+        status = self._status_for(trial_dir)
+        if status.state in TERMINAL_CAPTURE_STATES:
+            state = status.state
+        elif status.snapshots:
+            state = CAPTURE_COMPLETE
+        elif status.state == CAPTURE_STARTING:
+            state = CAPTURE_UNAVAILABLE  # capture never began
+        else:
+            state = CAPTURE_FAILED  # it began, and produced nothing
+        final = replace(status, state=state, at=time.time())
+        self._write_status(trial_dir, final)
+        if final.captured_nothing:
+            log.error(
+                "no snapshots captured for %s (%s after %d attempt(s)): %s — a flip "
+                "replay of this trial cannot tell 'never solved' from 'never "
+                "measured', so do not score it as either",
+                final.trial,
+                final.state,
+                final.attempts,
+                final.reason or "no failure was recorded",
+            )
 
     def _fail(self, trial_dir: Path, detail: str) -> None:
         count = self._failures.get(trial_dir, 0) + 1
         self._failures[trial_dir] = count
         if count == 1:
             log.warning("snapshots unavailable for %s: %s", trial_dir.name, detail)
-        if count >= self.max_start_attempts:
+        retired = count >= self.max_start_attempts
+        if retired:
             self._finished.add(trial_dir)
+        status = self._status_for(trial_dir)
+        self._write_status(
+            trial_dir,
+            replace(
+                status,
+                state=CAPTURE_UNAVAILABLE if retired else CAPTURE_STARTING,
+                attempts=status.attempts + 1,
+                failures=count,
+                reason=detail,
+                at=time.time(),
+            ),
+        )
+        if retired:
+            self._finalise(trial_dir)
+
+    def _capture_failed(self, trial_dir: Path, detail: str) -> None:
+        """A capture attempt produced no snapshot. Escalate the way `_fail` does.
+
+        Shaped deliberately like :meth:`_fail`, because the asymmetry between
+        them *was* the bug: the start side escalated its first failure to
+        ``warning`` and retired the trial after N attempts, while the capture
+        side logged at ``debug`` and retried forever — so "capture is broken"
+        and "this host is slow" were the same observable, an empty manifest and
+        silence (#2196).
+
+        Once at ``warning`` and the rest at ``debug`` is the same anti-spam
+        shape ``_fail`` uses: the first failure is the diagnosis, and a wedged
+        container would otherwise fill the run log with the same line every
+        interval.
+        """
+        failures = self._capture_failures.get(trial_dir, 0) + 1
+        self._capture_failures[trial_dir] = failures
+        if failures == 1:
+            log.warning("snapshot capture failed for %s: %s", trial_dir.name, detail)
+        else:
+            log.debug(
+                "snapshot capture failed for %s (%d in a row): %s",
+                trial_dir.name,
+                failures,
+                detail,
+            )
+        status = self._status_for(trial_dir)
+        retired = failures >= self.max_capture_attempts
+        self._write_status(
+            trial_dir,
+            replace(
+                status,
+                state=CAPTURE_FAILED if retired else CAPTURE_CAPTURING,
+                attempts=status.attempts + 1,
+                failures=failures,
+                reason=detail,
+                at=time.time(),
+            ),
+        )
+        if not retired:
+            return
+        log.warning(
+            "giving up on snapshots for %s after %d consecutive failures: %s",
+            trial_dir.name,
+            failures,
+            detail,
+        )
+        self._finished.add(trial_dir)
+        with self._lock:
+            self._active.pop(trial_dir, None)
+        self._finalise(trial_dir)
+
+    def _captured(self, trial_dir: Path) -> None:
+        """One snapshot reached the manifest: the trial is measurable again."""
+        self._capture_failures.pop(trial_dir, None)
+        status = self._status_for(trial_dir)
+        self._write_status(
+            trial_dir,
+            replace(
+                status,
+                state=CAPTURE_CAPTURING,
+                snapshots=status.snapshots + 1,
+                attempts=status.attempts + 1,
+                failures=0,
+                at=time.time(),
+            ),
+        )
 
     def _begin(self, trial_dir: Path) -> None:
         container = container_for_trial(trial_dir)
@@ -525,10 +856,24 @@ class SnapshotSupervisor:
             capture.container, _commit_script(capture.workspace, capture.index)
         )
         if code != 0:
-            log.debug("snapshot commit failed for %s: %s", trial_dir.name, out[-200:])
+            self._capture_failed(
+                trial_dir,
+                f"the snapshot commit exited {code}: {out.strip()[-200:] or '(no output)'}",
+            )
             return
         sha = out.strip().splitlines()[-1].strip() if out.strip() else ""
         if not sha:
+            # A genuinely different fault from the branch above, and previously
+            # recorded nowhere at all — not even at `debug`: the commit
+            # *succeeded* and `rev-parse HEAD` still printed nothing, which is
+            # what the snapshot repo disappearing out from under a live
+            # container looks like. Named separately so the two cannot be
+            # confused after the fact.
+            self._capture_failed(
+                trial_dir,
+                "the snapshot commit succeeded but `git rev-parse HEAD` printed no "
+                "sha — the snapshot repository is gone or unreadable",
+            )
             return
 
         snap_dir = trial_dir / SNAPSHOT_DIRNAME
@@ -562,7 +907,13 @@ class SnapshotSupervisor:
             with (snap_dir / MANIFEST_NAME).open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(entry.to_json()) + "\n")
         except OSError as exc:
-            log.debug("could not append manifest for %s: %s", trial_dir.name, exc)
+            # The snapshot was taken and is now unreachable: the manifest is
+            # the only index into the patches. From the manifest's point of
+            # view — which is the only view replay has — this attempt captured
+            # nothing, so it is counted as the failure it is.
+            self._capture_failed(trial_dir, f"could not append the manifest: {exc}")
+        else:
+            self._captured(trial_dir)
         capture.index += 1
 
 

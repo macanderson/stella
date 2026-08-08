@@ -25,6 +25,7 @@ from .recorder import IMAGE_TAG, build_image, docker_available, image_present
 from .registry import DEFAULT_REGISTRY, export_root, sample_tasks
 from .replay import ReplayError, replay_flip
 from .server import default_workspace, serve
+from .snapshot import CAPTURE_FAILED
 
 __all__ = ["main"]
 
@@ -476,6 +477,18 @@ def _cmd_flip(args: argparse.Namespace) -> int:
             f"no snapshot passed ({result.snapshots} captured, "
             f"{result.probes} probed, {result.unknown} unknown)"
         )
+        # "No snapshot passed" reads as "the agent never solved it", so it must
+        # never be printed alone when capture is the thing that failed — that
+        # is how a solved trial gets recorded as a failure (#2196).
+        capture = result.capture
+        if capture is not None and capture.state == CAPTURE_FAILED:
+            print(
+                f"warning: capture broke during this trial after "
+                f"{capture.attempts} attempt(s) — {capture.reason}\n"
+                "         this trial was not fully measured; do not read the "
+                "absence of a flip as the agent never solving it",
+                file=sys.stderr,
+            )
         return 0
     print(
         f"flip at snapshot {result.flip_index}/{result.snapshots - 1} "
