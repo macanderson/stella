@@ -352,7 +352,8 @@ class TestDiscoveryFailsOpenNeverGuesses:
         assert turn_budget.discover_trial_deadline(logs_dir) is None
 
     def test_a_task_directory_with_no_task_toml(self, tmp_path: Path) -> None:
-        assert turn_budget.discover_trial_deadline(_trial_tree(tmp_path, task_timeout_sec=None)) is None
+        logs_dir = _trial_tree(tmp_path, task_timeout_sec=None)
+        assert turn_budget.discover_trial_deadline(logs_dir) is None
 
     def test_a_task_toml_that_is_not_toml(self, tmp_path: Path) -> None:
         logs_dir = _trial_tree(tmp_path)
@@ -384,16 +385,20 @@ class TestTrialDeadlineArithmeticMirrorsHarbor:
         assert turn_budget.trial_agent_deadline(config, 900.0) == 1200.0
 
     def test_a_cap_lowers_but_never_raises(self) -> None:
-        assert turn_budget.trial_agent_deadline({"agent": {"max_timeout_sec": 600.0}}, 900.0) == 600.0
-        assert turn_budget.trial_agent_deadline({"agent": {"max_timeout_sec": 3600.0}}, 900.0) == 900.0
+        lowered = {"agent": {"max_timeout_sec": 600.0}}
+        raised = {"agent": {"max_timeout_sec": 3600.0}}
+        assert turn_budget.trial_agent_deadline(lowered, 900.0) == 600.0
+        assert turn_budget.trial_agent_deadline(raised, 900.0) == 900.0
 
     def test_the_agent_multiplier_wins_over_the_global_one(self) -> None:
         config = {"timeout_multiplier": 3.0, "agent_timeout_multiplier": 2.0}
         assert turn_budget.trial_agent_deadline(config, 900.0) == 1800.0
-        assert turn_budget.trial_agent_deadline({"timeout_multiplier": 3.0}, 900.0) == 2700.0
+        global_only = {"timeout_multiplier": 3.0}
+        assert turn_budget.trial_agent_deadline(global_only, 900.0) == 2700.0
 
     def test_no_stated_base_is_no_deadline(self) -> None:
-        assert turn_budget.trial_agent_deadline({"timeout_multiplier": 2.0}, None) is None
+        stated = {"timeout_multiplier": 2.0}
+        assert turn_budget.trial_agent_deadline(stated, None) is None
 
     def test_a_stated_zero_multiplier_is_no_time_not_a_missing_multiplier(
         self,
@@ -404,7 +409,8 @@ class TestTrialDeadlineArithmeticMirrorsHarbor:
         "unstated" would arm a full-length deadline against a run that has
         none, so the two parsers are deliberately different.
         """
-        assert turn_budget.trial_agent_deadline({"agent_timeout_multiplier": 0}, 900.0) == 0.0
+        instant = {"agent_timeout_multiplier": 0}
+        assert turn_budget.trial_agent_deadline(instant, 900.0) == 0.0
         assert resolve_turn_budget(None, None, None) is None
         assert turn_budget.coerce_timeout_multiplier(0) == 0.0
         assert coerce_timeout_seconds(0) is None
