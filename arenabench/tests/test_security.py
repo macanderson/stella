@@ -186,6 +186,92 @@ class TestLoopbackOnly:
             server_module.ThreadingHTTPServer = original  # type: ignore[misc]
         assert stop.is_set()
 
+    def test_an_arena_already_serving_this_workspace_is_reused_not_duplicated(
+        self, tmp_path: Path, monkeypatch, capsys
+    ):
+        """A second arena over one workspace is a hazard, not a convenience.
+
+        Every arena reads the same on-disk match store, so duplicates show the
+        same runs while adding a port to remember, a process to kill, and two
+        servers able to drive one run. Left unchecked this produced six arenas
+        on one machine over one workspace. Witness: without the reuse probe,
+        `serve` binds a second socket and never prints the running arena's URL.
+        """
+        from arenabench import server as server_module
+
+        bound: list[int] = []
+
+        class _ShouldNotBind:
+            def __init__(self, addr, _handler):
+                bound.append(addr[1])
+                self.daemon_threads = False
+
+        monkeypatch.setattr(
+            server_module, "ThreadingHTTPServer", _ShouldNotBind, raising=True
+        )
+        # An arena is already up on 8902 over this very workspace.
+        monkeypatch.setattr(
+            server_module,
+            "probe_arena",
+            lambda host, port, **kw: str(tmp_path) if port == 8902 else None,
+            raising=True,
+        )
+
+        serve(tmp_path, host="127.0.0.1", port=8902)
+
+        assert bound == [], "reuse must not open a second socket"
+        out = capsys.readouterr().out
+        assert "http://127.0.0.1:8902/" in out
+        assert "--no-reuse" in out, "the escape hatch has to be discoverable"
+
+    def test_no_reuse_still_starts_a_fresh_arena(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The escape hatch stays honest: asked for a new one, bind a new one."""
+        from arenabench import server as server_module
+
+        bound: list[int] = []
+
+        class _Server:
+            def __init__(self, addr, _handler):
+                bound.append(addr[1])
+                self.daemon_threads = False
+
+            def serve_forever(self):
+                raise KeyboardInterrupt
+
+            def shutdown(self):
+                pass
+
+            def server_close(self):
+                pass
+
+        monkeypatch.setattr(
+            server_module, "ThreadingHTTPServer", _Server, raising=True
+        )
+        monkeypatch.setattr(
+            server_module, "probe_arena", lambda *a, **k: str(tmp_path), raising=True
+        )
+
+        serve(tmp_path, host="127.0.0.1", port=8902, reuse=False)
+
+        assert bound == [8902]
+
+    def test_a_port_held_by_a_different_workspaces_arena_is_refused(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Two workspaces are two experiments; sharing a port would conflate them."""
+        from arenabench import server as server_module
+
+        monkeypatch.setattr(
+            server_module,
+            "probe_arena",
+            lambda host, port, **kw: "/somewhere/else",
+            raising=True,
+        )
+        with pytest.raises(ValueError, match="different arena"):
+            serve(tmp_path, host="127.0.0.1", port=8902)
+
     def test_only_the_bound_address_is_an_acceptable_host_header(self):
         hosts = allowed_hosts("127.0.0.1", 8900)
         assert "127.0.0.1:8900" in hosts and "localhost:8900" in hosts

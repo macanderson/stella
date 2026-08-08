@@ -115,6 +115,57 @@ def is_loopback(host: str) -> bool:
     return host.strip().lower() in LOOPBACK_HOSTS
 
 
+#: Ports `serve` sweeps looking for an arena that is already up. The default
+#: plus a small window, because that is where previous arenas actually land:
+#: an operator who hits "address in use" tries the next number, and on this
+#: machine that produced six arenas on 8181/8900/8901/8902/8917/8933, all
+#: serving one workspace, none of them aware of the others. Bounded and
+#: deterministic on purpose — discovery must cost a handful of loopback
+#: connects, never a port scan.
+ARENA_DISCOVERY_PORTS: tuple[int, ...] = (8900, 8901, 8902, 8903, 8904, 8905)
+
+
+def probe_arena(host: str, port: int, *, timeout: float = 0.6) -> str | None:
+    """The workspace an arena on ``host:port`` is serving, or ``None``.
+
+    ``None`` covers every not-an-arena case identically — nothing listening, a
+    foreign service, a half-open socket, an arena too wedged to answer — because
+    the caller's next move is the same for all of them and a taxonomy of
+    failures here would only be a taxonomy of guesses.
+    """
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(
+            f"http://{host}:{port}/api/health", timeout=timeout
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        return None
+    workspace = payload.get("workspace")
+    return str(workspace) if workspace else None
+
+
+def find_running_arena(
+    workspace: Path, host: str, *, ports: tuple[int, ...] = ARENA_DISCOVERY_PORTS
+) -> int | None:
+    """The port of a live arena already serving ``workspace``, if there is one.
+
+    Matched on the resolved workspace, not merely on "something answered": two
+    arenas over different workspaces are two different experiments and must not
+    be silently conflated.
+    """
+    target = str(workspace.expanduser().resolve())
+    for port in ports:
+        served = probe_arena(host, port)
+        if served and str(Path(served).expanduser().resolve()) == target:
+            return port
+    return None
+
+
 def allowed_hosts(host: str, port: int) -> frozenset[str]:
     """Every ``Host`` header value that names the loopback arena.
 
@@ -904,14 +955,22 @@ def serve(
     registry: Registry | None = None,
     open_browser: bool = False,
     allow_remote: bool = False,
+    reuse: bool = True,
 ) -> None:
-    """Run the arena until interrupted.
+    """Run the arena until interrupted, or attach to one already serving it.
 
     Raises :class:`ValueError` on a non-loopback ``host`` unless ``allow_remote``
     says the operator meant it. Refusing rather than warning is the point: the
     warning was printed after the socket was already open, to a terminal nobody
     reads twice, on the one decision that hands strangers a shell's worth of
     credentials.
+
+    With ``reuse`` (the default) an arena already serving this workspace is
+    reported and reused rather than duplicated. Every arena reads the same
+    on-disk match store, so a second one shows the same runs while adding a
+    port to remember, a process to kill, and a real hazard: two arenas over one
+    workspace can both drive a run. Pass ``reuse=False`` to insist on a fresh
+    bind, which then fails honestly if the port is taken.
     """
     local = is_loopback(host)
     if not local and not allow_remote:
@@ -920,6 +979,28 @@ def serve(
             "launch runs with your provider credentials. Pass --allow-remote if "
             "that is genuinely what you want."
         )
+    if reuse:
+        # The requested port first: asking for one that already serves this
+        # workspace is the common case, and it should attach rather than raise
+        # "address already in use" at a caller who wanted exactly that arena.
+        existing = find_running_arena(
+            workspace, host, ports=(port, *ARENA_DISCOVERY_PORTS)
+        )
+        if existing is not None:
+            url = f"http://{host}:{existing}/"
+            print(f"\n  arenabench  ->  {url}  (already serving this workspace)")
+            print(f"  workspace   ->  {workspace}")
+            print("  reusing it instead of starting a second arena over the same")
+            print("  match store; pass --no-reuse to force a new one.\n")
+            if open_browser:
+                __import__("webbrowser").open(url)
+            return
+        occupant = probe_arena(host, port)
+        if occupant is not None:
+            raise ValueError(
+                f"port {port} already serves a different arena "
+                f"(workspace {occupant}); choose another --port"
+            )
     arena = ArenaServer(workspace, registry)
     handler = _handler_factory(arena, allowed_hosts(host, port) if local else None)
     httpd = ThreadingHTTPServer((host, port), handler)
