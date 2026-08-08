@@ -741,6 +741,113 @@ fn heuristic_fallback_passes_only_on_confirmed_green_tests() {
     );
 }
 
+/// #2129 witness, first half: a `verify_done` confirmation is deterministic
+/// tool evidence and must rescue the fallback exactly as the oracle's own
+/// flip does (#1788). The oracle tracks only its own command, so a run whose
+/// witness was proven by the worker's `verify_done` call had
+/// `flip_achieved: false` and a `WITNESS CONFIRMED` tool result in the same
+/// trace — and the fallback failed it.
+#[test]
+fn a_verify_done_confirmation_rescues_the_fallback_like_a_flip() {
+    let confirmed = heuristic_fallback(&LadderInputs {
+        flip_achieved: false,
+        touched_tests_passed: None,
+        verify_done_flip: true,
+        diff_lines: 5,
+        diff_budget: 100,
+        diff_available: true,
+        mutating_actions: 1,
+        ..Default::default()
+    });
+    assert!(
+        confirmed.passed,
+        "a proven baseline-pinned flip must survive a verifier outage"
+    );
+    assert!(
+        confirmed.reasoning.contains("verify_done"),
+        "the reason must name the evidence it credited: {}",
+        confirmed.reasoning
+    );
+    // The same inputs without the confirmation are the pre-existing FAIL —
+    // this is what makes the assertion above about the new channel and not
+    // about some other relaxation.
+    assert!(
+        !heuristic_fallback(&LadderInputs {
+            verify_done_flip: false,
+            diff_lines: 5,
+            diff_budget: 100,
+            diff_available: true,
+            mutating_actions: 1,
+            ..Default::default()
+        })
+        .passed
+    );
+}
+
+/// #2129 witness, second half: when no tracked test command exists at all,
+/// "no flip" is a demand the task structurally cannot meet, and failing on it
+/// is a verdict about the pipeline's own instrumentation rather than about
+/// the work.
+///
+/// The shape is `count-dataset-tokens`: the deliverable is a one-line
+/// `answer.txt`, there is nothing to flip, the worker solved it and stopped
+/// cleanly — and a degraded verdict re-opened execution and burned 45% of the
+/// trial re-deriving an answer that never changed.
+///
+/// The abstention is upward but NOT a full pass:
+/// [`LadderInputs::verifier_pass_stands_alone`] still holds over these
+/// inputs, so the caller scores the candidate `Unverified`.
+#[test]
+fn an_unobtainable_flip_demand_abstains_instead_of_failing() {
+    let untestable = LadderInputs {
+        flip_achieved: false,
+        touched_tests_passed: None,
+        no_test_surface: true,
+        diff_lines: 3,
+        diff_budget: 100,
+        diff_available: true,
+        mutating_actions: 2,
+        ..Default::default()
+    };
+    let verdict = heuristic_fallback(&untestable);
+    assert!(
+        verdict.passed,
+        "a demand the task cannot meet must not read as the task failing"
+    );
+    assert!(
+        verdict.reasoning.contains("structurally unobtainable"),
+        "the reason must say WHY it abstained, not just that it passed: {}",
+        verdict.reasoning
+    );
+    assert!(
+        untestable.verifier_pass_stands_alone(),
+        "nothing deterministic backs this, so it scores unverified downstream"
+    );
+
+    // With a tracked command available, the same all-dark evidence is a
+    // genuine failure to produce what the task COULD have produced.
+    assert!(
+        !heuristic_fallback(&LadderInputs {
+            no_test_surface: false,
+            ..untestable
+        })
+        .passed
+    );
+    // And the abstention needs observed work: an all-quiet turn with no
+    // command still fails closed rather than passing on emptiness.
+    assert!(
+        !heuristic_fallback(&LadderInputs {
+            no_test_surface: true,
+            ..LadderInputs::default()
+        })
+        .passed
+    );
+    // The dispensation is opt-in by construction: the all-dark default must
+    // never be the permissive input, because a caller that forgets this
+    // field would then silently buy an abstention.
+    assert!(!LadderInputs::default().no_test_surface);
+}
+
 #[test]
 fn evidence_builders_tag_determinism_correctly() {
     assert!(
