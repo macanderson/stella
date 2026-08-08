@@ -505,6 +505,15 @@ class MatchSpec:
     #: installer rather than its ability — so the operator gets a knob
     #: instead of a mystery.
     setup_timeout_multiplier: float = 1.0
+    #: Scales every task's agent-execution budget (Harbor's
+    #: ``--agent-timeout-multiplier``). Terminal-Bench pins 900s per task,
+    #: which build-heavy tasks exhaust while genuinely working — and Stella's
+    #: witness stage runs *after* execution, so the default budget can starve
+    #: the one measurement #2089 exists to take. Raising this deviates from
+    #: the dataset's standard conditions: fine for a head-to-head where every
+    #: arm gets the same multiplier, but a number quoted against external
+    #: leaderboards must disclose it.
+    agent_timeout_multiplier: float = 1.0
     #: Capture a real MP4 screen recording per trial (see :mod:`.recorder`).
     record_video: bool = False
     #: Capture periodic workspace snapshots so `arenabench flip` can find the
@@ -539,6 +548,7 @@ class MatchSpec:
             "attempts": self.attempts,
             "concurrency": self.concurrency,
             "setup_timeout_multiplier": self.setup_timeout_multiplier,
+            "agent_timeout_multiplier": self.agent_timeout_multiplier,
             "record_video": self.record_video,
             "capture_snapshots": self.capture_snapshots,
             "snapshot_interval": self.snapshot_interval,
@@ -563,6 +573,9 @@ class MatchSpec:
             concurrency=max(1, int(raw.get("concurrency") or 1)),
             setup_timeout_multiplier=max(
                 1.0, float(raw.get("setup_timeout_multiplier") or 1.0)
+            ),
+            agent_timeout_multiplier=max(
+                1.0, float(raw.get("agent_timeout_multiplier") or 1.0)
             ),
             record_video=bool(raw.get("record_video")),
             capture_snapshots=bool(raw.get("capture_snapshots")),
