@@ -129,6 +129,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"  {line}", file=sys.stderr)
         return 2
 
+    # The same SUT preflight the server runs in `create_match`, which this
+    # path never consulted: #2098's reproduction entered exactly here, a
+    # template whose default `main` had moved since the build, and the match
+    # launched anyway. Refusing before any container starts is the contract.
+    from .sut import sut_problem_for
+
+    sut_problem = sut_problem_for(spec)
+    if sut_problem:
+        print("error: the match cannot run the Stella it declares:", file=sys.stderr)
+        print(f"  {sut_problem}", file=sys.stderr)
+        return 2
+
     workspace = Path(args.workspace).expanduser()
     arena = ArenaServer(workspace)
     runner: MatchRunner = arena.runner

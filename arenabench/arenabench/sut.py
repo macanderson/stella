@@ -57,14 +57,18 @@ __all__ = [
     "STELLA_REPO_ENV",
     "Branch",
     "Drift",
+    "ResolvedPin",
     "StagedSut",
     "SutUnavailableError",
     "ambient_sut",
     "binary_for",
+    "broken_pin_problem",
     "drift_between",
     "embedded_commit",
     "list_branches",
+    "resolve_pin",
     "resolve_ref",
+    "staged_commits",
     "staged_for",
     "stella_repo",
     "sut_problem_for",
@@ -498,6 +502,36 @@ def binary_for(commit: str) -> StagedSut | None:
     return None
 
 
+def staged_commits() -> list[str]:
+    """Every commit with a staged binary, newest build first.
+
+    The per-commit cache directories plus the legacy path when it records a
+    commit. Used to *name* what is available when a pin cannot be satisfied —
+    "no binary for X, the nearest build is N commits behind" calls for a very
+    different reaction than "nothing has ever been built".
+    """
+    found: list[tuple[float, str]] = []
+    try:
+        children = list(sut_root().iterdir())
+    except OSError:
+        children = []
+    for child in children:
+        if not _FULL_SHA.match(child.name):
+            continue
+        staged = _staged_at(child)
+        if staged is not None:
+            found.append((staged.built_at, child.name))
+    legacy = legacy_staged()
+    if legacy is not None and _FULL_SHA.match(legacy.commit):
+        found.append((legacy.built_at, legacy.commit))
+    found.sort(reverse=True)
+    ordered: list[str] = []
+    for _, commit in found:
+        if commit not in ordered:
+            ordered.append(commit)
+    return ordered
+
+
 def drift_between(staged: str, target: str, repo: Path | None = None) -> Drift:
     """How far ``staged`` is from ``target`` in this checkout."""
     if not staged:
@@ -515,6 +549,107 @@ def drift_between(staged: str, target: str, repo: Path | None = None) -> Drift:
     except (SutUnavailableError, ValueError, IndexError):
         return Drift(staged=staged, target=target, comparable=False)
     return Drift(staged=staged, target=target, behind=behind, ahead=ahead)
+
+
+def _nearest_staged(target: str, repo: Path | None = None) -> Drift | None:
+    """The staged build nearest ``target``, as a drift, or ``None``.
+
+    "Nearest" prefers a comparable drift with the smallest total distance;
+    an incomparable one (built elsewhere, force-pushed away) is only ever the
+    answer when nothing comparable exists, because "cannot be compared" is
+    the least actionable thing a refusal can say.
+    """
+
+    def distance(drift: Drift) -> tuple[int, int]:
+        return (0, drift.behind + drift.ahead) if drift.comparable else (1, 0)
+
+    best: Drift | None = None
+    for commit in staged_commits():
+        drift = drift_between(commit, target, repo)
+        if best is None or distance(drift) < distance(best):
+            best = drift
+    return best
+
+
+@dataclass(frozen=True)
+class ResolvedPin:
+    """One observation of a SUT pin, made exactly once per match.
+
+    ``SutBuilder.start`` and the launch path used to each resolve the same
+    symbolic ref independently, minutes apart — long enough for ``main`` to
+    move between them, at which point the launch found no staged binary and
+    silently degraded to the ambient/``PATH`` tier (#2098). Resolving into a
+    value and handing *that* around is the coordination: provenance, the seat
+    launch record, and the binary actually uploaded all read this one
+    observation, so they cannot disagree about which commit a floating ref
+    meant.
+    """
+
+    #: The pin as declared. ``""`` is the explicit unpinned opt-out.
+    ref: str
+    #: The commit the ref resolved to; ``""`` when unpinned or unresolvable.
+    commit: str = ""
+    #: The staged binary for that commit, when one exists.
+    staged: StagedSut | None = None
+    #: Why resolution failed, when it did.
+    problem: str = ""
+
+    @property
+    def pinned(self) -> bool:
+        return bool(self.ref)
+
+
+def resolve_pin(ref: str) -> ResolvedPin:
+    """Resolve a declared pin to a commit and its staged binary, once.
+
+    Never raises: an unresolvable pin comes back with :attr:`ResolvedPin.problem`
+    set, so the caller decides whether that refuses a launch
+    (:func:`broken_pin_problem`) or merely records unknown (provenance).
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return ResolvedPin(ref="")
+    try:
+        commit = resolve_ref(ref)
+    except SutUnavailableError as exc:
+        return ResolvedPin(ref=ref, problem=str(exc))
+    return ResolvedPin(ref=ref, commit=commit, staged=binary_for(commit))
+
+
+def broken_pin_problem(pin: ResolvedPin) -> str | None:
+    """Why a *declared* pin cannot be satisfied — a refusal, never a fallback.
+
+    ``None`` means the pin is healthy, or there is no pin at all — the
+    unpinned posture is a different judgment (:func:`unpinned_problem`).
+    Anything else is #2098's contract: a match that declared a pin and cannot
+    honour it must refuse the trial, because the silent alternative was the
+    launch degrading to the ambient/``PATH`` tier — which once uploaded the
+    operator's native macOS build into every Linux task container.
+    """
+    if not pin.pinned:
+        return None
+    if pin.problem:
+        return (
+            f"Stella seat pinned to {pin.ref!r}, but the pin cannot be "
+            f"resolved: {pin.problem}. Refusing to fall back to an ambient "
+            "binary — clear the SUT pin to run unpinned on purpose."
+        )
+    if pin.staged is not None:
+        return None
+    nearest = _nearest_staged(pin.commit)
+    detail = (
+        f"the nearest staged build is {nearest.summary()}"
+        if nearest is not None
+        else "nothing is staged at all"
+    )
+    return (
+        f"Stella seat pinned to {pin.ref!r}, which resolved to "
+        f"{pin.commit[:8]}, but no binary is staged for that commit — "
+        f"{detail}. If {pin.ref!r} is a branch it has moved since the build; "
+        "pin the commit the build resolved to (the SUT panel and the build "
+        "record both report it), or build the new tip. Refusing rather than "
+        "falling back to an ambient binary (#2098)."
+    )
 
 
 def file_sha256(path: Path) -> str:
@@ -573,26 +708,50 @@ def sut_problem_for(spec: Any) -> str | None:
     ``None`` means "go". A string is a refusal, phrased for an operator who
     now has to do something about it.
 
-    Only matches carrying a Stella seat are checked — a Claude-Code-vs-Codex
-    contest has no system under test of ours and must not be blocked by the
-    state of a binary it never runs. An empty ``sut_ref`` opts out of *pinning*,
-    not out of every check: see :func:`unpinned_problem`.
+    Checked **per seat**: each Stella seat's effective pin — its own
+    ``sut_ref`` override when it declared one, the match-level default
+    otherwise — is judged independently, so a champion-vs-challenger match
+    refuses when *either* build is missing rather than checking one ref and
+    vouching for both (#2082). Only Stella seats are checked — a
+    Claude-Code-vs-Codex contest has no system under test of ours and must
+    not be blocked by the state of a binary it never runs. An empty effective
+    ref opts that seat out of *pinning*, not out of every check: see
+    :func:`unpinned_problem`.
     """
-    if not any(c.agent == "stella" for c in spec.contestants):
+    stella_seats = [c for c in spec.contestants if c.agent == "stella"]
+    if not stella_seats:
         return None
-    if not getattr(spec, "sut_ref", ""):
-        return unpinned_problem()
-    status = sut_status(spec.sut_ref)
-    if status["ready"]:
-        return None
-    detail = status.get("problem") or "the requested Stella build is unavailable"
-    return (
-        f"Stella seat pinned to {spec.sut_ref!r}, but {detail} "
-        "Build it from the arena's SUT panel, or run "
-        "`bench/evidence/run/build_sut.sh`. To measure an unattributable "
-        "binary on purpose, clear the SUT pin — the match is then recorded "
-        "as unverified."
-    )
+    problems: list[str] = []
+    status_by_ref: dict[str, dict[str, Any]] = {}
+    unpinned_checked = False
+    for seat in stella_seats:
+        override = getattr(seat, "sut_ref", None)
+        ref = getattr(spec, "sut_ref", "") if override is None else override
+        if not ref:
+            # One ambient binary serves every unpinned seat, so the verdict
+            # is per-machine, not per-seat — checking it once is reporting,
+            # not skipping.
+            if not unpinned_checked:
+                unpinned = unpinned_problem()
+                if unpinned:
+                    problems.append(unpinned)
+                unpinned_checked = True
+            continue
+        status = status_by_ref.get(ref)
+        if status is None:
+            status = sut_status(ref)
+            status_by_ref[ref] = status
+        if status["ready"]:
+            continue
+        detail = status.get("problem") or "the requested Stella build is unavailable"
+        problems.append(
+            f"Stella seat {seat.name!r} pinned to {ref!r}, but {detail} "
+            "Build it from the arena's SUT panel, or run "
+            "`bench/evidence/run/build_sut.sh`. To measure an unattributable "
+            "binary on purpose, clear the SUT pin — the match is then recorded "
+            "as unverified."
+        )
+    return "; ".join(problems) if problems else None
 
 
 def sut_status(ref: str = "main") -> dict[str, Any]:
@@ -642,18 +801,20 @@ def sut_status(ref: str = "main") -> dict[str, Any]:
 
     # Nothing built for the requested commit. Say what *is* there and how far
     # off it is, because "no binary" and "a binary from three days ago" call
-    # for very different reactions.
-    fallback = legacy
-    if fallback is None:
+    # for very different reactions — and when the ref is a branch that moved
+    # mid-build, the nearest per-commit build IS the drift, named so the
+    # operator can pin the commit that was actually built (#2098).
+    nearest = _nearest_staged(target, repo)
+    if nearest is None:
         out["problem"] = (
             f"no Stella binary has been built for {target[:8]}. Build one "
             "before running a Stella seat."
         )
         return out
-    drift = drift_between(fallback.commit, target, repo)
-    out["drift"] = drift.to_json()
+    out["drift"] = nearest.to_json()
     out["problem"] = (
-        f"the only staged binary is not {target[:8]}: {drift.summary()}. "
-        "Build the requested commit before running a Stella seat."
+        f"no staged binary is {target[:8]} — the nearest build is "
+        f"{nearest.summary()}. Build the requested commit before running "
+        "a Stella seat."
     )
     return out

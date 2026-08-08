@@ -125,8 +125,15 @@ class TestSeatEnvironmentIsScreened:
             engine=Engine(api="openrouter", model="x/y"),
             env={"ZAI_API_KEY": "zk", "PATH": "/evil/bin"},
         )
+        # Explicitly unpinned: this test is about the env screen, and a pinned
+        # seat with no staged build now refuses the launch before Popen (#2098).
         spec = MatchSpec.from_json(
-            {"dataset": "terminal-bench-2.1", "tasks": ["alpha"], "contestants": []}
+            {
+                "dataset": "terminal-bench-2.1",
+                "tasks": ["alpha"],
+                "sut_ref": "",
+                "contestants": [],
+            }
         )
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(replace(spec, contestants=(seat,)))
