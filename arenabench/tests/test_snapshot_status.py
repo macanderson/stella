@@ -204,15 +204,21 @@ def test_a_zero_capture_run_is_machine_detectable(tmp_path, monkeypatch, caplog)
     assert "no such container" in status.reason
 
 
-def test_the_pacing_deadline_now_names_which_fault_it_hit(tmp_path, monkeypatch):
+def test_the_pacing_deadline_now_names_which_fault_it_hit(
+    tmp_path, monkeypatch, wait_for_snapshots
+):
     """The snapshot tests' own wait can stop hedging (#2114 + #2196).
 
-    `_wait_for_snapshots` was landed deliberately unable to say whether a host
-    was slow or capture had stopped working — it could only suggest re-running
-    at DEBUG, because that was the only level the supervisor said anything at.
-    With the record on disk it reads the answer instead of guessing at it.
+    The wait was landed deliberately unable to say whether a host was slow or
+    capture had stopped working — it could only suggest re-running at DEBUG,
+    because that was the only level the supervisor said anything at. With the
+    record on disk it reads the answer instead of guessing at it.
+
+    Reached through the fixture every other snapshot test uses, rather than by
+    importing `tests.conftest`, which only resolves as an implicit namespace
+    package.
     """
-    from tests.conftest import _wait_for_snapshots
+    _wait_for_snapshots = wait_for_snapshots
 
     trial = _trial(tmp_path)
     _capture_that(monkeypatch, commit=(1, "fatal: not a git repository\n"))
