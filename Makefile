@@ -497,6 +497,17 @@ reap-seats: ## List abandoned harbor benchmark seats and their containers (dry r
 reap-seats-kill: ## Kill abandoned harbor seats and remove their task containers (asks first)
 	scripts/reap-seats.sh
 
+# A contest is a head-to-head on the fixed TB2.1 panel, and its arguments are
+# make variables rather than positional words because make has no positional
+# arguments — `make contest foo=1` is the native spelling, and a positional
+# hack would fight the tool for no gain.
+.PHONY: contest
+contest: ## Stella vs Claude Code (num_tasks= versus_model= max_throughput= [target=cloud|local] [ref=])
+	num_tasks="$(num_tasks)" versus_model="$(versus_model)" \
+	max_throughput="$(max_throughput)" target="$(target)" ref="$(ref)" \
+	attempts="$(attempts)" out="$(out)" extra="$(extra)" \
+	scripts/arena-contest.sh
+
 .PHONY: arena-scripts-test
 arena-scripts-test: ## Test the arena start/stop/reap scripts — argv self-match, ancestry, liveness (hermetic; not part of `gate`)
 	./scripts/test-arena-scripts.sh
