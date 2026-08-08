@@ -122,7 +122,7 @@ const NOTE_MAX_ROWS: usize = 6;
 /// the text under the cursor is the text being typed.
 fn input_lines(input: &ScopeInput, inner_w: usize) -> Vec<Line<'static>> {
     let (label, color, body) = match input {
-        ScopeInput::Refine(note) => ("refine ▸ ", theme::VIOLET, note.as_str()),
+        ScopeInput::Refine(note) => ("refine ▸ ", theme::ORCHID, note.as_str()),
         ScopeInput::Shell(cmd) => ("!", theme::TEXT_SECONDARY, cmd.as_str()),
     };
     let width = inner_w.saturating_sub(label.chars().count() + 1).max(8);
@@ -253,7 +253,7 @@ pub(crate) fn render(
                 word(" approve   "),
                 key("t", theme::WARN),
                 word(" trim   "),
-                key("r", theme::VIOLET),
+                key("r", theme::ORCHID),
                 word(" refine   "),
                 key("x", theme::DANGER),
                 word(" abort   "),

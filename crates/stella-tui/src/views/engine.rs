@@ -1086,7 +1086,7 @@ fn render_row(
         spans.push(Span::styled(shown, theme::body().add_modifier(sel_mod)));
         spans.push(Span::styled(
             "▏",
-            Style::default().fg(theme::VIOLET).add_modifier(sel_mod),
+            Style::default().fg(theme::ORCHID).add_modifier(sel_mod),
         ));
     } else {
         match value {
@@ -1146,7 +1146,7 @@ fn render_model_picker(e: &EngineOverlay, area: Rect, buf: &mut Buffer) {
     let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
         Span::styled("filter ", theme::muted()),
         Span::styled(picker.query.clone(), theme::body()),
-        Span::styled("▏", Style::new().fg(theme::VIOLET)),
+        Span::styled("▏", Style::new().fg(theme::ORCHID)),
     ])];
 
     if e.state.is_none() {

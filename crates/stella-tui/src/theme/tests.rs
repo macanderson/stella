@@ -63,10 +63,10 @@ const ALL_RGB_TOKENS: &[Color] = &[
     WARNING,
     DANGER,
     ORACLE_PRE_FLIP,
-    VIOLET,
-    AMBER,
-    TEAL,
-    MAGENTA,
+    ORCHID,
+    LIME,
+    AZURE,
+    ROSE,
     CODE,
     DIFF_ADD_BG,
     DIFF_DEL_BG,
@@ -178,18 +178,18 @@ fn role_aliases_track_their_palette_token() {
     assert_eq!(OK, SUCCESS);
     assert_eq!(WARN, WARNING);
     assert_eq!(BAD, DANGER);
-    assert_eq!(HELD, VIOLET);
-    assert_eq!(RUN, VIOLET);
+    assert_eq!(HELD, ORCHID);
+    assert_eq!(RUN, ORCHID);
     // Syntax and process hues are categorical -- never the brand accent.
-    assert_eq!(SYNTAX_NUMBER, VIOLET);
-    assert_eq!(SYNTAX_KEYWORD, AMBER);
+    assert_eq!(SYNTAX_NUMBER, ORCHID);
+    assert_eq!(SYNTAX_KEYWORD, LIME);
     assert_eq!(SYNTAX_COMMENT, TEXT_TERTIARY);
     // The categorical set is the observatory's data-mark palette verbatim,
     // so a series in a chart and a chip in the deck are the same colour.
-    assert_eq!(AMBER, palette::DATA_1);
-    assert_eq!(VIOLET, palette::DATA_2);
-    assert_eq!(MAGENTA, palette::DATA_3);
-    assert_eq!(TEAL, palette::DATA_4);
+    assert_eq!(LIME, palette::DATA_1);
+    assert_eq!(ORCHID, palette::DATA_2);
+    assert_eq!(ROSE, palette::DATA_3);
+    assert_eq!(AZURE, palette::DATA_4);
 }
 
 /// The kit's one hard prohibition, restated for a gold accent: **gold never
@@ -334,7 +334,7 @@ fn hue_separation(a: Color, b: Color) -> f64 {
 ///   4. Warning ramps warm, success ramps green, danger ramps red.
 ///   5. Gold is reserved. Every chromatic role sits ≥ 30° of hue away,
 ///      except the two named neighbours: WARN (always glyph-paired) and
-///      AMBER (confined to syntax keywords in code bodies).
+///      LIME (confined to syntax keywords in code bodies).
 #[test]
 fn palette_law_gold_is_the_brand() {
     const RETIRED_AURORA_CYAN: Color = Color::Rgb(0x3F, 0xE0, 0xFF);
@@ -512,9 +512,9 @@ fn palette_law_gold_is_the_brand() {
         (OK, "OK"),
         (RUN, "RUN"),
         (HELD, "HELD"),
-        (VIOLET, "VIOLET"),
-        (TEAL, "TEAL"),
-        (MAGENTA, "MAGENTA"),
+        (ORCHID, "ORCHID"),
+        (AZURE, "AZURE"),
+        (ROSE, "ROSE"),
         (CODE, "CODE"),
         (SYNTAX_STRING, "SYNTAX_STRING"),
         (SYNTAX_NUMBER, "SYNTAX_NUMBER"),
@@ -529,11 +529,11 @@ fn palette_law_gold_is_the_brand() {
     }
     // The named neighbours. WARN sits 4.0° from gold: permitted because a
     // status never appears without its glyph (`status_glyph`), so the hue is
-    // never the only carrier. AMBER sits 0.8° away: permitted because it
+    // never the only carrier. LIME sits 0.8° away: permitted because it
     // paints syntax keywords inside code bodies and nothing else — the
     // observatory stands the same mark down from every plotted surface, and
     // the deck stands it down from every chip, node and agent.
-    for (neighbour, name) in [(WARN, "WARN"), (AMBER, "AMBER")] {
+    for (neighbour, name) in [(WARN, "WARN"), (LIME, "LIME")] {
         assert_ne!(neighbour, ACCENT, "{name} may neighbour gold, not BE it");
         let sep = hue_separation(neighbour, ACCENT);
         assert!(
@@ -543,7 +543,7 @@ fn palette_law_gold_is_the_brand() {
         );
     }
     assert!(
-        !AGENT_PALETTE.contains(&AMBER),
+        !AGENT_PALETTE.contains(&LIME),
         "the amber mark is stood down: no agent chip may wear it"
     );
     for kind in [
@@ -551,7 +551,7 @@ fn palette_law_gold_is_the_brand() {
     ] {
         assert_ne!(
             graph_kind_color(kind),
-            AMBER,
+            LIME,
             "the amber mark is stood down: no graph node may wear it"
         );
     }
@@ -572,7 +572,7 @@ fn palette_law_gold_is_the_brand() {
     ] {
         assert_ne!(
             trace_kind_color(kind),
-            AMBER,
+            LIME,
             "the amber mark is stood down: no trace chip may wear it"
         );
     }
@@ -692,7 +692,7 @@ fn degrade_buffer_is_noop_when_truecolor() {
 fn degrade_buffer_resolves_every_cell_when_degraded() {
     let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
     buf.content[0].fg = ACCENT; // → 214 (256) / 11 (16)
-    buf.content[0].bg = VIOLET; // → 98 (256) / 13 (16)
+    buf.content[0].bg = ORCHID; // → 98 (256) / 13 (16)
     degrade_buffer(&mut buf, ColorMode::Ansi256);
     assert_eq!(buf.content[0].fg, Color::Indexed(214));
     assert_eq!(buf.content[0].bg, Color::Indexed(98));

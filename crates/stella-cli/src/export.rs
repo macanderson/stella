@@ -355,7 +355,7 @@ fn render_dashboard(
     let c_text3 = css_hex(stella_tui::theme::TEXT_TERTIARY);
     let c_brand = css_hex(stella_tui::theme::ACCENT);
     let c_brand_fill = css_hex(stella_tui::theme::ACCENT_FILL);
-    let c_violet = css_hex(stella_tui::theme::VIOLET);
+    let c_violet = css_hex(stella_tui::theme::ORCHID);
     let c_success = css_hex(stella_tui::theme::SUCCESS);
     let c_warn = css_hex(stella_tui::theme::WARNING);
     let c_danger = css_hex(stella_tui::theme::DANGER);
@@ -1262,7 +1262,7 @@ mod tests {
             ("--bg", stella_tui::theme::GROUND),
             ("--brand", stella_tui::theme::ACCENT),
             ("--brand-fill", stella_tui::theme::ACCENT_FILL),
-            ("--violet", stella_tui::theme::VIOLET),
+            ("--violet", stella_tui::theme::ORCHID),
             ("--text3", stella_tui::theme::TEXT_TERTIARY),
         ] {
             let declaration = format!("{var}: {};", css_hex(token));

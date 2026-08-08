@@ -406,7 +406,7 @@ fn footer(mode: IssuesMode) -> Line<'static> {
         spans.push(Span::styled(
             format!(" {key} "),
             Style::default()
-                .fg(theme::VIOLET)
+                .fg(theme::ORCHID)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(format!("{desc}  "), theme::muted()));

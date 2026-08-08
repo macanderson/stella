@@ -670,7 +670,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         render_right(
             vec![Span::styled(
                 ETHOS,
-                Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::ORCHID).add_modifier(Modifier::BOLD),
             )],
             row(bot_y),
             buf,
