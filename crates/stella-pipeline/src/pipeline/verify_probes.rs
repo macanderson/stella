@@ -596,13 +596,17 @@ const UNTRACKED_NUMSTAT_CONCURRENCY: usize = 16;
 /// commits a git baseline before the agent starts, so every extracted and
 /// generated file is untracked *and* fresh.
 ///
-/// Measured on `sqlite-with-gcov`, whose agent extracts SQLite into the
-/// workspace and builds it with `--coverage`: the pass fanned out roughly nine
-/// thousand subprocesses over a tree it had no use for. Across five models and
-/// six matches, every timed-out trial of that task died inside this
-/// post-execute observation with its journal ending before the warrant — the
-/// verify stage, the verdict and the whole witness record lost because the
-/// probe was reading a build tree when the harness killed it (#2110).
+/// Observed on `sqlite-with-gcov`, whose agent extracts SQLite into the
+/// workspace and builds it with `--coverage`. Across five models and six
+/// matches, every timed-out trial of that task died inside this post-execute
+/// observation with its journal ending before the warrant — the verify stage,
+/// the verdict and the whole witness record lost because the probe was
+/// reading a build tree when the harness killed it (#2110). The trials'
+/// artifacts do not record how many paths that tree held, so the cost is
+/// stated from a reproduction rather than claimed from the run: a synthetic
+/// tree of 4,502 fresh paths cost 9,004 subprocesses and ~30s in a single
+/// pass on fast local storage, which is a floor for a tree of that shape and
+/// well under the real one.
 ///
 /// The budget bounds only what is READ. Every fresh path is still named in
 /// the diff text and still contributes to the line count, so neither the
