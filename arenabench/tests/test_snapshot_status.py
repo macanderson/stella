@@ -204,6 +204,31 @@ def test_a_zero_capture_run_is_machine_detectable(tmp_path, monkeypatch, caplog)
     assert "no such container" in status.reason
 
 
+def test_the_pacing_deadline_now_names_which_fault_it_hit(tmp_path, monkeypatch):
+    """The snapshot tests' own wait can stop hedging (#2114 + #2196).
+
+    `_wait_for_snapshots` was landed deliberately unable to say whether a host
+    was slow or capture had stopped working — it could only suggest re-running
+    at DEBUG, because that was the only level the supervisor said anything at.
+    With the record on disk it reads the answer instead of guessing at it.
+    """
+    from tests.conftest import _wait_for_snapshots
+
+    trial = _trial(tmp_path)
+    _capture_that(monkeypatch, commit=(1, "fatal: not a git repository\n"))
+    _supervisor(tmp_path)._consider(trial)
+
+    try:
+        _wait_for_snapshots(trial, 2, what="of anything at all", deadline=0.0)
+    except AssertionError as exc:
+        message = str(exc)
+    else:  # pragma: no cover - the manifest is empty, so the wait cannot pass
+        raise AssertionError("the wait returned on an empty manifest")
+
+    assert "not a git repository" in message, f"the deadline still hedges: {message}"
+    assert "keeping up" not in message, f"a broken capture was blamed on speed: {message}"
+
+
 def test_a_retired_capture_stops_paying_for_a_dead_container(tmp_path, monkeypatch):
     """Retirement is bounded work, not a silent surrender.
 
