@@ -702,7 +702,16 @@ async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
     let mut corpus_bytes = 0usize;
     let mut longest_body = 0usize;
     for i in 0..NODES {
-        let content = format!("note number {i} about packing frames to a budget");
+        // Two topics, not one: a single-topic corpus saturates every query
+        // term (df = N) and the evidence gate abstains, which would let this
+        // bound pass vacuously with zero candidate bodies read. Half on-topic
+        // keeps the query's terms distinctive (df = N/2) so a full shortlist
+        // is admitted and genuinely measured.
+        let content = if i % 2 == 0 {
+            format!("note number {i} about packing frames to a budget")
+        } else {
+            format!("note number {i} rendering the quarterly revenue chart")
+        };
         corpus_bytes += content.len();
         longest_body = longest_body.max(content.len());
         delta = delta.with_node(
@@ -725,17 +734,23 @@ async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
         "this guard measures the fused arm; coverage unexpectedly fell back"
     );
     // 5 frames x DEFAULT_MMR_CANDIDATE_MULTIPLE = 20 candidates. Their bodies are all
-    // recall is entitled to read. Budgeted against the LONGEST body rather than
-    // the mean: which 20 nodes win is a ranking outcome, and a mean-based bound
-    // would flake whenever the winners ran slightly above average.
+    // the *ranking* is entitled to read — budgeted against the LONGEST body
+    // rather than the mean: which 20 nodes win is a ranking outcome, and a
+    // mean-based bound would flake whenever the winners ran slightly above
+    // average. On top of that sits exactly ONE streaming pass over the corpus:
+    // the evidence gate's term scan (#2289), which reads each body once,
+    // retains only per-term counts, and is the declared price of "a frame is
+    // recalled iff something ties it to this query". What this bound still
+    // removes is the old failure — bodies materialized per candidate and then
+    // thrown away, which cost a *multiple* of the corpus, not one pass of it.
     let candidates = 5 * DEFAULT_MMR_CANDIDATE_MULTIPLE;
-    let budgeted = candidates * longest_body;
+    let budgeted = corpus_bytes + candidates * longest_body;
     assert!(
         loaded <= budgeted,
         "recall read {loaded} content bytes of a {corpus_bytes}-byte corpus for \
-         5 frames; the candidate bound entitles it to about {budgeted} \
-         ({candidates} of {NODES} nodes). Loading the corpus and then \
-         declining to score it is the cost this bound exists to remove."
+         5 frames; one evidence-gate term pass plus the candidate bound \
+         entitles it to about {budgeted} ({candidates} of {NODES} nodes' \
+         bodies on top of the single streaming scan)."
     );
 }
 
@@ -756,12 +771,21 @@ async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
 async fn the_drop_report_counts_candidates_considered_not_the_corpus() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("context.db");
+    // Gate off: this fixture's one-topic corpus saturates every query term
+    // (df = N), so the evidence gate would rightly abstain and leave no
+    // shortlist to measure. The denominator arithmetic being pinned here is
+    // independent of admission; the gate has its own witnesses in
+    // `evidence_tests`.
     let store = ContextStore::open_with(
         &path,
         Arc::new(HashEmbedder::default()),
         FixedClock::shared(1_000),
     )
-    .unwrap();
+    .unwrap()
+    .with_tuning(RecallTuning {
+        require_evidence: false,
+        ..RecallTuning::default()
+    });
 
     const NODES: usize = 60;
     let mut delta = ContextDelta::new();
@@ -890,9 +914,13 @@ async fn recalled_frames_declare_honest_token_cost() {
 #[tokio::test]
 async fn recall_reports_dropped_frames_under_a_tight_frame_budget() {
     let (_dir, store) = seeded().await;
+    // The query names both the sqlite node's and the budgeting node's terms,
+    // so two candidates carry evidence and the one-frame budget genuinely has
+    // something to drop — under the evidence gate a drop report needs a
+    // *relevant* loser, not just any second row.
     let mut q = base_query(
         "open the database",
-        "open the sqlite connection in wal mode",
+        "open the sqlite connection in wal mode and pack the context frames to the token budget",
     );
     q.max_frames = 1;
     let result = store.recall(&q).await.unwrap();
@@ -970,9 +998,25 @@ async fn point_in_time_recall_excludes_content_recorded_after_the_cutoff() {
     let store =
         ContextStore::open_with(&path, Arc::new(HashEmbedder::default()), clock.clone()).unwrap();
     store
-        .upsert(ContextDelta::new().with_node(
-            NodeInput::new(NodeKind::Concept, "early").with_content("the flux capacitor note"),
-        ))
+        .upsert(
+            ContextDelta::new()
+                .with_node(
+                    NodeInput::new(NodeKind::Concept, "early")
+                        .with_content("the flux capacitor note"),
+                )
+                // Off-topic ballast: with only the two capacitor nodes every
+                // query term saturates (df = N) and the evidence gate rightly
+                // abstains. Two unrelated nodes keep "flux capacitor"
+                // distinctive at both instants this test queries.
+                .with_node(
+                    NodeInput::new(NodeKind::Concept, "chart")
+                        .with_content("render a bar chart of quarterly revenue"),
+                )
+                .with_node(
+                    NodeInput::new(NodeKind::Concept, "budget")
+                        .with_content("pack context frames and report drops"),
+                ),
+        )
         .await
         .unwrap();
     let cutoff = crate::clock::format_rfc3339(1_500);
@@ -1018,9 +1062,12 @@ async fn point_in_time_recall_excludes_content_recorded_after_the_cutoff() {
 #[tokio::test]
 async fn a_superseded_memory_never_costs_a_budget_slot() {
     let (_dir, store) = seeded().await;
+    // Two nodes' terms, so that when the winner is suppressed a *relevant*
+    // next candidate exists to take the slot — the evidence gate refuses an
+    // irrelevant stand-in, and rightly so.
     let mut q = base_query(
         "open the database",
-        "open the sqlite connection in wal mode with foreign keys on",
+        "open the sqlite connection in wal mode and pack the context frames to the token budget",
     );
     q.max_frames = 1;
 
@@ -1059,9 +1106,11 @@ async fn a_superseded_memory_never_costs_a_budget_slot() {
 #[tokio::test]
 async fn an_excluded_id_never_costs_a_budget_slot_either() {
     let (_dir, store) = seeded().await;
+    // Same two-node query as the suppression test above, for the same reason:
+    // the freed slot must have a relevant candidate to go to.
     let mut q = base_query(
         "open the database",
-        "open the sqlite connection in wal mode with foreign keys on",
+        "open the sqlite connection in wal mode and pack the context frames to the token budget",
     );
     q.max_frames = 1;
 
@@ -1096,7 +1145,14 @@ async fn an_excluded_id_never_costs_a_budget_slot_either() {
 async fn tuning_reaches_the_ranking() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("context.db");
+    // Gate off throughout: this fixture's one-topic corpus saturates every
+    // query term (df = N), and an abstaining recall has no shortlist widths
+    // or fallback arms left to compare. Each knob under test is set on top.
     let make = |tuning: RecallTuning| {
+        let tuning = RecallTuning {
+            require_evidence: false,
+            ..tuning
+        };
         ContextStore::open_with(
             &path,
             Arc::new(HashEmbedder::default()),
@@ -1174,12 +1230,22 @@ async fn recall_work_is_bounded_by_frame_count_not_corpus_size() {
     for corpus in [50usize, 500, 5_000] {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("context.db");
+        // Gate off: the byte-identical-across-corpus-sizes claim below is
+        // about the two-phase candidate load. The evidence gate's term pass
+        // deliberately reads the corpus once per recall (its budget is pinned
+        // in `recall_reads_only_the_candidates_bodies_not_the_whole_corpus`),
+        // which would make the bytes scale with the store and drown the
+        // property this benchmark exists to hold.
         let store = ContextStore::open_with(
             &path,
             Arc::new(HashEmbedder::default()),
             FixedClock::shared(1_000),
         )
-        .unwrap();
+        .unwrap()
+        .with_tuning(RecallTuning {
+            require_evidence: false,
+            ..RecallTuning::default()
+        });
 
         let mut delta = ContextDelta::new();
         for i in 0..corpus {

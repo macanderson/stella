@@ -491,6 +491,19 @@ mod tests {
                             NodeInput::new(NodeKind::Memory, "wal mode note").with_content(
                                 "the store opens sqlite in wal mode with foreign keys",
                             ),
+                        )
+                        // Off-topic ballast: with only the two sqlite nodes,
+                        // every query term saturates the corpus (df = N) and
+                        // the evidence gate rightly abstains. Real stores are
+                        // not single-topic; these keep the fixture's terms
+                        // distinctive so the recall below stays admissible.
+                        .with_node(
+                            NodeInput::new(NodeKind::Artifact, "chart todo")
+                                .with_content("render a bar chart of quarterly revenue"),
+                        )
+                        .with_node(
+                            NodeInput::new(NodeKind::Artifact, "budget todo")
+                                .with_content("pack context frames and report drops"),
                         ),
                 )
                 .await
