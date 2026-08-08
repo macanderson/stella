@@ -76,9 +76,8 @@ pub use repair::{RepairCost, RepairHeadroom, RepairPlan, RepairRefusal, plan_rep
 pub use retry::{RetryOutcome, RetryPolicy, retry_with_backoff};
 pub use router::{RoleTable, Router};
 pub use rules::{
-    GuardCheck, LoadRulesOptions, ProposedAction, Rule, RuleEnforcement, RuleGuard, RuleMetadata,
-    RuleMetadataError, RuleOrigin, RuleRecordKind, RuleSource, evaluate_guards, load_rules,
-    render_rule_metadata,
+    GuardCheck, LoadRulesOptions, ProposedAction, Rule, RuleGuard, RuleSource, evaluate_guards,
+    load_rules,
 };
 // Phase 3 (#714): the rules miner, previously defined but never re-exported —
 // which is most of why it shipped unwired. Mirrors the `skills::` exports below.

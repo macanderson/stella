@@ -114,7 +114,7 @@ lib.rs), never as a planning assumption.
 | [`src/accounted_call.rs`](src/accounted_call.rs), [`src/event_sender.rs`](src/event_sender.rs) | A one-shot accounted provider call for callers that are not the engine, and the channel wrapper that can journal an event durably before admitting it. |
 | [`src/bus.rs`](src/bus.rs) | The in-process extension bus: observers (`emit`) and policy hooks (`emit_blocking`) over a dotted event-name catalog. |
 | [`src/hooks.rs`](src/hooks.rs) | Settings-declared *shell* hooks — `SessionStart`/`PreToolUse`/`PostToolUse` matching and blocking decisions. |
-| [`src/rules.rs`](src/rules.rs), [`src/rules/metadata.rs`](src/rules/metadata.rs) | Rules engine: loading, precedence merge, Tier-1 rendering, Tier-2 `evaluate_guards`, candidate mining, metadata parse/render. |
+| [`src/rules.rs`](src/rules.rs) | Rules engine: loading, precedence merge, Tier-1 rendering, Tier-2 `evaluate_guards`, candidate mining. |
 | [`src/skills.rs`](src/skills.rs) | Skills engine: `SKILL.md` loading, `select_skills`, `render_skills_section`, auto-creation mining, install vocabulary. |
 | [`src/glob.rs`](src/glob.rs), [`src/mining.rs`](src/mining.rs), [`src/summarize.rs`](src/summarize.rs) | Non-public shared helpers: the `*`-only glob matcher behind rule guards and hook matchers; the lexical mining primitives the rules and skills miners share (they were once two byte-identical copies); the overflow summarizer's prompt and span rendering. |
 | [`src/discovery.rs`](src/discovery.rs) | The ranker behind `tool_search`/`skill_search`/`mcp_search`: `select:` lookups, `+required` terms, field-weighted scoring. |
@@ -241,11 +241,13 @@ system message and the latest user message are never touched.
   would swallow a message the user addressed to the parent. `ChildSteering`
   forwards the (non-destructive, latched) soft stop and returns nothing for the
   drain.
-- **`context_record` is not `stella-context`,** and it is not the live rules
-  path either: `rules::metadata` still drives that. The two coexist by decision —
-  do not merge them, and read the subsumption table in
-  [`src/context_record.rs`](src/context_record.rs) before assuming a mapping is
-  ratified (two edges are explicitly flagged as unratified).
+- **`context_record` is not `stella-context`** — the module is the pure record
+  taxonomy (types, validators, hashing); the crate is the retrieval plane. It
+  *is* the type layer under the live rules path: markdown and TOML rules alike
+  are projected onto records by `records::registry`, and the legacy
+  `rules::metadata` frontmatter layer those types subsumed (ADR 0009, ratified
+  2026-07-24) has been retired. Old `.md` rule files carrying its frontmatter
+  keys keep loading; the keys are inert.
 
 ## Testing
 

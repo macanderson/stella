@@ -1084,10 +1084,10 @@ mod tests {
         );
     }
 
-    // Phase 0: representative `.stella/rules/*.md` fixtures must parse under the
-    // CURRENT `stella_core::rules` parser — the format Phase 2's importer will
-    // read back as read-only mirrors. Captures both a promoted guard rule and a
-    // full context-as-code directive (inferred, advisory).
+    // Representative `.stella/rules/*.md` fixtures must parse under the CURRENT
+    // `stella_core::rules` parser. Captures both a promoted guard rule and a
+    // legacy context-as-code directive whose retired metadata frontmatter must
+    // stay loadable and inert.
     const GUARD_RULE_FIXTURE: &str =
         include_str!("../tests/fixtures/rules/no-hand-edited-migrations.md");
     const DIRECTIVE_RULE_FIXTURE: &str =
@@ -1112,31 +1112,28 @@ mod tests {
             Some("migrations/*-applied/**")
         );
         assert!(guard.deny_command_glob.is_none());
-        // A pure guard rule declares no lifecycle metadata and so has no errors.
-        assert!(rule.metadata.is_none());
-        assert!(rule.metadata_errors.is_empty());
     }
 
     #[test]
-    fn directive_rule_fixture_parses_with_context_metadata() {
+    fn directive_rule_fixture_still_loads_with_legacy_metadata_ignored() {
+        // The context-as-code frontmatter (`record_id`, `enforcement`,
+        // `origin`, timestamps, …) was subsumed by the TOML record surface
+        // (ADR 0009/0011) and its parser retired. Files already written with
+        // that frontmatter must keep loading as ordinary prompt rules, the
+        // extra keys inert.
         let rule = stella_core::rules::rule_from_file(
             ".stella/rules/api-integration-coverage.md",
             DIRECTIVE_RULE_FIXTURE,
         )
-        .expect("directive rule parses");
+        .expect("legacy directive rule still parses");
         assert_eq!(rule.id, "api-integration-coverage");
-        // Empty errors proves every enum (record_kind/enforcement/origin) and
-        // timestamp in the frontmatter parsed to a valid value.
         assert!(
-            rule.metadata_errors.is_empty(),
-            "unexpected metadata errors: {:?}",
-            rule.metadata_errors
+            !rule.text.trim().is_empty(),
+            "the rule statement survives the ignored frontmatter"
         );
-        let meta = rule.metadata.expect("context metadata present");
-        assert_eq!(meta.record_id, "dir_api_integration_coverage_v1");
-        assert_eq!(meta.confidence, 88);
-        // `scope_paths` is canonicalized (sorted, deduped) by the parser.
-        assert_eq!(meta.scope_paths, vec!["docs/api/**", "src/api/**"]);
-        assert_eq!(meta.supporting_evidence_ids.len(), 3);
+        assert!(
+            rule.guard.is_none(),
+            "metadata keys must not be misread as guard keys"
+        );
     }
 }

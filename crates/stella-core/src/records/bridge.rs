@@ -261,11 +261,6 @@ pub fn rule_from_record(loaded: &LoadedRecord, ledger_approved: bool) -> (Rule, 
         text: loaded.record.statement.clone(),
         guard: decision.guard.clone(),
         source: loaded.source.clone(),
-        // The TOML surface IS the schema (ADR 0011). The markdown frontmatter
-        // metadata parser survives only to load existing `.md` files and is
-        // deliberately not extended to reach here.
-        metadata: None,
-        metadata_errors: Vec::new(),
     };
     (rule, decision)
 }
@@ -423,9 +418,5 @@ mod tests {
         assert_eq!(rule.id, "no-force-push");
         assert_eq!(rule.text, loaded.record.statement);
         assert!(decision.guard.is_some());
-        assert!(
-            rule.metadata.is_none(),
-            "the legacy markdown metadata parser must not be extended to TOML records"
-        );
     }
 }
