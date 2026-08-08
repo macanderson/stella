@@ -263,8 +263,6 @@ fn a_rule_already_on_disk_is_not_re_proposed() {
         text: LESSON.into(),
         guard: None,
         source: ".stella/rules/existing.md".into(),
-        metadata: None,
-        metadata_errors: Vec::new(),
     }];
     let induced = induce_rule_proposals(
         &store,

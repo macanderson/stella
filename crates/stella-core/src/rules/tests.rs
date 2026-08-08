@@ -105,8 +105,6 @@ fn rule_from_file_parses_a_bash_command_guard() {
             deny_command_glob: Some("git push --force*".to_string()),
         })
     );
-    assert!(r.metadata.is_none());
-    assert!(r.metadata_errors.is_empty());
 }
 
 #[test]
@@ -118,8 +116,6 @@ fn rule_with_no_guard_frontmatter_is_prompt_only() {
     .unwrap();
     assert!(r.guard.is_none());
     assert_eq!(r.tier(), RuleTier::Prompt);
-    assert!(r.metadata.is_none());
-    assert!(r.metadata_errors.is_empty());
 }
 
 #[test]
@@ -269,8 +265,6 @@ fn rule(id: &str, text: &str, guard: Option<RuleGuard>) -> Rule {
         text: text.to_string(),
         guard,
         source: "test".to_string(),
-        metadata: None,
-        metadata_errors: Vec::new(),
     }
 }
 

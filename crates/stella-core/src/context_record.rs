@@ -43,32 +43,19 @@
 //! resolution** — "does this id name a record that exists?" — are deferred to the
 //! Phase 2/3 repository, since a value layer cannot answer them.
 //!
-//! ## Relationship to the legacy `rules::metadata` types (coexist, do not merge)
+//! ## Relationship to the legacy `rules::metadata` types (subsumed, retired)
 //!
-//! `stella-core::rules::metadata` already carries types that drive the **live**
-//! Markdown rules path. Those are left untouched here — editing them would be a
-//! behavior change. The new types coexist; a later phase migrates the rules path
-//! onto them. The intended subsumption mapping:
-//!
-//! | legacy (`rules::metadata`)                     | new (`context_record`)                          |
-//! |------------------------------------------------|-------------------------------------------------|
-//! | `RuleRecordKind::Directive`                    | `ContextRecordKind::Directive` + `DirectiveKind`|
-//! | `RuleEnforcement` = {Informational,Advisory,Blocking} | `DirectiveEnforcement` = {Advisory,Blocking} |
-//! | `RuleOrigin` = {User,System,Inferred,Imported} | `Origin` = {User,System,Observed,Inferred,Imported} |
-//!
-//! **Two mapping edges are NOT covered by the ratified decisions and are flagged
-//! for confirmation before the legacy path is migrated:**
-//!
-//! 1. `RuleEnforcement::Informational` has no target in the 2-value
-//!    `DirectiveEnforcement`. The ratified 4→2 mapping (ADR 0007) was over the
-//!    `context-prs-spec` vocabulary (`observe|advisory|required|blocking`), a
-//!    *different* set than `Informational|Advisory|Blocking`. `Informational →
-//!    advisory` is the likely intent but is **unratified**.
-//! 2. `Origin` is a uniform 5-value enum (ratified). However the directive
-//!    record schema (lifecycle §, directive allowed-values) enumerates only
-//!    `user, system, inferred, imported` — a per-family narrowing that forbids
-//!    an `observed` directive. That narrowing is left as a **flagged validator,
-//!    not implemented here**, because it refines the "uniform 5" resolution.
+//! `stella-core::rules::metadata` once carried a parallel enum set
+//! (`RuleRecordKind` / `RuleEnforcement` / `RuleOrigin`) parsed from markdown
+//! rule frontmatter. `doc:adr/0009-enum-freeze-resolutions` (ratified
+//! 2026-07-24) settled the two mapping edges this doc used to flag as open —
+//! `Informational → advisory`, and a uniform 5-value [`Origin`] for every
+//! record family with **no** per-family narrowing (a directive-specific
+//! narrowing would be a new decision, not implied by current spec) — and the
+//! module has since been retired: nothing in production ever read the parsed
+//! metadata, and the live path for markdown and TOML rules alike projects onto
+//! these types through `records::registry`. Markdown rule files that still
+//! carry the old frontmatter keys keep loading; the keys are inert.
 
 pub mod context_use;
 pub mod contract;
