@@ -81,7 +81,7 @@ free one). This crate builds no binary —
 | [`src/self_driving.rs`](src/self_driving.rs) | The perpetual delivery loop's runs, cycles and controller state, read from `~/.stella/self-driving/<slug>/`. Plain JSONL, no database — see below for why the `crashed` status is computed here rather than read. |
 | [`src/codegraph.rs`](src/codegraph.rs) | `codegraph.db` flattened to `{nodes, edges, groups}` for the force-directed canvas, including the Rust module-path resolution the indexer doesn't do. |
 | [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. Sections are addressed by fragment: `#<tab>`, or `#<tab>/<arg>` for a tab that addresses one record. `#transcript/<execution>` is the only argument-taking route today, and its tab stays hidden until a turn is open. |
-| `src/assets/mark.svg`, `src/assets/wordmark.svg` | Favicon and header lockup, served from `/assets/`. |
+| `src/assets/mark.svg`, `src/assets/wordmark.svg`, `src/assets/wordmark-light.svg` | Favicon and the header lockup's two theme cuts, served from `/assets/`. |
 | [`examples/serve.rs`](examples/serve.rs) | `cargo run -p stella-observatory --example serve -- <root> <port>` — serve any workspace without building the CLI. |
 
 ## God files — do not add lines
