@@ -1038,19 +1038,22 @@ fn recall_blocking(
                 (vector_ranked, 1.0),
                 (recency_ranked, q.tuning.recency_weight),
                 (graph_ranked, 1.0),
-                (domain_ranked.clone(), 1.0),
+                (domain_ranked, 1.0),
             ],
             q.tuning.rrf_k,
         );
         let mut ordered_all = dedup_by_content_hash(&fused, &meta_by_id);
 
         // The evidence gate (#2289): admission requires something that ties
-        // the candidate to THIS query. The fusion's own doc above draws the
-        // line — vector, graph, and domain are grounded signals, recency is a
-        // tiebreaker — but every embedded node is in the vector list, so
-        // list membership enforced nothing: on any store with ≥`max_frames`
-        // live nodes the budget filled every slot regardless of score, and a
-        // small workspace surfaced the same frames on every prompt. The gate
+        // the candidate to THIS query. Ranking alone enforced nothing — every
+        // embedded node is in the vector list, so on any store with
+        // ≥`max_frames` live nodes the budget filled every slot regardless of
+        // score, and a small workspace surfaced the same frames on every
+        // prompt. Note that admission is a **stricter** test than the fusion's
+        // "grounded signal": domain overlap ranks here but does not admit,
+        // because the scope every caller passes is the whole workspace
+        // vocabulary, which makes overlap a property of the node rather than
+        // of this query (see [`evidence`]'s module doc, and #2333). The gate
         // runs before the shortlist cut so an inadmissible head cannot
         // displace admissible candidates ranked below it, and its refusals
         // are counted, never silent (`L-C5`).
@@ -1071,7 +1074,6 @@ fn recall_blocking(
                 &anchor_ids,
                 &anchor_adjacent,
                 &pass.distinctive_matchers(),
-                &domain_ranked,
                 &semantic_hits,
             );
             let before = ordered_all.len();

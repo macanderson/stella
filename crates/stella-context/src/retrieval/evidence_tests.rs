@@ -41,6 +41,12 @@ const CONTAMINANTS: [&str; 5] = [
 /// and no distinctive term with any of them.
 const QUERY: &str = "restore the deck keybinding for scrollback paging";
 
+/// The workspace's whole domain vocabulary — which is exactly the scope a
+/// session hands recall today: `Domains::names()` (`stella-cli/src/memory.rs`)
+/// → `session_host` → `ScopedStore::query` → `recall_scoped_excluding`. No
+/// caller narrows it per query.
+const VOCABULARY: [&str; 3] = ["retrieval", "tui", "bench"];
+
 fn base_query(goal: &str) -> ContextQuery {
     ContextQuery {
         goal: goal.into(),
@@ -255,6 +261,59 @@ async fn anchors_and_their_neighbors_are_admitted_without_term_overlap() {
         result.frames.len(),
         2,
         "and the contaminants still are not: {titles:?}"
+    );
+}
+
+/// Sharing a domain with a **full-vocabulary** scope is not evidence, because
+/// the predicate degenerates: "overlaps the query's domains" becomes "carries
+/// any tag at all", which is a fact about the *node*, never about *this
+/// query*. Evidence must be query-conditional or it is not evidence.
+///
+/// The scope is the whole vocabulary on every production recall
+/// ([`VOCABULARY`]), and reflection write-back tags every episode whose turn
+/// touched files (`domains_for_path`, `stella-cli/src/memory.rs`). So an
+/// admission rung reading domain overlap would re-open #2289 at full width —
+/// the same tagged notes admitted on every prompt, forever — which is the
+/// exact failure this module exists to close.
+///
+/// Domain overlap keeps its honest job: a ranking signal in the RRF fusion,
+/// ordering the admissible. Restoring it as *evidence* needs a real per-query
+/// scope first (#2333).
+#[tokio::test]
+async fn a_full_vocabulary_domain_scope_is_not_evidence() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let store = ContextStore::open_with(
+        &path,
+        Arc::new(HashEmbedder::default()),
+        FixedClock::shared(1_000),
+    )
+    .unwrap()
+    .with_tuning(tuning(0.0, true));
+    let mut delta = ContextDelta::new();
+    for (i, text) in CONTAMINANTS.iter().enumerate() {
+        delta = delta.with_node(
+            NodeInput::new(NodeKind::Artifact, format!("note-{i}"))
+                .with_content(*text)
+                .with_domains([VOCABULARY[i % VOCABULARY.len()]]),
+        );
+    }
+    store.upsert(delta).await.unwrap();
+
+    let scope: Vec<String> = VOCABULARY.iter().map(|d| (*d).to_string()).collect();
+    let result = store
+        .recall_scoped(&base_query(QUERY), &scope)
+        .await
+        .unwrap();
+    let titles: Vec<&str> = result.frames.iter().map(|f| f.title.as_str()).collect();
+    assert!(
+        result.frames.is_empty(),
+        "every note shares a domain with the whole-vocabulary scope, which \
+         says nothing about this query; got {titles:?}"
+    );
+    assert_eq!(
+        result.no_evidence_cut, 5,
+        "and the refusals are reported, never silent"
     );
 }
 

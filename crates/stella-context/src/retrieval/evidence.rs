@@ -18,7 +18,6 @@
 //! - **anchor adjacency** — a 1-hop graph neighbor of an anchor;
 //! - a **distinctive lexical match** — the node contains a query term that is
 //!   rare in this workspace's corpus (see [`term_is_distinctive`]);
-//! - **domain overlap** — the query was scoped and the node shares a domain;
 //! - a **semantic similarity floor** — only when the active embedder declares
 //!   [`SimilarityPosture::Semantic`](crate::embed::SimilarityPosture). The
 //!   default [`HashEmbedder`](crate::embed::HashEmbedder) declares `Surface`:
@@ -26,6 +25,20 @@
 //!   caution but measurement — contaminant frames scored 0.38–0.50 against a
 //!   prompt whose genuinely relevant frames scored 0.45–0.63, so no floor
 //!   separates them (see [`super::DEFAULT_RECENCY_WEIGHT`]).
+//!
+//! **Domain overlap is deliberately not a channel.** It reads as one — "the
+//! query was scoped and the node shares a domain" — but no caller narrows the
+//! scope per query: a session hands recall its whole vocabulary
+//! (`Domains::names()` → `session_host` → `ScopedStore::query`), so
+//! "overlaps the query's domains" degenerates to "carries any tag at all",
+//! which is a fact about the node and says nothing about *this* query. Since
+//! reflection write-back tags every episode whose turn touched files, admitting
+//! on it would re-open #2289 at full width — the same tagged notes on every
+//! prompt, forever. Overlap keeps its honest job as an RRF ranking signal
+//! ([`super::recall_scoped`]'s fusion), which orders the admissible rather
+//! than admitting; it earns evidence status back when a real per-query scope
+//! exists to make it conditional (#2333). Witness:
+//! `a_full_vocabulary_domain_scope_is_not_evidence`.
 //!
 //! Like the rest of `retrieval`'s split-out modules, everything here is a pure
 //! function over already-loaded data. The parent owns the I/O: it streams the
@@ -190,14 +203,12 @@ pub(crate) fn admissible_ids(
     anchor_ids: &[i64],
     anchor_neighbors: &HashSet<i64>,
     lexical: &HashSet<i64>,
-    domain_ranked: &[i64],
     semantic_hits: &[i64],
 ) -> HashSet<i64> {
     let mut evidence: HashSet<i64> = HashSet::new();
     evidence.extend(anchor_ids.iter().copied());
     evidence.extend(anchor_neighbors.iter().copied());
     evidence.extend(lexical.iter().copied());
-    evidence.extend(domain_ranked.iter().copied());
     evidence.extend(semantic_hits.iter().copied());
     evidence
 }
@@ -256,7 +267,7 @@ mod tests {
 
     #[test]
     fn admissibility_is_the_union_of_the_channels() {
-        let ids = admissible_ids(&[1], &HashSet::from([2]), &HashSet::from([3]), &[4], &[5]);
-        assert_eq!(ids, HashSet::from([1, 2, 3, 4, 5]));
+        let ids = admissible_ids(&[1], &HashSet::from([2]), &HashSet::from([3]), &[4]);
+        assert_eq!(ids, HashSet::from([1, 2, 3, 4]));
     }
 }

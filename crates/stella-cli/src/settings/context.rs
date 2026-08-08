@@ -251,8 +251,8 @@ pub struct RetrievalSettings {
     /// ranking's own depth requirements demand it, so this is a floor.
     pub ann_probes: usize,
     /// Whether recall admission requires query-conditional evidence — an
-    /// anchor, anchor adjacency, a distinctive term match, domain overlap, or
-    /// a semantic-posture similarity floor. **On by default (#2289):** with it
+    /// anchor, anchor adjacency, a distinctive term match, or a
+    /// semantic-posture similarity floor. **On by default (#2289):** with it
     /// off, `max_frames` is a cap that always fills, so a small workspace
     /// surfaces the same frames on every prompt no matter what was asked.
     /// `false` is the escape hatch back to that padding behavior, for a
