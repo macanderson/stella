@@ -455,6 +455,28 @@ reap-agents: ## List orphaned stella agents/tool-subprocesses idle 20m+ (dry run
 reap-agents-kill: ## Kill orphaned stella agents/tool-subprocesses idle 20m+ (asks first)
 	scripts/reap-agents.sh
 
+# The arena server is launched detached on purpose, so it outlives the terminal
+# that started it — and therefore accumulates. `kill-arena` sends SIGTERM, which
+# stops the server WITHOUT running serve()'s KeyboardInterrupt handler, so
+# in-flight matches keep running and keep writing their artifacts. Pass
+# `ARENA_ARGS=--cancel` for the SIGINT path that also cancels them. Both
+# scripts carry the full reasoning in their headers.
+.PHONY: kill-arena
+kill-arena: ## Stop every arenabench server (in-flight matches survive; ARENA_ARGS=--cancel to end them)
+	scripts/arena-kill.sh $(ARENA_ARGS)
+
+#
+# `ARENA_PORT` rather than a bare `PORT`: make inherits the environment as make
+# variables, and `PORT` is exported by enough dev tooling that the generic name
+# would silently pin a port nobody chose.
+.PHONY: run-arena
+run-arena: ## Launch a detached, Stella-wired arenabench server (ARENA_PORT= to pin; else first free from 8900)
+	scripts/arena-run.sh $(if $(ARENA_PORT),--port $(ARENA_PORT),) $(ARENA_ARGS)
+
+.PHONY: arena-scripts-test
+arena-scripts-test: ## Test the arena start/stop scripts — argv self-match, ancestry, preflight (hermetic; not part of `gate`)
+	./scripts/test-arena-scripts.sh
+
 # The supply-chain step gates on the TOOL being present, not on its exit code:
 # a missing cargo-deny soft-skips with a message, but a real
 # advisory/license/vulnerability failure from an installed tool fails the
