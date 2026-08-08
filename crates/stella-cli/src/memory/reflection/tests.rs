@@ -24,12 +24,6 @@ use stella_protocol::{
     Provider, ProviderError, ReasoningEffort,
 };
 
-/// The instant handed to `reflect_on_turn` (#2320). These tests assert on the
-/// *request* the reflection builds, never on a timestamp, so the value only has
-/// to be fixed. `1_600_000_000` is 2020-09-13T12:26:40Z — the same reference
-/// instant `stella-context`'s clock tests use.
-const FIXED_NOW: u64 = 1_600_000_000;
-
 /// Records the prompt it is asked to complete — and the request's dispatch
 /// shape (effort, output cap) — then answers with a well-formed empty result
 /// so the caller's parsing path stays on its happy road: the request is what
@@ -90,7 +84,6 @@ async fn prompt_for(succeeded: bool) -> String {
         &["testing".to_string()],
         succeeded,
         None,
-        FIXED_NOW,
     )
     .await
     .expect("the stub provider cannot fail");
@@ -185,7 +178,6 @@ async fn reflection_dispatches_low_effort_with_its_bounded_output_cap() {
         &["testing".to_string()],
         true,
         None,
-        FIXED_NOW,
     )
     .await
     .expect("the stub provider cannot fail");

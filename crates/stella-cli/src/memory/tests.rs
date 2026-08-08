@@ -20,11 +20,6 @@ mod skill_creation;
 
 use super::*;
 
-/// The instant these parsing tests stamp lessons with (#2320). They assert on
-/// what was parsed, never on when — the value only has to be fixed, so the
-/// suite cannot start depending on the day it runs.
-const PARSE_FIXED_NOW: u64 = 1_600_000_000;
-
 fn msg(role: MessageRole, content: &str) -> CompletionMessage {
     CompletionMessage {
         role,
@@ -659,7 +654,17 @@ fn parse_lessons_drops_invented_domains_and_caps_at_three() {
         vec!["API"],
         "case-insensitive match kept"
     );
-    assert!(lessons[0].occurred_at > 0);
+    // The parser deliberately stamps NO instant (#2320). It used to assert
+    // `occurred_at > 0` here, back when `parse_lessons_checked` read the wall
+    // clock — the read that made the mining log unreproducible. Stamping is now
+    // the session's, in `reflect_and_record`'s existing task-id pass, and is
+    // pinned end to end in `memory::tests::determinism`. Asserting the zero
+    // keeps that boundary honest: a clock creeping back into the parser would
+    // fail here rather than pass quietly.
+    assert_eq!(
+        lessons[0].occurred_at, 0,
+        "parsing assigns no instant — the session does"
+    );
 }
 
 #[test]
@@ -681,14 +686,14 @@ fn unreadable_reflection_is_distinguished_from_having_nothing_to_say() {
 
     assert!(
         matches!(
-            parse_lessons_checked("", &[], PARSE_FIXED_NOW),
+            parse_lessons_checked("", &[]),
             ReflectionParse::Lessons(lessons) if lessons.is_empty()
         ),
         "an empty response is a legitimate 'nothing to record'"
     );
     assert!(
         matches!(
-            parse_lessons_checked("no json here", &[], PARSE_FIXED_NOW),
+            parse_lessons_checked("no json here", &[]),
             ReflectionParse::Unreadable(_)
         ),
         "prose with no array is a response we failed to read, not an empty one"
@@ -974,7 +979,7 @@ fn lessons_of(text: &str) -> Vec<crate::memory::ReflectionLesson> {
 }
 
 fn lessons_with(text: &str, allowed: &[String]) -> Vec<crate::memory::ReflectionLesson> {
-    match crate::memory::reflection::parse_lessons_checked(text, allowed, PARSE_FIXED_NOW) {
+    match crate::memory::reflection::parse_lessons_checked(text, allowed) {
         crate::memory::reflection::ReflectionParse::Lessons(lessons) => lessons,
         crate::memory::reflection::ReflectionParse::Unreadable(excerpt) => {
             panic!("expected a readable lesson array, got unreadable: {excerpt}")

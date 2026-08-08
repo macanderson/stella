@@ -71,7 +71,6 @@ impl SessionMemory {
             &self.domains.names(),
             succeeded,
             budget_limit,
-            self.clock.now_unix_secs().max(0) as u64,
         )
         .await
         {
@@ -138,9 +137,18 @@ impl SessionMemory {
         // from one reflection call read as one task and three turns on one task
         // read as three. Both directions are wrong; the session id is at least
         // a real boundary for the one-shot path, where one process is one task.
+        //
+        // `occurred_at` is stamped in the same pass, from the session clock
+        // (#2320). Both fields answer "which session, and when" — one loop
+        // owning both is why neither the reflection dispatch nor the parser
+        // needs to know the time. It also overwrites anything a model put in
+        // the field: a lesson's instant is ours to assign, never the
+        // response's to claim.
         let mut lessons = lessons;
+        let occurred_at = self.clock.now_unix_secs().max(0) as u64;
         for lesson in &mut lessons {
             lesson.task_id = self.task_id.clone();
+            lesson.occurred_at = occurred_at;
         }
 
         // Drop anything the user has already forgotten, BEFORE it reaches any

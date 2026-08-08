@@ -101,12 +101,10 @@ pub(crate) async fn reflect_routed(
         .await
 }
 
-/// `now` is the instant every lesson this call mines is stamped with, in Unix
-/// seconds. It is a parameter rather than a `SystemTime::now()` read because
-/// `occurred_at` is written verbatim into `reflections.jsonl`, which the skill
-/// and rule miners re-read — so a wall-clock read here made the whole mining
-/// log unreproducible (#2320). Callers inside a session pass
-/// `SessionMemory::clock`.
+/// Stamps no timestamp of its own (#2320). `occurred_at` is assigned by
+/// `SessionMemory::reflect_and_record`, in the same pass that stamps
+/// `task_id`, from the session clock — so neither this dispatch nor the parser
+/// below ever reads a clock, and the mining log they feed is reproducible.
 pub async fn reflect_on_turn(
     provider: &dyn Provider,
     model_hint: &str,
@@ -115,7 +113,6 @@ pub async fn reflect_on_turn(
     domain_names: &[String],
     succeeded: bool,
     budget_limit: Option<f64>,
-    now: u64,
 ) -> Result<
     (ReflectionParse, Option<SelfReviewRow>, f64, Vec<AgentEvent>),
     crate::accounted_call::StandaloneCallError,
@@ -313,7 +310,7 @@ pub async fn reflect_on_turn(
     )
     .await?;
     Ok((
-        parse_lessons_checked(&accounted.result.text, domain_names, now),
+        parse_lessons_checked(&accounted.result.text, domain_names),
         parse_self_review(&accounted.result.text),
         accounted.cost_usd,
         accounted.events,
@@ -468,9 +465,9 @@ fn extract_lesson_array(text: &str) -> Option<Vec<ReflectionLesson>> {
     None
 }
 
-/// `now` (Unix seconds) is stamped onto every lesson as `occurred_at`. See
-/// [`reflect_on_turn`] for why it is a parameter and not a clock read.
-pub fn parse_lessons_checked(text: &str, allowed_domains: &[String], now: u64) -> ReflectionParse {
+/// Purely a parser: it reads no clock and assigns no instant. `occurred_at`
+/// is the session's to stamp — see [`reflect_on_turn`] (#2320).
+pub fn parse_lessons_checked(text: &str, allowed_domains: &[String]) -> ReflectionParse {
     let Some(mut lessons) = extract_lesson_array(text) else {
         // An empty response is a legitimate "nothing to record". Anything else
         // is a response we failed to read, and the caller should say so.
@@ -482,7 +479,6 @@ pub fn parse_lessons_checked(text: &str, allowed_domains: &[String], now: u64) -
     };
     lessons.truncate(3);
     for lesson in &mut lessons {
-        lesson.occurred_at = now;
         lesson.domains.retain(|domain| {
             allowed_domains
                 .iter()

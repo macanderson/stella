@@ -194,7 +194,9 @@ impl LessonKind {
 /// second from minting one id, which governance would then count as a single
 /// task. Dropping it would buy reproducibility on a path that is never
 /// replayed, at the price of under-counting concurrent work. The deterministic
-/// half lives in [`deterministic_task_id`] instead, so the nondeterminism is
+/// half lives in `deterministic_task_id` instead (not a doc link: it is
+/// test-gated, so it does not exist in the documented build), so the
+/// nondeterminism is
 /// confined to the constructor that wants it rather than shared by both.
 fn default_task_id(clock: &dyn Clock) -> String {
     format!("session:{}-{}", clock.now_unix_secs(), std::process::id())
