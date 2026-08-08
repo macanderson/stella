@@ -433,10 +433,10 @@ parallel once 2 lands.
 ## 13. As built
 
 The plan above survived contact with the code; the sequencing did not. PR 1 (the
-clock seam) landed on its own as #2340 closing #2320, and PRs 2–4 land together
-here — the format, the assertions and the metrics are one module, and splitting
-an assertion suite from the replayer that exists only to run it produces a PR
-that tests nothing.
+clock seam) landed on its own as #2340 closing #2320, and PRs 2–5 landed as two
+changes rather than three — the format, the assertions and the metrics are one
+module, and splitting an assertion suite from the replayer that exists only to
+run it produces a PR that tests nothing.
 
 This section records where the implementation departs from the plan, so the
 document stays true to the tree. **Everything here was measured by replaying the
@@ -457,20 +457,20 @@ harness earning its keep before it shipped.
    while `stella_core::mining::terms` shatters the path into five terms and
    drops them. Four naturally-varied phrasings of one convention mined **zero**
    candidates; four written into the band mined a skill and a rule. Filed as
-   **#2358** — the committed corpus is worded around this defect, and that
-   workaround should not outlive it.
+   **#2358** — the corpus is worded around this defect, and that workaround
+   should not outlive it.
 2. **The foundry holes only a value-like argument.** `classify_argument` makes a
    positional argument a parameter only if it is a path or a number, so
    `cargo test -p <crate>` yields a different signature per crate and never
    clusters, while `rg -n "<pattern>" <path>` clusters immediately. Correct — a
    bareword is usually a subcommand — but a fixture varying a bareword measures
    nothing.
-3. **A record's lineage embeds the workspace directory name.** `derive_set_id`
-   falls back to it with no git remote, so two replays into different temp dirs
-   produced different lineage ids for the same learned rule and assertion 8
-   failed. The harness names its workspace rather than narrowing the summary to
-   hide it: stripping the set id would have buried real nondeterminism behind a
-   shorter report.
+3. **A record's lineage embeds the workspace directory name.**
+   `derive_set_id` falls back to it with no git remote, so two replays into
+   different temp dirs produced different lineage ids for the same learned rule
+   and assertion 8 failed. The harness names its workspace rather than narrowing
+   the summary to hide it: stripping the set id would have buried real
+   nondeterminism behind a shorter report.
 4. **`Path::starts_with` is lexical**, so `root/../escaped.txt` satisfies it and
    the obvious seed-path guard passed a fixture that escapes. It walks
    components now.
@@ -491,6 +491,10 @@ harness earning its keep before it shipped.
   `occurred_at`/`task_id`, which the replayer owns — a trace able to set them
   could contradict its own clock, and every assertion about recency or
   distinct-task counting would then be asserting the fixture.
+- **`ScriptedReflection` has a fourth arm, `NotRecorded`**, for a source that
+  carried no reflection at all. Every other spelling is a claim the source does
+  not support, and `Unreadable` would fabricate starvation and corrupt assertion
+  7's own metric.
 - **`TraceTurn` gained `forget` and `removed_files`.** Assertions 5 and 6 are
   unreachable without them, and both model real events in an engagement.
 - **Assertion 6 asserts against `retirement::retired_ids`, not the store's live
@@ -502,7 +506,23 @@ harness earning its keep before it shipped.
   absent for rules.** Filed as **#2359**: a placeholder must not render like a
   measurement.
 
-### 13.3 Still open
+### 13.3 The adapter, as built
+
+Option (b), as §7.2 recommends. Every turn carries `NotRecorded`, so the
+reflection path is never driven from transcript-derived material. The privacy
+gate lands where the risk actually is — the shell command — and is *stricter*
+than quarantine: a command whose redaction fired is **dropped**, not kept with a
+hole in it, because the redactor's prefix list is a good filter rather than a
+complete one, and a command carrying a credential was never going to be a
+recurring shape worth minting a tool from.
+
+Measured against the real corpus on 2026-08-08: **496 project directories** (up
+from the 485 §7 recorded — consistent with the rolling window, and the reason a
+derived trace can never be a committed fixture); a 20-project sample adapted to
+**16,664 turns carrying 17,343 shell commands**, every trace passing the
+loader's contract.
+
+### 13.4 Still open
 
 - **#2358** — the dedup/mining threshold collision. The most consequential thing
   the harness has found.
@@ -512,4 +532,3 @@ harness earning its keep before it shipped.
 - **Recall-ranking assertions remain scoped out**, inheriting #2288.
 - **#2321** — extracting the learning loop into a library crate would let the
   harness be an ordinary integration test rather than a `#[cfg(test)]` module.
-- **The §7 adapter** is a separate change; §13 gains its half when it lands.
