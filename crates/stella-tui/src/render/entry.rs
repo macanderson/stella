@@ -183,7 +183,7 @@ fn entry_body(
             // "deterministic-first" chip (`deck_render`) — the interactive-
             // chrome accent, never the brand gold. Rendered as plain lines
             // (not markdown) so nothing tints part of the prompt a 2nd color.
-            let violet = Style::new().fg(theme::ORCHID);
+            let violet = Style::new().fg(theme::VIOLET);
             let lines: Vec<Line<'static>> = text
                 .split('\n')
                 .map(|l| Line::from(Span::styled(l.to_owned(), violet)))
@@ -848,7 +848,7 @@ fn entry_body(
             if let Some(subject) = active {
                 spans.push(Span::styled(format!("  ·  {subject}"), quiet()));
             }
-            push_note("☰ plan", loud(theme::ORCHID), spans, width, out);
+            push_note("☰ plan", loud(theme::VIOLET), spans, width, out);
         }
         TranscriptEntry::Error { message, retryable } => {
             push_note(
