@@ -21,15 +21,17 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use stella_protocol::{
     CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, MessageRole,
-    Provider, ProviderError,
+    Provider, ProviderError, ReasoningEffort,
 };
 
-/// Records the prompt it is asked to complete, then answers with a well-formed
-/// empty result so the caller's parsing path stays on its happy road — the
-/// prompt is what is under test, not the response handling.
+/// Records the prompt it is asked to complete — and the request's dispatch
+/// shape (effort, output cap) — then answers with a well-formed empty result
+/// so the caller's parsing path stays on its happy road: the request is what
+/// is under test, not the response handling.
 #[derive(Default)]
 struct CapturingProvider {
     prompt: Mutex<String>,
+    shape: Mutex<(Option<ReasoningEffort>, Option<u32>)>,
 }
 
 #[async_trait]
@@ -49,6 +51,7 @@ impl Provider for CapturingProvider {
         {
             *self.prompt.lock().expect("prompt lock") = user.content.clone();
         }
+        *self.shape.lock().expect("shape lock") = (req.effort, req.max_output_tokens);
         Ok(CompletionResult {
             text: r#"{"lessons": []}"#.into(),
             tool_calls: vec![],
@@ -149,5 +152,38 @@ async fn a_successful_turn_is_asked_what_surprised_it() {
         !prompt.contains("where things live"),
         "the prompt is asking for file locations again, which is the \
          over-correction #944 was fixing"
+    );
+}
+
+/// #1847's request-shape half: reflection is a bounded management call.
+///
+/// `effort` was previously unset, which leaves the provider's own default
+/// reasoning allowance in force — unbounded thinking spent deciding, most
+/// turns, to return an empty list. Pinned low it matches the shape every
+/// bounded management call already has (the pipeline's `management_bounds`
+/// pins triage the same way; so does the engine's overflow summarizer). The
+/// 2048 output cap is asserted alongside because the two bounds are one
+/// dispatch contract: a short JSON lesson array, briefly reasoned.
+#[tokio::test]
+async fn reflection_dispatches_low_effort_with_its_bounded_output_cap() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join(".stella")).expect("workspace");
+    let provider = CapturingProvider::default();
+    let transcript = vec![CompletionMessage::user("fix the leak")];
+    super::reflect_on_turn(
+        &provider,
+        "capturing",
+        dir.path(),
+        &transcript,
+        &["testing".to_string()],
+        true,
+        None,
+    )
+    .await
+    .expect("the stub provider cannot fail");
+    assert_eq!(
+        *provider.shape.lock().expect("shape lock"),
+        (Some(ReasoningEffort::Low), Some(2048)),
+        "reflection must dispatch as a bounded, pinned-low management call"
     );
 }

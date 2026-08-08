@@ -106,16 +106,16 @@ pub(super) async fn record_and_reflect_turn(
         return;
     }
     let Some(memory) = memory else { return };
-    let mut report = memory
-        .reflect_and_record(
-            provider,
-            &cfg.model_id,
-            messages,
-            true,
-            true,
-            crate::agent::remaining_budget(budget),
-        )
-        .await;
+    let mut report = crate::memory::reflect_routed(
+        memory,
+        cfg,
+        provider,
+        messages,
+        true,
+        true,
+        crate::agent::remaining_budget(budget),
+    )
+    .await;
     crate::agent::settle_reflection_budget(&mut report, budget);
     forward_reflection_events(in_tx, report);
 }
