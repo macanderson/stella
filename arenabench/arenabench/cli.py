@@ -486,20 +486,32 @@ def _cmd_proof(args: argparse.Namespace) -> int:
         return 1
 
     reader = MetricsReader()
-    trials: list[tuple[str, TrialMetrics]] = []
+    trials: list[tuple[str, str, TrialMetrics]] = []
     for events in sorted(root.rglob(EVENTS_NAME)):
         trial_dir = events.parent.parent
         metrics = reader.read(trial_dir, trial_dir.name)
         if metrics.proof is not None:
-            trials.append((trial_dir.name, metrics))
+            # A match directory holds one job per seat, and a seat is what a
+            # reader is comparing. Without it the trials of two seats
+            # interleave under task names that look like duplicates.
+            trials.append((trial_dir.parent.name, trial_dir.name, metrics))
 
     if not trials:
         print(f"no Stella event stream under {root}", file=sys.stderr)
         return 1
 
-    width = min(46, max(len(name) for name, _ in trials))
-    print(f"{'trial':<{width}}  {'grade':<10} {'witness':<8} {'oracle':<10} wrong  rung")
-    for name, metrics in trials:
+    # Only shown when the path spans more than one seat: for a single job it
+    # is the same string on every row.
+    seats = {job for job, _, _ in trials}
+    trials.sort(key=lambda row: (row[0], row[1]))
+    width = min(46, max(len(name) for _, name, _ in trials))
+    seat_width = min(28, max(len(job) for job in seats)) if len(seats) > 1 else 0
+    seat_head = f"{'seat':<{seat_width}}  " if seat_width else ""
+    print(
+        f"{seat_head}{'trial':<{width}}  {'grade':<10} {'witness':<8} "
+        f"{'oracle':<10} wrong  rung"
+    )
+    for job, name, metrics in trials:
         proof = metrics.proof
         assert proof is not None  # filtered above
         # `+` passed, `-` failed, in the order observed. "never ran" gets its
@@ -508,13 +520,15 @@ def _cmd_proof(args: argparse.Namespace) -> int:
         # than a failing one.
         strip = "".join("+" if run.passed else "-" for run in proof.oracle_runs)
         strip = strip or "(none)"
+        seat_cell = f"{job[:seat_width]:<{seat_width}}  " if seat_width else ""
         print(
-            f"{name[:width]:<{width}}  {_GRADE_GLYPH.get(proof.grade, proof.grade):<10} "
+            f"{seat_cell}{name[:width]:<{width}}  "
+            f"{_GRADE_GLYPH.get(proof.grade, proof.grade):<10} "
             f"{'yes' if proof.witness_authored else 'no':<8} {strip[:10]:<10} "
             f"{proof.failed_attempts:<5}  {proof.rung or '-'}"
         )
 
-    totals = aggregate([m for _, m in trials])
+    totals = aggregate([m for _, _, m in trials])
     print(
         f"\n{totals['rail_trials']} trial(s) with a rail · "
         f"{totals['proven']} proven · {totals['witnessed']} witnessed · "
@@ -523,7 +537,7 @@ def _cmd_proof(args: argparse.Namespace) -> int:
         f"{totals['claimed_without_proof']} claimed without proof"
     )
 
-    for name, metrics in trials:
+    for job, name, metrics in trials:
         proof = metrics.proof
         assert proof is not None
         reasons = [
@@ -536,7 +550,7 @@ def _cmd_proof(args: argparse.Namespace) -> int:
         pivotal = proof.witness_authored or bool(reasons) or proof.oracle_runs
         if not (args.full or pivotal):
             continue
-        print(f"\n── {name} ── {proof.grade}")
+        print(f"\n── {job + ' · ' if seat_width else ''}{name} ── {proof.grade}")
         if proof.witness_authored:
             print(f"   witness   {proof.witness_path}  ({proof.witness_command})")
         if proof.tracked_command:
