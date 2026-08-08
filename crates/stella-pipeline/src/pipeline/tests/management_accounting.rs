@@ -267,7 +267,7 @@ async fn late_verdict_is_abandoned_and_falls_back_to_the_heuristic() {
 
     let verdict = pipeline
         .verifier(
-            &mut super::super::verifier_stage::VerdictDegradation::new(1),
+            &super::super::verifier_stage::VerdictDegradation::new(1),
             prompt,
             &inputs,
             &mut Spend {

@@ -517,7 +517,7 @@ async fn a_confirmed_verify_done_flip_survives_a_degraded_verdict() {
         .expect("the run reaches a verdict");
 
     assert!(
-        matches!(outcome.status, PipelineStatus::Completed { .. }),
+        matches!(outcome.status, PipelineStatus::Completed),
         "a confirmed verify_done flip must survive the verifier outage that \
          re-opened this exact shape; got {:?}",
         outcome.status
