@@ -8,17 +8,57 @@ code becomes its own module. The subject is one seam —
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("harbor", reason="Harbor is required to import the adapter")
 
 from stella_harbor.turn_budget import (  # noqa: E402 - after importorskip by design
     TEARDOWN_SEC,
+    coerce_timeout_multiplier,
     coerce_timeout_seconds,
+    discover_trial_deadline,
     resolve_turn_budget,
+    trial_agent_deadline,
 )
 
 from .test_adapter import _bare_agent  # noqa: E402 - after importorskip by design
+
+
+def _trial_tree(
+    tmp_path: Path,
+    *,
+    task_timeout_sec: object = 900.0,
+    trial_config: dict[str, object] | None = None,
+) -> Path:
+    """Lay out a Harbor single-step trial and return its agent ``logs_dir``.
+
+    The shape Harbor itself writes (``harbor/models/trial/paths.py``): the
+    resolved ``config.json`` at the trial root, the agent's log directory
+    immediately beneath it, and the task definition wherever ``task.path``
+    says. Built on disk rather than mocked because the thing under test is a
+    file layout, and a mock of it would agree with whatever the code does.
+    """
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    if task_timeout_sec is not None:
+        (task_dir / "task.toml").write_text(
+            f'schema_version = "1.1"\n\n[agent]\ntimeout_sec = {task_timeout_sec}\n',
+            encoding="utf-8",
+        )
+    config: dict[str, object] = {
+        "task": {"path": str(task_dir)},
+        "timeout_multiplier": 1.0,
+        "agent": {"override_timeout_sec": None, "max_timeout_sec": None},
+    }
+    config.update(trial_config or {})
+    trial_dir = tmp_path / "trial"
+    logs_dir = trial_dir / "agent"
+    logs_dir.mkdir(parents=True)
+    (trial_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    return logs_dir
 
 
 class TestTurnBudgetReachesTheEngine:
@@ -143,6 +183,231 @@ class TestTurnBudgetReachesTheEngine:
             cmd = agent._build_command("Fix the bug")
 
             assert "--turn-budget" not in cmd, junk
+
+
+class TestTheDeadlineArmsWithoutAnybodyPassingIt:
+    """#2135's witness: no runner ever passed the kwarg, so nothing armed.
+
+    ``BudgetGuard::set_task_deadline`` (#1481), its safe-boundary consumer in
+    ``stella-core::driver::settlement`` (#1503) and the CLI's
+    ``one_shot_budget_guard`` (#1507) were all built, wired and shipped. They
+    were also completely inert on the bench path, because arming them needs a
+    ``--turn-budget`` on argv, that flag needs a deadline, and the only two
+    channels for one were things a *caller* had to remember:
+
+    * ``--agent-kwarg agent_timeout_sec=…`` — every trial in match
+      ``cc00894779ff`` records ``agent.kwargs: {}``, and ArenaBench's
+      ``harbor run`` command line passes no ``--agent-kwarg`` at all.
+    * ``STELLA_TURN_BUDGET`` — a static value, and wrong by construction for a
+      dataset whose tasks carry 900s and 1800s deadlines.
+
+    So ``resolve_turn_budget(None, None)`` returned ``None``, the flag was
+    omitted, ``Config::turn_budget`` stayed ``None``, and every timeout in that
+    match was Harbor's own SIGKILL rather than an engine-side stop.
+
+    Harbor has always known the number, and writes it — with the inputs that
+    produce it — to ``config.json`` at the trial root before the agent starts.
+    These tests fail on a tree where the adapter does not read it.
+    """
+
+    def test_a_trial_arms_its_deadline_with_no_kwarg_and_no_variable(
+        self, tmp_path: Path
+    ) -> None:
+        """The witness. Exactly the inputs `cobol-modernization__kt3nQsB` had."""
+        agent = _bare_agent()
+        agent.model_name = "openrouter/anthropic/claude-sonnet-5"
+        agent.logs_dir = _trial_tree(tmp_path, task_timeout_sec=900.0)
+
+        cmd = agent._build_command("Fix the bug")
+
+        assert "--turn-budget" in cmd
+        assert cmd[cmd.index("--turn-budget") + 1] == "840"
+
+    def test_the_deadline_stays_per_task_across_a_mixed_dataset(
+        self, tmp_path: Path
+    ) -> None:
+        """The reason a static variable could never be the answer.
+
+        Terminal-Bench 2.1 runs 900s and 1800s tasks in one job. Discovery is
+        per trial, so each gets its own deadline rather than the tightest one.
+        """
+        agent = _bare_agent()
+        agent.model_name = "openrouter/anthropic/claude-sonnet-5"
+        agent.logs_dir = _trial_tree(tmp_path, task_timeout_sec=1800.0)
+
+        cmd = agent._build_command("Fix the bug")
+
+        assert cmd[cmd.index("--turn-budget") + 1] == "1740"
+
+    def test_an_explicit_kwarg_still_outranks_what_was_discovered(
+        self, tmp_path: Path
+    ) -> None:
+        """Stated beats derived: an operator who says it means it."""
+        agent = _bare_agent()
+        agent.model_name = "openrouter/anthropic/claude-sonnet-5"
+        agent.logs_dir = _trial_tree(tmp_path, task_timeout_sec=1800.0)
+        agent._agent_timeout_sec = 900.0
+
+        cmd = agent._build_command("Fix the bug")
+
+        assert cmd[cmd.index("--turn-budget") + 1] == "840"
+
+    def test_the_discovered_deadline_outranks_the_static_variable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The variable is the fallback for a host that has no trial to read."""
+        monkeypatch.setenv("STELLA_TURN_BUDGET", "900")
+        agent = _bare_agent()
+        agent.model_name = "openrouter/anthropic/claude-sonnet-5"
+        agent.logs_dir = _trial_tree(tmp_path, task_timeout_sec=1800.0)
+
+        cmd = agent._build_command("Fix the bug")
+
+        assert cmd[cmd.index("--turn-budget") + 1] == "1740"
+
+    def test_the_armed_value_is_disclosed_in_the_trials_own_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        """A trace field, so triage never has to reconstruct argv again.
+
+        Reading a timed-out trial's artifacts could not distinguish "the
+        deadline was armed and the run blew through it" from "no deadline was
+        ever armed" — the exact ambiguity that made #2135 a forensics job.
+        """
+        agent = _bare_agent()
+        agent.model_name = "openrouter/anthropic/claude-sonnet-5"
+        agent.logs_dir = _trial_tree(tmp_path, task_timeout_sec=900.0)
+        agent._metrics = {"status": "completed", "steps": 1}
+        agent._return_code = 0
+
+        class _Ctx:
+            cost_usd = None
+            n_input_tokens = None
+            n_output_tokens = None
+            n_cache_tokens = None
+            metadata = None
+
+        ctx = _Ctx()
+        agent.populate_context_post_run(ctx)
+
+        assert ctx.metadata["stella_turn_budget_sec"] == "840"
+
+    def test_an_unarmed_trial_says_so_rather_than_saying_nothing(self) -> None:
+        """A word, not an omission — the ``stella_budget_usd`` discipline.
+
+        Harbor's metadata dict drops ``None``, so an absent key would spell
+        "no deadline was armed" and "this adapter predates the field" the same
+        way, which is how the original question became unanswerable.
+        """
+        agent = _bare_agent()
+        agent.model_name = "openrouter/anthropic/claude-sonnet-5"
+        agent._metrics = {"status": "completed", "steps": 1}
+        agent._return_code = 0
+
+        class _Ctx:
+            cost_usd = None
+            n_input_tokens = None
+            n_output_tokens = None
+            n_cache_tokens = None
+            metadata = None
+
+        ctx = _Ctx()
+        agent.populate_context_post_run(ctx)
+
+        assert ctx.metadata["stella_turn_budget_sec"] == "unarmed"
+
+
+class TestDiscoveryFailsOpenNeverGuesses:
+    """A recomputation coupled to Harbor's version must degrade, not invent.
+
+    Every one of these returns "no deadline known", which omits the flag and
+    restores the pre-#1161 behaviour exactly. The alternative — a fallback
+    constant — is the failure this module's header already names: a guessed
+    deadline makes the engine decline continuations it could afford.
+    """
+
+    def test_no_logs_dir_at_all(self) -> None:
+        assert discover_trial_deadline(None) is None
+        assert discover_trial_deadline("") is None
+
+    def test_a_trial_directory_with_no_config(self, tmp_path: Path) -> None:
+        logs_dir = tmp_path / "trial" / "agent"
+        logs_dir.mkdir(parents=True)
+        assert discover_trial_deadline(logs_dir) is None
+
+    def test_a_config_that_is_not_json(self, tmp_path: Path) -> None:
+        logs_dir = _trial_tree(tmp_path)
+        (logs_dir.parent / "config.json").write_text("{not json", encoding="utf-8")
+        assert discover_trial_deadline(logs_dir) is None
+
+    def test_a_task_that_is_not_on_this_host(self, tmp_path: Path) -> None:
+        """A registry-resolved dataset records ``task.path: null``."""
+        logs_dir = _trial_tree(
+            tmp_path, trial_config={"task": {"path": None, "source": "registry"}}
+        )
+        assert discover_trial_deadline(logs_dir) is None
+
+    def test_a_task_directory_with_no_task_toml(self, tmp_path: Path) -> None:
+        assert discover_trial_deadline(_trial_tree(tmp_path, task_timeout_sec=None)) is None
+
+    def test_a_task_toml_that_is_not_toml(self, tmp_path: Path) -> None:
+        logs_dir = _trial_tree(tmp_path)
+        (tmp_path / "task" / "task.toml").write_text("[[[", encoding="utf-8")
+        assert discover_trial_deadline(logs_dir) is None
+
+    def test_a_multi_step_layout_reads_as_unknown_not_as_a_sibling_trial(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the immediate parent is consulted, on purpose.
+
+        Walking further up eventually finds *some* configuration, and arming a
+        deadline that belongs to a different run is worse than arming none.
+        """
+        logs_dir = _trial_tree(tmp_path)
+        deeper = logs_dir.parent / "steps" / "step-1" / "agent"
+        deeper.mkdir(parents=True)
+        assert discover_trial_deadline(deeper) is None
+
+
+class TestTrialDeadlineArithmeticMirrorsHarbor:
+    """`harbor/trial/trial.py`'s own formula, pure and without a trial tree."""
+
+    def test_the_task_timeout_is_the_base(self) -> None:
+        assert trial_agent_deadline({}, 900.0) == 900.0
+
+    def test_an_override_replaces_the_task_timeout(self) -> None:
+        config = {"agent": {"override_timeout_sec": 1200.0}}
+        assert trial_agent_deadline(config, 900.0) == 1200.0
+
+    def test_a_cap_lowers_but_never_raises(self) -> None:
+        assert trial_agent_deadline({"agent": {"max_timeout_sec": 600.0}}, 900.0) == 600.0
+        assert trial_agent_deadline({"agent": {"max_timeout_sec": 3600.0}}, 900.0) == 900.0
+
+    def test_the_agent_multiplier_wins_over_the_global_one(self) -> None:
+        config = {"timeout_multiplier": 3.0, "agent_timeout_multiplier": 2.0}
+        assert trial_agent_deadline(config, 900.0) == 1800.0
+        assert trial_agent_deadline({"timeout_multiplier": 3.0}, 900.0) == 2700.0
+
+    def test_no_stated_base_is_no_deadline(self) -> None:
+        assert trial_agent_deadline({"timeout_multiplier": 2.0}, None) is None
+
+    def test_a_stated_zero_multiplier_is_no_time_not_a_missing_multiplier(
+        self,
+    ) -> None:
+        """Harbor selects the multiplier with ``is not None``.
+
+        A stated ``0`` means the trial is killed on the instant. Reading it as
+        "unstated" would arm a full-length deadline against a run that has
+        none, so the two parsers are deliberately different.
+        """
+        assert trial_agent_deadline({"agent_timeout_multiplier": 0}, 900.0) == 0.0
+        assert resolve_turn_budget(None, None, None) is None
+        assert coerce_timeout_multiplier(0) == 0.0
+        assert coerce_timeout_seconds(0) is None
+
+    @pytest.mark.parametrize("raw", [None, True, False, "", "abc", "nan", "inf"])
+    def test_a_multiplier_that_is_not_a_number_is_unstated(self, raw: object) -> None:
+        assert coerce_timeout_multiplier(raw) is None
 
 
 class TestResolveTurnBudgetIsPure:
