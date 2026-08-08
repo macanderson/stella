@@ -21,6 +21,7 @@ pub(super) struct TurnTallies {
     mutating: Arc<AtomicU32>,
     opaque: Arc<AtomicU32>,
     verify_confirmations: Arc<AtomicU32>,
+    errored_commands: Arc<AtomicU32>,
 }
 
 impl TurnTallies {
@@ -30,6 +31,7 @@ impl TurnTallies {
         signals.mutating_actions += self.mutating.load(Ordering::Relaxed);
         signals.opaque_actions += self.opaque.load(Ordering::Relaxed);
         signals.verify_done_confirmations += self.verify_confirmations.load(Ordering::Relaxed);
+        signals.errored_commands += self.errored_commands.load(Ordering::Relaxed);
     }
 }
 
@@ -242,6 +244,13 @@ impl<'a> Pipeline<'a> {
         let opaque = seen_opaque.clone();
         let seen_verify = Arc::new(AtomicU32::new(0));
         let verify = seen_verify.clone();
+        // The errored-command census (#2125): unconditional, like the
+        // `verify_done` tally above, because the fact it records is invisible
+        // to every other channel — a chain that exits 0 with a broken command
+        // inside it leaves no trace in the diff, the touch count or the
+        // oracle.
+        let seen_command_errors = Arc::new(AtomicU32::new(0));
+        let command_errors = seen_command_errors.clone();
         // The `verify_done` calls in flight, so their results can be scored
         // (#2129). Correlated by `call_id` for the same reason the command
         // map below is — a step dispatches calls concurrently.
@@ -360,6 +369,13 @@ impl<'a> Pipeline<'a> {
                     {
                         verify.fetch_add(1, Ordering::Relaxed);
                     }
+                    // Scored off the result alone (#2125) — no call-id
+                    // correlation, because the marker the census reads is the
+                    // shell renderer's own and no dispatch record is needed to
+                    // recognize it.
+                    if crate::verify::command_errors::exited_zero_with_a_failed_command(output) {
+                        command_errors.fetch_add(1, Ordering::Relaxed);
+                    }
                     consumer.send(event)
                 }
                 _ => consumer.send(event),
@@ -372,6 +388,7 @@ impl<'a> Pipeline<'a> {
                 mutating: seen_mutating,
                 opaque: seen_opaque,
                 verify_confirmations: seen_verify,
+                errored_commands: seen_command_errors,
             },
         )
     }
