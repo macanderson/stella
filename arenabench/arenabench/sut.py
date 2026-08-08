@@ -399,11 +399,23 @@ def resolve_ref(ref: str, repo: Path | None = None) -> str:
 
     A full SHA and an explicitly-qualified ref (``origin/main``) are used as
     given; only a bare name gets the ``origin/`` preference.
+
+    A full SHA needs no checkout, because there is nothing left to resolve —
+    it *is* the answer, and asking git to confirm it would only report
+    whether this particular clone happens to have fetched that object yet.
+    That distinction is what lets a runner with a staged binary and no
+    Stella source honour a pin: the cloud executor resolves the symbolic ref
+    once at submit time and pins the slice to the commit, so the container
+    never re-resolves anything (the #2098 discipline, applied across the
+    machine boundary). A bare branch name still requires a repository, and
+    still says so.
     """
+    safe = _safe_ref(ref)
+    if _FULL_SHA.match(safe) and repo is None and stella_repo() is None:
+        return safe
     repo = repo or stella_repo()
     if repo is None:
         raise SutUnavailableError(f"cannot resolve {ref!r}: {repo_problem()}")
-    safe = _safe_ref(ref)
     candidates = [safe] if (_FULL_SHA.match(safe) or "/" in safe) else [
         f"origin/{safe}",
         safe,
@@ -879,12 +891,19 @@ def sut_status(ref: str = "main") -> dict[str, Any]:
         "problem": None,
     }
     repo, why = _repo_search()
-    if repo is None:
+    # A checkout answers exactly one question: what commit does this
+    # symbolic ref mean. A pin that is already a full SHA has no such
+    # question, and the staged binary beside it is content-addressed by that
+    # commit — so a runner holding the binary and no Stella source can still
+    # say precisely which Stella it is about to run. Refusing there rejected
+    # every cloud trial (ctl-0808-0028, turnloop-val-2316) for want of a
+    # repository it had no use for.
+    if repo is None and not _FULL_SHA.match(ref):
         out["problem"] = f"the arena cannot say which commit it would run: {why}"
         legacy = legacy_staged()
         out["legacy"] = legacy.to_json() if legacy else None
         return out
-    out["repo"] = str(repo)
+    out["repo"] = str(repo) if repo is not None else None
     try:
         target = resolve_ref(ref, repo)
     except SutUnavailableError as exc:
@@ -906,7 +925,10 @@ def sut_status(ref: str = "main") -> dict[str, Any]:
     # for very different reactions — and when the ref is a branch that moved
     # mid-build, the nearest per-commit build IS the drift, named so the
     # operator can pin the commit that was actually built (#2098).
-    nearest = _nearest_staged(target, repo)
+    # Naming the drift takes git (how far is the nearest build from the one
+    # asked for), so without a checkout the honest report is the plain
+    # absence rather than a distance nobody can compute.
+    nearest = None if repo is None else _nearest_staged(target, repo)
     if nearest is None:
         out["problem"] = (
             f"no Stella binary has been built for {target[:8]}. Build one "
