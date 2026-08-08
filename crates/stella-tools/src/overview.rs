@@ -92,14 +92,18 @@ impl Tool for ProjectOverview {
 }
 
 /// A compact, deterministic orientation block for the system prompt, or
-/// `None` when there is no usable index.
+/// `None` only when the workspace is empty — the worker starts oriented, it
+/// never has to *choose* to look.
 ///
 /// Read-only on purpose: it opens an **existing** index and never builds one,
 /// so it can be called during system-prompt assembly without ever blocking
 /// the first response on an index build (which would defeat the point of a
-/// fast first turn). When the index is absent — a fresh session before the
-/// background build finishes — it returns `None` and the model can still call
-/// `project_overview` explicitly.
+/// fast first turn). When the index is absent or has indexed nothing — a
+/// fresh session before the background build finishes, or a tree with no
+/// files the indexer has a grammar for (an eight-trial bench run rendered
+/// this block in zero worker prompts for exactly that reason) — it degrades
+/// to [`listing_orientation_block`], one bounded `read_dir` of the root,
+/// instead of silently vanishing.
 ///
 /// Deliberately the complement of the script index (which the prompt already
 /// injects separately): languages, top-level layout, entry points, and
@@ -113,6 +117,11 @@ impl Tool for ProjectOverview {
 /// `MAX_TOP_LEVEL_DIRS`, so a monorepo far beyond a few hundred files
 /// renders the same useful map a small tree does.
 pub fn render_orientation_block(root: &Path) -> Option<String> {
+    graph_orientation_block(root).or_else(|| listing_orientation_block(root))
+}
+
+/// The graph-backed map — `None` when the index is absent or empty.
+fn graph_orientation_block(root: &Path) -> Option<String> {
     let path = stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
         .ok()
         .flatten()?;
@@ -168,6 +177,43 @@ pub fn render_orientation_block(root: &Path) -> Option<String> {
         return None;
     }
     Some(lines.join("\n"))
+}
+
+/// The graphless fallback: one sorted, bounded `read_dir` of the workspace
+/// root. A tree the indexer has no grammar for (COBOL, nginx configs, a
+/// tarball) still orients the worker from the first token — what it can see
+/// at the top level — instead of leaving the prompt silently blank. Hidden
+/// entries stay out (which also covers `.stella`), directories carry a
+/// trailing `/`, and an empty workspace renders nothing: there is nothing to
+/// orient toward, and the task text already says so.
+fn listing_orientation_block(root: &Path) -> Option<String> {
+    let mut entries: Vec<String> = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().into_string().ok()?;
+            if name.starts_with('.') {
+                return None;
+            }
+            let is_dir = entry.file_type().ok()?.is_dir();
+            Some(if is_dir { format!("{name}/") } else { name })
+        })
+        .collect();
+    if entries.is_empty() {
+        return None;
+    }
+    entries.sort();
+    let omitted = entries.len().saturating_sub(MAX_TOP_LEVEL_DIRS);
+    entries.truncate(MAX_TOP_LEVEL_DIRS);
+    let mut listing = format!("Top level: {}", entries.join(", "));
+    if omitted > 0 {
+        listing.push_str(&format!(", +{omitted} more"));
+    }
+    Some(format!(
+        "## Project map (top-level listing — no code index yet)\n{listing}\n\
+         No indexed symbols here yet; once code exists, project_overview \
+         returns the graph-backed map."
+    ))
 }
 
 /// Assemble the overview. Total by construction: every source degrades to
@@ -503,16 +549,50 @@ mod tests {
     }
 
     #[test]
-    fn orientation_block_is_none_without_an_index_and_never_builds_one() {
+    fn orientation_block_without_an_index_lists_the_top_level_and_never_builds_one() {
         // Read-only: it must not create an index during system-prompt
-        // assembly, or it would block the first response on a build.
+        // assembly, or it would block the first response on a build. It still
+        // orients — the pre-index degradation is a listing, not a blank.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\n").unwrap();
-        assert!(render_orientation_block(dir.path()).is_none());
+        let block = render_orientation_block(dir.path()).expect("a non-empty tree orients");
+        assert!(block.contains("no code index yet"), "{block}");
+        assert!(block.contains("lib.rs"), "{block}");
         assert!(
             !crate::graph::graph_db_path(dir.path()).exists(),
             "the read-only block must not build an index"
         );
+        // An empty workspace is the one case with nothing to say.
+        let empty = tempfile::tempdir().unwrap();
+        assert!(render_orientation_block(empty.path()).is_none());
+    }
+
+    /// The eight-trial bench shape: `stella init` built the index, but the
+    /// workspace holds nothing the indexer has a grammar for (a tarball under
+    /// deny-listed `vendor/`, COBOL sources). The empty graph must degrade to
+    /// the top-level listing, never to a silently blank prompt — every worker
+    /// prompt in that run went blank exactly here.
+    #[test]
+    fn an_empty_index_falls_back_to_the_top_level_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("vendor")).unwrap();
+        std::fs::write(dir.path().join("vendor").join("src.tar.gz"), b"x").unwrap();
+        std::fs::write(dir.path().join("main.cob"), "IDENTIFICATION DIVISION.\n").unwrap();
+        let _ = build_overview(dir.path());
+        let block = render_orientation_block(dir.path()).expect("the fallback renders");
+        assert!(block.contains("no code index yet"), "{block}");
+        assert!(block.contains("main.cob"), "{block}");
+        assert!(block.contains("vendor/"), "{block}");
+    }
+
+    #[test]
+    fn the_top_level_listing_is_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..MAX_TOP_LEVEL_DIRS + 3 {
+            std::fs::write(dir.path().join(format!("f{i:02}")), b"").unwrap();
+        }
+        let block = render_orientation_block(dir.path()).expect("renders");
+        assert!(block.contains("+3 more"), "{block}");
     }
 
     #[test]
