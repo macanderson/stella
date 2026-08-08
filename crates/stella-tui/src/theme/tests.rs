@@ -451,7 +451,10 @@ fn palette_law_the_nebula_is_the_brand() {
     let Color::Rgb(gr, gg, gb) = GOLD else {
         panic!("GOLD must be a truecolor token");
     };
-    assert!(gr > gg && gg > gb, "GOLD must stay warm-dominant (r > g > b)");
+    assert!(
+        gr > gg && gg > gb,
+        "GOLD must stay warm-dominant (r > g > b)"
+    );
 
     // 2. The retired hues are gone from every token and alias.
     let mut all: Vec<Color> = ALL_RGB_TOKENS.to_vec();
