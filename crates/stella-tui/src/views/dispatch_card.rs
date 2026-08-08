@@ -36,7 +36,7 @@ pub fn render(pending: &crate::deck_ui::PendingDispatch, area: Rect, buf: &mut B
         pending.text.clone()
     };
     let lines = vec![
-        Line::from(Span::styled(held, Style::new().fg(theme::ORCHID))),
+        Line::from(Span::styled(held, Style::new().fg(theme::VIOLET))),
         Line::from(vec![
             Span::styled("  s  ", key),
             Span::styled("steer this turn — inject at the next step", dim),

@@ -138,7 +138,7 @@ def _preset(key: str, worker: str, title: str, blurb: str) -> dict[str, Any]:
                     "agent": "stella",
                     "engine": stella_engine,
                     "env": {"required": ["OPENROUTER_API_KEY"]},
-                    "color": "#7C5CFF",
+                    "color": "#FFB000",
                 },
             ],
         }

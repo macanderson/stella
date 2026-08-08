@@ -42,13 +42,9 @@ fn trace_kind_color_covers_every_variant_without_panic() {
 /// derived) so this and [`every_named_token_has_a_fallback`] fail loudly the
 /// moment a new truecolor token lands without a [`FALLBACKS`] entry. Role
 /// aliases (`INK`, `OK`, `DANGER`, …) share a value with a palette token, so
-/// they are intentionally not re-listed — that includes `ACCENT_FILL` (one
-/// value with `ACCENT`) and `SYNTAX_COMMENT` (the caption tier,
-/// `TEXT_TERTIARY`).
-///
-/// `ACCENT_BRIGHT` and `GOLD` are listed: under the comet kit each shared a
-/// value with another token (the bright stop with `GOLD_BRIGHT`, gold with
-/// `ACCENT`), and the nebula splits both apart.
+/// they are intentionally not re-listed — under the comet kit that includes
+/// `ACCENT_FILL` and `GOLD` (one Phosphor Gold with `ACCENT`) and
+/// `SYNTAX_COMMENT` (the caption tier, `TEXT_TERTIARY`).
 const ALL_RGB_TOKENS: &[Color] = &[
     VOID,
     GROUND,
@@ -60,19 +56,17 @@ const ALL_RGB_TOKENS: &[Color] = &[
     TEXT_SECONDARY,
     TEXT_TERTIARY,
     ACCENT,
-    ACCENT_BRIGHT,
-    ACCENT_DEEP,
-    GOLD,
     GOLD_BRIGHT,
+    ACCENT_DEEP,
     GOLD_DEEP,
     SUCCESS,
     WARNING,
     DANGER,
     ORACLE_PRE_FLIP,
-    ORCHID,
-    LIME,
-    AZURE,
-    ROSE,
+    VIOLET,
+    AMBER,
+    TEAL,
+    MAGENTA,
     CODE,
     DIFF_ADD_BG,
     DIFF_DEL_BG,
@@ -161,22 +155,19 @@ fn every_named_token_has_a_fallback() {
 #[test]
 fn role_aliases_track_their_palette_token() {
     // Brand roles resolve to the generated palette, not to a local literal.
-    // Under the nebula the accent is NOT the gold: the brand is a violet→cyan
-    // sweep and gold is the rationed north point, so the two families are
-    // separate values on purpose. (Under the comet kit these were `assert_eq!`
-    // — the split is the rebrand.)
+    // Under the comet kit the accent IS the gold: one Phosphor Gold serves
+    // text, rules and fills (11.36:1 on ground), so ACCENT, ACCENT_FILL and
+    // GOLD are one value on purpose.
     assert_eq!(ACCENT, palette::BRAND);
     assert_eq!(ACCENT_FILL, ACCENT);
-    assert_eq!(ACCENT_BRIGHT, palette::BRAND_BRIGHT);
-    assert_ne!(GOLD, ACCENT);
-    assert_ne!(palette::BRAND, palette::GOLD);
-    assert_ne!(palette::BRAND_BRIGHT, palette::GOLD_BRIGHT);
-    assert_eq!(GOLD, palette::GOLD);
+    assert_eq!(GOLD, ACCENT);
+    assert_eq!(palette::BRAND, palette::GOLD);
+    assert_eq!(palette::BRAND_BRIGHT, palette::GOLD_BRIGHT);
     assert_eq!(ACCENT_DEEP, palette::BRAND_DEEP);
     assert_eq!(GOLD_BRIGHT, palette::GOLD_BRIGHT);
     assert_eq!(GOLD_DEEP, palette::GOLD_DEEP);
-    // The gold sweep and the progress fill lead with different deep stops:
-    // they are now different hue families entirely, not two tunings of one.
+    // The identity sweep and the progress fill lead with different deep
+    // stops on purpose: chrome may run quiet, the fill's tail must hold AA.
     assert_ne!(GOLD_DEEP, ACCENT_DEEP);
     assert_eq!(VOID, palette::VOID);
     assert_eq!(HAIRLINE_STRONG, palette::HAIRLINE_STRONG);
@@ -187,20 +178,18 @@ fn role_aliases_track_their_palette_token() {
     assert_eq!(OK, SUCCESS);
     assert_eq!(WARN, WARNING);
     assert_eq!(BAD, DANGER);
-    assert_eq!(HELD, ORCHID);
-    assert_eq!(RUN, ORCHID);
-    // Syntax and process hues are categorical -- never the brand accent, and
-    // notably not the kit reference's violet keyword / cyan string, which are
-    // both brand-sweep values (see `theme`'s syntax note).
-    assert_eq!(SYNTAX_KEYWORD, ORCHID);
-    assert_eq!(SYNTAX_NUMBER, AZURE);
+    assert_eq!(HELD, VIOLET);
+    assert_eq!(RUN, VIOLET);
+    // Syntax and process hues are categorical -- never the brand accent.
+    assert_eq!(SYNTAX_NUMBER, VIOLET);
+    assert_eq!(SYNTAX_KEYWORD, AMBER);
     assert_eq!(SYNTAX_COMMENT, TEXT_TERTIARY);
     // The categorical set is the observatory's data-mark palette verbatim,
     // so a series in a chart and a chip in the deck are the same colour.
-    assert_eq!(LIME, palette::DATA_1);
-    assert_eq!(ORCHID, palette::DATA_2);
-    assert_eq!(ROSE, palette::DATA_3);
-    assert_eq!(AZURE, palette::DATA_4);
+    assert_eq!(AMBER, palette::DATA_1);
+    assert_eq!(VIOLET, palette::DATA_2);
+    assert_eq!(MAGENTA, palette::DATA_3);
+    assert_eq!(TEAL, palette::DATA_4);
 }
 
 /// The kit's one hard prohibition, restated for a gold accent: **gold never
@@ -336,23 +325,18 @@ fn hue_separation(a: Color, b: Color) -> f64 {
 /// what confines each of them.
 ///
 /// What must hold now:
-///   1. The accent is the kit's Nebula Violet lifted for the terminal,
-///      exactly; the ground is Void, exactly. Brand and gold are **not** one
-///      family — the *split* IS this rebrand, exactly as the collapse was the
-///      last one.
-///   2. Every retired hue is gone — the whole electric-blue family, the comet
-///      kit's Phosphor Gold and the warm neutral ramp under it, and the older
-///      warm-tinted gold with them.
-///   3. Grounds are blue-cast and never true black; text is cool.
+///   1. The accent is the kit's Phosphor Gold, exactly; the ground is Ink,
+///      exactly. Brand and gold are one family (the collapse IS the
+///      rebrand).
+///   2. Every retired hue is gone — the whole electric-blue family, the old
+///      warm-tinted gold, and the cool gray text ramp with them.
+///   3. Grounds are near-neutral and never true black; text is warm.
 ///   4. Warning ramps warm, success ramps green, danger ramps red.
-///   5. The brand is reserved. Every chromatic role sits ≥ 30° of hue away,
-///      with no exceptions at all — the named-neighbour clause the gold
-///      identity needed is *gone*, because moving the accent off the yellow
-///      side moved it clear of warning and the amber mark in one step.
-///   6. Gold is reserved separately and rationed: it is not the accent, and
-///      WARN is its one permitted hue-neighbour.
+///   5. Gold is reserved. Every chromatic role sits ≥ 30° of hue away,
+///      except the two named neighbours: WARN (always glyph-paired) and
+///      AMBER (confined to syntax keywords in code bodies).
 #[test]
-fn palette_law_the_nebula_is_the_brand() {
+fn palette_law_gold_is_the_brand() {
     const RETIRED_AURORA_CYAN: Color = Color::Rgb(0x3F, 0xE0, 0xFF);
     const RETIRED_EMBER_FLAME: Color = Color::Rgb(0xFF, 0x7E, 0x5F);
     const RETIRED_EMBER_CRIMSON: Color = Color::Rgb(0xC2, 0x18, 0x5B);
@@ -390,71 +374,34 @@ fn palette_law_the_nebula_is_the_brand() {
     const RETIRED_COOL_TEXT: Color = Color::Rgb(0xF2, 0xF5, 0xFA);
     const RETIRED_COOL_TEXT_2: Color = Color::Rgb(0x8E, 0x97, 0xA8);
     const RETIRED_COOL_TEXT_3: Color = Color::Rgb(0x73, 0x7D, 0x92);
-    /// The blue-cast "deep space" ground the ink ramp replaced. The nebula
-    /// ground is blue-cast again, but it is `#080B1C` and not this value —
-    /// the return of the cast is deliberate, the return of the *hex* would be
-    /// a revert.
+    /// The blue-cast "deep space" ground the ink ramp replaces.
     const RETIRED_DEEP_SPACE: Color = Color::Rgb(0x08, 0x0A, 0x0F);
-    /// The comet kit's Phosphor Gold, the identity this recolor retired: the
-    /// terminal's lifted accent, its bright and deep stops, and the two paper
-    /// golds. Gold survives in the nebula kit — but as `#FFC857`, the north
-    /// point, and never again as the accent.
-    const RETIRED_PHOSPHOR_GOLD: Color = Color::Rgb(0xFF, 0xB8, 0x1A);
-    const RETIRED_PHOSPHOR_GOLD_KIT: Color = Color::Rgb(0xFF, 0xB0, 0x00);
-    const RETIRED_PHOSPHOR_GOLD_BRIGHT: Color = Color::Rgb(0xFD, 0xC1, 0x54);
-    const RETIRED_PHOSPHOR_GOLD_DEEP: Color = Color::Rgb(0xE5, 0xA0, 0x00);
-    const RETIRED_GOLD_INK: Color = Color::Rgb(0x85, 0x5E, 0x00);
-    const RETIRED_GOLD_INK_DEEP: Color = Color::Rgb(0x5A, 0x3F, 0x00);
-    /// The warm neutral ramp the cool one replaces — the comet kit banned
-    /// cool grays, and the nebula bans these for the mirror-image reason: a
-    /// warm gray on a blue-cast void reads as a stain.
-    const RETIRED_WARM_TEXT: Color = Color::Rgb(0xF4, 0xF1, 0xEA);
-    const RETIRED_WARM_TEXT_2: Color = Color::Rgb(0x9B, 0x98, 0x90);
-    const RETIRED_WARM_TEXT_3: Color = Color::Rgb(0x8D, 0x8A, 0x82);
-    /// The warm-neutral Ink ground, and the warm paper that partnered it.
-    const RETIRED_INK_GROUND: Color = Color::Rgb(0x0B, 0x0B, 0x0C);
-    const RETIRED_WARM_PAPER: Color = Color::Rgb(0xF6, 0xF2, 0xE9);
 
-    // 1. The accent is Nebula Violet and the ground is Void — the exact kit
+    // 1. The accent is Phosphor Gold and the ground is Ink — the exact kit
     //    values, pinned by hex so the brand cannot silently drift. This is
-    //    the one clause that names numbers: `#8F72FF` on `#080B1C` is the
+    //    the one clause that names numbers: `#FFB81A` on `#0B0B0C` is the
     //    identity.
     assert_eq!(
         ACCENT,
-        Color::Rgb(0x8F, 0x72, 0xFF),
-        "the accent must be Nebula Violet #8F72FF, exactly"
+        Color::Rgb(0xFF, 0xB8, 0x1A),
+        "the accent must be Phosphor Gold #FFB81A, exactly"
     );
     assert_eq!(
         GROUND,
-        Color::Rgb(0x08, 0x0B, 0x1C),
-        "the ground must be Void #080B1C, exactly"
+        Color::Rgb(0x0B, 0x0B, 0x0C),
+        "the ground must be Ink #0B0B0C, exactly"
     );
     assert_eq!(ACCENT, palette::BRAND, "the accent comes from the palette");
     assert_eq!(
-        ACCENT_BRIGHT,
-        Color::Rgb(0x1F, 0xD8, 0xE6),
-        "the sweep's bright stop must be Nebula Cyan #1FD8E6, exactly"
-    );
-    // The split is the rebrand. Under the comet kit this was `assert_eq!`.
-    assert_ne!(
         GOLD, ACCENT,
-        "gold is the north point, not the brand — the split IS the nebula"
+        "brand and gold are one family under the comet"
     );
-    for (violet, name) in [(ACCENT, "ACCENT"), (ACCENT_FILL, "ACCENT_FILL")] {
-        let Color::Rgb(r, g, b) = violet else {
+    for (gold, name) in [(ACCENT, "ACCENT"), (ACCENT_FILL, "ACCENT_FILL")] {
+        let Color::Rgb(r, g, b) = gold else {
             panic!("{name} must be a truecolor token");
         };
-        assert!(b > r && r > g, "{name} must be violet-dominant (b > r > g)");
+        assert!(r > g && g > b, "{name} must be warm-dominant (r > g > b)");
     }
-    // Gold stays warm — it is the one warm thing left in the palette, which
-    // is exactly what makes a single gold moment carry.
-    let Color::Rgb(gr, gg, gb) = GOLD else {
-        panic!("GOLD must be a truecolor token");
-    };
-    assert!(
-        gr > gg && gg > gb,
-        "GOLD must stay warm-dominant (r > g > b)"
-    );
 
     // 2. The retired hues are gone from every token and alias.
     let mut all: Vec<Color> = ALL_RGB_TOKENS.to_vec();
@@ -500,29 +447,15 @@ fn palette_law_the_nebula_is_the_brand() {
             (RETIRED_COOL_TEXT_2, "the cool secondary gray"),
             (RETIRED_COOL_TEXT_3, "the cool tertiary gray"),
             (RETIRED_DEEP_SPACE, "the deep-space ground"),
-            (RETIRED_PHOSPHOR_GOLD, "the comet accent gold"),
-            (RETIRED_PHOSPHOR_GOLD_KIT, "the comet kit gold"),
-            (RETIRED_PHOSPHOR_GOLD_BRIGHT, "the comet bright gold"),
-            (RETIRED_PHOSPHOR_GOLD_DEEP, "the comet deep gold"),
-            (RETIRED_GOLD_INK, "the comet paper gold"),
-            (RETIRED_GOLD_INK_DEEP, "the comet deep paper gold"),
-            (RETIRED_WARM_TEXT, "the warm primary neutral"),
-            (RETIRED_WARM_TEXT_2, "the warm secondary neutral"),
-            (RETIRED_WARM_TEXT_3, "the warm tertiary neutral"),
-            (RETIRED_INK_GROUND, "the warm Ink ground"),
-            (RETIRED_WARM_PAPER, "the warm paper ground"),
         ] {
             assert_ne!(*token, retired, "a token still holds {name}");
         }
     }
 
-    // 3. The ground is void: deliberately blue-cast, and never true black —
-    //    pure black makes the accent scream; void lets it glow, and the cast
-    //    is what makes the ground read as sky rather than as a dead terminal.
-    //    This inverts the comet law, which required near-neutrality
-    //    (`max - min <= 5`). The text ramp inverts with it: warm grays are
-    //    banned now, because a warm gray on a blue-cast void reads as a
-    //    stain.
+    // 3. The ground is ink: near-neutral (a whisper of cast at most, in
+    //    either temperature), and never true black — pure black makes the
+    //    accent scream; ink lets it speak. The text ramp is warm: the owner
+    //    banned cool grays, so no text tier may lean blue.
     for (ground, name) in [
         (VOID, "VOID"),
         (GROUND, "GROUND"),
@@ -534,10 +467,10 @@ fn palette_law_the_nebula_is_the_brand() {
         let Color::Rgb(r, g, b) = ground else {
             panic!("{name} must be a truecolor token");
         };
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
-            b > r && b > g,
-            "{name} ({ground:?}) must be blue-cast (b > r, b > g) — the cast \
-             is the nebula's ground, not an accident"
+            max - min <= 5,
+            "{name} ({ground:?}) must be near-neutral ink, not a cast"
         );
         assert_ne!(ground, Color::Rgb(0, 0, 0), "{name} must not be true black");
     }
@@ -550,8 +483,8 @@ fn palette_law_the_nebula_is_the_brand() {
             panic!("{name} must be a truecolor token");
         };
         assert!(
-            b >= g && g >= r,
-            "{name} ({text:?}) must be a cool neutral (b ≥ g ≥ r) — warm \
+            r >= g && g >= b,
+            "{name} ({text:?}) must be a warm neutral (r ≥ g ≥ b) — cool \
              grays are banned"
         );
     }
@@ -571,85 +504,55 @@ fn palette_law_the_nebula_is_the_brand() {
     };
     assert!(dr > dg && dr > db, "danger must be red-dominant");
 
-    // 5. The brand is reserved for brand / active / focus / selection /
-    //    progress. Every chromatic role sits ≥ 30° of hue away — which is how
-    //    `AGENT_ICE` died — and this time there are *no* exceptions.
-    //
-    //    WARN and LIME are in this list rather than in a named-neighbour
-    //    escape hatch below it, which is the clearest single measure of what
-    //    the recolor bought: under the gold identity they sat 4.0° and 0.8°
-    //    from the accent and had to be argued for individually. Off the
-    //    yellow side, they clear it by 145° and 159° for free.
+    // 5. Gold is reserved for brand / active / focus / selection / progress.
+    //    Every chromatic role sits ≥ 30° of hue away — which is how
+    //    `AGENT_ICE` died — except the two *named* neighbours below.
     for (role, name) in [
         (BAD, "BAD"),
         (OK, "OK"),
-        (WARN, "WARN"),
         (RUN, "RUN"),
         (HELD, "HELD"),
-        (ORCHID, "ORCHID"),
-        (LIME, "LIME"),
-        (AZURE, "AZURE"),
-        (ROSE, "ROSE"),
+        (VIOLET, "VIOLET"),
+        (TEAL, "TEAL"),
+        (MAGENTA, "MAGENTA"),
         (CODE, "CODE"),
         (SYNTAX_STRING, "SYNTAX_STRING"),
         (SYNTAX_NUMBER, "SYNTAX_NUMBER"),
     ] {
-        assert_ne!(role, ACCENT, "{name} must not be the reserved brand hue");
+        assert_ne!(role, ACCENT, "{name} must not be the reserved gold");
         let sep = hue_separation(role, ACCENT);
         assert!(
             sep >= 30.0,
-            "{name} ({role:?}) is {sep:.1}° from the brand accent; \
+            "{name} ({role:?}) is {sep:.1}° from the gold accent; \
              30° is the floor for two hues to be told apart in a cell"
         );
     }
-    // 6. Gold is reserved *separately*: it is chrome and identity, never the
-    //    accent and never a verdict. WARN is its one permitted hue-neighbour,
-    //    and permitted for the reason it always was — a status never appears
-    //    without its glyph (`status_glyph`), so the hue is never the only
-    //    carrier. Everything else keeps 30° from gold too.
-    assert!(
-        hue_separation(WARN, GOLD) < 30.0,
-        "WARN is gold's one *named* hue-neighbour; if it has moved away, \
-         promote it to the reserved list below"
-    );
-    for (role, name) in [
-        (BAD, "BAD"),
-        (OK, "OK"),
-        (ORCHID, "ORCHID"),
-        (AZURE, "AZURE"),
-        (ROSE, "ROSE"),
-        (CODE, "CODE"),
-        (SYNTAX_STRING, "SYNTAX_STRING"),
-    ] {
-        assert_ne!(role, GOLD, "{name} must not be the reserved gold");
-        let sep = hue_separation(role, GOLD);
+    // The named neighbours. WARN sits 4.0° from gold: permitted because a
+    // status never appears without its glyph (`status_glyph`), so the hue is
+    // never the only carrier. AMBER sits 0.8° away: permitted because it
+    // paints syntax keywords inside code bodies and nothing else — the
+    // observatory stands the same mark down from every plotted surface, and
+    // the deck stands it down from every chip, node and agent.
+    for (neighbour, name) in [(WARN, "WARN"), (AMBER, "AMBER")] {
+        assert_ne!(neighbour, ACCENT, "{name} may neighbour gold, not BE it");
+        let sep = hue_separation(neighbour, ACCENT);
         assert!(
-            sep >= 30.0,
-            "{name} ({role:?}) is {sep:.1}° from the north-point gold; \
-             gold is rationed, so nothing may be mistaken for it"
+            sep < 30.0,
+            "{name} is a *named* hue-neighbour of gold ({sep:.1}°); if it \
+             has moved ≥ 30° away, promote it to the reserved list above"
         );
     }
-    // The amber mark's stand-down is *lifted*. Under the comet kit `data-1`
-    // measured 1.06:1 against the gold accent, so it was barred from every
-    // chip, node and trace. The accent is no longer gold and `data-1` is no
-    // longer amber, so the bar has no subject: the assertions that enforced it
-    // are gone rather than rewritten, because a rule kept past its reason is
-    // how a palette accumulates cargo.
-    // Gold's own ration, restated as a property: no trace chip, graph node or
-    // agent slot may wear it, because a chip that recurs per row is the
-    // opposite of "one gold moment per view". This replaces the amber
-    // stand-down above — same shape, correct subject.
     assert!(
-        !AGENT_PALETTE.contains(&GOLD),
-        "gold is rationed: no agent chip may wear it"
+        !AGENT_PALETTE.contains(&AMBER),
+        "the amber mark is stood down: no agent chip may wear it"
     );
     for kind in [
         "function", "method", "struct", "enum", "trait", "file", "module", "?",
     ] {
         assert_ne!(
             graph_kind_color(kind),
-            GOLD,
-            "gold is rationed: no graph node may wear it"
+            AMBER,
+            "the amber mark is stood down: no graph node may wear it"
         );
     }
     for kind in [
@@ -669,26 +572,17 @@ fn palette_law_the_nebula_is_the_brand() {
     ] {
         assert_ne!(
             trace_kind_color(kind),
-            GOLD,
-            "gold is rationed: no trace chip may wear it"
+            AMBER,
+            "the amber mark is stood down: no trace chip may wear it"
         );
     }
 
-    // 7. The sweep is a sweep: fill matches accent, the deep stop stays in the
-    //    accent's own hue, and the bright stop deliberately does NOT — the
-    //    nebula's whole point is that it travels violet→cyan, so a bright stop
-    //    within 10° of the accent would mean the gradient had collapsed.
+    // 6. The brand's own tones are the only things allowed near it, and the
+    //    accent/fill pair really is one value now.
     assert_eq!(ACCENT_FILL, ACCENT);
     assert!(hue_separation(ACCENT_DEEP, ACCENT) < 10.0);
-    assert!(
-        hue_separation(ACCENT_BRIGHT, ACCENT) > 30.0,
-        "the sweep must actually travel: if the bright stop has collapsed \
-         onto the accent's hue, the nebula is a single colour again"
-    );
-    // The gold family stays internally consistent, and away from the accent.
-    assert!(hue_separation(GOLD_DEEP, GOLD) < 10.0);
-    assert!(hue_separation(GOLD_BRIGHT, GOLD) < 10.0);
-    assert!(hue_separation(GOLD, ACCENT) >= 30.0);
+    assert!(hue_separation(GOLD_DEEP, ACCENT) < 10.0);
+    assert!(hue_separation(GOLD_BRIGHT, ACCENT) < 10.0);
 }
 
 #[test]
@@ -797,11 +691,11 @@ fn degrade_buffer_is_noop_when_truecolor() {
 #[test]
 fn degrade_buffer_resolves_every_cell_when_degraded() {
     let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-    buf.content[0].fg = ACCENT; // → 99 (256) / 13 (16)
-    buf.content[0].bg = ORCHID; // → 170 (256) / 13 (16)
+    buf.content[0].fg = ACCENT; // → 214 (256) / 11 (16)
+    buf.content[0].bg = VIOLET; // → 98 (256) / 13 (16)
     degrade_buffer(&mut buf, ColorMode::Ansi256);
-    assert_eq!(buf.content[0].fg, Color::Indexed(99));
-    assert_eq!(buf.content[0].bg, Color::Indexed(170));
+    assert_eq!(buf.content[0].fg, Color::Indexed(214));
+    assert_eq!(buf.content[0].bg, Color::Indexed(98));
 }
 
 /// The two degraded paths must still separate the things a reader has to
@@ -865,17 +759,10 @@ fn apply_theme_is_identity_for_dark_and_remaps_for_light() {
         remap_theme(ACCENT_DEEP, LIGHT_REMAP),
         palette::BRAND_INK_DEEP
     );
-    // The bright stop is its own value now, and cyan cannot survive on paper
-    // (1.72:1), so it walks down its own ramp rather than borrowing violet's.
-    assert_eq!(
-        remap_theme(ACCENT_BRIGHT, LIGHT_REMAP),
-        Color::Rgb(0x0C, 0x66, 0x70)
-    );
-    // Gold is its own family under the nebula, so every gold stop lands on the
-    // kit's one light-ground gold instead of collapsing onto the accent's
-    // paper tone the way it did under the comet kit.
-    assert_eq!(remap_theme(GOLD, LIGHT_REMAP), palette::GOLD_INK);
-    assert_eq!(remap_theme(GOLD_BRIGHT, LIGHT_REMAP), palette::GOLD_INK);
+    // Flat gold cells are accent cells now, so they take the accent's paper
+    // text tone; the kit's own light-ground gold (`gold-ink`) survives in the
+    // graphical `gold_stops` sweep only.
+    assert_eq!(remap_theme(GOLD, LIGHT_REMAP), palette::BRAND_INK);
     assert_eq!(remap_theme(GOLD_DEEP, LIGHT_REMAP), palette::GOLD_INK);
     assert_eq!(remap_theme(VOID, LIGHT_REMAP), palette::PAPER);
     assert_eq!(remap_theme(GROUND, LIGHT_REMAP), palette::PAPER);

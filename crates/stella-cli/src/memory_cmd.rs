@@ -3,10 +3,10 @@
 //! `list` ranks the project's memories most-cited first, joining the
 //! citation feedback the agent recorded (`cite_memory` → `.stella/private/store.db`)
 //! with the memories themselves (`.stella/private/context.db`), and flags the ones
-//! that have earned rule promotion. `promote <id>` turns an eligible memory
-//! into a project rule at `.stella/rules/<slug>.md` — the rules engine's own
-//! authoring format (`stella_core::rules`), so the promoted file is loaded
-//! and parsed exactly like a hand-written rule.
+//! that have earned rule promotion. `promote <id>` publishes an eligible
+//! memory as a TOML context record under `.stella/rules/` (ADR 0011) — the
+//! same surface `stella context keep` publishes to, so the promoted record is
+//! loaded, validated, and governed exactly like a reviewed one.
 //!
 //! Like `stella stats`, both subcommands read local state only and need no
 //! API key; `list` never creates a database as a side effect. Promotion is
@@ -37,10 +37,10 @@ pub enum MemoryCmd {
         #[arg(long, value_enum, default_value = "text")]
         format: QueryFormat,
     },
-    /// Promote an eligible memory to a project rule at
-    /// `.stella/rules/<slug>.md`. Eligibility is strict: cited successfully
-    /// MORE THAN 10 consecutive times since its last negative remark — one
-    /// negative citation resets the count until it is re-earned.
+    /// Promote an eligible memory to a project rule — published as a TOML
+    /// context record under `.stella/rules/`. Eligibility is strict: cited
+    /// successfully MORE THAN 10 consecutive times since its last negative
+    /// remark — one negative citation resets the count until it is re-earned.
     Promote {
         /// The memory's stable id (nod_…) as shown by `stella memory list`
         id: String,
@@ -303,22 +303,44 @@ fn promote_in(workspace_root: &std::path::Path, id: &str) -> Result<(), String> 
     }
 
     let candidate = promotion_candidate(&node, stat);
-    let rules_dir = workspace_root.join(".stella").join("rules");
-    let path = rules_dir.join(format!("{}.md", candidate.id));
+    let set_id = crate::ingest_cmd::derive_set_id(workspace_root);
+    let record = crate::context_records::inferred_rule_record(
+        &set_id,
+        &candidate.id,
+        &candidate.text,
+        "memory",
+        &format!("memory:{}", node.public_id),
+    )?;
+    // A rule this memory promoted under the retired markdown surface still
+    // steers; publishing a TOML copy beside it would double-inject the lesson.
+    let legacy = workspace_root
+        .join(".stella")
+        .join("rules")
+        .join(format!("{}.md", candidate.id));
+    if legacy.exists() {
+        return Err(format!(
+            "{} already exists from an earlier promotion — delete it first to re-promote \
+             (promotions publish TOML context records now)",
+            legacy.display()
+        ));
+    }
+    let path = crate::context_records::publication_path(
+        workspace_root,
+        stella_core::ingest::record::SharingScope::Repository,
+        &record.lineage_id,
+    )
+    .ok_or_else(|| "cannot determine where to publish this record".to_string())?;
     // The pure promotion decision is the rules engine's (`decide_promotion`);
     // this command owns only the I/O halves: the exists-check and the write.
     match rules::decide_promotion(true, path.exists()) {
         PromoteStatus::AlreadyExists => Err(format!(
-            "{} already exists — not clobbering a possibly hand-edited rule; delete it first \
+            "{} already exists — not clobbering a possibly hand-edited record; delete it first \
              to re-promote",
             path.display()
         )),
         PromoteStatus::Declined => unreachable!("promote is always approved here"),
         PromoteStatus::Written => {
-            std::fs::create_dir_all(&rules_dir)
-                .map_err(|e| format!("could not create {}: {e}", rules_dir.display()))?;
-            std::fs::write(&path, rules::render_rule_markdown(&candidate))
-                .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+            crate::context_records::write_record(&path, &set_id, &record)?;
             println!(
                 "  {} promoted memory {} → {}",
                 "✦".magenta().bold(),
@@ -327,7 +349,7 @@ fn promote_in(workspace_root: &std::path::Path, id: &str) -> Result<(), String> 
             );
             println!(
                 "  {}",
-                "the rule now loads with the workspace rules (.stella/rules/)".dimmed()
+                "the record now loads with the workspace rules (.stella/rules/)".dimmed()
             );
             Ok(())
         }
@@ -858,8 +880,8 @@ fn validate_memories(workspace_root: &std::path::Path) -> Result<Vec<MemoryValid
     Ok(rows)
 }
 
-/// The promoted rule as a mining candidate, so `render_rule_markdown`
-/// produces the exact frontmatter shape `rule_from_file` parses back —
+/// The promoted rule as a mining candidate, so promotion feeds the same
+/// record-publication path as every other inferred rule —
 /// promotion never invents its own rule format. Prompt-only (no guard): the
 /// citation loop scores usefulness, it carries no file evidence to infer a
 /// safe deny-glob from.
@@ -1017,31 +1039,49 @@ mod tests {
     }
 
     #[test]
-    fn promoted_markdown_is_parsed_back_by_the_rules_engine() {
+    fn promoted_record_round_trips_through_the_record_loader() {
         let node = memory_node(
             "nod_0123456789abcdef01234567",
             "Never edit generated files",
             "Never edit generated files under gen/ — regenerate them instead.",
         );
         let candidate = promotion_candidate(&node, &stat(node.public_id.as_str(), 12, 12, true));
-        let markdown = rules::render_rule_markdown(&candidate);
+        let record = crate::context_records::inferred_rule_record(
+            "acme.web",
+            &candidate.id,
+            &candidate.text,
+            "memory",
+            &format!("memory:{}", node.public_id),
+        )
+        .expect("a publishable record");
+        assert_eq!(record.lineage_id, "ctx.acme.web.never-edit-generated-files");
 
-        // The promotion contract: the file must parse through the rules
-        // engine's own frontmatter parser and loader, exactly like a
-        // hand-authored .stella/rules/*.md file.
-        let fm = rules::parse_frontmatter(&markdown);
+        // The promotion contract: the published file must parse through the
+        // record loader exactly like a `stella context keep` publication —
+        // including the stamped hash verifying on load.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join(format!("{}.toml", record.lineage_id));
+        crate::context_records::write_record(&path, "acme.web", &record).expect("written");
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let loaded =
+            stella_core::records::load_context_file(&path.display().to_string(), &contents)
+                .expect("a loadable record file");
+        assert_eq!(loaded.len(), 1);
+        let loaded = &loaded[0].record;
+        assert_eq!(loaded.statement, candidate.text);
         assert_eq!(
-            fm.data.get("description").unwrap(),
-            "Promoted from memory nod_0123456789abcdef01234567 after 12 citation(s) \
-             (12 consecutive positive)."
+            loaded.origin,
+            Some(stella_core::context_record::Origin::Inferred)
         );
-        assert_eq!(fm.body, candidate.text);
-
-        let path = format!(".stella/rules/{}.md", candidate.id);
-        let rule = rules::rule_from_file(&path, &markdown).expect("a loadable rule");
-        assert_eq!(rule.id, "never-edit-generated-files");
-        assert_eq!(rule.text, candidate.text);
-        assert!(rule.guard.is_none(), "promoted rules are prompt-only");
+        assert!(
+            loaded.enforcement.is_none(),
+            "promoted records are advisory — no guard, no blocking"
+        );
+        // And the clobber seam: the writer refuses a second publication.
+        assert!(
+            crate::context_records::write_record(&path, "acme.web", &record).is_err(),
+            "a second write must not overwrite a published record"
+        );
     }
 
     #[test]
@@ -1142,14 +1182,21 @@ mod tests {
             .expect("rules dir created")
             .filter_map(|e| e.ok().map(|e| e.path()))
             .collect();
-        assert_eq!(written.len(), 1, "exactly one rule written: {written:?}");
-        let rule_path = &written[0];
-        let raw = std::fs::read_to_string(rule_path).expect("promoted rule written");
-        let rule = rules::rule_from_file(&rule_path.display().to_string(), &raw)
-            .expect("the rules engine loads the promoted file");
-        assert_eq!(rule.text, lesson);
+        assert_eq!(written.len(), 1, "exactly one record written: {written:?}");
+        let record_path = &written[0];
+        assert_eq!(
+            record_path.extension().and_then(|e| e.to_str()),
+            Some("toml"),
+            "promotion publishes a TOML context record"
+        );
+        let raw = std::fs::read_to_string(record_path).expect("promoted record written");
+        let loaded =
+            stella_core::records::load_context_file(&record_path.display().to_string(), &raw)
+                .expect("the record loader loads the promoted file");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].record.statement, lesson);
 
-        // Idempotence: re-promotion never clobbers the written rule.
+        // Idempotence: re-promotion never clobbers the written record.
         let err = promote_in(root, &id).unwrap_err();
         assert!(err.contains("already exists"), "{err}");
     }

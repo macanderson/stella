@@ -74,6 +74,7 @@ open; nothing before Phase 3 forces it.
 | # | Title | Status |
 |---|---|---|
 | [0013](0013-session-artifact-boundary.md) | The Session Artifact Boundary | **Proposed** — awaiting ratification |
+| [0014](0014-memories-join-the-record-control-plane.md) | Memories Join the Context-Record Control Plane | **Proposed** — awaiting ratification |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -81,3 +82,8 @@ fork) and what a control plane owns (identity, storage, transport, auth,
 retention). It decides a boundary, not a feature: nothing in it is implemented,
 and the parity rows `turn.checkpoint` and `turn.checkpoint_resume` defer to it
 by number.
+
+ADR 0014 brings workspace memories under the context-record control plane —
+one enumeration, one lifecycle, one suppression trail — while keeping their
+Markdown document representation per ADR 0011's field/document line. It
+governs an existing surface rather than adding one; the epic is #2283.

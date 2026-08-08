@@ -893,7 +893,7 @@ class TestOfflineTaskSource:
         })
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(spec)
-        runner._launch(match, spec.contestants[0])
+        runner._launch(match, spec.contestants[0], runner.resolve_harbor(match))
         return seen["command"]
 
     def test_an_export_is_filtered_by_bare_task_name(self, tmp_path: Path, monkeypatch):
@@ -952,7 +952,7 @@ class TestSeatLaunchRecord:
         )
         runner = MatchRunner(DEFAULT_REGISTRY, tmp_path / "ws")
         match = runner.create(spec)
-        run = runner._launch(match, spec.contestants[0])
+        run = runner._launch(match, spec.contestants[0], runner.resolve_harbor(match))
 
         record = json.loads(seat_manifest_path(run.job_dir).read_text(encoding="utf-8"))
         # The two spellings genuinely diverge for this seat — that divergence

@@ -100,10 +100,13 @@ pub type TurnControlsSlot = Arc<RwLock<TurnControls>>;
 ///
 /// A guard rather than a bare setter, and the asymmetry with
 /// [`crate::ToolRegistry::attach_events`] is deliberate: a stale event sender
-/// is inert (it writes to a channel nobody reads), but a stale
-/// [`stella_core::ports::TurnSteering`] is *armed*. `soft_stop_requested`
-/// latches by contract, so a tap left published past a stopped turn would
-/// stop every child of the next turn at its first boundary.
+/// misbehaves passively, but a stale [`stella_core::ports::TurnSteering`] is
+/// *armed*. `soft_stop_requested` latches by contract, so a tap left
+/// published past a stopped turn would stop every child of the next turn at
+/// its first boundary. ("Passively" is not "inertly": the sender holds its
+/// turn channel open, so a turn tail that awaits that channel's reader must
+/// call [`crate::ToolRegistry::detach_event_stream`] first or deadlock — the
+/// frozen-deck bug, and #960 before it.)
 ///
 /// Clearing on drop — rather than on an explicit detach call — is the same
 /// argument as `stella_core::subagent::AgentAttribution`: the turn future can

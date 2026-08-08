@@ -1,5 +1,5 @@
 //! The `stella init` cinematic — a tiny terminal animation that plays while
-//! the workspace is being indexed: a nebula starfield drifting by, crossed by
+//! the workspace is being indexed: a sky-blue starfield drifting by, crossed by
 //! stella's mascot-grade absurdity, a turtle on a jetpack skateboard.
 //!
 //! Rendering discipline mirrors the deck's fx rules:
@@ -16,11 +16,8 @@
 //!   exactly as before.
 //!
 //! Colors come from the brand palette (crates/stella-tui/src/palette.rs) and are
-//! enforced by this module's tests: the two star/flame inks are the `ACCENT_DEEP`
-//! and `ACCENT` brand tokens, and the shell takes the deck's categorical violet.
-//! (This sentence named `SKY_DEEP`/`SKY` until the Nebula recolour — tokens that
-//! are now retired hues the theme tests forbid, which is precisely the drift the
-//! next paragraph describes.)
+//! enforced by this module's tests: the two star/flame inks are the `SKY_DEEP`
+//! and `SKY` brand tokens, and the shell takes the deck's categorical violet.
 //! This module used to carry a private palette of its own that tracked nothing;
 //! it now takes the brand tokens directly, so the cinematic and the deck agree
 //! by construction instead of merely coinciding.
@@ -166,11 +163,11 @@ fn truncate_width(row: &mut String, width: usize) {
 /// palette-law test must check the *choice*, not the escape bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ink {
-    /// Deep nebula — jetpack flames and the skateboard deck.
+    /// Deep sky — jetpack flames and the skateboard deck.
     Flame,
     /// Muted — the dimmer twinkle of a star.
     Star,
-    /// Brand nebula — the brighter twinkle of a star.
+    /// Brand sky — the brighter twinkle of a star.
     StarBright,
     /// Violet — the turtle's shell linework. Categorical, not brand.
     Shell,
@@ -198,7 +195,7 @@ impl Ink {
             Ink::Star => Some(crate::tui::token_rgb(theme::TEXT_TERTIARY)),
             Ink::StarBright => Some(crate::tui::token_rgb(theme::ACCENT)),
             // Categorical, not brand — the deck's data-mark violet.
-            Ink::Shell => Some(crate::tui::token_rgb(theme::ORCHID)),
+            Ink::Shell => Some(crate::tui::token_rgb(theme::VIOLET)),
             Ink::Dim | Ink::Plain => None,
         }
     }
@@ -454,21 +451,14 @@ mod tests {
             Ink::Star.rgb(),
             Some(crate::tui::token_rgb(theme::TEXT_TERTIARY))
         );
-        assert_eq!(Ink::Shell.rgb(), Some(crate::tui::token_rgb(theme::ORCHID)));
-        // And the star/flame pair stays cool — the Nebula's violet stops are
-        // blue-dominant — so the cinematic can never drift back to the retired
-        // Phosphor Gold while still passing. The clause has now read all three
-        // ways: cool under the blue identity, warm under the comet, and cool
-        // again under the Nebula, which demoted gold from *the brand* to a
-        // rationed north point. It is the direction that keeps changing, not
-        // the rule: the pair must match whatever the brand currently is, and
-        // must never silently be the palette it just retired.
+        assert_eq!(Ink::Shell.rgb(), Some(crate::tui::token_rgb(theme::VIOLET)));
+        // And the star/flame pair stays warm — the comet's Phosphor Gold is
+        // r > g > b — so the cinematic can never drift back to the retired
+        // electric blue while still passing. (This clause read "cool, not
+        // warm" under the blue identity; the comet inverts it.)
         for ink in [Ink::Flame, Ink::StarBright] {
             let (r, g, b) = ink.rgb().expect("colored inks carry rgb");
-            assert!(
-                b > r && b > g,
-                "{ink:?} must read cool nebula, not warm gold"
-            );
+            assert!(r > g && g > b, "{ink:?} must read warm gold, not cool");
         }
     }
 

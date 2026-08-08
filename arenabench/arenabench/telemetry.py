@@ -194,6 +194,14 @@ INFRASTRUCTURE_FAILURES: frozenset[str] = frozenset(
         "AddTestsDirError",
         "DownloadVerifierDirError",
         "MissingExtraError",
+        # The harness could not assemble the seat at all: the harbor adapter
+        # was absent from PYTHONPATH, or its sources vanished mid-match when
+        # the server's launch worktree was deleted. Four trials of
+        # `cc00894779ff` died this way with 0 steps and 0 tokens and were
+        # scored as agent losses, reading `solve_rate` 40% against a true
+        # agent record of 4/6 (#2127, #2192).
+        "AdapterUnavailableError",
+        "StellaAdapterMissingError",
         # Credentials are an operator setting, not a capability.
         "AuthenticationError",
         "OAuthCallbackError",
@@ -228,6 +236,8 @@ VOID_SETUP: frozenset[str] = frozenset(
         "AddTestsDirError",
         "DownloadVerifierDirError",
         "MissingExtraError",
+        "AdapterUnavailableError",
+        "StellaAdapterMissingError",
     }
 )
 VOID_CREDENTIALS: frozenset[str] = frozenset(

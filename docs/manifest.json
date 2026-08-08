@@ -70,6 +70,11 @@
       "status": "proposed",
       "title": "ADR 0013: The session artifact boundary"
     },
+    "adr/0014-memories-join-the-record-control-plane": {
+      "path": "docs/adr/0014-memories-join-the-record-control-plane.md",
+      "status": "proposed",
+      "title": "ADR 0014: Memories join the context-record control plane"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
@@ -116,7 +121,7 @@
     "brand": {
       "path": "docs/brand/README.md",
       "status": "living",
-      "title": "stella\\* \u2014 brand kit v2.0"
+      "title": "stella\\* \u2014 brand kit v1.0"
     },
     "config-system": {
       "path": "docs/spec/config-system/DESIGN.md",
@@ -510,6 +515,25 @@
       "path": "docs/spec/threat-model.md",
       "status": "living",
       "title": "Stella Threat Model"
+    },
+    "trace-replay-learning-harness": {
+      "path": "docs/spec/trace-replay-learning-harness.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "status": "proposed",
+      "title": "The trace-replay learning harness \u2014 drive the learning machinery from recorded traces, with zero model calls"
     },
     "verification-gate": {
       "path": "docs/spec/verification-gate.md",

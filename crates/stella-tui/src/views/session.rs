@@ -122,11 +122,11 @@ fn digest_line(d: &TurnDigest, folded: bool, width: usize) -> Vec<Line<'static>>
     ));
     let left = vec![Span::styled(
         d.prompt.clone(),
-        Style::new().fg(theme::ORCHID),
+        Style::new().fg(theme::VIOLET),
     )];
     let mut spans = vec![Span::styled(
         format!("{chevron} "),
-        Style::new().fg(theme::ORCHID).add_modifier(Modifier::BOLD),
+        Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
     )];
     spans.extend(crate::render::justify(left, metric, width, 2));
     vec![Line::from(spans)]
