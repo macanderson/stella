@@ -751,7 +751,11 @@ tags       = ["testing", "pins"]
         )
         .unwrap();
 
-        std::fs::write(rules_dir.join("hand-written.md"), "# A rule\nSome body text.").unwrap();
+        std::fs::write(
+            rules_dir.join("hand-written.md"),
+            "# A rule\nSome body text.",
+        )
+        .unwrap();
         // Carries a rule extension but is not a rule; the engine's loader
         // reserves it and so must this view.
         std::fs::write(rules_dir.join("governance.toml"), "mode = \"regulated\"\n").unwrap();
