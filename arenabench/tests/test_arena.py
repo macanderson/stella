@@ -143,6 +143,46 @@ class TestMatchSpec:
         assert any("dataset" in p for p in problems)
         assert any("model" in p for p in problems)
 
+    def test_agent_timeout_multiplier_survives_json_and_toml(self):
+        """The agent-execution budget knob must survive every launch path.
+
+        Terminal-Bench pins 900s of agent execution per task; Stella's
+        witness stage runs after execution, so a spec that asks for more
+        time and silently loses the field starves the flip measurement
+        (#2109, #2089). Witness: field absent → each hop drops it.
+        """
+        from arenabench.config import dump_match, match_from_toml
+
+        spec = MatchSpec.from_json(
+            {
+                "dataset": "terminal-bench-2.1",
+                "agent_timeout_multiplier": 2.0,
+                "contestants": [
+                    {"name": "s", "agent": "stella", "engine": {"model": "m"}},
+                ],
+            }
+        )
+        assert spec.agent_timeout_multiplier == 2.0
+        assert MatchSpec.from_json(spec.to_json()).agent_timeout_multiplier == 2.0
+
+        import tomllib
+
+        parsed = match_from_toml(tomllib.loads(dump_match(spec)))
+        assert parsed.agent_timeout_multiplier == 2.0
+
+        # Below-1.0 values clamp like the setup multiplier: a typo degrades
+        # to the dataset default rather than shrinking every task's budget.
+        clamped = MatchSpec.from_json(
+            {
+                "dataset": "terminal-bench-2.1",
+                "agent_timeout_multiplier": 0.25,
+                "contestants": [
+                    {"name": "s", "agent": "stella", "engine": {"model": "m"}},
+                ],
+            }
+        )
+        assert clamped.agent_timeout_multiplier == 1.0
+
     def test_env_never_round_trips_to_the_client(self):
         contestant = Contestant.from_json(
             {"name": "s", "agent": "stella", "env": "OPENROUTER_API_KEY=sk-secret"}

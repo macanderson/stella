@@ -704,6 +704,11 @@ class MatchRunner:
                 "--agent-setup-timeout-multiplier",
                 str(match.spec.setup_timeout_multiplier),
             ]
+        if match.spec.agent_timeout_multiplier != 1.0:
+            command += [
+                "--agent-timeout-multiplier",
+                str(match.spec.agent_timeout_multiplier),
+            ]
         # Task names are namespaced by the *registry*, not by the task itself.
         # Filtering a ref'd dataset therefore needs `<namespace>/<task>`, while
         # an export on disk is just directories and answers to the bare name.
