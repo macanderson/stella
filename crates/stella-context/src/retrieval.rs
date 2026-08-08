@@ -1420,4 +1420,6 @@ pub(crate) use ranking::{
 pub(crate) use ranking::budget_tokens_for_bytes;
 
 #[cfg(test)]
+mod evidence_tests;
+#[cfg(test)]
 mod tests;
