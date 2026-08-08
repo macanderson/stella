@@ -605,9 +605,11 @@ def _benchmark_engine_posture(
         #
         # The engine default carries a comment saying 16k was itself a raise
         # from 8k for exactly this failure on glm-5.2, and names per-model caps
-        # as the real fix. Effort and the output cap are coupled: raising the
-        # tier without raising the cap buys reasoning that cannot fit an answer
-        # beside it, and the step ends with no tool call at all.
+        # as the real fix — which is the accurate reading. The model is not
+        # overrunning a budget it was told about; it is being cut off at a
+        # number we picked without knowing its real ceiling, so the step ends
+        # mid-reasoning with no tool call at all. Effort raises how much of the
+        # ceiling gets spent, but the ceiling is the thing that has to be right.
         #
         # 64000, which is the model's own ceiling and therefore the
         # comparator's. The previous value was 32000, held there because

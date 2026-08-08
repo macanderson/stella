@@ -160,6 +160,10 @@ mod tests {
             self.inner.fingerprint()
         }
 
+        fn similarity_posture(&self) -> crate::embed::SimilarityPosture {
+            self.inner.similarity_posture()
+        }
+
         async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if let Some(tx) = self

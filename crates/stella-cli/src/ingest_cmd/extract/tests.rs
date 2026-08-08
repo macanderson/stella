@@ -456,3 +456,32 @@ fn a_built_proposal_serializes_to_the_toml_surface() {
     assert_eq!(parsed.schema, stella_core::ingest::SCHEMA_TAG);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn the_stamped_precedence_agrees_with_the_force_it_came_from() {
+    // Derived from the force ordering rather than pinned as a table, because a
+    // table is how this inverted in the first place: `may` was stamped 15 and
+    // `info` 20, and any test asserting those literals would have agreed with
+    // the bug. Stated as a property, the next edit that disagrees with
+    // `Force::strength` fails here instead of quietly re-ranking what the
+    // volatile channel's budget drops.
+    let strongest_first = [Force::Must, Force::Should, Force::May, Force::Info];
+    let mut sorted = strongest_first;
+    sorted.sort_by_key(|force| std::cmp::Reverse(force.strength()));
+    assert_eq!(
+        sorted, strongest_first,
+        "this fixture must list every force, strongest first"
+    );
+    for pair in strongest_first.windows(2) {
+        let (stronger, weaker) = (pair[0], pair[1]);
+        assert!(
+            precedence_for(stronger) > precedence_for(weaker),
+            "`{}` implies precedence {} but the weaker `{}` implies {} — a stronger \
+             force must never imply a lower precedence",
+            stronger.as_str(),
+            precedence_for(stronger),
+            weaker.as_str(),
+            precedence_for(weaker),
+        );
+    }
+}

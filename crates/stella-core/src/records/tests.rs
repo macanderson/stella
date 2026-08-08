@@ -580,8 +580,9 @@ applies_to = { paths = [".git/*"], keywords = ["fsck", "reflog"] }
 
         // Render order is load order by contract ("records are emitted in the
         // order given" — render.rs), so this asserts the exact set in that
-        // order; precedence is a conflict tiebreaker, not a ranking. That the
-        // budget also drops in load order rather than by precedence is #2299.
+        // order. Precedence ranks nothing here: it decides which records
+        // survive a budget, and this render is unbudgeted, so the
+        // precedence-40 record still precedes the precedence-80 one.
         assert_eq!(
             rendered.rendered,
             vec!["mtime-not-recency", "reflog-first"],
@@ -681,6 +682,23 @@ applies_to = { paths = [".git/*"], keywords = ["fsck", "reflog"] }
         assert!(
             !squeezed.dropped.is_empty(),
             "the budget dropped a record and the ledger must say so"
+        );
+
+        // Honesty is not enough: the ledger can be truthful about a victim the
+        // budget had no business choosing. The two records are within a byte of
+        // each other in length, so a budget one byte short of the block fits
+        // exactly one — and precedence, not load order, must say which. The
+        // precedence-40 record loads first and used to win on that alone (#2299).
+        assert_eq!(
+            squeezed.rendered,
+            vec!["reflog-first".to_string()],
+            "the surviving record must be the higher-precedence one"
+        );
+        assert_eq!(
+            squeezed.dropped,
+            vec!["mtime-not-recency".to_string()],
+            "a precedence-80 record lost its place to a precedence-40 one that \
+             merely loaded earlier"
         );
     }
 

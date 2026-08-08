@@ -71,15 +71,17 @@ mod writeback;
 
 pub use ann::{AnnIndexPolicy, AnnIndexReport, AnnIndexState};
 pub use clock::{Clock, FixedClock, SystemClock, format_rfc3339};
-pub use embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, HashEmbedder};
+pub use embed::{
+    EmbedError, Embedder, EmbedderFingerprint, Embedding, HashEmbedder, SimilarityPosture,
+};
 pub use error::ContextError;
 pub use provider::{ContextProvider, ProviderRegistry};
 pub use retrieval::{
     DEFAULT_ANN_ENABLED, DEFAULT_ANN_PROBES, DEFAULT_COVERAGE_TOPK, DEFAULT_LEXICAL_LIMIT,
     DEFAULT_MAX_VECTOR_SEEDS, DEFAULT_MIN_COVERAGE, DEFAULT_MMR_CANDIDATE_MULTIPLE,
-    DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_RRF_K, DropReason, DroppedFrame,
-    RECALL_TIER_PROVENANCE_KIND, RecallResult, RecallTier, RecallTuning, SELECTION_PROVENANCE_KIND,
-    SelectionReason, is_lexical_fallback,
+    DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_REQUIRE_EVIDENCE, DEFAULT_RRF_K,
+    DropReason, DroppedFrame, RECALL_TIER_PROVENANCE_KIND, RecallResult, RecallTier, RecallTuning,
+    SELECTION_PROVENANCE_KIND, SelectionReason, is_lexical_fallback,
 };
 pub use store::ledger::{AppendOutcome, LedgerAppend, LedgerRecord};
 pub use store::{

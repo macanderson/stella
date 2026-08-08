@@ -119,6 +119,52 @@ class TestEngine:
         )
         assert Engine.from_json(engine.to_json()) == engine
 
+    def test_reasoning_spelled_off_as_a_string_actually_turns_it_off(self):
+        """`bool("false")` is True, and that answer ran the opposite arm (#2334).
+
+        `reasoning` is a negative selector with a True default: the only
+        reason to write it at all is to turn reasoning off, so the one value
+        anyone ever types was precisely the one read backwards. This repo's
+        own match files prove operators write the string forms — see the
+        `reasoning = "off"` role overrides in
+        `arenabench/matches/glm52-claude-code-vs-stella.toml` — they simply
+        happened to sit under `[contestant.engine.roles.*]`, which `RoleConfig`
+        parses correctly, rather than two spaces out under the engine, which
+        did not.
+        """
+        for spelled_off in ("false", "False", "no", "off", "0", ""):
+            engine = Engine.from_json({"model": "m", "reasoning": spelled_off})
+            assert engine.reasoning is False, spelled_off
+
+        for spelled_on in (True, 1, "true", "TRUE", " yes ", "on"):
+            engine = Engine.from_json({"model": "m", "reasoning": spelled_on})
+            assert engine.reasoning is True, spelled_on
+
+        # Absent keeps the documented default, and an undeclarable value keeps
+        # it too: for this field the shipping configuration is reasoning ON, so
+        # falling back to False would be the closed answer to the wrong question.
+        assert Engine.from_json({"model": "m"}).reasoning is True
+        assert Engine.from_json({"model": "m", "reasoning": "maybe"}).reasoning is True
+
+    def test_a_toml_template_refuses_a_reasoning_it_cannot_read(self):
+        """The human-authored side refuses rather than defaulting (#2334)."""
+        from arenabench.config import MatchTemplateError, match_from_toml
+
+        with pytest.raises(MatchTemplateError) as caught:
+            match_from_toml(
+                {
+                    "dataset": "terminal-bench-2.1",
+                    "contestant": [
+                        {
+                            "name": "s",
+                            "agent": "stella",
+                            "engine": {"model": "m", "reasoning": "sometimes"},
+                        },
+                    ],
+                }
+            )
+        assert "reasoning" in str(caught.value)
+
 
 class TestMatchSpec:
     def test_duplicate_seat_names_are_disambiguated(self):
