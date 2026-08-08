@@ -576,7 +576,7 @@ impl ToolRegistry {
             announce_mutations: std::sync::atomic::AtomicBool::new(true),
             mutations: std::sync::atomic::AtomicU64::new(0),
             process_free,
-            probe_ignore_policy: options.probe_ignore_policy,
+            probe_ignore_policy: options.effective_probe_ignore_policy(process_free),
         }
     }
 

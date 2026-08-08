@@ -7,6 +7,13 @@
 use super::*;
 
 impl ToolRegistry {
+    /// The ignore policy every capture this registry takes will use — the
+    /// requested one, unless a host attestation withheld it
+    /// ([`RegistryOptions::effective_probe_ignore_policy`]).
+    pub(crate) fn probe_ignore_policy(&self) -> crate::shell_touch::IgnorePolicy {
+        self.probe_ignore_policy
+    }
+
     /// Take a before-image of the workspace for the turn about to run.
     ///
     /// Paired with [`Self::settle_workspace_probe`]. `classify_file_op` reads

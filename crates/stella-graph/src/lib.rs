@@ -69,6 +69,7 @@ mod store;
 mod symbol;
 mod walk;
 mod watch;
+pub mod workspace_ignore;
 
 pub use error::GraphError;
 pub use frames::PROVIDER_ID;

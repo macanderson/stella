@@ -28,8 +28,10 @@
 //! the distinction between "I looked and saw nothing" and "I could not finish
 //! looking" is the one whose collapse caused #973.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
+
+use stella_graph::workspace_ignore::WorkspaceIgnore;
 
 use crate::file_touch::{FileOp, normalize_workspace_path};
 
@@ -112,6 +114,12 @@ pub(crate) const MAX_RECORDED_TOUCHES: usize = 256;
 /// probe stays fully sighted. That preserves this module's stated posture on
 /// Terminal-Bench, where the task directory is not a repository and producing
 /// build output is frequently the whole job.
+///
+/// A **process-free** registry always resolves to [`IgnorePolicy::WalkAll`],
+/// whatever the setting says: consulting the rules means spawning `git`, and
+/// that isolation exists precisely to promise no child process runs. Losing
+/// the filter there costs walk time, which `MAX_RECORDED_TOUCHES` already
+/// bounds; honoring the setting instead would cost the guarantee.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IgnorePolicy {
     /// Skip what the repository's own ignore rules exclude (the default).
@@ -119,47 +127,6 @@ pub enum IgnorePolicy {
     SkipIgnored,
     /// Walk everything the filesystem shows, ignore rules notwithstanding.
     WalkAll,
-}
-
-/// Everything the workspace's own repository ignores, as walk-relative paths.
-/// A wholly-ignored directory arrives collapsed to its topmost entry with a
-/// trailing slash (`target/`), so pruning at descent is an exact match.
-///
-/// One `git ls-files` per walk (measured ~30ms on a 20k-entry tree), and only
-/// when `root` itself hosts the repository (`root/.git` exists). That gate is
-/// correctness, not economy: without it a workspace that merely sits *under*
-/// someone else's repository — a scratch directory beneath a `$HOME` dotfiles
-/// repo whose `.gitignore` says `*` — would inherit ignore rules nobody wrote
-/// for it and the probe would go silently blind. Failures are absences, as
-/// everywhere in this module: no `git` on the host, or a directory that only
-/// looks like a repository, yields the empty set and an unfiltered walk.
-fn repo_ignored_paths(root: &Path) -> BTreeSet<String> {
-    if !root.join(".git").exists() {
-        return BTreeSet::new();
-    }
-    let Ok(output) = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args([
-            "ls-files",
-            "-z",
-            "--others",
-            "--ignored",
-            "--directory",
-            "--exclude-standard",
-        ])
-        .output()
-    else {
-        return BTreeSet::new();
-    };
-    if !output.status.success() {
-        return BTreeSet::new();
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .map(str::to_owned)
-        .collect()
 }
 
 /// What one snapshot recorded about one file.
@@ -199,11 +166,12 @@ pub struct WorkspaceProbe {
     /// The walk hit [`MAX_ENTRIES`] or [`MAX_DEPTH`]. The snapshot is a lower
     /// bound on the tree, so a path's *absence* from it proves nothing.
     saturated: bool,
-    /// What this walk's ignore rules excluded ([`repo_ignored_paths`]).
-    /// Carried on the snapshot because [`Self::diff`] needs it: a path absent
-    /// from one side may be *pruned* rather than *gone*, and the two must not
-    /// be confused when `.gitignore` itself changes between the walks.
-    ignored: BTreeSet<String>,
+    /// What this walk's ignore rules excluded, resolved once by
+    /// [`WorkspaceIgnore`]. Carried on the snapshot because [`Self::diff`]
+    /// needs it: a path absent from one side may be *pruned* rather than
+    /// *gone*, and the two must not be confused when `.gitignore` itself
+    /// changes between the walks.
+    ignored: WorkspaceIgnore,
 }
 
 impl WorkspaceProbe {
@@ -221,8 +189,8 @@ impl WorkspaceProbe {
     pub fn capture_with(root: &Path, policy: IgnorePolicy) -> Self {
         let mut probe = Self {
             ignored: match policy {
-                IgnorePolicy::SkipIgnored => repo_ignored_paths(root),
-                IgnorePolicy::WalkAll => BTreeSet::new(),
+                IgnorePolicy::SkipIgnored => WorkspaceIgnore::resolve(root),
+                IgnorePolicy::WalkAll => WorkspaceIgnore::none(),
             },
             ..Self::default()
         };
@@ -260,13 +228,13 @@ impl WorkspaceProbe {
                     // `--directory` collapses a wholly-ignored tree to its
                     // topmost entry, so an exact match here prunes the whole
                     // subtree without a prefix scan.
-                    if probe.ignored.contains(&format!("{rel_child}/")) {
+                    if probe.ignored.excludes_dir(&rel_child) {
                         continue;
                     }
                     stack.push((path, rel_child, depth + 1));
                     continue;
                 }
-                if probe.ignored.contains(&rel_child) {
+                if probe.ignored.excludes(&rel_child) {
                     continue;
                 }
                 // Symlinks are not followed: the target is either inside the
@@ -321,17 +289,7 @@ impl WorkspaceProbe {
     /// Whether this snapshot's walk pruned `path` under its ignore rules —
     /// either listed outright or covered by a collapsed `dir/` entry.
     fn ignores(&self, path: &str) -> bool {
-        if self.ignored.contains(path) {
-            return true;
-        }
-        let mut end = path.len();
-        while let Some(pos) = path[..end].rfind('/') {
-            if self.ignored.contains(&path[..=pos]) {
-                return true;
-            }
-            end = pos;
-        }
-        false
+        self.ignored.excludes(path)
     }
 
     /// Attribute the difference between this (pre) snapshot and `post`.
@@ -346,7 +304,7 @@ impl WorkspaceProbe {
     /// a path one side pruned and the other side saw is *unknowable*, not
     /// changed. Absent from `post` because a new rule now covers it is not a
     /// deletion; present in `post` because a rule was dropped is not a
-    /// creation. Both are skipped (see the private `ignores`) — a miss, never a
+    /// creation. Both are skipped ([`WorkspaceIgnore::excludes`]) — a miss, never a
     /// fabrication, because the probe never guesses.
     pub fn diff(&self, post: &Self) -> Vec<ShellTouch> {
         let mut touches = Vec::new();
