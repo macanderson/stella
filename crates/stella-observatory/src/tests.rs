@@ -270,15 +270,6 @@ fn seed_fs_surfaces(dir: &TempDir) {
     .unwrap();
     std::fs::create_dir_all(dot.join("rules")).unwrap();
     std::fs::write(dot.join("rules/style.md"), "Prefer witness tests.").unwrap();
-    std::fs::write(dot.join("rules/governance.toml"), "mode = \"regulated\"\n").unwrap();
-    std::fs::write(
-        dot.join("rules/promotions.jsonl"),
-        "{\"seq\":1,\"prev\":\"genesis\",\"at\":\"2026-08-03T04:12:38Z\",\
-         \"lineage_id\":\"ctx.demo.pin\",\"from\":\"advisory\",\"to\":\"blocking\",\
-         \"approver\":\"@someone\",\"reason\":\"the failure is unrecoverable after release\",\
-         \"mode\":\"regulated\"}\n",
-    )
-    .unwrap();
     std::fs::write(
             dot.join("private/reflections.jsonl"),
             r#"{"lesson":"check the test's invariant first","domains":["testing"],"occurred_at":1700000000}
@@ -1077,17 +1068,6 @@ fn memories_rules_and_reflections_come_from_disk_and_db() {
         serde_json::from_slice(&respond(ws.path(), "/api/rules").body).unwrap();
     assert_eq!(rules["db"][0]["rule_id"], "no-vacuous-fixes");
     assert_eq!(rules["files"][0]["name"], "style");
-    // The enforcement ledger is a distinct governance trail from the adaptive
-    // loop's own keep/ignore events, and it lives in a file rather than
-    // context.db — serving only the latter reported "no governance decisions"
-    // for a workspace whose policy had been promoted by a named approver.
-    assert_eq!(rules["governance_mode"], "regulated");
-    let promotions = rules["promotions"].as_array().unwrap();
-    assert_eq!(promotions.len(), 1);
-    assert_eq!(promotions[0]["lineage_id"], "ctx.demo.pin");
-    assert_eq!(promotions[0]["from"], "advisory");
-    assert_eq!(promotions[0]["to"], "blocking");
-    assert_eq!(promotions[0]["approver"], "@someone");
     let refl: serde_json::Value =
         serde_json::from_slice(&respond(ws.path(), "/api/reflections").body).unwrap();
     assert_eq!(refl["lessons"].as_array().unwrap().len(), 2);

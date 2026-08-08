@@ -292,9 +292,9 @@ cargo test -p stella-observatory
 There is no crate-specific `make` target — the root `Makefile` has one only for
 core/model/tools/cli/protocol — so `make test` picks this up with the workspace.
 No fixture dir, feature flag or env var. Most tests are an inline
-`#[cfg(test)] mod tests`; four suites live in `tests/` because each needs
+`#[cfg(test)] mod tests`; five suites live in `tests/` because each needs
 something the inline module cannot have — a dev-dependency on the crate whose
-schema it is checking, a real socket, or `node`:
+schema it is checking, a real socket, `node`, or room:
 
 | Suite | Why it is not inline |
 |---|---|
@@ -302,6 +302,7 @@ schema it is checking, a real socket, or `node`:
 | [`tests/journal_era.rs`](tests/journal_era.rs) | The other half of the digest alarm: which of two things a mismatch means depends on `executions.journal_era` (#1981). |
 | [`tests/live_stream.rs`](tests/live_stream.rs) | Drives the live endpoint over a real socket. |
 | [`tests/page_clipper.rs`](tests/page_clipper.rs) | Executes the page's own JavaScript under `node` — see below. |
+| [`tests/rules_ledger.rs`](tests/rules_ledger.rs) | Room: [`src/tests.rs`](src/tests.rs) sits at the file-size ratchet's 1500 lines exactly and this crate carries no baseline entry, so it is closed to growth. New route coverage lands in a sibling rather than raising a ceiling. |
 
 The dominant shape: `seeded_workspace()` builds a `TempDir` with a `store.db`
 seeded from hand-written DDL, `seed_fs_surfaces()` layers on the file-backed
