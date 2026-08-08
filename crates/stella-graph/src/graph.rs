@@ -161,8 +161,12 @@ impl CodeGraph {
             root: root.to_path_buf(),
             source,
         })?;
+        // The writer's open migrates AND verifies the image (quarantining a
+        // corrupt one); the read connection opens second, against a store the
+        // line above has already proven, so it takes the cheap reader path
+        // rather than paying the page walk twice.
         let write_conn = store::open(db_path)?;
-        let read_conn = store::open(db_path)?;
+        let read_conn = store::open_read(db_path)?;
         let grammars = Grammars::load()?;
 
         let inner = Inner {
