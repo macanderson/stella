@@ -99,18 +99,22 @@ async fn reflection_log_at(at: i64) -> (tempfile::TempDir, String) {
 }
 
 /// **The witness.** Two sessions frozen at the same instant write the same
-/// bytes.
+/// bytes, *and those bytes carry that instant*.
 ///
-/// On `main` this fails on the task id alone: `default_task_id` was
-/// `session:{SystemTime::now()}-{process::id()}`, so two sessions in one
-/// process shared a pid but raced the second boundary, and two sessions in
-/// different processes never agreed at all. `occurred_at` was a second,
-/// independent wall-clock read in `parse_lessons_checked`.
-///
-/// Byte equality rather than a field-by-field comparison is deliberate: the
-/// log is re-read verbatim by `mine_skill_candidates` and the observation
+/// Byte equality rather than a field-by-field comparison is deliberate: the log
+/// is re-read verbatim by `mine_skill_candidates` and the observation
 /// extractor, so *the bytes* are the interface, and a new field that quietly
-/// reintroduces a clock read would slip past a narrower assertion.
+/// reintroduced a clock read would slip past a narrower assertion.
+///
+/// The second half is not decoration, and measuring it changed this test.
+/// Equality **alone passes on the unfixed code**: both sessions run in one
+/// process, so a wall-clock `occurred_at` and a pid-bearing task id agree with
+/// each other whenever the two runs land in the same second — which is almost
+/// always. Verified by reverting the three internals behind their new
+/// signatures: the equality-only form passed while the three value-pinning
+/// tests below failed. An assertion that holds on the broken code except when
+/// it straddles a second boundary is a flake, not a witness, so this one pins
+/// the value too.
 #[tokio::test]
 async fn two_sessions_at_one_fixed_clock_write_byte_identical_mining_logs() {
     let (_a_dir, a) = reflection_log_at(T).await;
@@ -119,6 +123,12 @@ async fn two_sessions_at_one_fixed_clock_write_byte_identical_mining_logs() {
         a, b,
         "two sessions frozen at the same instant must produce an identical \
          mining log — this is the property trace replay rests on"
+    );
+    assert!(
+        a.contains(&format!("\"occurred_at\":{T}"))
+            && a.contains(&format!("\"task_id\":\"session:{T}\"")),
+        "…and they must agree on the *injected* instant, not merely on \
+         whatever the wall clock read twice in one second: {a}"
     );
 }
 
