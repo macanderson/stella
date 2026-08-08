@@ -424,6 +424,22 @@ inputs, not review afterthoughts:
   an escape hatch for a genuinely irreducible line (a module declaration in
   an already-oversized `lib.rs`), never something a plan may assume.
 
+**The ratchet judges your change, not the tree** (#2004). A file over its
+ceiling fails only when `current > max(ceiling, size in the base tree)` — so a
+violation that was already there before your branch existed is reported as
+drift and does not fail you, while anything your change grows past what it
+inherited fails exactly as it always did. The base is the merge commit's first
+parent on a pull request, the merge base locally, and nothing at all in a
+shallow clone or a fresh repository — where the guard falls back to the strict
+whole-tree check, because an unresolvable base must make it stricter, never
+weaker. This exists because the baseline is one shared cell every growing PR
+must write, and three times running two PRs that each wrote it correctly
+composed into a red `main` that then failed everyone downstream. Two
+consequences for planning: **do not "fix" a red ratchet you did not cause** by
+folding a baseline regeneration into an unrelated PR — land it on its own from
+a fresh `main`; and note that splitting a god file buys structure, not slack,
+since `--update` retightens every ceiling to its file's current size.
+
 The workspace's Rust god files, by crate (the bench harness's Python offenders
 sit in the same baseline). Each file's ceiling lives in
 `scripts/file-size-baseline.txt` and is deliberately not repeated here: that
