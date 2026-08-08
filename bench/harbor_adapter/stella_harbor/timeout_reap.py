@@ -81,10 +81,32 @@ def container_reap_program(agent_path: str) -> str:
     mentions the path in an argument. The trailing-space case catches the
     ``"<path> (deleted)"`` form the kernel reports when the binary was replaced
     while running.
+
+    Liveness is read from the state field of ``/proc/<pid>/stat``, not from the
+    existence of ``/proc/<pid>``: a reaped-but-unwaited process keeps its
+    directory for as long as its parent ignores it, so a presence check would
+    report a zombie as a survivor and spend the whole grace waiting for a
+    process that is already dead.
+
+    No ``cut``, ``ps`` or ``awk``: the fields come out of ``set --``, so the
+    program depends on nothing but the shell itself.
     """
     quoted = shlex.quote(agent_path)
     return f"""set -u
 agent={quoted}
+# Echoes the subset of $pids that is still running — zombies excluded.
+running() {{
+    result=''
+    for pid in $pids; do
+        stat=$(cat "/proc/$pid/stat" 2>/dev/null) || continue
+        # A process that vanished mid-read yields an empty line, and `set -u`
+        # would abort the whole reap on the "$1" below rather than skip it.
+        [ -n "$stat" ] || continue
+        set -- ${{stat##*') '}}
+        [ "$1" = Z ] || result="$result $pid"
+    done
+    echo "$result"
+}}
 pids=''
 for entry in /proc/[0-9]*; do
     exe=$(readlink "$entry/exe" 2>/dev/null) || continue
@@ -99,8 +121,10 @@ fi
 groups=''
 for pid in $pids; do
     stat=$(cat "/proc/$pid/stat" 2>/dev/null) || continue
-    rest=${{stat##*') '}}
-    pgid=$(echo "$rest" | cut -d' ' -f3)
+    [ -n "$stat" ] || continue
+    set -- ${{stat##*') '}}
+    [ $# -ge 3 ] || continue
+    pgid=$3
     case " $groups " in
         *" $pgid "*) ;;
         *) groups="$groups $pgid" ;;
@@ -112,21 +136,22 @@ for pgid in $groups; do
 done
 waited=0
 while [ "$waited" -lt {_TERM_GRACE_SECONDS} ]; do
-    alive=''
-    for pid in $pids; do
-        [ -d "/proc/$pid" ] && alive="$alive $pid"
-    done
-    [ -n "$alive" ] || break
+    [ -n "$(running)" ] || break
     sleep 1
     waited=$((waited + 1))
 done
 for pgid in $groups; do
     kill -KILL "-$pgid" 2>/dev/null || true
 done
-survivors=''
-for pid in $pids; do
-    [ -d "/proc/$pid" ] && survivors="$survivors $pid"
+# SIGKILL is delivered, not completed: give the kernel a moment before
+# reporting, so the report is the outcome and not the race.
+settled=0
+while [ "$settled" -lt 2 ]; do
+    [ -n "$(running)" ] || break
+    sleep 1
+    settled=$((settled + 1))
 done
+survivors=$(running)
 echo '{REAP_LOG_PREFIX} survivors:'"${{survivors:- none}}"
 exit 0
 """
