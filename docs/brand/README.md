@@ -81,6 +81,7 @@ a palette change meant hand-editing PNG/GIF pixels. `brand-tokens.toml` +
 `pnpm generate-assets` fixes that:
 
 ```
+brew install oxipng           # lossless PNG re-encoder (MIT) — see below
 cd docs/brand
 pnpm install
 pnpm generate-assets          # recolor pwa/, wallpapers/, spinners/*.gif
@@ -88,6 +89,16 @@ pnpm generate-assets          # recolor pwa/, wallpapers/, spinners/*.gif
 pnpm check-assets             # verify committed files match the tokens;
                                # exits 1 (no writes) if anything's stale
 ```
+
+Needs `oxipng` (`brew install oxipng`) the same way `social/`'s generator
+needs `rsvg-convert`: pngjs (the npm PNG codec this pipeline decodes and
+recolors pixels with) has no optimizing encoder of its own — its default
+writer runs ~3x larger than the committed files on this kit's art — and the
+usual npm fix, `sharp`, bundles a `libvips` binary built `LGPL-3.0-or-later`,
+which fails this repo's (AGPL/commercial dual-licensed) dependency-review
+gate. `oxipng` is MIT-licensed and re-encodes losslessly over stdin/stdout,
+so it's an external tool dependency instead — see `scripts/lib/png.mjs`'s
+module doc.
 
 Edit `brand-tokens.toml` — the nebula gradient (violet→cyan) plus a dark and
 a light `{bg, fg}` — and re-run. Everything else about these files is
