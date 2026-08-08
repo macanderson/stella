@@ -10,30 +10,14 @@
 //! A fixture cannot be written for this suite without knowing three things that
 //! are not obvious from any single module, and that were measured here first.
 //!
-//! **1. The dedup filter and the miner use the same metric at the same
-//! threshold.** `retain_unknown` drops a lesson whose Jaccard overlap with an
-//! existing memory is `>= 0.5` (`stella_store::SIMILARITY_THRESHOLD`), and it
-//! runs *before* the mining log is appended — so a dropped lesson never becomes
-//! an observation and can never contribute an occurrence. The skill miner then
-//! clusters at `min_similarity: 0.5` (`SkillMineConfig`). Same number, same
-//! metric. For a cluster of three to form at all, three lessons must be similar
-//! enough to cluster while staying dissimilar enough to survive dedup.
-//!
-//! **That band exists only because the two tokenizers differ**, and the
-//! difference is load-bearing:
-//!
-//! | | `stella_store::forget::tokens` | `stella_core::mining::terms` |
-//! |---|---|---|
-//! | `crates/stella-tools/src/registry.rs` | **one** token | **five** terms |
-//! | stopwords and words of ≤2 chars | kept | dropped |
-//!
-//! So a shared *path* contributes one token to the dedup comparison and five
-//! terms to the clustering one, while differing filler inflates the dedup union
-//! invisibly to the miner. That is exactly the shape a real engagement produces
-//! — the same file re-encountered in different words — which is why the corpus
-//! below is written that way rather than as obvious near-duplicates. A fixture
-//! of literal repetitions builds **nothing**, and would read as a broken learner
-//! rather than as a fixture that cannot clear the filter.
+//! **1. Dedup and clustering are different predicates in different token
+//! spaces, and the corpus may be worded naturally because #2358 is fixed.**
+//! `partition_known` diverts a store-restatement to the mining log instead of
+//! dropping it, so recurrence survives dedup by construction, and the miners'
+//! `min_similarity` (0.4) is measured in `stella_core::mining::terms` space
+//! rather than inherited from the store's dedup constant — see
+//! [`the_dedup_and_clustering_predicates_hold_the_declared_relationship`] for
+//! the relationship, asserted with this corpus's own strings.
 //!
 //! **2. The foundry only holes a *value-like* argument.** `classify_argument`
 //! makes a positional argument a parameter only if it is a path or a number (or
@@ -50,6 +34,8 @@
 //! and build nothing.
 
 use std::path::Path;
+
+use stella_core::skills::{self, SkillMineConfig, SkillObservation};
 
 use super::summary::ReplaySummary;
 use super::trace::*;
@@ -160,15 +146,22 @@ fn trace(description: &str, sessions: Vec<TraceSession>) -> Trace {
     }
 }
 
-/// Four re-encounters of one convention, phrased as an engineer would phrase
-/// them on four different days. See the module docs for why they are worded
-/// this way and not as literal repeats.
+/// Five re-encounters of one convention, phrased as an engineer would phrase
+/// them on five different days — naturally varied, plus one near-restatement
+/// of the first. Both recurrence shapes a real engagement produces, and both
+/// were once invisible to the miners (#2358): the varied wordings sat below
+/// the inherited 0.5 clustering threshold, and the restatement was dropped by
+/// dedup before it could reach the mining log.
 fn recurring_registry_lessons() -> Vec<TraceTurn> {
     [
-        "Register the tool in crates/stella-tools/src/registry.rs",
-        "Tool registration lives at crates/stella-tools/src/registry.rs",
-        "Tools register through crates/stella-tools/src/registry.rs",
-        "Registered tools come from crates/stella-tools/src/registry.rs",
+        "Tool registration happens in crates/stella-tools/src/registry.rs — add the entry there.",
+        "Register a new tool by editing the ToolRegistry in crates/stella-tools/src/registry.rs.",
+        "A tool nobody registered in crates/stella-tools/src/registry.rs is invisible to the agent.",
+        "Every builtin is wired through crates/stella-tools/src/registry.rs before it can be called.",
+        // Close enough to the first wording that `partition_known` keeps it out
+        // of the context store — and it still counts as a mining occurrence,
+        // which is the #2358 fix in one line.
+        "Tool registration happens in crates/stella-tools/src/registry.rs, so add the new entry there.",
     ]
     .iter()
     .enumerate()
@@ -266,9 +259,9 @@ async fn a_two_turn_trace_replays_and_builds_exactly_one_memory() {
                 T0,
                 "Register the tool in crates/stella-tools/src/registry.rs",
             ),
-            // A restatement close enough to be dropped by `retain_unknown`, so
-            // two turns yield one memory — the dedup path, asserted rather than
-            // assumed.
+            // A restatement close enough for `partition_known` to divert it to
+            // the mining log, so two turns yield one memory — the dedup path,
+            // asserted rather than assumed.
             turn(
                 T0 + DAY,
                 "Register the tool in crates/stella-tools/src/registry.rs please",
@@ -299,7 +292,7 @@ async fn a_two_turn_trace_replays_and_builds_exactly_one_memory() {
 #[tokio::test]
 async fn recurrence_across_distinct_tasks_builds_what_recurrence_within_one_task_does_not() {
     let across = trace(
-        "one convention, four tasks",
+        "one convention, five tasks",
         one_task_each(recurring_registry_lessons()),
     );
     let (spread, _a) = replay(&across).await;
@@ -310,25 +303,133 @@ async fn recurrence_across_distinct_tasks_builds_what_recurrence_within_one_task
     );
     let (single, _b) = replay(&within).await;
 
-    assert_eq!(spread.distinct_tasks, 4);
+    assert_eq!(spread.distinct_tasks, 5);
     assert_eq!(single.distinct_tasks, 1);
     assert_eq!(
         spread.memories, single.memories,
         "both corpora record the same lessons — only the task boundary differs"
     );
+    assert_eq!(
+        spread.memories, 4,
+        "the fifth turn restates the first, so the store holds four distinct \
+         memories while the mining log holds five occurrences — the #2358 \
+         split, visible from the outside"
+    );
 
     assert!(
         !spread.skills.is_empty(),
-        "four distinct tasks should clear the eligibility gate: {spread:?}"
+        "a naturally-worded convention recurring across distinct tasks should \
+         clear the eligibility gate: {spread:?}"
+    );
+    assert!(
+        !spread.rules.is_empty(),
+        "and with four occurrences over four distinct tasks its confidence \
+         clears the auto-activation bar: {spread:?}"
     );
     assert!(
         single.skills.is_empty(),
-        "four turns of ONE task must not mint a skill — that is the \
+        "five turns of ONE task must not mint a skill — that is the \
          anti-poisoning rule, and it is the whole reason task identity is \
          carried at all. Built: {:?}",
         single.skills
     );
     assert!(single.rules.is_empty(), "nor a rule: {:?}", single.rules);
+}
+
+/// The lesson texts of [`recurring_registry_lessons`], for asserting on the
+/// corpus's own strings rather than a copy that could drift from it.
+fn registry_lesson_texts() -> Vec<String> {
+    recurring_registry_lessons()
+        .into_iter()
+        .filter_map(|turn| match turn.reflection {
+            ScriptedReflection::Lessons { mut lessons, .. } => lessons.pop().map(|l| l.lesson),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The #2358 contract, declared: store dedup and miner clustering are
+/// **different predicates in different token spaces**, and each must hold its
+/// own half of the band on the corpus above.
+///
+/// `stella_store::SIMILARITY_THRESHOLD` (0.5) is measured over
+/// `forget::tokens`, which keeps a file path as one token; the miners'
+/// `min_similarity` (0.4) is measured over `stella_core::mining::terms`, which
+/// shatters the same path into five terms. The same pair of lessons scores
+/// differently under each, so neither number may be "aligned" with the other
+/// or moved without re-measuring in its own space — the measurements live on
+/// [`SkillMineConfig::min_similarity`]'s doc comment. When one of them (or a
+/// tokenizer) moved before, the mining band silently closed and the loop kept
+/// mining lessons every turn while producing nothing durable, with no error
+/// anywhere. This test is the tripwire: it fails if either side moves in a way
+/// the other half was not re-measured against.
+#[test]
+fn the_dedup_and_clustering_predicates_hold_the_declared_relationship() {
+    let mining = SkillMineConfig::default();
+    assert_eq!(
+        mining.min_similarity,
+        stella_core::rules::MineConfig::default().min_similarity,
+        "the skills and rules miners cluster one observation pool; a rule \
+         threshold drifting from the skill threshold would make one artifact \
+         class see recurrence the other cannot"
+    );
+    assert!(
+        mining.min_similarity < stella_store::forget::SIMILARITY_THRESHOLD,
+        "clustering must see recurrence in lessons the store keeps as \
+         distinct: natural variation scores lower under `mining::terms` than \
+         restatement scores under `forget::tokens`, so the clustering bar \
+         sits below the dedup bar"
+    );
+
+    let texts = registry_lesson_texts();
+    let (varied, restated) = (&texts[..4], texts[4].as_str());
+
+    // The store half: the four natural wordings are distinct knowledge (each
+    // gets stored), while the fifth restates the first (diverted to the log).
+    for (index, wording) in varied.iter().enumerate() {
+        for other in &varied[index + 1..] {
+            assert!(
+                !stella_store::is_restatement(wording, other),
+                "the corpus's natural wordings must each survive dedup, or \
+                 the store never learns them: {wording:?} vs {other:?}"
+            );
+        }
+    }
+    assert!(
+        stella_store::is_restatement(&varied[0], restated),
+        "the fifth wording must trip dedup — it exists to prove a deduped \
+         restatement still reaches the miners"
+    );
+
+    // The miner half: clustering sees one convention in those same strings —
+    // including the restatement dedup kept out of the store.
+    let observations = texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| SkillObservation {
+            text: text.clone(),
+            occurred_at: index as u64,
+            domains: Vec::new(),
+            salient: false,
+            reference: format!("trace:{index}"),
+        })
+        .collect();
+    let candidates = skills::mine_skill_candidates(observations, &[], &mining);
+    let candidate = candidates
+        .first()
+        .expect("the naturally-worded convention must mine a candidate");
+    assert!(
+        candidate.occurrences >= mining.min_occurrences,
+        "the cluster must clear the recurrence bar on its own: {candidate:?}"
+    );
+    assert!(
+        candidate
+            .evidence
+            .iter()
+            .any(|evidence| evidence.reference == "trace:4"),
+        "the store-deduped restatement must count as a mining occurrence — \
+         that ordering is the other half of the #2358 fix: {candidate:?}"
+    );
 }
 
 // ---- §5 assertion 2: promotion is advisory, and never clobbers ------------
@@ -342,7 +443,7 @@ async fn recurrence_across_distinct_tasks_builds_what_recurrence_within_one_task
 #[tokio::test]
 async fn an_auto_activated_rule_is_advisory_and_never_blocking() {
     let corpus = trace(
-        "one convention, four tasks",
+        "one convention, five tasks",
         one_task_each(recurring_registry_lessons()),
     );
     let (summary, dir) = replay(&corpus).await;
@@ -381,7 +482,7 @@ async fn an_auto_activated_rule_is_advisory_and_never_blocking() {
 async fn auto_activation_never_clobbers_an_existing_record() {
     // First, learn where the miner publishes.
     let corpus = trace(
-        "one convention, four tasks",
+        "one convention, five tasks",
         one_task_each(recurring_registry_lessons()),
     );
     let (first, dir) = replay(&corpus).await;

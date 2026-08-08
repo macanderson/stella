@@ -28,9 +28,10 @@ use super::{
 #[cfg(test)]
 mod guarantees;
 
-/// What [`SessionMemory::retain_unknown`] drops and keeps. A child module for
-/// the same reason as [`guarantees`]: the filter is private, and it is the
-/// filter itself that needs pinning, not the turn that happens to call it.
+/// What [`SessionMemory::partition_known`] stores, diverts to the mining log,
+/// and drops. A child module for the same reason as [`guarantees`]: the split
+/// is private, and it is the split itself that needs pinning, not the turn
+/// that happens to call it.
 #[cfg(test)]
 mod dedupe;
 
@@ -159,20 +160,17 @@ impl SessionMemory {
         // at recall is what makes forgetting durable — an unsuppressed lesson
         // would land in the log and stay re-mineable forever.
         let lessons = self.retain_unforgotten(turn_store.as_ref(), lessons);
-        // Then drop what we already know. The loop re-learns the same facts in
-        // slightly different words every turn, and only byte-identical content
-        // collapses on its own (a memory's lineage is seeded from its content
-        // hash), so paraphrases accumulate unchecked.
-        //
-        // Measured on a live treatment store: 23 stored memories encoding
-        // **six** distinct facts, with "commands are registered in registry.py"
-        // held seven separate times — 61% of the store was restatement. That is
-        // not merely untidy. Recall has a budget, so three slots spent on three
-        // phrasings of one fact are three slots not spent on the other five,
-        // and the store gets worse at covering the codebase the longer it runs.
-        let lessons = self.retain_unknown(lessons);
+        // Then split what survives into lessons the store should learn and
+        // restatements of what it already holds. The split — rather than the
+        // filter this used to be — is the #2358 fix: a restatement must skip
+        // the store (see `partition_known` for the measured cost of storing
+        // paraphrases) but still reach the mining log below, because a lesson
+        // the loop keeps re-learning is exactly the recurrence the skill and
+        // rule miners count. Dropping it here starved both miners of the
+        // most common recurrence shape there is.
+        let (novel, restatements) = self.partition_known(lessons);
 
-        if lessons.is_empty() {
+        if novel.is_empty() && restatements.is_empty() {
             return ReflectionReport {
                 cost_usd: reflection_cost_usd,
                 events: reflection_events,
@@ -196,36 +194,50 @@ impl SessionMemory {
         // guessed (see `anchors::resolve_anchors`). A lesson that names no file
         // simply gets no anchors, which is the common case for process notes
         // and is exactly right — they are not about a file.
-        let delta = ContextDelta {
-            memories: lessons
-                .iter()
-                .map(|l| {
-                    MemoryInput::reflection(&l.lesson, l.domains.iter().cloned())
-                        .with_recall_tier(l.kind.recall_tier())
-                        .with_anchors(crate::memory::anchors::resolve_anchors(
-                            &self.workspace_root,
-                            &l.lesson,
-                        ))
-                })
-                .collect(),
-            ..Default::default()
+        let stored = if novel.is_empty() {
+            // Nothing needed storing, so nothing failed to store: a
+            // restatement-only turn feeds the miners below and claims no
+            // memory.
+            true
+        } else {
+            let delta = ContextDelta {
+                memories: novel
+                    .iter()
+                    .map(|l| {
+                        MemoryInput::reflection(&l.lesson, l.domains.iter().cloned())
+                            .with_recall_tier(l.kind.recall_tier())
+                            .with_anchors(crate::memory::anchors::resolve_anchors(
+                                &self.workspace_root,
+                                &l.lesson,
+                            ))
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            self.store.upsert(delta).await.is_ok()
         };
-        let stored = self.store.upsert(delta).await.is_ok();
 
         // 2. Append to the mining log and mine for auto-creatable skills.
-        // Count how many lessons actually reached the log so the message below
-        // reports partial persistence accurately (some serialize/append writes
-        // may fail while others succeed). Each lesson is also mirrored into
-        // `store.db`'s durable `reflections` table — the surface the
-        // observatory's reflections panel, the JSON export, and the prune
-        // carve-out read; without the mirror those readers only ever saw an
-        // empty table. Best-effort like every store write here: a failed
-        // mirror never touches the jsonl path or the turn.
+        // BOTH halves of the split reach the log — the log is the mining
+        // substrate, and the restatements *are* the recurrence it exists to
+        // record (#2358). Count how many novel lessons actually reached the
+        // log so the message below reports partial persistence accurately
+        // (some serialize/append writes may fail while others succeed). Each
+        // lesson is also mirrored into `store.db`'s durable `reflections`
+        // table — the surface the observatory's reflections panel, the JSON
+        // export, and the prune carve-out read; without the mirror those
+        // readers only ever saw an empty table. Best-effort like every store
+        // write here: a failed mirror never touches the jsonl path or the
+        // turn.
         let log_path =
             stella_store::workspace_private_state_path(&self.workspace_root, "reflections.jsonl")
                 .ok();
-        let mut logged_count = 0usize;
-        for lesson in &lessons {
+        let mut novel_logged = 0usize;
+        for (is_novel, lesson) in novel
+            .iter()
+            .map(|l| (true, l))
+            .chain(restatements.iter().map(|l| (false, l)))
+        {
             if let Ok(line) = serde_json::to_string(lesson)
                 && stella_store::append_workspace_private_line(
                     &self.workspace_root,
@@ -233,8 +245,9 @@ impl SessionMemory {
                     &line,
                 )
                 .is_ok()
+                && is_novel
             {
-                logged_count += 1;
+                novel_logged += 1;
             }
             if let Some(store) = &turn_store {
                 let _ = store.record_reflection(&stella_store::ReflectionRow {
@@ -259,23 +272,27 @@ impl SessionMemory {
             self.auto_create_skills(log_path, quiet);
         }
 
-        if !quiet {
-            let n = lessons.len();
+        // A restatement-only turn stays quiet, exactly as it did when the
+        // whole turn was dropped: "we already knew that" repeated every turn
+        // is noise. The messages describe only the novel half, which is the
+        // half the user could lose.
+        if !quiet && !novel.is_empty() {
+            let n = novel.len();
             if stored {
                 println!(
                     "  {} remembered {n} lesson(s) from this turn",
                     "✦".magenta()
                 );
-            } else if logged_count == n {
+            } else if novel_logged == n {
                 println!(
                     "  {} could not persist {n} lesson(s) to the context store \
                      (logged to reflections.jsonl only)",
                     "!".yellow()
                 );
-            } else if logged_count > 0 {
+            } else if novel_logged > 0 {
                 println!(
                     "  {} could not persist {n} lesson(s) to the context store; \
-                     {logged_count} of {n} reached reflections.jsonl",
+                     {novel_logged} of {n} reached reflections.jsonl",
                     "!".yellow()
                 );
             } else {
@@ -287,7 +304,7 @@ impl SessionMemory {
             }
         }
         ReflectionReport {
-            recorded: if stored { lessons.len() } else { 0 },
+            recorded: if stored { novel.len() } else { 0 },
             model_error: None,
             cost_usd: reflection_cost_usd,
             events: reflection_events,
@@ -321,7 +338,8 @@ impl SessionMemory {
             .collect()
     }
 
-    /// Drop lessons that restate something the store already holds.
+    /// Split lessons into ones the store should learn and restatements of
+    /// something it already holds — `(novel, restatements)`.
     ///
     /// The same predicate [`Self::retain_unforgotten`] uses, pointed at live
     /// memories instead of tombstones. The machinery for "is this the same
@@ -329,20 +347,34 @@ impl SessionMemory {
     /// asked the question *do we know this already*, only *did the user delete
     /// this*.
     ///
-    /// Deliberately silent about *re-*learning: a fact mined twice is weak
-    /// evidence it matters, and a future change could raise salience on the
-    /// existing memory instead of discarding the restatement. Discarding is the
-    /// conservative half — it cannot make the store worse, and it is what stops
-    /// one fact crowding out five at recall time.
+    /// The novel half is the only half that may be stored. Measured on a live
+    /// treatment store: 23 stored memories encoding **six** distinct facts,
+    /// with "commands are registered in registry.py" held seven separate
+    /// times — 61% of the store was restatement. That is not merely untidy.
+    /// Recall has a budget, so three slots spent on three phrasings of one
+    /// fact are three slots not spent on the other five, and the store gets
+    /// worse at covering the codebase the longer it runs.
+    ///
+    /// The restatements are returned rather than dropped because *re*-learning
+    /// is the strongest recurrence evidence the loop ever sees, and discarding
+    /// it here was what starved the skill and rule miners (#2358): a lesson
+    /// that never reaches `reflections.jsonl` never becomes an observation and
+    /// can never contribute an occurrence. A within-batch repeat is different —
+    /// one reflection call returns up to three lessons and routinely says the
+    /// same thing twice, which is the model stuttering, not the codebase
+    /// recurring — so it lands in neither half.
     ///
     /// Restatement matching is fuzzy by construction (`SIMILARITY_THRESHOLD`
     /// over token sets, the same predicate [`stella_store::is_suppressed`]
-    /// applies), so this can drop a genuinely new lesson that happens to share
-    /// most of its vocabulary with an old one. That trade is the same one
-    /// forgetting already makes,
-    /// and it errs the right way here: a missed new memory costs one fact,
-    /// while an unchecked duplicate costs a recall slot on every future turn.
-    fn retain_unknown(&self, lessons: Vec<ReflectionLesson>) -> Vec<ReflectionLesson> {
+    /// applies), so this can divert a genuinely new lesson that happens to
+    /// share most of its vocabulary with an old one. That trade is the same
+    /// one forgetting already makes, and it errs the right way here: the
+    /// diverted lesson still counts toward mining, while an unchecked
+    /// duplicate costs a recall slot on every future turn.
+    fn partition_known(
+        &self,
+        lessons: Vec<ReflectionLesson>,
+    ) -> (Vec<ReflectionLesson>, Vec<ReflectionLesson>) {
         let known: Vec<String> = match self.store.memory_nodes() {
             // Compare against the memory's own text, which is what a later
             // recall would inject — the display label is truncated.
@@ -350,23 +382,24 @@ impl SessionMemory {
             // A store we cannot read is not evidence that nothing is stored, so
             // keep the lessons rather than risk dropping the first ones a fresh
             // workspace ever learns.
-            Err(_) => return lessons,
+            Err(_) => return (lessons, Vec::new()),
         };
-        let mut kept: Vec<ReflectionLesson> = Vec::with_capacity(lessons.len());
+        let mut novel: Vec<ReflectionLesson> = Vec::with_capacity(lessons.len());
+        let mut restatements: Vec<ReflectionLesson> = Vec::new();
         for lesson in lessons {
-            // Check against this batch too: one reflection call returns up to
-            // three lessons and routinely says the same thing twice.
-            let already =
-                stella_store::is_suppressed(&lesson.lesson, known.iter().map(String::as_str))
-                    || stella_store::is_suppressed(
-                        &lesson.lesson,
-                        kept.iter().map(|l: &ReflectionLesson| l.lesson.as_str()),
-                    );
-            if !already {
-                kept.push(lesson);
+            let repeats_batch = |batch: &[ReflectionLesson]| {
+                stella_store::is_suppressed(&lesson.lesson, batch.iter().map(|l| l.lesson.as_str()))
+            };
+            if repeats_batch(&novel) || repeats_batch(&restatements) {
+                continue;
+            }
+            if stella_store::is_suppressed(&lesson.lesson, known.iter().map(String::as_str)) {
+                restatements.push(lesson);
+            } else {
+                novel.push(lesson);
             }
         }
-        kept
+        (novel, restatements)
     }
 
     /// Mine the whole reflection log for recurring lessons and auto-create

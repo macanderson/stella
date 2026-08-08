@@ -596,6 +596,25 @@ pub struct SkillMineConfig {
     pub min_occurrences: usize,
     /// Jaccard term-overlap threshold to cluster two observations as "the
     /// same".
+    ///
+    /// This number lives in `crate::mining::terms`'s token space and only
+    /// there. It is deliberately **not** `stella-store`'s dedup threshold
+    /// (`SIMILARITY_THRESHOLD`, 0.5): that constant was measured over
+    /// `forget::tokens`, which keeps a file path as ONE token and keeps
+    /// stopwords, while `terms` shatters the same path into five terms and
+    /// drops stopwords — so the same pair of lessons scores differently under
+    /// each. The two numbers describe different spaces and must be tuned
+    /// against measurements in their own space (#2358).
+    ///
+    /// Measured in *this* space, over lessons phrased the way a real
+    /// engagement phrases them: four naturally-varied restatements of one
+    /// convention score 0.40 pairwise; short path-dominated phrasings score
+    /// 0.67; the worst adversarial cross-fact pair (two short lessons naming
+    /// different files in one crate) scores 0.36; typical cross-fact pairs
+    /// sit at or below 0.29. The default sits at 0.4 — on the natural-variation
+    /// signal, above the cross-fact ceiling. At the inherited 0.5 the miner
+    /// could only see recurrence worded into the 0.5–0.67 band, which is why
+    /// naturally-phrased conventions never became skills.
     pub min_similarity: f64,
     /// Max candidates returned, ranked by score.
     pub limit: usize,
@@ -605,7 +624,7 @@ impl Default for SkillMineConfig {
     fn default() -> Self {
         Self {
             min_occurrences: 3,
-            min_similarity: 0.5,
+            min_similarity: 0.4,
             limit: 10,
         }
     }

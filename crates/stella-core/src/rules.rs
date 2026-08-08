@@ -693,7 +693,12 @@ pub struct MineConfig {
     /// candidate.
     pub min_occurrences: usize,
     /// Jaccard term-overlap threshold to cluster two lessons as "the
-    /// same".
+    /// same". Must match [`crate::skills::SkillMineConfig::min_similarity`],
+    /// whose doc comment carries the measurements behind the number — both
+    /// miners cluster the same observation pool through
+    /// `crate::mining::cluster_observations`, and a rule threshold that
+    /// drifted from the skill threshold would make one artifact class see
+    /// recurrence the other cannot (#2358).
     pub min_similarity: f64,
     /// Max candidates returned, ranked by score.
     pub limit: usize,
@@ -703,7 +708,7 @@ impl Default for MineConfig {
     fn default() -> Self {
         Self {
             min_occurrences: 3,
-            min_similarity: 0.5,
+            min_similarity: 0.4,
             limit: 10,
         }
     }

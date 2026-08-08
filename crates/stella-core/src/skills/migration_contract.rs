@@ -276,11 +276,18 @@ fn lexical_miner_counts_events_not_distinct_tasks() {
 /// observation. Both halves are gate-relevant: the typed path reuses this
 /// miner, so a threshold change would move the promotion bar for every user
 /// without touching a settings file.
+///
+/// `min_similarity` moved 0.5 → 0.4 as the #2358 fix: 0.5 was inherited from
+/// the store's dedup constant, which is measured in a different token space,
+/// and it put naturally-varied restatements of one convention (0.40 pairwise
+/// in `mining::terms` space) permanently out of clustering reach. The field's
+/// doc comment on [`SkillMineConfig`] carries the measurements; moving the
+/// number again means re-measuring, not editing this assertion to match.
 #[test]
 fn the_shipped_thresholds_are_three_occurrences_or_one_salient() {
     let config = SkillMineConfig::default();
     assert_eq!(config.min_occurrences, 3);
-    assert_eq!(config.min_similarity, 0.5);
+    assert_eq!(config.min_similarity, 0.4);
     assert_eq!(config.limit, 10);
 
     let two = (0..2)
