@@ -30,6 +30,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+# Only the `arenabench cloud` verbs (AWS Batch submission) need the AWS SDK;
+# everything else stays stdlib-only. cloud.py imports it lazily, so the rest
+# of the package works without this extra installed.
+cloud = ["boto3>=1.34"]
 
 [project.scripts]
 arenabench = "arenabench.cli:main"

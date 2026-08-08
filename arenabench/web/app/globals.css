@@ -137,9 +137,18 @@ button.secondary {
   border: 1px solid var(--line);
 }
 
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .note {
   color: var(--dim);
   font-size: 12.5px;
+}
+
+.error {
+  color: var(--bad);
 }
 
 code {

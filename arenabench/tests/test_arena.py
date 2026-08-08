@@ -844,8 +844,10 @@ class TestOfflineTaskSource:
                 return None
 
         monkeypatch.setattr("arenabench.runner.subprocess.Popen", _Fake)
+        # Explicitly unpinned: this test is about the argv shape, and a
+        # pinned seat with no staged build now refuses the launch (#2098).
         spec = MatchSpec.from_json({
-            "dataset": "terminal-bench-2.1", "tasks": ["alpha"],
+            "dataset": "terminal-bench-2.1", "tasks": ["alpha"], "sut_ref": "",
             "contestants": [{"name": "s", "agent": "stella",
                              "engine": {"api": "openrouter", "model": "x/y"}}],
         })
@@ -1227,4 +1229,137 @@ class TestSnapshotDetections:
         second = arena.match(match_id)["detections"]
         assert len(first) == 5
         assert second == first
+
+
+class TestSutPinTemplates:
+    """The SUT pin as a file: a committed match must run the Stella it names.
+
+    Before #2082 neither TOML path carried `sut_ref` at all — a committed
+    template always ran `main` no matter what the match it was downloaded
+    from had pinned, and the GUI's "download this match" silently dropped
+    the pin. Every test here is about the pin surviving the file.
+    """
+
+    def _two_pin_spec(self) -> MatchSpec:
+        return match_from_toml(
+            {
+                "match": {
+                    "name": "twins",
+                    "dataset": "terminal-bench-2.1",
+                    "tasks": ["fix-git"],
+                    "sut_ref": "branch-a",
+                },
+                "contestant": [
+                    {
+                        "id": "champ",
+                        "name": "champion",
+                        "agent": "stella",
+                        "engine": {"api": "openrouter", "model": "z-ai/glm-5.2"},
+                    },
+                    {
+                        "id": "chall",
+                        "name": "challenger",
+                        "agent": "stella",
+                        "sut_ref": "branch-b",
+                        "engine": {"api": "openrouter", "model": "z-ai/glm-5.2"},
+                    },
+                ],
+            }
+        )
+
+    def test_a_match_level_pin_reaches_the_spec(self):
+        spec = self._two_pin_spec()
+        assert spec.sut_ref == "branch-a"
+
+    def test_a_seat_override_wins_and_the_rest_inherit(self):
+        spec = self._two_pin_spec()
+        assert spec.contestants[0].sut_ref is None
+        assert spec.contestants[1].sut_ref == "branch-b"
+        assert spec.sut_ref_for(spec.contestants[0]) == "branch-a"
+        assert spec.sut_ref_for(spec.contestants[1]) == "branch-b"
+
+    def test_a_template_without_the_key_still_means_main(self):
+        """Absent must keep meaning `main`, not the opt-out: every template
+        committed before the key existed asked for the default branch."""
+        spec = match_from_toml(
+            {
+                "match": {"dataset": "terminal-bench-2.1"},
+                "contestant": [
+                    {"agent": "stella", "engine": {"model": "z-ai/glm-5.2"}}
+                ],
+            }
+        )
+        assert spec.sut_ref == "main"
+
+    def test_the_pin_round_trips_byte_stably(self):
+        """dump -> load -> dump is the identity, pins included."""
+        import tomllib
+
+        from arenabench.config import dump_match
+
+        text = dump_match(self._two_pin_spec())
+        again = match_from_toml(tomllib.loads(text))
+        assert again.sut_ref == "branch-a"
+        assert again.contestants[1].sut_ref == "branch-b"
+        assert dump_match(again) == text
+
+    def test_a_downloaded_template_no_longer_drops_the_pin(self):
+        """The GUI's "download this match" renders through dump_match; the
+        pin must be in the bytes, unconditionally."""
+        from arenabench.config import dump_match
+
+        pinned = MatchSpec.from_json(
+            {
+                "dataset": "terminal-bench-2.1",
+                "sut_ref": "0123456789abcdef0123456789abcdef01234567",
+                "contestants": [
+                    {"name": "s", "agent": "stella", "engine": {"model": "m"}}
+                ],
+            }
+        )
+        assert 'sut_ref = "0123456789abcdef0123456789abcdef01234567"' in dump_match(
+            pinned
+        )
+
+    def test_a_pin_on_a_non_stella_seat_is_refused_at_parse(self):
+        from arenabench.config import MatchTemplateError
+
+        with pytest.raises(MatchTemplateError) as caught:
+            match_from_toml(
+                {
+                    "match": {"dataset": "terminal-bench-2.1"},
+                    "contestant": [
+                        {
+                            "agent": "claude-code",
+                            "sut_ref": "main",
+                            "engine": {"api": "anthropic", "model": "m"},
+                        }
+                    ],
+                }
+            )
+        assert any("only to a stella seat" in p for p in caught.value.problems)
+
+    def test_a_pin_on_a_non_stella_seat_is_refused_at_validate(self):
+        spec = MatchSpec.from_json(
+            {
+                "dataset": "terminal-bench-2.1",
+                "contestants": [
+                    {
+                        "name": "cc",
+                        "agent": "claude-code",
+                        "sut_ref": "main",
+                        "engine": {"api": "anthropic", "model": "m"},
+                    }
+                ],
+            }
+        )
+        assert any("only to a stella seat" in p for p in spec.validate())
+
+    def test_the_seat_pin_survives_the_json_spec_record(self):
+        """`spec.json` round-trips through redacted()/from_json on restore;
+        losing the pin there would strand history without its SUT."""
+        spec = self._two_pin_spec()
+        again = MatchSpec.from_json(spec.to_json())
+        assert again.contestants[1].sut_ref == "branch-b"
+        assert again.sut_ref == "branch-a"
 

@@ -93,15 +93,47 @@ class Provenance:
     #: dates a result to whenever someone happens to read the record, which is
     #: the same reason :mod:`arenabench.registry` pins datasets by digest.
     #: Empty means genuinely unknown, never a guess — an unpinned match ran a
-    #: binary nobody can attribute, and saying so is the honest record.
+    #: binary nobody can attribute, and saying so is the honest record. When
+    #: seats pin *different* commits (:attr:`sut_seats`), no single value is
+    #: true and this stays empty — per-seat truth lives in ``sut_seats``.
     sut_commit: str = ""
     #: SHA-256 of the exact binary that ran. Two builds of one commit on
     #: different toolchains are not the same artifact, and this is what tells
-    #: them apart after the fact.
+    #: them apart after the fact. Like :attr:`sut_commit`, empty when the
+    #: seats diverge.
     sut_sha256: str = ""
+    #: Per-seat SUT identity, keyed by contestant id: ``{"name", "ref",
+    #: "commit", "sha256"}`` for every Stella seat. This is what makes a
+    #: champion-vs-challenger match recordable at all — the single fields
+    #: above assume one SUT per match, which was defect 3 of #2082. Empty for
+    #: records written before per-seat pins existed and for matches with no
+    #: Stella seat; readers fall back to the single fields then.
+    sut_seats: dict[str, dict[str, str]] = field(default_factory=dict)
     arenabench_version: str = ""
     recorded_at: float = field(default_factory=time.time)
     source: str = SOURCE_RECORDED
+
+    def _key(self, sut: str) -> str:
+        digest = (self.dataset_digest or "unknown").removeprefix("sha256:")[:8]
+        if self.harbor_version:
+            grader = f"harbor{self.harbor_version}"
+        elif self.harbor_bound:
+            grader = f"harbor?{self.harbor_bound}"
+        else:
+            grader = "harbor?"
+        return f"{self.dataset_key or 'unknown'}@{digest}/{grader}/{sut}"
+
+    @property
+    def sut_commits(self) -> tuple[str, ...]:
+        """Distinct per-seat SUT commits, sorted; the legacy single field when
+        no per-seat record exists. ``""`` members mean a seat whose commit is
+        genuinely unknown — kept, never dropped, because unknown is not zero.
+        """
+        if self.sut_seats:
+            return tuple(
+                sorted({seat.get("commit") or "" for seat in self.sut_seats.values()})
+            )
+        return (self.sut_commit,)
 
     @property
     def comparability_key(self) -> str:
@@ -111,19 +143,33 @@ class Provenance:
         a key nobody reads is a key nobody notices differing. An unknown Harbor
         keeps its bound in the key rather than collapsing to the same string as
         a measured one — the whole point is that those two are not the same.
+
+        The SUT belongs in the key for the same reason the dataset digest
+        does: two runs of different Stella revisions answer different
+        questions, and a key that hides that invites them into one average. A
+        match whose seats pin *different* commits names them all — a two-twin
+        match is its own apparatus, never averageable into a single-SUT
+        series; :meth:`comparability_key_for` is the arm-level key.
         """
-        digest = (self.dataset_digest or "unknown").removeprefix("sha256:")[:8]
-        if self.harbor_version:
-            grader = f"harbor{self.harbor_version}"
-        elif self.harbor_bound:
-            grader = f"harbor?{self.harbor_bound}"
+        commits = self.sut_commits
+        if len(commits) == 1:
+            sut = f"stella{commits[0][:8]}" if commits[0] else "stella?"
         else:
-            grader = "harbor?"
-        # The SUT belongs in the key for the same reason the dataset digest
-        # does: two runs of different Stella revisions answer different
-        # questions, and a key that hides that invites them into one average.
-        sut = f"stella{self.sut_commit[:8]}" if self.sut_commit else "stella?"
-        return f"{self.dataset_key or 'unknown'}@{digest}/{grader}/{sut}"
+            sut = "stella" + "+".join(c[:8] if c else "?" for c in commits)
+        return self._key(sut)
+
+    def comparability_key_for(self, contestant_id: str) -> str:
+        """The key for one arm of the match.
+
+        Two arms — from the same match or different ones — are comparable
+        exactly when their keys differ in nothing but the ``stella<commit>``
+        half, which is the variable under test. Everything else differing
+        (dataset digest, grader) makes them different measurements, and this
+        key is what refuses to let that difference hide (#2082).
+        """
+        seat = self.sut_seats.get(contestant_id)
+        commit = (seat.get("commit") or "") if seat else self.sut_commit
+        return self._key(f"stella{commit[:8]}" if commit else "stella?")
 
     @property
     def measured(self) -> bool:
@@ -137,6 +183,11 @@ class Provenance:
         # without having to reimplement how it is built.
         out["comparability_key"] = self.comparability_key
         out["measured"] = self.measured
+        if self.sut_seats:
+            out["comparability_key_by_seat"] = {
+                seat_id: self.comparability_key_for(seat_id)
+                for seat_id in self.sut_seats
+            }
         return out
 
     @classmethod

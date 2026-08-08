@@ -326,6 +326,19 @@ match resolves its `sut_ref` to a commit and runs the binary built from that
 commit, ignoring this variable entirely — which is how a result records which
 Stella produced it.
 
+The pin is per seat as well as per match: `sut_ref` in a template's `[match]`
+table is the default every Stella seat inherits, and a seat's own `sut_ref`
+line overrides it — two Stella builds racing the same tasks is one extra
+build, since builds are cached by commit. The pin is resolved **once per
+match** and that single observation feeds the launch, `provenance.json`
+(per-seat under `sut_seats`), and each seat's `.seat.json` launch record. A
+declared pin that cannot be satisfied — typically a branch that moved between
+the build and the launch — refuses the trial naming the drift; it never falls
+back to `STELLA_BINARY` or a `PATH` lookup, because that fallback once
+uploaded a host's native macOS build into Linux task containers (#2098). Pin
+the commit the build actually resolved to (the SUT panel pins it for you) to
+be immune to branch movement.
+
 Clearing the pin opts out of *pinning*, not out of every check. An unpinned
 match asks for whatever is current, so the arena reads the commit stamped into
 `STELLA_BINARY` itself and refuses to launch when that commit is more than

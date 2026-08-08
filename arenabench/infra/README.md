@@ -109,6 +109,19 @@ tears everything down when the queue drains. Provider API keys are read at
 trial start from SSM parameters under `/arenabench/` (SecureString;
 `/arenabench/anthropic_api_key` → `ANTHROPIC_API_KEY`, etc.).
 
+`arenabench cloud run` automates all of the above — per-trial slice upload,
+SUT resolution from `binaries/<ref>/latest.json` (building via
+`arenabench-sut-build` on a miss), submit-time refusal of seats with no SSM
+credentials, one job per trial, progress streaming (queued trials surface as
+progress, not a hang), and results download:
+
+```bash
+pip install 'arenabench[cloud]'
+arenabench cloud run match.toml --ref main        # submit + watch + fetch
+arenabench cloud status <run-id> [--follow]       # from any machine
+arenabench cloud fetch <run-id> [--artifacts]
+```
+
 ### Quotas (account limits, not template limits)
 
 | Quota | At deploy time | Needed for 12×12 | Fix |
