@@ -324,7 +324,7 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 	./scripts/test-automerge-nudge.sh
 
 .PHONY: file-size-test
-file-size-test: ## Test which languages the file-size ratchet actually watches (hermetic; not part of `gate`)
+file-size-test: ## Test the file-size ratchet's language coverage and its change-relative judgement (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
 
 .PHONY: guard-sigpipe-test
