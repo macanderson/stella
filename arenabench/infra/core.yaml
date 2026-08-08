@@ -379,10 +379,27 @@ Resources:
               - Key: Project
                 Value: arenabench
 
+  # The three compute environments are deliberately left unnamed.
+  #
+  # Batch treats most ComputeResources edits — instance types above all — as
+  # requiring a *replacement* of the compute environment, and CloudFormation
+  # cannot replace a resource that carries an explicit name, because the new
+  # one would collide with the old before the old is gone. A custom name
+  # therefore converts an ordinary tuning change into `CloudFormation cannot
+  # update a stack when a custom-named resource requires replacing. Rename
+  # ... and update the stack again` — a rollback, and a rename in the
+  # template for every future change. That is exactly how the deploy of the
+  # one-trial-per-instance fix failed the first time.
+  #
+  # Unnamed, CloudFormation replaces them cleanly: it creates the new
+  # environment, repoints the queue at it, then deletes the old one. Nothing
+  # external addresses a compute environment anyway — submissions and every
+  # runbook name the *queues* (arenabench-measure / -burst / -tune), which
+  # keep their stable names and are unaffected by a replacement underneath.
+  # The generated names are published as stack outputs for the console.
   OnDemandComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
-      ComputeEnvironmentName: arenabench-ondemand
       Type: MANAGED
       State: ENABLED
       ComputeResources:
@@ -412,7 +429,6 @@ Resources:
   SpotComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
-      ComputeEnvironmentName: arenabench-spot
       Type: MANAGED
       State: ENABLED
       ComputeResources:
@@ -443,7 +459,6 @@ Resources:
   GpuComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
-      ComputeEnvironmentName: arenabench-gpu
       Type: MANAGED
       State: ENABLED
       ComputeResources:
@@ -716,6 +731,15 @@ Outputs:
     Value: !Ref RunsTable
   RunnerImageUri:
     Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/arenabench/runner:latest
+  # The compute environments are unnamed so Batch can replace them (see the
+  # comment on OnDemandComputeEnvironment); these publish what CloudFormation
+  # generated, for anyone who needs to find one in the console or the CLI.
+  OnDemandComputeEnvironmentName:
+    Value: !Ref OnDemandComputeEnvironment
+  SpotComputeEnvironmentName:
+    Value: !Ref SpotComputeEnvironment
+  GpuComputeEnvironmentName:
+    Value: !Ref GpuComputeEnvironment
   MeasureQueueArn:
     Value: !Ref MeasureQueue
   BurstQueueArn:
