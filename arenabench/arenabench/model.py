@@ -284,10 +284,23 @@ class Engine:
     base_url: str | None = None
     #: Per-trial USD target handed to the agent, if it supports one.
     budget_usd: float | None = None
-    #: Output-token ceiling per step. Left ``None`` to take the agent's own
-    #: default — but see the Stella adapter's note on why a low cap plus high
-    #: effort is the classic way to buy reasoning that cannot fit an answer.
+    #: Output-token ceiling per step. Leave ``None`` to take the model's own
+    #: maximum, which is nearly always right. A model spends up to whatever
+    #: ceiling it is handed, so a cap pinned BELOW its real one cuts the step
+    #: off mid-reasoning and the call comes back ``length`` with no answer and
+    #: no tool call. That is what #2128 actually was: not effort overrunning a
+    #: budget the model was told about — it is not supposed to do that — but a
+    #: cap we chose without knowing the model's real ceiling. See the Stella
+    #: adapter's note in ``posture.py`` for the measurement.
     max_tokens: int | None = None
+    #: Run the agent's raw step loop instead of its staged pipeline. For Stella
+    #: that is ``--no-pipeline``, which settles triage, witness and verify at
+    #: once because all three ARE the pipeline. Declared on the engine rather
+    #: than exported at launch: the runner scrubs every ambient ``STELLA_*`` so
+    #: a host setting can never quietly reconfigure a seat, and which loop an
+    #: arm ran belongs in the match's published identity either way. Agents
+    #: with no pipeline ignore it, like the role overrides below.
+    bare_loop: bool = False
     #: Per-role overrides, keyed by a member of :data:`ROLES`.
     roles: dict[str, RoleConfig] = field(default_factory=dict)
 
@@ -347,6 +360,7 @@ class Engine:
             "base_url": self.base_url,
             "budget_usd": self.budget_usd,
             "max_tokens": self.max_tokens,
+            "bare_loop": self.bare_loop,
             "roles": {name: role.to_json() for name, role in self.roles.items()},
         }
 
@@ -372,6 +386,7 @@ class Engine:
             max_tokens=(
                 int(raw["max_tokens"]) if raw.get("max_tokens") not in (None, "") else None
             ),
+            bare_loop=bool(raw.get("bare_loop", False)),
             roles=roles,
         )
 
@@ -380,8 +395,12 @@ class Engine:
         """A one-line human description, e.g. ``glm-5.2 · xhigh · +2 roles``."""
         short = self.model.rsplit("/", 1)[-1] or "unset"
         think = self.effort if self.reasoning else "no-reasoning"
+        # Named before the roles: on a bare-loop arm the roles are inert, and a
+        # label reading "+2 roles" with no mention of the loop would advertise
+        # management stages that never ran.
+        loop = " · bare loop" if self.bare_loop else ""
         extra = f" · +{len(self.roles)} roles" if self.roles else ""
-        return f"{short} · {think}{extra}"
+        return f"{short} · {think}{loop}{extra}"
 
 
 @dataclass(frozen=True)

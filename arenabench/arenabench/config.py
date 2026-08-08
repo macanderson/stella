@@ -143,6 +143,7 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
         max_tokens=(
             int(raw["max_tokens"]) if raw.get("max_tokens") not in (None, "") else None
         ),
+        bare_loop=bool(raw.get("bare_loop", False)),
         roles=roles,
     )
 
@@ -454,6 +455,10 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
             out.append("  " + _line("max_tokens", engine.max_tokens))
         if engine.budget_usd is not None:
             out.append("  " + _line("budget_usd", engine.budget_usd))
+        if engine.bare_loop:
+            # Emitted only when true, so every existing template renders back
+            # byte-identical and a saved match cannot gain an arm it never had.
+            out.append("  " + _line("bare_loop", engine.bare_loop))
 
         if engine.roles:
             out.append("")
