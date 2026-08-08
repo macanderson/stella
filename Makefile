@@ -112,6 +112,16 @@ test-cli: ## Test stella-cli only (the shipping binary)
 test-protocol: ## Test stella-protocol only (shared types)
 	cargo test -p stella-protocol
 
+# The trace-replay learning harness (#2304, `doc:trace-replay-learning-harness`
+# §8). Deliberately NOT a `make gate` step: the assertions are ordinary in-crate
+# tests already covered by the gate's existing `test` step, and a target whose
+# job is to PRINT a report adds nothing as pass/fail — while every added step is
+# one more shared cell the Makefile, AGENTS.md and CONTRIBUTING.md must agree on.
+.PHONY: replay-learning
+replay-learning: ## Replay the synthetic months corpus and print what the learners built (#2304)
+	cargo test -p stella-cli --bin stella \
+	  memory::replay::tests::replay_learning_report -- --exact --nocapture
+
 .PHONY: record-golden
 record-golden: ## Re-record the golden replay trajectories (review the fixture diff!)
 	STELLA_REFRESH_GOLDEN=1 cargo test -p stella-pipeline --lib golden
