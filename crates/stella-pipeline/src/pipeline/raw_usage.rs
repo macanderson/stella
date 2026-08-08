@@ -380,3 +380,106 @@ fn call_meta<'r>(role: ModelCallRole, resolved: &'r ResolvedRole<'_>) -> RawCall
         model_id: &resolved.model_ref.model_id,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2128 witness for the prevention half: every capped role reaches the
+    /// wire with reasoning headroom above its written output contract, so a
+    /// reasoning model has room to think before its first answer token. The
+    /// old caps (512 triage, 1024 verdict) are exactly the numbers that came
+    /// back empty across a whole benchmark match.
+    #[test]
+    fn every_capped_role_carries_reasoning_headroom() {
+        let none = RoleCallOverrides::default();
+        for (role, contract) in [
+            (ModelCallRole::Triage, 512),
+            (ModelCallRole::Verdict, 1024),
+            (ModelCallRole::DistressGuidance, 1024),
+            (ModelCallRole::Plan, 4096),
+            (ModelCallRole::PlanRepair, 4096),
+            (ModelCallRole::Worker, 2048),
+        ] {
+            let cap = role_output_cap(role, &none, Some(64_000))
+                .unwrap_or_else(|| panic!("{role:?} is a capped role"));
+            assert_eq!(
+                cap,
+                contract + REASONING_HEADROOM_TOKENS,
+                "{role:?} must budget its output contract PLUS thinking room"
+            );
+            assert!(
+                cap < 64_000,
+                "{role:?} must still be far under the engine base — the cap is \
+                 what keeps a runaway role call bounded"
+            );
+        }
+    }
+
+    /// An operator's explicit cap is honored exactly, headroom included or
+    /// not: it is the most specific statement about the call, and quietly
+    /// serving a larger number would make the setting a suggestion. The
+    /// starvation retry is what keeps honoring it from being a silent loss.
+    #[test]
+    fn an_explicit_override_is_never_widened() {
+        let pinned = RoleCallOverrides {
+            max_output_tokens: Some(512),
+            ..RoleCallOverrides::default()
+        };
+        assert_eq!(
+            role_output_cap(ModelCallRole::Triage, &pinned, Some(64_000)),
+            Some(512)
+        );
+    }
+
+    /// An uncapped role inherits the engine base, exactly as before.
+    #[test]
+    fn an_uncapped_role_still_inherits_the_engine_base() {
+        let none = RoleCallOverrides::default();
+        assert_eq!(
+            role_output_cap(ModelCallRole::Reflection, &none, Some(64_000)),
+            Some(64_000)
+        );
+    }
+
+    /// The starvation signature requires BOTH halves: a truncated reply with
+    /// text is ordinary (the parsers cope), and an empty reply that stopped
+    /// for any other reason is a model declining, which more room cannot fix.
+    #[test]
+    fn only_an_empty_length_stop_counts_as_starvation() {
+        let base = CompletionResult {
+            text: String::new(),
+            finish_reason: Some(FinishReason::Length),
+            ..CompletionResult::default()
+        };
+        assert!(starved_of_output(&base));
+        assert!(
+            starved_of_output(&CompletionResult {
+                text: "   \n ".into(),
+                ..base.clone()
+            }),
+            "whitespace is not an answer"
+        );
+        assert!(!starved_of_output(&CompletionResult {
+            text: "PASS — looks right".into(),
+            ..base.clone()
+        }));
+        assert!(!starved_of_output(&CompletionResult {
+            finish_reason: Some(FinishReason::Stop),
+            ..base.clone()
+        }));
+        assert!(!starved_of_output(&CompletionResult {
+            finish_reason: None,
+            ..base
+        }));
+    }
+
+    /// A retry is bought only when more room could change the answer.
+    #[test]
+    fn a_retry_is_declined_when_room_was_never_the_constraint() {
+        assert_eq!(starved_retry_cap(Some(1024)), Some(STARVED_RETRY_CAP));
+        assert_eq!(starved_retry_cap(Some(STARVED_RETRY_CAP)), None);
+        assert_eq!(starved_retry_cap(Some(64_000)), None);
+        assert_eq!(starved_retry_cap(None), None);
+    }
+}
