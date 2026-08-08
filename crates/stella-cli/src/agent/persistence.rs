@@ -1,6 +1,9 @@
 //! Event/telemetry persistence and execution closeout.
 
 use super::*;
+use stella_core::ports::Clock;
+
+use crate::runtime::WallClock;
 
 #[derive(Default)]
 pub(crate) struct RendererOutcome {
@@ -61,6 +64,10 @@ pub(crate) fn spawn_renderer(
             crate::diag_boot::dx(),
             Some(crate::diag_boot::workspace_root()),
         );
+        // The stream-json sink's clock. Wall-anchored, not `SystemClock`: a
+        // journal stamp has to stay comparable across processes and runs, and a
+        // per-construction origin is exactly the wrong shape for that (#2111).
+        let clock = WallClock;
         while let Some(event) = rx.recv().await {
             bridge.observe(&event);
             let event = if format == OutputFormat::StreamJson {
@@ -99,7 +106,7 @@ pub(crate) fn spawn_renderer(
                 // Serialization of a protocol enum never fails; if it somehow
                 // does, terminate before the provider loop can spend on a
                 // later unmetered call.
-                OutputFormat::StreamJson => emit_stream_json(&event, durable_pre_persisted),
+                OutputFormat::StreamJson => emit_stream_json(&event, durable_pre_persisted, &clock),
                 OutputFormat::Json => outcome.events.push(event),
                 OutputFormat::Text => match &event {
                     AgentEvent::ToolStart { call } => {
@@ -140,7 +147,7 @@ pub(crate) fn spawn_renderer(
             {
                 outcome.persistence_complete = false;
             }
-            emit_stream_json(&event, durable_pre_persisted);
+            emit_stream_json(&event, durable_pre_persisted, &clock);
         }
         // The stream is closed, so the bounded tally is final: one record
         // carrying the per-token counts that deliberately produced none of
@@ -153,8 +160,12 @@ pub(crate) fn spawn_renderer(
 /// Publish one stream-json line, honoring Harbor's durable sink. Failures are
 /// terminal rather than a warning: a benchmark run whose evidence file is
 /// incomplete must not keep spending on later calls.
-fn emit_stream_json(event: &AgentEvent, durable_pre_persisted: bool) {
-    match serde_json::to_string(event) {
+///
+/// The line is stamped with `clock`'s wall clock (#2111) — the instant *this*
+/// sink admitted it. When the durable sender already persisted the event it
+/// stamped its own instant a moment earlier; see `output::ordered_durable_event_sender`.
+fn emit_stream_json(event: &AgentEvent, durable_pre_persisted: bool, clock: &dyn Clock) {
+    match stella_protocol::stamped_line(event, clock.now_ms()) {
         Ok(line) if durable_pre_persisted => {
             emit_pre_persisted_stream_json_line_or_terminate(&line)
         }
