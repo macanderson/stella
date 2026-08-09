@@ -185,11 +185,7 @@ pub trait HistoryBackend: Send + Sync {
     /// Commits reachable from neither `target` nor any branch — the ones a
     /// checkout can strand. `target` is a reference name; the backend
     /// resolves it.
-    async fn unreferenced(
-        &self,
-        root: &Path,
-        target: &str,
-    ) -> Result<RepoRecovery, RepoError>;
+    async fn unreferenced(&self, root: &Path, target: &str) -> Result<RepoRecovery, RepoError>;
 }
 
 /// Split one `--format` record on [`FS`] into exactly `n` fields.
@@ -260,9 +256,12 @@ impl HistoryBackend for GitCli {
         let mut truncated = Vec::new();
 
         let head = Self::head_sha(root).await?;
-        let (branch_code, branch_out) =
-            Self::history_probe(root, "repo_history", &["symbolic-ref", "-q", "--short", "HEAD"])
-                .await;
+        let (branch_code, branch_out) = Self::history_probe(
+            root,
+            "repo_history",
+            &["symbolic-ref", "-q", "--short", "HEAD"],
+        )
+        .await;
         let branch = (branch_code == 0)
             .then(|| branch_out.trim().to_string())
             .filter(|b| !b.is_empty());
@@ -459,7 +458,10 @@ impl HistoryBackend for GitCli {
                 ],
             )
             .await;
-            let Some(f) = (code == 0).then(|| out.lines().next()).flatten().and_then(|l| fields(l, 5))
+            let Some(f) = (code == 0)
+                .then(|| out.lines().next())
+                .flatten()
+                .and_then(|l| fields(l, 5))
             else {
                 continue;
             };
@@ -484,8 +486,7 @@ impl HistoryBackend for GitCli {
                 break;
             }
 
-            let parents: Vec<String> =
-                f[3].split_whitespace().map(str::to_string).collect();
+            let parents: Vec<String> = f[3].split_whitespace().map(str::to_string).collect();
             let sits_on_target = match parents.first() {
                 Some(first) => {
                     let (code, _) = Self::history_probe(
@@ -764,7 +765,9 @@ mod tests {
         let tool = RepoRecoverTool(Arc::new(GitCli));
         let root = Path::new(".");
         for bad in ["--all", "HEAD master", "-n 5"] {
-            let out = tool.execute(&serde_json::json!({ "target": bad }), root).await;
+            let out = tool
+                .execute(&serde_json::json!({ "target": bad }), root)
+                .await;
             assert!(
                 matches!(out, ToolOutput::Error { .. }),
                 "{bad:?} should be refused"

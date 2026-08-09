@@ -338,24 +338,24 @@ fn is_credential_path(path: &str) -> bool {
         return !is_readable_git_metadata(&components[idx + 1..]);
     }
     components.iter().any(|component| {
-            matches!(
+        matches!(
+            component.as_str(),
+            ".ssh" | ".aws" | ".azure" | ".config" | ".kube"
+        ) || component == ".env"
+            || component.starts_with(".env.")
+            || matches!(
                 component.as_str(),
-                ".ssh" | ".aws" | ".azure" | ".config" | ".kube"
-            ) || component == ".env"
-                || component.starts_with(".env.")
-                || matches!(
-                    component.as_str(),
-                    "credentials.json"
-                        | "creds.json"
-                        | ".netrc"
-                        | ".npmrc"
-                        | ".pypirc"
-                        | "id_rsa"
-                        | "id_ed25519"
-                )
-                || component.ends_with(".pem")
-                || component.ends_with(".key")
-        })
+                "credentials.json"
+                    | "creds.json"
+                    | ".netrc"
+                    | ".npmrc"
+                    | ".pypirc"
+                    | "id_rsa"
+                    | "id_ed25519"
+            )
+            || component.ends_with(".pem")
+            || component.ends_with(".key")
+    })
 }
 
 /// Copy one accepted witness artifact from the authoring snapshot into

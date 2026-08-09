@@ -1,9 +1,7 @@
 //! Vendor-neutral repository tools: `repo_status`, `repo_diff`,
-//! `repo_commit`, `repo_push`, `repo_pull`, `repo_rollback`. The
-//! read-only history surface (`repo_history`, `repo_recover`) lives in
-//! [`history`] — a sibling submodule because this file sits against the
-//! 1500-line ceiling, and because history is a separate port ([`history::
-//! HistoryBackend`]) with a different cost profile.
+//! `repo_commit`, `repo_push`, `repo_pull`, `repo_rollback`. The read-only
+//! history surface (`repo_history`, `repo_recover`) is a separate port in
+//! the sibling [`history`] submodule — this file is at its size ceiling.
 //!
 //! Nothing here says "git" — not the tool names, not the argument names.
 //! The tools speak in repository concepts (branch, paths, message) through

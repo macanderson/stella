@@ -347,10 +347,7 @@ pub fn scrub_spawn_std_env(command: &mut std::process::Command) {
 
 /// [`scrub_spawn_std_env`] preserving an exact credential allowlist — same
 /// contract and same restraint as [`scrub_sensitive_env_except`].
-pub fn scrub_spawn_std_env_except(
-    command: &mut std::process::Command,
-    preserved_names: &[&str],
-) {
+pub fn scrub_spawn_std_env_except(command: &mut std::process::Command, preserved_names: &[&str]) {
     for var in GIT_REPO_ENV_VARS {
         command.env_remove(var);
     }

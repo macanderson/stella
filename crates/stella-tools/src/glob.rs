@@ -267,7 +267,8 @@ fn fd_command(search_dir: &std::path::Path, pattern: &str, keep_git: bool) -> Co
     fd.arg("--hidden");
     // See the doc above: prune `.git` wholesale only while nobody asked
     // about it; once they have, prune just the bulk object store.
-    fd.arg("--exclude").arg(if keep_git { "objects" } else { ".git" });
+    fd.arg("--exclude")
+        .arg(if keep_git { "objects" } else { ".git" });
     fd.arg("--type").arg("f");
     fd.arg("--color").arg("never");
     // Single-threaded, for the same reason `grep` passes `--sort path`: `fd`

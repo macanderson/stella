@@ -634,11 +634,9 @@ mod tests {
         assert_eq!(repo["detached"], json!(false), "{repo}");
         assert_eq!(repo["branch"], json!("main"), "{repo}");
         assert!(
-            repo["recent_commits"]
-                .as_array()
-                .is_some_and(|c| c.iter().any(|l| l
-                    .as_str()
-                    .is_some_and(|s| s.contains("first commit")))),
+            repo["recent_commits"].as_array().is_some_and(|c| c
+                .iter()
+                .any(|l| l.as_str().is_some_and(|s| s.contains("first commit")))),
             "the last commits must be in the overview: {repo}"
         );
 
@@ -666,8 +664,12 @@ mod tests {
         git(&["init", "-q", "-b", "main"]);
         git(&["config", "user.email", "t@example.com"]);
         git(&["config", "user.name", "T"]);
+        // `build_overview` builds the code graph under `.stella/`, which is
+        // then a legitimately untracked path. Ignore it so this test counts
+        // the fixture's own changes and not Stella's working state.
+        std::fs::write(dir.path().join(".gitignore"), ".stella/\n").unwrap();
         std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
-        git(&["add", "a.txt"]);
+        git(&["add", "a.txt", ".gitignore"]);
         git(&["commit", "-q", "-m", "first"]);
 
         std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
