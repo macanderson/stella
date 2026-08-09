@@ -25,6 +25,39 @@ fn touched_tests_status(observed: Option<bool>) -> &'static str {
     }
 }
 
+/// How the flip channel reports itself to the **model** verifier.
+///
+/// `false` is reserved for what it says: the oracle locked onto a command and
+/// that command never went fail→pass. When the oracle never locked onto
+/// anything there was no flip to observe, and saying `false` states a negative
+/// finding about a check that never ran.
+///
+/// That distinction is the whole contract this module documents two paragraphs
+/// down — "silence means the probe had nothing to say, never that it looked and
+/// found nothing" — and the flip channel was the one place violating it, purely
+/// because it is a `bool` where `touched_tests` is an `Option<bool>`.
+///
+/// It cost a real trial. On Terminal-Bench `fix-git`, triage waived the witness
+/// (no test framework in the workspace), so the oracle tracked nothing and the
+/// evidence line opened `flip_achieved=false`. The verifier is instructed to
+/// judge only what the evidence positively shows — and was handed a
+/// deterministic-looking negative it had no way to recognize as absence. It
+/// FAILed, reached for the only other artifact it had to explain why, and
+/// invented one; the worker was then told that invention was "Evidence" and
+/// destructively reset its own correct work. Reporting the silence as silence
+/// is what lets the verifier abstain instead.
+///
+/// Deliberately affects the **rendered evidence only**. `LadderInputs`
+/// keeps its boolean and the deterministic ladder's own arithmetic is
+/// unchanged: this fixes what the model is told, not what the ladder decides.
+fn flip_status(flipped: bool, oracle_tracked_a_command: bool) -> &'static str {
+    match (flipped, oracle_tracked_a_command) {
+        (true, _) => "true",
+        (false, true) => "false",
+        (false, false) => "unobserved",
+    }
+}
+
 /// The most observations the trusted zone will render (#1787). The trace
 /// grows once per verification round, and the repair gate can keep granting
 /// rounds as long as a measured budget affords them — so unlike the diff,
@@ -114,7 +147,10 @@ impl<'a> Pipeline<'a> {
         let mut evidence_summary = format!(
             "flip_achieved={}; touched_tests={}; mutating_actions={}; diff_lines={} \
              (budget {}); file_change_events={}",
-            inputs.flip_achieved,
+            flip_status(
+                inputs.flip_achieved,
+                state.oracle.tracked_command().is_some()
+            ),
             touched_tests_status(inputs.touched_tests_passed),
             inputs.mutating_actions,
             inputs.diff_lines,
@@ -244,8 +280,29 @@ impl<'a> Pipeline<'a> {
 mod tests {
     use super::{
         MAX_ORACLE_TRACE_OBSERVATIONS, OracleObservation, ProofTree, bounded_oracle_trace,
-        touched_tests_status,
+        flip_status, touched_tests_status,
     };
+
+    /// The same instrument-vs-world confusion as the test below, on the
+    /// channel that still had it — and the one the ladder weighs hardest.
+    ///
+    /// A witness the pipeline never provisioned cannot have failed to flip.
+    /// Rendering that silence as `flip_achieved=false` hands the model verifier
+    /// a deterministic-looking negative about a check that never ran, which is
+    /// exactly what the system prompt's blindness clause forbids it from
+    /// FAILing on — and exactly what it cannot detect when the channel lies in
+    /// the shape of a fact. Terminal-Bench `fix-git` lost a trial to it: triage
+    /// waived the witness, the oracle tracked nothing, and the verifier FAILed
+    /// and confabulated a defect to explain the `false` it had been shown.
+    #[test]
+    fn an_unprovisioned_witness_reports_silence_not_a_failed_flip() {
+        // Nothing tracked: the oracle never locked onto a command.
+        assert_eq!(flip_status(false, false), "unobserved");
+        // Tracked and genuinely never flipped — a real negative, still `false`.
+        assert_eq!(flip_status(false, true), "false");
+        // A flip is a flip.
+        assert_eq!(flip_status(true, true), "true");
+    }
 
     #[test]
     fn touched_tests_render_names_the_unobserved_case() {
