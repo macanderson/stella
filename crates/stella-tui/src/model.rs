@@ -209,6 +209,62 @@ pub struct SubAgentSummary {
     pub reason: Option<String>,
 }
 
+/// One recalled context frame, as [`TranscriptEntry::ContextRecall`] holds it.
+///
+/// A near-lossless read-model of `stella_protocol::ContextFrameRef`: every
+/// field the wire carries survives except `block_id`, which recall never sets
+/// (a frame becomes a block only once it is *rendered* into a message, after
+/// the event is emitted — see `Recall::telemetry_event`).
+///
+/// The two fields worth naming are the two the old label-only shape lost.
+/// [`Self::kind`] is what separates a 60-token graph symbol from an 800-token
+/// episodic memory, and until it survived to the renderer the deck showed both
+/// as undifferentiated prose. [`Self::tokens`] is what turns a recall total
+/// into a finding: "1155 tok" is a number, but one frame holding 812 of them
+/// is a reason to tune retrieval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecalledFrameRow {
+    /// Protocol frame kind — `symbol`, `memory`, `episode`, `fact`,
+    /// `snippet`, `doc`, `graph`. Empty on a stream recorded before the field
+    /// existed, which the renderer shows as `frame` rather than a blank column.
+    pub kind: String,
+    /// The human citation (L-C4) — never a raw id.
+    pub label: String,
+    /// The frame's canonical source URI, when it declared one.
+    pub uri: Option<String>,
+    /// The CGP provider leg that served the frame (`code-graph`,
+    /// `workspace-memory`).
+    pub provider: String,
+    /// The original source named by the provenance chain — deliberately
+    /// distinct from [`Self::provider`], which is the adapter that fronted it.
+    pub source: String,
+    /// The most-derived provenance method, when declared.
+    pub method: Option<String>,
+    /// The provider's own frame id, a detail-view identifier only (L-C4).
+    pub id: Option<String>,
+    /// `"sha256:<hex>"` over the exact injected bytes. Its **absence** is
+    /// meaningful — such a frame is not verifiable per the context-reuse spec
+    /// — so the expanded view says "unverifiable" rather than showing nothing.
+    pub digest: Option<String>,
+    /// What injecting this frame cost the prompt.
+    pub tokens: u32,
+}
+
+/// The CGP budget report for one recall, as the deck's expanded view shows it.
+///
+/// `served`/`rejected` is the pair that earns this its place: a provider that
+/// served five frames and had two rejected has a cost-honesty problem the
+/// frame list alone cannot show, because rejected frames never reach it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecallBudget {
+    /// Tokens the host asked for.
+    pub requested: u64,
+    /// Tokens the recall actually spent.
+    pub consumed: u64,
+    /// `(provider, served, rejected, tokens)`, one per contributing leg.
+    pub providers: Vec<(String, u32, u32, u64)>,
+}
+
 /// One semantic entry in the transcript. Rendering (colour, borders, glyphs)
 /// is applied by [`mod@crate::render`]; this type carries only content.
 #[derive(Debug, Clone, PartialEq)]
@@ -306,10 +362,35 @@ pub enum TranscriptEntry {
     },
     /// Context recall completed; frames are cited by human label, never raw
     /// id (L-C4).
+    ///
+    /// The frames are kept **whole** rather than projected to a label list.
+    /// A recall is five-or-so records with four attributes each — a small
+    /// table — and this entry used to hold `{ frames: usize, tokens: u32,
+    /// labels: Vec<String> }`, which is a table with three of its four
+    /// columns deleted. Every surface downstream then had no choice but to
+    /// comma-join the labels into a paragraph that wrapped mid-word at the
+    /// pane edge: a symbol frame and an episodic memory rendered identically,
+    /// the per-frame cost was unrepresentable, and `ctrl+o` had nothing left
+    /// to reveal. Keeping the row means the renderer decides what to elide,
+    /// which is the only layer that knows the width.
     ContextRecall {
-        frames: usize,
+        frames: Vec<RecalledFrameRow>,
+        /// Sum of the frames' token costs — the turn's context bill.
         tokens: u32,
-        labels: Vec<String>,
+        /// Wall-clock milliseconds recall took. `0` means *not measured*, not
+        /// "instant" (the wire contract, `AgentEvent::ContextRecall`), so the
+        /// renderer omits it at `0` rather than printing a false `0ms`.
+        latency_ms: u32,
+        /// Whether the ANN index fired; `None` when the recall path did not
+        /// report it. Tri-state on the wire for a reason — see the protocol
+        /// event — and carried tri-state here so the deck can say "nobody
+        /// said" instead of "the index never fires".
+        used_ann_index: Option<bool>,
+        /// `(provider, frames)` — the recall's provider mix, already folded
+        /// on the wire.
+        providers: Vec<(String, u32)>,
+        /// The CGP budget report, when a host produced one.
+        budget: Option<RecallBudget>,
     },
     /// Context write-back completed.
     ContextWrite {
@@ -779,17 +860,58 @@ impl SessionModel {
                 removed,
                 diff,
             } => self.touch_file(path, *kind, *added, *removed, diff),
+            // Every field is carried through. The old fold projected the
+            // frames down to their labels here, which is where the deck's
+            // recall row lost the ability to be anything but a paragraph —
+            // and it is also how `latency_ms` and `used_ann_index`, both added
+            // to the wire precisely because recall sits on the first-token
+            // path (#875), never reached a surface at all.
             AgentEvent::ContextRecall {
                 frames,
-                provider_mix: _,
+                provider_mix,
                 tokens,
-                ..
+                usage,
+                latency_ms,
+                used_ann_index,
             } => {
-                let labels = frames.iter().map(|f| f.citation_label.clone()).collect();
                 self.transcript.push(TranscriptEntry::ContextRecall {
-                    frames: frames.len(),
+                    frames: frames
+                        .iter()
+                        .map(|f| RecalledFrameRow {
+                            kind: f.kind.clone(),
+                            label: f.citation_label.clone(),
+                            uri: f.uri.clone(),
+                            provider: f.provider.clone(),
+                            source: f.source.clone(),
+                            method: f.method.clone(),
+                            id: f.id.clone(),
+                            digest: f.content_digest.clone(),
+                            tokens: f.token_cost,
+                        })
+                        .collect(),
                     tokens: *tokens,
-                    labels,
+                    latency_ms: *latency_ms,
+                    used_ann_index: *used_ann_index,
+                    providers: provider_mix
+                        .iter()
+                        .map(|s| (s.provider.clone(), s.frames))
+                        .collect(),
+                    budget: usage.as_ref().map(|u| RecallBudget {
+                        requested: u64::from(u.budget_requested),
+                        consumed: u.budget_consumed,
+                        providers: u
+                            .providers
+                            .iter()
+                            .map(|p| {
+                                (
+                                    p.provider_id.clone(),
+                                    p.frames_served,
+                                    p.frames_rejected,
+                                    p.token_cost,
+                                )
+                            })
+                            .collect(),
+                    }),
                 });
             }
             AgentEvent::ContextWrite {

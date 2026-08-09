@@ -332,9 +332,13 @@ fn run_deck_paints_folds_resizes_and_restores_under_a_real_pty() {
         let s = d.painted();
         s.contains("SESSION") && s.contains("AGENTS") && s.contains("SETTINGS")
     });
-    // …and the scripted scenario folded in over the inbound lane.
+    // …and the scripted scenario folded in over the inbound lane. The needle
+    // is the recall row's *location* column rather than its citation label:
+    // the label alone was satisfied by the old single-line rendering that
+    // comma-joined the frames into prose, so `path:line` is what proves the
+    // frames reached the pane as a table with their source intact.
     deck.wait_for("the scripted recall fold", |d| {
-        d.painted().contains("enginestep-driver(driver.rs)")
+        d.painted().contains("driver.rs:88")
     });
 
     // Resize: ratatui's autoresize forces a full repaint (and the SIGWINCH
@@ -436,8 +440,11 @@ fn the_accessible_deck_runs_inline_answers_input_and_never_takes_the_screen() {
     });
 
     // The scripted scenario folds in and paints, inline.
+    // Same needle as the full-screen deck: accessible mode composes its rows
+    // through the same `render::entry_lines`, so the recall table is the same
+    // table and `path:line` proves it arrived intact here too.
     deck.wait_for("the scripted recall fold", |d| {
-        d.painted().contains("enginestep-driver(driver.rs)")
+        d.painted().contains("driver.rs:88")
     });
 
     // Liveness under resize: the inline viewport is anchored to a row, so this
