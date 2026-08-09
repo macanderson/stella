@@ -16,13 +16,17 @@ Inferring the workspace's domains, for memory tagging and recall. Runs during
 | Dispatch | raw completion, `tools: []` |
 | Built in | `infer_domains`, `crates/stella-cli/src/domains.rs` |
 | Model | the worker model (`model_hint`) |
-| Output cap | 2,048 |
+| Output cap | 2,048 visible + 4,096 reasoning headroom |
 | Temperature | 0.0 |
 | Repair | one bounded retry, in-thread |
 | Override | none |
 
 A second call site, `crates/stella-cli/src/ingest_cmd/extract.rs`, records
-under this same role for record extraction during ingest.
+under this same role for record extraction during ingest. Its output is a whole
+claim list rather than a 4-10 element taxonomy, so it **states its own cap** —
+sized to the document and doubled on truncation, up to 131,072 — and keeps it.
+That is the one standalone call site with a per-call reason for a number; see
+[README.md](README.md#output-caps).
 
 ## Wire shape
 

@@ -50,19 +50,6 @@ pub fn should_reflect_on<E: std::fmt::Display>(result: &Result<(), E>) -> bool {
     }
 }
 
-/// What reflection is asked to **write**: at most three short lesson objects
-/// plus a five-field self-review. Thinking room is added on top by
-/// [`stella_core::starvation::with_reasoning_headroom`] — the number here stays
-/// readable against the prompt that justifies it instead of silently encoding
-/// someone's guess at a reasoning budget.
-///
-/// 512 was the original, enough for a model that answers with bare JSON and
-/// nothing else. A model that narrates first spends the whole allowance on
-/// prose and never reaches the array, so every lesson from every turn is lost
-/// — silently, because a truncated response parses to zero lessons exactly
-/// like an empty one.
-const LESSONS_OUTPUT_CONTRACT: u32 = 2_048;
-
 /// The thinking posture one reflection call sends on the wire.
 ///
 /// Reflection dispatches on the model the **triage** pin selected (#1847), so
@@ -278,34 +265,27 @@ pub async fn reflect_on_turn(
             ),
             CompletionMessage::user(prompt),
         ],
-        // [`LESSONS_OUTPUT_CONTRACT`] is what reflection is asked to WRITE;
-        // the headroom on top is what a reasoning model spends before it
-        // writes anything. Sending the contract alone is what froze this
-        // workspace's learning plane for nine days: execution 63 came back at
-        // exactly 2,048 output tokens with `finish_reason: length` and no
-        // visible text, which `extract_lesson_array` reads as zero lessons —
-        // indistinguishable, from every surface, from a turn that genuinely
-        // taught nothing (#2174).
-        max_output_tokens: Some(stella_core::starvation::with_reasoning_headroom(
-            LESSONS_OUTPUT_CONTRACT,
-        )),
+        // Both bounds are unstated here and declared once at the standalone
+        // chokepoint (`accounted_call::standalone_bounds`), which sends this
+        // role's written contract PLUS the thinking room a reasoning model
+        // spends before writing any of it. Sending the contract alone is what
+        // froze this workspace's learning plane for nine days: execution 63
+        // came back at exactly 2,048 output tokens with `finish_reason: length`
+        // and no visible text, which `extract_lesson_array` reads as zero
+        // lessons — indistinguishable, from every surface, from a turn that
+        // genuinely taught nothing (#2174). Reflection was then the only one of
+        // the four standalone roles that had been given headroom, which is
+        // exactly why the number moved to where a new role has to decide it
+        // (#2444).
+        max_output_tokens: None,
         temperature: Some(0.0),
-        // Pinned low, like every bounded management call (the pipeline's
-        // `management_bounds` pins triage the same way, and the overflow
-        // summarizer pins its own pass low): the written output contract is
-        // a three-lesson JSON array, and an unset effort leaves the
-        // provider's default reasoning allowance in force — unbounded
-        // thinking spent deciding, most turns, to return an empty list.
-        // Providers that cannot express effort drop it per their declared
-        // `ReasoningPosture` (provider-parity invariant #8), the same path
-        // every pinned management call rides.
-        //
-        // The operator's own triage posture wins over both pins where they set
-        // one: reflection dispatches on the model the triage pin selected
-        // (#1847), and a knob that chooses the model for a call but cannot
-        // reach the call is a knob that lies. An `agents.triage.reasoning: off`
-        // now actually reaches the wire.
-        effort: posture.effort.or(Some(ReasoningEffort::Low)),
+        // The chokepoint pins this role's effort `Low`; what this line carries
+        // is the operator's own triage posture, which outranks that pin where
+        // one is set. Reflection dispatches on the model the triage pin
+        // selected (#1847), and a knob that chooses the model for a call but
+        // cannot reach the call is a knob that lies — `agents.triage.reasoning:
+        // off` reaches the wire through here.
+        effort: posture.effort,
         tools: Vec::new(),
         reasoning: posture.reasoning,
         params: None,

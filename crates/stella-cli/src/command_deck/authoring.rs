@@ -154,7 +154,12 @@ async fn create_agent(
 ) -> Result<(String, String), String> {
     let request = CompletionRequest {
         messages: crate::agents_installed::creation_messages(description),
-        max_output_tokens: Some(1200),
+        // Unstated on purpose: `AgentAuthor`'s output contract is declared once
+        // at the chokepoint (`accounted_call::standalone_bounds`) and arrives
+        // with reasoning headroom on top. This call site has no per-call reason
+        // for a number — the 1,200 it used to send was one picked in isolation,
+        // below the median definition it asks the model to write (#2444).
+        max_output_tokens: None,
         temperature: Some(0.2),
         effort: None,
         tools: Vec::new(),

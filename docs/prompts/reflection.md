@@ -15,10 +15,14 @@ call — produces the self-review the deck shows the user.
 | Call role | `ModelCallRole::Reflection` (`"reflection"`) |
 | Dispatch | raw completion, `tools: []` |
 | Built in | `crates/stella-cli/src/memory/reflection.rs` |
-| Output cap | 2,048 |
+| Output cap | 2,048 visible + 4,096 reasoning headroom |
 | Temperature | 0.0 |
 | Effort | pinned low, like every bounded management call |
 | Override | none |
+
+The cap and the effort pin are declared by `standalone_bounds`
+(`crates/stella-cli/src/accounted_call.rs`), not by this call site — see
+[README.md](README.md#output-caps).
 
 ## Wire shape
 

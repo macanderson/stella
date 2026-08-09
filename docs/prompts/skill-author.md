@@ -20,7 +20,16 @@ prompt — it is the primary selection signal.
 | Dispatch | raw completion, `tools: []` |
 | System prompt | `SKILL_AUTHOR_SYSTEM`, `crates/stella-cli/src/command_deck/skills.rs` |
 | User message | `build_skill_creation_prompt`, same file — pure, unit-tested |
+| Output cap | 4,096 visible + 4,096 reasoning headroom |
+| Temperature | 0.2 |
+| Effort | inherited — the written artifact *is* the product |
 | Override | none |
+
+The cap was 1,200 until #2444, which truncated three of the four real
+single-file `SKILL.md` artifacts it was measured against (~700-2,855 tokens) —
+and that was the whole budget, thinking included. It is now declared by
+`standalone_bounds` (`crates/stella-cli/src/accounted_call.rs`); see
+[README.md](README.md#output-caps).
 
 ## Wire shape
 

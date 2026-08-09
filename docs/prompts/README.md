@@ -160,26 +160,46 @@ Six roles have no override door at all: `research`, `agent_author`,
 
 ## Output caps
 
-`management_bounds` (`crates/stella-pipeline/src/pipeline/raw_usage.rs`) pins
-a **visible-output** contract per role, and `role_output_cap` adds
-`REASONING_HEADROOM_TOKENS` (4,096) on top — so the numbers below read against
-the prompts that justify them rather than encoding a guess at a thinking
-budget. An explicit `max_output_tokens` override always wins and is
-deliberately given *no* headroom: an operator who pinned 512 asked for 512.
+Two chokepoints declare these, and they are deliberately the same shape.
+`management_bounds` (`crates/stella-pipeline/src/pipeline/raw_usage.rs`) covers
+the staged pipeline's management roles; `standalone_bounds`
+(`crates/stella-cli/src/accounted_call.rs`) covers the four paid one-shot calls
+that are not engine turns. Each pins a **visible-output** contract per role and
+adds `REASONING_HEADROOM_TOKENS` (4,096) on top, so the numbers below read
+against the prompts that justify them rather than encoding a guess at a
+thinking budget. Both matches are exhaustive over `ModelCallRole` on purpose: a
+new role has to decide its bounds rather than inherit a ceiling by omission.
 
-| Role | Visible output | Effort |
-|---|---|---|
-| `triage` | 512 | `Low` (pinned) |
-| `worker` (conversational only) | 2,048 | `Low` (pinned) |
-| `verdict`, `distress_guidance` | 1,024 | inherited |
-| `plan`, `plan_repair` | 4,096 | inherited |
-| everything else | engine base | inherited |
+| Role | Visible output | Effort | Declared by |
+|---|---|---|---|
+| `triage` | 512 | `Low` (pinned) | `management_bounds` |
+| `worker` (conversational only) | 2,048 | `Low` (pinned) | `management_bounds` |
+| `verdict`, `distress_guidance` | 1,024 | inherited | `management_bounds` |
+| `plan`, `plan_repair` | 4,096 | inherited | `management_bounds` |
+| `agent_author`, `skill_author` | 4,096 | inherited | `standalone_bounds` |
+| `domain_inference` | 2,048 | inherited | `standalone_bounds` |
+| `reflection` | 2,048 | `Low` (pinned) | `standalone_bounds` |
+| everything else | engine base | inherited | — |
+
+The two authoring rows inherit effort rather than pinning it low, which is a
+decision: triage writes a three-line classification whose value is the routing
+choice, while an authoring role's *product* is the written artifact — buying it
+less deliberation is a quality change, not a bounds one.
+
+A cap stated by the caller always wins and is deliberately given *no* headroom:
+an operator who pinned 512 asked for 512, and quietly serving 4,608 would make
+the setting a suggestion. On the standalone side that channel is narrower —
+there is no separate override field, so one `max_output_tokens` carries both
+meanings, and `None` is how a call site says "no per-call reason for a number,
+use my role's contract". Exactly one standalone call site states its own:
+`ingest_cmd/extract.rs` sizes its request to the document and doubles it on
+truncation, up to 131,072, which no per-role constant could express.
 
 A call that comes back empty with `finish_reason: length` has provably starved
 — the whole budget went to reasoning before the first visible token — and is
-retried once at `STARVED_RETRY_CAP` (32,768), loudly. Roles outside this
-chokepoint carry their own caps: summarization pins 1,200 at `Low`, reflection
-2,048 at temperature 0, agent authoring 1,200.
+retried once at `STARVED_RETRY_CAP` (32,768), loudly, at **both** chokepoints.
+The one role still outside either is summarization, which pins 1,200 at `Low`
+from the engine's own `run_compaction_pass`.
 
 ## This document set is a snapshot, not the source
 

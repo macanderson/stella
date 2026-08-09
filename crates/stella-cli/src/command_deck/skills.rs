@@ -389,7 +389,11 @@ async fn create_skill_llm(
             CompletionMessage::system(SKILL_AUTHOR_SYSTEM),
             CompletionMessage::user(build_skill_creation_prompt(description, &ranked)),
         ],
-        max_output_tokens: Some(1200),
+        // Unstated on purpose — see `accounted_call::standalone_bounds`, which
+        // declares `SkillAuthor`'s output contract once and pads it with
+        // reasoning headroom. The 1,200 sent from here truncated three of the
+        // four real single-file skills it was measured against (#2444).
+        max_output_tokens: None,
         temperature: Some(0.2),
         effort: None,
         tools: vec![],
