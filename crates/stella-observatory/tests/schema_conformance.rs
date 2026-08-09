@@ -642,11 +642,7 @@ fn the_ratings_feed_counts_only_graded_turns_against_the_real_schema() {
             "execution {id} reflected unreadably and was never graded, so it is \
              not a rating: {rating}"
         );
-        let prose = |key: &str| {
-            rating[key]
-                .as_str()
-                .is_some_and(|s| !s.trim().is_empty())
-        };
+        let prose = |key: &str| rating[key].as_str().is_some_and(|s| !s.trim().is_empty());
         assert!(
             !rating["self_rating"].is_null()
                 || !rating["delivered"].is_null()
