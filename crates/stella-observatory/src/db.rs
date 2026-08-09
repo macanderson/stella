@@ -34,6 +34,43 @@ pub(crate) const MAX_LISTED_EXECUTIONS: usize = 500;
 /// self-improvement tab's ratings line up with the runs the tables list.
 pub(crate) const MAX_LISTED_REFLECTIONS: usize = 500;
 
+/// The `execution_reflection` rows that carry an assessment, as a SQL
+/// predicate over the alias `er` (#2443).
+///
+/// The table has three producers owning disjoint columns
+/// (`stella_store::reflection`'s module doc): the derived half from
+/// `finalize_execution_reflection`, the model's own grade from
+/// `record_self_review`, and `parse_error` from
+/// `record_reflection_parse_failure`. Only the middle one records an
+/// assessment, so a row written by either of the others alone reads as a
+/// reflection the model *declined* to grade — when in truth none was ever
+/// attempted. Rows exist for turns that reflected unreadably; the Improve
+/// tab names those separately, from `parse_error` itself.
+///
+/// This is the SQL half of `stella_store::SelfReviewRow::is_empty`, mirrored
+/// rather than called: this crate must not link `stella-store` in production
+/// (see its manifest — `Store::open` migrates, and an observer never writes
+/// what it observes). `tests/schema_conformance.rs` is what keeps the mirror
+/// honest, driving both callers against a store built by the real migration
+/// path.
+///
+/// Trims the prose columns as `is_empty` does — whitespace is not an
+/// assessment. SQLite's two-argument `trim` takes a character set, so
+/// `char(32,9,10,13)` covers ASCII whitespace and not the wider Unicode set
+/// `str::trim` handles; the gap is unreachable through the writer, which
+/// refuses an empty review outright. A NULL prose column (possible only in a
+/// store this crate did not write) leaves the whole disjunction NULL, which
+/// excludes the row — the same answer, by the safe route.
+///
+/// Every column here predates the table's first shipped version, so this adds
+/// no schema dependency to either caller; both still degrade a missing table
+/// or column to an empty section via [`is_missing_schema`].
+pub(crate) const HAS_SELF_REVIEW: &str = "(er.delivered IS NOT NULL
+      OR er.self_rating IS NOT NULL
+      OR trim(er.what_went_well, char(32,9,10,13)) != ''
+      OR trim(er.what_to_improve, char(32,9,10,13)) != ''
+      OR trim(er.critique, char(32,9,10,13)) != '')";
+
 /// Newest tool calls the [`Observatory::tools`] leaderboard aggregates. This
 /// is the store's highest-cardinality table and the p50 needs every duration
 /// in the window materialized, so scanning all of history on every 5 s poll
@@ -335,10 +372,19 @@ impl Observatory {
                 }))
             },
         )?;
+        // The same "did the model actually grade this turn" test the ratings
+        // feed applies (#2443). A row left behind by finalize alone, or by a
+        // reflection whose response would not parse, carries nothing but
+        // blanks — and a Self-reflection panel of blanks tells the reader the
+        // model looked at the turn and had nothing to say. `reflection: null`
+        // says the true thing: it was never graded.
         let reflection = or_empty(conn.query_row(
-            "SELECT delivered, self_rating, what_went_well, what_to_improve,
-                    critique
-             FROM execution_reflection WHERE execution_id = ?1",
+            &format!(
+                "SELECT er.delivered, er.self_rating, er.what_went_well,
+                        er.what_to_improve, er.critique
+                 FROM execution_reflection er
+                 WHERE er.execution_id = ?1 AND {HAS_SELF_REVIEW}"
+            ),
             [id],
             |r| {
                 Ok(json!({
@@ -903,6 +949,12 @@ impl Observatory {
 
     /// The newest `MAX_LISTED_REFLECTIONS` post-turn self-reflections joined
     /// to their executions: the self-improvement tab's ratings feed.
+    ///
+    /// Only rows the model actually graded ([`HAS_SELF_REVIEW`]). Filtering in
+    /// SQL rather than after the fact is what makes the window mean "the newest
+    /// N ratings": the predicate applies before `LIMIT`, so a workspace whose
+    /// most recent `MAX_LISTED_REFLECTIONS` rows are all ungraded still shows
+    /// the ratings behind them instead of an empty chart (#2443).
     pub fn reflection_ratings(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
@@ -919,6 +971,7 @@ impl Observatory {
                         er.recorded_at
                  FROM execution_reflection er
                  LEFT JOIN executions e ON e.id = er.execution_id
+                 WHERE {HAS_SELF_REVIEW}
                  ORDER BY er.execution_id DESC LIMIT {MAX_LISTED_REFLECTIONS}"
             ),
             |r| {
