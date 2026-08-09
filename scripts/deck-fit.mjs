@@ -12,7 +12,8 @@
 // one answer — and this script is the thing that takes it.
 //
 // It is deliberately NOT a `make gate` step: it needs a browser, and CI's gate
-// runs toolchain-free guards plus cargo. Run it by hand when you touch a deck.
+// runs toolchain-free guards plus cargo. `.github/workflows/deck-fit.yml` runs
+// it on every change under website/public/presentations/ instead (#2425).
 //
 //   node scripts/deck-fit.mjs                       # default deck, default sizes
 //   node scripts/deck-fit.mjs path/to/deck.html
