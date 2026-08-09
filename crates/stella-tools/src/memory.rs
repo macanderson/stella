@@ -41,15 +41,23 @@ impl Tool for SaveMemory {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "save_memory".into(),
-            description: "Persist a durable lesson (gotcha, convention, failed approach) to \
-                          .stella/memories/. Loaded into every future session's prompt. \
-                          Takes effect next session."
+            description: "Tell the next session what would have made THIS one faster, cheaper, \
+                          or more correct — whatever you would want to have been told before \
+                          you started. There is no approved list of topics; you watched this \
+                          work and you decide what would have helped. One test: would knowing \
+                          it have changed what you actually did? A fact you would have looked \
+                          up in seconds anyway changes nothing and is worth nothing; one you \
+                          did not look up and paid for is worth everything. Unlike recalled \
+                          context, this is loaded into EVERY future session in this workspace \
+                          whether or not it turns out to be relevant, so it is paid for on \
+                          every model call from now on — which is why it must change an action, \
+                          not merely be true. Takes effect next session."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "slug": { "type": "string", "description": "Filename slug (lowercase, -, _)" },
-                    "memory": { "type": "string", "description": "The lesson, 1-6 lines of markdown" }
+                    "memory": { "type": "string", "description": "What to remember, 1-6 lines of markdown. Say when it applies, so a future session can tell at a glance whether it is being spoken to." }
                 },
                 "required": ["slug", "memory"]
             }),

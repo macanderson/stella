@@ -1,20 +1,26 @@
-//! The reflection prompt must not undercut its own instruction.
+//! The reflection prompt must ask for the thing itself, and must not undercut
+//! its own instruction.
 //!
-//! This prompt has been wrong twice, in opposite directions (#768, then #944),
-//! and the second fix landed in two halves — the framing question in #944, the
-//! body it contradicted only afterwards. In between, the prompt asked for facts
-//! that inspection could not reveal and then offered a one-grep fact as its
-//! model of a good lesson.
+//! Three failures are pinned here, because all three were the same mistake and
+//! the third is the one this file now spends most of its assertions on.
 //!
-//! That is a specific and recurring failure, not a typo: the instruction was
-//! correct in the abstract each time, and what the prompt *showed* pulled the
-//! other way. An example outranks a rule for the model reading it, so the
-//! examples are the part worth pinning.
+//! #768 asked "what should change next time" — a question about the agent —
+//! and got eight process notes out of ten. #944 over-corrected into "where
+//! things live" and filled a store with one-grep facts, then landed its repair
+//! in two halves, leaving the prompt telling the model to discard exactly the
+//! kind of fact its own worked example held up as ideal. The repair for *that*
+//! was a rediscovery-cost test operationalized as surprise, which measures
+//! novelty when what a memory is worth is savings — so it discarded, by rule,
+//! every fact that is cheap to look up and expensive to lack.
 //!
-//! These assertions are deliberately coarse. They do not score prompt quality —
-//! nothing here can. They pin the two things that were actually wrong: that the
-//! discard test is present at all, and that the construct which carried the
-//! anti-example both times has not come back.
+//! Each repair replaced one guess about the model's topic with another. The
+//! prompt now names no topics, asks the counterfactual directly, and requires
+//! each lesson to arrive with its trigger and the moment it would have changed.
+//! So there are two classes of assertion below: that the question and its
+//! grounding are present, and that no topic list has grown back.
+//!
+//! These are deliberately coarse. They do not score prompt quality — nothing
+//! here can. They pin what has actually gone wrong before.
 //!
 //! The witnesses at the bottom of the file pin something else: what the prompt
 //! is allowed to *see*. Both fail on the tail-window digest #2460 replaced, each
@@ -111,19 +117,83 @@ async fn prompt_for_evidence(evidence: super::TurnEvidence<'_>) -> String {
 const THE_ANTI_PATTERN: &str = "A good domain lesson reads like";
 
 #[tokio::test]
-async fn the_prompt_states_the_rediscovery_test_on_both_outcomes() {
+async fn the_prompt_states_the_action_change_test_on_both_outcomes() {
     for succeeded in [true, false] {
         let prompt = prompt_for(succeeded).await;
         assert!(
-            prompt.contains("could a competent engineer find this in under a minute"),
-            "succeeded={succeeded}: the prompt no longer applies the rediscovery \
-             test, which is the whole mechanism that keeps greppable facts out \
-             of the store"
+            prompt.contains("WOULD KNOWING THIS HAVE CHANGED WHAT YOU ACTUALLY DID"),
+            "succeeded={succeeded}: the prompt no longer applies the \
+             action-change test. It is the only thing standing between an open \
+             invitation to record and a store full of true, useless facts — the \
+             topic lists that used to do that job are deliberately gone"
         );
         assert!(
-            prompt.contains("DISCARD IT"),
-            "succeeded={succeeded}: the test is stated but not actionable — the \
-             model is told what to weigh and not what to do about it"
+            prompt.contains("changes nothing and is worth nothing"),
+            "succeeded={succeeded}: the test is stated without its cheap half. \
+             A model told only to keep what changed an action still keeps what \
+             it would have grepped anyway, because that is technically true; \
+             the discard has to be spelled out"
+        );
+    }
+}
+
+/// The half of the change that is not a rewording: a lesson must arrive with
+/// its trigger and with the moment it would have changed.
+///
+/// This is what replaces the topic guidance rather than merely deleting it. An
+/// open question with no required justification moves the guess from the prompt
+/// author to the model without making it any more checkable than it was — the
+/// answer is still an assertion that something would have helped. The two
+/// fields are the argument the assertion has to come with, and `saves` in
+/// particular is refutable against the very transcript in front of the model.
+#[tokio::test]
+async fn every_lesson_must_carry_its_trigger_and_the_moment_it_would_have_changed() {
+    for succeeded in [true, false] {
+        let prompt = prompt_for(succeeded).await;
+        assert!(
+            prompt.contains("\"trigger\"") && prompt.contains("\"saves\""),
+            "succeeded={succeeded}: the response shape no longer asks for both \
+             fields, so nothing makes a lesson say when it applies or what it \
+             would have bought"
+        );
+        assert!(
+            prompt.contains("If you cannot name the moment, do not record the lesson"),
+            "succeeded={succeeded}: `saves` is requested but not enforced. \
+             Without the refusal it degrades into a third place to restate the \
+             lesson, and the grounding this change exists for is gone"
+        );
+    }
+}
+
+/// The fourth failure this prompt could have, guarded before it happens.
+///
+/// Three times the prompt has been wrong by guessing at the model's topic
+/// (#768's "what should change", #944's "where things live", and the
+/// rediscovery test's blindness to cheap-to-find/expensive-to-lack facts). Each
+/// repair replaced one guess with another. The instruction now names no topics
+/// at all, and these are the two enumerations that carried the last guess — if
+/// either returns, so has the failure mode.
+#[tokio::test]
+async fn the_prompt_prescribes_no_topics() {
+    for succeeded in [true, false] {
+        let prompt = prompt_for(succeeded).await;
+        assert!(
+            !prompt.contains("do NOT record: where files live"),
+            "succeeded={succeeded}: the forbidden-topic list is back. It was a \
+             guess about what a lesson may be about, made by whoever wrote the \
+             prompt rather than by the model that watched the turn"
+        );
+        assert!(
+            !prompt.contains("DO record what inspection cannot reveal"),
+            "succeeded={succeeded}: the prescribed-topic list is back, which is \
+             the same guess wearing the other sign"
+        );
+        assert!(
+            prompt.contains("There is no approved list of topics"),
+            "succeeded={succeeded}: the model is no longer told that the choice \
+             is its own. Silence is not the same instruction — it leaves the \
+             model's own prior about what a memory looks like in force, \
+             unstated and different per provider"
         );
     }
 }
@@ -149,22 +219,78 @@ async fn the_prompt_does_not_offer_a_greppable_fact_as_its_model_lesson() {
     }
 }
 
-/// The framing question from #944, which is the half that did land. Pinned here
-/// so a future edit cannot quietly restore the "where things live" framing that
-/// #768's over-correction introduced.
+/// The framing question, pinned on both outcomes.
+///
+/// Every previous version asked a proxy — "what should change next time",
+/// "where things live", "what surprised you" — and got exactly the class of
+/// answer the proxy described. The counterfactual is the objective itself, and
+/// the phrasing that carries it is the no-memory clause: it is what stops the
+/// model answering from the position it is actually in, which is the one
+/// position a future session will never be in.
 #[tokio::test]
-async fn a_successful_turn_is_asked_what_surprised_it() {
-    let prompt = prompt_for(true).await;
-    assert!(
-        prompt.contains("What SURPRISED you?"),
-        "the surprise framing is the operational form of the principle: if \
-         inspection would have told you, it will tell you again for free"
+async fn both_outcomes_ask_the_counterfactual_not_a_proxy() {
+    for succeeded in [true, false] {
+        let prompt = prompt_for(succeeded).await;
+        assert!(
+            prompt.contains("with no memory of anything that happened here"),
+            "succeeded={succeeded}: the counterfactual frame is gone. Without \
+             it the model answers as itself-now, which knows the answer, rather \
+             than as itself-next-time, which is the reader being written for"
+        );
+        assert!(
+            prompt.contains("What do you want to have been told before you start"),
+            "succeeded={succeeded}: the question is no longer about what would \
+             have helped, and a question about anything else gets an answer \
+             about anything else — three times over, so far"
+        );
+        assert!(
+            !prompt.contains("What SURPRISED you?"),
+            "succeeded={succeeded}: the surprise proxy is back. It measures \
+             novelty, and what a memory is worth is savings; the two come apart \
+             on every fact that is cheap to find and expensive to lack"
+        );
+        assert!(
+            !prompt.contains("where things live"),
+            "succeeded={succeeded}: the prompt is asking for file locations \
+             again, which is the over-correction #944 was fixing"
+        );
+    }
+}
+
+/// A turn is allowed to teach more than three things.
+///
+/// The old cap was below the number of genuinely distinct findings a busy turn
+/// produces, so on those turns the cap — not the test — was what decided, and
+/// it decided by arithmetic, silently, after the model had already done the
+/// work of finding them.
+#[tokio::test]
+async fn the_per_turn_lesson_cap_is_above_what_a_turn_typically_teaches() {
+    let many = (1..=12)
+        .map(|i| format!(r#"{{"lesson": "lesson {i}", "kind": "domain"}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let parsed = super::parse_lessons_checked(&format!("{{\"lessons\": [{many}]}}"), &[]);
+    let super::ReflectionParse::Lessons(lessons) = parsed else {
+        panic!("a well-formed lesson array must parse as lessons");
+    };
+    assert_eq!(
+        lessons.len(),
+        super::MAX_LESSONS_PER_TURN,
+        "the parser truncates to a different number than the prompt promises, \
+         so the model is told a cap it is not held to"
     );
-    assert!(
-        !prompt.contains("where things live"),
-        "the prompt is asking for file locations again, which is the \
-         over-correction #944 was fixing"
-    );
+    // A `const` block, because the predicate is constant and clippy's
+    // `assertions_on_constants` is right that a runtime assert on it is
+    // theatre: it can only fail on a code change, never on a run. Const
+    // evaluation makes that literal — a cap put back below what a turn teaches
+    // stops the build rather than waiting for someone to run this test.
+    const {
+        assert!(
+            super::MAX_LESSONS_PER_TURN > 3,
+            "the cap is back below what a turn teaches, which makes it the \
+             decision again rather than a backstop"
+        );
+    }
 }
 
 /// #1847's request-shape half, and #2174's: reflection is a bounded
@@ -177,12 +303,20 @@ async fn a_successful_turn_is_asked_what_surprised_it() {
 /// pins triage the same way; so does the engine's overflow summarizer).
 ///
 /// The cap is asserted alongside because the two bounds are one dispatch
-/// contract — and because the cap sent for a year was the written contract
-/// with NO headroom. `max_output_tokens` is one number on the wire and a
-/// reasoning model bills its thinking against it, so that cap came back spent
-/// entirely on reasoning: `finish_reason: length`, empty text, zero lessons,
-/// and a learning plane frozen for nine days with every surface reporting
-/// health (#2174).
+/// contract, and because this is that cap's one guard — a response that
+/// overruns it parses to zero lessons *exactly like an empty one*, so the
+/// symptom of undersizing it is not a truncated lesson but a turn that
+/// silently taught nothing. Both halves of the number are pinned here, because
+/// each was undersized once with that same invisible symptom:
+///
+/// - The **written contract** rose to 4096 when a lesson became three prose
+///   fields and the per-turn cap became [`super::MAX_LESSONS_PER_TURN`].
+/// - The **headroom on top** exists because the cap sent for a year was the
+///   written contract alone. `max_output_tokens` is one number on the wire and
+///   a reasoning model bills its thinking against it, so that cap came back
+///   spent entirely on reasoning: `finish_reason: length`, empty text, zero
+///   lessons, and a learning plane frozen for nine days with every surface
+///   reporting health (#2174).
 #[tokio::test]
 async fn reflection_dispatches_low_effort_with_a_cap_that_leaves_room_to_think() {
     let (shape, reasoning) = dispatch_shape(super::ReflectionPosture::default()).await;
@@ -190,13 +324,13 @@ async fn reflection_dispatches_low_effort_with_a_cap_that_leaves_room_to_think()
         shape,
         (
             Some(ReasoningEffort::Low),
-            Some(stella_core::starvation::with_reasoning_headroom(2048)),
+            Some(stella_core::starvation::with_reasoning_headroom(4096)),
         ),
         "reflection must dispatch as a bounded, pinned-low management call \
          whose cap covers its output contract PLUS thinking room"
     );
     assert!(
-        shape.1.expect("a cap is sent") > 2048,
+        shape.1.expect("a cap is sent") > 4096,
         "sending the written contract alone is the #2174 defect itself"
     );
     assert_eq!(
