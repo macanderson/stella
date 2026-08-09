@@ -1,6 +1,7 @@
 use stella_protocol::{AgentEvent, MessageRole};
 
 use super::TurnOutcome;
+use crate::TurnState;
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome, DeadlineOutcome};
 use crate::event_sender::EventSender;
 use crate::step::AbortKind;
@@ -116,17 +117,25 @@ impl super::Engine<'_> {
     /// abort decision below, which reports this same number: when the child's
     /// spend is what trips the cap, the abort must not under-report by
     /// exactly that amount.
+    ///
+    /// Takes the whole [`TurnState`] rather than three of its fields because
+    /// the deadline question needs a fourth — `last_step`, the pace estimate —
+    /// and threading each one through by hand is what makes a call site grow
+    /// every time this learns to consider something else.
     pub(super) fn check_budget(
         &self,
-        budget: &mut BudgetGuard,
-        total_cost_usd: &mut f64,
-        warnings: &mut BudgetWarnings,
+        state: &mut TurnState,
         events: &EventSender,
     ) -> Option<TurnOutcome> {
         let child_spend = self.tools.drain_sub_agent_spend_usd();
         if child_spend > 0.0 {
-            record_settled_cost(budget, child_spend, warnings, events);
-            *total_cost_usd += child_spend;
+            record_settled_cost(
+                &mut state.budget,
+                child_spend,
+                &mut state.memos.warnings,
+                events,
+            );
+            state.total_cost_usd += child_spend;
         }
         // The one clock read on this path — `crate::budget`'s guard is pure
         // and takes `now` as an owned parameter (module docs), mirroring how
@@ -134,9 +143,10 @@ impl super::Engine<'_> {
         // existing per-turn `ContinuationBudget` rather than letting a pure
         // decision function read the clock itself.
         check_budget(
-            budget,
-            *total_cost_usd,
-            warnings,
+            &mut state.budget,
+            state.total_cost_usd,
+            state.last_step,
+            &mut state.memos.warnings,
             events,
             std::time::Instant::now(),
         )
@@ -154,15 +164,42 @@ impl super::Engine<'_> {
 fn check_budget(
     budget: &BudgetGuard,
     total_cost_usd: f64,
+    last_step: Option<std::time::Duration>,
     warnings: &mut BudgetWarnings,
     events: &EventSender,
     now: std::time::Instant,
 ) -> Option<TurnOutcome> {
-    if let DeadlineOutcome::Exceeded { overrun } = budget.check_deadline(now) {
-        let reason = format!(
+    // The forecast for one more step is what the last one cost. Same rule,
+    // same words, as `truncation::ContinuationBudget::affords_another` — and
+    // no safety margin invented here either: the caller owns the deadline
+    // (`runtime::one_shot_budget_guard` derives it from `--turn-budget`, which
+    // the bench adapter already sets to Harbor's timeout minus a teardown
+    // reserve). A margin baked in at this level would be a second, invisible
+    // policy on top of the one the operator configured.
+    //
+    // `None` before any step has been timed, which reads as a zero reserve and
+    // so reproduces the reactive check exactly — there is nothing to forecast
+    // from yet, and inventing a number would be guessing at the model.
+    let reserve = last_step.unwrap_or_default();
+    let reason = match budget.check_deadline_with_reserve(now, reserve) {
+        DeadlineOutcome::Exceeded { overrun } => Some(format!(
             "task deadline exceeded by {:.1}s — stopping with partial work",
             overrun.as_secs_f64()
-        );
+        )),
+        // Stopping while the deadline is still ahead. Worth its own sentence
+        // rather than reusing the overrun one: this is the loop declining to
+        // start work it cannot finish, and a reader who sees "exceeded" on a
+        // trial that never exceeded anything learns the wrong thing about it.
+        DeadlineOutcome::Closing { remaining } => Some(format!(
+            "task deadline in {:.1}s, less than the {:.1}s the last step took \
+             — stopping with the work already done rather than starting a step \
+             that cannot finish",
+            remaining.as_secs_f64(),
+            reserve.as_secs_f64(),
+        )),
+        DeadlineOutcome::Continue => None,
+    };
+    if let Some(reason) = reason {
         let _ = events.send(AgentEvent::Error {
             message: reason.clone(),
             retryable: false,
@@ -217,4 +254,110 @@ pub(super) fn last_assistant_text(state: &crate::step::TurnState) -> Option<Stri
             message.role == MessageRole::Assistant && !message.content.trim().is_empty()
         })
         .map(|message| message.content.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use stella_protocol::BudgetMode;
+
+    /// The pure decision, exercised without an executor — which is the reason
+    /// `check_budget` was split out of the `&self` wrapper in the first place.
+    fn decide(
+        deadline_in: Option<Duration>,
+        last_step: Option<Duration>,
+    ) -> (Option<TurnOutcome>, Vec<String>) {
+        let now = std::time::Instant::now();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        if let Some(offset) = deadline_in {
+            budget.set_task_deadline(Some(now + offset));
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let mut warnings = BudgetWarnings::default();
+        let outcome = check_budget(&budget, 0.0, last_step, &mut warnings, &events, now);
+        let mut messages = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let AgentEvent::Error { message, .. } = event {
+                messages.push(message);
+            }
+        }
+        (outcome, messages)
+    }
+
+    #[test]
+    fn a_step_that_cannot_finish_is_not_started() {
+        // #2278's witness. 20s of wall clock left and the last step took 30s:
+        // starting another buys a harness SIGKILL with the work discarded,
+        // which is what `sqlite-with-gcov__egbgJmd` bought at step 77.
+        let (outcome, messages) =
+            decide(Some(Duration::from_secs(20)), Some(Duration::from_secs(30)));
+
+        let Some(TurnOutcome::Aborted { reason, kind, .. }) = outcome else {
+            panic!("expected an anticipatory stop, got {outcome:?}");
+        };
+        assert_eq!(
+            kind,
+            AbortKind::DeliberateStop,
+            "stopping early is the engine's own policy, not a crash"
+        );
+        assert!(
+            reason.contains("cannot finish") && reason.contains("20.0s"),
+            "the reason must say it stopped BEFORE the deadline, and by how \
+             much — a reader told 'exceeded' about a trial that never exceeded \
+             anything learns the wrong thing: {reason}"
+        );
+        assert!(
+            !reason.contains("exceeded"),
+            "this trial did not exceed its deadline: {reason}"
+        );
+        assert_eq!(messages, vec![reason], "and it is announced once");
+    }
+
+    #[test]
+    fn room_for_another_step_starts_it() {
+        let (outcome, messages) = decide(
+            Some(Duration::from_secs(300)),
+            Some(Duration::from_secs(30)),
+        );
+        assert!(outcome.is_none(), "300s left, 30s steps: keep working");
+        assert!(messages.is_empty(), "and say nothing");
+    }
+
+    #[test]
+    fn before_the_first_timed_step_the_check_stays_reactive() {
+        // No pace to forecast from yet. Inventing one would be guessing at the
+        // model, so an unmeasured turn behaves exactly as it did before #2278.
+        let (outcome, _) = decide(Some(Duration::from_millis(1)), None);
+        assert!(
+            outcome.is_none(),
+            "a 1ms-from-deadline turn with no measured step must not stop early"
+        );
+    }
+
+    #[test]
+    fn a_crossed_deadline_still_reports_the_overrun() {
+        // The anticipatory rung must not swallow the hard one.
+        let (outcome, _) = decide(None, Some(Duration::from_secs(30)));
+        assert!(outcome.is_none(), "no deadline configured: never stops");
+
+        let now = std::time::Instant::now();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        budget.set_task_deadline(Some(now - Duration::from_secs(2)));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut warnings = BudgetWarnings::default();
+        let outcome = check_budget(
+            &budget,
+            0.0,
+            Some(Duration::from_secs(600)),
+            &mut warnings,
+            &EventSender::new(tx),
+            now,
+        );
+        let Some(TurnOutcome::Aborted { reason, .. }) = outcome else {
+            panic!("expected the overrun stop");
+        };
+        assert!(reason.contains("exceeded by 2.0s"), "{reason}");
+    }
 }
