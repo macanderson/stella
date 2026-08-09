@@ -533,11 +533,12 @@ impl Roster {
     /// roster that configured nothing yields an empty map, so the common case
     /// costs nothing to carry.
     ///
-    /// [`Self::rejected`] is deliberately not represented. Those describe
-    /// configuration text this roster could not turn into bindings, and text
-    /// that is not being re-parsed cannot be re-rejected — a run holding one
-    /// was refused before spend ([`crate::PipelineError::InvalidRoster`]), so
-    /// no checkpoint of it exists to restore.
+    /// The roster's rejected rows are deliberately not represented. Those
+    /// describe configuration text this roster could not turn into bindings,
+    /// and text that is not being re-parsed cannot be re-rejected — a run
+    /// holding one was refused before spend
+    /// ([`crate::PipelineError::InvalidRoster`]), so no checkpoint of it
+    /// exists to restore.
     #[must_use]
     pub fn overrides(&self) -> BTreeMap<String, AssignmentOverride> {
         let baseline = Self::default();
