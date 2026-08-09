@@ -54,7 +54,9 @@ from pathlib import Path
 from stat import S_ISDIR
 from typing import Any
 
+from . import harness as harness_mod
 from .artifacts import mp4_is_finalized
+from .harness import HarnessProfile, HarnessTotals
 from .pricing import Price, price_for, price_for_route, price_on_route, trial_cost
 from .proof import TrialProof, distill
 
@@ -335,6 +337,23 @@ class TrialMetrics:
     #: empty rail there is the absence of the machinery rather than a
     #: failure of it.
     proof: TrialProof | None = None
+    #: What the opponent's harness disclosed about itself at boot — product
+    #: version, model, tool roster, permission mode, credential source
+    #: (:class:`arenabench.harness.HarnessProfile`). ``None`` for an arm that
+    #: publishes no such stream, which today is every agent but Claude Code.
+    #:
+    #: This is the half of a head-to-head that used to be argued from
+    #: documentation. "Both arms ran the same model at the same effort" is a
+    #: claim; this is the evidence, and it has already contradicted the claim
+    #: once — an ``api_key_source`` of ``none`` on trials that were scored as
+    #: losses.
+    harness: HarnessProfile | None = None
+    #: How the opponent spent its turn: calls per tool, wall clock per tool,
+    #: tool errors, reasoning tokens, and the harness's own final verdict
+    #: (:class:`arenabench.harness.HarnessTotals`). Two agents at the same
+    #: solve rate that reached it with 22 shell calls and with 2 reads did not
+    #: do the same thing, and the solve rate cannot say so.
+    behaviour: HarnessTotals | None = None
 
     @property
     def usage_measured(self) -> bool:
@@ -502,6 +521,10 @@ class TrialMetrics:
             "flip_elapsed": self.flip_elapsed,
             "wasted_elapsed": self.wasted_elapsed,
             "proof": self.proof.to_json() if self.proof is not None else None,
+            "harness": self.harness.to_json() if self.harness is not None else None,
+            "behaviour": (
+                self.behaviour.to_json() if self.behaviour is not None else None
+            ),
         }
 
 
@@ -613,6 +636,12 @@ class MetricsReader:
     def __init__(self) -> None:
         self._events: dict[Path, tuple[int, dict[str, Any]]] = {}
         self._seats: dict[Path, dict[str, Any] | None] = {}
+        #: Cursors into the opponents' stdout streams. Kept on the reader
+        #: rather than rebuilt per read for the reason the whole class exists:
+        #: one archived stream is 15 MB and 99% of it is superseded reasoning
+        #: estimates, so re-parsing it per poll would cost more than every
+        #: other thing a live dashboard does.
+        self._harness = harness_mod.StreamReader()
 
     def _seat_record(self, trial_dir: Path) -> dict[str, Any] | None:
         """The launch record of this trial's seat, or ``None``.
@@ -677,6 +706,45 @@ class MetricsReader:
                 if isinstance(extra, dict):
                     metrics.cache_write = int(extra.get("total_cache_write_tokens") or 0)
 
+        # The opponent's own stdout stream, where it has one. Richer than the
+        # trajectory and — the whole point — *current*: ATIF is written once at
+        # teardown, so before this a Claude Code arm read 0 steps, 0 tools, 0
+        # tokens and $0 for the entire length of a match and only became real
+        # when it was over. Same precedence as the trajectory it supersedes:
+        # Stella's stream below still wins on a Stella seat, which has no
+        # `claude-code.txt` to read anyway.
+        harness = self._harness.read(trial_dir / harness_mod.STREAM_NAME)
+        if harness is not None:
+            profile, totals = harness
+            metrics.harness = profile
+            metrics.behaviour = totals
+            metrics.steps = totals.steps or metrics.steps
+            metrics.tools = totals.tools or metrics.tools
+            # ATIF's convention, deliberately — `prompt_tokens`, not
+            # `tokens_in`. Every Claude Code cost and cache-hit figure in the
+            # archive was computed with cache legs folded into the input side,
+            # and switching conventions here would move every historical number
+            # without a single line of the measurement having changed.
+            metrics.tokens_in = totals.prompt_tokens or metrics.tokens_in
+            metrics.tokens_out = totals.tokens_out or metrics.tokens_out
+            metrics.cache_read = totals.cache_read or metrics.cache_read
+            metrics.cache_write = totals.cache_write or metrics.cache_write
+            metrics.total_cost = totals.total_cost or metrics.total_cost
+            if totals.models:
+                metrics.models = totals.models
+            metrics.declared_complete = totals.complete
+            metrics.status = "done" if totals.complete else "running"
+            if totals.api_error:
+                # The harness's own account of how it died. Recorded as the
+                # late error because that is what it is — and because this
+                # exact shape (a 429 swallowed into a nonzero exit) scored
+                # three trials as Claude Code losses when the agent had never
+                # completed a single call (#1480).
+                metrics.late_error = (
+                    f"api_error_status:{totals.api_error}"
+                    + (f" ({totals.terminal_reason})" if totals.terminal_reason else "")
+                )
+
         # Stella's own stream is richer and current, so it wins where it speaks.
         if events is not None:
             metrics.steps = events["steps"] or metrics.steps
@@ -695,13 +763,19 @@ class MetricsReader:
             # `.get` rather than `[…]`: a cached reduction from a reader that
             # predates the proof rail has no such key.
             metrics.proof = events.get("proof")
-        elif metrics.age_s is not None:
+        elif harness is None and metrics.age_s is not None:
             # Liveness artifacts and no verdict yet mean the trial is in
-            # flight even though nothing streams — every trajectory-only arm
+            # flight even though nothing streams — a trajectory-only arm
             # mid-run looks like this. Without it the stall rule could never
             # see such an arm hang: a "pending" trial is not expected to be
             # writing, so its silence would never be suspicious (#1571).
             # `result.json` below still forces "done" once Harbor concludes.
+            #
+            # Skipped when the harness stream spoke, because that is a real
+            # statement about the agent and this is an inference from file
+            # mtimes. Unguarded it would overwrite `declared_complete`'s
+            # status with "running" for an agent that had just said it was
+            # finished — the inference beating the evidence.
             metrics.status = "running"
 
         configured = ""
