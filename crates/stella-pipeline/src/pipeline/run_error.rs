@@ -45,6 +45,18 @@ pub enum PipelineError {
         "an independent verifier was required for the verdict but {0} — refusing before spend rather than letting the worker grade its own work under a configuration that claims otherwise"
     )]
     VerifierNotIndependent(String),
+    /// The responsibility roster (#2381) says something that cannot be
+    /// honoured — a key naming no responsibility, a binding naming no agent,
+    /// a disabled worker.
+    ///
+    /// Refused before spend, and refused rather than repaired, for the reason
+    /// the roster exists: its rows are how a measurement declares which stages
+    /// ran. Quietly dropping an unparseable row would produce a run whose
+    /// posture says "triage ablated" and whose trace shows triage running,
+    /// which is worse than no run at all. Carries every problem at once, since
+    /// a hand-written block usually has more than one.
+    #[error("the responsibility roster cannot be honoured: {0}")]
+    InvalidRoster(String),
     /// A required role (worker) could not be resolved at all.
     #[error(transparent)]
     Routing(#[from] RouterError),

@@ -219,6 +219,12 @@ pub struct AgentsSection {
     pub verifier: Option<AgentEngineAgent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triage: Option<AgentEngineAgent>,
+    /// `[agents.responsibilities.<responsibility>]` — who performs each
+    /// pipeline responsibility and whether it runs (#2381). A table of
+    /// tables, so it sits with the agents above rather than among the flat
+    /// scalars, for the same TOML-stranding reason they do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responsibilities: Option<BTreeMap<String, super::ResponsibilitySpec>>,
 }
 
 impl AgentsSection {
@@ -614,6 +620,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         worker: per_agent.worker,
         verifier: per_agent.verifier,
         triage: per_agent.triage,
+        responsibilities: cfg.responsibilities.clone(),
     };
     let models = ModelsSection {
         allowed: cfg.allowed_models.clone(),
@@ -685,5 +692,6 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         tool_result_horizon_steps: agents.tool_result_horizon_steps,
         approval_wait_secs: agents.approval_wait_secs,
         agents: agents_field,
+        responsibilities: agents.responsibilities,
     })
 }

@@ -206,6 +206,15 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
+        // The same pre-flight `Pipeline::run` does, and for the same reasons
+        // (#2381). A resumed leg still buys calls and still produces a verdict,
+        // so a roster that cannot be honoured must refuse here too, and an
+        // ablation must be as visible in the resumed transcript as in the
+        // original — a reader of the second half has no access to the first.
+        if let Err(error) = self.roster_refusal() {
+            return Err(PipelineRunError::new(error, total_cost));
+        }
+        self.report_roster_posture();
         let task_class = resume.task_class;
         let goal = resume.goal.clone();
         let goal = goal.as_str();
