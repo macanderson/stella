@@ -1,7 +1,7 @@
 //! Complete per-call accounting for pipeline roles that call providers directly.
 
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use stella_core::retry::RetryPolicy;
 // One home for the starvation arithmetic, shared with `stella-cli`'s
@@ -9,6 +9,7 @@ use stella_core::retry::RetryPolicy;
 // on a bare cap, which is how post-turn reflection starved for nine days
 // (#2174). Two copies of these numbers is what let the second caller miss the
 // first fix.
+use stella_core::budget::DeadlineOutcome;
 use stella_core::starvation::{starved_of_output, starved_retry_cap, with_reasoning_headroom};
 use stella_core::{
     AccountedCall, AccountedCallError, BudgetGuard, ReceiptContext, run_accounted_call,
@@ -17,7 +18,9 @@ use stella_protocol::{
     CompletionMessage, CompletionRequest, CompletionResult, ModelCallRole, ReasoningEffort,
 };
 
-use super::stage_budget::{PipelineStageAbort, budget_abort, deadline_abort};
+use super::stage_budget::{
+    PipelineStageAbort, budget_abort, deadline_abort, deadline_closing_abort,
+};
 use super::{Pipeline, ResolvedRole, RoleCallOverrides};
 
 pub(super) struct RawCall<'r, 'a> {
@@ -49,8 +52,12 @@ pub(super) enum RawCallError {
     Provider,
     Timeout,
     Budget(PipelineStageAbort),
-    /// The task's wall-clock deadline had already passed, so this call was
-    /// never dispatched and cost nothing (#2238).
+    /// The task's wall clock stopped this call before dispatch, so it was
+    /// never dispatched and cost nothing: either the deadline had already
+    /// passed (#2238) or too little of it remained to fit the call at all
+    /// (#2432). One variant for both, because the consequence here is
+    /// identical; the difference that matters reaches the stream, where
+    /// `stage_budget` gives each stop its own sentence.
     ///
     /// Separate from [`Self::Budget`] because the two want opposite handling
     /// *after* execute: a dollar breach is the run being unable to afford the
@@ -280,6 +287,48 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<CompletionResult, RawCallError> {
+        // The anticipatory rung (#2432). #2238 put a wall-clock check at
+        // `run_accounted_call`'s pre-dispatch seam, but a reactive one: it
+        // refuses only work that is ALREADY too late, so a verdict call
+        // dispatched with 2s of task clock left and taking 60s overruns by 58s.
+        //
+        // The reserve is supplied here rather than there because that seam
+        // measures nothing — no pace estimate, no per-role history — and a
+        // margin invented in a place with no basis is a second, invisible
+        // policy on top of the operator's `--turn-budget`, which
+        // `driver::settlement::check_budget` forbids itself for exactly this
+        // reason. This caller does have a basis, so it is the caller that
+        // anticipates. The engine's step loop does the same thing with the
+        // basis it has (`TurnState::last_step`, which it measures).
+        //
+        // Provenance of the number, stated because a reserve with none is the
+        // invented policy above: it is the measured wall clock of the LAST
+        // completed call of this same role (`super::role_pace`), the pipeline's
+        // equivalent of the `TurnState::last_step` the engine forecasts from.
+        // A role with no history yet reports `None` and is never refused —
+        // anticipation requires a measurement, and this seam makes none up.
+        //
+        // The call's own `timeout` was the cheaper candidate and is wrong: it
+        // is an IDLE ceiling (`model_timeout` defaults to 816s), so reserving
+        // it would refuse every management call on any run whose deadline is
+        // under ~14 minutes — a stop far larger than the overrun it prevents.
+        //
+        // An unarmed deadline is untouched: `check_deadline_with_reserve`
+        // answers `Continue` when none is set, so a run nobody is timing keeps
+        // #2238's behaviour exactly.
+        //
+        // Invariant 6 holds — this is still before dispatch, between model
+        // calls, with nothing in flight to interrupt. Invariant 2 holds: the
+        // clock is read here and handed in, never read inside the guard.
+        if let Some(reserve) = self.role_pace.forecast(meta.role)
+            && let DeadlineOutcome::Closing { remaining } =
+                budget.check_deadline_with_reserve(Instant::now(), reserve)
+        {
+            return Err(RawCallError::Deadline(deadline_closing_abort(
+                remaining, reserve,
+            )));
+        }
+        let dispatched_at = Instant::now();
         match run_accounted_call(
             AccountedCall {
                 provider: meta.provider,
@@ -310,6 +359,11 @@ impl<'a> Pipeline<'a> {
         {
             Ok(result) => {
                 *total += result.cost_usd;
+                // Only a completed call teaches the forecast anything (#2432).
+                // A refusal or an early death would report the failure's
+                // duration rather than the work's, talking the estimate down
+                // exactly when a run is in trouble.
+                self.role_pace.observe(meta.role, dispatched_at.elapsed());
                 Ok(result)
             }
             Err(AccountedCallError::Provider(_)) => Err(RawCallError::Provider),

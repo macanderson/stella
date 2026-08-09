@@ -123,6 +123,7 @@ mod raw_usage;
 mod repair_gate;
 mod research_stage;
 mod resume_stage;
+mod role_pace;
 mod roster_wiring;
 use roster_wiring::Assigned;
 mod run_error;
@@ -286,18 +287,17 @@ pub struct PipelineConfig {
     /// and refused repairs a long run could still afford (#1507).
     ///
     /// **This field is an estimate, not a ceiling.** Nothing is cancelled when
-    /// it elapses and no call is refused because of it; together with the
-    /// deadline below it sizes the repair gate's headroom and the
-    /// witness-repair bound, and both being `None` means "nobody is measuring"
-    /// — the clock axis abstains rather than inventing one nobody declared.
+    /// it elapses and no call is refused because of it; with the deadline below
+    /// it sizes the repair gate's headroom and the witness-repair bound, and
+    /// both `None` means nobody is measuring — the axis abstains, never zeroes.
     ///
     /// The enforcing wall clock is a different field elsewhere:
     /// `BudgetGuard::set_task_deadline`, an absolute instant on the guard
     /// threaded into [`Pipeline::run`]. That one IS honoured — by the engine's
     /// step loop (`stella_core::driver::settlement`) and, since #2238, before
-    /// every raw stage dispatch (`stella_core::run_accounted_call`). Both feed
-    /// `Pipeline::remaining_wall_clock`, which since #2433 reports whichever
-    /// binds first, so a surface arming only one of them is still measured.
+    /// every raw stage dispatch. Both feed `Pipeline::remaining_wall_clock`,
+    /// which since #2433 reports whichever binds first, so a surface arming
+    /// only one of them is still measured.
     pub run_budget: Option<Duration>,
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
@@ -962,6 +962,8 @@ pub struct Pipeline<'a> {
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
+    /// Measured per-role wall clock — the anticipatory rung's basis (#2432).
+    role_pace: role_pace::RolePace,
     /// The once-per-run verifier notices — see [`VerifierNotices`].
     verifier_notices: VerifierNotices,
     /// Whether more than one candidate is currently writing to [`Self::events`]
@@ -1026,6 +1028,7 @@ impl<'a> Pipeline<'a> {
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
+            role_pace: role_pace::RolePace::default(),
             verifier_notices: VerifierNotices::default(),
             shared_event_lane: AtomicBool::new(false),
             started: std::time::Instant::now(),

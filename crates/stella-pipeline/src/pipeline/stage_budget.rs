@@ -78,6 +78,26 @@ pub(super) fn deadline_abort(overrun: Duration) -> PipelineStageAbort {
     }
 }
 
+/// The stop for a stage call refused because too little of the task's wall
+/// clock remains to fit it (#2432) — the anticipatory half of
+/// [`deadline_abort`], phrased like `crate::driver::settlement`'s `Closing`
+/// sentence and for the same reason it has one: a reader who sees "exceeded"
+/// on a run that never exceeded anything learns the wrong thing about it.
+///
+/// Names both numbers, so the refusal carries its own basis rather than asking
+/// the reader to infer it — the clock that remains, and what this call was
+/// declared to need.
+pub(super) fn deadline_closing_abort(remaining: Duration, reserve: Duration) -> PipelineStageAbort {
+    PipelineStageAbort {
+        reason: format!(
+            "task deadline in {:.1}s, less than the {:.1}s this call is bounded to take — \
+             declining to start work the remaining clock cannot fit",
+            remaining.as_secs_f64(),
+            reserve.as_secs_f64()
+        ),
+    }
+}
+
 /// The tighter of the two clocks that can stop a pipeline run, or `None` when
 /// neither is set.
 ///
