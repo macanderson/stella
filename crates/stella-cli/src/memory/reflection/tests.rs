@@ -319,18 +319,23 @@ async fn a_fact_in_the_middle_of_a_long_turn_reaches_the_reflection_prompt() {
         ));
     }
     transcript.push(CompletionMessage::assistant("done — tests pass"));
+    let at = transcript
+        .iter()
+        .position(|message| message.content == THE_FACT)
+        .expect("the fact was planted");
     assert!(
-        transcript.len() > 24,
-        "the fact must sit well outside a twelve-message tail, or this witness \
-         proves nothing"
+        transcript.len() - at > 12,
+        "the fact sits at index {at} of {}, inside a twelve-message tail — this \
+         witness would pass on the old digest and prove nothing",
+        transcript.len()
     );
 
     let prompt = prompt_for_evidence(super::TurnEvidence::from_transcript(&transcript, true)).await;
     assert!(
         prompt.contains(THE_FACT),
         "reflection is being asked what it learned by a witness that cannot see \
-         where the turn went wrong: the fact at index 5 of {} never reached the \
-         prompt.\n\nprompt was:\n{prompt}",
+         where the turn went wrong: the fact at index {at} of {} never reached \
+         the prompt.\n\nprompt was:\n{prompt}",
         transcript.len()
     );
 }
