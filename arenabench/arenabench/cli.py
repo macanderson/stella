@@ -228,6 +228,79 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return worst
 
 
+def _cmd_contest(args: argparse.Namespace) -> int:
+    """``arenabench contest`` — build a head-to-head match, optionally submit it.
+
+    Writes the ``arenabench.toml`` *first*, always, even when submitting: the
+    file is the record of what was measured, and a run whose configuration
+    exists only inside the process that launched it cannot be reproduced or
+    audited afterwards.
+    """
+    from .config import dump_match
+    from .presets import ContestError, contest_comparability_note, contest_spec
+
+    try:
+        spec = contest_spec(
+            args.versus_model,
+            num_tasks=args.num_tasks,
+            concurrency=args.concurrency,
+            attempts=args.attempts,
+            record_video=not args.no_video,
+            name=args.name,
+        )
+    except ContestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    destination = Path(args.output or f"contest-{args.num_tasks}task.toml")
+    destination.write_text(dump_match(spec), encoding="utf-8")
+    print(f"match     : {destination}")
+    print(f"tasks     : {len(spec.tasks)}  attempts: {spec.attempts}")
+    note = contest_comparability_note(args.num_tasks)
+    if note:
+        print(f"WARNING   : {note}")
+
+    if not args.submit:
+        print("\nnot submitted. Run it locally with:")
+        print(f"  arenabench run {destination}")
+        print("…or on AWS Batch (one job per trial) with:")
+        print(f"  arenabench cloud run {destination} --ref main")
+        return 0
+
+    # Named before the run starts, not after: the watcher is worth opening
+    # while trials are queueing, and a run id printed only on completion is a
+    # run nobody watched.
+    if args.run_id:
+        print(f"\nwatch the scoreboard while it runs:")
+        print(f"  arenabench cloud watch {args.run_id}")
+    else:
+        print("\nwatch the scoreboard with `arenabench cloud watch <run-id>` "
+              "(the id is printed below)")
+
+    # Hand off rather than re-implement: `cloud run` owns SUT resolution,
+    # per-trial submission, the refusal of seats with no SSM credentials, and
+    # result download. A second submission path here would be a second thing
+    # to keep correct.
+    from .cloud import _cmd_cloud_run
+
+    cloud_args = argparse.Namespace(
+        template=str(destination),
+        ref=args.ref,
+        run_id=args.run_id,
+        burst=args.burst,
+        poll=args.poll,
+        vcpus=args.vcpus,
+        memory_mb=args.memory_mb,
+        no_wait=args.no_wait,
+        no_fetch=False,
+        artifacts=False,
+        out=None,
+        region=args.region,
+        bucket=args.bucket,
+    )
+    return _cmd_cloud_run(cloud_args)
+
+
 def _cmd_template(args: argparse.Namespace) -> int:
     """Print a starter ``arenabench.toml`` to stdout or a file."""
     from .config import dump_match
@@ -727,6 +800,10 @@ def _cmd_build_recorder(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The panel size is in `contest`'s help text and is its default, so it is
+    # read while the parser is built rather than when a command runs.
+    from .presets import PANEL_TASKS
+
     parser = argparse.ArgumentParser(
         prog="arenabench",
         description="Run coding-agent benchmarks as a live, side-by-side contest.",
@@ -750,6 +827,53 @@ def main(argv: list[str] | None = None) -> int:
         help="launch even when a seat's declared credentials are absent",
     )
     run_parser.set_defaults(func=_cmd_run)
+
+    contest_parser = subparsers.add_parser(
+        "contest",
+        help="build (and optionally submit) a Stella-vs-Claude-Code contest",
+    )
+    contest_parser.add_argument(
+        "--versus-model",
+        required=True,
+        help="the worker BOTH arms run, e.g. anthropic/claude-sonnet-5 or "
+             "claude-sonnet-5 (either spelling)",
+    )
+    contest_parser.add_argument(
+        "--num-tasks", type=int, default=len(PANEL_TASKS),
+        help=f"how many of the {len(PANEL_TASKS)}-task panel to run "
+             f"(default: all {len(PANEL_TASKS)}; fewer is not comparable to "
+             "the full-panel history)",
+    )
+    contest_parser.add_argument(
+        "--concurrency", type=int, default=1,
+        help="task slots per runner. One slot is TWO contestant containers "
+             "racing, so a laptop-class Docker allocation serialises honestly "
+             "at 1. Irrelevant to --submit, which fans out one job per trial.",
+    )
+    contest_parser.add_argument("--attempts", type=int, default=1)
+    contest_parser.add_argument("--name", help="match name")
+    contest_parser.add_argument("-o", "--output", help="where to write the toml")
+    contest_parser.add_argument(
+        "--no-video", action="store_true", help="do not record trial video"
+    )
+    contest_parser.add_argument(
+        "--submit", action="store_true",
+        help="submit to AWS Batch via `cloud run` after writing the toml",
+    )
+    contest_parser.add_argument("--ref", help="git ref of the Stella SUT (--submit)")
+    contest_parser.add_argument("--run-id", help="run identifier (--submit)")
+    contest_parser.add_argument(
+        "--burst", action="store_true",
+        help="submit to the spot queue — NOT for measured comparisons, since "
+             "a spot interruption is indistinguishable from a loss",
+    )
+    contest_parser.add_argument("--poll", type=float, default=15.0)
+    contest_parser.add_argument("--vcpus", type=int, default=4)
+    contest_parser.add_argument("--memory-mb", type=int, default=15360)
+    contest_parser.add_argument("--no-wait", action="store_true")
+    contest_parser.add_argument("--region")
+    contest_parser.add_argument("--bucket")
+    contest_parser.set_defaults(func=_cmd_contest)
 
     template_parser = subparsers.add_parser(
         "template", help="print a starter arenabench.toml"

@@ -377,6 +377,42 @@ class TrialMetrics:
             return None
         return min(100.0, self.cache_read / self.tokens_in * 100.0)
 
+    def never_ran(self) -> bool:
+        """Whether this trial has POSITIVE evidence the agent never got a turn.
+
+        Deliberately conservative, in the direction that costs us. Absence of
+        telemetry is not proof of absence of work — #2132 is exactly that
+        hazard, four trials in one match published no usage at all — so voiding
+        on missing numbers alone would let a genuine loss disappear and flatter
+        the arm. Every condition here has to hold:
+
+        * the trial **did not pass** — a solved task ran, whatever its
+          telemetry says, so a pass is never voided;
+        * the verifier **produced a score** — this rule says "a verdict is not
+          evidence of an attempt", which presupposes a verdict. An UNJUDGED
+          trial is already handled, and handled better, by the `void_setup` /
+          `void_credentials` / `void_cancelled` family below: those name *why*
+          it never got a verdict, and a generic "no fair attempt" here would
+          throw that cause away;
+        * **no steps**, and
+        * **no tokens in either direction** — steps alone would void a trial
+          whose usage failed to attach mid-run;
+        * and a **recorded failure**, which is the positive half: something
+          went wrong at startup and said so. A silent zero stays a loss.
+
+        Not classified on the exception name, because that name is ambiguous:
+        `NonZeroAgentExitCodeError` covers both "Stella crashed at step 40" and
+        "Stella never started", which are opposite facts about the agent.
+        """
+        if self.resolved or self.reward is None:
+            return False
+        return (
+            bool(self.failure)
+            and self.steps <= 0
+            and self.tokens_in <= 0
+            and self.tokens_out <= 0
+        )
+
     def outcome_reason(self) -> str | None:
         """One closed label for *how* this judged trial ended (#2076).
 
@@ -391,6 +427,16 @@ class TrialMetrics:
         """
         if self.status != "done":
             return None
+        if self.never_ran():
+            # Before the verdict is consulted at all. A verifier run against an
+            # untouched workspace returns 0 as surely as one run against a
+            # botched attempt, so `resolved is False` is not evidence that
+            # anything was attempted — and the guard below only reaches
+            # `void_no_fair_attempt` when the trial went UNJUDGED. Six trials
+            # on this rig had zero steps, zero observed spend, a provider that
+            # rejected the very first call, and a scored 0 recorded against the
+            # agent's name (#1480's rule, applied to the shape that slipped it).
+            return "void_no_fair_attempt"
         if self.resolved is None:
             # Group A: judged, no verdict — not agent performance.
             if not self.failure:
@@ -889,7 +935,16 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
     the one nobody can defend afterwards.
     """
     trials = list(trials)
-    judged = [t for t in trials if t.resolved is not None]
+    # A verdict is not evidence of an attempt. The verifier scores an untouched
+    # workspace 0 exactly as it scores a botched one, so a trial the agent
+    # never got a turn in arrives here as `resolved is False` and would divide
+    # into the solve rate as a loss. Six trials on this rig did: zero steps,
+    # zero tokens, a provider that refused the first call, a 0 recorded against
+    # the agent's name. Held out for the same reason `infrastructure` is, and
+    # counted below for the same reason too — the exclusion is disclosed, never
+    # silent.
+    never_ran = [t for t in trials if t.status == "done" and t.never_ran()]
+    judged = [t for t in trials if t.resolved is not None and not t.never_ran()]
     passed = [t for t in judged if t.resolved]
     # Trials that published a proof rail at all. Its own subset, because the
     # rail's denominator is not the match's: a seat with no pipeline
@@ -899,6 +954,11 @@ def aggregate(trials: Iterable[TrialMetrics]) -> dict[str, Any]:
     return {
         "trials": len(trials),
         "infrastructure": sum(1 for t in trials if t.infrastructure),
+        # Trials held out of `judged` because the agent never ran. Distinct
+        # from `infrastructure`, which counts trials that never reached a
+        # verdict at all: these DID get scored, and the score is what had to
+        # be discarded.
+        "never_ran": len(never_ran),
         "running": sum(1 for t in trials if t.status == "running"),
         "done": sum(1 for t in trials if t.status == "done"),
         "judged": len(judged),
