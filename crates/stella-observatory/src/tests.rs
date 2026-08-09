@@ -562,13 +562,13 @@ fn reflection_ratings_are_bounded_to_the_newest_rows() {
 fn the_ratings_feed_lists_only_turns_the_model_graded() {
     let ws = seeded_workspace();
     let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
-    // A third shape the shared fixture does not carry: prose with no numeric
-    // grade. It IS an assessment — the "what to improve" feed is built from
-    // exactly these — so the predicate must not key on `self_rating` alone.
-    // ...and a fourth: prose that is only whitespace, which
+    // Two shapes the shared fixture does not carry, on either side of the line.
+    // Execution 3 is prose with no numeric grade: an assessment, and what the
+    // "what to improve" feed is built from, so the predicate must not key on
+    // `self_rating` alone. Execution 4 is prose that is only whitespace, which
     // `SelfReviewRow::is_empty` trims before judging and the SQL mirror must
-    // too. Unreachable through the writer, which refuses an empty review — it
-    // is here because the mirror is the thing under test, not the writer.
+    // too — unreachable through the writer, which refuses an empty review, and
+    // here because the mirror is the thing under test rather than the writer.
     conn.execute_batch(
         "INSERT INTO execution_reflection (execution_id, critique)
          VALUES (3, 'landed, but the first diagnosis was wrong');
