@@ -329,10 +329,48 @@ fn a_truncated_reply_is_retried_with_a_larger_budget_instead_of_failing() {
     let budgets = provider.requested_budgets.lock().expect("lock").clone();
     assert_eq!(
         budgets,
-        vec![Some(BASE_OUTPUT_TOKENS), Some(BASE_OUTPUT_TOKENS * 2)],
+        vec![Some(MIN_OUTPUT_TOKENS), Some(MIN_OUTPUT_TOKENS * 2)],
         "the retry must ask for more room, not repeat the same budget"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A short document keeps the floor; a long one is sized to the text it sends,
+/// so it never has to buy a cut-off attempt just to earn a big enough one.
+#[test]
+fn the_output_budget_is_sized_to_the_document() {
+    assert_eq!(starting_output_budget(0), MIN_OUTPUT_TOKENS);
+    assert_eq!(starting_output_budget(41), MIN_OUTPUT_TOKENS);
+    assert_eq!(
+        starting_output_budget(MIN_OUTPUT_TOKENS as usize - 1),
+        MIN_OUTPUT_TOKENS,
+        "below the floor stays at the floor"
+    );
+    // The shape that motivated the change: this repository's AGENTS.md, which
+    // now fits the prompt cap whole.
+    assert_eq!(starting_output_budget(44_545), 44_545);
+    assert_eq!(
+        starting_output_budget(MAX_PROMPT_CHARS),
+        MAX_PROMPT_CHARS as u32,
+        "a full-size document must fit under the output ceiling in one call"
+    );
+}
+
+/// The budget must never exceed the ceiling, whatever it is asked for — a
+/// request above a model's limit is rejected or clamped by the provider, and
+/// either way it is not a thing to ask for by accident.
+#[test]
+fn the_output_budget_never_exceeds_the_ceiling() {
+    assert_eq!(starting_output_budget(usize::MAX), MAX_OUTPUT_TOKENS);
+    assert_eq!(
+        starting_output_budget(MAX_OUTPUT_TOKENS as usize + 1),
+        MAX_OUTPUT_TOKENS
+    );
+    assert!(
+        MAX_PROMPT_CHARS as u32 <= MAX_OUTPUT_TOKENS,
+        "a document at the prompt cap must be expressible within one reply \
+         budget, or the ceiling is unreachable by construction"
+    );
 }
 
 #[test]
