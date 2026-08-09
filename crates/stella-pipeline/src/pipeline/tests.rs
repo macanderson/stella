@@ -1456,7 +1456,7 @@ fn assemble_user_message_puts_recall_before_the_task() {
         id: None,
         content_digest: None,
     }];
-    let msg = assemble_user_message("do the thing", &frames, VerificationContract::None);
+    let msg = assemble_user_message("do the thing", &frames, &[], VerificationContract::None);
     let recall_idx = msg.find("Recalled context").unwrap();
     let task_idx = msg.find("do the thing").unwrap();
     assert!(recall_idx < task_idx, "recall rides before the goal");
@@ -1465,7 +1465,7 @@ fn assemble_user_message_puts_recall_before_the_task() {
 #[test]
 fn assemble_user_message_is_just_the_goal_when_no_recall() {
     assert_eq!(
-        assemble_user_message("hello", &[], VerificationContract::None),
+        assemble_user_message("hello", &[], &[], VerificationContract::None),
         "hello"
     );
 }
@@ -1479,6 +1479,7 @@ fn assemble_user_message_is_just_the_goal_when_no_recall() {
 fn assemble_user_message_states_the_configured_verification_contract() {
     let msg = assemble_user_message(
         "fix the parser",
+        &[],
         &[],
         VerificationContract::Oracle("cargo test -p parser"),
     );
@@ -1498,7 +1499,12 @@ fn assemble_user_message_states_the_configured_verification_contract() {
 /// proceeds, but test-first is now the worker's job and the message says so.
 #[test]
 fn assemble_user_message_demands_test_first_when_nothing_else_verifies() {
-    let msg = assemble_user_message("add retries", &[], VerificationContract::WorkerTestFirst);
+    let msg = assemble_user_message(
+        "add retries",
+        &[],
+        &[],
+        VerificationContract::WorkerTestFirst,
+    );
     let task_idx = msg.find("add retries").unwrap();
     let contract_idx = msg.find("write the failing test").unwrap();
     assert!(
@@ -2327,13 +2333,13 @@ mod golden;
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
 /// `super::*`.
 mod mcp_prefetch;
-/// The plan-step walk and its early close-out (#1702). A child module, so it
-/// reaches the scripted ports above via `super::*`.
-mod plan_walk;
 /// The plan call's `[system, user]` split and its share of `agents.worker`
 /// (#2416). A child module, so it reaches the scripted ports above via
 /// `super::*`.
 mod plan_shaping;
+/// The plan-step walk and its early close-out (#1702). A child module, so it
+/// reaches the scripted ports above via `super::*`.
+mod plan_walk;
 mod research;
 /// The resumed execute stage and its verdict (#1671). A child module, so it
 /// reaches the scripted ports above via `super::*`.

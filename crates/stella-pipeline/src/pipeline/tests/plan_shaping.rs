@@ -82,7 +82,11 @@ async fn plan_call_with(
     let mut messages = vec![CompletionMessage::system("sys")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     pipeline
-        .run("Install and verify nginx end to end", &mut messages, &mut budget)
+        .run(
+            "Install and verify nginx end to end",
+            &mut messages,
+            &mut budget,
+        )
         .await
         .expect("run succeeds");
     drop(pipeline);
@@ -169,7 +173,9 @@ async fn the_plan_repair_call_keeps_the_same_split_and_override() {
     assert!(repair[0].1.contains("SENTINEL-WORKER-PROMPT"));
     assert!(repair[1].1.contains("could not be parsed as a plan"));
     assert!(
-        repair[2].1.contains("I will install nginx and then verify it."),
+        repair[2]
+            .1
+            .contains("I will install nginx and then verify it."),
         "the echoed response is per-call and rides the user half"
     );
 }

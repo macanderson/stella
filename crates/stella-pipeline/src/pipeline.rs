@@ -1123,8 +1123,24 @@ impl<'a> Pipeline<'a> {
             }
             None => VerificationContract::None,
         };
+        // --- 2b. Pre-plan research (#1778): triage named questions, so
+        // parallel read-only sub-agents answer them before anything is
+        // prompted. Empty questions skip the stage byte-for-byte (L-E2),
+        // which is what lets it sit ahead of the conversational branch below:
+        // triage never names questions for a chat turn, so a greeting reaches
+        // `research_stage` and returns from its first line with no events and
+        // no spend.
+        //
+        // It runs BEFORE the user message is assembled because the worker's
+        // message is now one of its sinks (#2415) — findings used to reach
+        // the planner alone, so a fact a read-only sub-agent verified against
+        // this workspace survived to the worker only as whatever residue of
+        // it the planner encoded into a step string.
+        let research = self
+            .research_stage(goal, &research_questions, budget, &mut total_cost)
+            .await;
         messages.push(CompletionMessage::user(assemble_user_message(
-            goal, &frames, contract,
+            goal, &frames, &research, contract,
         )));
 
         // --- Conversational fast path. -------------------------------------
@@ -1139,13 +1155,6 @@ impl<'a> Pipeline<'a> {
                 .run_conversational(messages, budget, &mut total_cost)
                 .await;
         }
-
-        // --- 2b. Pre-plan research (#1778): triage named questions, so
-        // parallel read-only sub-agents answer them before the planner runs.
-        // Empty questions skip the stage byte-for-byte (L-E2).
-        let research = self
-            .research_stage(goal, &research_questions, budget, &mut total_cost)
-            .await;
 
         // --- 3+4. Plan, then scope review — one phase, because a reviewer who
         // asks for a different scope sends us back to the planner. -----------
@@ -3098,15 +3107,45 @@ enum VerificationContract<'a> {
     None,
 }
 
+/// The worker's first user message: the recalled frames and research findings
+/// that ground the turn, the goal, and how this run will be verified.
+///
+/// `research` is the second sink for the pre-plan stage's findings (#2415).
+/// Before it, [`crate::plan::build_planner_prompt`] was the only one — so a
+/// fact a read-only sub-agent verified against this workspace reached the
+/// worker only as whatever residue of it the planner chose to encode into a
+/// step string, compressed through a lossy intermediary that was never asked
+/// to preserve it. On a class that does not plan there was no intermediary at
+/// all.
+///
+/// The advisory contract holds in the strongest form: **no findings must leave
+/// this output byte-for-byte what it was before this parameter existed**, which
+/// is what the early return and the `is_empty` guard below are for.
 fn assemble_user_message(
     goal: &str,
     frames: &[RecalledFrame],
+    research: &[ResearchFinding],
     contract: VerificationContract<'_>,
 ) -> String {
-    if frames.is_empty() && contract == VerificationContract::None {
+    if frames.is_empty() && research.is_empty() && contract == VerificationContract::None {
         return goal.to_string();
     }
     let mut s = String::new();
+    // Research before recall, and its own section — the same ordering and the
+    // same reason as the planner prompt (`build_planner_prompt`): recall is
+    // what the context plane remembered, research is what a sub-agent verified
+    // against this workspace just now, and the worker cannot weigh the two
+    // provenances differently if they arrive in one list.
+    if !research.is_empty() {
+        s.push_str("## Research findings\n");
+        for finding in research {
+            s.push_str("### ");
+            s.push_str(finding.question.trim());
+            s.push('\n');
+            s.push_str(finding.answer.trim());
+            s.push_str("\n\n");
+        }
+    }
     if !frames.is_empty() {
         s.push_str("## Recalled context\n");
         for f in frames {

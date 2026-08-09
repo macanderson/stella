@@ -475,7 +475,9 @@ mod tests {
         let prompt = build_planner_prompt("goal", &[], &[], "", None);
         assert_eq!(
             prompt.rendered(),
-            format!("{PLANNER_INSTRUCTIONS}\n\n## Goal\ngoal\n\n## Plan (JSON array of step strings)\n")
+            format!(
+                "{PLANNER_INSTRUCTIONS}\n\n## Goal\ngoal\n\n## Plan (JSON array of step strings)\n"
+            )
         );
     }
 

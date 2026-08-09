@@ -141,6 +141,22 @@ impl Pipeline<'_> {
         // class must genuinely plan, and a conversational turn does no work.
         // Everything cheaper degrades to the empty set — the stage that reads
         // this treats empty as "skip", so the fast paths (L-E2) never pay.
+        //
+        // #2415 asked whether `single` should be allowed to ask them too, and
+        // the answer here is **not yet**, deliberately. The case for widening
+        // is real — a `single` turn has no plan and, until #2415's other half,
+        // had no findings either, which is exactly where a worker is most
+        // exposed. But the ask is not free where it is made: the `RESEARCH:`
+        // line is what moved triage from ~17 output tokens to 330–778, and 27
+        // of 34 triage calls in the runs censused for #2414 then burned the
+        // full latency ceiling and returned nothing at all. Widening the class
+        // that pays for the ask would buy more of that before triage's own
+        // latency is back inside its ceiling — and a triage that times out
+        // supplies neither research questions nor a class.
+        //
+        // So the ordering is: fix what research already costs us (its findings
+        // now reach the worker, not the planner alone), then re-measure triage,
+        // then revisit this gate. Tracked as the follow-up on #2415.
         let research = if resolved.class.plans() && !resolved.conversational {
             response
                 .as_deref()
