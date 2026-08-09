@@ -3801,14 +3801,7 @@ fn toggle_expanded(ui: &mut DeckUi, agent: &str, idx: usize) {
 
 /// Whether `ctrl+o` can meaningfully expand this entry — exactly the variants
 /// whose [`crate::render::entry_lines`] rendering honors the expanded flag: a
-/// tool call (full args), a tool result (full output), a collapsed thought, or
-/// a context recall (every frame, with provenance and the budget report).
-///
-/// This list and the `expanded` arms of [`crate::render::entry_lines`] are one
-/// contract in two places, and they had already drifted: recall was omitted
-/// here *and* ignored the flag there, so the transcript's one "there is more
-/// behind this" affordance silently did nothing on the row that had the most
-/// behind it. Adding a variant means teaching both halves.
+/// tool call, a tool result, a collapsed thought, or a context recall.
 fn is_expandable(entry: &crate::model::TranscriptEntry) -> bool {
     use crate::model::TranscriptEntry as E;
     matches!(

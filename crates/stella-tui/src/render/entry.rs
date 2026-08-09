@@ -903,6 +903,13 @@ fn entry_body(
 // the whole point — with the per-frame cost in a right-hand column, the one
 // frame eating two thirds of the budget is visible by scanning a strip of
 // digits, which is a finding no paragraph can carry.
+//
+// The `expanded` half of this is one contract in two places: the arms below and
+// `deck_ui::is_expandable`, which decides whether `ctrl+o` even reaches an
+// entry. They had already drifted — recall was missing from that list *and*
+// ignored the flag here, so the transcript's "there is more behind this"
+// affordance did nothing on the row with the most behind it. Teaching a new
+// variant means teaching both halves.
 
 /// Frames shown before the fold. Sized so the collapsed block is no taller
 /// than the wrapped paragraph it replaces (four rows, in the pane that
