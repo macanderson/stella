@@ -172,6 +172,10 @@ catalog! {
     // Vendor-neutral repository tools; the two reads are local git queries.
     "repo_status"         => (true, true, Always, "repo"),
     "repo_diff"           => (true, true, Always, "repo"),
+    // Read-only by design, which is the point: a role behind `ReadOnlyTools`
+    // has no `bash`, and before these it had no route to git state at all.
+    "repo_history"        => (true, true, Always, "repo"),
+    "repo_recover"        => (true, true, Always, "repo"),
     "repo_commit"         => (false, false, Always, "repo"),
     "repo_push"           => (false, false, Always, "repo"),
     "repo_pull"           => (false, false, Always, "repo"),

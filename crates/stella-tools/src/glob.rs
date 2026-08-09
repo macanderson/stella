@@ -233,6 +233,26 @@ fn backend_failure(program: &str, output: &std::process::Output) -> Option<Strin
 /// Matched on path COMPONENTS, not as a substring, so a file that merely
 /// contains the letters (`.gitignore`, `dot.github`) does not disable the
 /// prune for an ordinary walk.
+/// Escape the glob metacharacters in a literal path prefix.
+///
+/// Both backends anchor a slash-carrying pattern by prepending the search
+/// directory, and both then interpret the result as a glob — so a workspace
+/// checked out under a directory whose name contains `[`, `*` or `?` would
+/// have that name reinterpreted as a character class or wildcard and match
+/// nothing. The prefix is literal text by construction; this keeps it that
+/// way. `fd`'s glob engine and `find`'s `fnmatch` both honour backslash
+/// escapes.
+fn escape_glob_meta(literal: &str) -> String {
+    let mut out = String::with_capacity(literal.len());
+    for ch in literal.chars() {
+        if matches!(ch, '*' | '?' | '[' | ']' | '{' | '}' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 pub(crate) fn names_git_dir(search_path: &str, pattern: &str) -> bool {
     let component = |s: &str| {
         s.split(['/', '\\'])
@@ -261,7 +281,30 @@ fn fd_command(search_dir: &std::path::Path, pattern: &str, keep_git: bool) -> Co
     // and is not one — the walk itself has to be deterministic.
     fd.arg("--threads").arg("1");
     fd.arg("--max-results").arg(MAX_RESULTS.to_string());
-    fd.arg("--").arg(pattern).arg(search_dir);
+    // `fd --glob` matches the FILE NAME. A slash-carrying pattern therefore
+    // matched nothing at all — `src/**/*.ts` and `.git/refs/heads/*` both
+    // came back "(no files found)" on every machine with `fd` installed,
+    // while the `find` fallback answered them correctly through its `-path`
+    // branch. That is the same two-backends-disagree defect the module doc
+    // records for hidden files, in the direction that reads as proof the
+    // files do not exist. (`**/*.rs` survived by accident: a leading `**/`
+    // leaves a bare basename glob behind.)
+    //
+    // `--full-path` switches to path matching, and the pattern is then
+    // anchored at the search directory exactly as `find_command` anchors
+    // its `-path` — otherwise `src/*.ts` would also match `vendor/src/*.ts`.
+    // Unlike `find`, `fd`'s engine implements `**`, so no collapsing is
+    // needed here and the anchored form is the more precise of the two.
+    let matched = if pattern.contains('/') {
+        fd.arg("--full-path");
+        format!(
+            "{}/{pattern}",
+            escape_glob_meta(&search_dir.to_string_lossy())
+        )
+    } else {
+        pattern.to_string()
+    };
+    fd.arg("--").arg(&matched).arg(search_dir);
     crate::subprocess_env::scrub_sensitive_env(&mut fd);
     fd.stdout(std::process::Stdio::piped());
     fd.stderr(std::process::Stdio::piped());
@@ -304,8 +347,10 @@ fn find_command(search_dir: &std::path::Path, pattern: &str, keep_git: bool) -> 
         while translated.contains("**") {
             translated = translated.replace("**", "*");
         }
-        find.arg("-path")
-            .arg(format!("{}/{translated}", search_dir.display()));
+        find.arg("-path").arg(format!(
+            "{}/{translated}",
+            escape_glob_meta(&search_dir.to_string_lossy())
+        ));
     } else {
         find.arg("-name").arg(pattern);
     }
@@ -564,6 +609,59 @@ mod tests {
         );
         // The bulk object store stays pruned even then.
         assert!(!content.contains("objects/ab/cdef"), "{content}");
+    }
+
+    /// Witness for the wider defect the `.git` work uncovered: `fd --glob`
+    /// matches the FILE NAME, so every slash-carrying pattern answered
+    /// "(no files found)" wherever `fd` was installed — while the `find`
+    /// fallback answered the same pattern correctly. `**/*.rs` survived by
+    /// accident (a leading `**/` leaves a bare basename glob), which is why
+    /// the existing coverage never caught it.
+    #[tokio::test]
+    async fn slash_globs_match_against_the_path_and_stay_anchored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src/deep")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join("vendor/src")).expect("mkdir");
+        std::fs::write(dir.path().join("src/a.ts"), "").expect("write");
+        std::fs::write(dir.path().join("src/deep/inner.ts"), "").expect("write");
+        std::fs::write(dir.path().join("vendor/src/theirs.ts"), "").expect("write");
+        std::fs::write(dir.path().join("stray.ts"), "").expect("write");
+
+        let content = |pattern: &str| {
+            let pattern = pattern.to_string();
+            let root = dir.path().to_path_buf();
+            async move {
+                match Glob::bare()
+                    .execute(&serde_json::json!({ "pattern": pattern }), &root)
+                    .await
+                {
+                    ToolOutput::Ok { content } => content,
+                    other => panic!("glob must succeed: {other:?}"),
+                }
+            }
+        };
+
+        let scoped = content("src/**/*.ts").await;
+        assert!(scoped.contains("src/a.ts"), "{scoped}");
+        assert!(scoped.contains("src/deep/inner.ts"), "{scoped}");
+        // Anchored at the search root, exactly as the `find` branch anchors
+        // its `-path`: a nested `vendor/src/` is a different directory.
+        assert!(!scoped.contains("vendor/src/theirs.ts"), "{scoped}");
+        assert!(!scoped.contains("stray.ts"), "{scoped}");
+
+        // The unanchored form still reaches every depth.
+        let everywhere = content("**/*.ts").await;
+        assert!(everywhere.contains("stray.ts"), "{everywhere}");
+        assert!(everywhere.contains("vendor/src/theirs.ts"), "{everywhere}");
+    }
+
+    /// A literal path prefix stays literal: both backends anchor by
+    /// prepending the search directory and then read the result as a glob.
+    #[test]
+    fn glob_metacharacters_in_the_anchor_are_escaped() {
+        assert_eq!(escape_glob_meta("/ws/plain"), "/ws/plain");
+        assert_eq!(escape_glob_meta("/ws/a[1]/b"), "/ws/a\\[1\\]/b");
+        assert_eq!(escape_glob_meta("/ws/re*po"), "/ws/re\\*po");
     }
 
     /// The other half: a walk that never mentions `.git` is unchanged.
