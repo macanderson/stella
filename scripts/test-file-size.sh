@@ -87,16 +87,24 @@ commit() {
 }
 
 # want <name> <expect-pass|expect-fail> <repo> [substring]
+#
+# The substring is checked on BOTH verdicts. On expect-fail it pins which file
+# was flagged; on expect-pass it pins what a passing run still reported — a
+# drift note is a real finding that happens not to be fatal, and a guard that
+# passed by forgetting the file would satisfy a bare expect-pass.
 want() {
   local name="$1" expect="$2" dir="$3" sub="${4:-}" out rc
   out="$("$dir/scripts/check-file-size.sh" 2>&1)"
   rc=$?
   if [ "$expect" = "expect-pass" ]; then
-    if [ "$rc" -eq 0 ]; then
-      pass=$((pass + 1)); echo "ok   $name"
-    else
+    if [ "$rc" -ne 0 ]; then
       fail=$((fail + 1)); echo "FAIL $name — expected OK, got:"; echo "$out"
+      return
     fi
+    case "$out" in
+      *"$sub"*) pass=$((pass + 1)); echo "ok   $name" ;;
+      *) fail=$((fail + 1)); echo "FAIL $name — passed, but did not report '$sub':"; echo "$out" ;;
+    esac
     return
   fi
   if [ "$rc" -eq 0 ]; then
@@ -254,6 +262,55 @@ commit "$r" "the base branch drifts while the PR is open"
 git -C "$r" merge -q --no-ff -m "Merge feature" feature
 want "B6 a refs/pull/N/merge checkout finds its base branch tip unaided" \
   expect-pass "$r"
+
+# ── The same rule for a file with NO baseline entry (#2397) ──────────────────
+#
+# B1-B4 all concern grandfathered files, and so did the fix: the allowance ran
+# in the branch that reads a baseline ceiling, and a file with no entry went on
+# failing on sight. So the first time any file crossed 1500 lines on `main`,
+# every open PR went red — including PRs whose tree was byte-identical to the
+# base, which is precisely the shape #2004 was written to end. B7-B9 pin the
+# rule to both kinds of file, and B8/B9 are what stop that from becoming a
+# licence: a first-time crossing is survived only while the branch does not
+# make it worse, and it is never absorbed into the baseline.
+
+# The blocking case: over the limit at the base, with no baseline entry, and
+# this change touches something else entirely. It must pass — and it must still
+# SAY so, because the debt is real and only the ownership of it is in question.
+# A guard that passed by forgetting the file would satisfy the verdict alone.
+r="$(new_repo "newover_at_base")"
+plant "$r" "src/big.rs" 1600
+commit "$r" "base: a first-time crossing lands on main"
+plant "$r" "src/unrelated.rs" 10
+commit "$r" "head: an unrelated change walks past it"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "B7 a first-time crossing inherited from the base is drift, not this change's failure" \
+  expect-pass "$r" "src/big.rs is 1600 lines, over the 1500-line limit — already so at the base; split it"
+unset FILE_SIZE_BASE_REF
+
+# The bloat the ratchet exists to block, in its commonest form: the branch
+# itself pushes a file over the limit for the first time.
+r="$(new_repo "newover_grown_here")"
+plant "$r" "src/big.rs" 1400
+commit "$r" "base: under the limit"
+plant "$r" "src/big.rs" 1600
+commit "$r" "head: this change crosses the limit"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "B8 a file this change pushes over the limit still fails" \
+  expect-fail "$r" "src/big.rs is 1600 lines, over the 1500-line limit"
+unset FILE_SIZE_BASE_REF
+
+# Drift must not become a licence here either — the B4 asymmetry, for a file
+# with no baseline entry to grow against.
+r="$(new_repo "newover_growth_on_drift")"
+plant "$r" "src/big.rs" 1600
+commit "$r" "base: already over, and not grandfathered"
+plant "$r" "src/big.rs" 1650
+commit "$r" "head: grow it further still"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "B9 growth on top of an inherited first-time crossing still fails" \
+  expect-fail "$r" "src/big.rs is 1650 lines, over the 1500-line limit"
+unset FILE_SIZE_BASE_REF
 
 echo
 echo "passed ${pass}, failed ${fail}"

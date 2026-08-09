@@ -20,7 +20,8 @@ from pathlib import Path
 
 from arenabench.cli import main
 from arenabench.proof import distill
-from arenabench.telemetry import MetricsReader, TranscriptReader, aggregate
+from arenabench.telemetry import MetricsReader, aggregate
+from arenabench.transcript import TranscriptReader
 
 # --------------------------------------------------------------------------
 # Event-stream fixtures

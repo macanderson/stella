@@ -241,7 +241,11 @@ impl Tool for CreateIssue {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let title = match crate::input::required_str(input, "title") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let params = CreateParams {
             title: title.to_string(),

@@ -163,11 +163,19 @@ impl Tool for EditFile {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let old_string = match crate::input::required_str(input, "old_string") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         // An empty `old_string` is destructive: `"".matches("")` reports
         // char_count+1 hits, so the tool would tell the model to set
@@ -183,7 +191,11 @@ impl Tool for EditFile {
         }
         let new_string = match crate::input::required_str(input, "new_string") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let replace_all = input
             .get("replace_all")
