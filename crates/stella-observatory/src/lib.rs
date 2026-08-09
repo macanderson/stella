@@ -49,6 +49,7 @@ mod context_diff;
 mod db;
 mod fsview;
 mod global;
+mod journal;
 mod live;
 mod self_driving;
 mod sent_context;

@@ -88,12 +88,6 @@ pub(crate) const TOOL_CALL_SCAN_WINDOW: usize = 10_000;
 /// the stream enormous.
 pub(crate) const MAX_RUNNING_CALLS: usize = 200;
 
-/// Char cap on one transcript body in the default
-/// [`Observatory::execution_journal`] payload. A single `read_file` result
-/// can be megabytes; the drawer needs the shape of the turn, not the bytes,
-/// and `?full=1` is the escape hatch for the reader who wants them.
-pub(crate) const JOURNAL_BODY_CLIP: usize = 4_000;
-
 /// Everything that can go wrong serving observatory data.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -439,40 +433,7 @@ impl Observatory {
         let Some(conn) = self.store() else {
             return Ok(Value::Array(Vec::new()));
         };
-        // `-1` rather than `0` when unfiltered: `seq` starts at 0
-        // (`Store::record_event`'s first call), and a sentinel of 0 would
-        // silently drop that opening row from every unfiltered fetch.
-        let after = after_seq.unwrap_or(-1);
-        let sql = "SELECT seq, ts, event_type, payload
-             FROM events
-             WHERE execution_id = ?1
-               AND seq > ?2
-               AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
-                                  'tool_result', 'speculation_discarded',
-                                  'turn_parked', 'turn_woken')
-             ORDER BY seq ASC";
-        let mut stmt = match conn.prepare(sql) {
-            Ok(stmt) => stmt,
-            Err(e) if is_missing_schema(&e) => return Ok(Value::Array(Vec::new())),
-            Err(e) => return Err(e.into()),
-        };
-        let mapped = stmt.query_map([id, after], |r| {
-            Ok(json!({
-                "seq": r.get::<_, i64>(0)?,
-                "ts": r.get::<_, String>(1)?,
-                "type": r.get::<_, String>(2)?,
-                "payload": r.get::<_, String>(3)?,
-            }))
-        })?;
-        let mut rows = Vec::new();
-        for row in mapped {
-            rows.push(row?);
-        }
-        Ok(Value::Array(
-            rows.into_iter()
-                .map(|row| journal_entry(row, full))
-                .collect(),
-        ))
+        crate::journal::entries(conn, id, full, after_seq)
     }
 
     /// One model call's **sent context** (#1475): the messages that call was
@@ -1230,99 +1191,6 @@ fn recall_timings(conn: &Connection, execution_id: i64) -> Result<Vec<Value>, Db
             }))
         },
     )
-}
-
-/// Shape one raw `events` row into the transcript entry the drawer renders.
-///
-/// The payload is the internally-tagged `AgentEvent` JSON the store
-/// persisted (`{"type":"text","text":…}`; rows written before #1886 spell
-/// the field `delta`, so `text` reads both). Only the fields the transcript
-/// needs are lifted out, keyed by the row's own `event_type` column. A
-/// payload that no longer parses (a hand-edited store, a variant this binary
-/// predates) keeps its seq/type header with no body rather than erroring —
-/// one unreadable row must not blank the transcript around it.
-fn journal_entry(row: Value, full: bool) -> Value {
-    let ty = row["type"].as_str().unwrap_or("").to_owned();
-    let payload: Value = row["payload"]
-        .as_str()
-        .and_then(|raw| serde_json::from_str(raw).ok())
-        .unwrap_or(Value::Null);
-    let mut out = json!({
-        "seq": row["seq"],
-        "ts": row["ts"],
-        "type": ty,
-    });
-    if payload.is_null() {
-        return out;
-    }
-    match ty.as_str() {
-        "stage" => {
-            out["label"] = payload["name"].clone();
-        }
-        "text" | "reasoning" => {
-            // `text` carries `text` since #1886, `delta` before; `reasoning`
-            // still carries `delta`. One bilingual read covers all three.
-            let body = payload["text"]
-                .as_str()
-                .or_else(|| payload["delta"].as_str());
-            set_journal_body(&mut out, body.unwrap_or(""), full);
-        }
-        "tool_start" => {
-            out["call_id"] = payload["call"]["call_id"].clone();
-            out["name"] = payload["call"]["name"].clone();
-            let args = serde_json::to_string_pretty(&payload["call"]["input"]).unwrap_or_default();
-            set_journal_body(&mut out, &args, full);
-        }
-        "tool_result" => {
-            out["call_id"] = payload["call_id"].clone();
-            out["duration_ms"] = payload["duration_ms"].clone();
-            out["speculated"] = json!(payload["speculated"].as_bool().unwrap_or(false));
-            // `ToolOutput` is externally tagged: `{"ok":{"content":…}}` or
-            // `{"error":{"message":…}}` — the tag is the ok/failed verdict.
-            out["ok"] = json!(!payload["output"]["ok"].is_null());
-            let body = payload["output"]["ok"]["content"]
-                .as_str()
-                .or_else(|| payload["output"]["error"]["message"].as_str())
-                .unwrap_or("");
-            set_journal_body(&mut out, body, full);
-        }
-        "speculation_discarded" => {
-            out["call_id"] = payload["call_id"].clone();
-            out["name"] = payload["name"].clone();
-            out["reason"] = payload["reason"].clone();
-        }
-        // A parked span is the one thing that explains a wall-clock gap with
-        // no events in it (#1857). Without its payload the row would say a
-        // park happened but not what was waited on or for how long — which
-        // is the entire question an operator opens this transcript to ask.
-        "turn_parked" => {
-            out["description"] = payload["description"].clone();
-            out["poll_interval_secs"] = payload["poll_interval_secs"].clone();
-            out["deadline_secs"] = payload["deadline_secs"].clone();
-        }
-        "turn_woken" => {
-            out["reason"] = payload["reason"].clone();
-            out["polls_used"] = payload["polls_used"].clone();
-        }
-        _ => {}
-    }
-    out
-}
-
-/// Attach `body` to a transcript entry, clipped to [`JOURNAL_BODY_CLIP`]
-/// unless `full`, and record which of the two happened.
-///
-/// Shared with the sent-context messages (`sent_context`), so the transcript
-/// and the reconstruction can never disagree about what "clipped" means or
-/// where the cut falls.
-pub(crate) fn set_journal_body(entry: &mut Value, body: &str, full: bool) {
-    let clipped = !full && body.chars().count() > JOURNAL_BODY_CLIP;
-    entry["body"] = if clipped {
-        json!(truncate(body, JOURNAL_BODY_CLIP))
-    } else {
-        json!(body)
-    };
-    entry["truncated"] = json!(clipped);
 }
 
 /// The promoted-rules query, shared by [`Observatory::rules`] and
