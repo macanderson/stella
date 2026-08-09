@@ -620,54 +620,64 @@ fn classify(evidence: TurnEvidence<'_>) -> Vec<Priority> {
 /// did not already know last turn. Recalled context is a `User` message
 /// (`memory/recall.rs::inject_recall_block`) and is therefore kept.
 fn render(message: &CompletionMessage, names: &HashMap<&str, &str>, cap: usize) -> String {
-    match message.role {
-        MessageRole::System => String::new(),
-        MessageRole::User => prefixed("user", &clip(&message.content, cap)),
-        MessageRole::Assistant => {
-            let mut body = clip(&message.content, cap);
-            for call in &message.tool_calls {
-                let _ = write!(
-                    body,
-                    "\n  → calls {}({})",
-                    call.name,
-                    clip(&compact(&call.input), TOOL_INPUT_CHARS)
-                );
-            }
-            prefixed("assistant", &body)
-        }
-        MessageRole::Tool => {
-            // The half the old digest could not see at any window size: a
-            // `Tool` message's payload is `tool_results`, and its `content` is
-            // empty by construction.
-            let share = (cap / message.tool_results.len().max(1)).max(MIN_RESULT_CHARS);
-            let mut body = clip(&message.content, cap);
-            for result in &message.tool_results {
-                let name = names
-                    .get(result.call_id.as_str())
-                    .copied()
-                    .unwrap_or("tool");
-                match &result.output {
-                    ToolOutput::Error { message } => {
-                        let _ = write!(body, "\n  {name} FAILED: {}", clip(message, share));
-                    }
-                    ToolOutput::Ok { content } => {
-                        let _ = write!(body, "\n  {name} ok: {}", clip(content, share));
-                    }
-                }
-            }
-            prefixed("tool", &body)
-        }
+    if message.role == MessageRole::System {
+        return String::new();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let content = clip(&message.content, cap);
+    if !content.is_empty() {
+        parts.push(content);
+    }
+    for call in &message.tool_calls {
+        parts.push(format!(
+            "→ calls {}({})",
+            call.name,
+            clip(&compact(&call.input), TOOL_INPUT_CHARS)
+        ));
+    }
+    // The half the old digest could not see at any window size: a `Tool`
+    // message's payload is `tool_results`, and its `content` is empty by
+    // construction.
+    let share = (cap / message.tool_results.len().max(1)).max(MIN_RESULT_CHARS);
+    for result in &message.tool_results {
+        let name = names
+            .get(result.call_id.as_str())
+            .copied()
+            .unwrap_or("tool");
+        parts.push(match &result.output {
+            ToolOutput::Error { message } => format!("{name} FAILED: {}", clip(message, share)),
+            ToolOutput::Ok { content } => format!("{name} ok: {}", clip(content, share)),
+        });
+    }
+    prefixed(role_label(message.role), parts)
+}
+
+/// The digest's name for a message's author.
+fn role_label(role: MessageRole) -> &'static str {
+    match role {
+        MessageRole::System => "system",
+        MessageRole::User => "user",
+        MessageRole::Assistant => "assistant",
+        MessageRole::Tool => "tool",
     }
 }
 
-/// `role: body`, or nothing when the body is empty — an empty rendering is
-/// dropped rather than emitted as a bare role label, which is exactly what the
-/// old digest did to every tool result.
-fn prefixed(role: &str, body: &str) -> String {
-    if body.trim().is_empty() {
+/// `role: part`, or `role: first` with the remaining parts indented beneath it.
+///
+/// Nothing at all when there are no parts. A message that would render as a bare
+/// role label is dropped instead, because a bare label is exactly what the old
+/// digest emitted for every tool result Stella ever produced: it reads like
+/// evidence while carrying none.
+fn prefixed(role: &str, parts: Vec<String>) -> String {
+    let mut parts = parts.into_iter().filter(|part| !part.trim().is_empty());
+    let Some(first) = parts.next() else {
         return String::new();
+    };
+    let mut out = format!("{role}: {first}");
+    for part in parts {
+        let _ = write!(out, "\n  {part}");
     }
-    format!("{role}: {body}")
+    out
 }
 
 /// A tool call's arguments as one line. `Value::to_string` is already compact; a

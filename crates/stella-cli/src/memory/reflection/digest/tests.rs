@@ -60,6 +60,10 @@ fn failed(message: &str) -> ToolOutput {
 }
 
 /// `steps` routine tool exchanges around one that failed at `at`.
+///
+/// Each routine result is deliberately longer than [`FILLER_CHARS`], so a turn
+/// of any real length actually exhausts the budget — a fixture of terse
+/// one-liners fits inside it and elides nothing, which tests the wrong thing.
 fn long_turn(steps: usize, at: usize, failure: &str) -> Vec<CompletionMessage> {
     let mut transcript = vec![user("make the suite green")];
     for step in 0..steps {
@@ -70,7 +74,10 @@ fn long_turn(steps: usize, at: usize, failure: &str) -> Vec<CompletionMessage> {
             if step == at {
                 failed(failure)
             } else {
-                ok(&format!("step {step} fine"))
+                ok(&format!(
+                    "step {step}: {}",
+                    "running 412 tests ... ok ".repeat(30)
+                ))
             },
         ));
     }
@@ -93,7 +100,7 @@ fn a_tool_result_is_rendered_from_tool_results_not_from_content() {
          defect this module exists to fix.\n\n{out}"
     );
     assert!(
-        !out.contains("tool: \n") && !out.ends_with("tool:"),
+        !out.lines().any(|line| line.trim() == "tool:"),
         "a bare `tool:` line with no payload is the old rendering\n\n{out}"
     );
 }
