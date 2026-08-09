@@ -87,10 +87,7 @@ pub(super) fn deadline_abort(overrun: Duration) -> PipelineStageAbort {
 /// Names both numbers, so the refusal carries its own basis rather than asking
 /// the reader to infer it — the clock that remains, and what this call was
 /// declared to need.
-pub(super) fn deadline_closing_abort(
-    remaining: Duration,
-    reserve: Duration,
-) -> PipelineStageAbort {
+pub(super) fn deadline_closing_abort(remaining: Duration, reserve: Duration) -> PipelineStageAbort {
     PipelineStageAbort {
         reason: format!(
             "task deadline in {:.1}s, less than the {:.1}s this call is bounded to take — \
@@ -197,10 +194,7 @@ mod tests {
     #[test]
     fn the_armed_deadline_binds_a_generous_declared_allowance() {
         assert_eq!(
-            binding_clock(
-                Some(Duration::from_secs(5)),
-                Some(Duration::from_secs(600))
-            ),
+            binding_clock(Some(Duration::from_secs(5)), Some(Duration::from_secs(600))),
             Some(Duration::from_secs(5))
         );
     }
@@ -211,10 +205,7 @@ mod tests {
     #[test]
     fn a_distant_deadline_does_not_buy_back_the_declared_allowance() {
         assert_eq!(
-            binding_clock(
-                Some(Duration::from_secs(600)),
-                Some(Duration::from_secs(5))
-            ),
+            binding_clock(Some(Duration::from_secs(600)), Some(Duration::from_secs(5))),
             Some(Duration::from_secs(5))
         );
     }

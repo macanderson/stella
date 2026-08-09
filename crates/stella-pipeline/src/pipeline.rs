@@ -292,9 +292,9 @@ pub struct PipelineConfig {
     /// `BudgetGuard::set_task_deadline`, an absolute instant on the guard
     /// threaded into [`Pipeline::run`]. That one IS honoured — by the engine's
     /// step loop (`stella_core::driver::settlement`) and, since #2238, before
-    /// every raw stage dispatch (`stella_core::run_accounted_call`). Both feed
-    /// `Pipeline::remaining_wall_clock`, which since #2433 reports whichever
-    /// binds first, so a surface arming only one of them is still measured.
+    /// every raw stage dispatch. Both feed `Pipeline::remaining_wall_clock`,
+    /// which since #2433 reports whichever binds first, so a surface arming
+    /// only one of them is still measured.
     pub run_budget: Option<Duration>,
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
@@ -956,8 +956,7 @@ pub struct Pipeline<'a> {
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
-    /// Measured wall clock per management role, the basis for the anticipatory
-    /// deadline rung in `metered_raw_call` (#2432) — see [`role_pace`].
+    /// Measured per-role wall clock — the anticipatory rung's basis (#2432).
     role_pace: role_pace::RolePace,
     /// The once-per-run verifier notices — see [`VerifierNotices`].
     verifier_notices: VerifierNotices,

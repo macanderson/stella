@@ -609,11 +609,13 @@ async fn a_deadline_too_near_to_fit_a_measured_call_stops_it_before_dispatch() {
          reach the provider"
     );
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-    let anticipatory = events.iter().any(|event| matches!(
-        event,
-        AgentEvent::Error { message, .. }
-            if message.contains("declining to start work") && !message.contains("exceeded")
-    ));
+    let anticipatory = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::Error { message, .. }
+                if message.contains("declining to start work") && !message.contains("exceeded")
+        )
+    });
     assert!(
         anticipatory,
         "the stop must read as anticipation, never as an overrun that never \
