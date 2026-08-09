@@ -379,6 +379,124 @@ def _cmd_datasets(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_harness(args: argparse.Namespace) -> int:
+    """What each arm's harness disclosed, and how it spent its turn.
+
+    The half of a head-to-head that a solve rate cannot express. Two agents at
+    5/8 that reached it with 22 shell calls and with 7 reads plus an edit did
+    not do the same thing, and neither did two arms whose tool rosters, memory
+    files or permission modes differed while a match description said they were
+    "the same configuration". This prints the evidence rather than the claim.
+
+    Reads only artifacts, like everything else here, so it works the same on a
+    live match and on an archive — and running it cannot perturb what it reads.
+    """
+    from .harness import STREAM_NAME, HarnessProfile, StreamReader
+
+    match_dir = Path(args.workspace).expanduser() / "matches" / args.match
+    if not match_dir.is_dir():
+        print(f"no such match: {match_dir}")
+        return 1
+
+    reader = StreamReader()
+    #: seat → (profile, summed behaviour across its trials, trial count)
+    seats: dict[str, tuple[HarnessProfile, dict, int]] = {}
+    for job_dir in sorted((match_dir / "jobs").glob("*")):
+        if not job_dir.is_dir():
+            continue
+        for trial_dir in sorted(job_dir.glob("*")):
+            read = reader.read(trial_dir / STREAM_NAME)
+            if read is None:
+                continue
+            profile, totals = read
+            name = job_dir.name
+            _, summed, count = seats.get(name, (profile, {}, 0))
+            payload = totals.to_json()
+            for key, value in payload.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    summed[key] = summed.get(key, 0) + value
+                elif isinstance(value, dict):
+                    bucket = summed.setdefault(key, {})
+                    for tool, n in value.items():
+                        bucket[tool] = bucket.get(tool, 0) + n
+            seats[name] = (profile, summed, count + 1)
+
+    if not seats:
+        print(
+            f"{args.match}: no arm published a harness stream.\n"
+            "Only agents run through a stream-json CLI do — today that is the "
+            "Claude Code seat. A Stella arm's equivalent is its own event "
+            "stream; see `arenabench transcript`."
+        )
+        return 0
+
+    for name, (profile, totals, trials) in seats.items():
+        print(f"\n=== {name}  ({trials} trial{'s' if trials != 1 else ''})")
+        print(f"  product        {profile.version or '?'}")
+        print(f"  model          {profile.model or '?'}")
+        print(f"  permission     {profile.permission_mode or '?'}")
+        print(f"  credential     {profile.api_key_source or '?'}")
+        print(f"  tools offered  {len(profile.tools)}  ({', '.join(profile.tools)})")
+        if profile.mcp_servers:
+            print(f"  mcp servers    {', '.join(profile.mcp_servers)}")
+        if profile.skills:
+            print(f"  skills         {len(profile.skills)}")
+        if profile.subagents:
+            print(f"  subagents      {', '.join(profile.subagents)}")
+        calls = totals.get("tool_calls") or {}
+        elapsed = totals.get("tool_ms") or {}
+        print(
+            f"  turns          {totals.get('steps', 0)} model steps, "
+            f"{totals.get('tools', 0)} tool calls, "
+            f"{totals.get('tool_errors', 0)} of them errors"
+        )
+        if calls:
+            print("  tool mix       " + ", ".join(
+                f"{tool}x{n}"
+                + (f" ({elapsed[tool] / 1000:.0f}s)" if tool in elapsed else "")
+                for tool, n in sorted(calls.items(), key=lambda kv: -kv[1])
+            ))
+        counted = totals.get("tokens_out", 0) or totals.get("prompt_tokens", 0)
+        if counted:
+            print(
+                f"  spend          {totals.get('tokens_out', 0)} out, "
+                f"{totals.get('prompt_tokens', 0)} in "
+                f"({totals.get('cache_read', 0)} from cache), "
+                f"{totals.get('thinking_tokens', 0)} reasoning (est.), "
+                f"${totals.get('total_cost', 0.0):.4f} self-reported"
+            )
+        else:
+            # Zeroed usage on the wire is a real, route-dependent thing: a seat
+            # pointed at a non-Anthropic endpoint through ANTHROPIC_BASE_URL
+            # gets `{"input_tokens": 0, "output_tokens": 0}` on every streamed
+            # message while the session transcript carries the true figures. It
+            # is not "this trial was free", and printing a 0 beside a nonzero
+            # cost would read as exactly that.
+            print(
+                f"  spend          stream reported no usage "
+                f"(gateway route); {totals.get('thinking_tokens', 0)} reasoning "
+                f"(est.), ${totals.get('total_cost', 0.0):.4f} self-reported"
+            )
+            print(
+                "                 token counts for this arm come from the ATIF "
+                "trajectory instead — see `arenabench series`"
+            )
+        print(
+            f"  clock          {totals.get('duration_ms', 0) / 1000:.0f}s wall, "
+            f"{totals.get('api_ms', 0) / 1000:.0f}s in provider calls, "
+            f"{totals.get('tool_wall_ms', 0) / 1000:.0f}s in tools"
+        )
+        # Deliberately not subtracted into an "overhead" figure: Harbor runs
+        # this CLI with background tasks forced on, so tools and provider calls
+        # overlap and the difference goes negative on real trials.
+    print(
+        "\nCost is the agent's own figure and is never compared across seats — "
+        "each vendor prices from its own table. `arenabench series` recomputes "
+        "both arms at one rate."
+    )
+    return 0
+
+
 def _cmd_provenance(args: argparse.Namespace) -> int:
     """Show — and with ``--migrate``, backfill — what each match was measured with.
 
@@ -395,6 +513,8 @@ def _cmd_provenance(args: argparse.Namespace) -> int:
 
     rows: list[tuple[str, str, str]] = []
     backfilled = 0
+    blended: list[tuple[str, str, list[str]]] = []
+    violated: list[tuple[str, str, list[str]]] = []
     for match_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         record = provenance.read_match(match_dir)
         state = "recorded"
@@ -412,6 +532,22 @@ def _cmd_provenance(args: argparse.Namespace) -> int:
             record = rebuilt
         elif record.source == provenance.SOURCE_BACKFILLED:
             state = "backfilled"
+        elif args.migrate:
+            # A recorded match still learns its opponent's version late: the
+            # trials had not run when the record was written.
+            stamped = provenance.stamp_agent_versions(match_dir)
+            if stamped is not None:
+                record = stamped
+        for seat_id in record.mixed_version_seats:
+            blended.append(
+                (
+                    match_dir.name,
+                    seat_id,
+                    [str(v) for v in record.agent_seats[seat_id].get("versions") or []],
+                )
+            )
+        for seat_id, ran in record.violated_pins.items():
+            violated.append((match_dir.name, seat_id, ran))
         rows.append((match_dir.name, record.comparability_key, state))
 
     width = max((len(key) for _, key, _ in rows), default=20)
@@ -432,6 +568,25 @@ def _cmd_provenance(args: argparse.Namespace) -> int:
             count = sum(1 for _, k, _ in rows if k == key)
             print(f"  {count:>3}  {key}")
         print("Numbers from different keys are different experiments. Label, never sum.")
+
+    # Louder than the key listing, because a blended arm is not a different
+    # experiment sitting tidily beside the others — it is one number that is
+    # secretly two, inside a single match nobody has any reason to distrust.
+    if blended:
+        print(f"\n{len(blended)} arm(s) ran more than one product version:")
+        for match_name, seat_id, versions in blended:
+            print(f"  {match_name:14} {seat_id:<28} {' + '.join(versions)}")
+        print(
+            "Such an arm's numbers are a blend of those releases, not a "
+            "measurement of any one of them. Pin the seat's `agent_version` "
+            "to make the next run comparable."
+        )
+    if violated:
+        print(f"\n{len(violated)} pinned arm(s) ran something else:")
+        for match_name, seat_id, ran in violated:
+            print(f"  {match_name:14} {seat_id:<28} actually ran {', '.join(ran)}")
+        print("The installer did not honour the pin; the key names what ran.")
+
     if args.migrate and backfilled:
         print(f"\nbackfilled {backfilled} match(es).")
     elif not args.migrate and any(state == "would backfill" for _, _, state in rows):
@@ -905,6 +1060,14 @@ def main(argv: list[str] | None = None) -> int:
 
     datasets_parser = subparsers.add_parser("datasets", help="list registered datasets")
     datasets_parser.set_defaults(func=_cmd_datasets)
+
+    harness_parser = subparsers.add_parser(
+        "harness",
+        help="what each arm's harness disclosed, and how it spent its turn",
+    )
+    harness_parser.add_argument("match", help="match id under <workspace>/matches")
+    harness_parser.add_argument("--workspace", default=str(default_workspace()))
+    harness_parser.set_defaults(func=_cmd_harness)
 
     provenance_parser = subparsers.add_parser(
         "provenance",

@@ -13,6 +13,7 @@ No Docker, no network, no key: every fixture is a synthetic stream.
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -488,3 +489,74 @@ def test_a_stella_trial_is_untouched_by_the_harness_reader(tmp_path: Path) -> No
     assert metrics.behaviour is None
     assert metrics.tokens_in == 500
     assert metrics.tokens_out == 40
+
+
+# --------------------------------------------------------------------------
+# the operator's view
+# --------------------------------------------------------------------------
+
+
+def test_the_harness_command_reports_an_arm(tmp_path: Path, capsys) -> None:
+    """`arenabench harness <match>` prints the evidence, not the claim."""
+    from arenabench.cli import _cmd_harness
+
+    trial = tmp_path / "matches" / "m1" / "jobs" / "m1-claude-code" / "t__a"
+    write_stream(
+        trial / STREAM_NAME,
+        [
+            init_event(),
+            assistant(
+                "msg_a",
+                blocks=[{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}],
+                usage={"input_tokens": 5, "output_tokens": 9},
+                timestamp="2026-08-09T00:00:00.000Z",
+            ),
+            tool_result("t1", timestamp="2026-08-09T00:00:01.000Z"),
+            result_event(),
+        ],
+    )
+    args = argparse.Namespace(workspace=str(tmp_path), match="m1")
+    assert _cmd_harness(args) == 0
+    out = capsys.readouterr().out
+    assert "2.1.226" in out
+    assert "Bashx1" in out
+    assert "bypassPermissions" in out
+
+
+def test_the_harness_command_says_so_when_no_arm_streams(
+    tmp_path: Path, capsys
+) -> None:
+    """A Stella-only match is not an error; it just has no such stream."""
+    from arenabench.cli import _cmd_harness
+
+    (tmp_path / "matches" / "m1" / "jobs" / "m1-stella").mkdir(parents=True)
+    args = argparse.Namespace(workspace=str(tmp_path), match="m1")
+    assert _cmd_harness(args) == 0
+    assert "no arm published a harness stream" in capsys.readouterr().out
+
+
+def test_zeroed_stream_usage_is_disclosed_not_printed_as_free(
+    tmp_path: Path, capsys
+) -> None:
+    """A gateway-routed seat streams zeros; that is not "this trial was free".
+
+    Printing `0 tokens` beside a nonzero self-reported cost reads as a
+    contradiction at best and as an efficiency claim at worst — and the seats
+    it happens to are exactly the ones a cost comparison is about.
+    """
+    from arenabench.cli import _cmd_harness
+
+    trial = tmp_path / "matches" / "m1" / "jobs" / "m1-claude-code" / "t__a"
+    write_stream(
+        trial / STREAM_NAME,
+        [
+            init_event(model="glm-5.2"),
+            assistant("msg_a", usage={"input_tokens": 0, "output_tokens": 0}),
+            result_event(total_cost_usd=3.02),
+        ],
+    )
+    args = argparse.Namespace(workspace=str(tmp_path), match="m1")
+    assert _cmd_harness(args) == 0
+    out = capsys.readouterr().out
+    assert "stream reported no usage" in out
+    assert "3.0200" in out
