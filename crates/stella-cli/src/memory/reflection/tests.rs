@@ -71,20 +71,25 @@ impl Provider for CapturingProvider {
 
 /// Drive the real prompt builder and hand back exactly what it sent.
 async fn prompt_for(succeeded: bool) -> String {
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::create_dir_all(dir.path().join(".stella")).expect("workspace");
-    let provider = CapturingProvider::default();
     let transcript = vec![
         CompletionMessage::user("fix the leak"),
         CompletionMessage::assistant("swapped db() for withTenantDb"),
     ];
+    prompt_for_evidence(super::TurnEvidence::from_transcript(&transcript, succeeded)).await
+}
+
+/// The same, for a caller that has already assembled the turn's evidence — the
+/// selection tests below build transcripts and friction ledgers of their own.
+async fn prompt_for_evidence(evidence: super::TurnEvidence<'_>) -> String {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join(".stella")).expect("workspace");
+    let provider = CapturingProvider::default();
     super::reflect_on_turn(
         &provider,
         "capturing",
         dir.path(),
-        &transcript,
+        evidence,
         &["testing".to_string()],
-        succeeded,
         None,
         super::ReflectionPosture::default(),
     )
@@ -236,9 +241,8 @@ async fn dispatch_shape(
         &provider,
         "capturing",
         dir.path(),
-        &transcript,
+        super::TurnEvidence::from_transcript(&transcript, true),
         &["testing".to_string()],
-        true,
         None,
         posture,
     )
