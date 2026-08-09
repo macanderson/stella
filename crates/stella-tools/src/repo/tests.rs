@@ -139,15 +139,84 @@ async fn repo_status_reports_branch_upstream_and_changed_rows() {
     assert_eq!(status["truncated"], false);
 }
 
+/// A candidate shadow must say where the work will land.
+///
+/// Stella runs the agent in a linked worktree created with
+/// `git worktree add --detach`, so `branch` is genuinely null — and nothing in
+/// the payload said why. Observed in a real session: the agent read
+/// `branch: null` as a broken repository, and its own reasoning shows it
+/// spending a shell call on `git status` to re-derive what this field states.
+#[tokio::test]
+async fn a_detached_linked_worktree_reports_the_branch_the_work_lands_on() {
+    if !git_available().await {
+        eprintln!("skipping worktree-context test: `git` not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let ws = fixture(dir.path()).await;
+
+    // A Stella candidate workspace, in the shape `candidate_ws` creates it:
+    // a linked worktree on no branch at all.
+    let shadow = dir.path().join("stella_candidate_1_0");
+    sh_git(
+        &ws,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            shadow.to_str().unwrap(),
+            "HEAD",
+        ],
+    )
+    .await;
+
+    let out = RepoStatusTool(backend())
+        .execute(&Value::Null, &shadow)
+        .await;
+    let ToolOutput::Ok { content } = out else {
+        panic!("repo_status must succeed inside a shadow: {out:?}");
+    };
+    let status: Value = serde_json::from_str(&content).expect("typed JSON payload");
+
+    // The disorienting part, unchanged and correct: it really is on no branch.
+    assert!(status["branch"].is_null(), "{content}");
+    // …and now it says why, and names the branch the work will land on. Before
+    // this, an agent read `branch: null` as a broken repository and spent a
+    // shell call re-deriving it.
+    assert_eq!(status["worktree"]["linked"], true, "{content}");
+    assert_eq!(status["worktree"]["main_branch"], "main", "{content}");
+}
+
+/// The main checkout is not a linked worktree and not a shadow. Without this,
+/// a context block that reported `linked: true` everywhere would be worse than
+/// none — it would tell every ordinary session it was running in a sandbox.
+#[tokio::test]
+async fn the_main_checkout_is_not_reported_as_linked_or_a_shadow() {
+    if !git_available().await {
+        eprintln!("skipping worktree-context test: `git` not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let ws = fixture(dir.path()).await;
+
+    let out = RepoStatusTool(backend()).execute(&Value::Null, &ws).await;
+    let ToolOutput::Ok { content } = out else {
+        panic!("repo_status must succeed: {out:?}");
+    };
+    let status: Value = serde_json::from_str(&content).expect("typed JSON payload");
+    assert_eq!(status["worktree"]["linked"], false, "{content}");
+    assert_eq!(status["worktree"]["candidate_shadow"], false, "{content}");
+    assert_eq!(status["worktree"]["main_branch"], "main", "{content}");
+}
+
 /// The Terminal-Bench `fix-git` witness, at the grain that caused it.
 ///
-/// A commit orphaned by a checkout is exactly the state that task hides,
-/// and every field `repo_status` used to carry is structurally blind to it:
-/// `branch`, `ahead`, `behind` and `changed` describe the WORKING TREE, and
-/// an orphaned commit leaves the working tree clean. The tool answered
-/// truthfully — `branch: null` (detached), `changed: []` (clean) — and told
-/// the caller nothing it could act on, so the agent fell back to raw
-/// `git fsck` / `git reflog` from step 1.
+/// A commit orphaned by a checkout is exactly the state that task hides, and
+/// every field `repo_status` used to carry is structurally blind to it:
+/// `branch`, `ahead`, `behind` and `changed` describe the WORKING TREE, and an
+/// orphaned commit leaves the working tree clean. The tool answered truthfully
+/// — `branch: null`, `changed: []` — and told the caller nothing it could act
+/// on, so the agent fell back to raw `git fsck` / `git reflog` from step 1.
 ///
 /// It must now name where HEAD is, and list the commit nothing points at.
 #[tokio::test]

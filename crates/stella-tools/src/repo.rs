@@ -103,11 +103,36 @@ pub struct CommitRef {
     pub subject: String,
 }
 
+/// Which checkout of the repository this is.
+///
+/// Without it, an agent running in a Stella candidate workspace reads
+/// `branch: null` and concludes something is wrong with the repository — the
+/// shadow is created with `git worktree add --detach`, so it is genuinely on
+/// no branch, and nothing in the payload said why. Observed costing a bash
+/// round-trip to `git status` on the first turn of a real session, purely to
+/// re-derive what this field states.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WorktreeContext {
+    /// True when this is a linked worktree rather than the repository's main
+    /// checkout.
+    pub linked: bool,
+    /// True when this is a Stella candidate workspace — an isolated shadow
+    /// whose edits are adopted back into the real tree. Detached by design.
+    pub candidate_shadow: bool,
+    /// The branch the repository's MAIN checkout is on. A caller in a detached
+    /// shadow almost always wants this rather than its own `branch: null`: it
+    /// is the branch the work will land on.
+    pub main_branch: Option<String>,
+}
+
 /// The `repo_status` payload: typed rows, bounded.
 #[derive(Debug, Clone, Serialize)]
 pub struct RepoStatus {
     /// Current branch; `None` when the checkout is detached.
     pub branch: Option<String>,
+    /// Which checkout this is, and what the main one is on. `None` outside a
+    /// repository.
+    pub worktree: Option<WorktreeContext>,
     /// Where `HEAD` actually points. Always populated, and the only way to
     /// read the state at all when [`Self::branch`] is `None` — a detached
     /// checkout reported `branch: null` and nothing else, which is true and
@@ -452,6 +477,75 @@ impl GitCli {
         }
     }
 
+    /// Which checkout this is, and the branch the main one is on.
+    ///
+    /// Every fact here comes from `git worktree list --porcelain`, whose FIRST
+    /// record is always the main worktree — so one invocation answers both
+    /// "am I a linked worktree" and "what is the real checkout on". The
+    /// alternative, comparing `--git-dir` against `--git-common-dir`, answers
+    /// only the first and needs a second call for the second.
+    ///
+    /// A candidate shadow is recognised by the per-worktree baseline ref the
+    /// pipeline pins at creation, not by the directory name. The name is a
+    /// convention (`stella_candidate_<pid>_<seq>`) that a temp dir could
+    /// coincide with; the ref is the pipeline's own signature.
+    async fn worktree_context(&self, root: &Path) -> Result<Option<WorktreeContext>, RepoError> {
+        let (code, listing) =
+            Self::git_stdout(root, "status", &["worktree", "list", "--porcelain"]).await?;
+        if code != 0 {
+            return Ok(None);
+        }
+        // The first record is the main worktree; its `branch` line is a full
+        // ref, and a detached main checkout has none.
+        let mut main_branch = None;
+        for line in listing.lines() {
+            if let Some(rest) = line.strip_prefix("branch ") {
+                main_branch = Some(
+                    rest.trim()
+                        .strip_prefix("refs/heads/")
+                        .unwrap_or(rest.trim())
+                        .to_string(),
+                );
+                break;
+            }
+            // A blank line ends the first record: the main worktree is
+            // detached, and later records are other worktrees, not it.
+            if line.trim().is_empty() {
+                break;
+            }
+        }
+        let main_path = listing
+            .lines()
+            .next()
+            .and_then(|l| l.strip_prefix("worktree "))
+            .map(str::trim);
+        let linked = main_path.is_some_and(|main| {
+            // Compare canonically: the listing reports `/private/var/...`
+            // where the caller holds `/var/...` on macOS.
+            let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            canon(Path::new(main)) != canon(root)
+        });
+        let candidate_shadow = matches!(
+            Self::git_stdout(
+                root,
+                "status",
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    crate::verify::WITNESS_BASELINE_WORKTREE_REF,
+                ],
+            )
+            .await,
+            Ok((0, _))
+        );
+        Ok(Some(WorktreeContext {
+            linked,
+            candidate_shadow,
+            main_branch,
+        }))
+    }
+
     /// How many stash entries exist. Zero rules the stash out; it is not noise.
     async fn stash_count(&self, root: &Path) -> Result<u32, RepoError> {
         match Self::git_stdout(root, "status", &["stash", "list"]).await? {
@@ -497,11 +591,13 @@ impl RepoBackend for GitCli {
                 path: line[3..].to_string(),
             });
         }
+        let worktree = self.worktree_context(root).await?;
         let head = self.head_commit(root).await?;
         let (unreachable, unreachable_truncated) = self.unreachable_commits(root).await?;
         let stashes = self.stash_count(root).await?;
         Ok(RepoStatus {
             branch,
+            worktree,
             head,
             ahead,
             behind,
