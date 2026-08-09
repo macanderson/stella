@@ -3400,6 +3400,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "stella-core",
+ "stella-diag",
  "stella-graph",
  "stella-home",
  "stella-media",

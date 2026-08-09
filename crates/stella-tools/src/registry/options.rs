@@ -28,6 +28,21 @@ pub struct RegistryOptions {
     /// policy is inert. Not a tool switch — it configures the registry's own
     /// observation machinery, which no MCP or custom tool ever routes around.
     pub probe_ignore_policy: crate::shell_touch::IgnorePolicy,
+    /// The process's diagnostic handle, when the host has one.
+    ///
+    /// `None` — the default — means the built-ins record nothing, which is
+    /// what a library consumer and every test get unless they ask otherwise.
+    /// A handle rides here rather than through a post-construction
+    /// `attach_*` setter because the tools that use it are built once, in
+    /// [`super::process_tools::builtins`], and a setter would have to be
+    /// remembered at each of the ten sites that already call
+    /// [`super::ToolRegistry::attach_events`] — a gap that fails silently, by
+    /// recording nothing, in exactly the runs this exists to explain.
+    ///
+    /// Only `verify_done` reads it today (#2486). It is the crate's seam for
+    /// the diagnostic plane, not that tool's private channel: a built-in with
+    /// a decision worth explaining takes it from here too.
+    pub diagnostics: Option<Arc<stella_diag::Dx>>,
 }
 
 impl RegistryOptions {

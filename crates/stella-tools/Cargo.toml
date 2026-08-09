@@ -11,6 +11,11 @@ publish.workspace = true
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
+# `verify_done`'s per-phase wall clock (#2486). The diagnostic plane is the
+# only channel that can carry it: a tool's `ToolOutput` is what the loop
+# detector keys on, so an elapsed time there would blind it. stella-diag is a
+# leaf crate by construction, so this adds no cycle.
+stella-diag = { path = "../stella-diag" }
 stella-graph = { path = "../stella-graph" }
 stella-store = { path = "../stella-store" }
 stella-media = { path = "../stella-media" }
