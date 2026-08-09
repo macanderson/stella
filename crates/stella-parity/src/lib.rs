@@ -119,8 +119,9 @@ pub const UNWITNESSED_BASELINE: usize = 3;
 pub static CAPABILITIES: &[Capability] = &[
     Capability {
         id: "turn.run",
-        engine_home: "stella-core driver: one bounded agent turn (run_turn as a loop over run_step)",
-        engine_entries: &["run_turn", "run_turn_with_sender", "run_step", "new_turn"],
+        engine_home: "stella-core driver: one bounded agent turn (drive as a loop over run_step; \
+                      run_turn is drive over an adopted transcript)",
+        engine_entries: &["run_turn", "run_turn_with_sender", "drive", "run_step", "new_turn"],
         cli: SurfacePosture::Shipped {
             mechanism: "`stella run` / deck turns via agent::run_turn and the pipeline drivers",
             witness: "non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_scope_review",

@@ -4,16 +4,16 @@
 //! and the retry-jitter RNG across awaits — `stella-cli::fleet_cmd`), so it
 //! cannot be `tokio::spawn`ed onto the server's multi-thread runtime. Instead
 //! each session gets its own OS thread running a **current-thread** runtime that
-//! `block_on`s a loop over `stella_engine::run_step`; the server side
-//! communicates with it purely through
+//! `block_on`s `stella_engine::Engine::drive` over a `TurnState` this crate
+//! owns; the server side communicates with it purely through
 //! `Send` channels — an outbound [`ServerFrame`] stream and the shared
 //! [`Pending`] one-shot registry. This is the fleet's bridge, reused for a
 //! long-lived server instead of a batch worker.
 //!
 //! Scope note: one [`Session`] drives one turn. Multi-turn sessions (retaining
 //! the message history across turns) layer on top of this without changing the
-//! transport; per-step checkpointing happens here (see [`drive_turn`]) through
-//! the `CheckpointSink` on `EngineConfig`, so a served turn interrupted
+//! transport; per-step checkpointing is the engine loop's (see [`drive_turn`])
+//! through the `CheckpointSink` on `EngineConfig`, so a served turn interrupted
 //! mid-flight resumes from its last step boundary rather than being re-run
 //! from the prompt. That sink comes from one of two places:
 //! [`SessionSpec::checkpoint`], which names a key in the server's
@@ -25,14 +25,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use stella_core::EngineConfig;
-use stella_core::bus::{HookBus, names as bus_names};
-use stella_core::driver::lifecycle::{turn_outcome_payload, turn_started_payload};
-use stella_engine::{
-    BudgetGuard, CancelToken, Engine, EventSender, StepOutcome, TurnOutcome, step_cap_reason,
-};
+use stella_engine::{BudgetGuard, CancelToken, Engine, EventSender, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, CompletionResult, ProviderError, StageKind, ToolOutput,
-    ToolSchema,
+    AgentEvent, CompletionMessage, CompletionResult, ProviderError, ToolOutput, ToolSchema,
 };
 use tokio::runtime::Builder;
 use tokio::sync::mpsc;
@@ -467,128 +462,48 @@ pub(crate) struct DrivenTurn {
     pub(crate) budget: BudgetGuard,
 }
 
-/// Drive one turn as a loop over [`Engine::run_step`], the step-scoped facade
-/// `stella-engine` exists to expose (#1129).
+/// Drive one turn through [`Engine::drive`], the engine's own turn loop, over
+/// a [`TurnState`] this host owns.
 ///
-/// This is deliberately the same loop as `Engine::run_turn_with_sender` —
-/// which is itself a loop over `run_step`, so there is one implementation of
-/// a step and no second engine here. What driving it from this side buys is
-/// the two things a whole-turn call cannot give a durable host:
+/// The loop itself used to live here, as a third copy of the same five
+/// obligations `Engine::run_turn_with_sender` and the engine's resume driver
+/// each kept — and, exactly as three copies predict, this one silently kept
+/// only four: an `EngineConfig::turn_halt` armed by an embedder through
+/// [`SessionSpec::config`] was never consulted (#2452). Owning the
+/// [`TurnState`] rather than the loop is what actually buys a durable host the
+/// two things a whole-turn call cannot give it, and both survive the move:
 ///
-/// - **A step-boundary cancel.** [`CancelToken`] is read at the top of every
-///   step, so `POST /v1/turns/{id}/cancel` interrupts CPU-bound work
-///   *between* reverse requests — compaction, loop detection — instead of
-///   only at the next time the engine happens to ask the host something.
-///   Before this, a turn that was mid-compaction observed a cancel only once
-///   it next parked on a reverse request.
-/// - **A checkpoint seam.** `StepOutcome::Continue` is the one moment the
-///   transcript is guaranteed well-paired (no `tool_use` without its
-///   `tool_result`), which is exactly where a durable runner would persist
-///   `state.to_checkpoint()`. It does: given a `CheckpointSink` on
-///   `EngineConfig`, every step boundary of a served turn writes a resume
-///   point, exactly as a CLI turn does — the two drivers call the same
-///   `Engine::persist_checkpoint`, so an HTTP turn and a local turn are
-///   equally recoverable rather than merely similar.
+/// - **A step-boundary cancel.** [`CancelToken`] rides on the state, and
+///   `Engine::run_step` reads it at the top of every step — so
+///   `POST /v1/turns/{id}/cancel` interrupts CPU-bound work *between* reverse
+///   requests (compaction, loop detection) instead of only at the next time
+///   the engine happens to ask the host something.
+/// - **The finished transcript by value.** `Engine::run_turn` writes its
+///   result back through `&mut` borrows; owning the state means the messages
+///   and the spend come back as values, which is what lets this settle them
+///   into the session registry.
 ///
-///   That parity is load-bearing in the other direction too, which is why the
-///   terminal arms below discard unconditionally instead of keeping the
-///   resume point of a turn that was *cancelled*. Retaining it is arguable —
-///   a cancelled turn was interrupted, not finished — but it is a change to
-///   what a checkpoint means, and making it here alone would leave a served
-///   turn and a CLI turn recoverable under different rules while this comment
-///   claimed otherwise. The consequence, stated so it is not discovered:
-///   what survives is the turn that died *without* unwinding (a `SIGKILL`, a
-///   panic, a lost machine), not the tail of a graceful drain.
+/// The checkpoint seam is the engine's, and always was — both drivers called
+/// the same `Engine::persist_checkpoint`, so an HTTP turn and a local turn are
+/// equally recoverable rather than merely similar. That includes discarding
+/// the resume point of a turn that was *cancelled*. Retaining it is arguable —
+/// a cancelled turn was interrupted, not finished — but it is a change to what
+/// a checkpoint means, and making it for served turns alone would leave the
+/// two recoverable under different rules. The consequence, stated so it is not
+/// discovered: what survives is the turn that died *without* unwinding (a
+/// `SIGKILL`, a panic, a lost machine), not the tail of a graceful drain.
+///
+/// [`TurnState`]: stella_core::step::TurnState
 pub(crate) async fn drive_turn(
     engine: &Engine<'_>,
     messages: Vec<CompletionMessage>,
     budget: BudgetGuard,
     events: &mpsc::UnboundedSender<AgentEvent>,
     cancel: CancelToken,
-    bus: Option<&HookBus>,
 ) -> DrivenTurn {
     let events = EventSender::new(events.clone());
-    // The stage marker `run_turn` opens with. Emitted here for the same
-    // reason the loop is here: a host driving steps must produce the identical
-    // event sequence, or a client cannot tell the two drivers apart — which is
-    // the whole promise of `run_turn` being a loop over `run_step`.
-    let _ = events.send(AgentEvent::Stage {
-        name: StageKind::Execute,
-    });
-    let max_steps = engine.max_steps();
-    // The turn *boundary* on the hook bus, which `run_step` cannot emit — it
-    // is per-step, and a turn is what a host driving steps assembles itself
-    // (#1298). Same argument as the stage marker above and the step-cap exit
-    // below: this loop owns exactly the framing `run_turn_with_sender` owns,
-    // and it emits it through `run_turn`'s own payload shapers so the two
-    // drivers cannot say the same thing differently.
-    if let Some(bus) = bus {
-        bus.emit_named(
-            bus_names::AGENT_TURN_STARTED,
-            turn_started_payload(messages.len(), max_steps, engine.call_role()),
-        );
-    }
     let mut state = engine.new_turn(messages, budget).with_cancel_token(cancel);
-
-    let outcome = loop {
-        if state.step() >= max_steps {
-            // The belt-and-suspenders backstop, reported exactly as
-            // `run_turn` reports it — the string is shared rather than
-            // copied, because two spellings of one failure read as two
-            // failures.
-            let reason = step_cap_reason(max_steps);
-            let _ = events.send(AgentEvent::Error {
-                message: reason.clone(),
-                retryable: false,
-            });
-            engine.discard_checkpoint();
-            break TurnOutcome::Aborted {
-                reason,
-                kind: stella_core::AbortKind::DeliberateStop,
-                cost_usd: state.total_cost_usd(),
-            };
-        }
-        match engine.run_step(&mut state, &events).await {
-            // The checkpoint seam: the one moment the transcript is
-            // guaranteed well-paired. A served turn that dies here — a dropped
-            // connection, a killed process — resumes from this point instead
-            // of re-running the prompt and paying for the work twice.
-            StepOutcome::Continue => {
-                engine.persist_checkpoint(&state);
-                continue;
-            }
-            terminal => {
-                if let Some(outcome) = terminal.into_turn_outcome() {
-                    // The turn ended; a resume point that outlives it would
-                    // offer to replay work the client already saw finish.
-                    engine.discard_checkpoint();
-                    break outcome;
-                }
-                // Unreachable: `into_turn_outcome` is `None` only for
-                // `Continue`, which the arm above already took. Breaking
-                // rather than panicking keeps a future variant from taking
-                // down a session thread.
-                break TurnOutcome::Aborted {
-                    reason: "engine step returned no outcome".to_string(),
-                    kind: stella_core::AbortKind::Failure,
-                    cost_usd: state.total_cost_usd(),
-                };
-            }
-        }
-    };
-
-    // Every exit above lands here — including the step-cap backstop, whose
-    // turn is exactly the runaway an observer most wants paired with its
-    // `started`. Emitting from the individual breaks instead would be one
-    // added early return away from a silently unpaired boundary, which is the
-    // same reasoning that put `agent.step.completed` in a wrapper rather than
-    // at each of `run_step_inner`'s dozen exits.
-    if let Some(bus) = bus {
-        bus.emit_named(
-            bus_names::AGENT_TURN_COMPLETED,
-            turn_outcome_payload(&outcome, state.step()),
-        );
-    }
+    let outcome = engine.drive(&mut state, &events).await;
     let budget = *state.budget();
     DrivenTurn {
         outcome,
@@ -822,21 +737,10 @@ fn run_session(
                         spec.budget,
                         &event_tx,
                         cancel,
-                        bus.as_ref(),
                     )
                     .await
                 }
-                None => {
-                    drive_turn(
-                        &engine,
-                        spec.messages,
-                        spec.budget,
-                        &event_tx,
-                        cancel,
-                        bus.as_ref(),
-                    )
-                    .await
-                }
+                None => drive_turn(&engine, spec.messages, spec.budget, &event_tx, cancel).await,
             }
         };
         let messages = outcome.messages;
