@@ -254,9 +254,19 @@ pub fn build_overview(root: &Path) -> Value {
                 json!({
                     "built": false,
                     "note": "no code graph index — run `stella init` to build one; \
-                             language, entry points, and storage are unavailable until then",
+                             entry points and storage are unavailable until then",
                 }),
             );
+            // Languages without the graph. `code_section` derives them from
+            // indexed files, so the one moment a caller most needs to know what
+            // kind of tree this is — the first call, before any index exists —
+            // was the one moment the field was missing entirely. Tracked files
+            // only, via git, so a vendored `node_modules` cannot rename the
+            // project's language.
+            let languages = tracked_languages(root);
+            if !languages.is_empty() {
+                map.insert("languages".into(), json!(languages));
+            }
         }
     }
     out
@@ -354,6 +364,28 @@ fn branch_convention(branches: &[String]) -> Value {
         }),
         _ => Value::Null,
     }
+}
+
+/// Languages present among git-TRACKED files, for the pre-index case.
+///
+/// Tracked rather than walked, for the reason the code graph is indexed rather
+/// than globbed: a vendored `node_modules` or `target/` dwarfs the project and
+/// would rename its language. `git ls-files` already answers "what is actually
+/// ours", and honours `.gitignore` for free.
+///
+/// Reuses [`language_of`] so this fallback and the indexed answer can never
+/// disagree about what a `.rs` file is.
+fn tracked_languages(root: &Path) -> Vec<&'static str> {
+    let Some(files) = git_lines(root, &["ls-files"]) else {
+        return Vec::new();
+    };
+    let mut found: BTreeSet<&'static str> = BTreeSet::new();
+    for file in &files {
+        if let Some(language) = language_of(file) {
+            found.insert(language);
+        }
+    }
+    found.into_iter().collect()
 }
 
 /// Non-empty stdout lines from a `git` invocation, or `None` when git failed.
