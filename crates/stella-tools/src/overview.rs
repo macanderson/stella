@@ -235,20 +235,36 @@ const OVERVIEW_BRANCHES: usize = 8;
 /// Non-empty stdout lines from one `git` read, or `None` when git is absent,
 /// the directory is not a repository, or the command failed.
 ///
-/// Direct argv — no shell, nothing interpolated into a command string — and
-/// the full spawn-env policy, so an ambient `GIT_DIR` from a surrounding
-/// hook cannot re-aim these reads at another repository and have the
-/// overview report its branches as this workspace's.
+/// Direct argv — no shell, nothing interpolated into a command string.
 ///
 /// Synchronous on purpose: every caller here already runs on the blocking
 /// pool (`build_overview` is dispatched there), and these are single ref
 /// reads.
+///
+/// `current_dir` is **not** sufficient to say which repository this reads.
+/// `GIT_DIR` overrides it, and git *exports* `GIT_DIR` to every hook it runs —
+/// so an overview assembled from inside a pre-push hook would report the outer
+/// repository's branches, remotes and languages as this workspace's, silently
+/// and with no error to notice. `an_ambient_git_dir_cannot_retarget_the_overview`
+/// is the witness.
+///
+/// [`scrub_spawn_std_env`](crate::subprocess_env::scrub_spawn_std_env) is the
+/// whole answer and the only correct call here: it removes the retargeting
+/// family (`GIT_REPO_ENV_VARS`) and the forced-colour family *before*
+/// delegating to the credential/ambient-authority scrub. Reaching for
+/// `scrub_sensitive_std_env` and re-removing `GIT_REPO_ENV_VARS` by hand is
+/// the exact partial application that helper exists to prevent — and it
+/// silently drops the colour half, which matters because this output goes to
+/// a captured pipe rather than a terminal.
 fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
     let mut command = std::process::Command::new("git");
     command
         .args(args)
         .current_dir(root)
-        .stdin(std::process::Stdio::null());
+        // Nothing here reads stdin; inheriting it lets a git that decides to
+        // prompt (a credential helper on a remote URL) hang the overview.
+        .stdin(std::process::Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0");
     crate::subprocess_env::scrub_spawn_std_env(&mut command);
     let output = command.output().ok()?;
     if !output.status.success() {
@@ -525,50 +541,6 @@ fn tracked_languages(root: &Path) -> Vec<&'static str> {
         }
     }
     found.into_iter().collect()
-}
-
-/// Non-empty stdout lines from a `git` invocation, or `None` when git failed.
-///
-/// Synchronous on purpose: every caller here already runs on the blocking pool
-/// (`build_overview` is dispatched there), and these are single ref reads.
-///
-/// `current_dir` is **not** sufficient to say which repository this reads.
-/// `GIT_DIR` overrides it, and git *exports* `GIT_DIR` to every hook it runs —
-/// so an overview assembled from inside a pre-push hook would report the outer
-/// repository's branches, remotes and languages as this workspace's, silently
-/// and with no error to notice.
-///
-/// Both scrubs are needed and neither subsumes the other, which is easy to get
-/// wrong: `scrub_sensitive_std_env` drops credentials and the *ambient
-/// authority* set — `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF` and friends, the
-/// vars that make git run someone else's code — but the *retargeting* vars
-/// live in [`crate::exec::GIT_REPO_ENV_VARS`] and are removed by name. A first
-/// draft of this used only the former and still read the wrong repository;
-/// `an_ambient_git_dir_cannot_retarget_the_overview` is what caught it.
-fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
-    let mut command = std::process::Command::new("git");
-    command
-        .args(args)
-        .current_dir(root)
-        // Nothing here reads stdin; inheriting it lets a git that decides to
-        // prompt (a credential helper on a remote URL) hang the overview.
-        .stdin(std::process::Stdio::null())
-        .env("GIT_TERMINAL_PROMPT", "0");
-    crate::subprocess_env::scrub_sensitive_std_env(&mut command);
-    for var in crate::exec::GIT_REPO_ENV_VARS {
-        command.env_remove(var);
-    }
-    let out = command.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(str::to_string)
-            .collect(),
-    )
 }
 
 fn open_graph(root: &Path) -> Option<crate::graph::OpenedGraph> {
