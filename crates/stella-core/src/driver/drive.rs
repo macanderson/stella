@@ -59,7 +59,7 @@ use stella_protocol::{AgentEvent, StageKind};
 
 use super::{Engine, TurnOutcome, bus, lifecycle, settlement, step_cap_reason};
 use crate::event_sender::EventSender;
-use crate::step::{AbortKind, StepOutcome, TurnState};
+use crate::step::{AbortKind, TurnState};
 
 impl Engine<'_> {
     /// Drive `state` to an ordinary end: a loop over [`Engine::run_step`],
@@ -124,63 +124,54 @@ impl Engine<'_> {
                     cost_usd: state.total_cost_usd(),
                 };
             }
-            match self.run_step(state, events).await {
-                StepOutcome::Continue => {
-                    // The checkpoint seam (#971). `Continue` is the one moment
-                    // the transcript is guaranteed well-paired — no `tool_use`
-                    // without its `tool_result` — and `run_step` has already
-                    // advanced `state.step()`, so the snapshot names the step
-                    // that runs NEXT rather than the one that just finished.
-                    // Writing here and nowhere else is what makes a resumed
-                    // turn indistinguishable from one never interrupted.
-                    self.persist_checkpoint(state);
+            // `StepOutcome::into_turn_outcome` is the one conversion from "how
+            // the step ended" to "how the turn ended", and `None` is its
+            // contract for "the turn continues" — so falling through here is
+            // that contract being read, not a variant being assumed away.
+            if let Some(outcome) = self.run_step(state, events).await.into_turn_outcome() {
+                return outcome;
+            }
 
-                    // "The goal is already met" — the one stopping condition
-                    // that is not a limit being hit. Asked here, at a committed
-                    // boundary, for the same reason the checkpoint is written
-                    // here: ending now can never orphan a `tool_use` from its
-                    // `tool_result`. Asking mid-step could.
-                    //
-                    // Asked AFTER a step rather than at the top of the loop so
-                    // a turn always does something: a predicate already true on
-                    // entry describes a goal met before this turn began, which
-                    // is the caller's business to notice, not a reason to
-                    // return an empty turn.
-                    //
-                    // `Completed`, never `Aborted`. This turn did its work;
-                    // `Aborted` is the failure arm and reaches the CLI as a
-                    // non-zero exit, which Harbor — and any other host reading
-                    // exit codes — scores identically to the agent crashing.
-                    if let Some(reason) = self
-                        .config
-                        .turn_halt
-                        .as_ref()
-                        .and_then(|halt| halt.halt_reason())
-                    {
-                        // Prefer the model's own last words; fall back to the
-                        // predicate's reason when the final step was pure tool
-                        // calls (an assistant message that only called tools
-                        // has empty `content`), so the turn never reports an
-                        // empty answer.
-                        let text = settlement::last_assistant_text(state).unwrap_or(reason);
-                        return TurnOutcome::Completed {
-                            text,
-                            cost_usd: state.total_cost_usd(),
-                        };
-                    }
-                }
-                terminal => {
-                    // `into_turn_outcome` is `None` only for `Continue`, which
-                    // the arm above already took.
-                    if let Some(outcome) = terminal.into_turn_outcome() {
-                        return outcome;
-                    }
-                    return TurnOutcome::Aborted {
-                        reason: "engine step returned no outcome".to_string(),
-                        kind: AbortKind::Failure,
-                        cost_usd: state.total_cost_usd(),
-                    };
-                }
+            // Past here the step was `Continue`: the checkpoint seam (#971),
+            // the one moment the transcript is guaranteed well-paired — no
+            // `tool_use` without its `tool_result` — and `run_step` has already
+            // advanced `state.step()`, so the snapshot names the step that runs
+            // NEXT rather than the one that just finished. Writing here and
+            // nowhere else is what makes a resumed turn indistinguishable from
+            // one that was never interrupted.
+            self.persist_checkpoint(state);
+
+            // "The goal is already met" — the one stopping condition that is
+            // not a limit being hit. Asked here, at a committed boundary, for
+            // the same reason the checkpoint is written here: ending now can
+            // never orphan a `tool_use` from its `tool_result`. Asking mid-step
+            // could.
+            //
+            // Asked AFTER a step rather than at the top of the loop so a turn
+            // always does something: a predicate already true on entry
+            // describes a goal met before this turn began, which is the
+            // caller's business to notice, not a reason to return an empty
+            // turn.
+            //
+            // `Completed`, never `Aborted`. This turn did its work; `Aborted`
+            // is the failure arm and reaches the CLI as a non-zero exit, which
+            // Harbor — and any other host reading exit codes — scores
+            // identically to the agent crashing.
+            if let Some(reason) = self
+                .config
+                .turn_halt
+                .as_ref()
+                .and_then(|halt| halt.halt_reason())
+            {
+                // Prefer the model's own last words; fall back to the
+                // predicate's reason when the final step was pure tool calls
+                // (an assistant message that only called tools has empty
+                // `content`), so the turn never reports an empty answer.
+                let text = settlement::last_assistant_text(state).unwrap_or(reason);
+                return TurnOutcome::Completed {
+                    text,
+                    cost_usd: state.total_cost_usd(),
+                };
             }
         }
     }

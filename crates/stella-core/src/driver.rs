@@ -1178,10 +1178,12 @@ impl<'a> Engine<'a> {
     ///
     /// # Who calls this, and who deliberately does not
     ///
-    /// This is for a host that drives [`Self::run_step`] itself and owns its
-    /// own loop — it hands back a state to keep stepping. Neither shipping
-    /// surface is one today, and that is a declaration rather than an
-    /// oversight:
+    /// This is for a host that continues an interrupted turn: it hands back a
+    /// state to keep stepping, which the host either passes to [`Self::drive`]
+    /// — the ordinary case, and what `stella-pipeline`'s resumed execute stage
+    /// does — or steps itself through [`Self::run_step`]. Neither shipping
+    /// surface accepts one from the outside today, and that is a declaration
+    /// rather than an oversight:
     ///
     /// - **The CLI** resumes an interrupted turn at *transcript* granularity
     ///   instead. Its turns are dispatched through `stella-pipeline`, which
