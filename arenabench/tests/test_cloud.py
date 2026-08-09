@@ -33,6 +33,7 @@ from arenabench.cloud import (
     CloudError,
     CloudExecutor,
     _cmd_cloud_run,
+    is_moving_ref,
     job_name,
     plan_trials,
     progress_from_states,
@@ -41,7 +42,9 @@ from arenabench.cloud import (
     select_queue,
     slice_spec,
     ssm_env_name,
+    sut_cache_is_current,
     sut_seats,
+    tip_from_ls_remote,
     trial_environment,
 )
 from arenabench.config import match_from_toml
@@ -49,6 +52,9 @@ from arenabench.model import Contestant, Engine, MatchSpec
 
 ACCOUNT = "123456789012"
 BUCKET = f"arenabench-artifacts-{ACCOUNT}"
+#: What ``infra/core.yaml``'s ``SutGitUrl`` defaults to, as the SUT build
+#: project reports it back.
+GIT_URL = "https://github.com/macanderson/stella.git"
 
 
 # --------------------------------------------------------------------------
@@ -133,9 +139,10 @@ class FakeSsm:
 
 
 class FakeCodeBuild:
-    def __init__(self, statuses: list[str]) -> None:
-        self.statuses = list(statuses)
+    def __init__(self, statuses: list[str] | None = None) -> None:
+        self.statuses = list(statuses or ["SUCCEEDED"])
         self.started: list[dict] = []
+        self.project_calls: list[list[str]] = []
         self.polls = 0
 
     def start_build(self, **kwargs: object) -> dict:
@@ -146,6 +153,44 @@ class FakeCodeBuild:
         status = self.statuses[min(self.polls, len(self.statuses) - 1)]
         self.polls += 1
         return {"builds": [{"id": ids[0], "buildStatus": status}]}
+
+    def batch_get_projects(self, *, names: list[str]) -> dict:
+        """The project's own ``GIT_URL`` — the remote a freshness check must
+        consult, since it is the one the buildspec clones."""
+        self.project_calls.append(list(names))
+        return {
+            "projects": [
+                {
+                    "name": names[0],
+                    "environment": {
+                        "environmentVariables": [
+                            {"name": "GIT_URL", "value": GIT_URL},
+                            {"name": "GIT_REF", "value": "main"},
+                        ]
+                    },
+                }
+            ]
+        }
+
+
+class FakeLsRemote:
+    """``git ls-remote`` as a recorded call over a fixed remote ref table."""
+
+    def __init__(self, refs: dict[str, str] | None = None) -> None:
+        self.refs = dict(refs or {})
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def __call__(self, url: str, patterns) -> str:
+        patterns = list(patterns)
+        self.calls.append((url, patterns))
+        return "".join(
+            f"{self.refs[p]}\t{p}\n" for p in patterns if p in self.refs
+        )
+
+
+def _refuse_ls_remote(url: str, patterns) -> str:
+    """The seam a test uses to prove the remote is never consulted."""
+    raise AssertionError(f"git ls-remote must not run: {url} {list(patterns)}")
 
 
 class FakeSts:
@@ -163,10 +208,13 @@ class FakeDynamo:
         return self.pages[min(len(self.calls) - 1, len(self.pages) - 1)]
 
 
-def _executor(**clients: object) -> CloudExecutor:
+def _executor(ls_remote=None, **clients: object) -> CloudExecutor:
     defaults: dict[str, object] = {"sts": FakeSts()}
     defaults.update(clients)
-    return CloudExecutor(clients=defaults)
+    return CloudExecutor(
+        clients=defaults,
+        ls_remote=ls_remote if ls_remote is not None else _refuse_ls_remote,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -402,6 +450,61 @@ class TestAvailableCredentials:
             assert call["WithDecryption"] is False, "values must never transit"
 
 
+class TestRefMutability:
+    """A ref's mutability is a property of its *shape*, and the freshness
+    decision is a pure function of three strings (#2388)."""
+
+    def test_only_a_full_sha_is_immutable(self) -> None:
+        assert not is_moving_ref("a" * 40)
+        assert is_moving_ref("main")
+        assert is_moving_ref("feature/x")
+        assert is_moving_ref("v2.1"), "a tag can be force-moved; treat it as moving"
+        assert is_moving_ref("a" * 12), "an abbreviated sha is not the pinned shape"
+
+    def test_a_moving_ref_reuses_the_cache_only_at_the_remote_tip(self) -> None:
+        tip, stale = "a" * 40, "b" * 40
+        assert sut_cache_is_current("main", tip, tip)
+        assert not sut_cache_is_current("main", stale, tip)
+        assert not sut_cache_is_current("main", "", tip)
+        assert not sut_cache_is_current("main", stale, ""), (
+            "an unresolved tip must never read as agreement"
+        )
+
+    def test_a_full_sha_needs_no_tip_at_all(self) -> None:
+        sha = "c" * 40
+        assert sut_cache_is_current(sha, sha, "")
+        assert not sut_cache_is_current(sha, "", "")
+
+
+class TestTipFromLsRemote:
+    def test_a_branch_wins_over_a_like_named_tag(self) -> None:
+        """`git checkout <ref>` in the buildspec's fresh clone prefers the
+        branch, so the freshness check must resolve the same way."""
+        output = (
+            f"{'a' * 40}\trefs/heads/release\n"
+            f"{'b' * 40}\trefs/tags/release\n"
+        )
+        assert tip_from_ls_remote(output, "release") == "a" * 40
+
+    def test_an_annotated_tag_resolves_to_the_peeled_commit(self) -> None:
+        """`ls-remote` reports the *tag object* for the bare pattern; the
+        build's `git rev-parse HEAD` reports the commit it peels to. Comparing
+        against the tag object would rebuild on every annotated tag forever."""
+        output = (
+            f"{'7' * 40}\trefs/tags/v2.1\n"
+            f"{'9' * 40}\trefs/tags/v2.1^{{}}\n"
+        )
+        assert tip_from_ls_remote(output, "v2.1") == "9" * 40
+
+    def test_a_lightweight_tag_falls_back_to_the_unpeeled_line(self) -> None:
+        assert tip_from_ls_remote(f"{'4' * 40}\trefs/tags/light\n", "light") == "4" * 40
+
+    def test_no_match_is_the_empty_string_not_a_guess(self) -> None:
+        """`ls-remote` exits 0 with no output when nothing matches."""
+        assert tip_from_ls_remote("", "main") == ""
+        assert tip_from_ls_remote(f"{'a' * 40}\trefs/heads/other\n", "main") == ""
+
+
 class TestResolveSut:
     def test_reads_the_per_ref_latest_manifest(self) -> None:
         commit = "a" * 40
@@ -412,7 +515,10 @@ class TestResolveSut:
                 ).encode()
             }
         )
-        sut = _executor(s3=s3).resolve_sut("feature/x")
+        ls_remote = FakeLsRemote({"refs/heads/feature/x": commit})
+        sut = _executor(
+            s3=s3, codebuild=FakeCodeBuild(), ls_remote=ls_remote
+        ).resolve_sut("feature/x")
         assert sut.commit == commit
         assert sut.uri == f"s3://{BUCKET}/binaries/feature-x/{commit}/stella"
 
@@ -431,9 +537,11 @@ class TestResolveSut:
                 {"git_ref": "main", "commit": commit}
             ).encode()
 
-        sut = _executor(s3=s3, codebuild=codebuild).resolve_sut(
-            "main", sleep=sleep, out=lambda _line: None
-        )
+        sut = _executor(
+            s3=s3,
+            codebuild=codebuild,
+            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
+        ).resolve_sut("main", sleep=sleep, out=lambda _line: None)
         assert sut.commit == commit
         (started,) = codebuild.started
         assert started["projectName"] == "arenabench-sut-build"
@@ -445,9 +553,160 @@ class TestResolveSut:
     def test_a_failed_build_is_an_error_not_a_submission(self) -> None:
         codebuild = FakeCodeBuild(["FAILED"])
         with pytest.raises(CloudError, match="FAILED"):
-            _executor(s3=FakeS3(), codebuild=codebuild).resolve_sut(
-                "main", sleep=lambda _s: None, out=lambda _line: None
-            )
+            _executor(
+                s3=FakeS3(),
+                codebuild=codebuild,
+                ls_remote=FakeLsRemote({"refs/heads/main": "e" * 40}),
+            ).resolve_sut("main", sleep=lambda _s: None, out=lambda _line: None)
+
+
+class TestResolveSutFreshness:
+    """#2388: `--ref main` must measure what `main` points at *now*.
+
+    Before this, `resolve_sut` started a build only when
+    `binaries/<ref>/latest.json` was absent — so a moving ref reused whichever
+    artifact happened to be there, forever, and recorded a real commit that
+    was simply not the one asked for.
+    """
+
+    @staticmethod
+    def _cached(ref_safe_name: str, commit: str) -> FakeS3:
+        return FakeS3(
+            {
+                f"binaries/{ref_safe_name}/latest.json": json.dumps(
+                    {"git_ref": ref_safe_name, "commit": commit}
+                ).encode()
+            }
+        )
+
+    def test_a_moving_ref_behind_the_remote_tip_rebuilds(self) -> None:
+        stale, tip = "9" * 40, "4" * 40
+        s3 = self._cached("main", stale)
+        codebuild = FakeCodeBuild(["SUCCEEDED"])
+        ls_remote = FakeLsRemote({"refs/heads/main": tip})
+
+        def start_build(**kwargs: object) -> dict:
+            # The build lands the *current* tip's artifact.
+            s3.objects["binaries/main/latest.json"] = json.dumps(
+                {"git_ref": "main", "commit": tip}
+            ).encode()
+            return FakeCodeBuild.start_build(codebuild, **kwargs)
+
+        codebuild.start_build = start_build  # type: ignore[method-assign]
+        lines: list[str] = []
+        sut = _executor(s3=s3, codebuild=codebuild, ls_remote=ls_remote).resolve_sut(
+            "main", sleep=lambda _s: None, out=lines.append
+        )
+
+        assert sut.commit == tip, "a stale cache must not be reused"
+        assert codebuild.started, "a moving ref behind its remote must rebuild"
+        assert codebuild.started[0]["environmentVariablesOverride"] == [
+            {"name": "GIT_REF", "value": "main", "type": "PLAINTEXT"}
+        ]
+        text = "\n".join(lines)
+        assert tip[:12] in text and stale[:12] in text, (
+            "the rebuild must say which commit it is leaving behind"
+        )
+
+    def test_a_moving_ref_at_the_remote_tip_reuses_the_cache(self) -> None:
+        tip = "4" * 40
+        s3 = self._cached("main", tip)
+        codebuild = FakeCodeBuild(["SUCCEEDED"])
+        sut = _executor(
+            s3=s3, codebuild=codebuild, ls_remote=FakeLsRemote({"refs/heads/main": tip})
+        ).resolve_sut("main", sleep=lambda _s: None, out=lambda _line: None)
+        assert sut.commit == tip
+        assert codebuild.started == [], "an up-to-date artifact must not rebuild"
+
+    def test_a_full_sha_never_consults_the_remote(self) -> None:
+        """The other half of the contract: a pinned run is offline and free.
+        `_refuse_ls_remote` is the default seam, so reaching the remote here
+        raises rather than quietly passing."""
+        sha = "c" * 40
+        s3 = self._cached(sha, sha)
+        codebuild = FakeCodeBuild(["SUCCEEDED"])
+        sut = _executor(s3=s3, codebuild=codebuild).resolve_sut(
+            sha, sleep=lambda _s: None, out=lambda _line: None
+        )
+        assert sut.commit == sha
+        assert codebuild.started == []
+        assert codebuild.project_calls == [], "no GIT_URL lookup for a pinned ref"
+
+    def test_the_remote_is_the_build_projects_own_git_url(self) -> None:
+        """Not a constant in `cloud.py`: `SutGitUrl` is a stack parameter, and
+        checking a different remote than the buildspec clones answers a
+        question nobody asked."""
+        tip = "4" * 40
+        ls_remote = FakeLsRemote({"refs/heads/main": tip})
+        codebuild = FakeCodeBuild(["SUCCEEDED"])
+        _executor(
+            s3=self._cached("main", tip), codebuild=codebuild, ls_remote=ls_remote
+        ).resolve_sut("main", sleep=lambda _s: None, out=lambda _line: None)
+        (url, patterns) = ls_remote.calls[0]
+        assert url == GIT_URL
+        assert codebuild.project_calls == [["arenabench-sut-build"]]
+        assert patterns == [
+            "refs/heads/main",
+            "refs/tags/main^{}",
+            "refs/tags/main",
+        ], "branch first, then the peeled tag — the buildspec's own precedence"
+
+    def test_the_git_url_is_read_once_per_executor(self) -> None:
+        tip = "4" * 40
+        codebuild = FakeCodeBuild(["SUCCEEDED"])
+        executor = _executor(
+            s3=self._cached("main", tip),
+            codebuild=codebuild,
+            ls_remote=FakeLsRemote({"refs/heads/main": tip}),
+        )
+        for _ in range(3):
+            executor.resolve_sut("main", sleep=lambda _s: None, out=lambda _l: None)
+        assert len(codebuild.project_calls) == 1
+
+    def test_a_ref_absent_from_the_remote_stops_the_submission(self) -> None:
+        """`ls-remote` exits 0 with no output for a ref that does not exist,
+        so the miss has to be raised here or it reads as "unchanged"."""
+        with pytest.raises(CloudError, match="no ref 'nope'"):
+            _executor(
+                s3=self._cached("nope", "9" * 40),
+                codebuild=FakeCodeBuild(["SUCCEEDED"]),
+                ls_remote=FakeLsRemote({"refs/heads/main": "4" * 40}),
+            ).resolve_sut("nope", sleep=lambda _s: None, out=lambda _l: None)
+
+    def test_an_unreachable_remote_is_an_error_not_a_stale_reuse(self) -> None:
+        """Failing closed is the point: the alternative is publishing a number
+        measured against a tree nobody chose."""
+
+        def offline(url: str, patterns) -> str:
+            raise CloudError("git ls-remote https://... failed: no route to host")
+
+        with pytest.raises(CloudError, match="no route to host"):
+            _executor(
+                s3=self._cached("main", "9" * 40),
+                codebuild=FakeCodeBuild(["SUCCEEDED"]),
+                ls_remote=offline,
+            ).resolve_sut("main", sleep=lambda _s: None, out=lambda _l: None)
+
+    def test_a_manifest_disagreeing_with_a_pinned_sha_is_refused(self) -> None:
+        """`git checkout <sha>` can only rev-parse to <sha>, so a manifest
+        under `binaries/<sha>/` naming anything else means the artifact's
+        identity is unknown — which is exactly what must never be measured."""
+        sha, other = "c" * 40, "d" * 40
+        with pytest.raises(CloudError, match="identity is in doubt"):
+            _executor(
+                s3=self._cached(sha, other), codebuild=FakeCodeBuild(["SUCCEEDED"])
+            ).resolve_sut(sha, sleep=lambda _s: None, out=lambda _l: None)
+
+    def test_build_missing_off_refuses_a_stale_cache_too(self) -> None:
+        """`build_missing=False` means "do not build", never "run whatever is
+        cached": the stale artifact is still the wrong answer."""
+        stale, tip = "9" * 40, "4" * 40
+        with pytest.raises(CloudError, match="no current prebuilt SUT"):
+            _executor(
+                s3=self._cached("main", stale),
+                codebuild=FakeCodeBuild(["SUCCEEDED"]),
+                ls_remote=FakeLsRemote({"refs/heads/main": tip}),
+            ).resolve_sut("main", build_missing=False)
 
 
 class TestSubmitContract:
@@ -696,7 +955,11 @@ class TestCloudRunCommand:
         )
         batch = FakeBatch()
         executor = _executor(
-            s3=s3, batch=batch, ssm=FakeSsm(["/arenabench/openrouter_api_key"])
+            s3=s3,
+            batch=batch,
+            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
+            codebuild=FakeCodeBuild(),
+            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
         )
 
         rc = _cmd_cloud_run(_run_args(template), executor=executor)
@@ -710,4 +973,9 @@ class TestCloudRunCommand:
         assert env["SUT_COMMIT"] == commit
         assert env["RUN_ID"] == "r-test"
         assert "runs/r-test/jobs.json" in s3.objects
-        assert "cloud status r-test" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "cloud status r-test" in out
+        assert f"sut       : main -> {commit}" in out, (
+            "submit-time output must name ref -> commit, so a reader can see "
+            "which commit 'main' meant on this run (#2388)"
+        )

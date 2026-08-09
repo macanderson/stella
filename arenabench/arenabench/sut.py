@@ -65,6 +65,8 @@ __all__ = [
     "broken_pin_problem",
     "drift_between",
     "embedded_commit",
+    "is_full_sha",
+    "is_safe_ref",
     "list_branches",
     "repo_problem",
     "resolve_pin",
@@ -251,15 +253,34 @@ def _git(repo: Path, *args: str, timeout: float = 30.0) -> str:
     return out.stdout
 
 
-def _safe_ref(ref: str) -> str:
-    """Validate a ref before it reaches a subprocess.
+def is_full_sha(ref: str) -> bool:
+    """Whether ``ref`` is a full 40-hex commit id.
 
-    A full SHA passes unchanged. Anything else must look like an ordinary
-    branch name; in particular a leading ``-`` is rejected, because git would
+    The one ref shape that is *immutable*: it names the same tree forever, so
+    anything derived from it (a built binary, a cached artifact) can never go
+    stale. Every other shape — branch, tag, ``HEAD`` — can point somewhere new
+    tomorrow. :mod:`arenabench.cloud` keys its artifact-freshness decision off
+    exactly this distinction, so the predicate lives here beside the pattern
+    it tests rather than being spelled a second time (#2388).
+    """
+    return bool(_FULL_SHA.match(ref.strip()))
+
+
+def is_safe_ref(ref: str) -> bool:
+    """Whether ``ref`` may be handed to a git subprocess as-is.
+
+    A full SHA always may. Anything else must look like an ordinary branch or
+    tag name; in particular a leading ``-`` is rejected, because git would
     read it as an option rather than a ref.
     """
     ref = ref.strip()
-    if _FULL_SHA.match(ref) or _SAFE_REF.match(ref):
+    return bool(_FULL_SHA.match(ref) or _SAFE_REF.match(ref))
+
+
+def _safe_ref(ref: str) -> str:
+    """:func:`is_safe_ref` as a guard: the ref back, or a typed refusal."""
+    ref = ref.strip()
+    if is_safe_ref(ref):
         return ref
     raise SutUnavailableError(f"refusing to resolve unsafe ref {ref!r}")
 

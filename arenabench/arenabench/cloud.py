@@ -42,11 +42,25 @@ entrypoint, upper-cased basename); a seat none of whose declared names will
 exist in the trial environment would burn a container to score a ``0.0``
 indistinguishable from a real loss — the same contract #1777/#1827 enforce on
 the local path, applied before any job is submitted.
+
+**Mutability is a property of the ref, not of the cache.** ``binaries/<ref>/``
+is keyed by a *name*, but its contents are only ever valid for one *commit*.
+So a cached artifact is reused on presence alone only for an immutable ref (a
+full SHA); for a moving ref — ``main``, a branch, a tag — the remote is asked
+what that name points at now and the artifact is reused only if it agrees.
+Presence-only caching is what #2388 was: ``--ref main`` reused whichever build
+ran last, forever, and recorded a real commit that was simply not the one the
+operator asked for. Failing to reach the remote is an error rather than a
+silent fall-back to the stale artifact, because "measured an unknown tree" is
+the outcome this whole path exists to prevent; an operator who genuinely wants
+the offline path pins a full SHA, which is also what makes the run reportable.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
@@ -55,6 +69,7 @@ from pathlib import Path
 from typing import Any
 
 from .model import MatchSpec, slugify
+from .sut import is_full_sha, is_safe_ref
 
 __all__ = [
     "BURST_QUEUE",
@@ -65,6 +80,7 @@ __all__ = [
     "Progress",
     "SutBinary",
     "TrialPlan",
+    "is_moving_ref",
     "job_name",
     "plan_trials",
     "progress_from_states",
@@ -74,7 +90,9 @@ __all__ = [
     "select_queue",
     "slice_spec",
     "ssm_env_name",
+    "sut_cache_is_current",
     "sut_seats",
+    "tip_from_ls_remote",
     "trial_environment",
 ]
 
@@ -97,6 +115,17 @@ TRIAL_MEMORY_MB = 15360
 
 #: ``describe_jobs`` accepts at most this many ids per call.
 _DESCRIBE_CHUNK = 100
+
+#: The SUT build project's environment variable naming the git remote it
+#: clones (``infra/core.yaml``'s ``SutGitUrl``). Read off the project at
+#: resolve time rather than mirrored here as a URL constant: ``SutGitUrl`` is a
+#: stack *parameter* an operator may retarget, and a freshness check pointed at
+#: a different remote than the build clones is the same class of wrong answer
+#: #2388 is about.
+GIT_URL_VAR = "GIT_URL"
+
+#: How long ``git ls-remote`` may take before the resolution is called failed.
+_LS_REMOTE_TIMEOUT = 30.0
 
 #: Batch job states that mean "waiting for capacity". A quota-limited account
 #: parks most of a large submission here; surfacing the count is what keeps a
@@ -138,6 +167,69 @@ def ref_safe(ref: str) -> str:
     the same fold.
     """
     return ref.replace("/", "-")
+
+
+def is_moving_ref(ref: str) -> bool:
+    """Whether ``ref`` can name a different commit tomorrow than it does today.
+
+    True for everything except a full 40-hex SHA — branches obviously, but
+    tags too, which git will happily force-move. The cost of being wrong in
+    the safe direction is one ``git ls-remote`` per submission; the cost of
+    being wrong in the other direction is a published number measured against
+    a tree nobody chose.
+    """
+    return not is_full_sha(ref)
+
+
+def _ref_patterns(ref: str) -> tuple[str, ...]:
+    """The refs to ask a remote about, in the buildspec's own precedence.
+
+    A branch wins over a like-named tag, matching ``git checkout <ref>`` in
+    the fresh clone ``infra/core.yaml`` does. An annotated tag is asked for
+    **peeled** (``^{}``) first, because ``git ls-remote`` reports the *tag
+    object* for the bare pattern while the build's ``git rev-parse HEAD``
+    after checkout reports the commit it peels to — comparing against the tag
+    object would find a mismatch on every annotated tag, forever.
+    """
+    return (f"refs/heads/{ref}", f"refs/tags/{ref}^{{}}", f"refs/tags/{ref}")
+
+
+def tip_from_ls_remote(output: str, ref: str) -> str:
+    """The commit ``ref`` names in ``git ls-remote`` output, or ``""``.
+
+    ``ls-remote`` exits 0 with no output when nothing matches, so an empty
+    return here means "the remote has no such ref" and must be treated as a
+    failure to resolve — never as "unchanged".
+    """
+    seen: dict[str, str] = {}
+    for line in output.splitlines():
+        commit, _, name = line.partition("\t")
+        commit, name = commit.strip(), name.strip()
+        if commit and name:
+            seen.setdefault(name, commit)
+    for pattern in _ref_patterns(ref.strip()):
+        if pattern in seen:
+            return seen[pattern]
+    return ""
+
+
+def sut_cache_is_current(ref: str, cached_commit: str, remote_tip: str) -> bool:
+    """Whether ``binaries/<ref>/latest.json``'s artifact is what ``ref`` means now.
+
+    The whole decision, as a pure function of three strings:
+
+    * no cached commit at all — nothing to reuse;
+    * an immutable ref (full SHA) — the artifact can only ever have been built
+      from that commit, so its presence is sufficient and ``remote_tip`` is
+      not consulted;
+    * a moving ref — reusable only when the cached artifact was built from the
+      commit the remote reports for that name right now.
+    """
+    if not cached_commit:
+        return False
+    if not is_moving_ref(ref):
+        return True
+    return bool(remote_tip) and cached_commit == remote_tip
 
 
 def ssm_env_name(parameter_name: str) -> str:
@@ -392,6 +484,34 @@ def progress_from_states(states: Iterable[str]) -> Progress:
 # --------------------------------------------------------------------------
 
 
+def git_ls_remote(url: str, patterns: Iterable[str]) -> str:
+    """``git ls-remote`` against ``url``, as raw stdout.
+
+    The only outbound call in this module that is not AWS, and the only one
+    that needs an executable on the operator's machine. ``GIT_TERMINAL_PROMPT``
+    is pinned off so a remote that wants credentials fails in thirty seconds
+    with a message instead of blocking a submission on a prompt nobody is
+    watching.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "ls-remote", url, *patterns],
+            capture_output=True,
+            text=True,
+            timeout=_LS_REMOTE_TIMEOUT,
+            check=False,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CloudError(f"git ls-remote {url} failed: {exc}") from exc
+    if completed.returncode != 0:
+        raise CloudError(
+            f"git ls-remote {url} exited {completed.returncode}: "
+            f"{completed.stderr.strip()}"
+        )
+    return completed.stdout
+
+
 class CloudExecutor:
     """Thin adapter over the AWS clients the cloud verbs need.
 
@@ -399,6 +519,9 @@ class CloudExecutor:
     only moves bytes. ``clients`` injects recorded-call fakes in tests — when
     a service is missing from the mapping, a real boto3 client is built
     lazily, so importing and testing this module never requires boto3.
+    ``ls_remote`` is the same seam for the one non-AWS call
+    (:func:`git_ls_remote`), so the freshness tests neither shell out nor
+    reach the network.
     """
 
     def __init__(
@@ -407,10 +530,13 @@ class CloudExecutor:
         region: str | None = None,
         bucket: str | None = None,
         clients: Mapping[str, Any] | None = None,
+        ls_remote: Callable[[str, Iterable[str]], str] = git_ls_remote,
     ) -> None:
         self._region = region
         self._bucket = bucket
         self._clients: dict[str, Any] = dict(clients or {})
+        self._ls_remote = ls_remote
+        self._git_url: str | None = None
 
     def _client(self, service: str) -> Any:
         if service not in self._clients:
@@ -462,31 +588,122 @@ class CloudExecutor:
         sleep: Callable[[float], None] = time.sleep,
         out: Callable[[str], None] = print,
     ) -> SutBinary:
-        """The prebuilt binary for ``ref``, building it first when absent.
+        """The prebuilt binary for ``ref``, rebuilt unless it is current.
 
         Reads ``binaries/<ref>/latest.json`` (written by the
-        ``arenabench-sut-build`` CodeBuild project alongside each artifact);
-        on a miss, starts that project with a ``GIT_REF`` override and polls
-        until the build settles. The manifest's ``commit`` is what the trial
-        records as its SUT identity, so it comes from the build, never from a
-        local git resolution that could disagree with what was compiled.
+        ``arenabench-sut-build`` CodeBuild project alongside each artifact).
+        Whether that artifact may be *reused* is :func:`sut_cache_is_current`'s
+        call: a full SHA's artifact is always current, while a moving ref's is
+        current only when it was built from the commit the remote reports for
+        that name now. Otherwise the project is started with a ``GIT_REF``
+        override and polled until the build settles.
+
+        The returned ``commit`` always comes from the manifest — i.e. from
+        what CodeBuild actually compiled — never from the ``ls-remote`` tip,
+        so the identity a trial records cannot drift from the bytes it runs
+        even if the branch moves mid-build (#2388).
         """
+        ref = ref.strip()
         manifest = self._latest_manifest(ref)
-        if manifest is None:
+        cached = str((manifest or {}).get("commit") or "")
+        if manifest is not None and not cached:
+            raise CloudError(f"binaries/{ref_safe(ref)}/latest.json names no commit")
+
+        moving = is_moving_ref(ref)
+        tip = self._remote_tip(ref) if moving else ref
+        if not moving and cached and cached != ref:
+            # Only reachable if something other than the buildspec wrote the
+            # manifest: `git checkout <sha>` can only ever rev-parse to <sha>.
+            # Rebuilding would write the same disagreement again, so say so.
+            raise CloudError(
+                f"binaries/{ref_safe(ref)}/latest.json names commit {cached} "
+                f"but the ref is {ref}; refusing to run a binary whose "
+                "identity is in doubt"
+            )
+
+        if not sut_cache_is_current(ref, cached, tip):
             if not build_missing:
-                raise CloudError(f"no prebuilt SUT for ref {ref!r} and building is off")
-            self._build_sut(ref, poll_interval=poll_interval, sleep=sleep, out=out)
+                raise CloudError(
+                    f"no current prebuilt SUT for ref {ref!r} and building is off"
+                    + (f" (cached {cached[:12]}, {ref} is at {tip[:12]})"
+                       if cached else "")
+                )
+            reason = (
+                f"{ref} is at {tip[:12]}, cached artifact is {cached[:12]}"
+                if cached
+                else f"no artifact for {ref!r}"
+            )
+            self._build_sut(
+                ref, reason=reason, poll_interval=poll_interval, sleep=sleep, out=out
+            )
             manifest = self._latest_manifest(ref)
+            cached = str((manifest or {}).get("commit") or "")
             if manifest is None:
                 raise CloudError(
                     f"SUT build for {ref!r} succeeded but wrote no "
                     f"binaries/{ref_safe(ref)}/latest.json"
                 )
-        commit = str(manifest.get("commit") or "")
-        if not commit:
-            raise CloudError(f"binaries/{ref_safe(ref)}/latest.json names no commit")
-        uri = f"s3://{self.bucket()}/binaries/{ref_safe(ref)}/{commit}/stella"
-        return SutBinary(ref=ref, commit=commit, uri=uri)
+            if not cached:
+                raise CloudError(
+                    f"binaries/{ref_safe(ref)}/latest.json names no commit"
+                )
+
+        uri = f"s3://{self.bucket()}/binaries/{ref_safe(ref)}/{cached}/stella"
+        return SutBinary(ref=ref, commit=cached, uri=uri)
+
+    def _sut_git_url(self) -> str:
+        """The remote the SUT build clones, read off the build project itself.
+
+        Not a constant in this module: ``SutGitUrl`` is a stack parameter, and
+        a freshness check that consulted a different remote than the build
+        clones would answer a question nobody asked.
+        """
+        if self._git_url is None:
+            codebuild = self._client("codebuild")
+            projects = codebuild.batch_get_projects(names=[SUT_BUILD_PROJECT]).get(
+                "projects", []
+            )
+            if not projects:
+                raise CloudError(
+                    f"CodeBuild project {SUT_BUILD_PROJECT!r} not found — is the "
+                    "arenabench stack deployed in this account/region?"
+                )
+            env_vars = projects[0].get("environment", {}).get("environmentVariables", [])
+            url = next(
+                (
+                    str(var.get("value") or "")
+                    for var in env_vars
+                    if var.get("name") == GIT_URL_VAR
+                ),
+                "",
+            )
+            if not url or url.startswith("-"):
+                raise CloudError(
+                    f"CodeBuild project {SUT_BUILD_PROJECT!r} declares no usable "
+                    f"{GIT_URL_VAR} ({url!r}); cannot check whether a moving ref "
+                    "is current"
+                )
+            self._git_url = url
+        return self._git_url
+
+    def _remote_tip(self, ref: str) -> str:
+        """The commit ``ref`` names on the SUT remote right now.
+
+        Raising rather than returning ``""`` on a miss is the point: an
+        unresolvable ref must stop the submission, because the alternative is
+        running whatever the cache happens to hold and calling it ``ref``.
+        """
+        if not is_safe_ref(ref):
+            raise CloudError(f"refusing to resolve unsafe ref {ref!r}")
+        url = self._sut_git_url()
+        tip = tip_from_ls_remote(self._ls_remote(url, _ref_patterns(ref)), ref)
+        if not tip:
+            raise CloudError(
+                f"{url} has no ref {ref!r} — nothing to build or compare "
+                "against. Pass a branch, tag, or full commit SHA that exists "
+                "on that remote."
+            )
+        return tip
 
     def _latest_manifest(self, ref: str) -> dict[str, Any] | None:
         s3 = self._client("s3")
@@ -505,6 +722,7 @@ class CloudExecutor:
         self,
         ref: str,
         *,
+        reason: str,
         poll_interval: float,
         sleep: Callable[[float], None],
         out: Callable[[str], None],
@@ -517,7 +735,7 @@ class CloudExecutor:
             ],
         )
         build_id = started["build"]["id"]
-        out(f"sut: no artifact for {ref!r}; building via {SUT_BUILD_PROJECT} ({build_id})")
+        out(f"sut: {reason}; building via {SUT_BUILD_PROJECT} ({build_id})")
         while True:
             build = codebuild.batch_get_builds(ids=[build_id])["builds"][0]
             status = build["buildStatus"]
@@ -826,7 +1044,10 @@ def _cmd_cloud_run(args: Any, executor: CloudExecutor | None = None) -> int:
     print(f"queue     : {queue}" + ("  (spot — not for measured comparisons)"
                                     if args.burst else ""))
     if sut is not None:
-        print(f"sut       : {sut.commit[:12]} ({sut.ref})")
+        # `ref -> commit`, always both: the ref is what the operator asked for
+        # and the commit is what will actually be measured, and the whole of
+        # #2388 was those two silently disagreeing.
+        print(f"sut       : {sut.ref} -> {sut.commit}")
     grid = "per-seat whole-dataset" if not spec.tasks else (
         f"{spec.attempts} attempt(s) x {len(spec.tasks)} task(s) x "
         f"{len(spec.contestants)} seat(s)"
@@ -963,7 +1184,9 @@ def register_cli(subparsers: Any) -> None:
     run.add_argument(
         "--ref",
         help="git ref of the Stella SUT to run (default: the match's sut_ref); "
-             "built via CodeBuild first if no artifact exists",
+             "a moving ref (branch/tag) is resolved against the remote and "
+             "rebuilt via CodeBuild whenever the cached artifact is behind it, "
+             "a full commit SHA is taken from cache whenever one exists",
     )
     run.add_argument("--run-id", help="run identifier (default: generated)")
     run.add_argument(
