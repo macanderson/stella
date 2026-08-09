@@ -194,6 +194,18 @@ pub(crate) async fn complete_standalone(
                 events: settled_events,
             })
         }
+        // Unreachable in practice — this path builds its guard from
+        // `build_budget_guard`, which arms no task deadline — but stated
+        // rather than swept into a catch-all, so arming one here later is a
+        // decision someone makes on purpose.
+        Err(AccountedCallError::Deadline { .. }) => {
+            let _ = store.finish_execution_accounted(execution_id, "aborted", 0.0, false);
+            Err(StandaloneCallError {
+                message: "model call skipped: the task deadline had already passed".into(),
+                cost_usd: 0.0,
+                events: settled_events,
+            })
+        }
     }
 }
 

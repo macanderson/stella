@@ -25,7 +25,10 @@
 //! `cargo test -p <crate>` yields a *different signature per crate* and can
 //! never cluster, while `rg -n "<pattern>" <path>` clusters immediately. Right
 //! behaviour — a bareword is usually a subcommand — but a fixture that varies a
-//! bareword measures nothing.
+//! bareword measures nothing. Since #2378 the converse is also true: a fixture
+//! that varies its arguments on *every* invocation measures nothing either,
+//! because `min_reuse_ratio` reads 1.0× reuse as the shell itself rather than a
+//! tool. A fixture must make its argument sets **recur**.
 //!
 //! **3. A file only lands under a trusted project.** With
 //! `include_workspace_skills` false, `write_candidates` and `induce_rules` both
@@ -552,31 +555,39 @@ async fn a_one_off_lesson_does_not_become_a_skill() {
     );
 }
 
-// ---- §5 assertion 4: the foundry needs variation --------------------------
+// ---- §5 assertion 4: the foundry needs variation *and* reuse --------------
 
-/// A shape recurring with **≥2 distinct argument sets** yields a tool proposal;
-/// the identical command repeated yields none.
+/// A shape recurring with **≥2 distinct argument sets, each retyped**, yields a
+/// tool proposal; the identical command repeated yields none.
 ///
 /// The negative half is the interesting one: an exact repeat is loop detection's
 /// business, not the foundry's, and `min_distinct_arguments: 2` draws that line.
+/// The other end of the same line — variation with no reuse at all — is
+/// [`a_shape_whose_arguments_never_repeat_is_not_minted`].
 #[tokio::test]
 async fn a_shape_with_varying_arguments_mints_a_tool_and_an_exact_repeat_does_not() {
+    // Two argument sets, each reconstructed on all three days: the incantation
+    // shape the foundry exists for, at 3.0× reuse.
+    let recurring_greps = shell(&[
+        "rg -n \"unwrap\" crates/stella-core/src/driver.rs",
+        "rg -n \"expect\" crates/stella-cli/src/agent.rs",
+    ]);
     let varied = trace(
-        "one shape, three argument sets",
+        "one shape, two argument sets, each retyped three times",
         one_task_each(vec![
             TraceTurn {
-                shell: shell(&["rg -n \"unwrap\" crates/stella-core/src/driver.rs"]),
+                shell: recurring_greps.clone(),
                 ..turn(T0, "Grepping for unwrap is how the panic audit starts")
             },
             TraceTurn {
-                shell: shell(&["rg -n \"expect\" crates/stella-cli/src/agent.rs"]),
+                shell: recurring_greps.clone(),
                 ..turn(
                     T0 + DAY,
                     "The agent loop lives in crates/stella-cli/src/agent.rs",
                 )
             },
             TraceTurn {
-                shell: shell(&["rg -n \"panic\" crates/stella-model/src/openai.rs"]),
+                shell: recurring_greps,
                 ..turn(
                     T0 + 2 * DAY,
                     "OpenAI's adapter is crates/stella-model/src/openai.rs",
@@ -587,8 +598,8 @@ async fn a_shape_with_varying_arguments_mints_a_tool_and_an_exact_repeat_does_no
     let (with_variation, _a) = replay(&varied).await;
     assert!(
         !with_variation.tools.is_empty(),
-        "three invocations of one shape with three argument sets should propose \
-         a tool: {with_variation:?}"
+        "one shape reused across two argument sets should propose a tool: \
+         {with_variation:?}"
     );
 
     let repeated = trace(
@@ -619,6 +630,52 @@ async fn a_shape_with_varying_arguments_mints_a_tool_and_an_exact_repeat_does_no
         without_variation.tools.is_empty(),
         "an exact repeat is a loop, not a parameterized tool: {:?}",
         without_variation.tools
+    );
+}
+
+/// The other end of the same line: a shape whose arguments are *never* repeated
+/// mints nothing, however often the program name recurs.
+///
+/// This is the half assertion 4 was missing. `min_distinct_arguments` is a floor
+/// on variation, so unbounded variation cleared it — and against a real 81,684-
+/// command history that asymmetry proposed 2,073 tools, almost all of them the
+/// shell wearing a costume (#2378). Nine invocations here, nine argument sets,
+/// zero proposals: `rg -n <str> <path>` at 1.0× reuse is `rg`, not a tool.
+#[tokio::test]
+async fn a_shape_whose_arguments_never_repeat_is_not_minted() {
+    let files = [
+        "crates/stella-core/src/driver.rs",
+        "crates/stella-cli/src/agent.rs",
+        "crates/stella-model/src/openai.rs",
+    ];
+    let turns: Vec<TraceTurn> = files
+        .iter()
+        .enumerate()
+        .map(|(day, path)| {
+            let commands: Vec<String> = ["unwrap", "expect", "panic"]
+                .iter()
+                .map(|needle| format!("rg -n \"{needle}-{day}\" {path}"))
+                .collect();
+            let borrowed: Vec<&str> = commands.iter().map(String::as_str).collect();
+            TraceTurn {
+                shell: shell(&borrowed),
+                ..turn(
+                    T0 + day as i64 * DAY,
+                    "Grepping for unwrap is how the panic audit starts",
+                )
+            }
+        })
+        .collect();
+
+    let (summary, _dir) = replay(&trace(
+        "one shape, nine argument sets",
+        one_task_each(turns),
+    ))
+    .await;
+    assert!(
+        summary.tools.is_empty(),
+        "a shape with one argument set per use is the shell, not a tool: {:?}",
+        summary.tools
     );
 }
 

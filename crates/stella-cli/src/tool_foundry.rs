@@ -191,8 +191,9 @@ fn run_tools_author_in(
                 "  {}",
                 format!(
                     "none right now — a shape must recur ≥{} times across ≥{} distinct \
-                     argument sets in the last {HISTORY_WINDOW} bash receipts",
-                    config.min_occurrences, config.min_distinct_arguments
+                     argument sets, each reused ≥{:.1}×, in the last {HISTORY_WINDOW} \
+                     bash receipts",
+                    config.min_occurrences, config.min_distinct_arguments, config.min_reuse_ratio
                 )
                 .dimmed()
             );
@@ -204,8 +205,11 @@ fn run_tools_author_in(
                 "·".dimmed(),
                 p.name.bright_magenta(),
                 format!(
-                    "— `{}` ({}× across {} argument sets)",
-                    p.signature, p.occurrences, p.distinct_arguments
+                    "— `{}` ({}× across {} argument sets, {:.1}× reuse)",
+                    p.signature,
+                    p.occurrences,
+                    p.distinct_arguments,
+                    p.reuse_ratio()
                 )
                 .dimmed()
             );
@@ -333,15 +337,26 @@ mod tests {
         }
     }
 
-    /// A store seeded with the given bash commands under one execution.
+    /// How many times each seeded command is recorded. The detector's shipping
+    /// [`GapDetectionConfig::min_reuse_ratio`] asks that *argument sets* recur,
+    /// not just program names (#2378), and these fixtures are about the store →
+    /// inbox wiring rather than about ranking — so each command is retyped
+    /// three times, exactly as a real recurring incantation would be.
+    const SEEDED_REPEATS: usize = 3;
+
+    /// A store seeded with the given bash commands under one execution, each
+    /// recorded [`SEEDED_REPEATS`] times under a distinct call id.
     fn store_with(commands: &[(&str, &str, bool)]) -> Store {
         let store = Store::in_memory().expect("store");
         let id = store
             .begin_execution("run", "p", "zai", "glm-5.2")
             .expect("execution");
-        let rows: Vec<ToolCallRow> = commands
-            .iter()
-            .map(|(cid, cmd, ok)| bash_row(cid, cmd, *ok))
+        let rows: Vec<ToolCallRow> = (0..SEEDED_REPEATS)
+            .flat_map(|round| {
+                commands
+                    .iter()
+                    .map(move |(cid, cmd, ok)| bash_row(&format!("{cid}-{round}"), cmd, *ok))
+            })
             .collect();
         store.record_tool_calls(id, &rows).expect("record");
         store

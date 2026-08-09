@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use stella_core::{AbortKind, BudgetGuard, BudgetOutcome};
 use stella_protocol::AgentEvent;
 
@@ -29,14 +31,22 @@ pub(super) struct Spend<'a> {
     pub(super) total: &'a mut f64,
 }
 
-/// A settled stage call crossed an enforced budget. Kept distinct from
-/// provider/routing failures so raw stages must propagate the stop.
+/// A stage call hit a ceiling the run may not spend past — dollars or wall
+/// clock. Kept distinct from provider/routing failures so raw stages must
+/// propagate the stop rather than degrade through it.
+///
+/// One type for both axes because the *consequence* is identical at every
+/// call site (stop at this safe boundary, report why), and the axes stay
+/// distinguishable where it matters — in `reason`, which is what reaches the
+/// stream. Named for the stop rather than for dollars since #2238 taught it
+/// the clock: the old name, `PipelineBudgetAbort`, would have described what
+/// the type used to be while it carried "the task deadline passed".
 #[derive(Debug, Clone)]
-pub(super) struct PipelineBudgetAbort {
+pub(super) struct PipelineStageAbort {
     pub(super) reason: String,
 }
 
-pub(super) fn budget_abort(outcome: BudgetOutcome) -> Option<PipelineBudgetAbort> {
+pub(super) fn budget_abort(outcome: BudgetOutcome) -> Option<PipelineStageAbort> {
     let BudgetOutcome::AbortTurn {
         spent_usd,
         limit_usd,
@@ -45,11 +55,27 @@ pub(super) fn budget_abort(outcome: BudgetOutcome) -> Option<PipelineBudgetAbort
     else {
         return None;
     };
-    Some(PipelineBudgetAbort {
+    Some(PipelineStageAbort {
         reason: format!(
             "budget exceeded after this call: spent ${spent_usd:.4} against a ${limit_usd:.2} limit"
         ),
     })
+}
+
+/// The stop for a stage reached after the task's wall-clock deadline passed
+/// (#2238), phrased like `crate::driver::settlement`'s so the two rungs of the
+/// same mechanism read the same way in a transcript.
+///
+/// "before spending anything further" is load-bearing: unlike the dollar
+/// abort above, no call was made and no money changed hands — the run is
+/// declining to start work it has no time to finish.
+pub(super) fn deadline_abort(overrun: Duration) -> PipelineStageAbort {
+    PipelineStageAbort {
+        reason: format!(
+            "task deadline exceeded by {:.1}s — stopping before spending anything further",
+            overrun.as_secs_f64()
+        ),
+    }
 }
 
 /// The terminal `Error` event and the `Aborted` outcome for a run that stopped

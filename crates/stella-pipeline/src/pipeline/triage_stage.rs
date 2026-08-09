@@ -27,7 +27,7 @@ impl Pipeline<'_> {
         goal: &str,
         budget: &mut BudgetGuard,
         total: &mut f64,
-    ) -> Result<(TaskAssessment, Vec<String>), PipelineBudgetAbort> {
+    ) -> Result<(TaskAssessment, Vec<String>), PipelineStageAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Triage,
         });
@@ -89,7 +89,10 @@ impl Pipeline<'_> {
             .await
         {
             Ok(result) => Some(result.text),
-            Err(RawCallError::Budget(abort)) => return Err(abort),
+            // Triage is the run's first paid call: an expired clock here means
+            // nothing has been produced, so stopping is honest — there is no
+            // partial work a pivot could settle with.
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => return Err(abort),
             Err(RawCallError::Provider | RawCallError::Timeout) => None,
         };
         let assessment = response.as_deref().and_then(parse_triage_response);

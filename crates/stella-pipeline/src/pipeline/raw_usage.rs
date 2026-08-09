@@ -17,7 +17,7 @@ use stella_protocol::{
     CompletionMessage, CompletionRequest, CompletionResult, ModelCallRole, ReasoningEffort,
 };
 
-use super::stage_budget::{PipelineBudgetAbort, budget_abort};
+use super::stage_budget::{PipelineStageAbort, budget_abort, deadline_abort};
 use super::{Pipeline, ResolvedRole, RoleCallOverrides};
 
 pub(super) struct RawCall<'r, 'a> {
@@ -48,7 +48,18 @@ pub(super) struct RawCall<'r, 'a> {
 pub(super) enum RawCallError {
     Provider,
     Timeout,
-    Budget(PipelineBudgetAbort),
+    Budget(PipelineStageAbort),
+    /// The task's wall-clock deadline had already passed, so this call was
+    /// never dispatched and cost nothing (#2238).
+    ///
+    /// Separate from [`Self::Budget`] because the two want opposite handling
+    /// *after* execute: a dollar breach is the run being unable to afford the
+    /// next call at all, while an expired clock on a run that has already
+    /// produced a diff wants a pivot — skip the remaining assurance stages and
+    /// settle the work that exists, so a partially-solved task is still
+    /// scorable. Every match site therefore states its own answer rather than
+    /// sharing the budget arm.
+    Deadline(PipelineStageAbort),
 }
 
 /// Role-shaped request bounds `(max_output_tokens, effort)` for the
@@ -303,6 +314,11 @@ impl<'a> Pipeline<'a> {
             }
             Err(AccountedCallError::Provider(_)) => Err(RawCallError::Provider),
             Err(AccountedCallError::Timeout) => Err(RawCallError::Timeout),
+            // Nothing was dispatched, so `total` is untouched — the run's
+            // settled cost stays exactly what it was before this call.
+            Err(AccountedCallError::Deadline { overrun }) => {
+                Err(RawCallError::Deadline(deadline_abort(overrun)))
+            }
             Err(AccountedCallError::Budget { result, outcome }) => {
                 *total += result.cost_usd;
                 Err(RawCallError::Budget(

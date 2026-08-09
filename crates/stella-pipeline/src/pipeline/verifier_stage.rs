@@ -61,7 +61,7 @@ impl<'a> Pipeline<'a> {
         prompt: ManagementPrompt,
         budget: &mut BudgetGuard,
         total: &mut f64,
-    ) -> Result<Option<String>, PipelineBudgetAbort> {
+    ) -> Result<Option<String>, PipelineStageAbort> {
         let resolved = match self.resolve_provider(Role::Verifier) {
             Ok(resolved) => resolved,
             Err(_) => return Ok(None),
@@ -102,7 +102,14 @@ impl<'a> Pipeline<'a> {
                 }
             }
             Err(RawCallError::Budget(abort)) => Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => Ok(None),
+            // Post-execute, so the clock joins the best-effort arm rather than
+            // the abort one (#2238): guidance exists to improve a revision the
+            // run no longer has time to make, and discarding the executed diff
+            // to report "out of time" would throw away the only scorable thing
+            // the run produced.
+            Err(RawCallError::Provider | RawCallError::Timeout | RawCallError::Deadline(_)) => {
+                Ok(None)
+            }
         }
     }
 
@@ -116,7 +123,7 @@ impl<'a> Pipeline<'a> {
         prompt: ManagementPrompt,
         inputs: &LadderInputs,
         spend: &mut Spend<'_>,
-    ) -> Result<ModelVerifierVerdict, PipelineBudgetAbort> {
+    ) -> Result<ModelVerifierVerdict, PipelineStageAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Verdict,
         });
@@ -182,6 +189,15 @@ impl<'a> Pipeline<'a> {
             Err(RawCallError::Budget(abort)) => Err(abort),
             Err(RawCallError::Provider | RawCallError::Timeout) => {
                 self.warn_verifier_fallback(degradation, "the verifier call failed or timed out");
+                Ok(heuristic_fallback(inputs))
+            }
+            // The pivot (#2238): the work is done and the clock is gone, so
+            // grade it with the deterministic ladder rather than abort and
+            // report nothing. `heuristic_fallback` is conservative (L-E11), so
+            // this trades a model verdict for a stricter one — never for an
+            // unearned pass.
+            Err(RawCallError::Deadline(abort)) => {
+                self.warn_verifier_fallback(degradation, &abort.reason);
                 Ok(heuristic_fallback(inputs))
             }
         }

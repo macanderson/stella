@@ -275,8 +275,10 @@ fn provenance_header(proposal: &ProposedTool, name: &str) -> String {
          # To adopt:       stella tools --adopt {name}    (runs its witness)\n\
          # To enable:      stella tools --enable {name}   (the human approval)\n\
          #\n\
-         # Evidence: {} invocations, {} distinct argument sets.\n",
-        proposal.occurrences, proposal.distinct_arguments,
+         # Evidence: {} invocations, {} distinct argument sets ({:.1}x reuse).\n",
+        proposal.occurrences,
+        proposal.distinct_arguments,
+        proposal.reuse_ratio(),
     ));
     for line in comment_lines(&format!("signature: {}", proposal.signature)) {
         out.push_str(&format!("# {line}\n"));
@@ -311,9 +313,15 @@ mod tests {
 
     /// Run the real detector over a history and return its proposals — every
     /// test authors from genuine detector output, never hand-built structs.
+    ///
+    /// Each command is retyped three times, because the detector's shipping
+    /// [`GapDetectionConfig::min_reuse_ratio`] asks that *argument sets* recur
+    /// rather than merely vary (#2378). Authorship is indifferent to the
+    /// counts; what these tests need is that the real default proposes at all.
     fn proposals_for(commands: &[&str]) -> Vec<ProposedTool> {
-        let history: Vec<ShellInvocation> =
-            commands.iter().map(|c| ShellInvocation::ok(*c)).collect();
+        let history: Vec<ShellInvocation> = (0..3)
+            .flat_map(|_| commands.iter().map(|c| ShellInvocation::ok(*c)))
+            .collect();
         detect_tool_gaps(&history, GapDetectionConfig::default())
     }
 
@@ -443,7 +451,9 @@ mod tests {
     fn provenance_header_carries_evidence_and_stays_valid_toml() {
         let authored = author_one(&["jq '.a' a.json", "jq '.b' b.json", "jq '.c' c.json"]);
         assert!(authored.manifest_toml.contains("STAGED ONLY"));
-        assert!(authored.manifest_toml.contains("3 invocations"));
+        // Three argument sets, each retyped three times by `proposals_for`.
+        assert!(authored.manifest_toml.contains("9 invocations"));
+        assert!(authored.manifest_toml.contains("3 distinct argument sets"));
         assert!(authored.manifest_toml.contains("$ jq '.a' a.json"));
         // The whole file — comments included — is valid TOML.
         toml::from_str::<toml::Value>(&authored.manifest_toml).expect("valid TOML");
