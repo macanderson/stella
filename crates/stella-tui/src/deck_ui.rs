@@ -3801,12 +3801,12 @@ fn toggle_expanded(ui: &mut DeckUi, agent: &str, idx: usize) {
 
 /// Whether `ctrl+o` can meaningfully expand this entry — exactly the variants
 /// whose [`crate::render::entry_lines`] rendering honors the expanded flag: a
-/// tool call (full args), a tool result (full output), or a collapsed thought.
+/// tool call, a tool result, a collapsed thought, or a context recall.
 fn is_expandable(entry: &crate::model::TranscriptEntry) -> bool {
     use crate::model::TranscriptEntry as E;
     matches!(
         entry,
-        E::ToolStart { .. } | E::ToolResult { .. } | E::Reasoning(_)
+        E::ToolStart { .. } | E::ToolResult { .. } | E::Reasoning(_) | E::ContextRecall { .. }
     )
 }
 

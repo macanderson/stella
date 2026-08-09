@@ -13,6 +13,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use stella_protocol::{CiStatus, PrStatus, SubAgentStatus};
 
@@ -558,22 +559,19 @@ fn entry_body(
         TranscriptEntry::ContextRecall {
             frames,
             tokens,
-            labels,
+            latency_ms,
+            used_ann_index,
+            providers,
+            budget,
         } => {
-            let cited = labels.join(", ");
-            push_note(
-                "◉ recalled",
-                quiet(),
-                vec![
-                    Span::styled(
-                        format!(
-                            "{} · {tokens} tok",
-                            plural(*frames as u64, "frame", "frames")
-                        ),
-                        value(),
-                    ),
-                    Span::styled(format!("  ·  {cited}"), quiet()),
-                ],
+            recall_lines(
+                frames,
+                *tokens,
+                *latency_ms,
+                *used_ann_index,
+                providers,
+                budget.as_ref(),
+                expanded,
                 width,
                 out,
             );
@@ -890,6 +888,432 @@ fn entry_body(
             );
         }
     }
+}
+
+// ── Context recall ──────────────────────────────────────────────────────────
+//
+// A recall is a handful of records with four attributes each — a small table —
+// and it used to render as its labels comma-joined into a paragraph that
+// wrapped mid-word at the pane edge. The reader could not tell where one record
+// ended and the next began, could not tell an 800-token episodic memory from a
+// 60-token graph symbol, and had no way to ask for more: `ctrl+o` did not apply
+// to the entry, and there was nothing left in the read-model for it to reveal.
+//
+// So: a header row that summarises, and one aligned row per frame. Alignment is
+// the whole point — with the per-frame cost in a right-hand column, the one
+// frame eating two thirds of the budget is visible by scanning a strip of
+// digits, which is a finding no paragraph can carry.
+//
+// The `expanded` half of this is one contract in two places: the arms below and
+// `deck_ui::is_expandable`, which decides whether `ctrl+o` even reaches an
+// entry. They had already drifted — recall was missing from that list *and*
+// ignored the flag here, so the transcript's "there is more behind this"
+// affordance did nothing on the row with the most behind it. Teaching a new
+// variant means teaching both halves.
+
+/// Frames shown before the fold. Sized so the collapsed block is no taller
+/// than the wrapped paragraph it replaces (four rows, in the pane that
+/// prompted this) while being scannable rather than run together.
+const RECALL_PREVIEW: usize = 3;
+
+/// Widest a citation label grows before it is elided. Labels are heterogeneous
+/// by nature — `fn review` beside a whole recalled user prompt — so the column
+/// is capped rather than sized to the widest, which one episodic memory would
+/// otherwise push past the pane edge on its own.
+const RECALL_LABEL_MAX: usize = 34;
+
+/// Narrowest a label column shrinks to before the location is dropped instead.
+/// Below this a label is not a citation, it is an initial.
+const RECALL_LABEL_MIN: usize = 12;
+
+/// Widest a location grows before it is left-elided.
+const RECALL_LOCATION_MAX: usize = 38;
+
+/// Narrowest a location column is worth keeping. A `path:line` shorter than
+/// this is all ellipsis and no path.
+const RECALL_LOCATION_MIN: usize = 14;
+
+/// The kind column, wide enough for the longest protocol kind (`snippet`).
+const RECALL_KIND_COL: usize = 8;
+
+/// Column for a recall's second-level detail — a frame's provenance chain, a
+/// budget leg. One step past [`BODY`], so the hierarchy reads without a rule.
+const RECALL_DETAIL: usize = BODY + 2;
+
+/// The provider column in the expanded budget breakdown, sized for the two
+/// legs that ship (`workspace-memory`, `code-graph`).
+const RECALL_LEG_COL: usize = 18;
+
+/// The transcript rows for one context recall.
+#[allow(clippy::too_many_arguments)]
+fn recall_lines(
+    frames: &[crate::model::RecalledFrameRow],
+    tokens: u32,
+    latency_ms: u32,
+    used_ann_index: Option<bool>,
+    providers: &[(String, u32)],
+    budget: Option<&crate::model::RecallBudget>,
+    expanded: bool,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    let dim = Style::new().fg(theme::MUTED);
+
+    // Header: the two numbers that are always worth having, then the two that
+    // say whether recall was the reason the turn felt slow.
+    let mut head = vec![Span::styled(
+        format!(
+            "{} · {tokens} tok",
+            plural(frames.len() as u64, "frame", "frames")
+        ),
+        value(),
+    )];
+    // `0` means *not measured* on the wire, never "instant" — printing `0ms`
+    // would invent a measurement. Omitting it says only what is known.
+    if latency_ms > 0 {
+        head.push(Span::styled(
+            format!("  ·  {}", human_duration(u64::from(latency_ms))),
+            quiet(),
+        ));
+    }
+    // Tri-state, and rendered tri-state: `ann` (the index fired), `scan` (it
+    // did not), nothing at all (no recall path reported). A `bool` here would
+    // print `scan` on every real turn and read as "the index never fires".
+    if let Some(ann) = used_ann_index {
+        head.push(Span::styled(
+            if ann { "  ·  ann" } else { "  ·  scan" }.to_string(),
+            quiet(),
+        ));
+    }
+    push_note("◉ recalled", quiet(), head, width, out);
+
+    let shown = if expanded {
+        frames.len()
+    } else {
+        RECALL_PREVIEW.min(frames.len())
+    };
+    // One column layout for the whole block, computed once. Per-row layout
+    // would let each row pick a different label width and the table would stop
+    // being a table — alignment is the entire reason this is not a paragraph.
+    let cols = RecallColumns::fit(&frames[..shown], width);
+    for frame in &frames[..shown] {
+        // Deliberately **no rail glyph**. `Rail::Result`'s `⎿` means "the
+        // outcome of the call above", and borrowing it here would put five
+        // false hits per turn into the margin a reader scans for "what ran and
+        // how did it go". Recall is bookkeeping — the same judgement `quiet()`
+        // documents — so it takes the subordinate body column and recedes.
+        push_recall_row(
+            justify(
+                recall_frame_spans(frame, &cols),
+                vec![Span::styled(
+                    format!("{:>w$} tok", frame.tokens, w = cols.metric_digits),
+                    dim,
+                )],
+                width,
+                BODY,
+            ),
+            BODY,
+            width,
+            out,
+        );
+        // Expanded only: the provenance chain, which is the whole reason a
+        // detail view exists here. `provider ← source` is deliberately two
+        // fields — an adapter fronting another store (`workspace-memory` over
+        // `stella-context`) is exactly the case a single field would hide.
+        if expanded {
+            push_recall_row(
+                vec![Span::styled(recall_provenance(frame), dim)],
+                RECALL_DETAIL,
+                width,
+                out,
+            );
+        }
+    }
+
+    if !expanded {
+        let hidden = frames.len() - shown;
+        // `⋯` is this UI's one glyph for "there is more behind this", and it
+        // carries the ctrl+o affordance everywhere else in the file. The row
+        // is emitted even at zero hidden frames, because provenance and the
+        // budget report are *always* behind the fold and an affordance nobody
+        // knows about is the same as no affordance.
+        //
+        // The hidden frames' token cost rides on it, and that is the whole
+        // reason the fold can afford to keep the host's render order rather
+        // than promoting the expensive frames into the preview. In the recall
+        // that prompted this work the two folded frames carried 908 of 1155
+        // tokens — reordering would have shown the outlier while lying about
+        // what the model actually saw; naming the number shows it and does not.
+        let more = if hidden > 0 {
+            let cost: u32 = frames[shown..].iter().map(|f| f.tokens).sum();
+            format!("⋯ {hidden} more · {cost} tok · ctrl+o for provenance and budget")
+        } else {
+            "⋯ ctrl+o for provenance and budget".to_string()
+        };
+        push_recall_row(
+            vec![Span::styled(more, Style::new().fg(theme::TEXT_TERTIARY))],
+            BODY,
+            width,
+            out,
+        );
+        return;
+    }
+
+    // The bill. One row per leg rather than one long joined line: the legs are
+    // the same shape as the frame rows above them, so the same scan works on
+    // both, and a joined line wrapped at any ordinary pane width — splitting
+    // `2 rejected` across two rows, which is precisely the phrase this exists
+    // to surface.
+    //
+    // When a budget report is present it *subsumes* the provider mix: the mix
+    // counts frames that won fusion and reached the prompt, the report counts
+    // what each leg served and what the host rejected. Showing both puts two
+    // similar-looking counts side by side that mean different things, and the
+    // report is the strict superset.
+    match budget {
+        Some(b) => {
+            push_recall_row(
+                vec![Span::styled(
+                    format!("budget {} of {} tok", b.consumed, b.requested),
+                    dim,
+                )],
+                BODY,
+                width,
+                out,
+            );
+            for (provider, served, rejected, tok) in &b.providers {
+                let counts = if *rejected > 0 {
+                    format!("{served} served · {rejected} rejected · {tok} tok")
+                } else {
+                    format!("{served} served · {tok} tok")
+                };
+                push_recall_row(
+                    vec![Span::styled(
+                        format!("{} {counts}", pad_to(provider, RECALL_LEG_COL)),
+                        dim,
+                    )],
+                    RECALL_DETAIL,
+                    width,
+                    out,
+                );
+            }
+        }
+        // No report — say which legs the frames came from, which is all the
+        // event carries when no CGP host produced a usage report.
+        None if !providers.is_empty() => {
+            let mix = providers
+                .iter()
+                .map(|(p, n)| format!("{p} {n}"))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            push_recall_row(
+                vec![Span::styled(format!("via {mix}"), dim)],
+                BODY,
+                width,
+                out,
+            );
+        }
+        None => {}
+    }
+}
+
+/// Emit one recall row at `indent`, wrapping to the same column.
+///
+/// [`push_detail_line`] would do this but takes a `&str` in one fixed style,
+/// and a recall row is a styled composite — a tertiary kind, a white citation,
+/// a dim path, a dim metric flushed right.
+fn push_recall_row(
+    spans: Vec<Span<'static>>,
+    indent: usize,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    let mut row = vec![Span::raw(" ".repeat(indent))];
+    row.extend(spans);
+    wrap_one_indent(Line::from(row), width, indent, out);
+}
+
+/// The left half of a frame row: `kind`, then the citation, then where it came
+/// from in the tree.
+///
+/// The kind is the field the old rendering lost and the one that changes how a
+/// row is read — a `memory` and a `symbol` cost the prompt the same tokens and
+/// mean entirely different things about what retrieval did.
+fn recall_frame_spans(
+    frame: &crate::model::RecalledFrameRow,
+    cols: &RecallColumns,
+) -> Vec<Span<'static>> {
+    let dim = Style::new().fg(theme::MUTED);
+    // An empty kind is a stream recorded before the field existed. `frame`
+    // says that honestly; a blank column would read as a rendering bug.
+    let kind = if frame.kind.is_empty() {
+        "frame"
+    } else {
+        frame.kind.as_str()
+    };
+    let mut spans = vec![Span::styled(
+        pad_to(kind, RECALL_KIND_COL),
+        Style::new().fg(theme::TEXT_TERTIARY),
+    )];
+    let label = elide(&frame.label, cols.label);
+    let Some(uri) = frame.uri.as_deref().filter(|_| cols.location > 0) else {
+        spans.push(Span::styled(label, value()));
+        return spans;
+    };
+    spans.push(Span::styled(pad_to(&label, cols.label + 2), value()));
+    // The location, elided from the *left*: a recall row is actionable because
+    // of its filename and line, and clipping from the right — which is what the
+    // pane edge did — removes exactly that and keeps the repo prefix every row
+    // already shares.
+    spans.push(Span::styled(recall_location(uri, cols.location), dim));
+    spans
+}
+
+/// The column widths one recall block renders at.
+///
+/// Computed from the pane rather than fixed, because the two elastic columns
+/// fail in opposite directions when space runs out. A citation label is prose
+/// and elides gracefully — half of `create a new minor release…` still says
+/// what it is. A location does not: it is a `path:line`, and the tail is the
+/// entire point. So the location is budgeted **first** and the label absorbs
+/// the pressure.
+///
+/// Leaving this to [`justify`] is the bug this type exists to fix. `justify`
+/// truncates its left column from the *right* to make room for the metric,
+/// which is exactly backwards here: in a 100-column deck pane it cut
+/// `crates/stella-core/src/driver.rs:88` down to
+/// `crates/stella-core/src/driver.r…`, deleting the filename and line while
+/// keeping the repo prefix every row on screen already shares.
+struct RecallColumns {
+    label: usize,
+    /// `0` when the pane cannot afford a location column that would still say
+    /// something — dropped whole rather than rendered as an ellipsis.
+    location: usize,
+    /// Digits the token counts are right-aligned within, so the metric reads
+    /// as one strip a reader can run an eye down.
+    metric_digits: usize,
+}
+
+impl RecallColumns {
+    fn fit(frames: &[crate::model::RecalledFrameRow], width: usize) -> Self {
+        let metric_digits = frames
+            .iter()
+            .map(|f| f.tokens.to_string().len())
+            .max()
+            .unwrap_or(1);
+        // What `justify` will leave the left column: the pane, less the body
+        // indent, less the metric and the one space it insists on.
+        let avail = width
+            .saturating_sub(BODY)
+            .saturating_sub(metric_digits + " tok".len() + 1);
+        let rest = avail.saturating_sub(RECALL_KIND_COL);
+
+        // The widest location any frame in *this* block needs, so a block of
+        // short paths does not reserve a column for a long one that is absent.
+        let widest = frames
+            .iter()
+            .filter_map(|f| f.uri.as_deref())
+            .map(|u| recall_location(u, RECALL_LOCATION_MAX).chars().count())
+            .max()
+            .unwrap_or(0);
+
+        // The label keeps its minimum before the location gets anything; below
+        // that the location is dropped entirely rather than both being starved
+        // into two columns of ellipsis.
+        let for_location = rest.saturating_sub(RECALL_LABEL_MIN + 2);
+        let location = if widest == 0 || for_location < RECALL_LOCATION_MIN {
+            0
+        } else {
+            widest.min(for_location)
+        };
+        let gap = usize::from(location > 0) * 2;
+        let label = rest
+            .saturating_sub(location + gap)
+            .clamp(RECALL_LABEL_MIN, RECALL_LABEL_MAX);
+        Self {
+            label,
+            location,
+            metric_digits,
+        }
+    }
+}
+
+/// The dim provenance line under an expanded frame row.
+fn recall_provenance(frame: &crate::model::RecalledFrameRow) -> String {
+    let mut parts = Vec::new();
+    if frame.provider.is_empty() {
+        parts.push(frame.source.clone());
+    } else if frame.provider == frame.source || frame.source.is_empty() {
+        parts.push(frame.provider.clone());
+    } else {
+        parts.push(format!("{} ← {}", frame.provider, frame.source));
+    }
+    if let Some(m) = &frame.method {
+        parts.push(m.clone());
+    }
+    if let Some(id) = &frame.id {
+        parts.push(id.clone());
+    }
+    // A missing digest is not nothing: per the context-reuse spec such a frame
+    // is *not verifiable* and a host must re-query rather than reuse it. Saying
+    // so is the point of showing the field at all.
+    match &frame.digest {
+        Some(d) => parts.push(short_digest(d)),
+        None => parts.push("unverifiable (no digest)".to_string()),
+    }
+    parts.join(" · ")
+}
+
+/// `sha256:9f2c1ab…` — enough to compare two frames by eye, short enough to
+/// share a row with the rest of the provenance chain.
+fn short_digest(digest: &str) -> String {
+    match digest.split_once(':') {
+        Some((algo, hex)) => format!("{algo}:{}…", &hex[..hex.len().min(7)]),
+        None => format!("{}…", &digest[..digest.len().min(14)]),
+    }
+}
+
+/// A frame's URI as a location a reader can act on, within `cap` columns.
+///
+/// Left-elided, which is the opposite of what the pane edge did to it: the tail
+/// (`…/command_deck/hunk_gate.rs:32`) is the part that identifies the frame,
+/// and the head is a repo prefix every row on screen already shares.
+fn recall_location(uri: &str, cap: usize) -> String {
+    // Strip a scheme so `file:///…` and a bare path render alike; the scheme
+    // is never the discriminating part of a recall row.
+    let path = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+    if path.chars().count() <= cap {
+        return path.to_string();
+    }
+    let tail: String = path
+        .chars()
+        .skip(path.chars().count() - cap.saturating_sub(1))
+        .collect();
+    // Cut on a separator so the elision lands between path segments rather
+    // than mid-directory-name — but only when that leaves a real path behind.
+    // Snapping to a separator that sits near the end would trade a readable
+    // `…re/src/driver.rs:88` for a useless `…/driver.rs:88`… of the wrong
+    // width, so the snap is taken only in the leading third.
+    match tail.find('/').filter(|cut| *cut <= cap / 3) {
+        Some(cut) => format!("…{}", &tail[cut..]),
+        None => format!("…{tail}"),
+    }
+}
+
+/// Truncate to `cap` display columns with a trailing `…`, never mid-wrap.
+fn elide(text: &str, cap: usize) -> String {
+    if text.chars().count() <= cap {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(cap.saturating_sub(1)).collect();
+    format!("{}…", kept.trim_end())
+}
+
+/// Right-pad to a soft column. Soft, like [`pad_name`]: an over-wide field
+/// overruns rather than truncating, since identity outranks alignment.
+fn pad_to(text: &str, col: usize) -> String {
+    let w = UnicodeWidthStr::width(text);
+    format!("{text}{}", " ".repeat(col.saturating_sub(w).max(1)))
 }
 
 fn pr_status_color(status: PrStatus) -> Color {
