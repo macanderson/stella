@@ -35,8 +35,6 @@ fn the_default_roster_is_the_pipeline_that_shipped() {
         (ModelCallRole::Plan, Role::Plan),
         (ModelCallRole::Worker, Role::Worker),
         (ModelCallRole::WitnessAuthor, Role::Verifier),
-        (ModelCallRole::DistressGuidance, Role::Verifier),
-        (ModelCallRole::Verdict, Role::Verifier),
     ] {
         assert!(
             roster.enabled(responsibility),
@@ -77,8 +75,6 @@ fn only_the_calls_this_pipeline_issues_are_assignable() {
             ModelCallRole::Plan,
             ModelCallRole::WitnessAuthor,
             ModelCallRole::Worker,
-            ModelCallRole::DistressGuidance,
-            ModelCallRole::Verdict,
         ],
         "assignable responsibilities drifted from the calls the pipeline makes"
     );
@@ -153,7 +149,7 @@ fn disabling_one_responsibility_leaves_the_rest_alone() {
         ModelCallRole::Plan,
         ModelCallRole::Worker,
         ModelCallRole::WitnessAuthor,
-        ModelCallRole::Verdict,
+        ModelCallRole::Research,
     ] {
         assert!(
             roster.enabled(still_on),
@@ -178,9 +174,9 @@ fn a_responsibility_can_be_reassigned_to_another_agent() {
         Some(Role::Triage)
     );
     assert_eq!(
-        roster.role(ModelCallRole::Verdict),
-        Some(Role::Verifier),
-        "reassigning one half of the verifier's job must not move the other"
+        roster.role(ModelCallRole::Plan),
+        Some(Role::Plan),
+        "reassigning one responsibility must not move another"
     );
 }
 
@@ -190,7 +186,10 @@ fn a_responsibility_can_be_reassigned_to_another_agent() {
 #[test]
 fn binding_a_graded_responsibility_to_the_worker_is_legal_and_reported() {
     let mut roster = Roster::default();
-    let errors = roster.apply([("verdict".to_string(), override_of(None, Some("worker")))]);
+    let errors = roster.apply([(
+        "witness_author".to_string(),
+        override_of(None, Some("worker")),
+    )]);
 
     assert!(
         errors.is_empty(),
@@ -199,25 +198,70 @@ fn binding_a_graded_responsibility_to_the_worker_is_legal_and_reported() {
     assert_eq!(
         roster.independence_losses(),
         vec![IndependenceLoss {
-            responsibility: ModelCallRole::Verdict,
+            responsibility: ModelCallRole::WitnessAuthor,
             agent: AgentId::new("worker"),
         }],
-        "a verdict graded by the worker must be reported as an independence loss"
+        "a witness the worker wrote for itself must be reported as an independence loss"
     );
 }
 
-/// Distress guidance is deliberately outside the independence set: steering a
-/// worker with its own model is weaker advice, not a broken proof, and
-/// reporting it would train operators to ignore the report.
+/// **The witness for the removal.** No configuration can put a model back in
+/// the judgement seat.
+///
+/// This is the shape a removal has to be tested in. Asserting that a default
+/// run makes no verdict call would pass just as well if the call were merely
+/// defaulted off, and "off by default" is one settings key away from being on
+/// — which, for the one stage whose value is that its answer cannot be talked
+/// into existence, is not a guarantee at all.
+///
+/// So it asserts the stronger property: the responsibilities are *unassignable*.
+/// `Roster::default` builds its rows by filtering `ModelCallRole::ALL` through
+/// `default_agent`, so a `None` there means no row exists to enable; and
+/// `Roster::apply` rejects a key `is_assignable` denies, so the configuration
+/// surface cannot create one. Both halves are checked, in both spellings an
+/// operator might reach for.
 #[test]
-fn distress_guidance_on_the_worker_is_not_an_independence_loss() {
-    let mut roster = Roster::default();
-    roster.apply([(
-        "distress_guidance".to_string(),
-        override_of(None, Some("worker")),
-    )]);
+fn no_configuration_can_put_a_model_back_in_the_judgement_seat() {
+    for responsibility in [ModelCallRole::Verdict, ModelCallRole::DistressGuidance] {
+        let token = responsibility_token(responsibility);
 
-    assert!(roster.independence_losses().is_empty());
+        assert!(
+            !Roster::is_assignable(responsibility),
+            "`{token}` must not be assignable"
+        );
+        assert!(
+            Roster::default().assignment(responsibility).is_none(),
+            "`{token}` must have no row to enable"
+        );
+        assert!(
+            !Roster::default().enabled(responsibility),
+            "`{token}` must never report as enabled"
+        );
+        assert_eq!(
+            Roster::default().role(responsibility),
+            None,
+            "`{token}` must resolve no role, so no call site can make its call"
+        );
+
+        // Both spellings an operator would reach for: turn it on, and point it
+        // at an agent. Each is refused by name rather than silently ignored.
+        for spec in [override_of(Some(true), None), override_of(None, Some("verifier"))] {
+            let mut roster = Roster::default();
+            let errors = roster.apply([(token.clone(), spec)]);
+            assert_eq!(
+                errors,
+                vec![RosterError::NotAssignable {
+                    responsibility: token.clone(),
+                }],
+                "configuring `{token}` must be refused by name"
+            );
+            assert_eq!(
+                roster.role(responsibility),
+                None,
+                "a refused row must leave `{token}` resolving nothing"
+            );
+        }
+    }
 }
 
 /// A disabled responsibility cannot lose independence it was never going to
@@ -227,7 +271,7 @@ fn distress_guidance_on_the_worker_is_not_an_independence_loss() {
 fn a_disabled_responsibility_reports_no_independence_loss() {
     let mut roster = Roster::default();
     roster.apply([(
-        "verdict".to_string(),
+        "witness_author".to_string(),
         override_of(Some(false), Some("worker")),
     )]);
 
@@ -239,18 +283,21 @@ fn a_disabled_responsibility_reports_no_independence_loss() {
 #[test]
 fn an_unknown_agent_is_named_and_never_silently_resolved() {
     let mut roster = Roster::default();
-    let errors = roster.apply([("verdict".to_string(), override_of(None, Some("verifer")))]);
+    let errors = roster.apply([(
+        "witness_author".to_string(),
+        override_of(None, Some("verifer")),
+    )]);
 
     assert_eq!(
         errors,
         vec![RosterError::UnknownAgent {
-            responsibility: "verdict".to_string(),
+            responsibility: "witness_author".to_string(),
             agent: "verifer".to_string(),
             known: "worker, triage, plan, research, verifier".to_string(),
         }]
     );
     assert_eq!(
-        roster.role(ModelCallRole::Verdict),
+        roster.role(ModelCallRole::WitnessAuthor),
         None,
         "an unresolvable binding must resolve to nothing, never to a default"
     );
@@ -288,7 +335,7 @@ fn apply_reports_every_problem_rather_than_the_first() {
     let mut roster = Roster::default();
     let errors = roster.apply([
         ("nonsense".to_string(), override_of(Some(false), None)),
-        ("verdict".to_string(), override_of(None, Some("nobody"))),
+        ("witness_author".to_string(), override_of(None, Some("nobody"))),
     ]);
 
     assert_eq!(errors.len(), 2, "both rows must be reported: {errors:?}");
@@ -311,12 +358,12 @@ fn the_worker_cannot_be_disabled() {
 #[test]
 fn an_absent_field_keeps_the_built_in_binding() {
     let mut roster = Roster::default();
-    roster.apply([("verdict".to_string(), override_of(Some(false), None))]);
+    roster.apply([("witness_author".to_string(), override_of(Some(false), None))]);
 
-    assert!(!roster.enabled(ModelCallRole::Verdict));
+    assert!(!roster.enabled(ModelCallRole::WitnessAuthor));
     assert_eq!(
         roster
-            .assignment(ModelCallRole::Verdict)
+            .assignment(ModelCallRole::WitnessAuthor)
             .map(|row| row.agent.clone()),
         Some(AgentId::new("verifier")),
         "disabling a responsibility must not also reset who owns it"
@@ -348,7 +395,7 @@ fn a_roster_round_trips_through_its_own_override_block() {
     let mut original = Roster::default();
     original.set_enabled(ModelCallRole::Triage, false);
     original.set_enabled(ModelCallRole::WitnessAuthor, false);
-    original.set_agent(ModelCallRole::Verdict, AgentId::new("triage"));
+    original.set_agent(ModelCallRole::Plan, AgentId::new("triage"));
 
     let mut restored = Roster::default();
     let problems = restored.apply(original.overrides());
@@ -408,8 +455,6 @@ fn a_block_naming_only_some_rows_leaves_the_rest_at_their_defaults() {
         ModelCallRole::Plan,
         ModelCallRole::Research,
         ModelCallRole::Worker,
-        ModelCallRole::DistressGuidance,
-        ModelCallRole::Verdict,
     ] {
         assert_eq!(
             restored.assignment(untouched),

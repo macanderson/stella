@@ -55,17 +55,20 @@ fn evidence(summary: &str, rung: Option<LadderRung>) -> VerdictEvidence {
     }
 }
 
-/// The four scored tiers, at their stated magnitudes. Zero cost so the
-/// outcome term is the whole reward.
+/// The scored tiers, at their stated magnitudes. Zero cost so the outcome
+/// term is the whole reward.
+///
+/// There are two of them, and there used to be four. The judged tier is gone
+/// with the call that produced it: no rung's magnitude now comes from a model's
+/// opinion, so every non-deterministic rung is a named discard rather than a
+/// number — see `every_unscored_rung_names_its_reason`.
 #[test]
-fn the_four_tiers_score_at_their_stated_weights() {
+fn only_the_deterministic_rungs_score_at_their_stated_weights() {
     let free = cost(0, 0.0, 0);
     let policy = RewardPolicy::default();
     for (rung, passed, expected) in [
         (LadderRung::SubmitFast, true, 1.0),
         (LadderRung::Revise, false, -1.0),
-        (LadderRung::Unverified, true, 0.5),
-        (LadderRung::Unverified, false, -0.5),
     ] {
         let label = label(settled(rung, passed), free, &policy);
         assert_eq!(label.rung, Some(rung));
@@ -146,21 +149,22 @@ fn the_abstain_rungs_are_discarded_not_punished() {
     }
 }
 
-/// A heuristic verdict describes the verifier's availability, not the work, and a
-/// waived review determined nothing at all. Both are discarded — and the two
-/// reasons stay distinct, because they are different facts.
+/// Evidence that fell short and a review nobody bought are both discarded —
+/// and the two reasons stay distinct, because they are different facts about
+/// the turn. One ran the checks and did not get a proof; the other never
+/// checked, because the warrant found nothing worth proving.
 #[test]
-fn a_verdict_about_the_pipeline_is_not_a_verdict_about_the_work() {
+fn an_unproven_turn_is_told_apart_from_an_unreviewed_one() {
     let policy = RewardPolicy::default();
-    let heuristic = label(
+    let unproven = label(
         settled(LadderRung::Unverified, true),
         cost(3, 0.1, 0),
         &policy,
     );
-    assert_eq!(heuristic.discard, Some(DiscardReason::VerifierUnavailable));
+    assert_eq!(unproven.discard, Some(DiscardReason::Unproven));
     let waived = label(settled(LadderRung::Waived, true), cost(3, 0.1, 0), &policy);
     assert_eq!(waived.discard, Some(DiscardReason::ReviewWaived));
-    assert_ne!(heuristic.discard, waived.discard);
+    assert_ne!(unproven.discard, waived.discard);
 }
 
 /// A `deterministic: true, passed: true` waived verdict — the shape that would
@@ -233,63 +237,7 @@ fn distrusting(judged: f64) -> RewardPolicy {
     }
 }
 
-/// The knob does what it says: a workspace that trusts its verifier less scores
-/// judged turns lower, and leaves the deterministic rungs untouched. That
-/// asymmetry is the whole point — the discount applies to the opinion, not to
-/// the observation.
-#[test]
-fn a_lowered_verifier_weight_discounts_only_the_judged_rungs() {
-    let policy = distrusting(0.2);
-    let free = cost(0, 0.0, 0);
-    for (rung, passed, expected) in [
-        (LadderRung::Unverified, true, 0.2),
-        (LadderRung::Unverified, false, -0.2),
-        (LadderRung::SubmitFast, true, 1.0),
-        (LadderRung::Revise, false, -1.0),
-    ] {
-        let label = label(settled(rung, passed), free, &policy);
-        assert_eq!(
-            label.outcome,
-            Some(expected),
-            "{rung:?} passed={passed} under judged=0.2"
-        );
-    }
-}
 
-/// A judged weight of zero is a refusal to label, not a label of zero.
-///
-/// The distinction is the module's founding rule applied to a knob: `0.0` is a
-/// claim that a neutral outcome was observed, and "I do not trust this verifier"
-/// is the opposite of a claim. A trainer filtering on `is_scored()` must not
-/// see these rows at all.
-#[test]
-fn a_zero_verifier_weight_discards_rather_than_scoring_zero() {
-    let policy = distrusting(0.0);
-    for passed in [true, false] {
-        let label = label(
-            settled(LadderRung::Unverified, passed),
-            cost(3, 0.1, 0),
-            &policy,
-        );
-        assert_eq!(label.reward, None, "a distrusted verifier scores nothing");
-        assert_eq!(label.outcome, None);
-        assert_eq!(label.discard, Some(DiscardReason::VerifierDistrusted));
-        assert!(!label.is_scored());
-        assert_eq!(
-            label.rung,
-            Some(LadderRung::Unverified),
-            "the rung survives so the row stays selectable"
-        );
-    }
-    // And the deterministic rungs are unaffected: distrusting the verifier is not
-    // distrusting the tests.
-    let deterministic = label(
-        settled(LadderRung::SubmitFast, true),
-        cost(0, 0.0, 0),
-        &policy,
-    );
-    assert_eq!(deterministic.outcome, Some(1.0));
-}
 
 /// The ceiling: a judged weight above the deterministic one is refused, at both
 /// the places it can arrive. Above that line a model's opinion outranks a
@@ -317,18 +265,15 @@ fn a_verifier_weight_above_the_deterministic_one_is_refused() {
     );
 }
 
-/// Equal weights are legal — a workspace whose verifier is as good as its tests is
-/// entitled to say so. The ceiling is `>`, not `>=`.
+/// Equal weights are legal. The ceiling is `>`, not `>=`.
+///
+/// Validation only: the judged weight no longer prices any rung, so there is
+/// no scoring behaviour left to assert about it. The rule is still enforced
+/// because the field is still settings-visible, and a policy that fails its
+/// own stated bound must not be accepted whatever reads it.
 #[test]
 fn a_verifier_weight_equal_to_the_deterministic_one_is_allowed() {
-    let policy = distrusting(1.0);
-    assert_eq!(policy.validate(), Ok(()));
-    let label = label(
-        settled(LadderRung::Unverified, true),
-        cost(0, 0.0, 0),
-        &policy,
-    );
-    assert_eq!(label.outcome, Some(1.0));
+    assert_eq!(distrusting(1.0).validate(), Ok(()));
 }
 
 /// Every other way a policy can be nonsense, and the distinct reason each one
@@ -423,24 +368,35 @@ fn every_label_carries_the_policy_it_was_computed_under() {
     }
 }
 
-/// Two workspaces, the same turn, different verifier weights: the labels differ,
-/// and each one carries the number that explains why. This is the property that
-/// makes per-workspace weights safe to pool.
+/// Two workspaces, the same turn, different shaping: the labels differ, and
+/// each one carries the numbers that explain why. This is the property that
+/// makes per-workspace policies safe to pool.
+///
+/// Demonstrated on the cost term rather than the outcome weights, because
+/// after the judged tier's removal a scored label's outcome is the same
+/// magnitude under every valid policy — the weights that still vary a scored
+/// row are the shaping ones.
 #[test]
 fn the_same_turn_under_two_policies_is_told_apart_by_its_stamp() {
-    let turn = || settled(LadderRung::Unverified, true);
+    let turn = || settled(LadderRung::SubmitFast, true);
     let spent = cost(4, 0.1, 0);
-    let trusting = label(turn(), spent, &RewardPolicy::default());
-    let skeptical = label(turn(), spent, &distrusting(0.2));
+    let thrifty = RewardPolicy {
+        shaping: RewardShaping {
+            per_usd: 4.0,
+            ..RewardShaping::default()
+        },
+        ..RewardPolicy::default()
+    };
+    let ordinary = label(turn(), spent, &RewardPolicy::default());
+    let penny_pinching = label(turn(), spent, &thrifty);
 
-    assert_ne!(trusting.reward, skeptical.reward);
-    assert_ne!(trusting.policy, skeptical.policy);
-    // And the difference is fully explained by the stamp: rescaling the
-    // skeptical label by the ratio of the two judged weights recovers the
-    // trusting one, with no access to the journal either produced it from.
-    let ratio = trusting.policy.outcome.judged / skeptical.policy.outcome.judged;
-    let recovered = skeptical.outcome.unwrap() * ratio;
-    assert!((recovered - trusting.outcome.unwrap()).abs() < 1e-9);
+    assert_ne!(ordinary.reward, penny_pinching.reward);
+    assert_ne!(ordinary.policy, penny_pinching.policy);
+    // And the difference is fully explained by the stamp: the two rewards
+    // differ by exactly the extra dollar-price the thrifty policy declares,
+    // recoverable without access to the journal either came from.
+    let extra = (thrifty.shaping.per_usd - RewardPolicy::default().shaping.per_usd) * 0.1;
+    assert!((penny_pinching.reward.unwrap() + extra - ordinary.reward.unwrap()).abs() < 1e-9);
 }
 
 /// The airlock, stated structurally: a serialized label contains no string
@@ -454,10 +410,10 @@ fn a_label_has_no_free_text_leaves() {
         "revise",
         "nothing_attempted",
         "unverifiable",
-        "model_verdict",
-        "heuristic_fallback",
+        "unverified",
         "waived",
         // DiscardReason
+        "unproven",
         "abstained",
         "verifier_unavailable",
         "review_waived",
@@ -548,9 +504,12 @@ proptest! {
             "verifier reasoning leaked into {json}"
         );
         // And the label is still the right one — the airlock does not cost the
-        // signal, only the prose.
+        // signal, only the prose. An unproven rung carries no outcome term by
+        // construction, so the surviving signal is the rung and the named
+        // reason it was not scored.
         prop_assert_eq!(label.rung, Some(LadderRung::Unverified));
-        prop_assert_eq!(label.outcome, Some(if passed { 0.5 } else { -0.5 }));
+        prop_assert_eq!(label.outcome, None);
+        prop_assert_eq!(label.discard, Some(DiscardReason::Unproven));
     }
 
     /// Labelling is total and never emits a non-finite scalar, for any rung,
