@@ -130,12 +130,22 @@ class TestAgainstTheLocalCorpus:
                     judged += 1
                     reason = m.outcome_reason()
                     assert reason, f"{match.spec.id}/{m.trial}: judged, no reason"
-                    # Group A == the trials the void machinery already
-                    # excludes (resolved is None on a judged trial); the
-                    # taxonomy must add names, never reclassify.
-                    assert reason.startswith("void_") == (m.resolved is None), (
+                    # A `void_` label must mean exactly "outside the solve
+                    # rate" — the prefix is only useful if it tracks the
+                    # denominator mechanically.
+                    #
+                    # This used to assert `void_ == (resolved is None)`, on the
+                    # premise that only an unjudged trial can be a void. That
+                    # premise was false, and the corpus is what disproved it:
+                    # six trials here have a scored 0 with zero steps, zero
+                    # tokens and a provider that refused the first call. The
+                    # verifier grades an untouched workspace 0 as readily as a
+                    # botched one, so `resolved is False` never meant "the
+                    # agent attempted this". Those six were counted as losses.
+                    excluded = m.resolved is None or m.never_ran()
+                    assert reason.startswith("void_") == excluded, (
                         f"{match.spec.id}/{m.trial}: {reason} vs "
-                        f"resolved={m.resolved}"
+                        f"resolved={m.resolved} never_ran={m.never_ran()}"
                     )
         assert judged, "corpus present but nothing judged — the walk is inert"
 
