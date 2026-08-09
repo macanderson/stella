@@ -565,9 +565,15 @@ fn the_ratings_feed_lists_only_turns_the_model_graded() {
     // A third shape the shared fixture does not carry: prose with no numeric
     // grade. It IS an assessment — the "what to improve" feed is built from
     // exactly these — so the predicate must not key on `self_rating` alone.
+    // ...and a fourth: prose that is only whitespace, which
+    // `SelfReviewRow::is_empty` trims before judging and the SQL mirror must
+    // too. Unreachable through the writer, which refuses an empty review — it
+    // is here because the mirror is the thing under test, not the writer.
     conn.execute_batch(
         "INSERT INTO execution_reflection (execution_id, critique)
-         VALUES (3, 'landed, but the first diagnosis was wrong');",
+         VALUES (3, 'landed, but the first diagnosis was wrong');
+         INSERT INTO execution_reflection (execution_id, what_went_well)
+         VALUES (4, '  \t\n ');",
     )
     .unwrap();
 
@@ -581,8 +587,8 @@ fn the_ratings_feed_lists_only_turns_the_model_graded() {
     assert_eq!(
         listed,
         vec![1, 3],
-        "execution 2 reflected unreadably and was never graded, so it is not a \
-         rating; the prose-only row is one"
+        "execution 2 reflected unreadably and 4 said nothing — neither was \
+         graded, so neither is a rating; the prose-only row is one"
     );
 
     // The same row, through the other projection that reads this table. A
