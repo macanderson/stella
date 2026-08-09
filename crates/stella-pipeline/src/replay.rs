@@ -43,6 +43,7 @@ pub mod ground_truth;
 pub mod independence;
 pub mod reference_adapter;
 
+use crate::verify::LadderInputs;
 use ground_truth::PendingPass;
 use independence::GraderCohorts;
 use stella_protocol::{AgentEvent, OracleObservation, ProofTree, StageKind, VerdictEvidence};
@@ -73,10 +74,12 @@ pub struct CalibrationReport {
     /// verifier-alone rate below (#1295). Verdicts recorded before snapshots
     /// existed (#865) are excluded rather than assumed either way.
     pub snapshotted_verdicts: u32,
-    /// …of which NOTHING mechanical corroborated the result: no flip, and no
-    /// touched-test run observed green.
+    /// …of which NOTHING mechanical corroborated the result: no flip, no
+    /// touched-test run observed green, and no worker-run `verify_done`
+    /// confirmation (#2194 — that third channel was missing here for as long
+    /// as it existed on the live predicate).
     ///
-    /// This is `LadderInputs::verifier_pass_stands_alone` read back off the
+    /// This is [`LadderInputs::verifier_pass_stands_alone`] read back off the
     /// record, and it is the number #1295 turns on: the gated "send it back
     /// for evidence" behaviour is worth a turn only where this is the
     /// suspicious minority. Counted over every snapshotted verdict, not only
@@ -356,14 +359,31 @@ pub fn calibration_pending(
 
 /// Whether a recorded verdict had no deterministic corroboration behind it
 /// (#1295) — the snapshot-side reading of
-/// `crate::verify::LadderInputs::verifier_pass_stands_alone`.
+/// [`LadderInputs::verifier_pass_stands_alone`].
 ///
-/// Deliberately the same two conjuncts and no more. A readable diff or a
-/// recorded file touch proves the tree **changed**; neither says the change
-/// is **correct**, and only the second claim is what a pass makes — so
-/// counting them here would report a rate the pipeline does not gate on.
+/// **It calls that predicate rather than restating it.** For a while it
+/// restated it, in two conjuncts, and when #2191 taught the live predicate a
+/// third channel (`verify_done_flip`) the copy here stayed at two — so
+/// [`CalibrationReport::uncorroborated_verdicts`] counted a verdict as
+/// uncorroborated over runs where the engine, at decision time, held
+/// corroboration. That rate is the number that decides
+/// `PipelineConfig::verifier_evidence_demand`, so a tuning knob was being set
+/// by a metric that disagreed with the code it claimed to mirror, and the
+/// disagreement grew with every `verify_done`-rescued turn (#2194).
+///
+/// The projection carries only the channels the predicate reads; every other
+/// input keeps its `Default`, which is the "nothing observed" value. A
+/// readable diff or a recorded file touch is deliberately not among them: they
+/// prove the tree **changed**, never that the change is **correct**, and only
+/// the second claim is what a pass makes.
 fn stands_alone(snapshot: &stella_protocol::LadderSnapshot) -> bool {
-    !snapshot.flip_achieved && snapshot.touched_tests_passed != Some(true)
+    LadderInputs {
+        flip_achieved: snapshot.flip_achieved,
+        touched_tests_passed: snapshot.touched_tests_passed,
+        verify_done_flip: snapshot.verify_done_flip,
+        ..LadderInputs::default()
+    }
+    .verifier_pass_stands_alone()
 }
 
 /// Render an oracle trace compactly — `baseline:fail → candidate:pass` —
@@ -453,6 +473,24 @@ pub fn verdict_provenance(evidence: &VerdictEvidence) -> Option<String> {
     // overlap was not measured" is a direct answer to it.
     if let Some(coverage) = &snapshot.diff_coverage {
         out.push_str(&format!("; diff_coverage={coverage}"));
+    }
+    // #2194: the two channels that can change the verdict without appearing
+    // anywhere else in this render. Stated only when they fired — like every
+    // conditional clause here, silence is "the probe had nothing to say",
+    // never "it looked and found nothing".
+    if snapshot.verify_done_flip {
+        out.push_str(
+            "; verify_done_flip=confirmed (worker's witness: baseline fail → change pass)",
+        );
+    }
+    if snapshot.no_test_surface {
+        out.push_str("; no_test_surface=true (no tracked command; a flip was unobtainable)");
+    }
+    if snapshot.errored_commands > 0 {
+        out.push_str(&format!(
+            "; errored_commands={} (exited 0 with a failed command inside)",
+            snapshot.errored_commands
+        ));
     }
     // #1795: a provenance reader asking "who graded this?" gets the stored
     // fact — `self-graded` is the finding this field exists to surface, and
@@ -1359,18 +1397,19 @@ mod calibration_tests {
         assert_eq!(merged.verifier_false_positives, 1);
     }
 
-    /// A verdict carrying its ladder snapshot, so the verifier-alone fold has
-    /// something to read. `corroborated` decides whether the recorded turn
-    /// had a flip behind it.
-    fn snapshotted(passed: bool, deterministic: bool, corroborated: bool) -> AgentEvent {
-        let snapshot = stella_protocol::LadderSnapshot {
+    /// A snapshot observing nothing, for tests that set only the channels
+    /// they exercise. The diff fields are non-zero because "the tree changed"
+    /// is never corroboration here — a literal that looked all-dark would
+    /// suggest it might be.
+    fn bare_snapshot() -> stella_protocol::LadderSnapshot {
+        stella_protocol::LadderSnapshot {
             rung: None,
             tracked_command: None,
             oracle_trace: vec![],
-            flip_achieved: corroborated,
+            flip_achieved: false,
             unstable_flip: false,
             flip_refused_different_failure: false,
-            touched_tests_passed: corroborated.then_some(true),
+            touched_tests_passed: None,
             test_infra: None,
             diff_lines: 4,
             diff_budget: 400,
@@ -1382,7 +1421,21 @@ mod calibration_tests {
             witness_intact: None,
             witness_mutation: None,
             diff_coverage: None,
+            verify_done_flip: false,
+            no_test_surface: false,
+            errored_commands: 0,
             verifier_independent: None,
+        }
+    }
+
+    /// A verdict carrying its ladder snapshot, so the verifier-alone fold has
+    /// something to read. `corroborated` decides whether the recorded turn
+    /// had a flip behind it.
+    fn snapshotted(passed: bool, deterministic: bool, corroborated: bool) -> AgentEvent {
+        let snapshot = stella_protocol::LadderSnapshot {
+            flip_achieved: corroborated,
+            touched_tests_passed: corroborated.then_some(true),
+            ..bare_snapshot()
         };
         AgentEvent::Verdict {
             passed,
@@ -1423,6 +1476,79 @@ mod calibration_tests {
         // The pass cohorts are untouched by the new fold.
         assert_eq!(report.verifier_passes, 2);
         assert_eq!(report.deterministic_passes, 1);
+    }
+
+    /// #2194: the projection and the live predicate agree on every
+    /// combination of the three channels a corroboration decision reads.
+    ///
+    /// This is the assertion whose absence let the two drift. `stands_alone`
+    /// used to *restate* `verifier_pass_stands_alone` in two conjuncts; #2191
+    /// taught the live predicate a third (`verify_done_flip`) and the copy
+    /// stayed at two, so `uncorroborated_verdicts` — the number that decides
+    /// `verifier_evidence_demand` — over-counted every `verify_done`-rescued
+    /// turn. The projection now calls the predicate rather than repeating it,
+    /// and this pins the remaining hazard: a channel the predicate reads must
+    /// survive the trip through the wire snapshot, or the same drift returns
+    /// wearing a `Default` instead of a missing conjunct.
+    #[test]
+    fn the_snapshot_projection_agrees_with_the_live_predicate() {
+        for flip_achieved in [false, true] {
+            for touched_tests_passed in [None, Some(false), Some(true)] {
+                for verify_done_flip in [false, true] {
+                    let inputs = LadderInputs {
+                        flip_achieved,
+                        touched_tests_passed,
+                        verify_done_flip,
+                        ..LadderInputs::default()
+                    };
+                    let snapshot = stella_protocol::LadderSnapshot {
+                        flip_achieved,
+                        touched_tests_passed,
+                        verify_done_flip,
+                        ..bare_snapshot()
+                    };
+                    // Through the wire, because that is how a replay reader
+                    // meets a snapshot: off disk, not from memory.
+                    let json = serde_json::to_string(&snapshot).unwrap();
+                    let recorded: stella_protocol::LadderSnapshot =
+                        serde_json::from_str(&json).unwrap();
+                    assert_eq!(
+                        stands_alone(&recorded),
+                        inputs.verifier_pass_stands_alone(),
+                        "projection disagrees at flip={flip_achieved} \
+                         touched={touched_tests_passed:?} verify_done={verify_done_flip}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The consequence, folded: a verdict rescued by a worker-run
+    /// `verify_done` confirmation is corroborated, and must not land in the
+    /// uncorroborated tally that tunes `verifier_evidence_demand`.
+    #[test]
+    fn a_verify_done_rescued_verdict_is_not_counted_uncorroborated() {
+        let rescued = AgentEvent::Verdict {
+            passed: true,
+            evidence: VerdictEvidence {
+                summary: "heuristic fallback passed on the worker's verify_done confirmation"
+                    .into(),
+                deterministic: false,
+                evidence_refs: vec![],
+                ladder: Some(Box::new(stella_protocol::LadderSnapshot {
+                    verify_done_flip: true,
+                    ..bare_snapshot()
+                })),
+            },
+        };
+        let report = calibration(&[rescued]);
+        assert_eq!(report.snapshotted_verdicts, 1);
+        assert_eq!(
+            report.uncorroborated_verdicts, 0,
+            "a confirmed verify_done flip is deterministic corroboration, exactly as the \
+             engine weighed it at decision time"
+        );
+        assert_eq!(report.verifier_passes_standing_alone, 0);
     }
 
     /// A rate with no denominator is reported as unmeasured, never as 0% —
