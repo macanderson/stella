@@ -1,13 +1,40 @@
-//! Terminal UI — streaming text, tool-call cards, cost tracking.
+//! The **plain surface** — the line-oriented renderer: streaming text,
+//! tool-call cards, inline diffs, stage rules, cost tracking.
 //!
-//! Designed for speed and engagement: tool calls appear as cards with
-//! status, and the model's response prints as soon as it's ready.
+//! This module was called `tui` until #2421, which was the one thing it is
+//! not: there is no screen here, no layout and no input loop, just `colored`
+//! and `println!` writing lines that scroll. The Command Deck in
+//! [`stella_tui`] is the TUI. This is what runs when the deck cannot — and
+//! that is not a rare fallback: `stella run` never opens the deck at all
+//! (`main.rs`'s `Command::Run` arm), every supervised child writes here
+//! because its stdout is a console *file* rather than a terminal, and
+//! `stella daemon logs`/`attach` replay those bytes. For a great many runs
+//! this surface is the only transcript that ever exists.
 //!
-//! `render_event` is the TUI's one entry point onto `stella_core::Engine`'s
-//! event stream (L-T1: the TUI renders exclusively
-//! from `AgentEvent`s — no panel owns state that isn't reconstructible by
-//! replaying the event log). It's deliberately a thin dispatcher onto the
-//! existing per-kind print helpers below, not a rewrite of them.
+//! The name follows the decision that selects it:
+//! [`crate::term_policy::plain_fallback`], `--plain`, `STELLA_PLAIN`.
+//!
+//! `render_event` is this surface's one entry point onto `stella_core::Engine`'s
+//! event stream (L-T1: it renders exclusively from `AgentEvent`s — no panel
+//! owns state that isn't reconstructible by replaying the event log). It's
+//! deliberately a thin dispatcher onto the per-kind print helpers below, not a
+//! rewrite of them.
+//!
+//! # What is shared with the deck, and what is not
+//!
+//! Both surfaces fold the same event stream, so they always agree on *what
+//! happened*; they disagree on paint, and the split is deliberate:
+//!
+//! - **Shared**, because two copies drift: the event→text wording
+//!   ([`stella_tui::textline`], #66), the stage vocabulary
+//!   ([`stella_tui::textline::stage_label`]), the markdown parse
+//!   ([`stella_tui::markdown`]) and the diff layout ([`stella_tui::diff`]).
+//! - **Not shared**, because the media genuinely differ: this surface writes
+//!   into the user's own scrollback and paints no ground, so prose keeps the
+//!   terminal's default foreground instead of the deck's explicit
+//!   `theme::INK` — inheriting that would fight a light terminal profile.
+//!   The deck can also expand a diff in place (ctrl+o); a scrollback line
+//!   cannot be revisited, so this surface commits to one capped rendering.
 //!
 //! There is deliberately no animated "thinking" spinner: the Phase 0/1
 //! version had one, but it only ticked a fixed 3 frames *before* dispatching

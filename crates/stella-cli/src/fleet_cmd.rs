@@ -62,7 +62,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use crate::agent;
 use crate::config::Config;
 use crate::runtime::{SystemClock, TokioSleeper, WallClock};
-use crate::tui;
+use crate::plain;
 
 /// Cap on the per-task summary line so the report table stays a table.
 const SUMMARY_CHARS: usize = 96;
@@ -98,7 +98,7 @@ pub async fn run_fleet(
     .await
     .map_err(|e| format!("cannot resolve the fleet base ref: {e}"))?;
 
-    tui::section_header("Stella — fleet");
+    plain::section_header("Stella — fleet");
     println!(
         "  {} task(s) from {}, base {}, ≤{} concurrent\n",
         plan.tasks.len(),

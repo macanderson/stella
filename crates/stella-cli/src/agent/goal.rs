@@ -88,7 +88,7 @@ pub(crate) async fn run_raw_one_shot(
     let calibration = seed_calibration(&store, cfg);
 
     if format == OutputFormat::Text {
-        tui::section_header("Stella");
+        plain::section_header("Stella");
         println!("  {}\n", prompt.dimmed());
     }
 
@@ -287,7 +287,7 @@ pub async fn run_goal_cmd(
     let store = open_store(&cfg.workspace_root);
     let calibration = seed_calibration(&store, cfg);
 
-    tui::section_header("Stella — goal mode");
+    plain::section_header("Stella — goal mode");
     println!("  {}\n", goal.dimmed());
 
     // Persona matches the driver: pipeline rounds get the pipeline worker
@@ -555,7 +555,7 @@ pub(crate) async fn run_goal_turn(
             );
         }
     }
-    tui::files_touched_panel(&files);
+    plain::files_touched_panel(&files);
 
     match outcome {
         GoalOutcome::Met {
@@ -569,7 +569,7 @@ pub(crate) async fn run_goal_turn(
                 if rounds == 1 { "" } else { "s" },
                 verdict
             );
-            tui::cost_summary(
+            plain::cost_summary(
                 cost_usd,
                 &format!("{}/{}", cfg.provider.id, cfg.model_id),
                 turn_start.elapsed(),
@@ -583,7 +583,7 @@ pub(crate) async fn run_goal_turn(
             cost_usd,
             kind,
         } => {
-            tui::cost_summary(
+            plain::cost_summary(
                 cost_usd,
                 &format!("{}/{}", cfg.provider.id, cfg.model_id),
                 turn_start.elapsed(),
@@ -858,14 +858,14 @@ async fn run_goal_pipeline_turn(
             });
 
             if verdict.met {
-                tui::files_touched_panel(&registry.files_touched());
+                plain::files_touched_panel(&registry.files_touched());
                 println!(
                     "\n  {} goal met after {round} round{}: {}",
                     "✓".green().bold(),
                     if round == 1 { "" } else { "s" },
                     verdict.reasoning
                 );
-                tui::cost_summary(
+                plain::cost_summary(
                     total_cost_usd,
                     &format!("{}/{}", cfg.provider.id, cfg.model_id),
                     turn_start.elapsed(),
@@ -886,7 +886,7 @@ async fn run_goal_pipeline_turn(
             (Some(r), _) => r,
             (None, true) => Ok(()),
             (None, false) => {
-                tui::cost_summary(
+                plain::cost_summary(
                     total_cost_usd,
                     &format!("{}/{}", cfg.provider.id, cfg.model_id),
                     turn_start.elapsed(),
@@ -924,7 +924,7 @@ async fn run_goal_pipeline_turn(
             );
         }
     }
-    tui::files_touched_panel(&files);
+    plain::files_touched_panel(&files);
     goal_result
 }
 
