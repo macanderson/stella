@@ -15,6 +15,31 @@ pub(crate) async fn run_raw_one_shot(
     budget_limit: Option<f64>,
     format: OutputFormat,
 ) -> Result<(), crate::failure::CliFailure> {
+    // The bare step loop withholds the task board.
+    //
+    // The board is what makes a long autonomous run legible and resumable —
+    // and a one-shot turn has nothing to resume, so here it is pure overhead
+    // charged at the most expensive rate there is: a model round trip per
+    // card. Measured over nine solved Terminal-Bench trials, 26% of every tool
+    // call this loop made was board bookkeeping and 14% of its steps did
+    // nothing else — steps that read nothing, changed no file, and still paid
+    // for a full request under a 900s ceiling.
+    //
+    // Narrowed rather than switched off at construction: `narrow_with` can
+    // only ever remove capability, so an operator who has already disabled
+    // something keeps it disabled, and this cannot grant anything back. It is
+    // the same seam `tools.bash: "off"` travels through, which is why the
+    // board disappears from MCP-wrapped and custom tool stacks too rather than
+    // only from the built-in registry.
+    let cfg = &{
+        let mut bare = cfg.clone();
+        bare.tool_policy
+            .narrow_with(&stella_tools::policy::ToolPolicy::from_switches([(
+                "task".to_string(),
+                false,
+            )]));
+        bare
+    };
     let provider = build_provider(cfg)?;
     let registry_options = registry_options(cfg);
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
@@ -963,6 +988,60 @@ impl stella_core::ToolExecutor for VerifierScopedTools<'_> {
     // is wrong the day that changes.
     fn drain_sub_agent_spend_usd(&self) -> f64 {
         self.inner.drain_sub_agent_spend_usd()
+    }
+}
+
+#[cfg(test)]
+mod bare_loop_board_tests {
+    use stella_tools::policy::ToolPolicy;
+
+    /// The narrowing `run_raw_one_shot` applies, asserted at the seam it uses.
+    ///
+    /// Fails on main, where the bare loop narrowed nothing and every board
+    /// tool was offered: 26% of its tool calls and 14% of its steps went on
+    /// bookkeeping that a one-shot turn can never resume.
+    fn bare_loop_policy(base: ToolPolicy) -> ToolPolicy {
+        let mut policy = base;
+        policy.narrow_with(&ToolPolicy::from_switches([("task".to_string(), false)]));
+        policy
+    }
+
+    #[test]
+    fn the_bare_loop_withholds_every_board_tool() {
+        let policy = bare_loop_policy(ToolPolicy::allow_all());
+        for tool in [
+            "task_create",
+            "task_list",
+            "task_start",
+            "task_complete",
+            "task_cancel",
+        ] {
+            assert!(!policy.allows(tool), "{tool} should be withheld");
+        }
+    }
+
+    #[test]
+    fn withholding_the_board_leaves_the_working_tools_alone() {
+        let policy = bare_loop_policy(ToolPolicy::allow_all());
+        for tool in ["bash", "read_file", "write_file", "edit_file", "grep"] {
+            assert!(policy.allows(tool), "{tool} must still be available");
+        }
+    }
+
+    /// Narrowing can only remove. An operator who has already switched
+    /// something off keeps it off, and this must never hand it back — which is
+    /// why the board is withheld through the policy seam rather than by
+    /// skipping registration.
+    #[test]
+    fn narrowing_never_grants_back_what_an_operator_denied() {
+        let operator =
+            ToolPolicy::from_switches([("bash".to_string(), false), ("task".to_string(), true)]);
+        let policy = bare_loop_policy(operator);
+        assert!(!policy.allows("bash"), "operator's denial must survive");
+        assert!(
+            !policy.allows("task_create"),
+            "an operator grant must not resurrect the board here"
+        );
     }
 }
 

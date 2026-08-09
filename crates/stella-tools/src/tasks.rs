@@ -83,18 +83,38 @@ impl Tool for TaskCreate {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "task_create".into(),
-            description: "Add a task to the session task board — the board is the session's \
+            description: "Add tasks to the session task board — the board is the session's \
                           visible plan, so create tasks BEFORE starting multi-step work, one \
-                          per concrete deliverable. New tasks start pending; mark the one you \
-                          work on with task_start (or delegate it with task_assign)."
+                          per concrete deliverable. Pass `tasks` to create a whole plan in ONE \
+                          call; `subject` creates a single task. New tasks start pending; mark \
+                          the one you work on with task_start (or delegate it with \
+                          task_assign). Board updates cost a full model round trip when they \
+                          travel alone — issue them in the SAME step as the real work they \
+                          describe, never as a step of their own."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "description": "The whole plan at once — strings, or objects with subject/description. Prefer this over several task_create calls.",
+                        "items": {
+                            "anyOf": [
+                                { "type": "string" },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "subject": { "type": "string" },
+                                        "description": { "type": "string" }
+                                    },
+                                    "required": ["subject"]
+                                }
+                            ]
+                        }
+                    },
                     "subject": { "type": "string", "description": "Imperative title (e.g. \"Fix the auth redirect loop\")" },
                     "description": { "type": "string", "description": "What needs to be done, if the subject alone is not enough" }
-                },
-                "required": ["subject"]
+                }
             }),
             read_only: false,
             speculation_safe: false,
@@ -102,6 +122,52 @@ impl Tool for TaskCreate {
     }
 
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
+        // The batch form exists because the per-call form was being billed a
+        // model round trip per card. Across nine solved Terminal-Bench trials,
+        // 26% of every tool call Stella made was board bookkeeping and 14% of
+        // its steps did nothing else — a plan of four tasks cost four requests
+        // to write four lines that changed no file and read nothing.
+        if let Some(entries) = input.get("tasks").and_then(Value::as_array) {
+            if entries.is_empty() {
+                return ToolOutput::Error {
+                    message: "field `tasks` was empty — pass at least one task".into(),
+                };
+            }
+            let mut board = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            let mut created = Vec::with_capacity(entries.len());
+            for (i, entry) in entries.iter().enumerate() {
+                // A bare string is the common case and worth accepting: it is
+                // what a model reaches for when the subject says it all.
+                let (subject, description) = match entry {
+                    Value::String(s) if !s.trim().is_empty() => (s.trim().to_string(), None),
+                    Value::Object(_) => match require_str(entry, "subject") {
+                        Ok(s) => (s.to_string(), optional_str(entry, "description")),
+                        Err(e) => return e,
+                    },
+                    _ => {
+                        return ToolOutput::Error {
+                            message: format!(
+                                "tasks[{i}] must be a non-empty string or an object with `subject`"
+                            ),
+                        };
+                    }
+                };
+                let item = board.create(subject, description);
+                created.push(serde_json::json!({
+                    "id": item.id,
+                    "subject": item.subject,
+                    "status": item.status,
+                }));
+            }
+            return ToolOutput::Ok {
+                content: format!(
+                    "created {} task(s) {}",
+                    created.len(),
+                    Value::Array(created)
+                ),
+            };
+        }
+
         let subject = match require_str(input, "subject") {
             Ok(s) => s,
             Err(e) => return e,
@@ -172,7 +238,9 @@ impl Tool for TaskStart {
                           on right now. Keep exactly ONE task in_progress at a time: complete \
                           the current task before starting the next. (task_assign marks \
                           delegated tasks in_progress by itself — task_start is for your own \
-                          work.)"
+                          work.) Issue this in the SAME step as the first real tool call of \
+                          that task: alone it costs a whole model round trip to change one \
+                          character on a board."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -214,7 +282,9 @@ impl Tool for TaskComplete {
             description: "Mark a board task completed the moment its work is done and \
                           verified. Complete tasks as you finish them — that is what keeps \
                           exactly one task in_progress and the board honest. Completed is \
-                          terminal."
+                          terminal. Send it alongside the next task's first real tool call \
+                          rather than in a step of its own: a step that only moves a card \
+                          reads nothing and changes nothing, and still costs a full request."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -395,6 +465,76 @@ mod tests {
         }
     }
 
+    /// Witness: a whole plan is one call, not one call per card.
+    ///
+    /// Fails on main, where `task_create` required `subject` and ignored
+    /// `tasks` — four deliverables cost four model round trips to write four
+    /// lines that read nothing and changed no file.
+    #[tokio::test]
+    async fn a_plan_of_four_tasks_is_created_in_one_call() {
+        let (board, _) = handles();
+        let tool = TaskCreate(board.clone());
+        let out = content(
+            exec(
+                &tool,
+                serde_json::json!({
+                    "tasks": [
+                        "Install the toolchain",
+                        { "subject": "Extract the vendored tarball", "description": "into /app" },
+                        "Compile with coverage",
+                        "Prove coverage data is produced",
+                    ]
+                }),
+            )
+            .await,
+        );
+        assert!(
+            out.contains("created 4 task(s)"),
+            "unexpected output: {out}"
+        );
+
+        let board = board.lock().expect("board");
+        assert_eq!(board.items().len(), 4, "all four should be on the board");
+        assert_eq!(board.items()[0].subject, "Install the toolchain");
+        assert_eq!(
+            board.items()[1].description.as_deref(),
+            Some("into /app"),
+            "the object form must keep its description"
+        );
+    }
+
+    /// The single form still works — the batch form is an addition, and a
+    /// caller that has already learned `subject` must not be broken by it.
+    #[tokio::test]
+    async fn the_single_subject_form_still_creates_one_task() {
+        let (board, _) = handles();
+        let out = content(
+            exec(
+                &TaskCreate(board.clone()),
+                serde_json::json!({ "subject": "Just the one" }),
+            )
+            .await,
+        );
+        assert!(out.contains("created task"), "unexpected output: {out}");
+        assert_eq!(board.lock().expect("board").items().len(), 1);
+    }
+
+    /// An empty batch is a caller mistake worth naming, not a silent no-op:
+    /// silently succeeding would let a model believe it had filed a plan.
+    #[tokio::test]
+    async fn an_empty_batch_is_refused_by_name() {
+        let (board, _) = handles();
+        let msg = error(
+            exec(
+                &TaskCreate(board.clone()),
+                serde_json::json!({ "tasks": [] }),
+            )
+            .await,
+        );
+        assert!(msg.contains("tasks"), "error should name the field: {msg}");
+        assert_eq!(board.lock().expect("board").items().len(), 0);
+    }
+
     #[test]
     fn all_six_tools_advertise_task_schemas() {
         let (board, queue) = handles();
@@ -429,10 +569,21 @@ mod tests {
             );
             assert_eq!(schema.input_schema["type"], "object", "{}", schema.name);
         }
-        assert_eq!(
-            schemas[0].input_schema["required"],
-            serde_json::json!(["subject"])
+        // `task_create` declares no top-level `required`: either `tasks` (a
+        // whole plan in one call) or `subject` (one card) satisfies it, and a
+        // blanket `required: ["subject"]` would reject the batch form that
+        // exists to stop a four-task plan costing four model round trips.
+        // Neither-supplied is still refused — at execution, by name.
+        assert!(
+            schemas[0].input_schema.get("required").is_none(),
+            "task_create takes either `tasks` or `subject`"
         );
+        for field in ["tasks", "subject"] {
+            assert!(
+                schemas[0].input_schema["properties"].get(field).is_some(),
+                "task_create must still advertise `{field}`"
+            );
+        }
         assert_eq!(
             schemas[5].input_schema["required"],
             serde_json::json!(["id", "briefing"])
