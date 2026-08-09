@@ -1354,6 +1354,7 @@ fn reflection_budget_tick_is_rebased_to_the_caller_session() {
             mode: BudgetMode::Enforced,
             session_spent_usd: None,
             session_limit_usd: None,
+            deadline_remaining_ms: None,
         }],
     };
 

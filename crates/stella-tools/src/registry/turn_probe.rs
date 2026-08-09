@@ -32,7 +32,14 @@ impl ToolRegistry {
     /// Latches this session as turn-bracketing, which is what turns the
     /// per-call probe in [`Self::execute`] off. Calling this once commits the
     /// session to turn granularity; the two never run together.
+    ///
+    /// Also opens `verify_done`'s shadow-run memo
+    /// ([`crate::verify::ShadowMemo`]), because this pair is the only turn
+    /// boundary a registry is told about. A host that never brackets never
+    /// arms it, and an unarmed memo serves nothing — the same fail-open
+    /// default an unbracketed session already gets from the probe itself.
     pub fn begin_workspace_probe(&self) {
+        self.shadow_memo.arm();
         self.turn_bracketing
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.bracket_opaque_calls
@@ -63,6 +70,11 @@ impl ToolRegistry {
     /// folds repeats, so an edit that a tool declared and the tree confirms
     /// stays one entry rather than becoming two.
     pub fn settle_workspace_probe(&self) {
+        // The turn is over, so every shadow observation it memoised is over
+        // with it. Unconditional and ahead of the early return below: an
+        // observation must not survive its turn even on a settle that has no
+        // before-image to attribute.
+        self.shadow_memo.invalidate();
         let Some(before) = self
             .workspace_probe
             .lock()

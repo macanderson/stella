@@ -21,7 +21,7 @@ looping.
 | Retry policy | `RetryPolicy::deterministic()` — no retry-hang on the retry |
 | Output cap | 4,096 visible + 4,096 reasoning headroom |
 | Effort | inherited |
-| Override | `agents.worker.prompt` — **not wired**, same gap as `plan` (#2416) |
+| Override | `agents.worker.prompt` — **wired**, same as `plan` |
 
 It is a distinct call role rather than a second `plan` call so that repair
 spend stays separable in the paid-call ledger: a run whose planner needs a
@@ -30,18 +30,29 @@ repairs are counted apart.
 
 ## Wire shape
 
-A single user message, like the plan call it follows. It is a **fresh
-completion**, not a continuation — the model does not see the original planner
-prompt, which is why the unparseable response has to be echoed back.
+The same `[system, user]` split as the plan call it follows (#2416) — it
+re-bills the same fixed instruction block on every repair, so it needs the same
+stable prefix, and it is authoring the same plan, so it takes the same operator
+prose. It is a **fresh completion**, not a continuation — the model does not
+see the original planner prompt, which is why the unparseable response has to
+be echoed back.
 
 ```
-[ user(plan_repair_prompt(previous_response)) ]
+[ system(agents.worker.prompt)?      ← config.role_overrides.worker
+  system(PLAN_REPAIR_INSTRUCTIONS)   ← &'static str, byte-identical every call
+  user(payload) ]
 ```
 
-## Prompt (template)
+## System message (verbatim)
 
 ```text
-Your previous response could not be parsed as a plan. Re-emit the plan as a strict JSON array of step strings and NOTHING else — no prose, no code fences. Previous response:
+Your previous response could not be parsed as a plan. Re-emit the plan as a strict JSON array of step strings and NOTHING else — no prose, no code fences.
+```
+
+## User message (template)
+
+```text
+Previous response:
 {echoed}
 
 JSON array:

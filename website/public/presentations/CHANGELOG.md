@@ -178,3 +178,136 @@ methodology disclosure.
    exists. Either ratify it as the stated target or replace it with a measured
    figure once a like-for-like frontier-cost comparison is run. Do not let the
    chip be dropped while the number stays.
+
+---
+
+# Revision 3 — 2026-08-09, the viewport rebuild and the unverified-claim sweep
+
+Closes the layout defect and the flag list carried by issue #2373. Two
+independent pieces of work: the deck no longer clips at any viewport, and every
+claim it makes is now either sourced, re-verified, attributed on-slide, or gone.
+
+## The viewport: a fixed stage, measured
+
+Revision 2 stopped slides being centred off both edges, but four still exceeded
+a 900px viewport and scrolled (02: 894px, 06: 1072px, 15: 928px, 20: 934px).
+The residual was a property of the approach, not of those four slides: with a
+fluid layout, "does this slide fit?" has a different answer at every window
+size, so it can only ever be checked one viewport at a time and is never
+settled.
+
+The deck now lays out inside a deterministic **1600×900 canvas** which the page
+transform-scales to fit the window — the model reveal.js uses. That turns the
+question into one measurement with one answer, and the answer holds on every
+screen the deck can be shown on.
+
+- Centring is done by absolute placement plus a half-size translate, not by a
+  centring layout: a grid or flex container *start-aligns* an item wider than
+  itself, which put the canvas 80px off-centre at 1440 wide and clipped its
+  right edge.
+- Every type size is a `rem` off one root font-size, so deck density is a
+  single knob. It sits at **18px — the largest value at which all 21 slides
+  still fit**, checked by bisection, and it fits with the bundled webfont
+  blocked too (fallback metrics are wider).
+- Narrow screens (≤900px, or a very short window) get **reader mode** instead:
+  the same markup as a scrolling document with one-column grids. Scaling a
+  1600px canvas onto a phone would have rendered body text at ~4px.
+- Print emits one 1600×900 landscape page per slide, 21 pages, no trailing
+  blank.
+
+**Verification — `node scripts/deck-fit.mjs`.** It activates each slide, and
+compares both the frame's scroll overflow and the lowest/rightmost descendant
+against the canvas, at 1440×900, 1280×800, 1920×1080, 2560×1440, and once more
+with the webfont blocked. It also asserts the document itself never scrolls,
+which is what catches a bad fit calculation. All 21 slides pass all five.
+It is not a `make gate` step — it needs a browser, and the gate is
+toolchain-free plus cargo — so run it by hand when you touch a deck.
+
+## Claims removed as unverifiable
+
+| Where | Removed | Why |
+|---|---|---|
+| Team slide (16) | "BS, Machine Learning & Algorithms — University of Tennessee, Knoxville" and "MS, Machine Learning — Georgia Institute of Technology" | Flag 2. Registrar wording could not be verified, and a retrofitted-looking degree title is the kind of detail a diligence process googles. The slide keeps the sixteen-years-of-engineering claim, which the founder attests directly. |
+| "We don't sell tokens" (11) | The `~90%` target-cost-reduction tile and its `target` chip | Flag 8. Revision 2's constraint was "do not drop the chip while leaving the number." The reverse resolution is taken here: the number goes with the chip. It was never a measurement, and issue #2373's definition of done required no dashed chip to survive. The slide keeps the two figures that are real — $1.35 per solved task, measured, and the sourced ~1/27th open-vs-frontier API price ratio. |
+| Appendix A3 (21) | "Base models are pinned to permissive-license weights (MIT / Apache-2.0 class); community-licensed weights are used only where their terms permit the customer's use" and its `[verification pending]` chip | Flag 3. The glm-5.2 base-weight licence matrix was never confirmed, so the sentence asserted a licensing posture nobody had checked. Replaced with the claim that is true today and is a process, not a matrix: every base model offered is licence-reviewed per engagement for three named rights — commercial fine-tuning, redistribution of derivatives to the customer, government deployment — and a base that does not grant all three is not offered for that engagement. |
+
+**No `.chip` element remains in the deck, and the class is deleted from the
+stylesheet** so the next one has to be added deliberately.
+
+## Claims re-verified and kept
+
+- **tbench.ai leaderboard rows (flag 5)** re-checked live on **2026-08-09**:
+  Claude Code · Fable 5 **83.8% ± 1.2**, Codex · GPT-5.5 **83.1% ± 1.1**,
+  Terminus 2 · Fable 5 **80.4% ± 1.2** — all three unchanged. The confidence
+  intervals for rows 2 and 3 are now shown (they were previously only on row
+  1), and both the proof slide and A1 state the re-check date rather than
+  "retrieved Aug 2026". These rows move; re-check again the week the deck is
+  shown.
+- **Fonteva figures (flag 4)** kept, and now attributed on-slide: the 2021
+  Togetherwork acquisition is public, its terms were not disclosed, and
+  $125M / $6M raised / ~60% retained are founder-attested.
+- **Ask-slide targets (flag 6)** kept, and the slide now says on-slide that
+  the milestones are the plan this raise funds and not results, naming which
+  two figures are measured. This flag stays **open**: ratifying the targets is
+  a founder decision, not a verification question.
+
+## Methodology permalinks re-pinned (issue item 6)
+
+Both links (proof slide and appendix A1) moved from branch commit
+`74daf6c3e179f02784f1a056805244e4cce4d081` to
+**`01987f1e9ee81195b956d8df0cb4a094fc4d0aa8`** — the commit that merged #2370
+and the commit that introduced `BENCHMARK_METHODOLOGY.md`, reachable from
+`main`.
+
+## Density: moved, never deleted
+
+The proof slide's footnote had grown into a near-copy of appendix A1 and was
+the single largest cause of its 1072px height. It was **shortened by moving,
+not by cutting**: A1 gained a `contamination` row (stock weights in both arms;
+Terminal-Bench excluded from every training corpus by protocol) and the dataset
+digest, which the footnote no longer has to carry alone. Every sourced
+disclosure that was on slide 6 is still in the deck. Elsewhere the prose was
+tightened editorially — no figure, source or caveat was dropped.
+
+## Graphics: eleven diagrams, and what each is for
+
+The deck was a wall of prose with three bar charts. Each of these encodes
+something the sentence beside it can only assert:
+
+| Slide | Diagram | Teaches |
+|---|---|---|
+| 02 | retry loop | attempt → "done" → unchecked → retry, billed on every pass, with no stopping rule |
+| 03 | four-node timeline | the origin story as a sequence, not four paragraphs |
+| 04 | today vs. with stella | traces leaving your boundary into a shared model, against traces staying inside it |
+| 05 | the flip | one witness authored by an independent verifier, run against old and new code, void if the worker touched it |
+| 07 | work → witness → lesson → next cycle | why the loop compounds |
+| 08 | goal + diff + proof → one labeled example | how a training example gets its label for free |
+| 08 | 89-task Venn | 36 both, 22 stella only, 8 Claude Code only, 23 neither — the real panel, from A1 |
+| 09 | the four-step cycle | that steps 1–3 ship and step 4 is dashed because it is funded, not built |
+| 10 | two customers, one substrate | lessons crossing the boundary while data does not |
+| 11 | the routing ladder | deterministic tools at $0, tuned model at $, frontier at $$$ — labelled schematic, no invented shares |
+| 12 | three-rung staircase against a cost-of-oracle axis | why the ladder is ordered by how expensive the oracle is |
+| 13 | column chart | $11.5B → $37B with the $4B coding slice called out, and 2030 dashed because it is a projection |
+| 14 | land → expand → anchor | contract value growing with deployment depth, not token burn |
+
+Two of them (03 and 07) are connector strips that only restate the cards beside
+them, and they are hidden in reader mode where their labels would be unreadable.
+
+Motion: entrance stagger, bars that grow from zero, SVG paths that draw
+themselves against their own measured length, counters that count up, and a
+drifting starfield. All of it collapses under `prefers-reduced-motion`, and the
+count-up writes its final value into markup that already contains it, so a
+scripting failure shows the true number rather than a zero.
+
+## Flags after this revision
+
+| # | Status |
+|---|---|
+| 1 · design-partner status | closed in revision 1 (founder) |
+| 2 · degree titles | **claim removed** |
+| 3 · base-weight licence matrix | **claim removed**, replaced with the per-engagement review process |
+| 4 · Fonteva figures | founder-attested, now attributed on-slide |
+| 5 · tbench.ai rows | **re-verified 2026-08-09**; re-check before each showing |
+| 6 · ask-slide targets | **open — needs founder ratification**, and labelled as plan on-slide |
+| 7 · oracle-coverage percentage | still deliberately unnumbered; A2 says so on-slide |
+| 8 · ~90% cost reduction | **claim removed** |

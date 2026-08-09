@@ -66,8 +66,9 @@ the wrong subsystem.
 
 ## Budgets on the way back
 
-Findings are bounded before they reach the planner, by
-`bound_research_findings`:
+Findings are bounded once, by `bound_research_findings`, before they reach
+either sink — the planner prompt and the worker's opening user message (#2415).
+Bounding at the source is what keeps a second sink from re-billing the budget:
 
 | Bound | Value | Behaviour on breach |
 |---|---|---|
@@ -110,5 +111,8 @@ manifests. `depth: 1`, per the sub-agent nesting contract.
 - [triage.md](triage.md) — authors the questions on its `RESEARCH:` line
 - [plan.md](plan.md) — receives the findings in their own section, kept
   distinct from recall so the planner can weigh the two provenances differently
+- [worker.md](worker.md) — the second sink (#2415): the same findings ride the
+  worker's opening user message, so a verified fact no longer reaches it only
+  as residue in a plan step
 - [worker.md](worker.md) — the `task` tool exposes the same read-only sub-agent
   shape to the worker, with its own system prompt

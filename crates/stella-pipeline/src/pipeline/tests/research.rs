@@ -433,3 +433,81 @@ async fn a_failed_research_round_degrades_to_the_no_research_prompt() {
         "zero findings must reproduce the pre-stage planner prompt byte for byte"
     );
 }
+
+/// The worker's own first user message, from the recorded per-call shapes:
+/// the one carrying the `## Task` heading `assemble_user_message` writes.
+fn worker_user_message(shapes: &[Vec<(stella_protocol::MessageRole, String)>]) -> String {
+    shapes
+        .iter()
+        .flatten()
+        .filter(|(role, _)| *role == stella_protocol::MessageRole::User)
+        .map(|(_, text)| text.as_str())
+        .find(|text| text.contains("## Task"))
+        .expect("a worker turn was dispatched")
+        .to_string()
+}
+
+/// #2415's witness. Findings reached the planner and no further: the worker
+/// saw them only as whatever residue the planner encoded into a step string.
+/// They now ride the worker's own user message, as their own section, with
+/// the question that grounds each one.
+#[tokio::test]
+async fn the_worker_user_message_carries_the_research_findings() {
+    let (_outcome, _events, shapes) = research_scenario!(
+        TRIAGE_WITH_QUESTIONS,
+        vec![
+            text_result("ANSWER-ONE: driver.rs owns retries."),
+            text_result("ANSWER-TWO: tests live in driver/tests.rs."),
+            // A plan whose steps mention neither answer — so the assertion
+            // cannot pass on the planner's residue leaking through.
+            text_result(r#"["do it"]"#),
+            text_result("PLAN COMPLETE: done."),
+        ]
+    );
+
+    let worker = worker_user_message(&shapes);
+    assert!(
+        worker.contains("## Research findings"),
+        "the findings are their own section in the worker's message: {worker}"
+    );
+    assert!(worker.contains("ANSWER-ONE"), "{worker}");
+    assert!(worker.contains("ANSWER-TWO"), "{worker}");
+    assert!(
+        worker.contains("Which module owns retries?"),
+        "each finding is grounded by its question: {worker}"
+    );
+    let findings_at = worker.find("## Research findings").unwrap();
+    let task_at = worker.find("## Task").unwrap();
+    assert!(
+        findings_at < task_at,
+        "grounding rides before the goal, as recall does: {worker}"
+    );
+}
+
+/// The advisory contract, in its strongest form: with no findings the
+/// worker's message is byte-for-byte what it was before the second sink
+/// existed. Compared against the function's own output for the same inputs
+/// rather than a transcribed literal, so it stays true as the message grows.
+#[tokio::test]
+async fn no_findings_leaves_the_worker_message_byte_identical() {
+    let (_outcome, _events, shapes) = research_scenario!(
+        "CLASS: multi\nWITNESS: yes\nVERIFIER: yes",
+        vec![
+            text_result(r#"["update retry.rs"]"#),
+            text_result("PLAN COMPLETE: done."),
+        ]
+    );
+
+    let worker = worker_user_message(&shapes);
+    assert!(!worker.contains("## Research findings"));
+    assert_eq!(
+        worker,
+        assemble_user_message(
+            "Refactor the retry layer end to end",
+            &[],
+            &[],
+            VerificationContract::Oracle("cargo test -p x"),
+        ),
+        "an empty findings list must not change a single byte"
+    );
+}

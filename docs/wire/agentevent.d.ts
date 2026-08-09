@@ -824,6 +824,14 @@ export type ProofStep = {
    * The stated reason a model verdict could not be rendered.
    */
   reason: string;
+} | {
+  kind: "triage_degraded";
+  /**
+   * The stated reason no model classification was available: the call
+   * timed out at its ceiling, failed, could not be routed, or answered
+   * off-protocol.
+   */
+  reason: string;
 };
 
 /**
@@ -1428,6 +1436,26 @@ export type AgentEvent = {
   ts?: number;
   type: "compaction";
 } | {
+  /**
+   * Wall clock left before the task deadline at this tick — the third
+   * axis, and the only one a journal could not otherwise state (#2240).
+   *
+   * `None` means **no deadline was armed**, which is exactly the
+   * distinction that used to require reading argv: a trial killed by its
+   * harness emitted dozens of these against a dollar cap it never
+   * approached, while the 900s wall clock that actually stopped it
+   * appeared nowhere in the journal. `Some(0)` is the opposite fact — a
+   * deadline is armed and has already passed.
+   *
+   * Milliseconds rather than a `Duration` because this is a wire type
+   * (invariant 4): a whole-millisecond integer round-trips through JSON
+   * byte-for-byte, where a float of seconds would not.
+   *
+   * `serde(default)` — absent on every journal written before this
+   * field existed, where it reads as "unarmed". That is the honest
+   * decode: those journals genuinely could not say otherwise.
+   */
+  deadline_remaining_ms?: number | null;
   limit_usd?: number | null;
   mode: BudgetMode;
   /**

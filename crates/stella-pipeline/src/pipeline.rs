@@ -127,6 +127,9 @@ mod scope_stage;
 mod stage_budget;
 mod task_frame;
 mod triage_stage;
+/// The worker's opening user message (recall, research findings, goal,
+/// verification contract) — pure text assembly, in its own module because
+/// `pipeline.rs` is closed to growth.
 mod user_message;
 use user_message::{VerificationContract, assemble_user_message};
 mod verifier_stage;
@@ -138,7 +141,7 @@ use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
 pub use run_error::{PipelineError, PipelineRunError};
 use run_error::{RoleResolveError, WitnessAuthorIndependence};
-use stage_budget::{PipelineBudgetAbort, Spend, budget_abort};
+use stage_budget::{PipelineStageAbort, Spend, budget_abort};
 use task_frame::TaskFrame;
 use verifier_stage::{VerdictDegradation, VerifierNotices};
 use witness_stage::{BoundHookRunner, WitnessAuthoring};
@@ -236,9 +239,8 @@ pub struct RoleCallOverrides {
     pub params: Option<stella_protocol::GenerationParams>,
 }
 
-/// The pipeline's per-role override set. Worker (and plan, which rides the
-/// worker's tier) is configured through [`PipelineConfig::engine`] directly;
-/// only the two roles with their own models get their own request shaping.
+/// The pipeline's per-role override set.
+///
 /// The witness author/repair engines ride the verifier's model, so they take
 /// the `verifier` row's shaping too (#1785) — everything except `prompt`,
 /// which stays scoped to the raw verdict/guidance calls
@@ -247,6 +249,23 @@ pub struct RoleCallOverrides {
 pub struct PipelineRoleOverrides {
     pub triage: RoleCallOverrides,
     pub verifier: RoleCallOverrides,
+    /// The worker row (`agents.worker`), which the **plan** stage consumes —
+    /// plan rides the worker's tier in the router, and the planner writes the
+    /// worker's work order (#2416).
+    ///
+    /// Everything except `prompt` also reaches the plan call through
+    /// [`PipelineConfig::engine`], which is already built from this same
+    /// worker tuning: `metered_raw_call` falls back to the engine's
+    /// temperature/effort/reasoning/params for any field left unset here. What
+    /// this row adds that the engine base structurally cannot is `prompt` — a
+    /// system message has nowhere to ride in an [`EngineConfig`], so operator
+    /// prose reached worker turns (`build_pipeline_system_prompt`) and stopped
+    /// at the planner, which then emitted steps the worker's own instructions
+    /// forbade.
+    ///
+    /// Deliberately NOT consumed by the conversational fast path — see
+    /// `Pipeline::run_conversational`.
+    pub worker: RoleCallOverrides,
 }
 
 /// Tuning for the whole staged flow.
@@ -261,10 +280,21 @@ pub struct PipelineConfig {
     /// engine turn: a multi-step plan runs one engine turn per step plus the
     /// witness author's and every revision's, so metering the run's elapsed
     /// time against a per-turn allowance under-reported the remaining clock
-    /// and refused repairs a long run could still afford (#1507). Like
-    /// `turn_budget` it enforces nothing — no future is cancelled when it
-    /// elapses — and `None` means "nobody is measuring": the clock axis
-    /// abstains rather than inventing a deadline the caller never declared.
+    /// and refused repairs a long run could still afford (#1507).
+    ///
+    /// **This field is an estimate, not a ceiling.** Nothing is cancelled when
+    /// it elapses and no call is refused because of it; it sizes the repair
+    /// gate's headroom question and the witness-repair bound, and `None` means
+    /// "nobody is measuring" — the clock axis abstains rather than inventing a
+    /// deadline the caller never declared.
+    ///
+    /// The enforcing wall clock is a different field elsewhere:
+    /// `BudgetGuard::set_task_deadline`, an absolute instant on the guard
+    /// threaded into [`Pipeline::run`]. That one IS honoured — by the engine's
+    /// step loop (`stella_core::driver::settlement`) and, since #2238, before
+    /// every raw stage dispatch (`stella_core::run_accounted_call`). Both are
+    /// fed the same `--turn-budget` by `stella-cli`, which is exactly why they
+    /// are easy to confuse and worth this paragraph.
     pub run_budget: Option<Duration>,
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
@@ -274,7 +304,28 @@ pub struct PipelineConfig {
     /// triage falls through to the full path. The expiry is not silent in
     /// accounting: `run_accounted_call` records a content-free
     /// `UsageIncomplete` envelope for the abandoned attempt (its provider-side
-    /// spend is unknowable once the response never lands).
+    /// spend is unknowable once the response never lands), and — since
+    /// #2414 — the stage emits a [`stella_protocol::ProofStep::TriageDegraded`]
+    /// naming the ceiling it hit.
+    ///
+    /// The default was 10s, and that number was measurably below the
+    /// distribution it was bounding rather than above it. Across three
+    /// Terminal-Bench arm runs, 27 of 34 triage calls burned the full 10,000ms
+    /// and returned nothing — while the 7 that *did* answer took
+    /// 4,684-8,587ms, i.e. even a successful triage was landing within a
+    /// couple of seconds of the wall. A ceiling set inside the answering
+    /// distribution does not bound a pathology, it converts slow-but-correct
+    /// answers into no answer at all, and pays the full ceiling for the
+    /// privilege.
+    ///
+    /// The never-wedge contract is what this exists for and it is unchanged: a
+    /// wedged provider still costs exactly one bounded wait and the run still
+    /// proceeds on the deterministic floor. What changed is which side of the
+    /// observed distribution the bound sits on. It remains an order of
+    /// magnitude under a run's own budget, and the honest reading of the new
+    /// number is that it is sized from 7 answering samples — small, and now at
+    /// least reported rather than assumed, which is what the degradation
+    /// record above is for.
     pub triage_latency_ceiling: Duration,
     /// Latency ceiling on the context-recall port. Recall runs concurrently
     /// with triage and is advisory (L-C6), never a gate — but nothing bounded
@@ -497,12 +548,15 @@ impl Default for PipelineConfig {
             engine: EngineConfig::default(),
             run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
-            triage_latency_ceiling: Duration::from_secs(10),
-            // Half the triage ceiling, and recall runs concurrently with
-            // triage — so this can never extend the critical path, it only
-            // stops recall from becoming it. A remote CGP embedding round
-            // trip is 100-500ms and the local path is single-digit ms, so
-            // this is an order of magnitude above the realistic worst case.
+            triage_latency_ceiling: Duration::from_secs(30),
+            // Sized from the recall port's own round trip, NOT as a fraction
+            // of the triage ceiling above (it was written as "half of it",
+            // which stopped being true when triage's moved). Recall runs
+            // concurrently with triage, so this can never extend the critical
+            // path; it only stops recall from becoming it. A remote CGP
+            // embedding round trip is 100-500ms and the local path is
+            // single-digit ms, so this is an order of magnitude above the
+            // realistic worst case.
             recall_latency_ceiling: Duration::from_secs(5),
             // Wider than triage's because a research child is a bounded
             // multi-step read (up to RESEARCH_MAX_STEPS tool round-trips),
@@ -1109,8 +1163,24 @@ impl<'a> Pipeline<'a> {
             }
             None => VerificationContract::None,
         };
+        // --- 2b. Pre-plan research (#1778): triage named questions, so
+        // parallel read-only sub-agents answer them before anything is
+        // prompted. Empty questions skip the stage byte-for-byte (L-E2),
+        // which is what lets it sit ahead of the conversational branch below:
+        // triage never names questions for a chat turn, so a greeting reaches
+        // `research_stage` and returns from its first line with no events and
+        // no spend.
+        //
+        // It runs BEFORE the user message is assembled because the worker's
+        // message is now one of its sinks (#2415) — findings used to reach
+        // the planner alone, so a fact a read-only sub-agent verified against
+        // this workspace survived to the worker only as whatever residue of
+        // it the planner encoded into a step string.
+        let research = self
+            .research_stage(goal, &research_questions, budget, &mut total_cost)
+            .await;
         messages.push(CompletionMessage::user(assemble_user_message(
-            goal, &frames, contract,
+            goal, &frames, &research, contract,
         )));
 
         // --- Conversational fast path. -------------------------------------
@@ -1125,13 +1195,6 @@ impl<'a> Pipeline<'a> {
                 .run_conversational(messages, budget, &mut total_cost)
                 .await;
         }
-
-        // --- 2b. Pre-plan research (#1778): triage named questions, so
-        // parallel read-only sub-agents answer them before the planner runs.
-        // Empty questions skip the stage byte-for-byte (L-E2).
-        let research = self
-            .research_stage(goal, &research_questions, budget, &mut total_cost)
-            .await;
 
         // --- 3+4. Plan, then scope review — one phase, because a reviewer who
         // asks for a different scope sends us back to the planner. -----------
@@ -1341,6 +1404,20 @@ impl<'a> Pipeline<'a> {
             convo.insert(0, CompletionMessage::system(CONVERSATIONAL_SYSTEM_PROMPT));
         }
 
+        // Deliberately NOT `role_overrides.worker`, unlike the plan stage
+        // (#2416). Both halves of that row would undo what this path exists to
+        // do. `agents.worker.prompt` is the operator's *engineering* persona —
+        // it replaces the base instruction set on worker turns
+        // (`build_pipeline_system_prompt`), and prepending it here would re-arm
+        // exactly the behaviour `CONVERSATIONAL_SYSTEM_PROMPT` suppresses two
+        // lines above ("no tools, no code, no plan, no test") on a turn that
+        // has no task. And the worker's `effort` would displace the
+        // `ReasoningEffort::Low` this role is pinned to in `management_bounds`,
+        // buying deliberation for a greeting.
+        //
+        // The tuning this path does want — temperature, params — still applies:
+        // `metered_raw_call` falls back to `config.engine`, which is already
+        // built from the worker's own settings.
         let overrides = RoleCallOverrides::default();
         let reply = match self
             .metered_raw_call(
@@ -1358,7 +1435,9 @@ impl<'a> Pipeline<'a> {
             .await
         {
             Ok(result) => result.text,
-            Err(RawCallError::Budget(abort)) => {
+            // The conversational path IS the whole run — there is no executed
+            // work either ceiling could settle with, so both stop the same way.
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => {
                 return Ok(self.aborted_before_execute(
                     TaskClass::SimpleLookup,
                     *total_cost,
@@ -1419,7 +1498,7 @@ impl<'a> Pipeline<'a> {
         repo_structure: &str,
         revision: Option<&str>,
         spend: &mut Spend<'_>,
-    ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
+    ) -> Result<Vec<PlanStep>, PipelineStageAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Plan,
         });
@@ -1434,16 +1513,22 @@ impl<'a> Pipeline<'a> {
         }
 
         let prompt = build_planner_prompt(goal, recall, research, repo_structure, revision);
-        // Plan rides the worker's settings (same router tier, same tuning).
-        let worker_overrides = RoleCallOverrides::default();
+        // Plan rides the worker's settings — the same router tier AND the same
+        // request shaping, which is what this row makes true (#2416). The
+        // non-prompt knobs also arrive via `config.engine` (built from the
+        // worker's tuning); `prompt` has no seat there and reaches the planner
+        // only here, prepended as a system message ahead of
+        // `PLANNER_INSTRUCTIONS` so the JSON-array contract `parse_plan` reads
+        // is never replaced.
+        let worker_overrides = &self.config.role_overrides.worker;
         let result = match self
             .metered_raw_call(
                 RawCall {
                     role: ModelCallRole::Plan,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(prompt)],
+                    messages: prompt.into_messages(),
                     policy: RetryPolicy::standard(),
-                    overrides: &worker_overrides,
+                    overrides: worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
                 spend.budget,
@@ -1452,7 +1537,9 @@ impl<'a> Pipeline<'a> {
             .await
         {
             Ok(r) => r,
-            Err(RawCallError::Budget(abort)) => return Err(abort),
+            // Still before execute: a fallback plan here would only buy the
+            // worker turns the run has no clock left to run.
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => return Err(abort),
             Err(RawCallError::Provider | RawCallError::Timeout) => return Ok(fallback_plan()),
         };
 
@@ -1466,9 +1553,9 @@ impl<'a> Pipeline<'a> {
                 RawCall {
                     role: ModelCallRole::PlanRepair,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(plan_repair_prompt(&result.text))],
+                    messages: plan_repair_prompt(&result.text).into_messages(),
                     policy: RetryPolicy::deterministic(),
-                    overrides: &worker_overrides,
+                    overrides: worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
                 spend.budget,
@@ -1481,7 +1568,7 @@ impl<'a> Pipeline<'a> {
                     return Ok(steps);
                 }
             }
-            Err(RawCallError::Budget(abort)) => return Err(abort),
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => return Err(abort),
             Err(RawCallError::Provider | RawCallError::Timeout) => {}
         }
 

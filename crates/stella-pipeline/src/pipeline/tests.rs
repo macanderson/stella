@@ -2260,6 +2260,10 @@ mod golden;
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
 /// `super::*`.
 mod mcp_prefetch;
+/// The plan call's `[system, user]` split and its share of `agents.worker`
+/// (#2416). A child module, so it reaches the scripted ports above via
+/// `super::*`.
+mod plan_shaping;
 /// The plan-step walk and its early close-out (#1702). A child module, so it
 /// reaches the scripted ports above via `super::*`.
 mod plan_walk;

@@ -12,6 +12,257 @@ use super::*;
 /// One sample per `KNOWN_TYPE_TAGS` entry, plus extra samples that exercise
 /// every arm of the nested vocabularies and both optional-field shapes.
 pub fn sample_events() -> Vec<AgentEvent> {
+//! The sample values the [wire contract](super) validates: one per arm of
+//! every enum in the payload graph, plus the `AgentEvent` table itself.
+//!
+//! Split out of `wire_contract.rs` when it reached the file-size ceiling
+//! (`scripts/check-file-size.sh`). The guard's rule is that new code goes in
+//! its own module rather than onto the end of an already-full file, and this
+//! is the coherent half: the fixtures grow with every new variant, while the
+//! validator and the proofs above them do not. Everything here is `pub(crate)`
+//! because the proofs are the only consumers.
+
+use serde_json::json;
+use stella_protocol::completion::FinishReason;
+use stella_protocol::event::{
+    BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, ModelCallRole,
+    PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind, TaskItem, TaskStatus,
+    UsageIncompleteReason,
+};
+use stella_protocol::ladder::{LadderRung, LadderSnapshot, OracleObservation};
+use stella_protocol::receipt::{
+    BlockKind, BlockOrigin, CacheZone, ContextFrameRef, ContextProviderUsage, ContextUsage,
+    ManifestEntry, ProviderShare,
+};
+use stella_protocol::{
+    AgentEvent, CompiledContextFrameBuilt, MediaArtifactRef, SubAgentPhase, SubAgentStatus,
+    ToolCall, ToolOutput, VerdictEvidence,
+};
+
+pub(crate) fn all_stage_kinds() -> Vec<StageKind> {
+    use StageKind::*;
+    vec![
+        Triage,
+        ContextRecall,
+        Research,
+        Plan,
+        ScopeReview,
+        Witness,
+        Execute,
+        Verify,
+        Verdict,
+        Reflect,
+        ContextWrite,
+        Complete,
+    ]
+}
+
+pub(crate) fn all_budget_modes() -> Vec<BudgetMode> {
+    vec![BudgetMode::Off, BudgetMode::Observed, BudgetMode::Enforced]
+}
+
+pub(crate) fn all_budget_scopes() -> Vec<BudgetScope> {
+    vec![BudgetScope::Turn, BudgetScope::Session]
+}
+
+pub(crate) fn all_policy_kinds() -> Vec<PolicyKind> {
+    use PolicyKind::*;
+    vec![Evaluated, Blocked, ApprovalRequested, SecretDetected]
+}
+
+pub(crate) fn all_model_call_roles() -> Vec<ModelCallRole> {
+    use ModelCallRole::*;
+    vec![
+        Unknown,
+        Triage,
+        Research,
+        Plan,
+        PlanRepair,
+        WitnessAuthor,
+        WitnessRepair,
+        Worker,
+        DistressGuidance,
+        Verdict,
+        AgentAuthor,
+        SkillAuthor,
+        DomainInference,
+        Reflection,
+        Summarization,
+    ]
+}
+
+pub(crate) fn all_usage_incomplete_reasons() -> Vec<UsageIncompleteReason> {
+    use UsageIncompleteReason::*;
+    vec![ProviderError, Timeout, Cancelled]
+}
+
+pub(crate) fn all_finish_reasons() -> Vec<FinishReason> {
+    use FinishReason::*;
+    vec![Stop, Length, ToolCalls, ContentFilter]
+}
+
+pub(crate) fn all_file_change_kinds() -> Vec<FileChangeKind> {
+    use FileChangeKind::*;
+    vec![Read, Created, Modified, Deleted]
+}
+
+pub(crate) fn all_proof_trees() -> Vec<ProofTree> {
+    vec![ProofTree::Baseline, ProofTree::Candidate]
+}
+
+pub(crate) fn all_ladder_rungs() -> Vec<LadderRung> {
+    use LadderRung::*;
+    vec![
+        SubmitFast,
+        Revise,
+        NothingAttempted,
+        Unverifiable,
+        ModelVerdict,
+        HeuristicFallback,
+        Waived,
+    ]
+}
+
+pub(crate) fn all_media_kinds() -> Vec<MediaKind> {
+    vec![MediaKind::Image, MediaKind::Svg, MediaKind::Video]
+}
+
+pub(crate) fn all_pr_statuses() -> Vec<PrStatus> {
+    use PrStatus::*;
+    vec![Draft, Open, Merged, Closed]
+}
+
+pub(crate) fn all_ci_statuses() -> Vec<CiStatus> {
+    use CiStatus::*;
+    vec![Pending, Running, Passing, Failing]
+}
+
+pub(crate) fn all_task_statuses() -> Vec<TaskStatus> {
+    use TaskStatus::*;
+    vec![Pending, InProgress, Completed, Cancelled]
+}
+
+pub(crate) fn all_block_kinds() -> Vec<BlockKind> {
+    use BlockKind::*;
+    vec![
+        SystemPrefix,
+        UserGoal,
+        RecalledFrame,
+        AssistantText,
+        ToolCall,
+        ToolResult,
+        Steered,
+        Summary,
+        Attachment,
+        Other,
+    ]
+}
+
+pub(crate) fn all_cache_zones() -> Vec<CacheZone> {
+    use CacheZone::*;
+    vec![StablePrefix, Cacheable, Volatile, Other]
+}
+
+pub(crate) fn all_subagent_statuses() -> Vec<SubAgentStatus> {
+    use SubAgentStatus::*;
+    vec![Completed, Incomplete, Refused]
+}
+
+pub(crate) fn all_proof_steps() -> Vec<ProofStep> {
+    vec![
+        ProofStep::Assurance {
+            witness: true,
+            verifier: false,
+        },
+        ProofStep::Warrant {
+            required: false,
+            reason: Some("docs only".into()),
+            diff_lines: 4,
+        },
+        ProofStep::WitnessAuthored {
+            path: "tests/witness.rs".into(),
+            command: "cargo test -p x witness".into(),
+            fingerprint: "sha256:aa".into(),
+        },
+        ProofStep::WitnessUnavailable {
+            reason: "no independent author".into(),
+        },
+        ProofStep::VerificationUnavailable {
+            reason: "every channel was blind".into(),
+        },
+        ProofStep::Oracle {
+            command: "cargo test".into(),
+            passed: true,
+            tree: ProofTree::Candidate,
+            run: Some(2),
+            runs_required: Some(3),
+            seed: Some(7741),
+        },
+        ProofStep::VerdictDegraded {
+            candidate: 2,
+            reason: "the verifier call failed or timed out".into(),
+        },
+        ProofStep::TriageDegraded {
+            reason: "the triage call timed out at its 30s ceiling".into(),
+        },
+    ]
+}
+
+pub(crate) fn all_media_job_states() -> Vec<MediaJobState> {
+    vec![
+        MediaJobState::Queued,
+        MediaJobState::Running,
+        MediaJobState::Succeeded,
+        MediaJobState::Failed {
+            reason: "provider rejected the prompt".into(),
+        },
+    ]
+}
+
+pub(crate) fn all_tool_outputs() -> Vec<ToolOutput> {
+    vec![
+        ToolOutput::Ok {
+            content: "hello".into(),
+        },
+        ToolOutput::Error {
+            message: "boom".into(),
+        },
+    ]
+}
+
+pub(crate) fn all_subagent_phases() -> Vec<SubAgentPhase> {
+    vec![
+        SubAgentPhase::Started {
+            agent_id: "search-1".into(),
+            instruction_preview: "find the retry policy".into(),
+            budget_usd: Some(0.25),
+            write_access: false,
+            depth: 1,
+        },
+        SubAgentPhase::Finished {
+            agent_id: "search-1".into(),
+            status: SubAgentStatus::Completed,
+            summary: "retry policy lives in retry.rs".into(),
+            truncated: false,
+            cost_usd: 0.004,
+            steps: 3,
+            absorbed_messages: 9,
+            reason: None,
+        },
+    ]
+}
+
+pub(crate) fn tool_call() -> ToolCall {
+    ToolCall {
+        call_id: "call_1".into(),
+        name: "read_file".into(),
+        input: json!({ "path": "src/main.rs" }),
+    }
+}
+
+/// One sample per `KNOWN_TYPE_TAGS` entry, plus extra samples that exercise
+/// every arm of the nested vocabularies and both optional-field shapes.
+pub(crate) fn sample_events() -> Vec<AgentEvent> {
     let mut events = vec![
         AgentEvent::Text {
             text: "the answer".into(),
@@ -367,6 +618,7 @@ pub fn sample_events() -> Vec<AgentEvent> {
                 mode,
                 session_spent_usd: Some(1.75),
                 session_limit_usd: Some(10.0),
+                deadline_remaining_ms: Some(842_137),
             },
             AgentEvent::BudgetTick {
                 spent_usd: 0.42,
@@ -374,6 +626,7 @@ pub fn sample_events() -> Vec<AgentEvent> {
                 mode,
                 session_spent_usd: None,
                 session_limit_usd: None,
+                deadline_remaining_ms: None,
             },
         ]
     }));

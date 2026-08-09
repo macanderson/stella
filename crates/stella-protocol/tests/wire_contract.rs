@@ -50,21 +50,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
-use stella_protocol::completion::FinishReason;
-use stella_protocol::event::{
-    BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, ModelCallRole,
-    PolicyKind, PrStatus, ProofStep, ProofTree, ScopeProposal, StageKind, TaskItem, TaskStatus,
-    UsageIncompleteReason,
-};
-use stella_protocol::ladder::{LadderRung, LadderSnapshot, OracleObservation};
-use stella_protocol::receipt::{
-    BlockKind, BlockOrigin, CacheZone, ContextFrameRef, ContextProviderUsage, ContextUsage,
-    ManifestEntry, ProviderShare,
-};
-use stella_protocol::{
-    AgentEvent, CompiledContextFrameBuilt, KNOWN_TYPE_TAGS, MediaArtifactRef, SubAgentPhase,
-    SubAgentStatus, ToolCall, ToolOutput, VerdictEvidence,
-};
+use stella_protocol::{AgentEvent, KNOWN_TYPE_TAGS};
 
 // ---------------------------------------------------------------------------
 // The committed artifact
@@ -91,6 +77,19 @@ fn committed_schema() -> Value {
     });
     serde_json::from_str(&text).expect("the committed wire schema is valid JSON")
 }
+
+/// The sample fixtures — one value per arm of every enum in the payload
+/// graph, and the `AgentEvent` table the proofs below validate. Its own
+/// module because it grows with every new variant while the validator does
+/// not (`scripts/check-file-size.sh`).
+///
+/// `#[path]` because this file is a test-binary *crate root*, so a bare
+/// `mod samples;` would resolve to a sibling `tests/samples.rs` — which Cargo
+/// would then compile as a second test target of its own.
+#[path = "wire_contract/samples.rs"]
+mod samples;
+
+use samples::*;
 
 // ---------------------------------------------------------------------------
 // A minimal JSON Schema 2020-12 validator
