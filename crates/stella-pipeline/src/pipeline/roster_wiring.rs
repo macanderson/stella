@@ -16,8 +16,8 @@
 //! closed to growth (AGENTS.md § God files) — the same reason `triage_stage`
 //! and `witness_stage` live beside it.
 
-use super::*;
 use super::run_error::Independence;
+use super::*;
 
 /// What the roster says about one responsibility, resolved against the router.
 pub(super) enum Assigned<'p> {
@@ -189,17 +189,19 @@ impl<'a> Pipeline<'a> {
             return Independence::WorkerUnresolvable;
         };
         match self.assigned(responsibility) {
-            Assigned::To(agent) if agent.model_ref != worker.model_ref => {
-                Independence::Independent
-            }
+            Assigned::To(agent) if agent.model_ref != worker.model_ref => Independence::Independent,
+            // The conclusion stays role-neutral (#1795) and the parenthetical
+            // names the ASSIGNED agent rather than the verifier (#2467), so a
+            // reader is pointed at the row that actually holds the job.
             Assigned::To(_) => Independence::Unavailable(format!(
-                "the `{}` agent and the worker both resolved to `{}`",
+                "no model independent of the worker resolves (the `{}` agent and the worker \
+                 both resolved to `{}`)",
                 self.assigned_agent(responsibility),
                 worker.model_ref
             )),
             Assigned::Withheld => Independence::Withheld,
             Assigned::Unresolvable => Independence::Unavailable(format!(
-                "the `{}` agent is unresolvable (no routable provider)",
+                "no model independent of the worker resolves (the `{}` agent is unresolvable)",
                 self.assigned_agent(responsibility)
             )),
         }
@@ -267,12 +269,11 @@ impl<'a> Pipeline<'a> {
             // row an operator may deliberately have moved authoring off.
             Independence::Unavailable(reason) => {
                 self.unproven(format!(
-                    "{reason}, so no model independent of the worker can author a witness; \
-                     verification is degraded — the deterministic flip oracle cannot arm, so \
-                     the verdict is a model review with no independent test. Point \
-                     `agents.{agent}.model` at a model distinct from the worker's, or move \
-                     `responsibilities.witness_author.agent` to an agent that already is, to \
-                     restore independent verification",
+                    "{reason}; verification is degraded — the deterministic flip oracle \
+                     cannot arm, so the verdict is a model review with no independent test. \
+                     Point `agents.{agent}.model` at a model distinct from the worker's, or \
+                     move `responsibilities.witness_author.agent` to an agent that already \
+                     is, to restore independent verification",
                     agent = self.assigned_agent(ModelCallRole::WitnessAuthor)
                 ));
                 false

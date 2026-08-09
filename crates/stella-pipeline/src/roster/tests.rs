@@ -331,3 +331,86 @@ fn media_roles_are_not_bindable_agents() {
         );
     }
 }
+
+/// **#2458's structural guarantee.** A roster written out as an override block
+/// and read back through [`Roster::apply`] is the roster that was written.
+///
+/// This is what makes it safe for the resume frame to carry a roster at all:
+/// [`Roster::overrides`] is the only encoder and `apply` is the only decoder —
+/// and `apply` is the *same* function the settings path calls, so a stored
+/// ablation cannot come to mean something a configured one does not.
+#[test]
+fn a_roster_round_trips_through_its_own_override_block() {
+    let mut original = Roster::default();
+    original.set_enabled(ModelCallRole::Triage, false);
+    original.set_enabled(ModelCallRole::WitnessAuthor, false);
+    original.set_agent(ModelCallRole::Verdict, AgentId::new("triage"));
+
+    let mut restored = Roster::default();
+    let problems = restored.apply(original.overrides());
+
+    assert!(
+        problems.is_empty(),
+        "a block this build wrote must read back clean: {problems:?}"
+    );
+    assert_eq!(
+        restored, original,
+        "every ablation and every reassignment survives the round trip"
+    );
+}
+
+/// The common case costs nothing to carry: a run that configured nothing
+/// encodes to an empty block, so an ordinary resume frame does not grow.
+#[test]
+fn a_default_roster_has_nothing_to_override() {
+    assert!(
+        Roster::default().overrides().is_empty(),
+        "the default is the absence of opinions, not a table of them"
+    );
+}
+
+/// Invariant 4 for the block that crosses into `stella-cli`'s resume frame.
+#[test]
+fn an_override_block_survives_json() {
+    let mut roster = Roster::default();
+    roster.set_enabled(ModelCallRole::Triage, false);
+    roster.set_agent(ModelCallRole::WitnessAuthor, AgentId::new("plan"));
+
+    let json = serde_json::to_string(&roster.overrides()).expect("the block serializes");
+    let parsed: BTreeMap<String, AssignmentOverride> =
+        serde_json::from_str(&json).expect("and reads back");
+    assert_eq!(parsed, roster.overrides());
+
+    let mut restored = Roster::default();
+    assert!(restored.apply(parsed).is_empty());
+    assert_eq!(restored, roster);
+}
+
+/// A block that names only some rows leaves the rest at their defaults.
+///
+/// The decoder rebuilds from [`Roster::default`] and applies a diff, so a
+/// [`ModelCallRole`] variant added after a block was written comes back at its
+/// new default rather than absent — the property that makes a persisted roster
+/// total by construction rather than by the writer's diligence.
+#[test]
+fn a_block_naming_only_some_rows_leaves_the_rest_at_their_defaults() {
+    let mut restored = Roster::default();
+    let problems = restored.apply([("witness_author".to_string(), override_of(Some(false), None))]);
+
+    assert!(problems.is_empty());
+    assert!(!restored.enabled(ModelCallRole::WitnessAuthor));
+    for untouched in [
+        ModelCallRole::Triage,
+        ModelCallRole::Plan,
+        ModelCallRole::Research,
+        ModelCallRole::Worker,
+        ModelCallRole::DistressGuidance,
+        ModelCallRole::Verdict,
+    ] {
+        assert_eq!(
+            restored.assignment(untouched),
+            Roster::default().assignment(untouched),
+            "{untouched:?} was not named, so it must keep the built-in binding"
+        );
+    }
+}

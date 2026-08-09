@@ -545,7 +545,8 @@ impl Roster {
             .iter()
             .filter_map(|row| {
                 let default = baseline.assignment(row.responsibility);
-                let enabled = (default.map(|d| d.enabled) != Some(row.enabled)).then_some(row.enabled);
+                let enabled =
+                    (default.map(|d| d.enabled) != Some(row.enabled)).then_some(row.enabled);
                 let agent =
                     (default.map(|d| &d.agent) != Some(&row.agent)).then(|| row.agent.clone());
                 (enabled.is_some() || agent.is_some()).then(|| {

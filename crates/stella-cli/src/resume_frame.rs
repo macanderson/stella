@@ -645,4 +645,88 @@ mod tests {
              {undeclared:?}"
         );
     }
+
+    /// **The #2458 witness.** Every ablation the run was launched under
+    /// survives a kill and a resume — not just witness authoring.
+    ///
+    /// Before this, the frame carried a lone `witness_writer` bool, so a
+    /// resumed leg reconstructed one half of one decision and defaulted
+    /// everything else: a run with triage ablated came back running triage,
+    /// and its transcript described a pipeline that had never been asked for.
+    /// Fails on the parent commit for the plainest reason — `PipelineFrame`
+    /// has no field to put a roster in.
+    #[test]
+    fn a_resumed_run_gets_back_every_ablation_it_was_launched_with() {
+        let mut roster = stella_pipeline::Roster::default();
+        roster.set_enabled(ModelCallRole::Triage, false);
+        roster.set_enabled(ModelCallRole::WitnessAuthor, false);
+        roster.set_agent(
+            ModelCallRole::Verdict,
+            stella_pipeline::AgentId::new("triage"),
+        );
+        let config = stella_pipeline::PipelineConfig {
+            roster: roster.clone(),
+            ..stella_pipeline::PipelineConfig::default()
+        };
+
+        let json = serde_json::to_string(&PipelineFrame::of(&config)).expect("the frame writes");
+        let ResumeFrame::Pipeline(frame) = ResumeFrame::parse(&json) else {
+            panic!("the frame this build wrote must read back: {json}");
+        };
+
+        assert_eq!(
+            frame.roster(),
+            roster,
+            "the resumed leg must run the pipeline the killed one was running"
+        );
+        assert!(
+            !frame.witness_writer,
+            "the legacy projection agrees with the row it is derived from"
+        );
+    }
+
+    /// A default-roster run — the overwhelming majority — adds nothing to the
+    /// frame, so the persistence change costs the common path no bytes.
+    #[test]
+    fn a_default_roster_run_writes_no_responsibilities_at_all() {
+        let frame = PipelineFrame::of(&stella_pipeline::PipelineConfig::default());
+        assert!(frame.responsibilities.is_empty());
+        let json = serde_json::to_string(&frame).expect("the frame writes");
+        assert!(
+            !json.contains("responsibilities"),
+            "an empty block is skipped rather than written as `{{}}`: {json}"
+        );
+        assert_eq!(frame.roster(), stella_pipeline::Roster::default());
+    }
+
+    /// A frame written before the roster rode along still resumes, and its one
+    /// expressible ablation is honoured rather than dropped.
+    ///
+    /// `responsibilities` is additive, so [`FRAME_VERSION`] does not move —
+    /// the same posture the `progress` addition took (#1671). The bool is the
+    /// only thing such a frame can say about the roster, and
+    /// [`PipelineFrame::roster`] is the single place that knows it.
+    #[test]
+    fn an_older_frame_is_upgraded_from_its_witness_bool() {
+        let ResumeFrame::Pipeline(off) =
+            ResumeFrame::parse(r#"{"version":1,"witness_writer":false}"#)
+        else {
+            panic!("a version-1 frame must parse");
+        };
+        assert!(
+            !off.roster().enabled(ModelCallRole::WitnessAuthor),
+            "the one ablation an old frame could express must survive"
+        );
+        assert!(
+            off.roster().enabled(ModelCallRole::Triage),
+            "and nothing it could not express may be invented"
+        );
+
+        let ResumeFrame::Pipeline(on) =
+            ResumeFrame::parse(r#"{"version":1,"witness_writer":true}"#)
+        else {
+            panic!("a version-1 frame must parse");
+        };
+        assert_eq!(on.roster(), stella_pipeline::Roster::default());
+    }
 }

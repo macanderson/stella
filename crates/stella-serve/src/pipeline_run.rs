@@ -227,9 +227,10 @@ fn pipeline_config(run: &PipelineRun, engine: EngineConfig) -> PipelineConfig {
     // place that answers it, and this is where the two meet (#2458). It used
     // to be a `PipelineConfig` field ANDed with this row at run time, which
     // meant a host setting the wire field got nothing whenever the row was off.
-    config
-        .roster
-        .set_enabled(stella_protocol::ModelCallRole::WitnessAuthor, run.witness_writer);
+    config.roster.set_enabled(
+        stella_protocol::ModelCallRole::WitnessAuthor,
+        run.witness_writer,
+    );
     if let Some(max_revisions) = run.max_revisions {
         config.max_revisions = max_revisions;
     }
@@ -415,9 +416,11 @@ mod tests {
         run.candidates = Some(3);
         let config = pipeline_config(&run, EngineConfig::default());
         assert_eq!(config.test_command.as_deref(), Some("cargo test -p widget"));
-        assert!(!config
+        assert!(
+            !config
                 .roster
-                .enabled(stella_protocol::ModelCallRole::WitnessAuthor));
+                .enabled(stella_protocol::ModelCallRole::WitnessAuthor)
+        );
         assert_eq!(config.max_revisions, 5);
         assert_eq!(config.candidates, Some(3));
         // Left unset by `PipelineRun` — the pipeline's own default survives.
