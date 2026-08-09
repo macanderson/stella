@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The verification vocabulary: how many rows the DONE VERIFICATION panel has,
-//! and what tone each one renders in.
+//! The PROOF panel's presentation vocabulary: how tall it is, how its sentences
+//! wrap, and what tone each standing renders in.
 //!
 //! # What used to be here
 //!
@@ -15,19 +15,28 @@
 //! screen to update.
 //!
 //! The panel now lives in [`crate::views::plan_rail`], unconditional and always
-//! five rows, so a row moving from `pending` to `authored` is a light changing
-//! colour in a fixed place. What is left here is the part that was never the
-//! problem: the row count and the tone→style mapping, shared so the rail and
-//! anything else that renders a verification row agree.
+//! the same height, so a change of standing is a light changing colour in a
+//! fixed place. What is left here is the part that was never the problem: the
+//! shared geometry and the tone→style mapping.
+//!
+//! # Why the body is three rows
+//!
+//! It carried five before, one per pipeline stage. [`crate::proof`] explains at
+//! length why those stage names left the surface; what remains is a headline in
+//! the panel's title and a plain sentence under it, and three rows is what that
+//! sentence needs at the rail's ~38 columns without ever reflowing. The two rows
+//! given back go to PLAN, which is the panel a squeezed rail used to lose
+//! entirely.
 
 use ratatui::style::{Modifier, Style};
 
 use crate::textline::Tone;
 use crate::theme;
 
-/// Rows the verification panel draws: warrant, witness, oracle, tamper,
-/// verdict. Always all five — see the module docs for what filtering them cost.
-pub const ROWS: u16 = 5;
+/// Rows the panel gives its explanation, under the title that carries the
+/// standing itself. Fixed, not a function of how the turn is going — the old
+/// band shrank as things improved, which is what made its absence unreadable.
+pub const BODY_ROWS: u16 = 3;
 
 pub fn style_for(tone: Tone) -> Style {
     match tone {
@@ -39,6 +48,36 @@ pub fn style_for(tone: Tone) -> Style {
     }
 }
 
+/// Word-wrap one plain sentence to `width` columns.
+///
+/// Greedy, and on word boundaries only: a single word longer than the line — in
+/// practice always a file path — is emitted whole on its own row rather than
+/// broken, and the renderer's ellipsis truncation is what marks the cut.
+/// Breaking a path across two rows would produce two strings that each look
+/// like a real path and neither of which is one.
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.chars().count() + 1 + word.chars().count() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -47,8 +86,8 @@ mod tests {
     /// going. The old band shrank as things improved, which is what made its
     /// absence unreadable.
     #[test]
-    fn the_panel_is_always_five_rows() {
-        assert_eq!(ROWS, 5);
+    fn the_body_is_always_three_rows() {
+        assert_eq!(BODY_ROWS, 3);
     }
 
     /// The three tones that carry a *verdict* must be mutually distinguishable
@@ -71,5 +110,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_sentence_wraps_on_word_boundaries() {
+        assert_eq!(
+            wrap("a test fails without this change and passes with it", 20),
+            vec!["a test fails without", "this change and", "passes with it"],
+        );
+    }
+
+    /// A path is one word and longer than the rail. It must survive whole for
+    /// the renderer to ellipsize — split, it would read as a path that exists.
+    #[test]
+    fn an_overlong_word_keeps_its_own_row_rather_than_breaking() {
+        assert_eq!(
+            wrap("apps/app/automations/store.ts", 12),
+            vec!["apps/app/automations/store.ts"],
+        );
+    }
+
+    #[test]
+    fn wrapping_nothing_produces_no_rows() {
+        assert!(wrap("", 20).is_empty());
+        assert!(wrap("anything", 0).is_empty());
     }
 }

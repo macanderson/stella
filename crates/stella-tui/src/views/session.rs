@@ -1,6 +1,6 @@
 //! Session tab — the focused agent's REPL surface: identity header, the stat
 //! box with its vitals gauges, any pending gate card, the transcript, and the
-//! right-hand rail carrying PLAN over DONE VERIFICATION
+//! right-hand rail carrying PLAN over PROOF
 //! ([`crate::views::plan_rail`]).
 //!
 //! It **reuses** the shared renderers (`render_hud`, `render_transcript`,
@@ -363,7 +363,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
 
     let hud_h = crate::render::HUD_H;
 
-    // PLAN and DONE VERIFICATION live in the right-hand rail
+    // PLAN and PROOF live in the right-hand rail
     // ([`crate::views::plan_rail`]) and are up for the whole session. Too
     // narrow for a column — or accessible mode, where a side-by-side column
     // reads as interleaved lines (#1258) — stacks them above the transcript
@@ -385,7 +385,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         Constraint::Length(dispatch_h),       // mid-turn routing (0 = collapsed)
         Constraint::Length(stacked_plan_h),   // PLAN, when stacked (0 = in the rail)
         Constraint::Min(1),                   // transcript (+ right rail on a wide frame)
-        Constraint::Length(stacked_verify_h), // DONE VERIFICATION, when stacked
+        Constraint::Length(stacked_verify_h), // PROOF, when stacked
     ])
     .split(area);
 
@@ -1259,17 +1259,17 @@ mod tests {
         render(&model, &mut ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(
-            text.contains("DONE VERIFICATION"),
+            text.contains("PROOF"),
             "the panel is unconditional — a waived turn is a report, not an \
              absence:\n{text}"
         );
         assert!(
-            text.contains("waived"),
-            "…and it says what triage decided:\n{text}"
+            text.contains("not needed"),
+            "…and it says what was decided, in the reader's words:\n{text}"
         );
-        // header(1) + stat box(3) = 4 of the 24 rows, and PLAN / DONE
-        // VERIFICATION cost COLUMNS rather than rows. Before this change the
-        // same turn spent 7 more rows on a band with nothing to report.
+        // header(1) + stat box(3) = 4 of the 24 rows, and PLAN / PROOF cost
+        // COLUMNS rather than rows. Before this change the same turn spent 7
+        // more rows on a band with nothing to report.
         assert_eq!(
             ui.metrics.session_height, 18,
             "the transcript must own every row the panels do not"
@@ -1301,7 +1301,7 @@ mod tests {
         render(&model, &mut ui, wide, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("PLAN"), "{text}");
-        assert!(text.contains("DONE VERIFICATION"), "{text}");
+        assert!(text.contains("PROOF"), "{text}");
         assert!(
             text.contains("Fix the auth redirect"),
             "with the step named, not just a count:\n{text}"
@@ -1316,7 +1316,7 @@ mod tests {
         render(&model, &mut ui, narrow, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("PLAN"), "stacked, never dropped:\n{text}");
-        assert!(text.contains("DONE VERIFICATION"), "{text}");
+        assert!(text.contains("PROOF"), "{text}");
         assert!(text.contains("Fix the auth redirect"), "{text}");
     }
 
