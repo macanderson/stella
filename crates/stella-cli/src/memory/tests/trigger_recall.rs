@@ -97,8 +97,7 @@ async fn session_with_crossed_lessons() -> (tempfile::TempDir, SessionMemory) {
         .reflect_and_record(
             &CrossedTriggers,
             "crossed",
-            &transcript,
-            true,
+            crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
             crate::memory::ReflectionPosture::default(),
@@ -232,8 +231,7 @@ async fn a_paraphrase_under_a_new_trigger_is_still_a_restatement() {
         .reflect_and_record(
             &Paraphrase,
             "paraphrase",
-            &transcript,
-            true,
+            crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
             crate::memory::ReflectionPosture::default(),

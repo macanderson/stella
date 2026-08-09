@@ -123,6 +123,7 @@ mod raw_usage;
 mod repair_gate;
 mod research_stage;
 mod resume_stage;
+mod role_pace;
 mod roster_wiring;
 use roster_wiring::Assigned;
 mod run_error;
@@ -142,8 +143,8 @@ mod witness_stage;
 use candidate_result::{CandidateAbort, CandidateResult, TurnAbort, escape_abort_reason};
 use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
+use run_error::RoleResolveError;
 pub use run_error::{PipelineError, PipelineRunError};
-use run_error::{RoleResolveError, WitnessAuthorIndependence};
 use stage_budget::{PipelineStageAbort, Spend, budget_abort};
 use task_frame::TaskFrame;
 use verifier_stage::{VerdictDegradation, VerifierNotices};
@@ -286,18 +287,17 @@ pub struct PipelineConfig {
     /// and refused repairs a long run could still afford (#1507).
     ///
     /// **This field is an estimate, not a ceiling.** Nothing is cancelled when
-    /// it elapses and no call is refused because of it; it sizes the repair
-    /// gate's headroom question and the witness-repair bound, and `None` means
-    /// "nobody is measuring" — the clock axis abstains rather than inventing a
-    /// deadline the caller never declared.
+    /// it elapses and no call is refused because of it; with the deadline below
+    /// it sizes the repair gate's headroom and the witness-repair bound, and
+    /// both `None` means nobody is measuring — the axis abstains, never zeroes.
     ///
     /// The enforcing wall clock is a different field elsewhere:
     /// `BudgetGuard::set_task_deadline`, an absolute instant on the guard
     /// threaded into [`Pipeline::run`]. That one IS honoured — by the engine's
     /// step loop (`stella_core::driver::settlement`) and, since #2238, before
-    /// every raw stage dispatch (`stella_core::run_accounted_call`). Both are
-    /// fed the same `--turn-budget` by `stella-cli`, which is exactly why they
-    /// are easy to confuse and worth this paragraph.
+    /// every raw stage dispatch. Both feed `Pipeline::remaining_wall_clock`,
+    /// which since #2433 reports whichever binds first, so a surface arming
+    /// only one of them is still measured.
     pub run_budget: Option<Duration>,
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
@@ -306,6 +306,38 @@ pub struct PipelineConfig {
     /// [`Roster::default`] is the pipeline that shipped; see [`crate::roster`]
     /// for why assignment and enablement are configurable while stage ORDER
     /// deliberately is not.
+    ///
+    /// **This is the only storage for any of it** (#2458). Two responsibilities
+    /// briefly carried a second switch each — a `witness_writer` bool and a
+    /// `distress_guidance` bool, each ANDed with its row at run time — and two
+    /// knobs for one decision is a defect waiting on a reader: a surface that
+    /// flipped the bool did nothing when the row was off, and neither answer
+    /// named the other. The concrete bug was in persistence. Only the bool rode
+    /// the resume frame, so a killed run came back having reconstructed half
+    /// the decision and defaulted the rest, and a deliberately witness-free run
+    /// started authoring witnesses on its resumed leg. The rows are now the
+    /// whole answer, and the whole roster is what `stella_cli::resume_frame`
+    /// persists.
+    ///
+    /// The two rows whose switch used to live here, since a reader of this
+    /// struct still needs to know what they buy:
+    ///
+    /// - **`witness_author`** — witness authoring (L-E11 front half). When no
+    ///   [`Self::test_command`] is configured and the task class verifies
+    ///   unconditionally, an independent model authors a failing witness test
+    ///   whose command arms the flip oracle, with tamper exclusion at verify
+    ///   time ([`crate::witness`]). Costs one engine turn + up to two test runs
+    ///   per *candidate*: each best-of-N candidate authors its own witness
+    ///   inside its own snapshot, because a witness written against a sibling's
+    ///   tree witnesses nothing about this one's work. At the default
+    ///   `candidates = None` that is once.
+    /// - **`distress_guidance`** — distress-triggered course-correction. On a
+    ///   candidate's *second* deterministic verification failure — cumulative,
+    ///   not necessarily consecutive (#868) — spend one call for guidance that
+    ///   rides with the next revision prompt
+    ///   ([`crate::verify::guidance_prompt`]). Event-triggered by design, never
+    ///   a fixed mid-run checkpoint, and bounded by [`Self::max_revisions`] (at
+    ///   most `max_revisions - 1` guidance calls per candidate).
     pub roster: Roster,
     /// Decision latency ceiling on the triage classification call (L-M4): if
     /// it doesn't answer within this, the in-flight call is dropped and
@@ -375,19 +407,10 @@ pub struct PipelineConfig {
     /// otherwise the run is a named error rather than a silent auto-approve.
     pub headless_bypass_scope_review: bool,
     /// The test command the flip oracle tracks (run before and after execute).
-    /// `None` hands the flip oracle to the witness author (when
-    /// `witness_writer` is on) — an explicit user command always wins over an
-    /// authored one.
+    /// `None` hands the flip oracle to the witness author (when the
+    /// `witness_author` row of [`Self::roster`] is enabled) — an explicit user
+    /// command always wins over an authored one.
     pub test_command: Option<String>,
-    /// Witness authoring (L-E11 front half): when no `test_command` is
-    /// configured and the task class verifies unconditionally, an independent
-    /// model authors a failing witness test whose command arms the flip
-    /// oracle, with tamper exclusion at verify time ([`crate::witness`]).
-    /// Costs one engine turn + up to two test runs per *candidate*: each
-    /// best-of-N candidate authors its own witness inside its own snapshot,
-    /// because a witness written against a sibling's tree witnesses nothing
-    /// about this one's work. At the default `candidates = None` that is once.
-    pub witness_writer: bool,
     /// Whether an authored witness is adopted into the real tree along with
     /// the work it verified. Off by default: the witness is scaffolding for
     /// one run, not a change the user asked for.
@@ -405,13 +428,6 @@ pub struct PipelineConfig {
     /// unchanged either way, since the witness has already done its job by
     /// the time adoption happens.
     pub keep_witness: bool,
-    /// Distress-triggered course-correction: on a candidate's *second*
-    /// deterministic verification failure — cumulative, not necessarily
-    /// consecutive (#868) — spend one verifier call for guidance that rides
-    /// with the next revision prompt ([`crate::verify::guidance_prompt`]).
-    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded by
-    /// `max_revisions` (at most `max_revisions - 1` guidance calls per candidate).
-    pub distress_guidance: bool,
     /// The closed diagnostic that reports what the turn changed. `None`
     /// disables diff-size and zero-diff inspection.
     pub diff_diagnostic: Option<DiagnosticInvocation>,
@@ -557,12 +573,15 @@ impl Default for PipelineConfig {
             run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
             roster: Roster::default(),
-            triage_latency_ceiling: Duration::from_secs(10),
-            // Half the triage ceiling, and recall runs concurrently with
-            // triage — so this can never extend the critical path, it only
-            // stops recall from becoming it. A remote CGP embedding round
-            // trip is 100-500ms and the local path is single-digit ms, so
-            // this is an order of magnitude above the realistic worst case.
+            triage_latency_ceiling: Duration::from_secs(30),
+            // Sized from the recall port's own round trip, NOT as a fraction
+            // of the triage ceiling above (it was written as "half of it",
+            // which stopped being true when triage's moved). Recall runs
+            // concurrently with triage, so this can never extend the critical
+            // path; it only stops recall from becoming it. A remote CGP
+            // embedding round trip is 100-500ms and the local path is
+            // single-digit ms, so this is an order of magnitude above the
+            // realistic worst case.
             recall_latency_ceiling: Duration::from_secs(5),
             // Wider than triage's because a research child is a bounded
             // multi-step read (up to RESEARCH_MAX_STEPS tool round-trips),
@@ -574,9 +593,7 @@ impl Default for PipelineConfig {
             headless_bypass_scope_review: false,
             plan_mode: false,
             test_command: None,
-            witness_writer: true,
             keep_witness: false,
-            distress_guidance: true,
             diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
             diff_budget_lines: 400,
             diagnostics_veto_warnings: false,
@@ -962,6 +979,8 @@ pub struct Pipeline<'a> {
     /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
     /// engine's worker and summarizer reserve.
     raw_call_seq: AtomicU64,
+    /// Measured per-role wall clock — the anticipatory rung's basis (#2432).
+    role_pace: role_pace::RolePace,
     /// The once-per-run verifier notices — see [`VerifierNotices`].
     verifier_notices: VerifierNotices,
     /// Whether more than one candidate is currently writing to [`Self::events`]
@@ -1026,6 +1045,7 @@ impl<'a> Pipeline<'a> {
             config,
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
+            role_pace: role_pace::RolePace::default(),
             verifier_notices: VerifierNotices::default(),
             shared_event_lane: AtomicBool::new(false),
             started: std::time::Instant::now(),
@@ -1058,21 +1078,23 @@ impl<'a> Pipeline<'a> {
         // check further down would still refuse, but only after buying the
         // very trajectory the caller must now throw away (#1147).
         if self.config.require_independent_witness
-            && let WitnessAuthorIndependence::Unavailable(reason) =
-                self.witness_author_independence()
+            && let Some(reason) = self.independence_shortfall(ModelCallRole::WitnessAuthor)
         {
             return Err(PipelineRunError::new(
                 PipelineError::WitnessAuthorUnavailable(reason),
                 total_cost,
             ));
         }
-        // Same probe, second consequence (#1795): the VERDICT grader must be
-        // independent too when the caller says so. The probe compares the
-        // worker's and verifier's resolved model refs, which is exactly
-        // "would the verdict resolve to the worker's model".
+        // The same probe, asked about a DIFFERENT responsibility (#1795,
+        // #2467). The VERDICT grader must be independent too when the caller
+        // says so — and until #2381 that was the same question as the witness
+        // author's, because both were served by `Role::Verifier` and neither
+        // could be moved. Asking about `Verdict` by name is what keeps the two
+        // answers correct once a roster can bind them apart; reusing the
+        // witness author's answer here would refuse, or fail to refuse, on the
+        // strength of a row the caller did not ask about.
         if self.config.require_independent_verifier
-            && let WitnessAuthorIndependence::Unavailable(reason) =
-                self.witness_author_independence()
+            && let Some(reason) = self.independence_shortfall(ModelCallRole::Verdict)
         {
             return Err(PipelineRunError::new(
                 PipelineError::VerifierNotIndependent(reason),
@@ -1161,7 +1183,6 @@ impl<'a> Pipeline<'a> {
         // that would not have authored a witness anyway.
         let authored_witness = !assessment.conversational
             && self.config.test_command.is_none()
-            && self.config.witness_writer
             && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
             && assessment.wants_witness()
             && task_class.verifies_unconditionally()
@@ -1969,7 +1990,8 @@ impl<'a> Pipeline<'a> {
         // is possible the snapshot would be spend without a consumer.
         let lint_baseline = if surface.workspace.is_none()
             && frame.assessment.class.verifies_unconditionally()
-            && (self.effective_test_command(None).is_some() || self.config.witness_writer)
+            && (self.effective_test_command(None).is_some()
+                || self.responsibility_enabled(ModelCallRole::WitnessAuthor))
         {
             match surface.lint {
                 Some(probe) => probe.snapshot(surface.cwd).await,
@@ -2472,7 +2494,9 @@ impl<'a> Pipeline<'a> {
                     // and gating on it paid a guidance call on the FIRST deterministic
                     // red while telling the verifier the agent had "failed twice in a row".
                     let mut reason = brief.message();
-                    if self.config.distress_guidance && state.failures.len() >= 2 {
+                    if self.responsibility_enabled(ModelCallRole::DistressGuidance)
+                        && state.failures.len() >= 2
+                    {
                         // Same witness exclusion as the verdict call (#1433):
                         // guidance reads the change under correction, and the
                         // verifier's own test is not part of it.
@@ -2868,79 +2892,6 @@ impl<'a> Pipeline<'a> {
         };
         if let Some(event) = bounded.telemetry_event() {
             self.emit(event);
-        }
-    }
-
-    /// Whether the wiring can supply a witness author independent of the
-    /// worker, and — when it cannot — why.
-    ///
-    /// Split from [`Self::can_author_independent_witness`] because the same
-    /// verdict is read twice with different consequences: the ladder degrades
-    /// on it, `require_independent_witness` refuses on it (#1147). Pure — it
-    /// emits nothing, so asking twice costs nothing and says nothing twice.
-    fn witness_author_independence(&self) -> WitnessAuthorIndependence {
-        let Ok(worker) = self.resolve_provider(Role::Worker) else {
-            return WitnessAuthorIndependence::WorkerUnresolvable;
-        };
-        match self.resolve_provider(Role::Verifier) {
-            Ok(verifier) if verifier.model_ref != worker.model_ref => {
-                WitnessAuthorIndependence::Independent
-            }
-            // Role-neutral wording on purpose (#1795): the same finding is
-            // framed by two different refusals (witness author, verdict
-            // grader) and one degradation notice, and each supplies its own
-            // role — a reason that named one would misname the others.
-            Ok(_) => WitnessAuthorIndependence::Unavailable(format!(
-                "no model independent of the worker resolves (verifier and worker both \
-                 resolved to `{}`)",
-                worker.model_ref
-            )),
-            Err(_) => WitnessAuthorIndependence::Unavailable(
-                "no model independent of the worker resolves (the verifier role is \
-                 unresolvable)"
-                    .to_string(),
-            ),
-        }
-    }
-
-    /// Whether a witness author independent of the worker can be resolved.
-    ///
-    /// Losing the author costs the run its authored witness, never the task:
-    /// a `false` here routes to the ordinary single-shot path and the
-    /// deterministic/verifier verify ladder. Announced once, at the one point
-    /// that decides it, so the run never pays for isolation it cannot use.
-    ///
-    /// A host that cannot afford that degradation sets
-    /// [`PipelineConfig::require_independent_witness`], which refuses the run
-    /// up front rather than reaching this call at all.
-    fn can_author_independent_witness(&self) -> bool {
-        match self.witness_author_independence() {
-            WitnessAuthorIndependence::Independent => true,
-            // Reported through `unproven`, not a bare `warn`. A witness
-            // triage asked for and the wiring cannot supply is precisely
-            // `WitnessUnavailable` — routing it to the warning channel alone
-            // left the rail's witness row with no statement, so it fell
-            // through to the backstop's "not reported" when the real answer
-            // was known all along and worth naming.
-            //
-            // The message names the degradation AND the way out: a same-model
-            // posture is legitimate (an auto-routing gateway can serve
-            // distinct upstream models behind one id, and this run keeps
-            // going either way), but the operator must hear that the flip
-            // oracle cannot arm and what config change restores it.
-            WitnessAuthorIndependence::Unavailable(reason) => {
-                self.unproven(format!(
-                    "{reason}; verification is degraded — the deterministic \
-                     flip oracle cannot arm, so the verdict is a model review \
-                     with no independent test. Set `pipeline_verifier_model` \
-                     (or `agents.verifier.model`) to a model distinct from \
-                     the worker to restore independent verification"
-                ));
-                false
-            }
-            // A worker that won't resolve fails later, on its own terms —
-            // not here, disguised as a witness-independence verdict.
-            WitnessAuthorIndependence::WorkerUnresolvable => false,
         }
     }
 

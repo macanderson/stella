@@ -80,18 +80,37 @@ impl PipelineRunError {
     }
 }
 
-/// What [`super::Pipeline::witness_author_independence`] found. Three states,
-/// not a bool: "the verifier is the worker" and "the worker itself will not
-/// resolve" are different facts with different owners, and collapsing them is
-/// how a routing failure starts reading as a witness verdict.
-pub(super) enum WitnessAuthorIndependence {
-    /// A verifier distinct from the worker resolves — the author exists.
+/// What [`super::Pipeline::independence_of`] found about one responsibility.
+///
+/// Four states, not a bool, and not three: "the assigned agent resolves to the
+/// worker's model", "the operator turned this responsibility off" and "the
+/// worker itself will not resolve" are different facts with different owners,
+/// and collapsing any two of them is how a routing failure starts reading as a
+/// verdict about independence — or, since #2381 made enablement configurable,
+/// how a deliberate ablation starts reading as an outage.
+pub(super) enum Independence {
+    /// The assigned agent resolves to a model the worker does not use.
     Independent,
-    /// No author independent of the worker, with the reason to announce.
+    /// The roster does not run this responsibility at all.
+    ///
+    /// An ablation the operator asked for, which
+    /// [`super::Pipeline::report_roster_posture`] has already stated once,
+    /// before any spend. A consumer must therefore neither report it a second
+    /// time nor describe it as a fault — but a caller that *required*
+    /// independence must still refuse, because "the stage did not run" fails
+    /// the claim it made just as surely as "the stage ran on the worker's
+    /// model".
+    Withheld,
+    /// The responsibility runs, but nothing independent of the worker backs
+    /// it, with the reason to announce.
+    ///
+    /// The reason names the assigned agent and never the responsibility: each
+    /// consumer wraps it in a sentence that already supplies its own role
+    /// (#1795), so a reason that named one too would misname the others.
     Unavailable(String),
-    /// The worker role itself will not resolve. Not a witness verdict at all:
-    /// the run fails on its own terms a few steps later, with the routing
-    /// error that actually explains it.
+    /// The worker role itself will not resolve. Not a verdict about
+    /// independence at all: the run fails on its own terms a few steps later,
+    /// with the routing error that actually explains it.
     WorkerUnresolvable,
 }
 

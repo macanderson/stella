@@ -170,8 +170,13 @@ pub async fn run_accounted_call(
     //
     // Reactive only (`check_deadline`, a zero reserve): this seam has no pace
     // estimate to anticipate with, and inventing one here would be a second,
-    // invisible policy on top of the operator's — the anticipatory rung lives
-    // where the measurement does, in the step loop.
+    // invisible policy on top of the operator's — so the anticipatory rung
+    // lives wherever a basis for one does. The engine's step loop forecasts
+    // from `TurnState::last_step`, which it measures; `stella-pipeline`'s
+    // `dispatch_raw` reserves each management call's own declared `timeout`
+    // and refuses ahead of this seam (#2432). A caller holding no such basis
+    // gets this reactive check alone, which is the honest answer for it —
+    // never a margin this module guessed on its behalf.
     if let DeadlineOutcome::Exceeded { overrun } = budget.check_deadline(started) {
         return Err(AccountedCallError::Deadline { overrun });
     }

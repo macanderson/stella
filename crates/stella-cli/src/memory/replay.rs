@@ -329,9 +329,8 @@ impl<'a> Replayer<'a> {
                 .reflect_and_record(
                     &provider,
                     "replay",
-                    &transcript,
+                    crate::memory::TurnEvidence::from_transcript(&transcript, turn.succeeded),
                     true,
-                    turn.succeeded,
                     None,
                     crate::memory::ReflectionPosture::default(),
                 )

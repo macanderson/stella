@@ -1,5 +1,9 @@
 //! Reflection gating, accounted provider dispatch, and response parsing.
 
+/// How a turn is rendered for the reflecting model: selection under a character
+/// budget, never a tail window (#2460).
+pub(crate) mod digest;
+
 /// What the prompt must and must not say. A child module so it can drive
 /// [`reflect_on_turn`] directly rather than through the whole record path.
 #[cfg(test)]
@@ -8,10 +12,10 @@ mod tests;
 use std::path::Path;
 
 use stella_model::provider::Provider;
-use stella_protocol::{
-    AgentEvent, CompletionMessage, CompletionRequest, MessageRole, ReasoningEffort,
-};
+use stella_protocol::{AgentEvent, CompletionMessage, CompletionRequest, ReasoningEffort};
 use stella_store::reflection::SelfReviewRow;
+
+pub use digest::{TurnEvidence, TurnFriction};
 
 use super::ReflectionLesson;
 
@@ -45,19 +49,6 @@ pub fn should_reflect_on<E: std::fmt::Display>(result: &Result<(), E>) -> bool {
         Err(reason) => !reason.to_string().contains(stella_core::SOFT_STOP_REASON),
     }
 }
-
-/// How much of the transcript the reflection digest reads ([`reflect_on_turn`]
-/// takes exactly this many messages off the tail).
-///
-/// This window is the ceiling on how good any reflection prompt can be, and it
-/// is currently far too small: twelve messages, each truncated to 300
-/// characters, is a few thousand characters of a turn that may have spent
-/// hundreds of thousands of tokens. The part of a turn that cost the most is
-/// in its middle, and the tail is what survives. Widening it well means
-/// *selecting* from the event stream rather than raising these numbers, which
-/// is #2460 — filed rather than folded in, because it is a per-turn cost
-/// change that deserves its own measurement.
-const REFLECTED_TAIL_MESSAGES: usize = 12;
 
 /// How many lessons one turn may contribute.
 ///
@@ -117,17 +108,6 @@ pub(crate) struct ReflectionPosture {
     pub(crate) effort: Option<ReasoningEffort>,
 }
 
-/// The slice of `messages` worth copying for a reflection transcript.
-///
-/// A caller that appends turn context (the final answer, a files-changed
-/// note) before reflecting should clone this tail, never the whole history:
-/// [`reflect_on_turn`] digests only the last [`REFLECTED_TAIL_MESSAGES`]
-/// messages, so on a long session everything earlier was memcpy'd to be
-/// dropped (#1847's call-site nit).
-pub(crate) fn reflection_tail(messages: &[CompletionMessage]) -> Vec<CompletionMessage> {
-    messages[messages.len().saturating_sub(REFLECTED_TAIL_MESSAGES)..].to_vec()
-}
-
 /// Post-turn reflection on the cheap tier (#1847): resolve the reflection
 /// route, then run [`super::SessionMemory::reflect_and_record`] on whichever
 /// provider it lands on — the configured triage model when routable
@@ -145,9 +125,8 @@ pub(crate) async fn reflect_routed(
     memory: &mut super::SessionMemory,
     cfg: &crate::config::Config,
     worker: &dyn Provider,
-    transcript: &[CompletionMessage],
+    evidence: TurnEvidence<'_>,
     quiet: bool,
-    succeeded: bool,
     budget_limit: Option<f64>,
 ) -> ReflectionReport {
     let routed =
@@ -161,15 +140,7 @@ pub(crate) async fn reflect_routed(
         None => (worker, cfg.model_id.as_str()),
     };
     memory
-        .reflect_and_record(
-            provider,
-            model_hint,
-            transcript,
-            quiet,
-            succeeded,
-            budget_limit,
-            posture,
-        )
+        .reflect_and_record(provider, model_hint, evidence, quiet, budget_limit, posture)
         .await
 }
 
@@ -177,60 +148,33 @@ pub(crate) async fn reflect_routed(
 /// `SessionMemory::reflect_and_record`, in the same pass that stamps
 /// `task_id`, from the session clock — so neither this dispatch nor the parser
 /// below ever reads a clock, and the mining log they feed is reproducible.
-// Eight parameters, and the lint is wrong here: every one is an independent
-// fact about THIS dispatch that the caller alone knows (which provider, which
-// model slug, which workspace, which transcript slice, which domain
-// vocabulary, whether the turn succeeded, what budget is left, what posture
-// the route declared). Bundling them into a struct would rename the arguments
-// without reducing what a caller must decide, and this is a leaf dispatch with
-// three call sites — the shape the lint exists to catch is a growing function
-// that has become several, which this is not.
-#[allow(clippy::too_many_arguments)]
+// The remaining parameters each carry a fact about THIS dispatch that the
+// caller alone knows — which provider, which model slug, which workspace, which
+// domain vocabulary, what budget is left, what posture the route declared — so
+// they stay positional. What the turn *is* does not: `transcript`, `succeeded`
+// and the event-derived friction are one question with one answer, and bundling
+// them as [`TurnEvidence`] is what keeps this at seven arguments while adding
+// evidence rather than at nine with an `#[allow]` (#2460).
 pub async fn reflect_on_turn(
     provider: &dyn Provider,
     model_hint: &str,
     workspace_root: &Path,
-    transcript: &[CompletionMessage],
+    evidence: TurnEvidence<'_>,
     domain_names: &[String],
-    succeeded: bool,
     budget_limit: Option<f64>,
     posture: ReflectionPosture,
 ) -> Result<
     (ReflectionParse, Option<SelfReviewRow>, f64, Vec<AgentEvent>),
     crate::accounted_call::StandaloneCallError,
 > {
-    let digest = transcript
-        .iter()
-        .rev()
-        .take(REFLECTED_TAIL_MESSAGES)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(|message| {
-            let role = match message.role {
-                MessageRole::System => "system",
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "tool",
-            };
-            let content: String = message.content.chars().take(300).collect();
-            let tools = if message.tool_calls.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    " [called: {}]",
-                    message
-                        .tool_calls
-                        .iter()
-                        .map(|call| call.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            };
-            format!("{role}: {content}{tools}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    // Selection, not the last twelve messages truncated to 300 characters: the
+    // expensive part of a turn is in the middle, and a `Tool` message's payload
+    // is not in `content` at all, so the old digest showed reflection the string
+    // `"tool: "` for every tool result it had ever produced. See
+    // [`digest`]'s module docs for both defects and the budget that replaces
+    // them.
+    let digest = digest::build(evidence);
+    let succeeded = evidence.succeeded;
     // The question is the counterfactual — what would you want to have been
     // told, to do this again faster, cheaper and more accurately — and
     // everything else in this prompt exists to keep the answer honest.

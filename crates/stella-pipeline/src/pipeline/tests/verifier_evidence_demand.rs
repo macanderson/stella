@@ -135,7 +135,7 @@ async fn no_tracked_command_means_no_ask_at_all() {
         // No `test_command`, and no authored witness to supply one — the
         // Terminal-Bench shape the original measurement ran into.
         test_command: None,
-        witness_writer: false,
+        roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         ..PipelineConfig::default()
     };
@@ -316,7 +316,7 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
         // Off so the model script stays a pure count of worker turns — the
         // second deterministic red would otherwise buy a guidance call, which
         // has its own witnesses.
-        distress_guidance: false,
+        roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
         // `max_revisions` stays at the default 2: the subject is that BOTH
         // configured rounds survive the demand, not a bigger allowance.
         ..PipelineConfig::default()

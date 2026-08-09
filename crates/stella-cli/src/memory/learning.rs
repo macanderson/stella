@@ -14,10 +14,10 @@ use stella_core::skills::appraisal::EvalEvidence;
 use stella_core::skills::{
     self, AutoCreateConfig, AutoCreateDecision, SkillMineConfig, SkillObservation,
 };
-use stella_protocol::{CompletionMessage, Provider};
+use stella_protocol::Provider;
 
 use super::{
-    LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, reflect_on_turn,
+    LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, TurnEvidence, reflect_on_turn,
     skill_paths_on_disk,
 };
 
@@ -50,8 +50,8 @@ impl SessionMemory {
     /// in whichever output format it speaks; the report distinguishes a genuine
     /// model-call failure from the common, correct "nothing worth recording."
     ///
-    /// `succeeded` controls the reflection prompt template (Proposal 1):
-    /// a failed turn gets a failure-analysis prompt that asks the model to
+    /// `evidence.succeeded` controls the reflection prompt template (Proposal
+    /// 1): a failed turn gets a failure-analysis prompt that asks the model to
     /// identify the root cause — the highest-value learning signal in the
     /// system. A succeeded turn gets the conventional "what worked?" prompt.
     ///
@@ -60,19 +60,12 @@ impl SessionMemory {
     /// `execution_reflection` half the Observatory's self-improve panels read.
     /// It rides here rather than in a call of its own because the model already
     /// has this transcript in front of it.
-    // Seven parameters, and the lint is wrong here for the same reason it is
-    // on `reflect_on_turn` below it: each is an independent fact about this
-    // one dispatch that only the caller holds. A parameter object would move
-    // the argument list to a struct literal at every call site and decide
-    // nothing.
-    #[allow(clippy::too_many_arguments)]
     pub async fn reflect_and_record(
         &mut self,
         provider: &dyn Provider,
         model_hint: &str,
-        transcript: &[CompletionMessage],
+        evidence: TurnEvidence<'_>,
         quiet: bool,
-        succeeded: bool,
         budget_limit: Option<f64>,
         posture: crate::memory::ReflectionPosture,
     ) -> ReflectionReport {
@@ -80,9 +73,8 @@ impl SessionMemory {
             provider,
             model_hint,
             &self.workspace_root,
-            transcript,
+            evidence,
             &self.domains.names(),
-            succeeded,
             budget_limit,
             posture,
         )

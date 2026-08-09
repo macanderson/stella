@@ -251,8 +251,7 @@ async fn reflect_and_record_stores_the_models_self_review_against_its_execution(
         .reflect_and_record(
             &StubProvider,
             "stub",
-            &transcript,
-            true,
+            crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
             crate::memory::ReflectionPosture::default(),
@@ -353,8 +352,10 @@ async fn without_an_execution_id_the_self_review_is_dropped_not_misattributed() 
         .reflect_and_record(
             &StubProvider,
             "stub",
-            &[msg(MessageRole::User, "convert the totals")],
-            true,
+            crate::memory::TurnEvidence::from_transcript(
+                &[msg(MessageRole::User, "convert the totals")],
+                true,
+            ),
             true,
             None,
             crate::memory::ReflectionPosture::default(),
@@ -463,8 +464,7 @@ async fn reflect_and_record_writes_lessons_to_log_and_store() {
         .reflect_and_record(
             &StubProvider,
             "stub",
-            &transcript,
-            true,
+            crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
             crate::memory::ReflectionPosture::default(),
@@ -578,8 +578,10 @@ async fn an_unreadable_reflection_is_recorded_and_an_empty_one_is_not() {
             .reflect_and_record(
                 &Scripted(response),
                 "scripted",
-                &[msg(MessageRole::User, "convert the totals")],
-                true,
+                crate::memory::TurnEvidence::from_transcript(
+                    &[msg(MessageRole::User, "convert the totals")],
+                    true,
+                ),
                 true,
                 None,
                 crate::memory::ReflectionPosture::default(),
@@ -654,8 +656,7 @@ async fn reflection_preserves_settled_cost_when_budget_rejects_model_output() {
         .reflect_and_record(
             &PaidReflection,
             "paid-reflection-model",
-            &[msg(MessageRole::User, "worked")],
-            true,
+            crate::memory::TurnEvidence::from_transcript(&[msg(MessageRole::User, "worked")], true),
             true,
             Some(0.001),
             crate::memory::ReflectionPosture::default(),
