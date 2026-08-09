@@ -1067,6 +1067,32 @@ class MatchRunner:
             match.snapshots.stop()
 
         match.finished_at = time.time()
+
+        # Provenance's second write. The opponent's product version cannot be
+        # known at launch — an agent that installs itself from its vendor's
+        # script inside each task container only exists once a trial has run —
+        # so it is folded in here, from the trajectories those trials left.
+        # Runs on a cancelled match too: trials that completed before the
+        # cancellation are real results, and their apparatus is worth
+        # recording even though the match as a whole proved nothing.
+        try:
+            stamped = provenance.stamp_agent_versions(match.workspace)
+        except Exception:  # never let bookkeeping fail a finished match
+            log.exception("could not stamp agent versions for %s", match.spec.id)
+        else:
+            if stamped is not None:
+                match.provenance = stamped
+                for seat_id in stamped.mixed_version_seats:
+                    versions = stamped.agent_seats[seat_id].get("versions") or []
+                    log.warning(
+                        "match %s seat %s ran %d product versions (%s): its "
+                        "numbers are a blend, not a measurement of either",
+                        match.spec.id,
+                        seat_id,
+                        len(versions),
+                        ", ".join(str(v) for v in versions),
+                    )
+
         if match.status != "cancelled":
             # "finished" is a claim that a contest happened. A match whose
             # every seat died without producing a single trial — Docker down,
