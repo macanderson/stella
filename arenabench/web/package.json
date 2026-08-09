@@ -17,5 +17,8 @@
     "next": "^15.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
+  },
+  "allowScripts": {
+    "sharp@0.34.5": true
   }
 }
