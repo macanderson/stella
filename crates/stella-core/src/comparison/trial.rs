@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::feature::FeatureCounts;
 use crate::self_tuning::TaskOutcome;
 
 /// One task run once under one arm.
@@ -26,6 +27,15 @@ pub struct TrialRecord {
     /// Model calls the trial spent. `0` is legitimate for a trial that never
     /// launched, so it is not a sentinel for "unknown".
     pub turns: u32,
+    /// Per-feature counters this trial observed — the opaque attribution
+    /// channel described in [`super::feature`]. Empty is the ordinary case
+    /// for a caller that measures nothing beyond the aggregates.
+    ///
+    /// `serde(default)` and skipped when empty, so a report recorded before
+    /// counters existed still deserializes and a producer that counts nothing
+    /// emits byte-identical JSON to the one it emitted before.
+    #[serde(default, skip_serializing_if = "FeatureCounts::is_empty")]
+    pub features: FeatureCounts,
 }
 
 /// One arm of the comparison: a named configuration and every trial run under

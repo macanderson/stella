@@ -46,6 +46,15 @@
 //!    resolves to [`ComparisonVerdict::GuardBlocked`] — a named refusal
 //!    carrying its evidence, never a silent non-promotion.
 //!
+//! # Which feature moved
+//!
+//! The aggregates say which arm won; they cannot say which *feature* did it.
+//! [`TrialRecord::features`] is the opaque per-feature counter channel that
+//! can — folded over the same paired trials as everything else, so a feature
+//! delta and a pass-rate delta in one report describe one population. See
+//! [`feature`] for the contract, and [`ComparisonReport::feature_deltas`] for
+//! the baseline-relative view a paired ablation reads.
+//!
 //! # Reading the report
 //!
 //! ```
@@ -57,6 +66,7 @@
 //!         task: task.to_string(),
 //!         outcome: TaskOutcome { succeeded, cost_usd: 0.1, tokens: 1_000, retries: 0 },
 //!         turns: 4,
+//!         features: Default::default(),
 //!     }
 //! }
 //!
@@ -77,6 +87,7 @@
 //! ```
 
 mod arm;
+pub mod feature;
 mod guard;
 mod metric;
 mod report;
@@ -84,6 +95,7 @@ mod task;
 mod trial;
 
 pub use arm::ArmSummary;
+pub use feature::{FeatureCounts, FeatureDelta, FeatureStat};
 pub use guard::{Guard, GuardFinding};
 pub use metric::Metric;
 pub use report::{

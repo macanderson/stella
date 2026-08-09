@@ -14,6 +14,7 @@ fn trial(task: &str, succeeded: bool) -> TrialRecord {
             retries: 0,
         },
         turns: 4,
+        features: FeatureCounts::new(),
     }
 }
 
@@ -27,6 +28,7 @@ fn priced(task: &str, succeeded: bool, cost_usd: f64, tokens: u64, turns: u32) -
             retries: 0,
         },
         turns,
+        features: FeatureCounts::new(),
     }
 }
 
@@ -452,4 +454,166 @@ fn a_stricter_selection_config_is_honored() {
     let report = compare(&arms, &config);
     assert!(!report.verdict.is_winner());
     assert_eq!(report.config.selection.min_samples_per_arm, 20);
+}
+
+// ── The per-feature attribution channel (#2382) ─────────────────────────────
+
+/// A trial carrying feature counters.
+fn counted(task: &str, succeeded: bool, counts: &[(&str, u64)]) -> TrialRecord {
+    TrialRecord {
+        features: counts
+            .iter()
+            .map(|(key, count)| ((*key).to_string(), *count))
+            .collect(),
+        ..trial(task, succeeded)
+    }
+}
+
+/// Counters fold over the arm's paired trials, and the mean is per trial —
+/// the only comparable figure, since pairing excludes at trial granularity and
+/// two arms over the same tasks can still fold different trial counts.
+#[test]
+fn feature_counters_fold_into_a_total_and_a_per_trial_mean() {
+    let arms = vec![
+        arm(
+            "base",
+            "off",
+            (0..4).map(|_| counted("t", false, &[])).collect(),
+        ),
+        arm(
+            "candidate",
+            "on",
+            (0..4)
+                .map(|_| counted("t", true, &[("recall.frames", 3)]))
+                .collect(),
+        ),
+    ];
+    let report = compare(&arms, &ComparisonConfig::new("base", Metric::PassRate));
+    let stat = report.arm("candidate").expect("arm").features["recall.frames"];
+    assert_eq!(stat.total, 12);
+    assert!((stat.mean - 3.0).abs() < 1e-9);
+    assert!(
+        report.arm("base").expect("arm").features.is_empty(),
+        "an arm that counted nothing carries no keys"
+    );
+}
+
+/// The key set is the **union**. A counter only the candidate emitted is the
+/// most interesting row a feature ablation produces, and an intersection would
+/// delete exactly that finding.
+#[test]
+fn the_feature_key_set_is_the_union_of_both_arms() {
+    let arms = vec![
+        arm(
+            "base",
+            "off",
+            (0..3)
+                .map(|_| counted("t", false, &[("tool.grep", 2)]))
+                .collect(),
+        ),
+        arm(
+            "candidate",
+            "on",
+            (0..3)
+                .map(|_| counted("t", true, &[("recall.frames", 1)]))
+                .collect(),
+        ),
+    ];
+    let report = compare(&arms, &ComparisonConfig::new("base", Metric::PassRate));
+    assert_eq!(report.feature_keys(), vec!["recall.frames", "tool.grep"]);
+
+    let deltas = report.feature_deltas();
+    assert_eq!(deltas.len(), 2, "one per (non-baseline arm, key)");
+    let frames = deltas
+        .iter()
+        .find(|d| d.key == "recall.frames")
+        .expect("key");
+    assert_eq!(frames.baseline.total, 0, "absent is zero occurrences");
+    assert!((frames.delta_mean - 1.0).abs() < 1e-9);
+    let grep = deltas.iter().find(|d| d.key == "tool.grep").expect("key");
+    assert!((grep.delta_mean + 2.0).abs() < 1e-9);
+}
+
+/// Counters obey pairing like every other figure: a trial excluded from the
+/// aggregates is excluded from the counters too. A feature delta computed over
+/// a wider trial set than the pass rate beside it is not comparable with it.
+#[test]
+fn an_excluded_trials_counters_are_excluded_too() {
+    let mut candidate: Vec<TrialRecord> = (0..3)
+        .map(|_| counted("shared", true, &[("recall.frames", 1)]))
+        .collect();
+    candidate.push(counted("solo", true, &[("recall.frames", 999)]));
+    let arms = vec![
+        arm(
+            "base",
+            "off",
+            (0..3)
+                .map(|_| counted("shared", false, &[("recall.frames", 1)]))
+                .collect(),
+        ),
+        arm("candidate", "on", candidate),
+    ];
+    let report = compare(&arms, &ComparisonConfig::new("base", Metric::PassRate));
+    assert_eq!(report.unpaired_tasks, vec!["solo".to_string()]);
+    assert_eq!(
+        report.arm("candidate").expect("arm").features["recall.frames"].total,
+        3
+    );
+}
+
+/// With no arm named by the config there is nothing to measure against, so no
+/// delta is stated. Rebasing onto the first arm would silently answer a
+/// different question than the one that was asked.
+#[test]
+fn a_missing_baseline_yields_no_feature_deltas() {
+    let arms = vec![arm(
+        "only",
+        "only",
+        (0..3)
+            .map(|_| counted("t", true, &[("tool.grep", 1)]))
+            .collect(),
+    )];
+    let report = compare(&arms, &ComparisonConfig::new("absent", Metric::PassRate));
+    assert_eq!(
+        report.feature_keys(),
+        vec!["tool.grep"],
+        "the keys are still visible"
+    );
+    assert!(report.feature_deltas().is_empty());
+}
+
+/// Additive, and checked rather than asserted: a report from a producer that
+/// counts nothing serializes exactly as it did before the channel existed, and
+/// a report recorded before it existed still deserializes.
+#[test]
+fn the_feature_channel_is_additive_on_the_wire() {
+    let arms = vec![
+        arm("base", "off", repeat("t", false, 6)),
+        arm("candidate", "on", repeat("t", true, 6)),
+    ];
+    let report = compare(&arms, &ComparisonConfig::new("base", Metric::PassRate));
+    let json = serde_json::to_value(&report).expect("serialize");
+    assert!(
+        json["arms"][0].get("features").is_none(),
+        "an arm that counted nothing adds no key: {}",
+        json["arms"][0]
+    );
+    assert_eq!(
+        COMPARISON_SCHEMA_VERSION, 1,
+        "the channel is additive, so the schema version does not move"
+    );
+
+    // A trial recorded before the field existed round-trips to an empty map.
+    let older = serde_json::json!({
+        "task": "t",
+        "outcome": {"succeeded": true, "cost_usd": 0.1, "tokens": 10, "retries": 0},
+        "turns": 3,
+    });
+    let record: TrialRecord = serde_json::from_value(older).expect("older shape still parses");
+    assert!(record.features.is_empty());
+
+    // And the whole report round-trips byte-for-byte (invariant #4).
+    let text = serde_json::to_string(&report).expect("serialize");
+    let back: ComparisonReport = serde_json::from_str(&text).expect("deserialize");
+    assert_eq!(serde_json::to_string(&back).expect("re-serialize"), text);
 }

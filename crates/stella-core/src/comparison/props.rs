@@ -17,9 +17,10 @@ fn arb_trial() -> impl Strategy<Value = TrialRecord> {
         0u64..100_000,
         0u32..8,
         0u32..40,
+        arb_features(),
     )
         .prop_map(
-            |(task, succeeded, cost_usd, tokens, retries, turns)| TrialRecord {
+            |(task, succeeded, cost_usd, tokens, retries, turns, features)| TrialRecord {
                 task: task.to_string(),
                 outcome: TaskOutcome {
                     succeeded,
@@ -28,8 +29,21 @@ fn arb_trial() -> impl Strategy<Value = TrialRecord> {
                     retries,
                 },
                 turns,
+                features,
             },
         )
+}
+
+/// A small key alphabet, so generated arms genuinely share counters — with
+/// unique keys every delta would be against an absent baseline and the
+/// interesting case would never be generated. The empty map is reachable,
+/// which is the ordinary shape for a caller that counts nothing.
+fn arb_features() -> impl Strategy<Value = FeatureCounts> {
+    proptest::collection::btree_map(
+        prop::sample::select(vec!["tool.grep".to_string(), "recall.frames".to_string()]),
+        0u64..500,
+        0..3,
+    )
 }
 
 fn arb_arm(id: &'static str) -> impl Strategy<Value = ArmTrials> {
@@ -168,5 +182,28 @@ proptest! {
             None | Some(std::cmp::Ordering::Less)
         );
         prop_assert_eq!(finding.regressed, expected_regressed);
+    }
+
+    /// Every feature delta re-derives from the two stats printed beside it.
+    /// A delta a reader cannot check against its operands is a number they
+    /// have to take on faith, which is the opposite of what the channel is
+    /// for — so it is derived, never stored, and this is that guarantee.
+    #[test]
+    fn a_feature_delta_always_re_derives_from_its_operands(
+        base in arb_arm("base"),
+        candidate in arb_arm("candidate"),
+    ) {
+        let report = compare(&[base, candidate], &ComparisonConfig::new("base", Metric::PassRate));
+        for summary in &report.arms {
+            for stat in summary.features.values() {
+                prop_assert!(stat.mean.is_finite());
+                // `total` is a sum of counts over `trials` trials, so the mean
+                // can never exceed it for a non-empty arm.
+                prop_assert!(stat.mean <= stat.total as f64 + 1e-9);
+            }
+        }
+        for delta in report.feature_deltas() {
+            prop_assert!((delta.delta_mean - (delta.candidate.mean - delta.baseline.mean)).abs() < 1e-9);
+        }
     }
 }

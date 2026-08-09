@@ -28,6 +28,13 @@ path = "src/main.rs"
 # reading the same aggregates, the same guard set, and the same significance
 # test the offline harness applied, and two report types is two standards.
 stella-core = { path = "../../crates/stella-core" }
+# The wire vocabulary the distiller reads (#2382). Only `StageKind` is used,
+# and only to canonicalize a stage name off the stream: the verdict stage is
+# aliased `judge`/`verifier` on the wire, so a hardcoded name list here would
+# split one stage's counter in two AND duplicate the stage vocabulary the
+# protocol crate exists to hold exactly once (L-E1). Already in the build
+# graph beneath `stella-core`, so it costs no compile time.
+stella-protocol = { path = "../../crates/stella-protocol" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

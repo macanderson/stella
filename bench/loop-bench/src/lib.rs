@@ -67,6 +67,7 @@
 
 pub mod artifacts;
 pub mod compare;
+pub mod features;
 pub mod reconcile;
 
 use std::collections::BTreeMap;
@@ -75,6 +76,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::artifacts::{StepStream, TrialArtifacts};
+use crate::features::FeatureCounts;
 use crate::reconcile::{Reconciliation, Requested, reported_task_name};
 
 /// The per-task loop + context signals, distilled from one trial's event
@@ -170,6 +172,21 @@ pub struct TrialReport {
     /// warnings land here too — it is the most recent explanation, not a
     /// verdict.
     pub last_error: Option<String>,
+    /// Per-feature counters distilled from the same stream (#2382) — recall,
+    /// context write-back, subagents, per-stage entries, and one key per tool
+    /// name. See [`features`] for the vocabulary and why it is keyed the way
+    /// it is.
+    ///
+    /// These are the *attribution* channel, distinct from the loop-health
+    /// counters above: they carry into [`compare`] and are differenced per
+    /// arm, which is what turns a paired ablation into a per-feature number
+    /// instead of a bespoke `jq` pass per experiment. Additive — every
+    /// existing counter keeps its meaning, or every comparison recorded before
+    /// today silently becomes incomparable.
+    ///
+    /// Skipped when empty so a `NOT-RUN` row's JSON is unchanged.
+    #[serde(skip_serializing_if = "FeatureCounts::is_empty")]
+    pub features: FeatureCounts,
 }
 
 impl TrialReport {
@@ -449,6 +466,7 @@ pub fn fold_steps(steps: &[TrialReport]) -> TrialReport {
         folded.spend_usd += step.spend_usd;
         folded.budget_capped |= step.budget_capped;
         folded.terminal_event = step.terminal_event;
+        features::merge(&mut folded.features, &step.features);
         for stage in &step.stages {
             if seen_stage.insert(stage.clone()) {
                 folded.stages.push(stage.clone());
@@ -488,6 +506,11 @@ pub fn distill_events(task: &str, raw: &str) -> TrialReport {
             continue;
         };
         r.parsed_lines += 1;
+        // Attribution runs over every parsed event, beside — never instead of
+        // — the loop-health fold below. The two answer different questions and
+        // an event can feed both (a `tool_start` is one tool call *and* one
+        // `tool.<name>`).
+        features::record(&ev, &mut r.features);
         match ev.get("type").and_then(Value::as_str) {
             Some("step_usage") => {
                 r.model_calls += 1;

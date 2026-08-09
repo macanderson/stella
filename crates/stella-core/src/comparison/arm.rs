@@ -1,8 +1,11 @@
 //! One arm's trials folded into the aggregates a report shows and a guard
 //! compares.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
+use super::feature::{self, FeatureStat};
 use super::metric::{mean, median};
 use super::trial::TrialRecord;
 use crate::self_tuning::{RewardWeights, reward};
@@ -46,6 +49,12 @@ pub struct ArmSummary {
     pub median_turns: f64,
     /// Retries per paired trial.
     pub mean_retries: f64,
+    /// Every per-feature counter this arm's paired trials carried, summed and
+    /// averaged over the same trials as the figures above (see
+    /// [`super::feature`]). Empty for a caller that counts nothing, and
+    /// skipped when empty so such a report's JSON is unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub features: BTreeMap<String, FeatureStat>,
 }
 
 impl ArmSummary {
@@ -107,6 +116,7 @@ impl ArmSummary {
             mean_tokens: mean(&tokens),
             median_turns: median(&turns),
             mean_retries: mean(&retries),
+            features: feature::fold(paired),
         }
     }
 }

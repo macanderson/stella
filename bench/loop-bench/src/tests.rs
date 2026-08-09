@@ -822,3 +822,201 @@ fn passed_is_reward_one_and_nothing_else() {
     assert!(!with(None).passed(), "never verified is not a pass");
     assert_eq!(tally(&[with(Some(0.5)), with(None)]).solved, 0);
 }
+
+// ── Per-feature attribution (#2382) ──────────────────────────────────────────
+//
+// The witness set for the counters `--compare` differences per arm. Each
+// asserts a known value off a stream that is a faithful sample of the wire
+// shape, because the whole point of the channel is that a number in a report
+// came from the events and not from a hand-written `jq` pass beside it.
+
+/// A stream exercising every event the attribution channel reads, once.
+///
+/// Deliberately spelled as the wire spells it — `sub_agent`'s nested `phase`
+/// discriminator, `context_recall`'s `usage.providers[]` — rather than a
+/// convenient flattening. A fixture that agrees with the distiller but not
+/// with the engine proves nothing.
+fn attributable_stream() -> String {
+    ev(&[
+        r#"{"type":"stage","name":"triage"}"#,
+        r#"{"type":"stage","name":"context_recall"}"#,
+        r#"{"type":"context_recall","frames":[{"citation_label":"a","source":"s","token_cost":10},{"citation_label":"b","source":"s","token_cost":20}],"provider_mix":[{"provider":"stella-context","frames":2}],"tokens":30,"latency_ms":12,"usage":{"budget_requested":100,"budget_consumed":30,"as_of":"2026-08-08T00:00:00Z","providers":[{"provider_id":"stella-context","frames_served":3,"frames_rejected":1,"token_cost":30}]}}"#,
+        r#"{"type":"stage","name":"execute"}"#,
+        r#"{"type":"tool_start","call":{"name":"graph_query"}}"#,
+        r#"{"type":"tool_start","call":{"name":"project_overview"}}"#,
+        r#"{"type":"tool_start","call":{"name":"task"}}"#,
+        r#"{"type":"sub_agent","phase":{"phase":"started","agent_id":"c1","instruction_preview":"look","budget_usd":0.05,"write_access":false,"depth":1}}"#,
+        r#"{"type":"sub_agent","phase":{"phase":"finished","agent_id":"c1","status":"completed","summary":"done"}}"#,
+        r#"{"type":"sub_agent","phase":{"phase":"started","agent_id":"c2","instruction_preview":"look","budget_usd":null,"write_access":false,"depth":1}}"#,
+        r#"{"type":"sub_agent","phase":{"phase":"finished","agent_id":"c2","status":"refused","summary":""}}"#,
+        r#"{"type":"tool_start","call":{"name":"repo_stats"}}"#,
+        r#"{"type":"stage","name":"witness"}"#,
+        r#"{"type":"stage","name":"verify"}"#,
+        r#"{"type":"stage","name":"context_write"}"#,
+        r#"{"type":"context_write","provider":"stella-context","upserts":4,"superseded":1}"#,
+        r#"{"type":"complete","model":"m","cost_usd":0.01}"#,
+    ])
+}
+
+fn count(r: &TrialReport, key: &str) -> u64 {
+    *r.features.get(key).unwrap_or_else(|| {
+        panic!(
+            "no `{key}` counter; the stream distilled {:?}",
+            r.features.keys().collect::<Vec<_>>()
+        )
+    })
+}
+
+/// #2382: recall, context write-back, subagents, stages and every tool name
+/// each land their own counter with the value the stream states.
+#[test]
+fn every_attributable_event_reaches_its_own_counter() {
+    let r = distill_events("attributed", &attributable_stream());
+
+    // Recall: one event, two admitted frames, thirty tokens, and the one
+    // frame the host rejected whole.
+    assert_eq!(count(&r, "recall.calls"), 1);
+    assert_eq!(count(&r, "recall.frames"), 2);
+    assert_eq!(count(&r, "recall.tokens"), 30);
+    assert_eq!(count(&r, "recall.frames_rejected"), 1);
+
+    // Write-back.
+    assert_eq!(count(&r, "context_write.calls"), 1);
+    assert_eq!(count(&r, "context_write.upserts"), 4);
+    assert_eq!(count(&r, "context_write.superseded"), 1);
+
+    // Two children asked for, one of them never allowed to run.
+    assert_eq!(count(&r, "subagent.spawned"), 2);
+    assert_eq!(count(&r, "subagent.refused"), 1);
+
+    // Stages, one key each.
+    for stage in ["triage", "context_recall", "execute", "witness", "verify"] {
+        assert_eq!(count(&r, &format!("stage.{stage}")), 1, "stage.{stage}");
+    }
+
+    // Tools by name — including one the harness has no dedicated column for,
+    // which is the whole reason the channel is keyed by name.
+    assert_eq!(count(&r, "tool.graph_query"), 1);
+    assert_eq!(count(&r, "tool.project_overview"), 1);
+    assert_eq!(count(&r, "tool.task"), 1);
+    assert_eq!(count(&r, "tool.repo_stats"), 1);
+}
+
+/// #2382 (1): `project_overview` and `graph_query` are counted separately, and
+/// the counters agree with the dedicated columns that predate them. F3 and F5
+/// are separate cards with separate kill criteria; one shared bucket cannot
+/// grade either.
+#[test]
+fn the_two_context_tools_are_counted_separately_and_agree_with_their_columns() {
+    let r = distill_events(
+        "split",
+        &ev(&[
+            r#"{"type":"tool_start","call":{"name":"project_overview"}}"#,
+            r#"{"type":"tool_start","call":{"name":"graph_query"}}"#,
+            r#"{"type":"tool_start","call":{"name":"graph_query"}}"#,
+        ]),
+    );
+    assert_eq!(count(&r, "tool.project_overview"), 1);
+    assert_eq!(count(&r, "tool.graph_query"), 2);
+    assert_eq!(u64::from(r.project_overview_calls), 1);
+    assert_eq!(u64::from(r.graph_query_calls), 2);
+}
+
+/// The verdict stage shipped on the wire as `judge` and is still aliased that
+/// way, so a raw-string key would file the same stage under two names and
+/// report each as having half-fired.
+#[test]
+fn a_stage_recorded_under_its_wire_alias_lands_in_the_canonical_bucket() {
+    let r = distill_events(
+        "aliased",
+        &ev(&[
+            r#"{"type":"stage","name":"judge"}"#,
+            r#"{"type":"stage","name":"verifier"}"#,
+            r#"{"type":"stage","name":"verdict"}"#,
+        ]),
+    );
+    assert_eq!(count(&r, "stage.verdict"), 3);
+    assert!(!r.features.contains_key("stage.judge"));
+    assert!(!r.features.contains_key("stage.verifier"));
+}
+
+/// A stage this build does not know keeps its own name. A newer stella's
+/// stage bucketed into an `other` would report as a stage that never fired.
+#[test]
+fn an_unknown_stage_is_counted_under_its_own_name() {
+    let r = distill_events("future", &ev(&[r#"{"type":"stage","name":"negotiate"}"#]));
+    assert_eq!(count(&r, "stage.negotiate"), 1);
+}
+
+/// A stage that fires twice — the revise back-edge re-entering `execute` —
+/// counts twice. The pre-existing `stages` list de-duplicates by design (it
+/// answers "where did it vanish?"), so the counter is the only place a repair
+/// loop is visible.
+#[test]
+fn a_stage_entered_twice_counts_twice_where_the_stage_list_dedupes() {
+    let r = distill_events(
+        "revised",
+        &ev(&[
+            r#"{"type":"stage","name":"execute"}"#,
+            r#"{"type":"stage","name":"verify"}"#,
+            r#"{"type":"stage","name":"execute"}"#,
+        ]),
+    );
+    assert_eq!(count(&r, "stage.execute"), 2);
+    assert_eq!(r.stages, vec!["execute", "verify"]);
+}
+
+/// A multi-step trial's counters sum, exactly as its tool and model call
+/// counts do — the trial did all of it.
+#[test]
+fn a_multi_step_trials_counters_sum_across_its_steps() {
+    let job = tempfile::tempdir().expect("job dir");
+    let trial = job.path().join("multi__t1");
+    for (step, tool) in [("one", "graph_query"), ("two", "graph_query")] {
+        let agent = trial.join("steps").join(step).join("agent");
+        std::fs::create_dir_all(&agent).expect("mkdir");
+        std::fs::write(
+            agent.join("stella-events.jsonl"),
+            format!(r#"{{"type":"tool_start","call":{{"name":"{tool}"}}}}"#),
+        )
+        .expect("write");
+    }
+    write_result(
+        &trial,
+        serde_json::json!({
+            "task_name": "multi",
+            "step_results": [{"step_name": "one"}, {"step_name": "two"}],
+        }),
+    );
+    let requested = vec!["multi".to_string()];
+    let analysis = analyze(job.path(), Some(one_trial_each(&requested)));
+    assert_eq!(count(only(&analysis), "tool.graph_query"), 2);
+}
+
+/// The counters reach the JSON a CI consumer trends, under `features`.
+#[test]
+fn the_json_report_carries_the_feature_counters() {
+    let job = tempfile::tempdir().expect("job dir");
+    trial_dir(
+        job.path(),
+        "ran__t1",
+        &[r#"{"type":"tool_start","call":{"name":"edit_file"}}"#],
+    );
+    let requested = vec!["ran".to_string(), "never".to_string()];
+    let analysis = analyze(job.path(), Some(one_trial_each(&requested)));
+    let json = serde_json::to_value(json_report(&analysis)).expect("serialize");
+    let rows = json["trials"].as_array().expect("rows");
+    let ran = rows
+        .iter()
+        .find(|row| row["task"] == "ran")
+        .expect("the trial that ran");
+    assert_eq!(ran["features"]["tool.edit_file"], 1);
+    let never = rows
+        .iter()
+        .find(|row| row["task"] == "never")
+        .expect("the NOT-RUN row");
+    assert!(
+        never.get("features").is_none(),
+        "an empty counter set is skipped, so a NOT-RUN row's JSON is unchanged"
+    );
+}

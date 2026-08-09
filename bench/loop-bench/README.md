@@ -53,9 +53,13 @@ promotion decided by them is a decision about the machine.
 For each trial dir `<jobs-dir>/<job-name>/<task>__<id>/`, `distill_events` reads
 `agent/stella-events.jsonl`: `step_usage` counts model calls, `tool_start` tool
 calls (`write_file` / `edit_file` / `apply_edits` are writes — never
-`delete_file`, or a destructive loop would look productive; `project_overview` /
-`graph_query` are context queries), and a terminal event is `complete` or an
-`error` with `retryable: false`. The reward comes from `verifier/reward.txt`.
+`delete_file`, or a destructive loop would look productive; `project_overview`
+and `graph_query` each get their own column, `ov` and `gq`), and a terminal
+event is `complete` or an `error` with `retryable: false`. The reward comes from
+`verifier/reward.txt`.
+
+Beside those loop-health counters, every trial also carries a **per-feature
+attribution** map — see [§ Feature attribution](#feature-attribution-2382).
 
 Four more files in the same directory are read, each closing a hole where
 harbor knew something the harness did not (#1299) — see
@@ -202,6 +206,81 @@ promote however cleanly the arms separate — it reports
 into a gate (exit `6`); it is off by default because a comparison is a
 measurement and "no winner" is a legitimate answer to it.
 
+## Feature attribution (#2382)
+
+The aggregates above answer *which arm won*. They cannot answer **which feature
+moved**, and that is the question a paired ablation is run to settle. Until
+#2382 the harness attributed exactly two features — `project_overview` and
+`graph_query` — so every other feature in the tree needed a bespoke `jq` pass
+per experiment, written beside the report rather than inside it. A figure
+computed over a *different* trial set than the report's pass rate is not
+comparable with it, and nothing on the page says so; that is precisely where a
+measurement artifact creeps in.
+
+So every trial now also carries a counter map, distilled by
+[`src/features.rs`](src/features.rs) from the same stream, and folded by
+`stella-core` over the same **paired** trials as every other figure. Each key is
+`<namespace>.<what>`, and the value counts exactly what the key names:
+
+| Key | One per | Card |
+|---|---|---|
+| `tool.<name>` | `tool_start`, keyed by the tool's own name | F2, F3, F5, F11 |
+| `stage.<kind>` | `stage`, keyed by the canonical `StageKind` tag | F6, F7, F10 |
+| `recall.calls` / `.frames` / `.tokens` / `.frames_rejected` | `context_recall` — the event, its admitted frames, its injected tokens, and the frames the host rejected whole | F8 |
+| `context_write.calls` / `.upserts` / `.superseded` | `context_write` and its two counts | F9, F14 |
+| `subagent.spawned` / `.refused` | `sub_agent` `started`, and a `finished` whose status is `refused` | F11 |
+
+`--compare` prints them per arm with the baseline-relative delta, above the
+verdict and never folded into it — a feature delta is evidence about *what
+changed*, not a bar a candidate may be promoted on:
+
+```
+FEATURE ATTRIBUTION — per-trial mean (total), over the paired trials only
+feature                        recall-off      recall-on    Δ recall-on
+──────────────────────────────────────────────────────────────────────────
+recall.frames                     0.00 (0)      3.00 (18)        +3.000
+tool.grep                         2.00 (12)      0.00 (0)        -2.000
+```
+
+Four decisions there are load-bearing:
+
+- **Tools are keyed by name, never by a class.** A foundry-authored tool is
+  indistinguishable from a built-in on the wire — `ToolCall` carries a name and
+  arguments and nothing about where the tool came from — so a `tool.foundry`
+  bucket would be the harness *guessing* from a name it does not own. Keying by
+  name reports what the stream says, and an operator ablating their adopted tool
+  knows its name.
+- **Stages are canonicalized through `StageKind`.** The verdict stage shipped on
+  the wire as `judge` and is still aliased that way, so a raw-string key would
+  file one stage under two names and report each as having half-fired.
+- **The key set is the union of both arms.** A counter only one arm emitted is
+  the single most interesting row an ablation produces; an intersection would
+  delete exactly that finding. An arm that never counted a key reads as zero
+  occurrences, which is what it is — the counters are folded over trials that
+  *ran*.
+- **The delta is derived, never stored.** It is `candidate.mean − baseline.mean`
+  computed at read time, so it cannot disagree with the two figures printed
+  beside it.
+
+`no_evidence_cut` — recall's evidence-gate refusal count — is **deliberately
+absent**, though #2382 asks for it. It is real (`stella-context`'s
+`RetrievalResult`) but never reaches the wire: `AgentEvent::ContextRecall`
+carries the admitted frames and, via `usage`, the ones the *host* rejected, and
+neither is the evidence gate's refusal. Counting `recall.frames_rejected` and
+labelling it the evidence cut would be a different number wearing the name of
+the one the experiment asked for. Tracked as #2398.
+
+The counters are **additive**: no existing counter changed meaning, the report's
+`COMPARISON_SCHEMA_VERSION` does not move, and an arm that counts nothing
+serializes exactly as it did before. `stella tune effort` reads a deliberately
+narrow view of a trial row and ignores the new key — checked in
+`crates/stella-cli/src/memory/self_tuning.rs`, not assumed.
+
+The offline warehouse ([`../telemetry_store/`](../telemetry_store/)) needs no
+change to stay consistent: `ingest.py` stores every event's whole payload in
+`events` (plus a `tool_calls` row per call), so the same counters are derivable
+there in SQL from the same file.
+
 ## The nightly CI gate (#873)
 
 [`.github/workflows/nightly-bench.yml`](../../.github/workflows/nightly-bench.yml)
@@ -268,8 +347,12 @@ verdict — no Docker, no harbor, no key. Each pins a real defect: batched
 `apply_edits` reporting zero writes, an ellipsis past the column budget that
 shifted a whole row, a retryable warning read as terminal, a *solved* run with
 no `complete` event called silent, a stream of non-JSON stella output passing
-for an unexplained silent death. A new signal means a `TrialReport` field, an
-arm in `distill_events`, a `print_table` column (`TABLE_WIDTH`), and a test.
+for an unexplained silent death. A new **loop-health** signal means a
+`TrialReport` field, an arm in `distill_events`, a `print_table` column
+(`TABLE_WIDTH`), and a test. A new **feature-attribution** counter is smaller:
+a key in [`src/features.rs`](src/features.rs), a row in the table above, and a
+test — it needs no column, because `--compare` renders whatever keys the stream
+produced.
 
 The #1299 tests build real trial directories under a `tempfile::tempdir` and run
 `analyze` over them, because the defects they pin are about *files harbor wrote
