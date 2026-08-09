@@ -69,6 +69,7 @@ pub fn arm_trials(id: &str, value: &str, reports: &[TrialReport]) -> ArmTrials {
                     retries: r.retries,
                 },
                 turns: r.model_calls,
+                features: r.features.clone(),
             })
             .collect(),
     }
@@ -123,7 +124,92 @@ pub fn print_comparison(report: &ComparisonReport) {
             report.unpaired_tasks.join(", ")
         );
     }
+    print_features(report);
     print_verdict(report);
+}
+
+/// Width of one feature cell: `12.34 (1234)` and a space.
+const FEATURE_CELL: usize = 14;
+/// Width of one delta cell: `-1234.567` and a `Δ <arm>` header over it.
+const DELTA_CELL: usize = 12;
+/// Width of the feature key column. Long enough for `context_write.superseded`,
+/// the longest key the distiller mints from a fixed name; a `tool.<name>` key
+/// past it truncates rather than shifting the row.
+const FEATURE_KEY: usize = 26;
+
+/// The per-feature attribution block (#2382): what each arm's trials actually
+/// did, and the baseline-relative delta a paired ablation is run to read.
+///
+/// Printed **before** the verdict and never folded into it. These counters are
+/// evidence about *which feature moved*, and the verdict is decided on the
+/// primary metric and the guards alone — a feature delta is not a bar a
+/// candidate can pass or fail, and rendering it above the verdict is how the
+/// page says which of the two the operator is allowed to promote on.
+///
+/// Silent when nothing counted: a stream with no attributable events (or one
+/// from a stella old enough not to emit them) should not print an empty table
+/// implying the features were measured and found absent.
+fn print_features(report: &ComparisonReport) {
+    let keys = report.feature_keys();
+    if keys.is_empty() {
+        return;
+    }
+    let baseline = report.config.baseline_id.as_str();
+    let candidates: Vec<&str> = report
+        .arms
+        .iter()
+        .map(|arm| arm.id.as_str())
+        .filter(|id| *id != baseline)
+        .collect();
+    // (arm, key) -> delta. Empty when the baseline arm is missing, which is
+    // the same condition that leaves the verdict a `MissingBaseline` refusal.
+    let deltas = report.feature_deltas();
+
+    println!("\nFEATURE ATTRIBUTION — per-trial mean (total), over the paired trials only");
+    print!("{:<FEATURE_KEY$}", "feature");
+    for arm in &report.arms {
+        print!(" {:>FEATURE_CELL$}", truncate(&arm.id, FEATURE_CELL));
+    }
+    for arm in &candidates {
+        print!(
+            " {:>DELTA_CELL$}",
+            truncate(&format!("Δ {arm}"), DELTA_CELL)
+        );
+    }
+    println!();
+    let width =
+        FEATURE_KEY + (FEATURE_CELL + 1) * report.arms.len() + (DELTA_CELL + 1) * candidates.len();
+    println!("{}", "─".repeat(width));
+
+    for key in &keys {
+        print!("{:<FEATURE_KEY$}", truncate(key, FEATURE_KEY));
+        for arm in &report.arms {
+            // A key this arm never counted is zero occurrences, not a gap:
+            // the counters are folded over trials that ran, so "no such
+            // event" is an observation about the arm.
+            let (mean, total) = arm
+                .features
+                .get(*key)
+                .map_or((0.0, 0), |stat| (stat.mean, stat.total));
+            print!(" {:>FEATURE_CELL$}", format!("{mean:.2} ({total})"));
+        }
+        for arm in &candidates {
+            let delta = deltas
+                .iter()
+                .find(|d| d.arm == *arm && d.key == *key)
+                .map(|d| d.delta_mean);
+            print!(
+                " {:>DELTA_CELL$}",
+                delta.map_or_else(|| "—".to_string(), |d| format!("{d:+.3}"))
+            );
+        }
+        println!();
+    }
+    if candidates.len() == report.arms.len() {
+        println!(
+            "  ⚠ no arm is named `{baseline}` — the Δ column has no baseline to measure against."
+        );
+    }
 }
 
 fn leader_label(leader: &Leader) -> String {

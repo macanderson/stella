@@ -152,3 +152,114 @@ fn a_stream_without_usage_fields_reports_zero_tokens() {
     assert_eq!(distilled.retries, 0);
     assert_eq!(distilled.model_calls, 1);
 }
+
+/// #2382 (3): a paired ablation yields a per-feature number directly — each
+/// counter reaches both arms, and the delta is the candidate's per-trial mean
+/// less the baseline's.
+#[test]
+fn a_paired_ablation_reports_each_feature_counter_with_its_delta() {
+    let with_recall = |frames: u64| {
+        let mut r = report("ctx", 1.0, 0.1, 1_000, 4);
+        r.features = [
+            ("recall.calls".to_string(), 1),
+            ("recall.frames".to_string(), frames),
+        ]
+        .into_iter()
+        .collect();
+        r
+    };
+    // The off arm emits no recall event at all — the shape an ablation
+    // actually produces, and the one an intersection of keys would delete.
+    let without_recall = || {
+        let mut r = report("ctx", 0.0, 0.1, 1_000, 4);
+        r.features = [("tool.grep".to_string(), 2)].into_iter().collect();
+        r
+    };
+
+    let off: Vec<TrialReport> = (0..6).map(|_| without_recall()).collect();
+    let on: Vec<TrialReport> = (0..6).map(|_| with_recall(3)).collect();
+    let arms = vec![
+        arm_trials("recall-off", "off", &off),
+        arm_trials("recall-on", "on", &on),
+    ];
+    let report = compare(&arms, &config("recall-off"));
+
+    // The union of keys, so the counter only the candidate emitted survives.
+    assert_eq!(
+        report.feature_keys(),
+        vec!["recall.calls", "recall.frames", "tool.grep"]
+    );
+
+    let on_arm = report.arm("recall-on").expect("candidate arm");
+    let frames = on_arm.features["recall.frames"];
+    assert_eq!(frames.total, 18, "3 frames × 6 paired trials");
+    assert!((frames.mean - 3.0).abs() < 1e-9);
+
+    let deltas = report.feature_deltas();
+    let frames_delta = deltas
+        .iter()
+        .find(|d| d.key == "recall.frames")
+        .expect("a delta for every key");
+    assert_eq!(frames_delta.arm, "recall-on");
+    assert_eq!(frames_delta.baseline.total, 0);
+    assert!((frames_delta.delta_mean - 3.0).abs() < 1e-9);
+
+    // And it differences in the other direction too: the tool the off arm
+    // reached for instead.
+    let grep = deltas
+        .iter()
+        .find(|d| d.key == "tool.grep")
+        .expect("a delta for every key");
+    assert!((grep.delta_mean + 2.0).abs() < 1e-9);
+}
+
+/// A trial the comparison excludes contributes no counters either. A feature
+/// delta computed over a wider trial set than the pass rate beside it is not
+/// comparable with it, which is the whole reason the counters ride the trial
+/// rather than being folded beside the report.
+#[test]
+fn an_unpaired_trials_counters_are_excluded_with_the_rest_of_it() {
+    let counted = |task: &str, frames: u64| {
+        let mut r = report(task, 1.0, 0.1, 1_000, 4);
+        r.features = [("recall.frames".to_string(), frames)]
+            .into_iter()
+            .collect();
+        r
+    };
+    let base: Vec<TrialReport> = (0..6).map(|_| counted("shared", 1)).collect();
+    let mut candidate: Vec<TrialReport> = (0..6).map(|_| counted("shared", 1)).collect();
+    // A task only this arm ran, carrying a large counter.
+    candidate.push(counted("solo", 500));
+
+    let arms = vec![
+        arm_trials("a", "a", &base),
+        arm_trials("b", "b", &candidate),
+    ];
+    let report = compare(&arms, &config("a"));
+    assert_eq!(report.unpaired_tasks, vec!["solo".to_string()]);
+    let b = report.arm("b").expect("candidate arm");
+    assert_eq!(
+        b.features["recall.frames"].total, 6,
+        "the unpaired trial's 500 frames are excluded with the trial itself"
+    );
+    let delta = report
+        .feature_deltas()
+        .into_iter()
+        .find(|d| d.key == "recall.frames")
+        .expect("a delta");
+    assert!(
+        delta.delta_mean.abs() < 1e-9,
+        "the arms are identical on the paired set"
+    );
+}
+
+/// A comparison of arms that counted nothing has no attribution block to
+/// print. An empty table implies the features were measured and found absent.
+#[test]
+fn arms_that_counted_nothing_have_no_feature_keys() {
+    let base: Vec<TrialReport> = (0..6).map(|_| report("t", 0.0, 0.1, 100, 2)).collect();
+    let arms = vec![arm_trials("a", "a", &base), arm_trials("b", "b", &base)];
+    let report = compare(&arms, &config("a"));
+    assert!(report.feature_keys().is_empty());
+    assert!(report.feature_deltas().is_empty());
+}

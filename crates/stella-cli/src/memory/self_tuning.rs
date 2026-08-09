@@ -514,6 +514,33 @@ mod tests {
         assert_eq!(from_array.rewards, from_object.rewards);
     }
 
+    /// #2382: loop-bench rows now carry a `features` map of per-feature
+    /// counters. This command reads a deliberately narrow view of a row, so a
+    /// key it has no opinion about must be ignored — and that is checked here
+    /// rather than assumed, because the failure mode is `stella tune effort`
+    /// refusing every artifact produced after the counters landed.
+    #[test]
+    fn a_bench_report_carrying_feature_counters_still_reads() {
+        let with_features = r#"{"trials":[
+            {"task":"a","reward":1.0,"spend_usd":0.50,"loop_detected":0,
+             "features":{"tool.graph_query":2,"recall.frames":7}}
+        ],"tally":{"total":1,"solved":1,"loop_broken":0,"crashed":0}}"#;
+        let report = parse_bench_report(with_features).expect("an unknown key is ignored");
+        assert_eq!(report.trials.len(), 1);
+        assert_eq!(report.trials[0].reward, Some(1.0));
+
+        // And the arithmetic is unchanged by the extra key's presence.
+        let without = r#"{"trials":[
+            {"task":"a","reward":1.0,"spend_usd":0.50,"loop_detected":0}
+        ],"tally":{"total":1,"solved":1,"loop_broken":0,"crashed":0}}"#;
+        let plain = parse_bench_report(without).expect("the plain shape reads");
+        let weights = RewardWeights::default();
+        assert_eq!(
+            arm_from_trials("a", "high", &report.trials, &weights).rewards,
+            arm_from_trials("a", "high", &plain.trials, &weights).rewards,
+        );
+    }
+
     /// A file that is neither shape stays an error. In particular a JSON object
     /// that is not a report must not read as a report of zero trials, which
     /// would reach the A/B as "insufficient samples" — a statement about the

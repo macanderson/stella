@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use super::arm::ArmSummary;
+use super::feature::{FeatureDelta, FeatureStat};
 use super::guard::{Guard, GuardFinding};
 use super::metric::Metric;
 use super::task::TaskRow;
@@ -141,7 +142,66 @@ impl ComparisonReport {
     pub fn arm(&self, id: &str) -> Option<&ArmSummary> {
         self.arms.iter().find(|a| a.id == id)
     }
+
+    /// Every per-feature counter key any arm carried, sorted and deduplicated.
+    ///
+    /// The **union**, not the baseline's set: a counter only the candidate
+    /// emitted is the single most interesting row a feature ablation can
+    /// produce ("the arm with recall on admitted 34 frames; the other emitted
+    /// no such event at all"), and an intersection would delete exactly that
+    /// finding.
+    pub fn feature_keys(&self) -> Vec<&str> {
+        let mut keys: BTreeSet<&str> = BTreeSet::new();
+        for arm in &self.arms {
+            keys.extend(arm.features.keys().map(String::as_str));
+        }
+        keys.into_iter().collect()
+    }
+
+    /// Each non-baseline arm's counters against the baseline's, one entry per
+    /// (arm, key) over [`Self::feature_keys`] — arms in report order, keys
+    /// sorted.
+    ///
+    /// A key an arm never counted contributes a zeroed [`FeatureStat`] rather
+    /// than being skipped. That is the honest reading here and only here: the
+    /// counters are folded over trials that *ran*, so "this arm emitted no
+    /// such event" is an observation about the arm, not a gap in the record.
+    ///
+    /// Empty when the report has no arm named by
+    /// [`ComparisonConfig::baseline_id`] — with nothing to measure against
+    /// there is no delta to state, and inventing one against the first arm
+    /// would silently rebase the comparison.
+    pub fn feature_deltas(&self) -> Vec<FeatureDelta> {
+        let Some(baseline) = self.arm(&self.config.baseline_id) else {
+            return Vec::new();
+        };
+        let keys = self.feature_keys();
+        let mut deltas = Vec::new();
+        for arm in &self.arms {
+            if arm.id == baseline.id {
+                continue;
+            }
+            for key in &keys {
+                let base = baseline.features.get(*key).copied().unwrap_or(ZERO_STAT);
+                let candidate = arm.features.get(*key).copied().unwrap_or(ZERO_STAT);
+                deltas.push(FeatureDelta {
+                    key: (*key).to_string(),
+                    arm: arm.id.clone(),
+                    baseline: base,
+                    candidate,
+                    delta_mean: candidate.mean - base.mean,
+                });
+            }
+        }
+        deltas
+    }
 }
+
+/// What an arm that never counted a key contributes to a delta.
+const ZERO_STAT: FeatureStat = FeatureStat {
+    total: 0,
+    mean: 0.0,
+};
 
 /// Fold trials from two or more arms into one comparison.
 ///

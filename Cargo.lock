@@ -1606,6 +1606,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stella-core",
+ "stella-protocol",
  "tempfile",
 ]
 

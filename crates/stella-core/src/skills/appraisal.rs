@@ -56,8 +56,8 @@ use serde::{Deserialize, Serialize};
 
 use super::SkillOrigin;
 use crate::comparison::{
-    ArmTrials, ComparisonConfig, ComparisonReport, ComparisonVerdict, Guard, LiftEvidence, Metric,
-    TrialRecord, compare,
+    ArmTrials, ComparisonConfig, ComparisonReport, ComparisonVerdict, FeatureCounts, Guard,
+    LiftEvidence, Metric, TrialRecord, compare,
 };
 use crate::self_tuning::{KeepReason, RewardWeights, SelectionConfig, TaskOutcome};
 
@@ -293,6 +293,10 @@ fn arms_from(trials: &[SkillTrial]) -> Vec<ArmTrials> {
         task: t.task.clone(),
         outcome: t.outcome,
         turns: t.turns,
+        // A skill appraisal counts no per-feature attribution: the arms here
+        // are "the skill was selected" vs "it was not", which the split
+        // itself already states.
+        features: FeatureCounts::new(),
     };
     vec![
         ArmTrials {
