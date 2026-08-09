@@ -15,7 +15,7 @@ call — produces the self-review the deck shows the user.
 | Call role | `ModelCallRole::Reflection` (`"reflection"`) |
 | Dispatch | raw completion, `tools: []` |
 | Built in | `crates/stella-cli/src/memory/reflection.rs` |
-| Output cap | 4,096 |
+| Output cap | 4,096 written contract, plus `with_reasoning_headroom` on top |
 | Temperature | 0.0 |
 | Effort | pinned low, like every bounded management call |
 | Lessons per turn | at most `MAX_LESSONS_PER_TURN` (8) |
@@ -159,16 +159,29 @@ holds it back instead is `saves`, which a self-critique cannot fill in without
 naming a moment, and `kind`, which sends anything that does not travel to a
 deferred recall tier rather than into competition with facts that do.
 
-## Why the cap is 4,096
+## Why the written contract is 4,096
 
-512 was enough for a model that answers with bare JSON and nothing else. A model
-that narrates first spends the whole allowance on prose and is cut off before it
-reaches the array — so **every lesson from every turn is lost, silently**,
-because a truncated response parses to zero lessons exactly like an empty one.
-That is why 2,048 followed, and why it is no longer the right number: a lesson
-is now three prose fields rather than one, and up to `MAX_LESSONS_PER_TURN` of
-them may be returned. The headroom is only ever spent by responses that were
-going to be truncated, and a truncation here is invisible.
+`max_output_tokens` is **one** number on the wire covering **two** things, and
+each was undersized once with the same invisible symptom. The number sent is
+`with_reasoning_headroom(LESSONS_OUTPUT_CONTRACT)`: the contract below, plus
+`REASONING_HEADROOM_TOKENS` for whatever a reasoning model spends before it
+writes anything.
+
+The **contract** is what reflection is asked to write. 512 was enough for a
+model that answers with bare JSON and nothing else. A model that narrates first
+spends the whole allowance on prose and is cut off before it reaches the array —
+so **every lesson from every turn is lost, silently**, because a truncated
+response parses to zero lessons exactly like an empty one. That is why 2,048
+followed, and why it is no longer the right number: a lesson is now three prose
+fields rather than one, and up to `MAX_LESSONS_PER_TURN` of them may be
+returned. The extra room is only ever spent by responses that were going to be
+truncated, and a truncation here is invisible.
+
+The **headroom** is why the contract is not sent alone. A reasoning model bills
+its thinking against the same wire number, so the bare cap came back spent
+entirely on reasoning — `finish_reason: length`, empty text, zero lessons — and
+froze this workspace's learning plane for nine days with every surface
+reporting health (#2174).
 
 The per-turn cap of 8 is a backstop, not a decision. The previous limit of 3 was
 below the number of distinct things a busy turn teaches, so on those turns the
