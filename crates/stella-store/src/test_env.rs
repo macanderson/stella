@@ -5,9 +5,9 @@
 //! a thread pool, so a test that sets `STELLA_DATA_DIR` is mutating state that
 //! every concurrently-running test in the same binary can observe. That is not
 //! hypothetical here: [`crate::home::migrate_legacy_global_dirs`] silently
-//! no-ops whenever `STELLA_HOME`, `STELLA_DATA_DIR` or `STELLA_CONFIG_DIR` is
-//! set, and `UsageStore::open` calls it — so an unrelated test's override
-//! changes what a store-opening test does.
+//! no-ops whenever `STELLA_HOME` or `STELLA_DATA_DIR` is set, and
+//! `UsageStore::open` calls it — so an unrelated test's override changes what
+//! a store-opening test does.
 //!
 //! Two distinct hazards, and both need covering:
 //!
