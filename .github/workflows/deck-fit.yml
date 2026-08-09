@@ -1,0 +1,109 @@
+name: deck-fit
+
+# Every slide of every deck under website/public/presentations/ fits the fixed
+# 1600x900 canvas it is authored in, at four viewports plus a webfont-blocked
+# pass (scripts/deck-fit.mjs).
+#
+# Why this exists: #2373's overflow was invisible for a full revision because
+# checking it meant opening the deck and looking. The script was written to turn
+# that into a measurement -- and then ran nowhere, which is the same bug wearing
+# the script's clothes: anyone editing a slide's copy could push a clipping deck
+# and every check stayed green (#2425).
+#
+# Why it is not a `make gate` step: the gate is toolchain-free guards plus
+# cargo, and this needs a browser (AGENTS.md § "The gate"). CI is the right home.
+#
+# Why it is its own workflow rather than a job in docs-guards.yml: that
+# workflow triggers on `**/*.rs`, so a job there would launch a browser on
+# essentially every pull request in the repository. `wire-schema.yml` exists for
+# exactly this reason in the other direction -- a check whose trigger paths are
+# disjoint from an existing workflow's gets its own file, so neither one has to
+# widen its path set to carry the other (#1439).
+on:
+  pull_request:
+    paths:
+      - "website/public/presentations/**"
+      - "website/public/brand/fonts/**"
+      - "scripts/deck-fit.mjs"
+      - ".github/workflows/deck-fit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "website/public/presentations/**"
+      - "website/public/brand/fonts/**"
+      - "scripts/deck-fit.mjs"
+      - ".github/workflows/deck-fit.yml"
+  workflow_dispatch:
+
+# Checkout plus a read-only measurement.
+permissions:
+  contents: read
+
+jobs:
+  fit:
+    name: deck slides fit the canvas
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      # Pinned for the same reason the actions above are: an unpinned tool is an
+      # unreproducible check. `--no-save` keeps it out of any manifest -- this is
+      # a one-shot measurement dependency, not something the repository ships.
+      - name: install playwright-core
+        run: npm i --no-save --no-package-lock playwright-core@1.62.1
+
+      # deck-fit.mjs exits 2 with the word "skipping" when the import fails.
+      # That is a red job either way, but the word invites a reader to shrug at
+      # it, so the install is proven here where the message is unambiguous.
+      - name: playwright-core resolves
+        run: node -e "import('playwright-core').then(() => console.log('playwright-core ok'))"
+
+      # The runner's preinstalled Chrome, rather than a downloaded Chromium: it
+      # costs no download, and the alternative pins a browser build we would then
+      # have to bump by hand. The version is logged because a layout result that
+      # changes with no deck change is a browser bump, and the log is where that
+      # gets diagnosed instead of guessed at.
+      - name: resolve a chrome
+        run: |
+          for candidate in \
+            /usr/bin/google-chrome \
+            /usr/bin/google-chrome-stable \
+            /usr/bin/chromium-browser \
+            /usr/bin/chromium
+          do
+            if [ -x "$candidate" ]; then
+              echo "CHROME=$candidate" >> "$GITHUB_ENV"
+              echo "deck-fit: $candidate — $("$candidate" --version 2>&1 | head -1)"
+              exit 0
+            fi
+          done
+          echo "deck-fit: no chrome found on this runner. Tried:" >&2
+          echo "  /usr/bin/google-chrome /usr/bin/google-chrome-stable" >&2
+          echo "  /usr/bin/chromium-browser /usr/bin/chromium" >&2
+          echo "If the runner image dropped Chrome, install one explicitly:" >&2
+          echo "  npx --yes playwright-core@1.62.1 install chromium" >&2
+          exit 1
+
+      # Every deck in the directory, not just the investor deck: a second deck
+      # added later is covered the day it lands rather than the day someone
+      # remembers this file exists.
+      - name: every slide fits the canvas at every viewport
+        run: |
+          shopt -s nullglob
+          decks=(website/public/presentations/*.html)
+          if [ ${#decks[@]} -eq 0 ]; then
+            echo "deck-fit: no decks under website/public/presentations/" >&2
+            exit 1
+          fi
+          status=0
+          for deck in "${decks[@]}"; do
+            echo "::group::$deck"
+            node scripts/deck-fit.mjs "$deck" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
