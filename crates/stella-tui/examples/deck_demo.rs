@@ -215,6 +215,7 @@ async fn main() -> std::io::Result<()> {
                             mode: stella_protocol::BudgetMode::Observed,
                             session_spent_usd: Some(0.054),
                             session_limit_usd: limit_usd,
+                            deadline_remaining_ms: None,
                         },
                     });
                 }
@@ -437,6 +438,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             mode: stella_protocol::BudgetMode::Observed,
             session_spent_usd: None,
             session_limit_usd: None,
+            deadline_remaining_ms: None,
         }),
         ev(AgentEvent::Complete {
             model: "glm-5.2".into(),

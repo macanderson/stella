@@ -735,13 +735,7 @@ impl Engine<'_> {
         // The parent's own post-settlement numbers, since the child's ticks
         // were dropped at the boundary and a HUD would otherwise sit stale
         // for the whole child run.
-        let _ = events.send(AgentEvent::BudgetTick {
-            spent_usd: budget.spent_usd(),
-            limit_usd: budget.turn_limit_usd(),
-            mode: budget.mode(),
-            session_spent_usd: Some(budget.session_spent_usd()),
-            session_limit_usd: budget.session_limit_usd(),
-        });
+        let _ = events.send(budget.tick_event(std::time::Instant::now()));
 
         let absorbed_messages = messages.len().saturating_sub(seeded);
         let steps = tally.steps();

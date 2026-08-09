@@ -1546,6 +1546,14 @@ impl<'a> Engine<'a> {
                 });
                 return 0.0;
             }
+            // Refused before dispatch (#2238): nothing spent, nothing misbehaved.
+            Err(AccountedCallError::Deadline { .. }) => {
+                let _ = events.send(AgentEvent::Error {
+                    message: "overflow summarizer skipped: the task deadline passed".into(),
+                    retryable: false,
+                });
+                return 0.0;
+            }
         };
         let cost_usd = result.cost_usd;
         let text = result.text.trim();
@@ -1902,8 +1910,10 @@ impl<'a> Engine<'a> {
                 return Err(format!("model call failed: {message}"));
             }
         };
-        let budget_outcome = record_settled_cost(budget, result.cost_usd, warnings, events);
-        let call_duration_ms = call_started.elapsed().as_millis() as u64;
+        // One boundary read: the call's duration and the tick's clock axis.
+        let now = std::time::Instant::now();
+        let call_duration_ms = now.duration_since(call_started).as_millis() as u64;
+        let budget_outcome = record_settled_cost(budget, result.cost_usd, warnings, events, now);
 
         // Deferred-flush: these `Retry` events only reach the wire now
         // that the step has actually committed (see module docs).
