@@ -85,10 +85,13 @@ impl Pipeline<'_> {
         // refuted one — counting the demand here walked a candidate into its
         // next refutation one repair round short of the configured allowance.
         let repairs = state.revisions.saturating_sub(state.evidence_demands);
+        // One clock read for the whole decision, taken here at the boundary
+        // rather than inside the headroom derivation (invariant 2).
+        let now = Instant::now();
         match plan_repair(
             repairs,
             self.config.max_revisions,
-            self.repair_headroom(budget),
+            self.repair_headroom(budget, now),
             meter.mean_round(spent_usd, rounds),
         ) {
             RepairPlan::Attempt { .. } => true,
@@ -109,21 +112,23 @@ impl Pipeline<'_> {
     /// it: `Off` means nothing is gated on spend, and letting a decorative
     /// limit stop a repair round would make it a hard ceiling by the back
     /// door.
-    fn repair_headroom(&self, budget: &BudgetGuard) -> RepairHeadroom {
+    fn repair_headroom(&self, budget: &BudgetGuard, now: Instant) -> RepairHeadroom {
         RepairHeadroom {
             budget_usd: (budget.mode() != BudgetMode::Off)
                 .then(|| budget.headroom_usd())
                 .flatten(),
-            // The run-scoped deadline, measured from when this pipeline was
-            // constructed. Deliberately NOT the engine's `turn_budget`
-            // (#1507): that allowance is per engine turn and a multi-step
-            // run holds many, so metering the whole run's elapsed time
-            // against one turn's budget turned this axis into a false
-            // refusal after the first turn's worth of elapsed time.
-            wall_clock: self
-                .config
-                .run_budget
-                .map(|budget| budget.saturating_sub(self.started.elapsed())),
+            // Whichever of the run's two clocks expires first
+            // (`super::stage_budget::Pipeline::remaining_wall_clock`).
+            // Deliberately NOT the engine's `turn_budget` (#1507): that
+            // allowance is per engine turn and a multi-step run holds many, so
+            // metering the whole run's elapsed time against one turn's budget
+            // turned this axis into a false refusal after the first turn's
+            // worth of elapsed time. And no longer the declared `run_budget`
+            // alone (#2433): that field enforces nothing, so a run whose armed
+            // deadline was seconds away still looked well-funded here, bought
+            // a repair round, and had it refused at the raw-call seam
+            // mid-round.
+            wall_clock: self.remaining_wall_clock(budget, now),
         }
     }
 }

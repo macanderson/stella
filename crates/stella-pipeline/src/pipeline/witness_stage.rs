@@ -5,6 +5,8 @@
 //! because it is the one stage that runs against the *witness* tool executor
 //! rather than the worker's.
 
+use std::time::Instant;
+
 use super::*;
 
 use crate::witness::{RUNNER_VOCABULARY, WITNESS_SYSTEM_PROMPT, runner_probe};
@@ -125,8 +127,10 @@ fn witness_baseline_symptom(baseline_output: &str) -> Option<&'static str> {
 const WITNESS_REPAIR_CEILING: Duration = Duration::from_secs(300);
 
 /// The wall clock one witness repair turn may spend (#2141): the static
-/// ceiling, tightened to half the run's remaining declared allowance when
-/// the caller declared one ([`PipelineConfig::run_budget`]).
+/// ceiling, tightened to half of whatever wall clock the run actually has
+/// left ([`Pipeline::remaining_wall_clock`] — the declared
+/// [`PipelineConfig::run_budget`] and the armed `BudgetGuard::task_deadline`,
+/// whichever expires first).
 ///
 /// Half, not all: the repair buys scaffolding, and whatever it consumes must
 /// leave the verification of the real work at least as much room as the
@@ -134,8 +138,8 @@ const WITNESS_REPAIR_CEILING: Duration = Duration::from_secs(300);
 /// the ceiling alone, so the bound exists on every configuration rather than
 /// only under a bench harness. Pure so the derivation is testable apart from
 /// the stage.
-fn witness_repair_bound(remaining_run_budget: Option<Duration>) -> Duration {
-    match remaining_run_budget {
+fn witness_repair_bound(remaining_wall_clock: Option<Duration>) -> Duration {
+    match remaining_wall_clock {
         Some(remaining) => WITNESS_REPAIR_CEILING.min(remaining / 2),
         None => WITNESS_REPAIR_CEILING,
     }
@@ -268,16 +272,6 @@ impl<'a> Pipeline<'a> {
             self.engine_config_for(surface),
             &self.config.role_overrides.verifier,
         ))
-    }
-
-    /// What remains of the run's declared wall-clock allowance
-    /// ([`PipelineConfig::run_budget`]), measured from the pipeline's start.
-    /// `None` when the caller declared no deadline — the same "nobody is
-    /// measuring" reading the repair gate gives its clock axis.
-    fn remaining_run_budget(&self) -> Option<Duration> {
-        self.config
-            .run_budget
-            .map(|budget| budget.saturating_sub(self.started.elapsed()))
     }
 
     pub(super) fn engine_config_for(&self, surface: CandidateSurface<'_>) -> EngineConfig {
@@ -507,7 +501,8 @@ impl<'a> Pipeline<'a> {
             // catch this shape: it measures idle gaps, and a runaway
             // reasoning stream never goes idle. Checked before dispatch so a
             // run that is already out of clock degrades for free.
-            let repair_bound = witness_repair_bound(self.remaining_run_budget());
+            let repair_bound =
+                witness_repair_bound(self.remaining_wall_clock(spend.budget, Instant::now()));
             if repair_bound.is_zero() {
                 return Err(WitnessAbort::degradable(
                     "no wall-clock room remains for a witness repair; the executed change \

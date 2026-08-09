@@ -431,6 +431,17 @@ pub struct Hud {
     pub spent_usd: f64,
     pub limit_usd: Option<f64>,
     pub budget_mode: Option<BudgetMode>,
+    /// Wall clock left before the task deadline, as the last `BudgetTick`
+    /// reported it (#2240, #2435). `None` is the load-bearing case and means
+    /// **no deadline is armed** — never "no time left", which is
+    /// `Some(0)`. The statline renders the two differently for exactly that
+    /// reason: a HUD showing `0s` for an unarmed run would put back into the
+    /// UI the confusion #2240 took out of the journal.
+    ///
+    /// Milliseconds rather than a `Duration` because that is the wire shape
+    /// (`AgentEvent::BudgetTick::deadline_remaining_ms`), and this struct is a
+    /// fold of the stream, not a reinterpretation of it.
+    pub deadline_remaining_ms: Option<u64>,
     pub stage: Option<StageKind>,
     pub model: Option<String>,
     /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
@@ -725,6 +736,7 @@ impl SessionModel {
                 spent_usd,
                 limit_usd,
                 mode,
+                deadline_remaining_ms,
                 ..
             } => {
                 // Gauge only — deliberately *not* pushed to the transcript.
@@ -746,6 +758,10 @@ impl SessionModel {
                 self.hud.spent_usd = *spent_usd;
                 self.hud.limit_usd = *limit_usd;
                 self.hud.budget_mode = Some(*mode);
+                // Assigned, never merged with what was there: an unarmed run
+                // must be able to go back to reporting nothing, and `or`-ing
+                // the old value would latch a stale clock onto it forever.
+                self.hud.deadline_remaining_ms = *deadline_remaining_ms;
             }
             AgentEvent::ProviderFallback { from, to, reason } => {
                 self.transcript.push(TranscriptEntry::ProviderFallback {

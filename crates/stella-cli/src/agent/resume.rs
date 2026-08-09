@@ -452,19 +452,24 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
 
 /// Drive a checkpoint-restored turn to an ordinary end.
 ///
-/// A thin adapter over [`stella_core::Engine::drive_restored_turn`], which
-/// owns the loop and its obligations (persist on `Continue`, discard on
-/// every terminal path, the carried step cap, the turn-halt check). This
-/// crate used to carry its own copy of that loop — and, exactly as two
-/// copies predict, the copy here had silently dropped the halt obligation.
+/// A thin adapter over [`stella_core::Engine::drive`], which owns the loop and
+/// its obligations (persist on `Continue`, discard on every terminal path, the
+/// carried step cap, the turn-halt check). This crate used to carry its own
+/// copy of that loop — and, exactly as two copies predict, the copy here had
+/// silently dropped the halt obligation.
+///
+/// A restored turn needs no driver of its own: `drive` takes the state the
+/// caller minted, and [`TurnState::from_checkpoint`] is one of the three ways
+/// to mint it (#2452).
 ///
 /// [`TurnState`]: stella_core::step::TurnState
+/// [`TurnState::from_checkpoint`]: stella_core::step::TurnState::from_checkpoint
 pub(crate) async fn drive_resumed_turn(
     engine: &Engine<'_>,
     mut state: stella_core::step::TurnState,
     events: &stella_core::EventSender,
 ) -> TurnOutcome {
-    engine.drive_restored_turn(&mut state, events).await
+    engine.drive(&mut state, events).await
 }
 
 #[cfg(test)]

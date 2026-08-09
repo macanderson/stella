@@ -86,7 +86,7 @@ use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
 use crate::bus;
 use crate::compaction::compact_measured;
 use crate::receipts::TranscriptRevision;
-use lifecycle::{step_outcome_label, turn_outcome_payload};
+use lifecycle::step_outcome_label;
 
 mod confident_zero;
 pub mod lifecycle;
@@ -131,7 +131,7 @@ use stella_protocol::ToolResult;
 use tokio::sync::mpsc::UnboundedSender;
 
 mod dispatch;
-mod resume;
+mod drive;
 mod settlement;
 mod waiting;
 use settlement::{BudgetWarnings, emit_budget_warning, record_settled_cost};
@@ -813,109 +813,22 @@ impl<'a> Engine<'a> {
     /// this form so append+flush completes synchronously before a paid-call
     /// producer can advance to another request.
     ///
-    /// The body is a loop over [`Self::run_step`] and nothing else — the step
-    /// is the only implementation of a step, so a host that drives steps
-    /// itself and a caller that drives whole turns cannot diverge (#971).
+    /// This is [`Self::drive`] over an adopted transcript, and nothing else —
+    /// the loop is the only implementation of a turn just as `run_step` is the
+    /// only implementation of a step, so a host that owns its own `TurnState`
+    /// and a caller that hands over borrows cannot diverge (#971, #2452).
     pub async fn run_turn_with_sender(
         &self,
         messages: &mut Vec<CompletionMessage>,
         budget: &mut BudgetGuard,
         events: &EventSender,
     ) -> TurnOutcome {
-        let _ = events.send(AgentEvent::Stage {
-            name: StageKind::Execute,
-        });
-        self.emit_lifecycle(bus::names::AGENT_TURN_STARTED, || {
-            lifecycle::turn_started_payload(messages.len(), self.config.max_steps, self.call_role)
-        });
         // The turn's state is OWNED for the duration and written back to the
         // caller's borrows when it drops — including on the hard-cancel path,
         // where the future is dropped mid-step and there is no exit to copy
         // back from (see `BorrowedTurn`).
         let mut turn = BorrowedTurn::adopt(messages, budget, &self.config);
-        while turn.state.step < self.config.max_steps {
-            if let Some(outcome) = self
-                .run_step(&mut turn.state, events)
-                .await
-                .into_turn_outcome()
-            {
-                self.emit_lifecycle(bus::names::AGENT_TURN_COMPLETED, || {
-                    turn_outcome_payload(&outcome, turn.state.step)
-                });
-                self.discard_checkpoint();
-                return outcome;
-            }
-            // The checkpoint seam (#971). `StepOutcome::Continue` is the one
-            // moment the transcript is guaranteed well-paired — no `tool_use`
-            // without its `tool_result` — and `state.step` has already been
-            // advanced by `run_step`, so the snapshot names the step that runs
-            // NEXT rather than the one that just finished. Writing here and
-            // nowhere else is what makes a resumed turn indistinguishable from
-            // one that was never interrupted.
-            self.persist_checkpoint(&turn.state);
-
-            // "The goal is already met" — the one stopping condition that is
-            // not a limit being hit. Asked here, at a committed step
-            // boundary, for the same reason the checkpoint is written here:
-            // `StepOutcome::Continue` is the moment the transcript is
-            // guaranteed well-paired, so ending now can never orphan a
-            // `tool_use` from its `tool_result`. Asking mid-step could.
-            //
-            // Placed AFTER the first step rather than at the top of the loop
-            // so a turn always does something: a halt predicate that is
-            // already true on entry describes a goal met before this turn
-            // began, which is the caller's business to notice, not a reason
-            // to return an empty turn.
-            //
-            // `Completed`, never `Aborted`. This turn did its work; `Aborted`
-            // is the failure arm and reaches the CLI as a non-zero exit,
-            // which Harbor — and any other host that reads exit codes —
-            // scores identically to the agent crashing.
-            if let Some(reason) = self
-                .config
-                .turn_halt
-                .as_ref()
-                .and_then(|halt| halt.halt_reason())
-            {
-                // Prefer the model's own last words; fall back to the
-                // predicate's reason when the final step was pure tool calls
-                // (an assistant message that only called tools has empty
-                // `content`), so the turn never reports an empty answer.
-                let text =
-                    settlement::last_assistant_text(&turn.state).unwrap_or_else(|| reason.clone());
-                let outcome = TurnOutcome::Completed {
-                    text,
-                    cost_usd: turn.state.total_cost_usd,
-                };
-                self.emit_lifecycle(bus::names::AGENT_TURN_COMPLETED, || {
-                    turn_outcome_payload(&outcome, turn.state.step)
-                });
-                self.discard_checkpoint();
-                return outcome;
-            }
-        }
-
-        let reason = step_cap_reason(self.config.max_steps);
-        let _ = events.send(AgentEvent::Error {
-            message: reason.clone(),
-            retryable: false,
-        });
-        let outcome = TurnOutcome::Aborted {
-            reason,
-            kind: AbortKind::DeliberateStop,
-            cost_usd: turn.state.total_cost_usd,
-        };
-        // The step-cap exit is a turn ending like any other. Emitting only
-        // from the loop above would leave an observer's `turn.started`
-        // unpaired on precisely the runaway turn it most wants to see.
-        self.emit_lifecycle(bus::names::AGENT_TURN_COMPLETED, || {
-            turn_outcome_payload(&outcome, turn.state.step)
-        });
-        // A turn that ran into the step cap is over, however unhappily. Leaving
-        // its checkpoint behind would offer a resume that replays a turn whose
-        // whole problem was that it would not stop.
-        self.discard_checkpoint();
-        outcome
+        self.drive(&mut turn.state, events).await
     }
 
     /// Write `state`'s resume point through the configured
@@ -960,10 +873,12 @@ impl<'a> Engine<'a> {
     /// bookkeeping → dispatch. Every per-step `AgentEvent` [`Self::run_turn`]
     /// emits is emitted here, in the same order — `run_turn` IS this method in
     /// a loop, so there is one code path and no second implementation to
-    /// drift. What `run_turn` adds around the loop is turn framing only: the
-    /// initial `Stage(Execute)` and, on the step-cap exit, a non-retryable
-    /// `Error` carrying [`step_cap_reason`] — a host driving steps itself owns
-    /// both (see `stella-engine`'s crate docs).
+    /// drift. What a turn adds around the loop — the initial `Stage(Execute)`,
+    /// the lifecycle boundary pair, the checkpoint and halt obligations, and
+    /// on the step-cap exit a non-retryable `Error` carrying
+    /// [`step_cap_reason`] — is likewise written once, in [`Self::drive`]. A
+    /// host that drives steps itself rather than calling `drive` owns all of
+    /// it (see `stella-engine`'s crate docs).
     ///
     /// `StepOutcome::Continue` means the step committed and `state.step` has
     /// advanced; anything else ends the turn and leaves `state.step` naming
@@ -1263,10 +1178,12 @@ impl<'a> Engine<'a> {
     ///
     /// # Who calls this, and who deliberately does not
     ///
-    /// This is for a host that drives [`Self::run_step`] itself and owns its
-    /// own loop — it hands back a state to keep stepping. Neither shipping
-    /// surface is one today, and that is a declaration rather than an
-    /// oversight:
+    /// This is for a host that continues an interrupted turn: it hands back a
+    /// state to keep stepping, which the host either passes to [`Self::drive`]
+    /// — the ordinary case, and what `stella-pipeline`'s resumed execute stage
+    /// does — or steps itself through [`Self::run_step`]. Neither shipping
+    /// surface accepts one from the outside today, and that is a declaration
+    /// rather than an oversight:
     ///
     /// - **The CLI** resumes an interrupted turn at *transcript* granularity
     ///   instead. Its turns are dispatched through `stella-pipeline`, which

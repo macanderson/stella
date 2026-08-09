@@ -97,6 +97,15 @@ all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
 because a PR that hand-edits a generated schema and nothing else starts neither
 of the other two (#1439).
 
+A fourth workflow, `deck-fit.yml`, runs no gate step at all: it measures every
+slide of every deck under `website/public/presentations/` against the fixed
+1600x900 canvas the decks are authored in (`scripts/deck-fit.mjs`). It needs a
+browser, which is why it is not in `make gate`, and it has its own file rather
+than a job in `docs-guards.yml` because that workflow triggers on `**/*.rs` and
+would launch a browser on nearly every PR — the same disjoint-paths reasoning
+that gave `wire-schema.yml` its own file. It is deliberately not a required
+check yet (#2425).
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no
