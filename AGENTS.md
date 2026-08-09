@@ -65,6 +65,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + god-files
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
+                         #   + typed-errors
                          #   + wire-schema
                          #   + doc-warnings (rustdoc -D warnings)
                          #   + format-check (fmt --check)
@@ -241,6 +242,38 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    never a bare `String`, never `.unwrap()`/`.expect()` on runtime data
    (network payloads, tool arguments, parsed source files are all runtime
    data). `unwrap` is fine in tests.
+
+   **"Library code" is the literal thing: a crate that exposes a `src/lib.rs`.**
+   `stella-cli` is a binary — it prints a message and exits, so a `String`
+   there is the finished product, not an unnamed error. That was left implicit
+   long enough to matter in both directions: an audit read all 421 of the CLI's
+   `Result<_, String>` signatures as violations and reported a number five
+   times the real one, while the genuine violations sat unchallenged because
+   the rule looked hopeless to enforce.
+
+   The test for whether a `String` is a defect is **whether a caller has to
+   branch on it**. `crates/stella-runtime/src/error.rs` states the case, and had
+   been quietly documenting this rule's own breach for as long as it existed: a
+   session-create failure must tell a bad model slug (the caller's fault, a 400)
+   from a misconfigured host (a 500), and a caller reaching that answer via
+   `err.contains("model")` is parsing prose. Variants make the decision
+   possible; a string makes it a guess.
+
+   Enforced by `scripts/check-typed-errors.py` (`make typed-errors`), which
+   fails the gate on a `pub fn` in a library crate returning
+   `Result<_, String>`. It is a **down-only ratchet**
+   (`scripts/typed-errors-baseline.txt`), for the one reason a ratchet is ever
+   legitimate here: the rule predates the guard, so the baseline records a debt
+   that already existed rather than granting new permission. It refuses to
+   raise a count — `make typed-errors-update` errors rather than write a bigger
+   number — so the only way past it is to type the signature. It is meant to
+   reach empty; the remaining 43 conversions are tracked in #2392, and adding a
+   crate to that file to turn the gate green is the expedient CLAUDE.md forbids.
+
+   Internal (`pub(crate)` and private) helpers are deliberately **not** covered:
+   the hazard is a caller that cannot branch, and those have no callers outside
+   the crate that wraps them. Widening the guard to them is a separate
+   judgement, not an oversight.
 6. **Budget aborts at safe boundaries only** — never mid-tool. `run_turn`
    consults the budget guard only between model calls, never interrupts a
    tool in flight.

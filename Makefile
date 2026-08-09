@@ -32,7 +32,7 @@ CARGO_SCOPE ?= --workspace
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
-                    role-names stat-portability module-reachability
+                    role-names stat-portability module-reachability typed-errors
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The whole gate, in order, as one name. `gate` below is defined *from* this
@@ -224,6 +224,14 @@ file-size: ## Assert no new Rust or Python file exceeds the 1500-line ratchet (#
 .PHONY: file-size-update
 file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitting a file)
 	@./scripts/check-file-size.sh --update
+
+.PHONY: typed-errors
+typed-errors: ## Assert no library crate's public API returns Result<_, String> (invariant #5)
+	@python3 ./scripts/check-typed-errors.py
+
+.PHONY: typed-errors-update
+typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing signatures)
+	@python3 ./scripts/check-typed-errors.py --update
 
 .PHONY: doc-warnings
 doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included (#634, #2336; CARGO_SCOPE to narrow)
