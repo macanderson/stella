@@ -383,6 +383,11 @@ impl Drop for ShadowDirGuard {
 /// sound. Keep it that way: a reader added here would silently widen what a
 /// memo key has to cover.
 ///
+/// `phases` is the one exception, and it is not one: it is written and never
+/// read, so nothing it carries can reach the result. A memo key covers what
+/// *determines* the observation, and how long producing it took is the one
+/// fact about a run that must never be part of that.
+///
 /// `Err` carries a complete, user-facing message; `Ok` is the run's
 /// `(exit code, output)`.
 async fn run_against_baseline(
