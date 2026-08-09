@@ -178,7 +178,7 @@ new role has to decide its bounds rather than inherit a ceiling by omission.
 | `plan`, `plan_repair` | 4,096 | inherited | `management_bounds` |
 | `agent_author`, `skill_author` | 4,096 | inherited | `standalone_bounds` |
 | `domain_inference` | 2,048 | inherited | `standalone_bounds` |
-| `reflection` | 2,048 | `Low` (pinned) | `standalone_bounds` |
+| `reflection` | 4,096 | `Low` (pinned) | `standalone_bounds` |
 | everything else | engine base | inherited | — |
 
 The two authoring rows inherit effort rather than pinning it low, which is a

@@ -15,7 +15,7 @@
 //! * a novel lesson lands in the novel half (the thing a too-eager filter
 //!   would break);
 //! * a batch that says one thing twice keeps one copy, **including on an empty
-//!   store** — one reflection call returns up to three lessons and routinely
+//!   store** — one reflection call returns several lessons and routinely
 //!   repeats itself, and the store being empty is exactly when a fresh
 //!   workspace is learning its first facts;
 //! * a within-batch repeat of a *diverted* lesson is also dropped — the model
@@ -38,6 +38,8 @@ fn lesson(text: &str) -> ReflectionLesson {
         domains: Vec::new(),
         occurred_at: 0,
         task_id: String::new(),
+        trigger: String::new(),
+        saves: String::new(),
         kind: LessonKind::Domain,
     }
 }

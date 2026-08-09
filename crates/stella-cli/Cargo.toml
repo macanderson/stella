@@ -98,3 +98,11 @@ contextgraph-conformance.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 rusqlite.workspace = true
+# The reflection-trigger encoding (`memory/learning/applicability.rs`) claims to
+# be a total round trip over model prose, and that claim is what lets #2459 fold
+# a trigger into the embedded body without re-tuning the restatement band. A
+# table of hand-picked strings would only cover the cases the author imagined —
+# and the input that breaks a separator-based decoder is precisely a trigger
+# that spells the separator. Already a workspace dependency (stella-core,
+# -context, -fleet, -pipeline, -tui), so this adds no crate to the tree.
+proptest.workspace = true

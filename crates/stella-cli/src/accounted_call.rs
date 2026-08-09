@@ -97,16 +97,25 @@ fn standalone_bounds(role: ModelCallRole) -> (Option<u32>, Option<ReasoningEffor
         // whose output is a whole claim list sized to the source file. It
         // states its own cap and therefore keeps it — see [`role_output_cap`].
         ModelCallRole::DomainInference => (Some(2_048), None),
-        // At most three short lesson objects plus a five-field self-review.
+        // Up to `memory::reflection::MAX_LESSONS_PER_TURN` lesson objects,
+        // each three prose fields (`lesson`, `trigger`, `saves`), plus a
+        // five-field self-review (`docs/prompts/reflection.md`).
+        //
         // 512 was the original and was enough only for a model that answers
         // with bare JSON; one that narrates first spends the allowance on
         // prose and never reaches the array, losing every lesson from every
         // turn — silently, because a truncated response parses to zero lessons
-        // exactly like an empty one. Pinned low because the written contract
-        // is that small and an unset effort leaves the provider's default
-        // allowance in force: unbounded thinking spent deciding, most turns,
-        // to return an empty list.
-        ModelCallRole::Reflection => (Some(2_048), Some(ReasoningEffort::Low)),
+        // exactly like an empty one. 2,048 was that repair and is no longer the
+        // number: it was sized for a one-field lesson capped at three per turn,
+        // and a lesson now carries three fields with eight of them permitted —
+        // call it eight times the ~90 tokens a grounded lesson takes, plus the
+        // self-review (#2465). Room here is only ever spent by a response that
+        // was going to be truncated, and a truncation here is invisible.
+        //
+        // Pinned low because an unset effort leaves the provider's default
+        // reasoning allowance in force: unbounded thinking spent deciding, most
+        // turns, to return an empty list.
+        ModelCallRole::Reflection => (Some(4_096), Some(ReasoningEffort::Low)),
         // Never dispatched through this chokepoint today. If one ever is,
         // inheriting the caller's request unchanged is exactly the behaviour
         // it has now — but the arm is spelled out rather than swept into a
@@ -516,7 +525,7 @@ mod tests {
             (ModelCallRole::AgentAuthor, "agent_author", 4_096),
             (ModelCallRole::SkillAuthor, "skill_author", 4_096),
             (ModelCallRole::DomainInference, "domain_inference", 2_048),
-            (ModelCallRole::Reflection, "reflection", 2_048),
+            (ModelCallRole::Reflection, "reflection", 4_096),
         ] {
             let root = tempfile::tempdir().expect("root");
             let provider = CapturingProvider::default();

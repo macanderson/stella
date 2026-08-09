@@ -67,8 +67,19 @@
 //! fresh checkout — so an identical call inside one turn reuses its
 //! observation rather than rebuilding for it ([`ShadowMemo`], #2208). The
 //! working-tree half is never reused.
+//!
+//! # Where the wall clock goes
+//!
+//! Neither half, as it turns out. Every boundary a call crosses is timed and
+//! reported to the diagnostic plane as one `tools.verify_done.phases` record.
+//! The `phases` submodule beside this one (`src/verify/phases.rs`) carries
+//! why the measurement was needed (#2486) and why it cannot ride the tool's
+//! own output.
 
 mod memo;
+mod phases;
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -77,6 +88,7 @@ use tokio::process::Command;
 
 use memo::{ShadowKey, ShadowObservation};
 pub use memo::{ShadowMemo, ShadowMemoHandle};
+use phases::{Phase, Phases, Verdict};
 
 use crate::registry::Tool;
 
@@ -90,12 +102,27 @@ pub struct VerifyDone {
     /// (unshared, never armed) is inert, so a standalone instance behaves
     /// exactly as it did before the memo existed.
     memo: ShadowMemoHandle,
+    /// Where this call's [`Phases`] record goes, when the host wired a
+    /// diagnostic handle through
+    /// [`RegistryOptions::diagnostics`](crate::RegistryOptions::diagnostics).
+    /// `None` is inert: the phases are still measured (an `Instant` costs
+    /// nothing worth branching on) and simply not reported, so an unwired
+    /// host and a wired one execute the same code.
+    diagnostics: Option<Arc<stella_diag::Dx>>,
 }
 
 impl VerifyDone {
     /// Register with the memo the owning registry brackets.
     pub fn with_memo(memo: ShadowMemoHandle) -> Self {
-        Self { memo }
+        Self {
+            memo,
+            diagnostics: None,
+        }
+    }
+
+    /// The full seam: the turn's memo, and where to report per-call timings.
+    pub fn new(memo: ShadowMemoHandle, diagnostics: Option<Arc<stella_diag::Dx>>) -> Self {
+        Self { memo, diagnostics }
     }
 }
 
@@ -357,6 +384,11 @@ impl Drop for ShadowDirGuard {
 /// sound. Keep it that way: a reader added here would silently widen what a
 /// memo key has to cover.
 ///
+/// `phases` is the one exception, and it is not one: it is written and never
+/// read, so nothing it carries can reach the result. A memo key covers what
+/// *determines* the observation, and how long producing it took is the one
+/// fact about a run that must never be part of that.
+///
 /// `Err` carries a complete, user-facing message; `Ok` is the run's
 /// `(exit code, output)`.
 async fn run_against_baseline(
@@ -366,7 +398,9 @@ async fn run_against_baseline(
     root_rel: &std::path::Path,
     test_cmd: &str,
     timeout_secs: u64,
+    phases: &mut Phases,
 ) -> Result<(i32, String), String> {
+    let add = Phase::start();
     // Shadow names carry pid + a process-wide counter: two concurrent
     // verify_done calls (parallel tools, parallel tests) must never collide on
     // the same worktree path — a timestamp alone can.
@@ -376,13 +410,17 @@ async fn run_against_baseline(
         std::process::id(),
         SHADOW_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    match git_in(root)
+    let added = git_in(root)
         .args(["worktree", "add", "--detach"])
         .arg(&shadow)
         .arg(baseline_sha)
         .output()
-        .await
-    {
+        .await;
+    // Stopped before the match, so a checkout that failed *slowly* — the
+    // interesting case, and the one a lock contention or a cold object store
+    // produces — is measured rather than discarded with its error.
+    phases.worktree_add = add.stop();
+    match added {
         Ok(out) if out.status.success() => {}
         Ok(out) => {
             return Err(format!(
@@ -400,31 +438,53 @@ async fn run_against_baseline(
         shadow: shadow.clone(),
     };
 
-    // Layer ONLY the test files onto the previous version.
-    for (rel, src, relpath) in resolved {
-        let dst = shadow.join(relpath);
-        if let Some(parent) = dst.parent()
-            && let Err(e) = tokio::fs::create_dir_all(parent).await
-        {
-            cleanup_shadow(root, &shadow).await;
-            return Err(format!(
-                "could not stage test file `{rel}` in the shadow: {e}"
-            ));
-        }
-        if let Err(e) = tokio::fs::copy(src, &dst).await {
-            cleanup_shadow(root, &shadow).await;
-            return Err(format!(
-                "could not copy test file `{rel}` into the shadow: {e}"
-            ));
-        }
+    let stage = Phase::start();
+    let staged = stage_witness_files(&shadow, resolved).await;
+    phases.stage_tests = stage.stop();
+    if let Err(message) = staged {
+        let teardown = Phase::start();
+        cleanup_shadow(root, &shadow).await;
+        phases.cleanup = teardown.stop();
+        return Err(message);
     }
 
     // Run in the shadow subdirectory matching the workspace root, so a
     // relative `test_cmd` (e.g. `cargo test`) resolves the same package it
     // would in the real working tree — not the repo toplevel.
+    let half_two = Phase::start();
     let shadow_run = run(test_cmd, &shadow.join(root_rel), timeout_secs).await;
+    phases.shadow_run = half_two.stop();
+    let teardown = Phase::start();
     cleanup_shadow(root, &shadow).await;
+    phases.cleanup = teardown.stop();
     shadow_run.map_err(|e| format!("shadow run against the previous version failed to run: {e}"))
+}
+
+/// Layer ONLY the test files onto the previous version.
+///
+/// Split out of [`run_against_baseline`] so the copy loop has one exit and can
+/// therefore be timed as one phase — the caller owns the shadow's teardown on
+/// both paths, which it already did on every other error.
+async fn stage_witness_files(
+    shadow: &std::path::Path,
+    resolved: &[(String, std::path::PathBuf, std::path::PathBuf)],
+) -> Result<(), String> {
+    for (rel, src, relpath) in resolved {
+        let dst = shadow.join(relpath);
+        if let Some(parent) = dst.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            return Err(format!(
+                "could not stage test file `{rel}` in the shadow: {e}"
+            ));
+        }
+        if let Err(e) = tokio::fs::copy(src, &dst).await {
+            return Err(format!(
+                "could not copy test file `{rel}` into the shadow: {e}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -452,15 +512,47 @@ impl Tool for VerifyDone {
         }
     }
 
+    /// Time the whole call, then report one `tools.verify_done.phases` record
+    /// — whatever the verdict, including the refusals that never build a
+    /// shadow at all.
+    /// Reporting only the calls that got far enough to be slow would censor
+    /// the fast end of the distribution and flatter every percentile #2486
+    /// exists to measure.
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let test_cmd = match crate::input::required_str(input, "test_cmd") {
-            Ok(v) => v,
-            Err(err) => {
-                return ToolOutput::Error {
-                    message: err.to_string(),
-                };
-            }
+        let call = Phase::start();
+        let mut phases = Phases::default();
+        let (output, verdict) = match self.verify(input, root, &mut phases).await {
+            Ok(pair) => pair,
+            Err(message) => (ToolOutput::Error { message }, Verdict::Error),
         };
+        phases.verdict = verdict;
+        // Last, so it spans everything above it including the teardown.
+        phases.total = call.stop();
+        if let Some(dx) = &self.diagnostics {
+            phases.emit(dx);
+        }
+        output
+    }
+}
+
+impl VerifyDone {
+    /// The call itself, with each phase's wall clock written into `phases`.
+    ///
+    /// `Err` is a named refusal — an input this tool cannot act on, or a
+    /// workspace it cannot measure a flip in — and reaches the model as
+    /// `ToolOutput::Error` exactly as it did before, through the one arm in
+    /// [`Self::execute`]. `Ok` carries the four real verdicts *with* the
+    /// [`Verdict`] each one is, because the alternative is re-deriving it by
+    /// sniffing the prose this function just wrote, which is what
+    /// `ToolOutput`'s own doc comment forbids.
+    async fn verify(
+        &self,
+        input: &Value,
+        root: &std::path::Path,
+        phases: &mut Phases,
+    ) -> Result<(ToolOutput, Verdict), String> {
+        let setup = Phase::start();
+        let test_cmd = crate::input::required_str(input, "test_cmd").map_err(|e| e.to_string())?;
         let test_files: Vec<String> = input
             .get("test_files")
             .and_then(|v| v.as_array())
@@ -471,12 +563,13 @@ impl Tool for VerifyDone {
             })
             .unwrap_or_default();
         if test_files.is_empty() {
-            return ToolOutput::Error {
-                message: "missing required field `test_files` — name the new/changed test \
-                          file(s) that witness this change"
-                    .into(),
-            };
+            return Err(
+                "missing required field `test_files` — name the new/changed test \
+                        file(s) that witness this change"
+                    .to_string(),
+            );
         }
+        phases.test_files = u32::try_from(test_files.len()).unwrap_or(u32::MAX);
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
 
         // The shadow-worktree copy destination must be derived from the
@@ -485,14 +578,9 @@ impl Tool for VerifyDone {
         // shadow prefix and resolve back to the real working-tree file, and
         // `fs::copy(src, src)` truncates it — silently emptying the user's test
         // file and violating the "NEVER mutates the working tree" contract.
-        let canon_root = match root.canonicalize() {
-            Ok(r) => r,
-            Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("could not canonicalize the workspace root: {e}"),
-                };
-            }
-        };
+        let canon_root = root
+            .canonicalize()
+            .map_err(|e| format!("could not canonicalize the workspace root: {e}"))?;
         // The shadow worktree mirrors the git TOPLEVEL, not the workspace root
         // — which may be a subdirectory of the repo. So test-file destinations
         // must be relative to the toplevel, and the shadow test must run in the
@@ -526,27 +614,18 @@ impl Tool for VerifyDone {
         for file in &test_files {
             match crate::resolve_within_root(root, file) {
                 Some(path) if path.is_file() => {
-                    let relpath = match path.strip_prefix(&canon_toplevel) {
-                        Ok(r) => r.to_path_buf(),
-                        Err(_) => {
-                            return ToolOutput::Error {
-                                message: format!(
-                                    "test file `{file}` resolved outside the git repository"
-                                ),
-                            };
-                        }
-                    };
-                    resolved.push((file.clone(), path, relpath));
+                    let relpath = path.strip_prefix(&canon_toplevel).map_err(|_| {
+                        format!("test file `{file}` resolved outside the git repository")
+                    })?;
+                    resolved.push((file.clone(), path.clone(), relpath.to_path_buf()));
                 }
                 Some(_) => {
-                    return ToolOutput::Error {
-                        message: format!("test file `{file}` does not exist in the workspace"),
-                    };
+                    return Err(format!(
+                        "test file `{file}` does not exist in the workspace"
+                    ));
                 }
                 None => {
-                    return ToolOutput::Error {
-                        message: format!("test file `{file}` escapes the workspace root"),
-                    };
+                    return Err(format!("test file `{file}` escapes the workspace root"));
                 }
             }
         }
@@ -576,15 +655,14 @@ impl Tool for VerifyDone {
                         }
                         _ => String::new(),
                     };
-                    return ToolOutput::Error {
-                        message: format!(
-                            "verify_done requires a git repository: the previous version of \
-                             the code is defined as git HEAD{detail}"
-                        ),
-                    };
+                    return Err(format!(
+                        "verify_done requires a git repository: the previous version of the \
+                         code is defined as git HEAD{detail}"
+                    ));
                 }
             }
         };
+        phases.setup = setup.stop();
 
         // Prune-on-start (#613): reclaim `.git/worktrees` registrations left
         // by a PREVIOUS run whose future was dropped. Such a run could only
@@ -596,31 +674,37 @@ impl Tool for VerifyDone {
         // registrations whose directory is already gone, so it is cheap,
         // idempotent, and can never disturb a live worktree (this run's or a
         // concurrent one's).
+        let prune = Phase::start();
         let _ = git_in(root).args(["worktree", "prune"]).output().await;
+        phases.prune = prune.stop();
 
         // Which commit is "the previous version" — see the module docs. HEAD
         // is only the default: inside a candidate workspace the pipeline has
         // already committed the work under proof on top of the baseline, and
         // comparing against it makes every real flip structurally impossible
         // while a missing build artifact fakes one (#2067).
-        let baseline = match resolve_witness_baseline(root, &head).await {
-            Ok(b) => b,
-            Err(message) => return ToolOutput::Error { message },
-        };
+        let resolve = Phase::start();
+        let baseline = resolve_witness_baseline(root, &head).await;
+        phases.baseline = resolve.stop();
+        let baseline = baseline?;
 
         // Half 1: the new code must pass.
-        let (new_exit, new_output) = match run(test_cmd, root, timeout_secs).await {
-            Ok(pair) => pair,
-            Err(e) => return ToolOutput::Error { message: e },
-        };
+        let half_one = Phase::start();
+        let new_run = run(test_cmd, root, timeout_secs).await;
+        phases.working_tree_run = half_one.stop();
+        let (new_exit, new_output) = new_run?;
         if new_exit != 0 {
-            return ToolOutput::Error {
-                message: format!(
-                    "NOT DONE — the witness test fails on your NEW code (exit {new_exit}). Fix \
-                     the implementation (or the test) and retry.\n--- output tail ---\n{}",
-                    tail(&new_output)
-                ),
-            };
+            return Ok((
+                ToolOutput::Error {
+                    message: format!(
+                        "NOT DONE — the witness test fails on your NEW code (exit {new_exit}). \
+                         Fix the implementation (or the test) and retry.\n--- output tail \
+                         ---\n{}",
+                        tail(&new_output)
+                    ),
+                },
+                Verdict::NotDone,
+            ));
         }
 
         // Half 2: the previous code (the baseline + your new tests) must fail.
@@ -643,19 +727,16 @@ impl Tool for VerifyDone {
             match memo_key.as_ref().and_then(|key| self.memo.get(key)) {
                 Some(observed) => (observed.exit, observed.output, true),
                 None => {
-                    let (exit, output) = match run_against_baseline(
+                    let (exit, output) = run_against_baseline(
                         root,
                         &baseline.sha,
                         &resolved,
                         &root_rel,
                         test_cmd,
                         timeout_secs,
+                        phases,
                     )
-                    .await
-                    {
-                        Ok(pair) => pair,
-                        Err(message) => return ToolOutput::Error { message },
-                    };
+                    .await?;
                     if let Some(key) = memo_key {
                         self.memo.insert(
                             key,
@@ -668,6 +749,7 @@ impl Tool for VerifyDone {
                     (exit, output, false)
                 }
             };
+        phases.shadow_reused = reused;
         // Every verdict below says whether the previous-code run behind it
         // happened on this call. A reader auditing a proof must never have to
         // guess that, and the truncated tail it is reading is now evidence
@@ -681,27 +763,31 @@ impl Tool for VerifyDone {
         };
 
         if old_exit == 0 {
-            return ToolOutput::Error {
-                message: format!(
-                    "VACUOUS TEST — the witness test ALSO PASSES on the previous code \
-                     (baseline {}, {}). It does not witness your change: either the behavior \
-                     already existed, the test doesn't exercise the new behavior, or your \
-                     change isn't wired in. Strengthen the test so it fails without your \
-                     change.{reuse_note}\n--- previous-code output tail ---\n{}",
-                    baseline.short(),
-                    baseline.provenance,
-                    tail(&old_output)
-                ),
-            };
+            return Ok((
+                ToolOutput::Error {
+                    message: format!(
+                        "VACUOUS TEST — the witness test ALSO PASSES on the previous code \
+                         (baseline {}, {}). It does not witness your change: either the \
+                         behavior already existed, the test doesn't exercise the new behavior, \
+                         or your change isn't wired in. Strengthen the test so it fails without \
+                         your change.{reuse_note}\n--- previous-code output tail ---\n{}",
+                        baseline.short(),
+                        baseline.provenance,
+                        tail(&old_output)
+                    ),
+                },
+                Verdict::Vacuous,
+            ));
         }
 
         // A failure while LOADING the test is not a failure OF the test:
         // classify before crediting, so a missing build artifact in the fresh
         // shadow checkout cannot fake a flip (#2067).
         if let Some(label) = import_failure_signature(&old_output) {
-            return ToolOutput::Error {
-                message: format!(
-                    "WITNESS_INCONCLUSIVE_BUILD_ERROR — the previous-code run failed with \
+            return Ok((
+                ToolOutput::Error {
+                    message: format!(
+                        "WITNESS_INCONCLUSIVE_BUILD_ERROR — the previous-code run failed with \
                      {label}, so the baseline could not be built or imported and no \
                      behavioural assertion ever ran: this failure is NOT evidence that your \
                      change is what flipped it. Two common causes, each with a fix:\n\
@@ -716,28 +802,33 @@ impl Tool for VerifyDone {
                      - previous code: baseline {} ({}) → exit {old_exit}, before any test \
                      ran{reuse_note}\n\
                      --- previous-code output tail ---\n{}",
+                        baseline.short(),
+                        baseline.provenance,
+                        tail(&old_output)
+                    ),
+                },
+                Verdict::InconclusiveBuildError,
+            ));
+        }
+
+        Ok((
+            ToolOutput::Ok {
+                content: format!(
+                    "WITNESS CONFIRMED — deterministic definition of done met:\n\
+                     - new code:      `{test_cmd}` exit 0 (PASS)\n\
+                     - previous code: baseline {} ({}) + your test files → exit {old_exit} \
+                     (FAIL){reuse_note}\n\
+                     Check the tail below: an assertion failure is a strong witness; a compile \
+                     error (test references symbols that don't exist on the baseline) is weaker \
+                     — prefer behavioral assertions when possible.\n\
+                     --- previous-code failure tail ---\n{}",
                     baseline.short(),
                     baseline.provenance,
                     tail(&old_output)
                 ),
-            };
-        }
-
-        ToolOutput::Ok {
-            content: format!(
-                "WITNESS CONFIRMED — deterministic definition of done met:\n\
-                 - new code:      `{test_cmd}` exit 0 (PASS)\n\
-                 - previous code: baseline {} ({}) + your test files → exit {old_exit} \
-                 (FAIL){reuse_note}\n\
-                 Check the tail below: an assertion failure is a strong witness; a compile \
-                 error (test references symbols that don't exist on the baseline) is weaker \
-                 — prefer behavioral assertions when possible.\n\
-                 --- previous-code failure tail ---\n{}",
-                baseline.short(),
-                baseline.provenance,
-                tail(&old_output)
-            ),
-        }
+            },
+            Verdict::Confirmed,
+        ))
     }
 }
 

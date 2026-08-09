@@ -386,8 +386,13 @@ const DENIED_EXACT: &[&str] = &[
     // declare lifecycle hooks and context providers that the project scope is
     // gated away from — so a repository that could move `HOME` would walk
     // straight through the trust boundary `.stella/settings.json` is held to.
-    // `STELLA_HOME`/`STELLA_CONFIG_DIR`/`STELLA_DATA_DIR` are the same trunk
-    // for `~/.stella` (stella-store's `home.rs`).
+    // `STELLA_HOME`/`STELLA_DATA_DIR` are the same trunk for `~/.stella`
+    // (`stella-home`). `STELLA_CONFIG_DIR` names no resolver — it never did,
+    // and #2442 retired it — but it stays refused deliberately: an entry here
+    // costs a line, while a missing one costs a repository the ability to
+    // redirect a trusted scope, and a deny-list is the worst possible place
+    // to discover an omission. Denying names Stella itself does not read is
+    // already the rule here, not an exception (`GCONV_PATH`, `LD_*`).
     "HOME",
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",

@@ -2266,6 +2266,10 @@ function renderImprove(skills) {
   const refl = D.reflections ?? {};
   if (!changed("improve", refl, skills ?? [])) return;
   const lessons = refl.lessons ?? [];
+  /* Narrower than what the route sends, and deliberately so. `/api/reflections`
+     already drops the turns nobody graded (#2443), but it keeps a critique with
+     no number — a real assessment, and what `imp-improve` below is built from.
+     The chart and these two tiles need the numeric half, so they filter again. */
   const ratings = (refl.ratings ?? []).filter(r => r.self_rating != null || r.delivered != null);
   const rated = ratings.filter(r => r.self_rating != null);
   const delivered = ratings.filter(r => r.delivered != null);
