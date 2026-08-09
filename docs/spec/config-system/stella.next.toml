@@ -132,8 +132,8 @@ track_latest = ["anthropic/claude-opus"]
 # =============================================================================
 # AGENTS  ── RESHAPED (closed set -> open set) + EXTENDED
 # =============================================================================
-# Today the agent set is CLOSED: four struct fields — default, worker, verifier,
-# triage. A misspelled agent key in JSON is silently ignored.
+# Today the agent set is CLOSED: struct fields — default, worker, verifier,
+# triage, research, plan. A misspelled agent key in JSON is silently ignored.
 #
 # Opening it is what makes the `task` tool configurable. That tool exists and
 # is merged (#922 -> #976/#983), but it dispatches to ONE hard-coded read-only
@@ -144,13 +144,16 @@ track_latest = ["anthropic/claude-opus"]
 # Opening the set joins those two halves: a named agent here is selectable by
 # `task`, and gets a real engine posture.
 #
-# The four built-in names keep their meaning and stay reserved.
+# The built-in names keep their meaning and stay reserved.
 
 [agents]
 default_model           = "anthropic/claude-fable-5"
 pipeline_worker_model   = "zai/glm-5.2"
 pipeline_verifier_model = "anthropic/claude-opus-5"
 pipeline_triage_model   = "deepseek/deepseek-chat"
+# Unset, research and plan ride the WORKER rather than `default_model`.
+pipeline_research_model = "deepseek/deepseek-chat"
+pipeline_plan_model     = "zai/glm-5.2"
 auto_mode               = "off"
 effort_auto             = "on"
 reasoning_auto          = "on"

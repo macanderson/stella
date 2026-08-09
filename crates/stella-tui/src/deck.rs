@@ -421,10 +421,16 @@ impl PipelineRole {
         use stella_protocol::ModelCallRole as R;
         match role {
             R::Triage => Some(Self::Triage),
-            // The whole main line of work reads as the worker. Planning,
-            // witness authoring and the distress path all run on the worker
-            // pin, so splitting them would print the same model three times
-            // and imply three configured models where there is one.
+            // The whole main line of work reads as the worker: the statline
+            // has three cells because horizontal space is the binding
+            // constraint there, not because these calls are indistinguishable.
+            //
+            // Plan and research became separately pinnable in #2374, so this
+            // fold can now hide a real difference — a run whose research is
+            // pinned elsewhere still reports the worker's model in the `W`
+            // cell. The `/models` dialog prints all six rows and is the
+            // surface that answers "what will each role run"; splitting the
+            // statline is a width question tracked separately.
             R::Plan
             | R::PlanRepair
             | R::Research

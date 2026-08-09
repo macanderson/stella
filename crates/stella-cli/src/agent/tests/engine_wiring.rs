@@ -1331,3 +1331,113 @@ fn the_worker_row_carries_agents_worker_tuning_to_the_pipeline() {
     let stock_wiring = resolve_engine_wiring(&stock, &stock_ref, &[configured_provider("zai")]);
     assert_eq!(stock_wiring.role_overrides.worker.prompt, None);
 }
+
+/// **The witness for #2374.** Research and plan must be pinnable *apart from*
+/// the worker — model, effort and reasoning — because they are the two roles a
+/// benchmark seat could not turn down.
+///
+/// The measurement that forced this: on Terminal-Bench `fix-git` the engine
+/// posture that reached the container carried four rows (`default`, `worker`,
+/// `verifier`, `triage`). Research was not among them, so it inherited the
+/// worker's `xhigh` and spent 76 seconds over fifteen calls to emit a few
+/// hundred reasoning tokens between them. The knob did not exist; this is its
+/// wire.
+#[test]
+fn research_and_plan_are_pinnable_independently_of_the_worker() {
+    let cfg = cfg_with_engine(
+        "zai", // session default: zai/glm-5.2
+        r#"{
+            "effort_auto": "off",
+            "reasoning_auto": "off",
+            "pipeline_research_model": "anthropic/claude-fable-5",
+            "agents": {
+                "worker":   { "effort": "xhigh", "reasoning": "on" },
+                "research": { "effort": "low",   "reasoning": "off" },
+                "plan":     { "effort": "high" }
+            }
+        }"#,
+    );
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    // The shaping, on the rows the research and plan stages actually read.
+    let research = &wiring.role_overrides.research;
+    assert_eq!(
+        (research.effort, research.reasoning),
+        (Some(stella_protocol::ReasoningEffort::Low), Some(false)),
+        "research must be able to run below the worker — that is the whole point"
+    );
+    assert_eq!(
+        wiring.role_overrides.plan.effort,
+        Some(stella_protocol::ReasoningEffort::High),
+        "the planner takes its own effort when one is set"
+    );
+    assert_eq!(
+        wiring.role_overrides.worker.effort,
+        Some(stella_protocol::ReasoningEffort::Xhigh),
+        "and turning research down must not touch the worker"
+    );
+
+    // The model half, through the real router rather than the raw pin table.
+    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
+    assert_eq!(
+        router.resolve(Role::Research).unwrap().model_ref,
+        ModelRef::new("anthropic", "claude-fable-5"),
+        "pipeline_research_model must actually route research calls"
+    );
+    assert_eq!(
+        router.resolve(Role::Worker).unwrap().model_ref,
+        ModelRef::new("zai", "glm-5.2"),
+        "and must say nothing about the worker's"
+    );
+}
+
+/// The other half of the contract, and the half a careless implementation
+/// breaks: **unconfigured, both roles still ride the worker**.
+///
+/// `model_for` falls through to `default_model`, which is right for triage and
+/// the verifier and wrong here — inheriting it would split research off onto
+/// the settings model the moment `--model` re-pointed the worker, so the run
+/// would report one model and buy two. `own_model_spec_for` is what refuses
+/// that, and this is what proves it.
+#[test]
+fn unpinned_research_and_plan_still_follow_the_worker_override() {
+    let cfg = cfg_with_engine(
+        "zai", // session default: zai/glm-5.2
+        r#"{
+            "effort_auto": "off",
+            "reasoning_auto": "off",
+            "pipeline_worker_model": "anthropic/claude-fable-5",
+            "agents": { "worker": { "prompt": "Never use npm here.", "effort": "xhigh" } }
+        }"#,
+    );
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    let overridden = ModelRef::new("anthropic", "claude-fable-5");
+    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
+    for role in [Role::Worker, Role::Plan, Role::Research] {
+        assert_eq!(
+            router.resolve(role).unwrap().model_ref,
+            overridden,
+            "{role:?} must follow the worker override when it names no model of its own"
+        );
+    }
+
+    // And the shaping inherits field by field, `prompt` included — #2416's
+    // property, which a plan row that started empty would have dropped.
+    assert_eq!(
+        wiring.role_overrides.plan.prompt.as_deref(),
+        Some("Never use npm here."),
+        "an absent agents.plan leaves the planner shaped exactly as the worker is"
+    );
+    assert_eq!(
+        wiring.role_overrides.research.effort,
+        Some(stella_protocol::ReasoningEffort::Xhigh),
+        "same for research — inheritance, not a reset to the provider default"
+    );
+}

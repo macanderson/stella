@@ -19,6 +19,18 @@ pub enum Role {
     Triage,
     /// Planner (defaults to worker-class, separately overridable).
     Plan,
+    /// The read-only research sub-agent answering a pre-plan question.
+    ///
+    /// Its own slot rather than a share of [`Self::Plan`]'s, because the two
+    /// have opposite cost profiles and a benchmark seat has to be able to
+    /// separate them: research is a fan-out of many short read-only calls,
+    /// while planning is one call that writes the work order. Sharing a slot
+    /// meant a run that turned the planner down turned the fan-out down with
+    /// it, and vice versa (#2374).
+    ///
+    /// Defaults to worker-class exactly as [`Self::Plan`] does, so an
+    /// unconfigured run resolves it to the same model it always did.
+    Research,
     /// The independent capable model that completes verification. Fills every
     /// half of the job: authors the witness test that arms the flip oracle,
     /// repairs a witness that did not fail, renders the verdict on

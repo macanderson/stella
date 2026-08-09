@@ -87,9 +87,15 @@ const STANDING_W: usize = 12;
 /// The roles this dialog prints, in pipeline order with the interactive lane
 /// first: the settings key the driver sends each row under, and the word the
 /// deck says out loud for it.
-const SLOTS: [(&str, &str); 4] = [
+const SLOTS: [(&str, &str); 6] = [
     ("default", "lead"),
     ("triage", "think"),
+    // Between triage and the worker because that is when they run, and both
+    // are here rather than folded into `work` because they became separately
+    // pinnable (#2374) — a dialog that answers "what will each role run" has
+    // to name a role the settings file can now point somewhere else.
+    ("research", "research"),
+    ("plan", "plan"),
     ("worker", "work"),
     ("verifier", "verify"),
 ];
@@ -356,6 +362,8 @@ mod tests {
                     "pipeline_verifier_model",
                 ),
                 wiring("triage", "z-ai/glm-5.2", "low", "agents.triage.model"),
+                wiring("research", "zai/glm-5.2", "low", "default_model"),
+                wiring("plan", "zai/glm-5.2", "medium", "default_model"),
             ],
             ..Default::default()
         }

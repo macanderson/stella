@@ -597,11 +597,16 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
 ///
 /// The real deck holds one of these from session start, so without it every
 /// `/models` surface — the demo, the goldens — would pin the honest empty
-/// state instead of the dialog. Deliberately not four identical rows: the
-/// three ways a role gets its model (its own `agents.<role>.model`, a flat
-/// `pipeline_<role>_model`, the shared `default_model`) each appear once, and
-/// the verifier carries the `effort_auto` disclosure that is the longest and
-/// most easily-truncated line the dialog can draw.
+/// state instead of the dialog. Deliberately not identical rows: the three
+/// ways a role gets its model (its own `agents.<role>.model`, a flat
+/// `pipeline_<role>_model`, the shared `default_model`) each appear at least
+/// once, and the verifier carries the `effort_auto` disclosure that is the
+/// longest and most easily-truncated line the dialog can draw.
+///
+/// Research and plan ride `default_model` here, which is the ordinary posture
+/// for them and the one worth pinning in a golden: they inherit the worker's
+/// model, and — since #2374 — say so on their own row rather than being
+/// invisible inside the worker's.
 pub fn demo_engine_config() -> crate::envelope::EngineConfigState {
     use crate::envelope::RoleWiringRow;
     let row = |role: &str, model: &str, effort: &str, thinking: &str, source: &str| RoleWiringRow {
@@ -644,6 +649,20 @@ pub fn demo_engine_config() -> crate::envelope::EngineConfigState {
                 "low",
                 "thinking off",
                 "agents.triage.model",
+            ),
+            row(
+                "research",
+                "zai/glm-5.2-air",
+                "low",
+                "thinking off",
+                "default_model",
+            ),
+            row(
+                "plan",
+                "zai/glm-5.2-air",
+                "medium",
+                "thinking on",
+                "default_model",
             ),
         ],
         ..Default::default()

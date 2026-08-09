@@ -488,6 +488,47 @@ fn applying_a_profile_writes_the_flat_model_keys_and_clears_per_agent_pins() {
     assert!(engine.pipeline_triage_model.is_some());
 }
 
+/// A profile owns research's and plan's **posture** and deliberately not their
+/// model (#2374).
+///
+/// Both halves matter. Writing the posture is the point — `stella profile fast`
+/// has to be able to reach research, or the role a benchmark could not turn
+/// down simply becomes a role a profile cannot turn down either. Withholding
+/// the model is what keeps "rides the worker" true: a flat
+/// `pipeline_research_model` would survive a `--model` that re-points the
+/// worker for one invocation, and the run would then buy two models while
+/// reporting one.
+#[test]
+fn a_profile_postures_research_and_plan_but_pins_no_model_for_them() {
+    let mut engine = AgentEngineConfig::default();
+    apply(&plan(Profile::Fast, &spread()), &mut engine);
+
+    assert!(
+        engine.pipeline_research_model.is_none() && engine.pipeline_plan_model.is_none(),
+        "a profile must leave both riding the worker's model"
+    );
+    let agents = engine.agents.as_ref().expect("posture rows are written");
+    let research = agents.research.as_ref().expect("research is postured");
+    assert_eq!(research.effort, Some(ReasoningEffort::Low));
+    assert!(research.model.is_none(), "posture only, never a model");
+    assert!(
+        agents
+            .plan
+            .as_ref()
+            .expect("plan is postured")
+            .model
+            .is_none()
+    );
+
+    // And `restore_auto` gives them back, or a profile would be a one-way door
+    // for the two newest rows the way it is not for the other four.
+    crate::profile::restore_auto(&mut engine);
+    assert!(
+        crate::profile::is_auto(&engine),
+        "every row hands the dials back"
+    );
+}
+
 #[test]
 fn applying_a_profile_preserves_what_it_does_not_own() {
     let mut engine = AgentEngineConfig {

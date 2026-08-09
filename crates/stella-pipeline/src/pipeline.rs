@@ -125,6 +125,8 @@ mod plan_steps;
 mod raw_usage;
 mod repair_gate;
 mod research_stage;
+mod role_overrides;
+pub use role_overrides::{PipelineRoleOverrides, RoleCallOverrides};
 mod resume_stage;
 mod revision;
 mod role_pace;
@@ -228,53 +230,6 @@ pub(crate) const CONVERSATIONAL_SYSTEM_PROMPT: &str = "You are Stella, a careful
      task. Reply briefly and warmly in plain prose: no tools, no code, no plan, \
      no test. Do not invent a task. If it fits, add one short line inviting \
      them to describe a change, bug, or question about their codebase.";
-
-/// Per-role request overrides for the pipeline's raw completion calls
-/// (triage / verifier / guidance), resolved by the caller from
-/// `agent_engine_config`. Every field is optional and falls through to the
-/// engine config's value — the worker's settings are the pipeline-wide
-/// base; these refine one role. `prompt`, when set, is prepended as a
-/// system message to the role's built-in task prompt (the task prompt
-/// carries the output contract — `PASS`/`FAIL`, the triage token — so it
-/// is never replaced outright).
-#[derive(Debug, Clone, Default)]
-pub struct RoleCallOverrides {
-    pub prompt: Option<String>,
-    pub effort: Option<stella_protocol::ReasoningEffort>,
-    pub reasoning: Option<bool>,
-    pub temperature: Option<f32>,
-    pub max_output_tokens: Option<u32>,
-    pub params: Option<stella_protocol::GenerationParams>,
-}
-
-/// The pipeline's per-role override set.
-///
-/// The witness author/repair engines ride the verifier's model, so they take
-/// the `verifier` row's shaping too (#1785) — everything except `prompt`,
-/// which stays scoped to the raw verdict/guidance calls
-/// (`Pipeline::witness_engine_config` says why).
-#[derive(Debug, Clone, Default)]
-pub struct PipelineRoleOverrides {
-    pub triage: RoleCallOverrides,
-    pub verifier: RoleCallOverrides,
-    /// The worker row (`agents.worker`), which the **plan** stage consumes —
-    /// plan rides the worker's tier in the router, and the planner writes the
-    /// worker's work order (#2416).
-    ///
-    /// Everything except `prompt` also reaches the plan call through
-    /// [`PipelineConfig::engine`], which is already built from this same
-    /// worker tuning: `metered_raw_call` falls back to the engine's
-    /// temperature/effort/reasoning/params for any field left unset here. What
-    /// this row adds that the engine base structurally cannot is `prompt` — a
-    /// system message has nowhere to ride in an [`EngineConfig`], so operator
-    /// prose reached worker turns (`build_pipeline_system_prompt`) and stopped
-    /// at the planner, which then emitted steps the worker's own instructions
-    /// forbade.
-    ///
-    /// Deliberately NOT consumed by the conversational fast path — see
-    /// `Pipeline::run_conversational`.
-    pub worker: RoleCallOverrides,
-}
 
 /// Tuning for the whole staged flow.
 #[derive(Debug, Clone)]
@@ -1554,14 +1509,16 @@ impl<'a> Pipeline<'a> {
         }
 
         let prompt = build_planner_prompt(goal, recall, research, repo_structure, revision);
-        // Plan rides the worker's settings — the same router tier AND the same
-        // request shaping, which is what this row makes true (#2416). The
+        // The planner's own row, which the caller resolves as `agents.plan`
+        // over `agents.worker` field by field — so plan still rides the
+        // worker's settings whenever nobody has said otherwise (#2416), and
+        // an operator who *has* said otherwise is obeyed (#2374). The
         // non-prompt knobs also arrive via `config.engine` (built from the
         // worker's tuning); `prompt` has no seat there and reaches the planner
         // only here, prepended as a system message ahead of
         // `PLANNER_INSTRUCTIONS` so the JSON-array contract `parse_plan` reads
         // is never replaced.
-        let worker_overrides = &self.config.role_overrides.worker;
+        let plan_overrides = &self.config.role_overrides.plan;
         let result = match self
             .metered_raw_call(
                 RawCall {
@@ -1569,7 +1526,7 @@ impl<'a> Pipeline<'a> {
                     resolved: &resolved,
                     messages: prompt.into_messages(),
                     policy: RetryPolicy::standard(),
-                    overrides: worker_overrides,
+                    overrides: plan_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
                 spend.budget,
@@ -1596,7 +1553,7 @@ impl<'a> Pipeline<'a> {
                     resolved: &resolved,
                     messages: plan_repair_prompt(&result.text).into_messages(),
                     policy: RetryPolicy::deterministic(),
-                    overrides: worker_overrides,
+                    overrides: plan_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
                 spend.budget,

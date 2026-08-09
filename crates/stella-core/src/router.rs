@@ -404,7 +404,9 @@ impl Router {
         }
 
         match role {
-            Role::Worker | Role::Plan => self.resolve_tier(role, |p| &p.worker_model),
+            Role::Worker | Role::Plan | Role::Research => {
+                self.resolve_tier(role, |p| &p.worker_model)
+            }
             Role::Triage => self.resolve_tier(role, |p| &p.triage_model),
             Role::Verifier => self.resolve_verifier(),
             Role::Embed | Role::Vision | Role::Image | Role::Video => {

@@ -27,7 +27,11 @@ fn the_default_roster_is_the_pipeline_that_shipped() {
     let roster = Roster::default();
     for (responsibility, expected) in [
         (ModelCallRole::Triage, Role::Triage),
-        (ModelCallRole::Research, Role::Plan),
+        // Its own agent since #2374, so a seat can turn the research fan-out
+        // down without touching the planner. Still the worker's tier when
+        // nothing pins it (`Router::resolve`), so the shipped pipeline is
+        // unchanged in what it actually runs.
+        (ModelCallRole::Research, Role::Research),
         (ModelCallRole::Plan, Role::Plan),
         (ModelCallRole::Worker, Role::Worker),
         (ModelCallRole::WitnessAuthor, Role::Verifier),
@@ -242,7 +246,7 @@ fn an_unknown_agent_is_named_and_never_silently_resolved() {
         vec![RosterError::UnknownAgent {
             responsibility: "verdict".to_string(),
             agent: "verifer".to_string(),
-            known: "worker, triage, plan, verifier".to_string(),
+            known: "worker, triage, plan, research, verifier".to_string(),
         }]
     );
     assert_eq!(
