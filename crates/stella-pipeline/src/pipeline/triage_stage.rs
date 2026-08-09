@@ -47,7 +47,7 @@ impl Pipeline<'_> {
         goal: &str,
         budget: &mut BudgetGuard,
         total: &mut f64,
-    ) -> Result<(TaskAssessment, Vec<String>), PipelineBudgetAbort> {
+    ) -> Result<(TaskAssessment, Vec<String>), PipelineStageAbort> {
         // #2381: the roster may withhold triage entirely. Returning BEFORE the
         // stage event is the point — an ablated stage must leave no frame in
         // `stella-events.jsonl`, so a reader sees the ablation rather than

@@ -61,7 +61,7 @@ impl<'a> Pipeline<'a> {
         prompt: ManagementPrompt,
         budget: &mut BudgetGuard,
         total: &mut f64,
-    ) -> Result<Option<String>, PipelineBudgetAbort> {
+    ) -> Result<Option<String>, PipelineStageAbort> {
         // A withheld or unresolvable guidance agent degrades identically:
         // evidence-only revision. Both land above the stage event, so an
         // ablated guidance call leaves no frame (#2381) — and unlike the
@@ -128,7 +128,7 @@ impl<'a> Pipeline<'a> {
         prompt: ManagementPrompt,
         inputs: &LadderInputs,
         spend: &mut Spend<'_>,
-    ) -> Result<ModelVerifierVerdict, PipelineBudgetAbort> {
+    ) -> Result<ModelVerifierVerdict, PipelineStageAbort> {
         // #2381 requirement 3, and the one ablation that could quietly turn a
         // run into a claimed-done. Checked BEFORE the stage event so the
         // ablation leaves no frame, and routed to the ABSTENTION rung rather
