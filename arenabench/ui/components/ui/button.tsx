@@ -3,7 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border font-mono lowercase transition-colors " +
+  "inline-flex cursor-pointer items-center justify-center gap-1.5 border font-mono transition-colors " +
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 " +
     "disabled:cursor-not-allowed disabled:opacity-40 active:translate-y-px",
   {
@@ -11,7 +11,7 @@ const buttonVariants = cva(
       variant: {
         default: "border-line bg-panel-2 text-foreground hover:border-dim",
         primary:
-          "border-gold bg-gold font-[650] text-ink hover:bg-[#ffc02e] hover:border-[#ffc02e]",
+          "border-accent bg-accent font-[650] text-on-accent hover:bg-accent/85 hover:border-accent/85",
         ghost: "border-line bg-transparent text-foreground hover:border-dim",
         danger: "border-line bg-transparent text-bad hover:border-bad/60",
         dashed:

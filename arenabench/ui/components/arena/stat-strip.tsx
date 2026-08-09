@@ -46,8 +46,8 @@ function Stat({
   blurb?: string;
 }) {
   const body = (
-    <div className="min-w-0 rounded-[10px] border border-line bg-panel px-3.5 py-2.5">
-      <div className="text-[10px] lowercase tracking-[0.1em] text-dim">{label}</div>
+    <div className="min-w-0 border border-line bg-panel px-3.5 py-2.5">
+      <div className="text-[10px] tracking-[0.1em] text-dim">{label}</div>
       <div
         className={cn(
           "mt-1 truncate font-mono text-[19px] leading-none tracking-[-0.02em]",

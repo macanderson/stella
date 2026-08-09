@@ -298,7 +298,7 @@ function PointTable({ group }: { group: Group }) {
     <div className="overflow-x-auto">
       <table className="w-full min-w-[520px] border-collapse text-left">
         <thead>
-          <tr className="border-b border-line-soft text-[10px] lowercase tracking-[0.09em] text-dim">
+          <tr className="border-b border-line-soft text-[10px] tracking-[0.09em] text-dim">
             <th className="px-2 py-1.5 font-normal">sut</th>
             <th className="px-2 py-1.5 font-normal">seat</th>
             <th className="px-2 py-1.5 text-right font-normal">solved</th>
@@ -389,7 +389,7 @@ function CompositionPanel({ group }: { group: Group }) {
   const keys = seatKeys(group.rows[0]);
   return (
     <div className="space-y-1.5">
-      <div className="text-[10px] lowercase tracking-[0.09em] text-dim">
+      <div className="text-[10px] tracking-[0.09em] text-dim">
         outcome composition
       </div>
       <div className="space-y-1">
@@ -413,7 +413,7 @@ function CompositionPanel({ group }: { group: Group }) {
                     {seat.name}
                   </span>
                 )}
-                <span className="flex h-[11px] w-[260px] flex-none items-stretch overflow-hidden rounded-[3px]">
+                <span className="flex h-[11px] w-[260px] flex-none items-stretch overflow-hidden ">
                   {REASON_STYLE.map((style) => {
                     const count = reasons[style.key] ?? 0;
                     if (count === 0 || o.scored === 0) return null;
@@ -455,7 +455,7 @@ function CompositionPanel({ group }: { group: Group }) {
         {REASON_STYLE.map((style) => (
           <span key={style.key} className="inline-flex items-center gap-1">
             <span
-              className="inline-block size-[8px] rounded-[2px]"
+              className="inline-block size-[8px] "
               style={{ background: style.color, opacity: style.opacity }}
             />
             {style.label}
@@ -519,7 +519,7 @@ function TaskGrid({ group }: { group: Group }) {
     <div className="overflow-x-auto">
       <table className="border-collapse text-left">
         <thead>
-          <tr className="border-b border-line-soft text-[10px] lowercase tracking-[0.09em] text-dim">
+          <tr className="border-b border-line-soft text-[10px] tracking-[0.09em] text-dim">
             <th className="px-2 py-1.5 font-normal">task</th>
             {seats.length > 1 && <th className="px-2 py-1.5 font-normal">seat</th>}
             {group.points.map((point) => (
@@ -568,9 +568,9 @@ function GroupCard({ group }: { group: Group }) {
     0,
   );
   return (
-    <section className="min-w-0 overflow-hidden rounded-[10px] border border-line bg-panel">
+    <section className="min-w-0 overflow-hidden border border-line bg-panel">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-[11px]">
-        <h2 className="text-[13px] font-semibold lowercase tracking-[0.04em]">
+        <h2 className="text-[13px] font-semibold tracking-[0.04em]">
           {comparability.dataset}
         </h2>
         <span className="font-mono text-[11px] text-muted">
@@ -634,14 +634,14 @@ export function TrendsView({ active }: { active: boolean }) {
   return (
     <div className="mx-auto max-w-[1600px] space-y-4 px-5 py-4">
       <div className="flex items-center gap-3">
-        <h1 className="text-[15px] font-semibold lowercase tracking-[0.03em]">trends</h1>
+        <h1 className="text-[15px] font-semibold tracking-[0.03em]">trends</h1>
         <span className="text-[11px] text-muted">
           outcomes across matches, keyed on the SUT commit
         </span>
         <button
           type="button"
           onClick={() => void load()}
-          className="ml-auto inline-flex cursor-pointer items-center rounded-[7px] border border-line bg-transparent px-2.5 py-[5px] font-mono text-xs lowercase text-foreground transition-colors hover:border-dim"
+          className="ml-auto inline-flex cursor-pointer items-center border border-line bg-transparent px-2.5 py-[5px] font-mono text-xs text-foreground transition-colors hover:border-dim"
         >
           refresh
         </button>
