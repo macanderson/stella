@@ -12,49 +12,18 @@ export interface ConnState {
 }
 
 /*
- * The lockup: the stella wordmark from the brand kit, a hairline pipe, and
- * the arena's domain. The artwork is a byte-copy of
- * docs/brand/logo/svg/wordmark-mono-{dark,light}.svg served from
- * public/brand/ — never redrawn here, so the kit stays the single source of
- * the mark. Two fixed cuts swap with the scheme because next-themes stamps
- * `.dark` on <html>; the kit's *-adaptive.svg follows only the OS media
- * query and would ignore the in-app toggle.
- *
- * The MONO cuts, not the colour ones: this chrome carries no accent hue, and
- * the wordmark is the largest thing on the page — a gold mark here would
- * reintroduce, at the top of every view, exactly the competition with the
- * data that removing the gold accent was for. The mono cuts are a single
- * fill each (#F4F1EA on the ink page, #0B0B0C on the paper one), so the
- * lockup reads as type rather than as a logo.
+ * The arena's domain, on its own. The stella wordmark used to sit to the left
+ * of a hairline pipe here, and was removed deliberately: this arena scores
+ * stella as one seat among several, so its mark does not belong in the chrome
+ * every seat is judged under. The pipe went with it — it separated two things
+ * and there is now one — as did the four cuts under public/brand/ and the
+ * `.brand-mark` entrance in globals.css, which nothing else used.
  */
 function Brand() {
   return (
-    <div className="flex items-center gap-3.5">
-      {/*
-       * h-[57px] is 2.25x the height of the lockup this one replaced. The
-       * artwork carries a 9-unit left bearing in its 264-wide viewBox (~5px
-       * at this size); the negative margin sets the glyphs, not the
-       * transparent frame, on the content edge.
-       */}
-      <img
-        src="/brand/wordmark-mono-light.svg"
-        alt="stella"
-        width={157}
-        height={57}
-        className="brand-mark -ml-[5px] block h-[57px] w-auto flex-none dark:hidden"
-      />
-      <img
-        src="/brand/wordmark-mono-dark.svg"
-        alt="stella"
-        width={157}
-        height={57}
-        className="brand-mark -ml-[5px] hidden h-[57px] w-auto flex-none dark:block"
-      />
-      <span aria-hidden="true" className="h-7 w-px flex-none bg-line" />
-      <span className="whitespace-nowrap text-[20px] font-bold tracking-[0.04em]">
-        ARENABENCH.ORG
-      </span>
-    </div>
+    <span className="whitespace-nowrap text-[20px] font-bold tracking-[0.04em]">
+      ARENABENCH.ORG
+    </span>
   );
 }
 
@@ -82,8 +51,10 @@ export function Topbar({
        * The bar itself spans the viewport (so the border does too); this
        * inner rail mirrors the active view's container — setup is
        * mx-auto max-w-[1180px] px-5, arena max-w-[1600px] px-5 sm:px-7 —
-       * so the wordmark's left edge lands on the content's left edge, not
-       * the page's.
+       * so the lockup's left edge lands on the content's left edge, not the
+       * page's. It needs no optical correction now that the lockup is type:
+       * the wordmark it replaced carried a 9-unit left bearing in its
+       * 264-wide viewBox and was pulled back -5px to compensate.
        */}
       <div
         className={cn(

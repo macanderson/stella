@@ -195,12 +195,6 @@ code {
 
 ::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 
-/* Assemble on load: the wordmark arrives along its own flight line. */
-@media (prefers-reduced-motion: no-preference) {
-  .brand-mark { animation: mark-in 220ms var(--ease-arrive) both; }
-}
-@keyframes mark-in { from { opacity: 0; transform: translateX(-6px); } }
-
 @keyframes cell-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 
 /* Respect a stated preference for less motion: the pulse and bar easing are
