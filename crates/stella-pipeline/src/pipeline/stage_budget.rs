@@ -174,10 +174,7 @@ mod tests {
     #[test]
     fn the_armed_deadline_binds_a_generous_declared_allowance() {
         assert_eq!(
-            binding_clock(
-                Some(Duration::from_secs(5)),
-                Some(Duration::from_secs(600))
-            ),
+            binding_clock(Some(Duration::from_secs(5)), Some(Duration::from_secs(600))),
             Some(Duration::from_secs(5))
         );
     }
@@ -188,10 +185,7 @@ mod tests {
     #[test]
     fn a_distant_deadline_does_not_buy_back_the_declared_allowance() {
         assert_eq!(
-            binding_clock(
-                Some(Duration::from_secs(600)),
-                Some(Duration::from_secs(5))
-            ),
+            binding_clock(Some(Duration::from_secs(600)), Some(Duration::from_secs(5))),
             Some(Duration::from_secs(5))
         );
     }
