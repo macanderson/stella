@@ -281,17 +281,12 @@ pub struct ProofState {
 }
 
 impl ProofState {
-    /// Nothing observed yet — for surfaces that would rather stay hidden than
-    /// show a panel about a turn that never reaches verification (a greeting, a
-    /// cancelled turn before triage answered).
-    pub fn is_empty(&self) -> bool {
-        self.assurance.is_none()
-            && self.warrant.is_none()
-            && self.witness.is_none()
-            && self.verdict.is_none()
-            && self.unverifiable.is_none()
-            && self.flip == Flip::default()
-    }
+    // There is deliberately no `is_empty`. One existed, for surfaces that would
+    // rather hide than show a panel about a turn that never reaches
+    // verification — and it had no callers, because the panel became
+    // unconditional and "nothing observed yet" now has a word of its own
+    // (`checking`). A predicate whose only remaining purpose is to be available
+    // is a second answer to a question this module already answers once.
 
     /// The turn ended. Anything still in flight becomes *never reported* — a
     /// statement, where a spinner would be a promise the turn cannot keep.
@@ -769,7 +764,6 @@ mod tests {
     #[test]
     fn a_fresh_state_has_nothing_to_report() {
         let state = ProofState::default();
-        assert!(state.is_empty());
         assert_eq!(state.standing(), Standing::Checking);
         assert!(state.explain().is_empty(), "no headline needs no reason");
     }
