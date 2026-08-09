@@ -27,8 +27,16 @@ makes the pipeline its own oracle and authors nothing.
 | System prompt | `WITNESS_SYSTEM_PROMPT`, `crates/stella-pipeline/src/witness.rs` |
 | User message | `witness_prompt`, same file |
 | Sent from | `crates/stella-pipeline/src/pipeline/witness_stage.rs` |
-| Output cap | `None` — inherits the engine base |
-| Override | `agents.verifier.prompt` — **not wired** |
+| Output cap | engine base, then `bound_witness_output_tokens` (#2141) |
+| Override | `agents.verifier` — every knob **except** `prompt` |
+
+`witness_engine_config` overlays the verifier's role overrides onto the engine
+config via `apply_role_shaping`: `effort`, `reasoning`, `temperature`,
+`max_output_tokens` and `params` all apply (#1785). `prompt` is **deliberately**
+absent — it is a raw-call concern, and this role's system message is
+`WITNESS_SYSTEM_PROMPT`, which carries the hard requirements the create
+boundary enforces. The output ceiling is applied *after* role shaping, so an
+override can lower the bound but never raise it back above the witness ceiling.
 
 The author is resolved from the **verifier's** model, never the worker's
 (L-E11, #1795). A worker that authored the test proving its own work would be

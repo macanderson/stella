@@ -35,7 +35,8 @@ Everything — instructions and payload alike — goes as a single user message:
 So the planner has no cacheable system prefix, and `agents.worker.prompt` never
 reaches it: `plan_stage` resolves its provider from the worker tier but hands
 `metered_raw_call` a `RoleCallOverrides::default()`. The model routing rides
-the worker's settings; the prompt does not.
+the worker's settings; the prompt does not. Both halves are tracked in **#2416**
+— including the in-code comment that claims the coupling exists.
 
 ## Prompt (template)
 

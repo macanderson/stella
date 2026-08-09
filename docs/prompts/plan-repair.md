@@ -21,7 +21,7 @@ looping.
 | Retry policy | `RetryPolicy::deterministic()` — no retry-hang on the retry |
 | Output cap | 4,096 visible + 4,096 reasoning headroom |
 | Effort | inherited |
-| Override | `agents.worker.prompt` — **not wired**, same gap as `plan` |
+| Override | `agents.worker.prompt` — **not wired**, same gap as `plan` (#2416) |
 
 It is a distinct call role rather than a second `plan` call so that repair
 spend stays separable in the paid-call ledger: a run whose planner needs a

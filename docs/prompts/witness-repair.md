@@ -18,8 +18,9 @@ corrected test, and discards the witness if that turn also fails.
 | Tools | the same witness set: `read_file`, `glob`, `create_witness_test` |
 | Built by | `witness_repair_prompt`, `crates/stella-pipeline/src/witness.rs` |
 | Sent from | `crates/stella-pipeline/src/pipeline/witness_stage.rs` |
-| Output cap | `None` — inherits the engine base |
-| Override | `agents.verifier.prompt` — **not wired** |
+| Output cap | engine base, then `bound_witness_output_tokens` (#2141) |
+| Override | `agents.verifier` — every knob **except** `prompt`, same as the author |
+| Wall clock | a static ceiling (#2141) — one observed repair ran a single reasoning-heavy call for 965 seconds |
 
 ## Wire shape
 

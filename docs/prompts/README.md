@@ -130,14 +130,23 @@ The mapping to call roles is not one-to-one, and the gaps are real:
 |---|---|---|
 | `agents.default.prompt` | the interactive worker's base persona | anything in the pipeline |
 | `agents.worker.prompt` | the pipeline worker's base persona | `plan`, `plan_repair`, the conversational reply — all three pass `RoleCallOverrides::default()` |
-| `agents.verifier.prompt` | `verdict`, `distress_guidance` | `witness_author`, `witness_repair` |
+| `agents.verifier.prompt` | `verdict`, `distress_guidance` | `witness_author`, `witness_repair` — by design, see below |
 | `agents.triage.prompt` | `triage` | — |
+
+The witness row is a decision, not a gap. `apply_role_shaping`
+(`crates/stella-pipeline/src/pipeline/witness_stage.rs`) carries every *other*
+verifier knob — `effort`, `reasoning`, `temperature`, `max_output_tokens`,
+`params` — onto the witness engine config (#1785), and excludes `prompt`
+because it is a raw-call concern: that role's system message is
+`WITNESS_SYSTEM_PROMPT`, whose hard requirements the create boundary enforces
+mechanically.
 
 The `worker` row is the surprising one. `plan_stage` resolves its *provider*
 from the worker tier and says so in a comment ("Plan rides the worker's
 settings"), but hands `metered_raw_call` a default override struct — so the
-model routing rides the worker's settings and the prompt does not. Tracked in
-the issue linked from each affected page.
+model routing rides the worker's settings and the prompt does not. Tracked as
+**#2416**, along with the fact that the planner is also the one raw role never
+given the `ManagementPrompt` split.
 
 Six roles have no override door at all: `research`, `agent_author`,
 `skill_author`, `domain_inference`, `reflection`, `summarization`.
@@ -167,10 +176,11 @@ chokepoint carry their own caps: summarization pins 1,200 at `Low`, reflection
 
 ## This document set is a snapshot, not the source
 
-The prompts here are transcribed from the code, and nothing yet checks that
-the transcription stays true. **The code is normative; when a page and the
-tree disagree, the tree is right and the page is a bug.** Each page names the
-exact symbol it was rendered from, so the diff is always checkable by hand.
+The prompts here are transcribed from the code, and **nothing yet checks that
+the transcription stays true — that guard is #2417.** The code is normative:
+when a page and the tree disagree, the tree is right and the page is a bug.
+Each page names the exact symbol it was rendered from, so the diff is always
+checkable by hand, which is a mitigation rather than a guarantee.
 
 The one prompt property that *is* machine-enforced is cross-prompt contract
 parity: `crates/stella-cli/src/agent/prompt/parity.rs` derives the shared
