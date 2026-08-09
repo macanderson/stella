@@ -319,7 +319,7 @@ async fn the_witness_gate_follows_the_assignment() {
     let resolver = OneProvider(&fixture.provider);
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut roster = Roster::default();
-    roster.set_agent(ModelCallRole::WitnessAuthor, AgentId::new("triage"));
+    roster.set_agent(ModelCallRole::WitnessAuthor, crate::roster::AgentId::new("triage"));
     let pipeline = fixture.pipeline(&resolver, tx, witness_config(roster));
 
     assert!(
@@ -353,7 +353,7 @@ async fn an_author_bound_to_the_worker_makes_the_run_ask_for_a_worker_test() {
     let resolver = OneProvider(&fixture.provider);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut roster = Roster::default();
-    roster.set_agent(ModelCallRole::WitnessAuthor, AgentId::new("worker"));
+    roster.set_agent(ModelCallRole::WitnessAuthor, crate::roster::AgentId::new("worker"));
     let pipeline = fixture.pipeline(&resolver, tx, witness_config(roster));
 
     assert!(
@@ -370,11 +370,15 @@ async fn an_author_bound_to_the_worker_makes_the_run_ask_for_a_worker_test() {
         .expect("losing the author costs the witness, never the task");
     assert_eq!(outcome.status, PipelineStatus::Completed);
 
+    // Not merely "the prompt carrying the goal": the triage classification
+    // prompt quotes the goal too, and matching it first is how this assertion
+    // passes for the wrong reason. `CLASS:` is the classifier's own answer
+    // grammar and appears in no other call.
     let worker_prompt = fixture
         .provider
         .prompts()
         .into_iter()
-        .find(|prompt| prompt.contains("Fix the failing test"))
+        .find(|prompt| prompt.contains("Fix the failing test") && !prompt.contains("CLASS:"))
         .expect("the worker was prompted");
     assert!(
         worker_prompt.contains("write the failing test"),
