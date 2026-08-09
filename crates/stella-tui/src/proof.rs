@@ -125,6 +125,13 @@ pub struct ProofState {
     /// nothing could observe must not read `✓ passed` just because nothing
     /// failed it either.
     pub unverifiable: Option<String>,
+    /// Set when verification ran and did not prove the turn — the ladder's
+    /// `Unverified` rung. Outranks the verdict on the rail for the same
+    /// reason [`Self::unverifiable`] does, and is a separate field from it
+    /// because the two imply opposite repairs: that one says the probes were
+    /// blind (fix the probes), this one says they worked and the evidence
+    /// fell short (produce the missing observation).
+    pub unproven: Option<String>,
     /// The witness-tamper check's stated result, from the verdict's ladder
     /// snapshot: `Some(true)` = every witness artifact matched its pinned
     /// identity (the witness panel's `tamper check ✓` line). `None` = the
@@ -152,6 +159,7 @@ impl ProofState {
             && self.witness.is_none()
             && self.verdict.is_none()
             && self.unverifiable.is_none()
+            && self.unproven.is_none()
             && self.flip == Flip::default()
     }
 
@@ -198,6 +206,9 @@ impl ProofState {
             }
             ProofStep::VerificationUnavailable { reason } => {
                 self.unverifiable = Some(reason.clone());
+            }
+            ProofStep::VerificationUnproven { reason } => {
+                self.unproven = Some(reason.clone());
             }
             ProofStep::Oracle {
                 command,
@@ -312,6 +323,7 @@ impl ProofState {
             && self.witness.is_none()
             && self.verdict.is_none()
             && self.unverifiable.is_none()
+            && self.unproven.is_none()
             && self.flip == Flip::default()
     }
 
@@ -347,6 +359,9 @@ impl ProofState {
     pub fn summary(&self) -> ProofRow {
         if let Some(reason) = &self.unverifiable {
             return ProofRow::new("proof", format!("unverifiable · {reason}"), Tone::Warn);
+        }
+        if let Some(reason) = &self.unproven {
+            return ProofRow::new("proof", format!("unproven · {reason}"), Tone::Warn);
         }
         if matches!(self.witness, Some(WitnessStanding::Unavailable { .. })) {
             return ProofRow::new("proof", "⚠ warranted, NOT proven", Tone::Warn);
@@ -531,6 +546,9 @@ impl ProofState {
         if let Some(reason) = &self.unverifiable {
             return ProofRow::new("verdict", format!("unverifiable · {reason}"), Tone::Warn);
         }
+        if let Some(reason) = &self.unproven {
+            return ProofRow::new("verdict", format!("unproven · {reason}"), Tone::Warn);
+        }
         match &self.verdict {
             // A turn can end without a verdict — cancelled, aborted on budget,
             // a lookup that verified nothing. The rail says which of "no
@@ -642,6 +660,9 @@ pub(crate) fn proof_trace(step: &stella_protocol::ProofStep) -> String {
         ProofStep::WitnessUnavailable { reason } => format!("witness unavailable: {reason}"),
         ProofStep::VerificationUnavailable { reason } => {
             format!("verification unavailable: {reason}")
+        }
+        ProofStep::VerificationUnproven { reason } => {
+            format!("verification unproven: {reason}")
         }
         ProofStep::Oracle { passed, tree, .. } => format!(
             "oracle: {} on {}",

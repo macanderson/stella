@@ -29,15 +29,21 @@
 //! So: **the set of responsibilities and their order are code; the assignment
 //! and the enablement are configuration.**
 //!
-//! # Verification is not on either axis
+//! # Judgement is not on either axis
 //!
 //! The one thing this module does *not* make configurable is whether a model
-//! participates in verification. It does not, and no key here can make it:
-//! [`default_agent`] answers `None` for the four responsibilities that used to
-//! be the verifier's, which removes their rows from every roster rather than
-//! defaulting them off. The reasoning is at that match arm; the short form is
+//! **judges** the work. None does, and no key here can make one:
+//! [`default_agent`] answers `None` for [`ModelCallRole::Verdict`] and
+//! [`ModelCallRole::DistressGuidance`], which removes their rows from every
+//! roster rather than defaulting them off — so there is no row to enable and
+//! no agent to rebind. The reasoning is at that match arm; the short form is
 //! that verification's only value is that its answer cannot be talked into
 //! existence, so the ablation axis must not reach it in either direction.
+//!
+//! [`ModelCallRole::WitnessAuthor`] stays assignable, and the distinction is
+//! the whole point: it *creates* an oracle, and what it produces is judged by
+//! being run. Whether that call should exist at all is a live question with a
+//! measured cost, but it is a different question from this one.
 //!
 //! # Why [`ModelCallRole`] is the responsibility vocabulary
 //!
@@ -192,9 +198,24 @@ pub fn default_agent(responsibility: ModelCallRole) -> Option<AgentId> {
         ModelCallRole::Plan => Role::Plan,
         ModelCallRole::Research => Role::Research,
         ModelCallRole::Worker => Role::Worker,
-        // **Verification buys no model call.** These four were the verifier's
-        // job — author the witness, repair it, steer a distressed worker,
-        // render the verdict — and the pipeline no longer issues any of them.
+        // Authoring a witness is the one verifier call that survives, and it
+        // survives because it is categorically different from the two below:
+        // it *creates the oracle* rather than substituting for one. Its output
+        // is a test that either goes fail→pass or does not, and that judgement
+        // is made by running it, not by reading it.
+        //
+        // It is nonetheless the most expensive call in the pipeline and its
+        // removal is the tracked next step (see the issue referenced in this
+        // PR): one measured run spent 10 calls, 267k input tokens and $0.67
+        // arguing with itself about where to put a test and never wrote one.
+        // The replacement is the worker's own `verify_done` shadow run, whose
+        // fail-on-baseline / pass-on-candidate check is already deterministic;
+        // that is a separable change with its own test surface, and folding it
+        // in here would bury the decision this module makes.
+        ModelCallRole::WitnessAuthor => Role::Verifier,
+        // **Judgement buys no model call.** Rendering a verdict and steering a
+        // distressed worker were the verifier's other two jobs, and the
+        // pipeline no longer issues either.
         //
         // `None` here is not "off by default"; it is the structural lock.
         // `Roster::default` builds its rows by filtering `ModelCallRole::ALL`
@@ -218,12 +239,9 @@ pub fn default_agent(responsibility: ModelCallRole) -> Option<AgentId> {
         // The deterministic machinery is untouched and is what now carries the
         // whole load: the flip oracle, the tamper exclusion, the mutation
         // guard, and the worker's own `verify_done` shadow run.
-        ModelCallRole::WitnessAuthor
-        | ModelCallRole::WitnessRepair
-        | ModelCallRole::DistressGuidance
-        | ModelCallRole::Verdict => return None,
+        ModelCallRole::DistressGuidance | ModelCallRole::Verdict => return None,
         // Repairs follow their principal — see `principal_of`.
-        ModelCallRole::PlanRepair => return None,
+        ModelCallRole::PlanRepair | ModelCallRole::WitnessRepair => return None,
         // Not this pipeline's calls. `Unknown` is the legacy-event default and
         // names no call at all; the rest are made by other drivers.
         ModelCallRole::Unknown
@@ -249,17 +267,11 @@ pub fn default_agent(responsibility: ModelCallRole) -> Option<AgentId> {
 /// [`RosterError::FollowsPrincipal`] rather than a silently ignored key. This
 /// function exists to make that error name the row the operator actually
 /// wanted.
-///
-/// `WitnessRepair` is deliberately **not** listed, though it is still a repair
-/// in the wire vocabulary. Its principal is no longer assignable either, so
-/// answering `Some(WitnessAuthor)` here would send an operator to a key that
-/// also does not exist — a correct-sounding error pointing at nothing. Falling
-/// through to `None` reports it as [`RosterError::NotAssignable`], which is the
-/// true diagnosis: the pipeline does not issue that call at all.
 #[must_use]
 pub fn principal_of(responsibility: ModelCallRole) -> Option<ModelCallRole> {
     match responsibility {
         ModelCallRole::PlanRepair => Some(ModelCallRole::Plan),
+        ModelCallRole::WitnessRepair => Some(ModelCallRole::WitnessAuthor),
         _ => None,
     }
 }

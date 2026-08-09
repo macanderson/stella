@@ -2486,12 +2486,14 @@ impl<'a> Pipeline<'a> {
                     // `fix-git` that narration made a worker reset `master`
                     // and destroy a correctly-recovered commit, twice, to
                     // satisfy a claim no measurement supported.
-                    if evidence_demand_is_worth_a_turn(
-                        &self.config,
-                        state.evidence_demands,
-                        state.revisions,
-                        effective_cmd.map(|cmd| cmd.command),
-                    ) && let Some(cmd) = effective_cmd
+                    if inputs.verifier_pass_stands_alone()
+                        && evidence_demand_is_worth_a_turn(
+                            &self.config,
+                            state.evidence_demands,
+                            state.revisions,
+                            effective_cmd.map(|cmd| cmd.command),
+                        )
+                        && let Some(cmd) = effective_cmd
                     {
                         state.evidence_demands += 1;
                         let ask = crate::verify::evidence_demand_prompt(cmd.command);

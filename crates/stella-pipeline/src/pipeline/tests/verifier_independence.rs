@@ -197,7 +197,7 @@ async fn a_self_graded_verdict_states_the_fact_on_its_snapshot() {
         .expect("the verdict carries its snapshot");
     assert_eq!(
         snapshot.rung,
-        Some(stella_protocol::LadderRung::ModelVerdict)
+        Some(stella_protocol::LadderRung::Unverified)
     );
     assert_eq!(
         snapshot.verifier_independent,

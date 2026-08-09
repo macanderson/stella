@@ -64,8 +64,8 @@ fn the_four_tiers_score_at_their_stated_weights() {
     for (rung, passed, expected) in [
         (LadderRung::SubmitFast, true, 1.0),
         (LadderRung::Revise, false, -1.0),
-        (LadderRung::ModelVerdict, true, 0.5),
-        (LadderRung::ModelVerdict, false, -0.5),
+        (LadderRung::Unverified, true, 0.5),
+        (LadderRung::Unverified, false, -0.5),
     ] {
         let label = label(settled(rung, passed), free, &policy);
         assert_eq!(label.rung, Some(rung));
@@ -153,7 +153,7 @@ fn the_abstain_rungs_are_discarded_not_punished() {
 fn a_verdict_about_the_pipeline_is_not_a_verdict_about_the_work() {
     let policy = RewardPolicy::default();
     let heuristic = label(
-        settled(LadderRung::HeuristicFallback, true),
+        settled(LadderRung::Unverified, true),
         cost(3, 0.1, 0),
         &policy,
     );
@@ -242,8 +242,8 @@ fn a_lowered_verifier_weight_discounts_only_the_judged_rungs() {
     let policy = distrusting(0.2);
     let free = cost(0, 0.0, 0);
     for (rung, passed, expected) in [
-        (LadderRung::ModelVerdict, true, 0.2),
-        (LadderRung::ModelVerdict, false, -0.2),
+        (LadderRung::Unverified, true, 0.2),
+        (LadderRung::Unverified, false, -0.2),
         (LadderRung::SubmitFast, true, 1.0),
         (LadderRung::Revise, false, -1.0),
     ] {
@@ -267,7 +267,7 @@ fn a_zero_verifier_weight_discards_rather_than_scoring_zero() {
     let policy = distrusting(0.0);
     for passed in [true, false] {
         let label = label(
-            settled(LadderRung::ModelVerdict, passed),
+            settled(LadderRung::Unverified, passed),
             cost(3, 0.1, 0),
             &policy,
         );
@@ -277,7 +277,7 @@ fn a_zero_verifier_weight_discards_rather_than_scoring_zero() {
         assert!(!label.is_scored());
         assert_eq!(
             label.rung,
-            Some(LadderRung::ModelVerdict),
+            Some(LadderRung::Unverified),
             "the rung survives so the row stays selectable"
         );
     }
@@ -304,7 +304,7 @@ fn a_verifier_weight_above_the_deterministic_one_is_refused() {
     // ...and `label` refuses it too, rather than trusting that whoever built
     // the policy validated it first.
     let label = label(
-        settled(LadderRung::ModelVerdict, true),
+        settled(LadderRung::Unverified, true),
         cost(1, 0.0, 0),
         &inverted,
     );
@@ -312,7 +312,7 @@ fn a_verifier_weight_above_the_deterministic_one_is_refused() {
     assert_eq!(label.discard, Some(DiscardReason::PolicyInvalid));
     assert_eq!(
         label.rung,
-        Some(LadderRung::ModelVerdict),
+        Some(LadderRung::Unverified),
         "the rung is still true even when the arithmetic is refused"
     );
 }
@@ -324,7 +324,7 @@ fn a_verifier_weight_equal_to_the_deterministic_one_is_allowed() {
     let policy = distrusting(1.0);
     assert_eq!(policy.validate(), Ok(()));
     let label = label(
-        settled(LadderRung::ModelVerdict, true),
+        settled(LadderRung::Unverified, true),
         cost(0, 0.0, 0),
         &policy,
     );
@@ -405,7 +405,7 @@ fn a_negative_shaping_price_cannot_pay_a_trajectory_to_spend_more() {
 fn every_label_carries_the_policy_it_was_computed_under() {
     let policy = distrusting(0.25);
     let scored = label(
-        settled(LadderRung::ModelVerdict, true),
+        settled(LadderRung::Unverified, true),
         cost(2, 0.1, 0),
         &policy,
     );
@@ -428,7 +428,7 @@ fn every_label_carries_the_policy_it_was_computed_under() {
 /// makes per-workspace weights safe to pool.
 #[test]
 fn the_same_turn_under_two_policies_is_told_apart_by_its_stamp() {
-    let turn = || settled(LadderRung::ModelVerdict, true);
+    let turn = || settled(LadderRung::Unverified, true);
     let spent = cost(4, 0.1, 0);
     let trusting = label(turn(), spent, &RewardPolicy::default());
     let skeptical = label(turn(), spent, &distrusting(0.2));
@@ -471,10 +471,10 @@ fn a_label_has_no_free_text_leaves() {
     for rung in [
         LadderRung::SubmitFast,
         LadderRung::Revise,
-        LadderRung::ModelVerdict,
+        LadderRung::Unverified,
         LadderRung::Unverifiable,
         LadderRung::NothingAttempted,
-        LadderRung::HeuristicFallback,
+        LadderRung::Unverified,
         LadderRung::Waived,
     ] {
         for passed in [true, false] {
@@ -519,7 +519,7 @@ fn collect_strings(value: &serde_json::Value, into: &mut Vec<String>) {
 #[test]
 fn a_label_round_trips() {
     let label = label(
-        settled(LadderRung::ModelVerdict, false),
+        settled(LadderRung::Unverified, false),
         cost(7, 0.33, 2),
         &RewardPolicy::default(),
     );
@@ -539,7 +539,7 @@ proptest! {
         cost_usd in 0.0f64..5.0,
         revisions in 0u32..8,
     ) {
-        let evidence = evidence(&reasoning, Some(LadderRung::ModelVerdict));
+        let evidence = evidence(&reasoning, Some(LadderRung::Unverified));
         let settlement = Settlement::from_evidence(passed, &evidence);
         let label = label(settlement, cost(steps, cost_usd, revisions), &RewardPolicy::default());
         let json = serde_json::to_string(&label).unwrap();
@@ -549,7 +549,7 @@ proptest! {
         );
         // And the label is still the right one — the airlock does not cost the
         // signal, only the prose.
-        prop_assert_eq!(label.rung, Some(LadderRung::ModelVerdict));
+        prop_assert_eq!(label.rung, Some(LadderRung::Unverified));
         prop_assert_eq!(label.outcome, Some(if passed { 0.5 } else { -0.5 }));
     }
 
@@ -579,8 +579,8 @@ proptest! {
             LadderRung::Revise,
             LadderRung::NothingAttempted,
             LadderRung::Unverifiable,
-            LadderRung::ModelVerdict,
-            LadderRung::HeuristicFallback,
+            LadderRung::Unverified,
+            LadderRung::Unverified,
             LadderRung::Waived,
         ];
         let policy = RewardPolicy {
@@ -632,7 +632,7 @@ proptest! {
             shaping: RewardShaping { per_step, per_usd, per_revision },
         };
         prop_assume!(policy.validate().is_ok());
-        let rung = [LadderRung::SubmitFast, LadderRung::ModelVerdict][which];
+        let rung = [LadderRung::SubmitFast, LadderRung::Unverified][which];
         let label = label(
             settled(rung, passed),
             cost(steps, cost_usd, revisions),

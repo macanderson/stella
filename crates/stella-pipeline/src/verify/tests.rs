@@ -170,7 +170,7 @@ fn an_unstable_oracle_does_not_credit_a_deterministic_pass() {
     };
     assert_eq!(
         ladder_decision(&inputs),
-        LadderDecision::ModelVerdict,
+        LadderDecision::Unverified,
         "an unconfirmed flip must escalate to the verifier, not SubmitFast"
     );
 }
@@ -282,7 +282,7 @@ fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
         !inputs.evidence_is_blind(),
         "six observed mutations are not an absence of evidence"
     );
-    assert_eq!(ladder_decision(&inputs), LadderDecision::ModelVerdict);
+    assert_eq!(ladder_decision(&inputs), LadderDecision::Unverified);
 }
 
 /// A red test is a real observation, so a turn carrying one is never blind
@@ -341,7 +341,7 @@ fn a_readable_empty_diff_is_not_blindness() {
             diff_lines: 12,
             ..inputs
         }),
-        LadderDecision::ModelVerdict,
+        LadderDecision::Unverified,
     );
 }
 
@@ -585,7 +585,7 @@ fn a_new_diagnostic_error_vetoes_the_fast_submit() {
     };
     assert_eq!(
         ladder_decision(&regressed),
-        LadderDecision::ModelVerdict,
+        LadderDecision::Unverified,
         "a flipped witness plus a fresh error must escalate, not ship"
     );
 }
@@ -615,7 +615,7 @@ fn new_warnings_veto_only_when_opted_in() {
     };
     assert_eq!(
         ladder_decision(&strict),
-        LadderDecision::ModelVerdict,
+        LadderDecision::Unverified,
         "opted-in, a new warning is a veto"
     );
 }
@@ -652,7 +652,7 @@ fn flip_and_green_but_over_diff_budget_escalates_to_verifier() {
     });
     assert_eq!(
         decision,
-        LadderDecision::ModelVerdict,
+        LadderDecision::Unverified,
         "a large diff deserves a second opinion even with green tests"
     );
 }
@@ -670,7 +670,7 @@ fn no_flip_evidence_escalates_to_verifier_not_a_false_pass() {
         mutating_actions: 1,
         ..Default::default()
     });
-    assert_eq!(decision, LadderDecision::ModelVerdict);
+    assert_eq!(decision, LadderDecision::Unverified);
 }
 
 #[test]
@@ -685,7 +685,7 @@ fn tests_indeterminate_escalates_to_verifier() {
         mutating_actions: 1,
         ..Default::default()
     });
-    assert_eq!(decision, LadderDecision::ModelVerdict);
+    assert_eq!(decision, LadderDecision::Unverified);
 }
 
 // verifier fallback (the response-parsing half lives in `parse`)
@@ -876,7 +876,7 @@ fn evidence_builders_tag_determinism_correctly() {
 fn a_heuristic_verdict_names_a_different_rung_than_a_parsed_one() {
     let parsed = parse_verifier_response("PASS — the flip is genuine").expect("parses");
     assert!(!parsed.heuristic);
-    assert_eq!(parsed.rung(), LadderRung::ModelVerdict);
+    assert_eq!(parsed.rung(), LadderRung::Unverified);
 
     let fallback = heuristic_fallback(&LadderInputs {
         touched_tests_passed: Some(true),
@@ -887,7 +887,7 @@ fn a_heuristic_verdict_names_a_different_rung_than_a_parsed_one() {
         fallback.passed,
         "green touched tests still pass the fallback"
     );
-    assert_eq!(fallback.rung(), LadderRung::HeuristicFallback);
+    assert_eq!(fallback.rung(), LadderRung::Unverified);
 }
 
 /// Every ladder decision has a wire name, and the mapping is one-to-one.
@@ -901,7 +901,7 @@ fn every_decision_maps_to_its_rung() {
             LadderRung::NothingAttempted,
         ),
         (LadderDecision::Unverifiable, LadderRung::Unverifiable),
-        (LadderDecision::ModelVerdict, LadderRung::ModelVerdict),
+        (LadderDecision::Unverified, LadderRung::Unverified),
     ] {
         assert_eq!(LadderRung::from(decision), rung);
     }
@@ -1375,7 +1375,7 @@ fn a_tautological_witness_blocks_the_fast_submit() {
     };
     assert_eq!(
         ladder_decision(&tautological),
-        LadderDecision::ModelVerdict,
+        LadderDecision::Unverified,
         "a witness that constrains nothing may not buy a deterministic pass"
     );
 }

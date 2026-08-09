@@ -103,8 +103,7 @@ pub(crate) fn all_ladder_rungs() -> Vec<LadderRung> {
         Revise,
         NothingAttempted,
         Unverifiable,
-        ModelVerdict,
-        HeuristicFallback,
+        Unverified,
         Waived,
     ]
 }
