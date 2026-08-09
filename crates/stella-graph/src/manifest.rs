@@ -95,11 +95,31 @@ pub struct StorageManifest {
     pub fields: BTreeMap<String, MeaningDecl>,
 }
 
+/// Why a storage manifest could not be read.
+///
+/// One variant today, and deliberately an enum rather than a struct: "absent"
+/// is already modelled as `Ok(None)` by [`StorageManifest::load`], so anything
+/// that reaches this type is a file that exists and does not parse. A future
+/// second failure (an unreadable-but-present file, say) gets a variant here
+/// instead of being folded into the parse message.
+#[derive(Debug, thiserror::Error)]
+pub enum ManifestError {
+    /// The manifest exists but is not valid TOML, or does not match the
+    /// schema. Carries the path because callers log it far from this call.
+    #[error("{}: {source}", .path.display())]
+    Malformed {
+        /// The manifest that failed to parse.
+        path: std::path::PathBuf,
+        /// The underlying TOML failure.
+        source: toml::de::Error,
+    },
+}
+
 impl StorageManifest {
     /// Load the manifest at `root`, if present. A malformed file is an
     /// `Err` (callers degrade to structure-only, never abort an index pass);
     /// a missing file is `Ok(None)` — the normal state for most projects.
-    pub fn load(root: &Path) -> Result<Option<StorageManifest>, String> {
+    pub fn load(root: &Path) -> Result<Option<StorageManifest>, ManifestError> {
         let path = manifest_path(root);
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
@@ -107,7 +127,7 @@ impl StorageManifest {
         };
         toml::from_str(&text)
             .map(Some)
-            .map_err(|e| format!("{}: {e}", path.display()))
+            .map_err(|source| ManifestError::Malformed { path, source })
     }
 
     /// The layer whose `paths` globs claim `rel_path` (first match in key
