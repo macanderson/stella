@@ -74,14 +74,14 @@ use outcome::{
 };
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
-use reflect::{reflect_on_interactive_turn, reflection_json};
-pub(crate) use reflect::{FrictionTap, surface_reflection};
 pub(crate) use persistence::{
     PersistOutcome, TurnBracket, close_event_stream, persist_event, persist_event_detailed,
     record_execution_end, spawn_renderer, warn_store_write_failed,
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
+pub(crate) use reflect::{FrictionTap, surface_reflection};
+use reflect::{reflect_on_interactive_turn, reflection_json};
 pub(crate) use skill_usage::stamp_and_record_skill_usage;
 // `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
 // session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".

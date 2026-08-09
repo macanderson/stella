@@ -355,7 +355,8 @@ async fn a_failed_tool_result_reaches_the_reflection_prompt() {
     ));
     transcript.push(CompletionMessage::assistant("gave up"));
 
-    let prompt = prompt_for_evidence(super::TurnEvidence::from_transcript(&transcript, false)).await;
+    let prompt =
+        prompt_for_evidence(super::TurnEvidence::from_transcript(&transcript, false)).await;
     assert!(
         prompt.contains(THE_ERROR),
         "the tool result that failed is the highest-value evidence in the turn, \

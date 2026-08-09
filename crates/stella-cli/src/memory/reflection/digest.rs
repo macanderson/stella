@@ -234,7 +234,10 @@ impl TurnFriction {
             AgentEvent::RetriesExhausted {
                 attempts, reasons, ..
             } => {
-                let last = reasons.last().map(String::as_str).unwrap_or("no reason given");
+                let last = reasons
+                    .last()
+                    .map(String::as_str)
+                    .unwrap_or("no reason given");
                 self.push_retry(format!("exhausted after {attempts} attempts: {last}"));
             }
             AgentEvent::LoopDetected {

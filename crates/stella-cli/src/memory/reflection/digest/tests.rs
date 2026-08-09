@@ -130,7 +130,10 @@ fn the_goal_and_the_outcome_are_never_dropped() {
         "the first user message is the goal; judging a turn without it is \
          judging work whose point is invisible\n\n{out}"
     );
-    assert!(out.contains("gave up"), "the outcome is pinned too\n\n{out}");
+    assert!(
+        out.contains("gave up"),
+        "the outcome is pinned too\n\n{out}"
+    );
 }
 
 #[test]
