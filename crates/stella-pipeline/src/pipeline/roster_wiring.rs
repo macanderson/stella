@@ -17,6 +17,7 @@
 //! and `witness_stage` live beside it.
 
 use super::*;
+use super::run_error::Independence;
 
 /// What the roster says about one responsibility, resolved against the router.
 pub(super) enum Assigned<'p> {
@@ -141,6 +142,144 @@ impl<'a> Pipeline<'a> {
                 responsibility_label(loss.responsibility),
                 loss.agent
             ));
+        }
+    }
+
+    /// The agent name a responsibility is bound to, for prose that must name
+    /// the row an operator would edit.
+    ///
+    /// Falls back to the responsibility's own token when the pipeline does not
+    /// own it — unreachable from the callers below, which have already gone
+    /// through the roster, but stated rather than `unreachable!`d because a
+    /// panic in library code on a value the type system permits is invariant
+    /// 5's exact prohibition.
+    fn assigned_agent(&self, responsibility: ModelCallRole) -> String {
+        self.config.roster.assignment(responsibility).map_or_else(
+            || responsibility_label(responsibility),
+            |row| row.agent.to_string(),
+        )
+    }
+
+    /// Whether the agent the roster assigns to `responsibility` is independent
+    /// of the worker — and, when it is not, why.
+    ///
+    /// **The roster is consulted exactly once, through [`Self::assigned`], so
+    /// this answers the same question the call site's own resolution will**
+    /// (#2467). It used to resolve [`Role::Verifier`] literally while
+    /// [`Self::resolve_witness_author`] went through the roster — which agreed
+    /// only for as long as `witness_author` could not be reassigned. Binding it
+    /// elsewhere made the gate and the resolution disagree in both directions,
+    /// and the false-positive direction was the dangerous one: the gate said
+    /// "independent", so `VerificationContract::WorkerTestFirst` was not chosen
+    /// and the worker was never told that its own failing test was the run's
+    /// only deterministic evidence; then the resolution dropped the author on
+    /// its worker-model filter, silently, because this function's contract says
+    /// the gate has already spoken. The run finished carrying no deterministic
+    /// evidence and said nothing.
+    ///
+    /// Parameterised by responsibility rather than fixed to the witness author
+    /// for the same reason one step out: `require_independent_verifier` asks
+    /// about the VERDICT, and that shared an answer with the witness author
+    /// only while the two could not be bound separately.
+    ///
+    /// Pure — it emits nothing, so asking twice costs nothing and says nothing
+    /// twice.
+    pub(super) fn independence_of(&self, responsibility: ModelCallRole) -> Independence {
+        let Ok(worker) = self.resolve_provider(Role::Worker) else {
+            return Independence::WorkerUnresolvable;
+        };
+        match self.assigned(responsibility) {
+            Assigned::To(agent) if agent.model_ref != worker.model_ref => {
+                Independence::Independent
+            }
+            Assigned::To(_) => Independence::Unavailable(format!(
+                "the `{}` agent and the worker both resolved to `{}`",
+                self.assigned_agent(responsibility),
+                worker.model_ref
+            )),
+            Assigned::Withheld => Independence::Withheld,
+            Assigned::Unresolvable => Independence::Unavailable(format!(
+                "the `{}` agent is unresolvable (no routable provider)",
+                self.assigned_agent(responsibility)
+            )),
+        }
+    }
+
+    /// The reason `responsibility` fails an independence *requirement*, or
+    /// `None` when it meets one.
+    ///
+    /// The requirement projection of [`Self::independence_of`], kept separate
+    /// from the degradation projection below because the two collapse its four
+    /// states differently — which is the whole reason the probe returns four.
+    ///
+    /// A withheld responsibility is a shortfall, and says so in its own words:
+    /// a host that declared an independent verifier and then ablated the
+    /// verdict holds a configuration that contradicts its own claim, and
+    /// quietly producing the number anyway is exactly what #1147 refuses.
+    ///
+    /// [`Independence::WorkerUnresolvable`] is deliberately NOT a shortfall.
+    /// The run fails on the worker's own routing error a few steps later, and
+    /// refusing here would file a routing outage under an independence claim.
+    pub(super) fn independence_shortfall(&self, responsibility: ModelCallRole) -> Option<String> {
+        match self.independence_of(responsibility) {
+            Independence::Independent | Independence::WorkerUnresolvable => None,
+            Independence::Withheld => Some(format!(
+                "the `{}` responsibility is disabled by configuration, so nothing performs it \
+                 at all",
+                responsibility_label(responsibility)
+            )),
+            Independence::Unavailable(reason) => Some(reason),
+        }
+    }
+
+    /// Whether a witness author independent of the worker can be resolved.
+    ///
+    /// Losing the author costs the run its authored witness, never the task: a
+    /// `false` here routes to the ordinary single-shot path and the
+    /// deterministic/verifier verify ladder. Announced once, at the one point
+    /// that decides it, so the run never pays for isolation it cannot use.
+    ///
+    /// A host that cannot afford that degradation sets
+    /// [`crate::PipelineConfig::require_independent_witness`], which refuses
+    /// the run up front rather than reaching this call at all.
+    pub(super) fn can_author_independent_witness(&self) -> bool {
+        match self.independence_of(ModelCallRole::WitnessAuthor) {
+            Independence::Independent => true,
+            // The operator removed the stage, and `report_roster_posture` said
+            // so once, before any spend. Saying it again through `unproven`
+            // would file a deliberate ablation as a degradation — precisely
+            // the distinction #2381 exists to keep legible.
+            Independence::Withheld => false,
+            // Reported through `unproven`, not a bare `warn`. A witness triage
+            // asked for and the wiring cannot supply is precisely
+            // `WitnessUnavailable` — routing it to the warning channel alone
+            // left the rail's witness row with no statement, so it fell
+            // through to the backstop's "not reported" when the real answer
+            // was known all along and worth naming.
+            //
+            // The message names the degradation AND the way out. A same-model
+            // posture is legitimate (an auto-routing gateway can serve
+            // distinct upstream models behind one id, and this run keeps going
+            // either way), but the operator must hear that the flip oracle
+            // cannot arm and what config change restores it — and hear it
+            // about the agent that actually holds the responsibility (#2467),
+            // since advice about `pipeline_verifier_model` is advice about a
+            // row an operator may deliberately have moved authoring off.
+            Independence::Unavailable(reason) => {
+                self.unproven(format!(
+                    "{reason}, so no model independent of the worker can author a witness; \
+                     verification is degraded — the deterministic flip oracle cannot arm, so \
+                     the verdict is a model review with no independent test. Point \
+                     `agents.{agent}.model` at a model distinct from the worker's, or move \
+                     `responsibilities.witness_author.agent` to an agent that already is, to \
+                     restore independent verification",
+                    agent = self.assigned_agent(ModelCallRole::WitnessAuthor)
+                ));
+                false
+            }
+            // A worker that won't resolve fails later, on its own terms — not
+            // here, disguised as a witness-independence verdict.
+            Independence::WorkerUnresolvable => false,
         }
     }
 
