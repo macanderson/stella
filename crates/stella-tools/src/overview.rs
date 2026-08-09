@@ -9,8 +9,10 @@
 //!
 //! Assembly, not new capability: every field comes from a deterministic
 //! source that already exists — the script index (static manifest
-//! detection), the code graph, the storage/schema snapshot, and the domain
-//! taxonomy. No model call, no shell, no grep.
+//! detection), the code graph, the storage/schema snapshot, the domain
+//! taxonomy, and the version-control state ([`repository_section`]). No
+//! model call, no grep, and no shell: the git reads are direct argv spawns
+//! of one pinned binary, never a command string.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -43,11 +45,15 @@ impl Tool for ProjectOverview {
             description: "CALL THIS FIRST on an unfamiliar repository. Returns one JSON \
                           object describing the whole project — language and frameworks, \
                           the build/test/lint commands, entry-point files, the storage \
-                          schema, domain taxonomy, and index freshness — assembled from \
-                          static manifests and the code graph. Takes no arguments and \
-                          costs no model call. Replaces the usual opening burst of \
+                          schema, domain taxonomy, index freshness, and the version-control \
+                          state (current branch or DETACHED position, uncommitted and \
+                          shelved/stashed changes, branches with ahead/behind vs the \
+                          default, and the last 10 commits) — assembled from static \
+                          manifests, the code graph and git. Takes no arguments and costs \
+                          no model call. Replaces the usual opening burst of \
                           glob/grep/read_file: use it before those, then reach for \
-                          graph_query or gather_context once you know what to ask about."
+                          graph_query or gather_context once you know what to ask about, \
+                          or repo_history / repo_recover to go deeper on git."
                 .into(),
             input_schema: json!({ "type": "object", "properties": {} }),
             // Read-only in the sense the flag means: it mutates no
@@ -216,6 +222,145 @@ fn listing_orientation_block(root: &Path) -> Option<String> {
     ))
 }
 
+/// Recent commits named in the `repository` section. Ten is the ask a
+/// person actually makes ("what were the last ten commits?"); `repo_history`
+/// goes deeper on request.
+const OVERVIEW_COMMITS: usize = 10;
+
+/// Branches placed against the default branch here at most. Each one past
+/// the first costs a `rev-list --count` spawn, so this bounds *work* — the
+/// full list is `repo_history`'s job.
+const OVERVIEW_BRANCHES: usize = 8;
+
+/// Run one `git` read and return its stdout lines, or `None` when git is
+/// absent, the directory is not a repository, or the command failed.
+///
+/// Direct argv — no shell, nothing interpolated into a command string — and
+/// the full spawn-env policy, so an ambient `GIT_DIR` from a surrounding
+/// hook cannot re-aim these reads at another repository and have the
+/// overview report its branches as this workspace's.
+fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
+    let mut command = std::process::Command::new("git");
+    command
+        .args(args)
+        .current_dir(root)
+        .stdin(std::process::Stdio::null());
+    crate::subprocess_env::scrub_spawn_std_env(&mut command);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// Version-control orientation: where the working position is, what is
+/// uncommitted, what is shelved, which branches exist and how they sit
+/// against the default, and the last [`OVERVIEW_COMMITS`] commits.
+///
+/// This is the fifth deterministic source (beside the script index, the code
+/// graph, the storage snapshot and the domain taxonomy) and the module doc's
+/// "no shell" still holds literally: these are direct argv spawns of one
+/// pinned binary, never a shell string.
+///
+/// It earns its place because the questions it answers were previously
+/// reachable only through `bash` — and a read-only role does not have
+/// `bash`. A `fix-git` bench trial opened with `project_overview`, learned
+/// nothing about git from it, and spent the next 45 seconds failing to find
+/// a tool that could tell it. `detached` alone would have ended that search.
+///
+/// `{"tracked": false}` when this is not a repository — stated plainly,
+/// because an absent key reads as "the overview forgot" rather than "there
+/// is no version control here".
+fn repository_section(root: &Path) -> Value {
+    if git_lines(root, &["rev-parse", "--is-inside-work-tree"]).is_none() {
+        return json!({ "tracked": false });
+    }
+
+    let branch = git_lines(root, &["symbolic-ref", "-q", "--short", "HEAD"])
+        .and_then(|lines| lines.into_iter().next())
+        .filter(|b| !b.is_empty());
+    let default_branch = git_lines(root, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
+        .and_then(|lines| lines.into_iter().next())
+        .and_then(|full| full.split_once('/').map(|(_, name)| name.to_string()))
+        .filter(|b| !b.is_empty());
+
+    let count = OVERVIEW_COMMITS.to_string();
+    let commits: Vec<Value> = git_lines(
+        root,
+        &["log", "--no-color", "--max-count", &count, "--format=%h %s"],
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .map(Value::from)
+    .collect();
+
+    let shelved: Vec<Value> = git_lines(root, &["stash", "list", "--format=%gd %s"])
+        .unwrap_or_default()
+        .into_iter()
+        .map(Value::from)
+        .collect();
+
+    let names = git_lines(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .unwrap_or_default();
+    let branch_total = names.len();
+    let mut branches = Vec::new();
+    for name in names.into_iter().take(OVERVIEW_BRANCHES) {
+        let mut row = json!({ "name": name, "current": Some(&name) == branch.as_ref() });
+        if let Some(base) = default_branch.as_deref()
+            && base != name
+            && let Some(counts) = git_lines(
+                root,
+                &[
+                    "rev-list",
+                    "--left-right",
+                    "--count",
+                    &format!("{base}...{name}"),
+                ],
+            )
+            .and_then(|lines| lines.into_iter().next())
+        {
+            let mut cols = counts.split_whitespace();
+            let behind = cols.next().and_then(|c| c.parse::<u64>().ok());
+            let ahead = cols.next().and_then(|c| c.parse::<u64>().ok());
+            if let (Some(ahead), Some(behind)) = (ahead, behind) {
+                let map = row.as_object_mut().expect("object literal");
+                map.insert("ahead".into(), json!(ahead));
+                map.insert("behind".into(), json!(behind));
+            }
+        }
+        branches.push(row);
+    }
+
+    let uncommitted = git_lines(root, &["status", "--porcelain"])
+        .map(|lines| lines.iter().filter(|l| !l.trim().is_empty()).count())
+        .unwrap_or(0);
+
+    json!({
+        "tracked": true,
+        // The single most useful fact when work has gone missing, and the
+        // one `repo_status` never stated: a detached position is why a
+        // commit "vanished" after a checkout.
+        "detached": branch.is_none(),
+        "branch": branch,
+        "default_branch": default_branch,
+        "uncommitted_files": uncommitted,
+        "shelved": shelved,
+        "branches": branches,
+        "branches_total": branch_total,
+        "recent_commits": commits,
+        "note": "orientation only — `repo_history` goes deeper (position log, \
+                 full branch list) and `repo_recover` finds commits no branch points at",
+    })
+}
+
 /// Assemble the overview. Total by construction: every source degrades to
 /// its empty shape, because an orientation call that errors sends the agent
 /// straight back to the glob loop this exists to replace.
@@ -231,6 +376,7 @@ pub fn build_overview(root: &Path) -> Value {
         "workspace": root.display().to_string(),
         "scripts": scripts_section(&scripts),
         "domains": domains_section(root),
+        "repository": repository_section(root),
     });
 
     let map = out.as_object_mut().expect("object literal");
@@ -447,6 +593,97 @@ mod tests {
         // zero files honestly rather than pretending there is nothing to index.
         assert_eq!(out["index"]["built"], serde_json::json!(true));
         assert_eq!(out["index"]["files"], serde_json::json!(0));
+    }
+
+    /// A tree under no version control says so, rather than omitting the
+    /// section and leaving the reader to guess whether it was forgotten.
+    #[test]
+    fn a_non_repository_reports_tracked_false() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\n").unwrap();
+        assert_eq!(
+            build_overview(dir.path())["repository"],
+            json!({ "tracked": false })
+        );
+    }
+
+    /// Witness: the first call of a session must be able to say that the
+    /// working position is DETACHED, which is the answer to a large share of
+    /// "my changes are gone after a checkout". Before the `repository`
+    /// section existed there was no non-`bash` route to it at all — and a
+    /// read-only role has no `bash`.
+    #[test]
+    fn the_overview_reports_a_detached_position_and_recent_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let mut c = std::process::Command::new("git");
+            c.args(args).current_dir(dir.path());
+            crate::subprocess_env::scrub_spawn_std_env(&mut c);
+            c.output().expect("git must be installed for this test")
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "T"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["commit", "-q", "-m", "first commit"]);
+
+        let attached = build_overview(dir.path());
+        let repo = &attached["repository"];
+        assert_eq!(repo["tracked"], json!(true), "{repo}");
+        assert_eq!(repo["detached"], json!(false), "{repo}");
+        assert_eq!(repo["branch"], json!("main"), "{repo}");
+        assert!(
+            repo["recent_commits"]
+                .as_array()
+                .is_some_and(|c| c.iter().any(|l| l
+                    .as_str()
+                    .is_some_and(|s| s.contains("first commit")))),
+            "the last commits must be in the overview: {repo}"
+        );
+
+        // Detach exactly the way the bench task's user did.
+        let head = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout)
+            .trim()
+            .to_string();
+        git(&["checkout", "-q", &head]);
+        let detached = build_overview(dir.path());
+        assert_eq!(detached["repository"]["detached"], json!(true));
+        assert_eq!(detached["repository"]["branch"], json!(null));
+    }
+
+    /// Uncommitted and shelved work are both counted — the two states a
+    /// "where did my change go?" question resolves to most often.
+    #[test]
+    fn the_overview_counts_uncommitted_and_shelved_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let mut c = std::process::Command::new("git");
+            c.args(args).current_dir(dir.path());
+            crate::subprocess_env::scrub_spawn_std_env(&mut c);
+            c.output().expect("git must be installed for this test")
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "T"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["commit", "-q", "-m", "first"]);
+
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        assert_eq!(
+            build_overview(dir.path())["repository"]["uncommitted_files"],
+            json!(1)
+        );
+
+        git(&["stash", "-q"]);
+        let repo = &build_overview(dir.path())["repository"];
+        assert_eq!(repo["uncommitted_files"], json!(0), "{repo}");
+        assert_eq!(
+            repo["shelved"].as_array().map(Vec::len),
+            Some(1),
+            "a stashed change must be visible without `bash`: {repo}"
+        );
     }
 
     /// The #643 witness for this tool: the overview's `freshness` line claims

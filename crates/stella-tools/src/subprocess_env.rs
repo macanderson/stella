@@ -328,13 +328,36 @@ pub fn scrub_spawn_env(command: &mut tokio::process::Command) {
 /// allowlist — same contract (and same restraint) as
 /// [`scrub_sensitive_env_except`].
 pub fn scrub_spawn_env_except(command: &mut tokio::process::Command, preserved_names: &[&str]) {
+    scrub_spawn_std_env_except(command.as_std_mut(), preserved_names);
+}
+
+/// Synchronous counterpart of [`scrub_spawn_env`] — the COMPLETE policy, not
+/// just the credential half.
+///
+/// It exists because the sync spawn paths previously had only
+/// [`scrub_sensitive_std_env`] available, which is exactly the partial
+/// application [`scrub_spawn_env`] documents as the mistake `bash`,
+/// `start_process` and the hook runner each made in turn. A sync caller that
+/// missed [`GIT_REPO_ENV_VARS`] would read a *surrounding* repository — an
+/// ambient `GIT_DIR` silently re-aims every `git` child — and report its
+/// branches as the workspace's own.
+pub fn scrub_spawn_std_env(command: &mut std::process::Command) {
+    scrub_spawn_std_env_except(command, &[]);
+}
+
+/// [`scrub_spawn_std_env`] preserving an exact credential allowlist — same
+/// contract and same restraint as [`scrub_sensitive_env_except`].
+pub fn scrub_spawn_std_env_except(
+    command: &mut std::process::Command,
+    preserved_names: &[&str],
+) {
     for var in GIT_REPO_ENV_VARS {
         command.env_remove(var);
     }
     for var in FORCED_COLOR_ENV_VARS {
         command.env_remove(var);
     }
-    scrub_sensitive_env_except(command, preserved_names);
+    scrub_sensitive_std_env_except(command, preserved_names);
 }
 
 /// Synchronous counterpart of [`scrub_sensitive_env_except`].

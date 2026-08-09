@@ -465,6 +465,61 @@ mod tests {
     use super::*;
     use stella_tools::{RegistryOptions, ToolRegistry};
 
+    /// Witness: a git-shaped goal needs git evidence, and `.git` sat on the
+    /// blanket credential denylist. The author's `read_file` on `.git/HEAD`
+    /// and `.git/logs/HEAD` were both refused in a `fix-git` trial, so it
+    /// wrote its assertion from a guess about a repository it could not see.
+    #[test]
+    fn git_metadata_is_readable_while_git_secrets_stay_denied() {
+        for readable in [
+            ".git/HEAD",
+            ".git/ORIG_HEAD",
+            ".git/packed-refs",
+            ".git/refs/heads/main",
+            ".git/logs/HEAD",
+            ".git/worktrees/candidate/HEAD",
+            "nested/.git/refs/heads/main",
+        ] {
+            assert!(
+                !is_credential_path(readable),
+                "{readable} is evidence, not a credential"
+            );
+        }
+
+        for denied in [
+            // A remote URL in `config` can carry a token.
+            ".git/config",
+            // Executable code, and the one `.git` path that can act.
+            ".git/hooks/pre-commit",
+            ".git/credentials",
+            // Not an allowlisted entry: unknown `.git` entries stay denied.
+            ".git/objects/ab/cdef",
+            ".git",
+        ] {
+            assert!(is_credential_path(denied), "{denied} must stay denied");
+        }
+    }
+
+    /// The rest of the denylist is untouched by making `.git` positional.
+    #[test]
+    fn the_non_git_credential_denylist_is_unchanged() {
+        for denied in [
+            ".ssh/id_rsa",
+            ".aws/credentials",
+            ".kube/config",
+            ".env",
+            ".env.production",
+            "certs/server.pem",
+            "certs/server.key",
+            ".stella/private/store.db",
+            "deploy/credentials.json",
+        ] {
+            assert!(is_credential_path(denied), "{denied} must stay denied");
+        }
+        assert!(!is_credential_path("src/main.rs"));
+        assert!(!is_credential_path("tests/env_test.rs"));
+    }
+
     async fn witness_executor(root: &Path) -> WitnessToolExecutor {
         witness_executor_for(root, root).await
     }
