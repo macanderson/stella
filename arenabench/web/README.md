@@ -15,6 +15,17 @@ on Auth.js — is #2100, and replaces the interim wall rather than stacking
 on it. The Claude Code credential lifecycle (connect/verify/renew from the
 UI) is #2101.
 
+**Install scripts**: npm records the dependency install scripts a project has
+reviewed in an `allowScripts` block in `package.json` — advisory on npm 11, and
+blocking on npm 12. Approvals are pinned to an exact version, so one survives
+a dependency bump only by accident. This app deliberately declares no block:
+nothing in `package-lock.json` sets `hasInstallScript`, because the only
+dependency that ever needed approval was `sharp` — reached optionally through
+`next` — and the 0.35.3 it resolves to today ships prebuilt `@img/sharp-*`
+binaries rather than the `install` hook 0.34.5 ran. Re-add a block with
+`npm approve-scripts`, never by hand, and only when an install reports a
+dependency that actually declares a script.
+
 Environment (all optional — defaults target the deployed stack):
 
 | Variable | Default |
