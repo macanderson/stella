@@ -797,3 +797,150 @@ fn run_session(
         pending.clear();
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use async_trait::async_trait;
+    use stella_core::driver::TurnHalt;
+    use stella_protocol::{
+        BudgetMode, CompletionRequestRef, CompletionUsage, Provider, ProviderError, ToolCall,
+    };
+
+    use super::*;
+
+    /// Answers a tool call first, then plain text — so the first step is a
+    /// committed `Continue` boundary and the second would finish the turn.
+    struct ToolThenText {
+        calls: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl Provider for ToolThenText {
+        fn id(&self) -> &str {
+            "scripted"
+        }
+        async fn complete_ref(
+            &self,
+            _req: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let mut result = CompletionResult {
+                text: String::new(),
+                tool_calls: vec![],
+                usage: CompletionUsage {
+                    reported: true,
+                    input_tokens: 1,
+                    ..CompletionUsage::default()
+                },
+                model: "scripted".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            };
+            if call == 0 {
+                result.tool_calls = vec![ToolCall {
+                    call_id: "call_0".into(),
+                    name: "touch".into(),
+                    input: serde_json::json!({}),
+                }];
+            } else {
+                result.text = "ran a second step the halt should have prevented".into();
+            }
+            Ok(result)
+        }
+    }
+
+    struct OkTool;
+
+    #[async_trait]
+    impl stella_core::ports::ToolExecutor for OkTool {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            vec![ToolSchema {
+                name: "touch".into(),
+                description: "touch a file".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                speculation_safe: false,
+            }]
+        }
+        async fn execute(&self, _name: &str, _input: &serde_json::Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: "ok".into(),
+            }
+        }
+    }
+
+    /// Armed from the start, so the first committed boundary ends the turn.
+    #[derive(Debug)]
+    struct AlwaysHalt;
+    impl TurnHalt for AlwaysHalt {
+        fn halt_reason(&self) -> Option<String> {
+            Some("the tracked test flipped".into())
+        }
+    }
+
+    async fn drive_scripted_turn(config: EngineConfig, calls: Arc<AtomicU32>) -> TurnOutcome {
+        let provider = ToolThenText { calls };
+        let tools = OkTool;
+        let sleeper = TokioSleeper;
+        let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        drive_turn(
+            &engine,
+            vec![
+                CompletionMessage::system("sys"),
+                CompletionMessage::user("go"),
+            ],
+            BudgetGuard::new(BudgetMode::Off, None, None),
+            &tx,
+            CancelToken::new(),
+        )
+        .await
+        .outcome
+    }
+
+    /// **The obligation the served loop never had.** `EngineConfig::turn_halt`
+    /// is a public field of the public [`SessionSpec::config`], so an embedder
+    /// can arm it — and before #2452 this driver's own copy of the step loop
+    /// never consulted it, silently, while the CLI's fresh and restored turns
+    /// both stopped at the boundary. Fails on the old shape: the turn ran on to
+    /// a second provider call and finished with the model's text.
+    #[tokio::test]
+    async fn a_served_turn_honors_the_turn_halt() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let config = EngineConfig {
+            turn_halt: Some(Arc::new(AlwaysHalt)),
+            ..EngineConfig::default()
+        };
+
+        let outcome = drive_scripted_turn(config, calls.clone()).await;
+
+        let TurnOutcome::Completed { .. } = outcome else {
+            panic!("a fired halt ends the turn as a success, not a failure: {outcome:?}");
+        };
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the halt fires at the first committed boundary — a second call \
+             means the served driver never consulted it"
+        );
+    }
+
+    /// The control: no halt, and the same served turn runs to its ordinary end.
+    /// Without it the assertion above would also pass on a driver that stopped
+    /// after one step for some entirely different reason.
+    #[tokio::test]
+    async fn an_unhalted_served_turn_runs_to_its_ordinary_end() {
+        let calls = Arc::new(AtomicU32::new(0));
+
+        let outcome = drive_scripted_turn(EngineConfig::default(), calls.clone()).await;
+
+        let TurnOutcome::Completed { text, .. } = outcome else {
+            panic!("an unhalted served turn completes: {outcome:?}");
+        };
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(text, "ran a second step the halt should have prevented");
+    }
+}
