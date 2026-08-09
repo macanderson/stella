@@ -47,7 +47,7 @@ pub(crate) fn run_tools_adopt(name: &str) -> Result<(), String> {
     let adopted = adopt_in(&root, &store, name)?;
     let (manifest, script) = adopted_paths(&root, name);
 
-    crate::tui::section_header("Tool adopted — still disabled");
+    crate::plain::section_header("Tool adopted — still disabled");
     println!(
         "  {} {}\n  {} {}",
         "·".green(),
@@ -72,7 +72,7 @@ pub(crate) fn run_tools_enable(name: &str, enabled: bool) -> Result<(), String> 
     set_enabled_in(&root, &store, name, enabled)?;
 
     if enabled {
-        crate::tui::section_header("Tool enabled");
+        crate::plain::section_header("Tool enabled");
         println!(
             "  {} {} {}",
             "·".green(),
@@ -80,7 +80,7 @@ pub(crate) fn run_tools_enable(name: &str, enabled: bool) -> Result<(), String> 
             "is now offered to the model".dimmed()
         );
     } else {
-        crate::tui::section_header("Tool disabled");
+        crate::plain::section_header("Tool disabled");
         println!(
             "  {} {} {}",
             "·".yellow(),

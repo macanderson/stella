@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use colored::Colorize;
 use stella_store::integrity;
 
-use crate::tui;
+use crate::plain;
 
 /// Problem rows printed under a failing check before the rest are summarized.
 /// SQLite can emit a hundred findings for one damaged page; the first handful
@@ -413,7 +413,7 @@ pub(crate) fn verdict(checks: &[Check]) -> Result<(), String> {
 }
 
 fn render(checks: &[Check]) {
-    tui::section_header("Doctor — local state checks");
+    plain::section_header("Doctor — local state checks");
     for check in checks {
         let mark = match check.status {
             CheckStatus::Pass => "✓".green(),

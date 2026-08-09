@@ -185,7 +185,7 @@ fn run_tools_author_in(
     let proposals = detect_tool_gaps(&invocations, config);
 
     let Some(name) = name else {
-        crate::tui::section_header("Tool-foundry proposals");
+        crate::plain::section_header("Tool-foundry proposals");
         if proposals.is_empty() {
             println!(
                 "  {}",
@@ -263,7 +263,7 @@ fn run_tools_author_in(
     std::fs::write(&manifest_path, &authored.manifest_toml)
         .map_err(|e| format!("cannot write {}: {e}", manifest_path.display()))?;
 
-    crate::tui::section_header("Tool staged — not installed");
+    crate::plain::section_header("Tool staged — not installed");
     println!(
         "  {} {}\n  {} {}",
         "·".green(),

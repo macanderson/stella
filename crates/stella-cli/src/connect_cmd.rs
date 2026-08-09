@@ -130,7 +130,7 @@ fn finish(
 }
 
 fn run_github(paste_token: bool) -> Result<(), String> {
-    crate::tui::section_header("Connect GitHub");
+    crate::plain::section_header("Connect GitHub");
     let rt = runtime()?;
     let connection = if paste_token {
         let token = prompt_secret("  GitHub personal access token (repo scope): ")?;
@@ -154,7 +154,7 @@ fn run_github(paste_token: bool) -> Result<(), String> {
 }
 
 fn run_linear(force_api_key: bool) -> Result<(), String> {
-    crate::tui::section_header("Connect Linear");
+    crate::plain::section_header("Connect Linear");
     let rt = runtime()?;
     let oauth = if force_api_key {
         None
@@ -200,7 +200,7 @@ fn run_linear(force_api_key: bool) -> Result<(), String> {
 }
 
 fn run_status() -> Result<(), String> {
-    crate::tui::section_header("Tracker connections");
+    crate::plain::section_header("Tracker connections");
     let connections = store()?.connections()?;
     if connections.is_empty() {
         println!(

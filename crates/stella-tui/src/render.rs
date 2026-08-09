@@ -531,13 +531,35 @@ pub(crate) fn render_slash_popup(
 /// Most styled diff lines a collapsed tool result shows inline before folding
 /// the rest behind ctrl+o — a mutation stays glanceable in the transcript
 /// without a large diff flooding it uninvited.
-pub(crate) const INLINE_DIFF_CAP: usize = 20;
+///
+/// Public because the plain surface renders the same capped diff (#2421) and
+/// a second number would be a second policy: "how much diff is glanceable" is
+/// one judgement about reading, not about ratatui.
+pub const INLINE_DIFF_CAP: usize = 20;
+
+/// Re-exported for the same reason as [`INLINE_DIFF_CAP`]: the plain surface
+/// previews a chain of thought to the same depth the deck does, and the depth
+/// is a reading judgement both surfaces should lose or keep together.
+pub use entry::THINKING_ROWS;
 
 /// Resolve a tool result's [`InlineDiffRef`] to the diff text it may render,
-/// or `None` when the reference went stale: the diff shown must be the one
-/// this call produced, so it only resolves while the path's `changes` counter
-/// still matches the seq recorded at fold time (a later mutation of the same
-/// path bumps it) and the path still carries a diff.
+/// or `None` when the reference can no longer be honoured.
+///
+/// The diff shown must be the one *this* call produced, so the lookup is by the
+/// `changes` seq recorded at fold time — never "the path's latest diff", which
+/// would misattribute an later edit's change to an earlier row.
+///
+/// It resolves for as long as that mutation is still remembered:
+/// [`FileState`] keeps the last
+/// [`DIFF_HISTORY`](crate::model::file_state::DIFF_HISTORY) diffs per path, so
+/// the common "edit the same file a few times in one turn" shape keeps every
+/// row's diff, and only the ones aged out past that depth — or evicted with
+/// their path at [`MAX_TRACKED_FILES`](crate::model::file_state::MAX_TRACKED_FILES)
+/// — degrade to naming their change.
+///
+/// This used to say the reference went stale the moment a later mutation
+/// bumped the counter, which described the behaviour before that history
+/// existed and read as though almost every diff were hidden.
 fn resolve_inline_diff<'a>(dref: &InlineDiffRef, files: &'a [FileState]) -> Option<&'a str> {
     files
         .iter()

@@ -41,8 +41,8 @@ use crate::memory::{
     ReflectionReport, SessionMemory, inject_recall_block, reflect_routed, reflection_tail,
     should_reflect_on, turn_warrants_reflection,
 };
+use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
-use crate::tui;
 use crate::{OutputFormat, config::Config, resume_frame};
 use stella_context::EpisodeOutcome;
 
@@ -278,7 +278,7 @@ async fn run_pipeline_one_shot(
     let calibration = seed_calibration(&store, cfg);
 
     if format == OutputFormat::Text {
-        tui::section_header("Stella (pipeline)");
+        plain::section_header("Stella (pipeline)");
         println!("  {}\n", prompt.dimmed());
     }
 
@@ -634,14 +634,14 @@ async fn run_pipeline_one_shot(
             }
 
             if format == OutputFormat::Text {
-                tui::files_touched_panel(&files);
-                tui::cost_summary(
+                plain::files_touched_panel(&files);
+                plain::cost_summary(
                     outcome.total_cost_usd + reflection_report.cost_usd,
                     &wiring.worker_model.to_string(),
                     turn_start.elapsed(),
                 );
                 if cfg.enable_recap {
-                    tui::recap_panel(&outcome.status, outcome.verdict.as_ref(), &files);
+                    plain::recap_panel(&outcome.status, outcome.verdict.as_ref(), &files);
                 }
                 println!();
             }
@@ -753,7 +753,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // telemetry, then sharpened by every turn in this REPL.
     let calibration = seed_calibration(&store, cfg);
 
-    tui::welcome_banner(
+    plain::welcome_banner(
         cfg.provider.id,
         &cfg.model_id,
         &cfg.workspace_root.display().to_string(),
@@ -865,7 +865,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             continue;
         }
         if input == "/files" {
-            tui::files_touched_panel(&registry.files_touched());
+            plain::files_touched_panel(&registry.files_touched());
             println!();
             continue;
         }
@@ -937,7 +937,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             continue;
         }
         if let Some(title) = input.strip_prefix("/rename ") {
-            tui::rename_tab(title.trim());
+            plain::rename_tab(title.trim());
             println!(
                 "  {}\n",
                 format!("tab renamed to `{}`", title.trim()).dimmed()
@@ -946,14 +946,14 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         }
         if let Some(color) = input.strip_prefix("/color ") {
             let name = color.trim();
-            if tui::set_accent(name) {
+            if plain::set_accent(name) {
                 // Acknowledge in the newly-set accent itself — the welcome
                 // banner uses a fixed palette and can't reflect the accent,
                 // so re-printing it would silently ignore the change.
                 println!(
                     "  {} {}\n",
-                    "◆".color(tui::accent()),
-                    format!("accent set to {name}").color(tui::accent()).bold()
+                    "◆".color(accent()),
+                    format!("accent set to {name}").color(accent()).bold()
                 );
             }
             continue;
@@ -1442,7 +1442,7 @@ pub async fn run_init(
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
 
-    tui::section_header("Stella init");
+    plain::section_header("Stella init");
 
     let (provider, model_hint) =
         match Config::load(model_override, api_key_override, base_url_override) {
@@ -1689,7 +1689,7 @@ fn policy_reason(policy: &stella_tools::policy::ToolPolicy, name: &str) -> Strin
 pub fn run_tools_listing() -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    tui::section_header("Stella tools");
+    plain::section_header("Stella tools");
 
     // The listing mirrors a real session: the registry builds the full
     // surface, and the operator's `"tools"` switches decide what survives.
@@ -1826,7 +1826,7 @@ pub fn run_tools_listing() -> Result<(), String> {
 pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    tui::section_header("Custom tool manifests — validation");
+    plain::section_header("Custom tool manifests — validation");
 
     let report = match dir {
         Some(dir) => {
@@ -2198,8 +2198,8 @@ async fn run_turn(
     match outcome {
         TurnOutcome::Completed { cost_usd, .. } => {
             if format == OutputFormat::Text {
-                tui::files_touched_panel(&files);
-                tui::cost_summary(
+                plain::files_touched_panel(&files);
+                plain::cost_summary(
                     cost_usd,
                     &format!("{}/{}", cfg.provider.id, cfg.model_id),
                     turn_start.elapsed(),
