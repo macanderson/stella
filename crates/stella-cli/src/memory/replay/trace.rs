@@ -89,9 +89,14 @@ pub(crate) struct TraceTurn {
     /// nothing in the harness ever reads the wall clock (#2320).
     pub at: i64,
     pub prompt: String,
-    /// The transcript stub the reflection prompt digests. Only the tail matters
-    /// — `reflect_on_turn` reverses and takes twelve — so a stub need not be a
-    /// whole transcript.
+    /// The transcript stub the reflection prompt digests.
+    ///
+    /// A stub need not be a whole transcript: the digest selects under a
+    /// character budget (`memory::reflection::digest`), so a short stub renders
+    /// whole. What a stub CAN now change is which messages survive — the digest
+    /// promotes an errored `tool_results` entry and the call that provoked it —
+    /// so a fixture that wants the failure in the prompt must carry a real
+    /// `ToolOutput::Error`, not prose describing one (#2460).
     #[serde(default)]
     pub transcript: Vec<TraceMessage>,
     /// What the model would have said, replayed through the scripted provider.

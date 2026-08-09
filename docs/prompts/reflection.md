@@ -68,6 +68,45 @@ Transcript:
 {digest}
 ```
 
+## What `{digest}` contains
+
+A **selection** of the turn under a character budget, built by
+`crates/stella-cli/src/memory/reflection/digest.rs` — never a window over the
+tail. Budget is spent in three tiers:
+
+| Tier | What | Per-message cap |
+|---|---|---|
+| Pinned | the goal (first user message) and the last 4 messages | 700 chars |
+| Friction | every message carrying an errored `ToolResult`, the assistant message that requested it, and anything the event stream flagged as costly or failed | 700 chars |
+| Filler | everything else, in transcript order, while budget lasts | 200 chars |
+
+Total budget is 6,000 characters (~1.5k tokens). Anything not admitted is
+replaced in place by `… N messages elided …`, and a digest that elided anything
+says so in a header, so the model can report that the evidence it needed was
+outside the selection rather than reason across a gap it cannot see. `System`
+messages are excluded entirely: the prompt prefix is byte-stable by design
+(AGENTS.md invariant 7) and identical on every turn.
+
+When the calling surface folded a friction ledger from the turn's `AgentEvent`
+stream, the digest opens with a short section naming where the turn spent
+itself — costliest steps by wire call-role, slowest tools, every failed tool
+call, retries, loop-detector firings. None of that is recoverable from a
+transcript at any window size. That ledger is wired on the staged-pipeline
+one-shot today; #2483 tracks the other three surfaces.
+
+**Why this replaced a tail window (#2460).** The digest was the last 12 messages
+with each `content` truncated to 300 characters. Two things were wrong. The
+window was in the wrong place — a turn's expensive part is in the middle, and
+the tail of a successful turn is the summary and the sign-off. And a `Tool`
+message carries no `content` at all: the engine builds it as
+`content: String::new()` with the payload in `tool_results`, so **every tool
+result on every surface rendered as the six characters `tool: `**. Reflection
+had never seen what a tool returned. Measured on an 82-message tool-heavy turn:
+the old digest was 195 characters (~48 tokens); the selection is ~6.2k
+characters (~1.55k tokens), taking the whole billed prompt from ~730 to ~2,255
+tokens. `memory::reflection::tests::the_billed_prompt_size_is_reported_and_bounded`
+prints both numbers under `--nocapture`.
+
 ## Why the self-review is asked for last
 
 `self_review` rides along in this same call rather than costing a second one —

@@ -38,8 +38,8 @@ use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::failure::CliFailure;
 use crate::interactive::{InteractiveToolSet, SkillRegistry, default_ask_io};
 use crate::memory::{
-    ReflectionReport, SessionMemory, inject_recall_block, reflect_routed, reflection_tail,
-    should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, SessionMemory, TurnEvidence, TurnFriction, inject_recall_block,
+    reflect_routed, should_reflect_on, turn_warrants_reflection,
 };
 use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -56,6 +56,7 @@ mod output;
 mod persistence;
 mod presence;
 mod prompt;
+mod reflect;
 pub(crate) mod resume;
 mod skill_usage;
 mod tools;
@@ -79,6 +80,8 @@ pub(crate) use persistence::{
 };
 pub(crate) use presence::SessionPresence;
 pub(crate) use prompt::*;
+pub(crate) use reflect::{FrictionTap, surface_reflection};
+use reflect::{reflect_on_interactive_turn, reflection_json};
 pub(crate) use skill_usage::stamp_and_record_skill_usage;
 // `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
 // session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".
@@ -359,6 +362,11 @@ async fn run_pipeline_one_shot(
     }
     let mut budget = crate::runtime::one_shot_budget_guard(budget_limit, cfg.turn_budget);
     budget.begin_turn();
+    // Reflection's only view of this turn's cost, wall clock, retries and loop
+    // firings: the worker's tool-calling turns are deliberately kept out of
+    // `messages` here (planner context hygiene, L-E6), so the event stream is
+    // not merely a better source than the transcript — it is the only one.
+    let friction = FrictionTap::default();
 
     let result = {
         let customs = CustomToolSet::new(base_tools, custom_tools, cfg.workspace_root.clone());
@@ -456,7 +464,7 @@ async fn run_pipeline_one_shot(
             steering: None,
         };
 
-        let events = pipeline_event_sender(&tx, format);
+        let events = friction.tap(pipeline_event_sender(&tx, format));
         let pipeline = resume_frame::pipeline(&cfg.durability, ports, events, pipeline_config)
             .with_calibration(&calibration);
         pipeline.run(prompt, &mut messages, &mut budget).await
@@ -515,7 +523,9 @@ async fn run_pipeline_one_shot(
                 name: stella_protocol::StageKind::Reflect,
             });
         }
-        let mut reflect_transcript = reflection_tail(&messages);
+        // The whole planner history, not its tail: the digest selects (#2460),
+        // and pre-truncating here would drop the middle it selects for.
+        let mut reflect_transcript = messages.clone();
         if let Ok(outcome) = &result
             && !outcome.final_text.trim().is_empty()
         {
@@ -531,16 +541,20 @@ async fn run_pipeline_one_shot(
                 "(files changed this turn: {changed})"
             )));
         }
+        let observed = friction.snapshot();
         let mut report = reflect_routed(
             m,
             cfg,
             &*provider,
-            &reflect_transcript,
+            TurnEvidence {
+                transcript: &reflect_transcript,
+                friction: &observed,
+                succeeded: matches!(
+                    &result,
+                    Ok(outcome) if matches!(outcome.status, PipelineStatus::Completed)
+                ),
+            },
             format != OutputFormat::Text,
-            matches!(
-                &result,
-                Ok(outcome) if matches!(outcome.status, PipelineStatus::Completed)
-            ),
             remaining_budget(&budget),
         )
         .await;
@@ -1161,99 +1175,6 @@ pub(crate) async fn record_turn_episode<E>(
         .await;
 }
 
-/// Post-turn reflection for one interactive REPL turn, shared by the plain
-/// prompt handler and `/goal` — the two carried byte-identical copies of
-/// this block, which is exactly the drift this helper removes.
-///
-/// Failures reflect too (the one-shot pipeline path has always treated a
-/// failed run as a high-value learning signal); only a user-chosen soft stop
-/// is excluded (`should_reflect_on`, issue #373 item 7). The gate reads only
-/// this turn's message slice (`turn_start..`) so a conversational turn never
-/// spends a model call.
-async fn reflect_on_interactive_turn<E: std::fmt::Display>(
-    provider: &dyn Provider,
-    cfg: &Config,
-    memory: &mut Option<SessionMemory>,
-    messages: &[CompletionMessage],
-    turn_start: usize,
-    result: &Result<(), E>,
-    budget: &mut BudgetGuard,
-) {
-    if should_reflect_on(result)
-        && turn_warrants_reflection(&messages[turn_start..])
-        && let Some(m) = memory
-    {
-        let mut report = reflect_routed(
-            m,
-            cfg,
-            provider,
-            messages,
-            false,
-            result.is_ok(),
-            remaining_budget(budget),
-        )
-        .await;
-        settle_reflection_budget(&mut report, budget);
-        surface_reflection(&report, OutputFormat::Text);
-    }
-}
-
-/// Surface a post-turn [`ReflectionReport`] for human text output. Machine
-/// streams route reflection events through their execution renderer so
-/// `Complete` remains the unique final frame; this helper never writes a
-/// second, unframed stdout sequence after that terminal barrier.
-pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat) {
-    if format == OutputFormat::Text {
-        for event in &report.events {
-            match event {
-                AgentEvent::StepUsage {
-                    role,
-                    provider,
-                    model,
-                    input_tokens,
-                    output_tokens,
-                    cost_usd,
-                    retries,
-                    complete,
-                    ..
-                } => eprintln!(
-                    "  {} {:?} {provider}/{model}: {input_tokens} in, {output_tokens} out, \
-                     ${cost_usd:.4}, {retries} retries, complete={complete}",
-                    "✦".magenta(),
-                    role
-                ),
-                AgentEvent::UsageIncomplete {
-                    role,
-                    provider,
-                    model,
-                    reason,
-                    retries,
-                    ..
-                } => eprintln!(
-                    "  {} {:?} {provider}/{model}: usage incomplete ({reason:?}, retries={retries:?})",
-                    "!".yellow(),
-                    role
-                ),
-                _ => {}
-            }
-        }
-    }
-    if let Some(err) = &report.model_error {
-        eprintln!(
-            "  {} post-turn reflection skipped — model call failed: {err}",
-            "!".yellow()
-        );
-    }
-}
-
-fn reflection_json(report: &ReflectionReport) -> serde_json::Value {
-    serde_json::json!({
-        "recorded": report.recorded,
-        "error": report.model_error,
-        "cost_usd": report.cost_usd,
-        "events": report.events,
-    })
-}
 /// The shared init flow behind `stella init` and the `/init` chat command:
 /// infer the domain taxonomy (model-assisted when a provider is available,
 /// directory heuristic otherwise), build the code-graph index, persist

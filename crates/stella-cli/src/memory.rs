@@ -224,9 +224,10 @@ fn deterministic_task_id(clock: &dyn Clock) -> String {
 }
 
 mod reflection;
-pub(crate) use reflection::{ReflectionPosture, reflect_routed, reflection_tail};
+pub(crate) use reflection::{ReflectionPosture, reflect_routed};
 pub use reflection::{
-    ReflectionReport, reflect_on_turn, should_reflect_on, turn_warrants_reflection,
+    ReflectionReport, TurnEvidence, TurnFriction, reflect_on_turn, should_reflect_on,
+    turn_warrants_reflection,
 };
 
 /// Session-scoped memory state: the context store, the CGP host that
