@@ -141,17 +141,31 @@ pub enum DrainFormat {
     Otel,
 }
 
+/// The `format` discriminator named an encoding this build cannot produce.
+///
+/// A struct rather than a one-variant enum: the drain either knows the format
+/// or does not, and there is no second way for this resolution to fail. It is
+/// a named type all the same, because "fails closed" is a security posture —
+/// a caller must be able to tell *this* from a transport error without
+/// matching on prose (invariant #5).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown drain format `{format}` — supported: \"stella\", \"otel\"")]
+pub struct UnknownDrainFormat {
+    /// The discriminator as the operator spelled it.
+    pub format: String,
+}
+
 impl CloudDrainConfig {
     /// Resolve the `format` discriminator, failing closed on anything this
     /// build cannot encode — a typo must stop the drain with a clear error,
     /// never fall back to a format the operator did not choose.
-    pub fn wire_format(&self) -> std::result::Result<DrainFormat, String> {
+    pub fn wire_format(&self) -> std::result::Result<DrainFormat, UnknownDrainFormat> {
         match self.format.as_str() {
             "stella" => Ok(DrainFormat::Stella),
             "otel" => Ok(DrainFormat::Otel),
-            other => Err(format!(
-                "unknown drain format `{other}` — supported: \"stella\", \"otel\""
-            )),
+            other => Err(UnknownDrainFormat {
+                format: other.to_string(),
+            }),
         }
     }
 }

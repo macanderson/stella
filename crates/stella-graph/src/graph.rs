@@ -407,7 +407,7 @@ impl CodeGraph {
         let (manifest, manifest_error) =
             match crate::manifest::StorageManifest::load(&self.inner.root) {
                 Ok(manifest) => (manifest, None),
-                Err(error) => (None, Some(error)),
+                Err(error) => (None, Some(error.to_string())),
             };
         let mut snapshot = crate::manifest::merge_snapshot(rows, manifest.as_ref());
         snapshot.manifest_error = manifest_error;

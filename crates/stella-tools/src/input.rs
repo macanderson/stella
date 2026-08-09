@@ -68,16 +68,68 @@ fn present<'a>(input: &'a Value, field: &str) -> Option<&'a Value> {
     }
 }
 
-fn missing(field: &str) -> String {
-    format!("missing required field `{field}`")
+/// Why a tool's JSON input could not be read.
+///
+/// The variants are the same two failures the module doc separates, promoted
+/// from prose into the type: a field that is **absent**, and a field that is
+/// **present with the wrong type**. Collapsing them was the original defect;
+/// leaving the distinction in the message string only half-fixed it, because a
+/// caller wanting to tell them apart still had to match on wording that these
+/// doc comments promise never to change. Now it matches on a variant, and the
+/// wording is free to improve (invariant #5).
+///
+/// `Display` reproduces the previous strings byte for byte — the migration to
+/// this type is invisible to the model reading the tool's error.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InputError {
+    /// A required field was absent — or `null`, which `present` treats as
+    /// absence.
+    #[error("missing required field `{field}`")]
+    Missing {
+        /// The field the caller omitted.
+        field: String,
+    },
+
+    /// The field was there, carrying a JSON type it cannot be read as.
+    #[error("field `{field}` must be {want}, got {got}")]
+    WrongType {
+        /// The field that was mistyped.
+        field: String,
+        /// What the reader wanted, phrased for the message ("a string").
+        want: &'static str,
+        /// The JSON type that actually arrived.
+        got: &'static str,
+    },
+
+    /// One element of an array field was not a string. Carries the index,
+    /// because "one of these is wrong" is not something a caller can act on.
+    #[error("field `{field}`[{index}] must be a string, got {got}")]
+    WrongElementType {
+        /// The array field being read.
+        field: String,
+        /// The offending element's position.
+        index: usize,
+        /// The JSON type that actually arrived.
+        got: &'static str,
+    },
 }
 
-fn wrong_type(field: &str, want: &str, got: &Value) -> String {
-    format!("field `{field}` must be {want}, got {}", type_name(got))
+fn missing(field: &str) -> InputError {
+    InputError::Missing {
+        field: field.to_string(),
+    }
+}
+
+fn wrong_type(field: &str, want: &'static str, got: &Value) -> InputError {
+    InputError::WrongType {
+        field: field.to_string(),
+        want,
+        got: type_name(got),
+    }
 }
 
 /// A required string field.
-pub fn required_str<'a>(input: &'a Value, field: &str) -> Result<&'a str, String> {
+pub fn required_str<'a>(input: &'a Value, field: &str) -> Result<&'a str, InputError> {
     let value = present(input, field).ok_or_else(|| missing(field))?;
     value
         .as_str()
@@ -86,7 +138,7 @@ pub fn required_str<'a>(input: &'a Value, field: &str) -> Result<&'a str, String
 
 /// An optional string field. `Ok(None)` means absent; a wrong type is an
 /// error rather than a silent fallback to the caller's default.
-pub fn optional_str<'a>(input: &'a Value, field: &str) -> Result<Option<&'a str>, String> {
+pub fn optional_str<'a>(input: &'a Value, field: &str) -> Result<Option<&'a str>, InputError> {
     match present(input, field) {
         None => Ok(None),
         Some(value) => value
@@ -97,7 +149,7 @@ pub fn optional_str<'a>(input: &'a Value, field: &str) -> Result<Option<&'a str>
 }
 
 /// A required non-negative integer field.
-pub fn required_u64(input: &Value, field: &str) -> Result<u64, String> {
+pub fn required_u64(input: &Value, field: &str) -> Result<u64, InputError> {
     let value = present(input, field).ok_or_else(|| missing(field))?;
     value
         .as_u64()
@@ -105,7 +157,7 @@ pub fn required_u64(input: &Value, field: &str) -> Result<u64, String> {
 }
 
 /// An optional non-negative integer field.
-pub fn optional_u64(input: &Value, field: &str) -> Result<Option<u64>, String> {
+pub fn optional_u64(input: &Value, field: &str) -> Result<Option<u64>, InputError> {
     match present(input, field) {
         None => Ok(None),
         Some(value) => value
@@ -116,7 +168,7 @@ pub fn optional_u64(input: &Value, field: &str) -> Result<Option<u64>, String> {
 }
 
 /// An optional boolean field.
-pub fn optional_bool(input: &Value, field: &str) -> Result<Option<bool>, String> {
+pub fn optional_bool(input: &Value, field: &str) -> Result<Option<bool>, InputError> {
     match present(input, field) {
         None => Ok(None),
         Some(value) => value
@@ -132,7 +184,7 @@ pub fn optional_bool(input: &Value, field: &str) -> Result<Option<bool>, String>
 pub fn optional_str_array<'a>(
     input: &'a Value,
     field: &str,
-) -> Result<Option<Vec<&'a str>>, String> {
+) -> Result<Option<Vec<&'a str>>, InputError> {
     let Some(value) = present(input, field) else {
         return Ok(None);
     };
@@ -141,11 +193,10 @@ pub fn optional_str_array<'a>(
         .ok_or_else(|| wrong_type(field, "an array of strings", value))?;
     let mut out = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
-        let text = item.as_str().ok_or_else(|| {
-            format!(
-                "field `{field}`[{i}] must be a string, got {}",
-                type_name(item)
-            )
+        let text = item.as_str().ok_or_else(|| InputError::WrongElementType {
+            field: field.to_string(),
+            index: i,
+            got: type_name(item),
         })?;
         out.push(text);
     }
@@ -160,7 +211,7 @@ mod tests {
     #[test]
     fn a_wrong_type_is_not_reported_as_missing() {
         let input = serde_json::json!({"pattern": 42});
-        let err = required_str(&input, "pattern").unwrap_err();
+        let err = required_str(&input, "pattern").unwrap_err().to_string();
         assert!(
             err.contains("must be a string") && err.contains("got number"),
             "must name expected AND actual type: {err}"
@@ -171,13 +222,36 @@ mod tests {
         );
     }
 
+    /// The invariant-#5 half of the same idea: a caller separates the two
+    /// failures by **matching a variant**, not by searching the message. This
+    /// is the witness for the typed-error migration — on the previous
+    /// `Result<_, String>` signature there is no variant to match and the test
+    /// does not compile, which is the strongest form of "fails on old code".
+    #[test]
+    fn the_two_failures_are_told_apart_without_reading_the_message() {
+        let absent = required_str(&serde_json::json!({}), "pattern").unwrap_err();
+        assert!(matches!(absent, InputError::Missing { ref field } if field == "pattern"));
+
+        let mistyped = required_str(&serde_json::json!({"pattern": 42}), "pattern").unwrap_err();
+        assert!(matches!(
+            mistyped,
+            InputError::WrongType {
+                ref field,
+                want: "a string",
+                got: "number",
+            } if field == "pattern"
+        ));
+    }
+
     /// The absent wording is byte-identical to what every tool said before, so
-    /// the migration changes only the case that was reporting wrongly.
+    /// the migration changes only the case that was reporting wrongly. Typing
+    /// the error did not get to change it either: `Display` is a contract here,
+    /// because the model on the other side has been reading this exact string.
     #[test]
     fn an_absent_field_keeps_the_original_wording() {
         let input = serde_json::json!({});
         assert_eq!(
-            required_str(&input, "pattern").unwrap_err(),
+            required_str(&input, "pattern").unwrap_err().to_string(),
             "missing required field `pattern`"
         );
     }
@@ -198,7 +272,7 @@ mod tests {
         let input = serde_json::json!({"path": null});
         assert_eq!(optional_str(&input, "path").unwrap(), None);
         assert_eq!(
-            required_str(&input, "path").unwrap_err(),
+            required_str(&input, "path").unwrap_err().to_string(),
             "missing required field `path`"
         );
     }
@@ -215,7 +289,11 @@ mod tests {
     fn a_bad_array_element_is_named_by_index() {
         let input = serde_json::json!({"paths": ["a", 2, "c"]});
         let err = optional_str_array(&input, "paths").unwrap_err();
-        assert!(err.contains("`paths`[1]"), "got {err}");
+        assert!(
+            matches!(err, InputError::WrongElementType { index: 1, .. }),
+            "the index belongs in the type, not just the prose: {err:?}"
+        );
+        assert!(err.to_string().contains("`paths`[1]"), "got {err}");
 
         let good = serde_json::json!({"paths": ["a"]});
         assert_eq!(optional_str_array(&good, "paths").unwrap(), Some(vec!["a"]));

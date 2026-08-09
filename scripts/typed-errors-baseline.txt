@@ -1,0 +1,13 @@
+# Down-only ratchet for AGENTS.md invariant #5: a library crate's public API
+# returns typed, named errors, never a bare `String`.
+#
+# Each line is `<crate> <count>` -- the number of `pub fn`s in that crate still
+# returning `Result<_, String>`. A crate may shrink its count; it may never
+# grow it, and a crate absent from this file must be at zero. Regenerate with
+# `make typed-errors-update`, which refuses to raise a number.
+#
+# This file is meant to reach empty. The remaining conversions are tracked in
+# #2392 -- do not add a crate here to turn the gate green.
+stella-model 10
+stella-tools 32
+stella-tui 1
