@@ -977,25 +977,32 @@ pub enum WorkspaceInput {
     Quit,
 }
 
-/// Which pipeline agent a per-agent engine override applies to — the four
+/// Which pipeline agent a per-agent engine override applies to — the
 /// configurable "agents" of `agent_engine_config`. `Default` is the
-/// interactive/step-loop agent; the other three are the staged pipeline's
-/// roles.
+/// interactive/step-loop agent; the rest are the staged pipeline's roles.
+///
+/// A mirror of `stella-cli`'s `EngineAgentKind`, in the same order, so
+/// `EngineConfigState::agents[i]` is that enum's `ALL[i]` — the driver maps
+/// one onto the other rather than this crate depending on the settings engine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EngineRole {
     Default,
     Worker,
     Verifier,
     Triage,
+    Research,
+    Plan,
 }
 
 impl EngineRole {
     /// Stable settings-key / display order.
-    pub const ALL: [EngineRole; 4] = [
+    pub const ALL: [EngineRole; 6] = [
         EngineRole::Default,
         EngineRole::Worker,
         EngineRole::Verifier,
         EngineRole::Triage,
+        EngineRole::Research,
+        EngineRole::Plan,
     ];
 
     /// The `agent_engine_config.agents.<key>` settings key (and display
@@ -1006,6 +1013,8 @@ impl EngineRole {
             EngineRole::Worker => "worker",
             EngineRole::Verifier => "verifier",
             EngineRole::Triage => "triage",
+            EngineRole::Research => "research",
+            EngineRole::Plan => "plan",
         }
     }
 }

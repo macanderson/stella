@@ -19,7 +19,7 @@
 //! precedence) rather than re-deriving the rules, because a config report that
 //! can disagree with the engine is worse than none.
 
-use crate::engine_config::{ModelSpec, model_spec_for, tuning_for};
+use crate::engine_config::{ModelSpec, model_spec_for, own_model_spec_for, tuning_for};
 use crate::settings::{AgentEngineConfig, EngineAgentKind};
 use stella_protocol::ReasoningEffort;
 
@@ -56,6 +56,16 @@ pub enum ModelSource {
     /// Nothing named it: the role rides the session's resolved model, which
     /// is the provider row's own default when settings are silent too.
     SessionDefault,
+    /// Nothing named it, and the role's documented default is the WORKER's
+    /// model rather than `default_model` — research and plan only (#2374).
+    ///
+    /// A distinct variant rather than reusing [`Self::SessionDefault`] because
+    /// the two answer differently the moment `pipeline_worker_model` and
+    /// `default_model` disagree, and this row is the one place a user checks
+    /// which. Reporting `default_model` there would name a model the run is
+    /// not going to buy, which is the failure the whole worker-inheritance
+    /// rule exists to prevent.
+    RidesWorker,
 }
 
 impl ModelSource {
@@ -68,7 +78,13 @@ impl ModelSource {
             Self::Flat(kind) => format!("pipeline_{}_model", role_key(kind)),
             Self::DefaultModel => "default_model".to_string(),
             Self::SessionDefault => "session default".to_string(),
+            Self::RidesWorker => "rides the worker".to_string(),
         }
+    }
+
+    /// Whether this role inherits the worker rather than naming its own model.
+    fn inherits_worker(kind: EngineAgentKind) -> bool {
+        matches!(kind, EngineAgentKind::Research | EngineAgentKind::Plan)
     }
 }
 
@@ -79,6 +95,8 @@ pub fn role_key(kind: EngineAgentKind) -> &'static str {
         EngineAgentKind::Worker => "worker",
         EngineAgentKind::Verifier => "verifier",
         EngineAgentKind::Triage => "triage",
+        EngineAgentKind::Research => "research",
+        EngineAgentKind::Plan => "plan",
     }
 }
 
@@ -100,6 +118,8 @@ fn model_source(engine: &AgentEngineConfig, kind: EngineAgentKind) -> ModelSourc
         EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
         EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
         EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
+        EngineAgentKind::Research => engine.pipeline_research_model.as_deref(),
+        EngineAgentKind::Plan => engine.pipeline_plan_model.as_deref(),
     };
     if flat.is_some() {
         ModelSource::Flat(kind)
@@ -110,7 +130,7 @@ fn model_source(engine: &AgentEngineConfig, kind: EngineAgentKind) -> ModelSourc
     }
 }
 
-/// Resolve all four roles.
+/// Resolve every role in [`EngineAgentKind::ALL`].
 ///
 /// `session` is the model the session actually resolved to (`Config`'s own
 /// provider + model), which is what a role falls back to when no setting names
@@ -127,6 +147,17 @@ pub fn resolve(
     model_pinned_by_flag: bool,
     is_provider: &dyn Fn(&str) -> bool,
 ) -> Vec<RoleWiring> {
+    // The worker's own row, resolved first because research and plan inherit
+    // it. `resolve_engine_wiring` does the same in the same order and for the
+    // same reason; this module exists to give the same answer it does, so the
+    // dependency has to be reproduced rather than approximated.
+    let worker = engine.map(|engine| {
+        let spec = (!model_pinned_by_flag)
+            .then(|| model_spec_for(engine, EngineAgentKind::Worker, is_provider))
+            .flatten();
+        (spec, tuning_for(engine, EngineAgentKind::Worker))
+    });
+
     EngineAgentKind::ALL
         .iter()
         .map(|&role| {
@@ -145,17 +176,39 @@ pub fn resolve(
             // from; the verifier and triage keep their own pins.
             let flag_owns = model_pinned_by_flag
                 && matches!(role, EngineAgentKind::Worker | EngineAgentKind::Default);
+            // Research and plan take `own_model_spec_for`, exactly as the
+            // request path does: their fallback is the WORKER's row, not
+            // `default_model`, and `model_spec_for`'s fallthrough would report
+            // a model the run is not going to buy.
+            let inherits = ModelSource::inherits_worker(role);
             let spec = if flag_owns {
                 None
+            } else if inherits {
+                own_model_spec_for(engine, role, is_provider)
             } else {
                 model_spec_for(engine, role, is_provider)
             };
             let (model, source) = match spec {
                 Some(spec) => (spec, model_source(engine, role)),
                 None if flag_owns => (session.clone(), ModelSource::Flag),
+                // Whatever the worker resolved to, named as inherited so the
+                // row does not read like a pin of its own.
+                None if inherits => match worker.as_ref().and_then(|(spec, _)| spec.clone()) {
+                    Some(spec) => (spec, ModelSource::RidesWorker),
+                    None if model_pinned_by_flag => (session.clone(), ModelSource::Flag),
+                    None => (session.clone(), ModelSource::SessionDefault),
+                },
                 None => (session.clone(), ModelSource::SessionDefault),
             };
-            let tuning = tuning_for(engine, role);
+            let mut tuning = tuning_for(engine, role);
+            // The shaping inherits field by field too, and for the same
+            // reason: `resolve_engine_wiring` layers these rows over the
+            // worker's, so a report that showed "provider default" here would
+            // contradict the request the engine actually sends.
+            if inherits && let Some((_, worker_tuning)) = worker.as_ref() {
+                tuning.effort = tuning.effort.or(worker_tuning.effort);
+                tuning.reasoning = tuning.reasoning.or(worker_tuning.reasoning);
+            }
             // What the user pinned, to compare against what auto resolved.
             let pinned = engine.agent(role);
             let effort_auto_replaced = pinned
@@ -380,11 +433,64 @@ mod tests {
     fn absent_settings_report_the_session_model_for_every_role() {
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let wiring = resolve(None, &session, false, &known);
-        assert_eq!(wiring.len(), 4);
+        assert_eq!(wiring.len(), EngineAgentKind::ALL.len());
         for row in &wiring {
             assert_eq!(row.model, session);
             assert_eq!(row.source, ModelSource::SessionDefault);
         }
+    }
+
+    /// **The report must not name a model the run will not buy.**
+    ///
+    /// `model_for` falls research and plan through to `default_model`, but the
+    /// request path resolves them with `own_model_spec_for` and inherits the
+    /// WORKER. The two answers are identical until `pipeline_worker_model`
+    /// disagrees with `default_model` — and then a report built on the wrong
+    /// one prints a model nothing runs, on the single surface a user checks to
+    /// find that out. This module's whole premise is that it cannot disagree
+    /// with the engine (see the module docs), so the disagreement is the bug.
+    #[test]
+    fn research_and_plan_report_the_worker_they_inherit_not_default_model() {
+        let engine = AgentEngineConfig {
+            default_model: Some("openrouter/moonshotai/kimi-k3".into()),
+            pipeline_worker_model: Some("anthropic/claude-fable-5".into()),
+            agents: Some(AgentEngineAgents {
+                worker: Some(AgentEngineAgent {
+                    effort: Some(ReasoningEffort::Xhigh),
+                    ..AgentEngineAgent::default()
+                }),
+                ..AgentEngineAgents::default()
+            }),
+            ..AgentEngineConfig::default()
+        };
+        let session = spec("openrouter", "moonshotai/kimi-k3");
+        let wiring = resolve(Some(&engine), &session, false, &known);
+
+        for role in [EngineAgentKind::Research, EngineAgentKind::Plan] {
+            let row = find(&wiring, role);
+            assert_eq!(
+                row.model.model, "claude-fable-5",
+                "{role:?} runs the worker's model, so that is what the report must print"
+            );
+            assert_eq!(row.source, ModelSource::RidesWorker);
+            assert_eq!(row.source.label(), "rides the worker");
+            assert_eq!(
+                row.effort,
+                Some(ReasoningEffort::Xhigh),
+                "{role:?} inherits the worker's shaping too — \"provider default\" would be a \
+                 second way of saying something untrue"
+            );
+        }
+
+        // And a role that names its own model still names it.
+        let pinned = AgentEngineConfig {
+            pipeline_research_model: Some("openrouter/z-ai/glm-5.2".into()),
+            ..engine
+        };
+        let pinned_wiring = resolve(Some(&pinned), &session, false, &known);
+        let row = find(&pinned_wiring, EngineAgentKind::Research);
+        assert_eq!(row.model.model, "z-ai/glm-5.2");
+        assert_eq!(row.source.label(), "pipeline_research_model");
     }
 
     /// The posture this feature was written to make checkable: worker rides
@@ -535,10 +641,15 @@ mod tests {
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
         let lines = render(&resolve(Some(&engine), &session, false, &known));
-        assert_eq!(lines.len(), 4);
+        assert_eq!(lines.len(), EngineAgentKind::ALL.len());
         for line in &lines {
             assert!(
-                line.contains("default_model") || line.contains("pipeline_verifier_model"),
+                line.contains("default_model")
+                    || line.contains("pipeline_verifier_model")
+                    // Research and plan name their inheritance rather than the
+                    // key at the end of it — which is the more useful answer:
+                    // it is the worker's row a user has to edit to move them.
+                    || line.contains("rides the worker"),
                 "every row names its source: {line}"
             );
         }

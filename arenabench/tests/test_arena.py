@@ -298,12 +298,16 @@ class TestPosture:
         so an extra field here would refuse the run rather than be ignored."""
         allowed = {
             "default_model", "pipeline_verifier_model", "pipeline_worker_model",
-            "pipeline_triage_model", "allowed_models", "auto_mode", "effort_auto",
+            "pipeline_triage_model", "pipeline_research_model", "pipeline_plan_model",
+            "allowed_models", "auto_mode", "effort_auto",
             "reasoning_auto", "headless_scope_bypass", "agents",
         }
         engine = Engine(
             model="m",
-            roles={r: RoleConfig(model="x") for r in ("worker", "verifier", "triage")},
+            roles={
+                r: RoleConfig(model="x")
+                for r in ("worker", "verifier", "triage", "research", "plan")
+            },
         )
         posture, _, _ = arena_posture("openrouter/m", engine)
         assert set(posture) <= allowed

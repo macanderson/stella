@@ -39,6 +39,10 @@ use crate::render::scroll_window_start;
 use crate::theme;
 use crate::views::settings::SettingsPane;
 
+mod tabs;
+pub use tabs::EngineTab;
+use tabs::{GLOBAL_ROWS, GlobalRow};
+
 /// The legal `effort` values, in cycle order (⏎ walks them, then wraps to
 /// "provider default"). This is the FULL vocabulary — the fallback when
 /// the selected model's own levels are unknown; [`effort_values_for`]
@@ -103,78 +107,6 @@ const SERVICE_TIER_VALUES: [&str; 4] = ["auto", "default", "flex", "priority"];
 /// Hint shown when an action needs the config snapshot the driver has not
 /// delivered yet (a race right after startup, or a driver error).
 const NO_SNAPSHOT_HINT: &str = "waiting for the engine config snapshot — r to reload";
-
-/// Which tab of the overlay has the keyboard: the GLOBAL toggles or one of
-/// the four per-agent override pages. GLOBAL comes first — the cross-agent
-/// switches are what the panel usually opens on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum EngineTab {
-    #[default]
-    Global,
-    Agent(EngineRole),
-}
-
-impl EngineTab {
-    /// Display/cycle order: GLOBAL, then the agents in
-    /// [`EngineRole::ALL`] order.
-    pub const ALL: [EngineTab; 5] = [
-        EngineTab::Global,
-        EngineTab::Agent(EngineRole::Default),
-        EngineTab::Agent(EngineRole::Worker),
-        EngineTab::Agent(EngineRole::Verifier),
-        EngineTab::Agent(EngineRole::Triage),
-    ];
-
-    fn index(self) -> usize {
-        EngineTab::ALL.iter().position(|t| *t == self).unwrap_or(0)
-    }
-
-    /// The next tab, wrapping past the last back to GLOBAL.
-    pub fn next(self) -> Self {
-        EngineTab::ALL[(self.index() + 1) % EngineTab::ALL.len()]
-    }
-
-    /// The previous tab, wrapping before GLOBAL to the last agent.
-    pub fn prev(self) -> Self {
-        let n = EngineTab::ALL.len();
-        EngineTab::ALL[(self.index() + n - 1) % n]
-    }
-
-    /// The header label — the settings key for agents, `GLOBAL` otherwise.
-    pub fn label(self) -> &'static str {
-        match self {
-            EngineTab::Global => "GLOBAL",
-            EngineTab::Agent(role) => role.key(),
-        }
-    }
-}
-
-/// The GLOBAL tab's rows, in display order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GlobalRow {
-    AutoMode,
-    EffortAuto,
-    ReasoningAuto,
-    AllowedModels,
-}
-
-const GLOBAL_ROWS: [GlobalRow; 4] = [
-    GlobalRow::AutoMode,
-    GlobalRow::EffortAuto,
-    GlobalRow::ReasoningAuto,
-    GlobalRow::AllowedModels,
-];
-
-impl GlobalRow {
-    fn label(self) -> &'static str {
-        match self {
-            GlobalRow::AutoMode => "auto_mode",
-            GlobalRow::EffortAuto => "effort_auto",
-            GlobalRow::ReasoningAuto => "reasoning_auto",
-            GlobalRow::AllowedModels => "allowed_models",
-        }
-    }
-}
 
 /// One editable field of [`EngineAgentState`], in the struct's declaration
 /// order — the agent tabs render exactly one row per variant, so the screen
@@ -1385,13 +1317,15 @@ mod tests {
         }
         assert_eq!(ui.engine.row, 0);
 
-        // Tab walks GLOBAL → the four agents → wraps back to GLOBAL.
+        // Tab walks GLOBAL → every agent → wraps back to GLOBAL. Counted off
+        // `EngineTab::ALL`, which is itself derived from `EngineRole::ALL`, so
+        // adding a configurable role does not silently un-test its page.
         let mut seen = vec![ui.engine.tab];
-        for _ in 0..5 {
+        for _ in 0..EngineTab::ALL.len() {
             handle_deck_key(key(KeyCode::Tab), &model, &mut ui);
             seen.push(ui.engine.tab);
         }
-        assert_eq!(seen.first(), seen.last(), "five presses wrap around");
+        assert_eq!(seen.first(), seen.last(), "one press per tab wraps around");
         assert_eq!(ui.engine.tab, EngineTab::Global);
 
         // A deep agent-row selection clamps when returning to GLOBAL.

@@ -151,27 +151,34 @@ impl Profile {
     }
 
     /// The reasoning effort this profile asks for, before the provider clamp.
+    ///
+    /// Research shares triage's rung, and for the same reason `auto_effort`
+    /// puts it there: a read-only sub-agent that greps a tree and reports what
+    /// it found is doing retrieval, not deliberation. Left on the worker's
+    /// rung it is a fan-out of expensive short calls — measured at 76 seconds
+    /// over fifteen `xhigh` calls for a few hundred reasoning tokens (#2374).
     fn effort(self, kind: EngineAgentKind) -> ReasoningEffort {
+        use EngineAgentKind::{Research, Triage, Verifier};
         match (self, kind) {
             (Profile::Fast, _) => ReasoningEffort::Low,
-            (Profile::Balanced, EngineAgentKind::Triage) => ReasoningEffort::Low,
-            (Profile::Balanced, EngineAgentKind::Verifier) => ReasoningEffort::High,
+            (Profile::Balanced, Triage | Research) => ReasoningEffort::Low,
+            (Profile::Balanced, Verifier) => ReasoningEffort::High,
             (Profile::Balanced, _) => ReasoningEffort::Medium,
-            (Profile::Pro, EngineAgentKind::Triage) => ReasoningEffort::Low,
-            (Profile::Pro, EngineAgentKind::Verifier) => ReasoningEffort::Xhigh,
+            (Profile::Pro, Triage | Research) => ReasoningEffort::Low,
+            (Profile::Pro, Verifier) => ReasoningEffort::Xhigh,
             (Profile::Pro, _) => ReasoningEffort::High,
-            (Profile::Ultra, EngineAgentKind::Triage) => ReasoningEffort::Medium,
+            (Profile::Ultra, Triage | Research) => ReasoningEffort::Medium,
             (Profile::Ultra, _) => ReasoningEffort::Max,
         }
     }
 
-    /// Whether thinking mode is on for a role. `fast` never thinks; triage
-    /// only thinks under `ultra`.
+    /// Whether thinking mode is on for a role. `fast` never thinks; triage and
+    /// research only think under `ultra`.
     fn reasoning(self, kind: EngineAgentKind) -> bool {
         match (self, kind) {
             (Profile::Fast, _) => false,
             (Profile::Ultra, _) => true,
-            (_, EngineAgentKind::Triage) => false,
+            (_, EngineAgentKind::Triage | EngineAgentKind::Research) => false,
             _ => true,
         }
     }
@@ -467,7 +474,24 @@ pub fn plan(profile: Profile, candidates: &[Candidate]) -> Plan {
             let can_think = chosen.is_none_or(|c| c.supports_reasoning != Some(false));
             RolePick {
                 kind,
-                model: chosen.cloned(),
+                // Posture only for research and plan — the same rule
+                // `provider_engine_baseline` follows for the default agent.
+                // These two ride the worker's model by contract, and a flat pin
+                // would break that in the one case it matters: `--model`
+                // re-points the worker for a single run and deliberately leaves
+                // settings alone, so a pinned research model would go on
+                // serving the model the flag overrode.
+                //
+                // `chosen` is still resolved above and still used, because the
+                // effort clamp and the thinking switch have to be judged
+                // against the model that will actually run — and at these two
+                // roles' percentile that IS the worker's pick. Dropping the
+                // candidate earlier instead nulled both, which made the
+                // profile's research posture a knob that wrote nothing.
+                model: match kind {
+                    EngineAgentKind::Research | EngineAgentKind::Plan => None,
+                    _ => chosen.cloned(),
+                },
                 effort,
                 reasoning: can_think.then(|| profile.reasoning(kind)),
                 effort_downgraded_from: match effort {
@@ -514,6 +538,13 @@ pub fn apply(plan: &Plan, engine: &mut AgentEngineConfig) {
                 EngineAgentKind::Worker => engine.pipeline_worker_model = qualified,
                 EngineAgentKind::Verifier => engine.pipeline_verifier_model = qualified,
                 EngineAgentKind::Triage => engine.pipeline_triage_model = qualified,
+                // Unreachable while `plan` leaves both models `None` (see
+                // there), and stated rather than `unreachable!`d: a panic on a
+                // value the type permits is invariant 5's exact prohibition.
+                // Should a future profile pick a model for one of these, this
+                // is the key it belongs on.
+                EngineAgentKind::Research => engine.pipeline_research_model = qualified,
+                EngineAgentKind::Plan => engine.pipeline_plan_model = qualified,
             }
         }
         let agent = agents
