@@ -106,12 +106,15 @@ pub(super) async fn record_and_reflect_turn(
         return;
     }
     let Some(memory) = memory else { return };
+    // Transcript-only evidence: the deck's driver events ride a bare
+    // `UnboundedSender` with no `EventSender` seam to wrap (#2470). Every tool
+    // call and its typed result are in `messages`, which is what the digest
+    // selects on.
     let mut report = crate::memory::reflect_routed(
         memory,
         cfg,
         provider,
-        messages,
-        true,
+        crate::memory::TurnEvidence::from_transcript(messages, true),
         true,
         crate::agent::remaining_budget(budget),
     )
