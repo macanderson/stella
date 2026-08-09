@@ -567,6 +567,57 @@ pub struct AgentEngineConfig {
     pub approval_wait_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
+    /// Who performs each pipeline responsibility, and whether it runs at all
+    /// (`stella_pipeline::Roster`, #2381).
+    ///
+    /// Keys are `stella_protocol::ModelCallRole` wire tokens — `triage`,
+    /// `research`, `plan`, `witness_author`, `worker`, `distress_guidance`,
+    /// `verdict` — because that enum is already the vocabulary every paid call
+    /// in the pipeline names itself by, so a row here and a row in the
+    /// paid-call ledger spell the same job the same way.
+    ///
+    /// ```jsonc
+    /// "responsibilities": {
+    ///   "triage": { "enabled": false },              // ablate the stage
+    ///   "witness_author": { "agent": "triage" },     // reassign it
+    ///   "verdict": { "agent": "worker" }             // self-grade, and be told so
+    /// }
+    /// ```
+    ///
+    /// Absent — the overwhelmingly common case — is
+    /// `stella_pipeline::Roster::default`, which is the pipeline exactly as it
+    /// shipped. This is the ablation control the #2374 measurement plan needs
+    /// and the reassignment surface that replaced a hard-coded `Role` at each
+    /// call site; it deliberately cannot reorder stages, because that ordering
+    /// is what makes the witness a proof (`stella_pipeline::roster`'s module
+    /// docs carry the argument).
+    ///
+    /// A `BTreeMap` here where [`AgentEngineAgents`] is a fixed struct, and for
+    /// the opposite reason: an unknown *agent* key is harmlessly ignorable, but
+    /// an unknown *responsibility* key means an ablation the operator asked for
+    /// is not happening — so this map is parsed loosely and then validated
+    /// strictly, and a bad key refuses the run rather than being dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responsibilities: Option<std::collections::BTreeMap<String, ResponsibilitySpec>>,
+}
+
+/// One responsibility's overrides. Both fields optional: an absent one keeps
+/// the built-in binding rather than pinning it to today's value.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ResponsibilitySpec {
+    /// Whether the responsibility runs. `false` is the ablation switch: the
+    /// stage emits no event frame and buys no call.
+    ///
+    /// A plain `bool` rather than the [`Toggle`] the mode keys use, because
+    /// this is a predicate and not a mode — and because a bare `bool` makes
+    /// `enabled = "no"` a parse error rather than a silently ignored key,
+    /// which is the refusal an ablation control needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Which agent performs it: `worker`, `triage`, `plan`, or `verifier` —
+    /// the same names [`AgentEngineAgents`] uses, so one spelling serves both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// The `agents` map — fixed keys rather than a `BTreeMap` so per-role
@@ -727,6 +778,7 @@ impl AgentEngineConfig {
             };
         }
         take!(default_model);
+        take!(responsibilities);
         take!(pipeline_verifier_model);
         take!(pipeline_worker_model);
         take!(pipeline_triage_model);

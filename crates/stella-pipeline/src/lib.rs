@@ -108,6 +108,7 @@ pub mod ports;
 pub mod replay;
 pub mod research;
 pub mod reward;
+pub mod roster;
 pub mod scope;
 pub mod triage;
 pub mod verify;
@@ -131,6 +132,9 @@ pub use ports::{
 pub use reward::{
     DiscardReason, OutcomeWeights, RewardLabel, RewardPolicy, RewardShaping, Settlement,
     TrajectoryCost, WeightError, label,
+};
+pub use roster::{
+    AgentId, Assignment, AssignmentOverride, IndependenceLoss, Roster, RosterError, default_agent,
 };
 pub use triage::TaskClass;
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};
