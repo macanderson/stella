@@ -7,27 +7,27 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-1834 bench/harbor_adapter/stella_harbor/__init__.py
-4299 bench/harbor_adapter/stella_harbor/secure_launcher.py
-2335 bench/harbor_adapter/tests/test_adapter.py
-3360 bench/harbor_adapter/tests/test_secure_launcher.py
-8272 bench/terminal_bench_analysis/tb21_analysis.py
+1839 bench/harbor_adapter/stella_harbor/__init__.py
+4364 bench/harbor_adapter/stella_harbor/secure_launcher.py
+2351 bench/harbor_adapter/tests/test_adapter.py
+3368 bench/harbor_adapter/tests/test_secure_launcher.py
+8298 bench/terminal_bench_analysis/tb21_analysis.py
 1911 bench/terminal_bench_analysis/tb21_evidence_contract.py
-4334 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
+4339 bench/terminal_bench_analysis/tests/test_tb21_analysis.py
 1659 bench/terminal_bench_analysis/tests/test_tb21_evidence_contract.py
-2270 crates/stella-cli/src/agent.rs
-1752 crates/stella-cli/src/agent/tests.rs
-4567 crates/stella-cli/src/command_deck.rs
+2183 crates/stella-cli/src/agent.rs
+1726 crates/stella-cli/src/agent/tests.rs
+4565 crates/stella-cli/src/command_deck.rs
 1507 crates/stella-cli/src/fleet_cmd.rs
 1891 crates/stella-core/src/bus.rs
-2572 crates/stella-core/src/driver.rs
-3681 crates/stella-core/src/driver/tests.rs
+2489 crates/stella-core/src/driver.rs
+3384 crates/stella-core/src/driver/tests.rs
 1781 crates/stella-model/src/anthropic/tests.rs
 2093 crates/stella-model/src/openai.rs
 1565 crates/stella-model/src/zai.rs
 1895 crates/stella-model/src/zai/tests.rs
-3181 crates/stella-pipeline/src/pipeline.rs
-2537 crates/stella-pipeline/src/pipeline/tests.rs
+3126 crates/stella-pipeline/src/pipeline.rs
+2475 crates/stella-pipeline/src/pipeline/tests.rs
 1996 crates/stella-store/src/lib.rs
 2266 crates/stella-store/src/tests.rs
 1916 crates/stella-store/src/usage.rs
