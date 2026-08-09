@@ -5490,7 +5490,13 @@ def _validate_calibration(
         "stella_agent_version": agent_version,
         "adapter_version": adapter_version,
         "adapter_sha256": adapter_sha256,
-        "budget_usd": _nonnegative_float(budget_usd),
+        # Matched against a trial row, which spells "no cap" as the word
+        # `unbounded` (#2411). `_nonnegative_float` would map both that word and
+        # the manifest's `null` to `None`, so the expectation is translated
+        # instead — otherwise the two sides agree only by both being unreadable.
+        "budget_usd": (
+            _NO_BUDGET_CAP_DISCLOSURE if budget_usd is None else budget_usd
+        ),
         "disable_reflection": disable_reflection,
         "base_url": base_url,
         "provider_route_policy": provider_route_policy,
