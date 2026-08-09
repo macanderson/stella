@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "one engineer, one repository, six simulated months - a tool-registration convention re-encountered across five distinct tasks in four naturally-varied wordings plus one near-restatement, a recurring `rg -n <pattern> <path>` shape, one unreadable reflection, and several unrelated one-off facts so the corpus stays multi-topic",
+  "description": "one engineer, one repository, six simulated months - a tool-registration convention re-encountered across five distinct tasks in four naturally-varied wordings plus one near-restatement, a `git log --oneline -N` incantation retyped across sessions (the reusable shape the foundry mints from), a never-repeating `rg -n <pattern> <path>` shape that deliberately does not clear the reuse floor, one unreadable reflection, and several unrelated one-off facts so the corpus stays multi-topic",
   "workspace": {
     "domains": [
       "tools",
@@ -40,7 +40,7 @@
             "kind": "lessons",
             "lessons": [
               {
-                "lesson": "Tool registration happens in crates/stella-tools/src/registry.rs — add the entry there.",
+                "lesson": "Tool registration happens in crates/stella-tools/src/registry.rs \u2014 add the entry there.",
                 "domains": [
                   "tools"
                 ],
@@ -52,6 +52,10 @@
           "shell": [
             {
               "command": "rg -n \"impl Tool\" crates/stella-tools/src/registry.rs",
+              "succeeded": true
+            },
+            {
+              "command": "git log --oneline -5",
               "succeeded": true
             }
           ],
@@ -86,6 +90,10 @@
           "shell": [
             {
               "command": "rg -n \"complete_ref\" crates/stella-model/src/anthropic.rs",
+              "succeeded": true
+            },
+            {
+              "command": "git log --oneline -20",
               "succeeded": true
             }
           ],
@@ -127,6 +135,10 @@
             {
               "command": "rg -n \"budget\" crates/stella-core/src/driver.rs",
               "succeeded": true
+            },
+            {
+              "command": "git log --oneline -5",
+              "succeeded": true
             }
           ],
           "succeeded": true
@@ -160,6 +172,10 @@
           "shell": [
             {
               "command": "rg -n \"BudgetGuard\" crates/stella-cli/src/agent.rs",
+              "succeeded": true
+            },
+            {
+              "command": "git log --oneline -5",
               "succeeded": true
             }
           ],
@@ -201,6 +217,10 @@
             {
               "command": "rg -n \"TestBackend\" crates/stella-tui/src/deck_render.rs",
               "succeeded": true
+            },
+            {
+              "command": "git log --oneline -20",
+              "succeeded": true
             }
           ],
           "succeeded": true
@@ -218,7 +238,12 @@
             "kind": "unreadable",
             "text": "Let me think about what I learned. Actually, nothing much!"
           },
-          "shell": [],
+          "shell": [
+            {
+              "command": "git log --oneline -5",
+              "succeeded": true
+            }
+          ],
           "succeeded": true
         },
         {
@@ -290,6 +315,10 @@
           "shell": [
             {
               "command": "rg -n \"unwrap\" crates/stella-core/src/driver.rs",
+              "succeeded": true
+            },
+            {
+              "command": "git log --oneline -5",
               "succeeded": true
             }
           ],

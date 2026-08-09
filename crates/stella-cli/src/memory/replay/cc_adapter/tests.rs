@@ -4,9 +4,11 @@
 //! never against the developer's real `~/.claude/projects`. That is not
 //! squeamishness: a test that read the real corpus would pass or fail based on
 //! what its author happened to have typed that month, and would put real user
-//! content in front of CI. The one test that touches the real corpus is
-//! [`the_real_corpus_adapts_when_opted_in`], which no-ops unless
-//! `STELLA_REPLAY_CC_CORPUS` is set.
+//! content in front of CI. The two tests that touch the real corpus are
+//! [`the_real_corpus_adapts_when_opted_in`] and
+//! [`the_real_corpus_measures_the_foundry_inbox_when_opted_in`], both of which
+//! no-op unless `STELLA_REPLAY_CC_CORPUS` is set and both of which print counts
+//! only.
 
 use super::*;
 use crate::memory::replay::Replayer;
@@ -307,21 +309,20 @@ async fn a_directory_of_transcripts_becomes_a_replayable_trace() {
 #[tokio::test]
 async fn a_recurring_shape_across_adapted_sessions_mints_a_tool() {
     let dir = tempfile::tempdir().expect("tempdir");
-    for (index, (day, path)) in [
-        ("10", "crates/stella-core/src/driver.rs"),
-        ("11", "crates/stella-cli/src/agent.rs"),
-        ("12", "crates/stella-model/src/openai.rs"),
-    ]
-    .iter()
-    .enumerate()
-    {
+    // The same two greps in every session: two argument sets, each retyped
+    // three times, which is what the detector's reuse floor asks for (#2378).
+    // Three *different* greps would be `rg`, not a tool.
+    for (index, day) in ["10", "11", "12"].iter().enumerate() {
         std::fs::write(
             dir.path().join(format!("s{index}.jsonl")),
             transcript(&[
                 user_line(&format!("2026-07-{day}T09:00:00Z"), "an ask"),
                 assistant_bash(
                     &format!("2026-07-{day}T09:00:05Z"),
-                    &[&format!("rg -n \"unwrap\" {path}")],
+                    &[
+                        "rg -n \"unwrap\" crates/stella-core/src/driver.rs",
+                        "rg -n \"expect\" crates/stella-cli/src/agent.rs",
+                    ],
                 ),
             ]),
         )
@@ -335,8 +336,8 @@ async fn a_recurring_shape_across_adapted_sessions_mints_a_tool() {
         .expect("replays");
     assert!(
         !summary.tools.is_empty(),
-        "one shape with three argument sets, mined from adapted transcripts: \
-         {summary:?}"
+        "one shape reused across two argument sets, mined from adapted \
+         transcripts: {summary:?}"
     );
 }
 
@@ -384,4 +385,71 @@ async fn the_real_corpus_adapts_when_opted_in() {
     }
     println!("adapted {adapted} project(s): {turns} turn(s), {commands} command(s)");
     assert!(adapted > 0, "the opt-in was set but nothing adapted");
+}
+
+/// The #2378 measurement, made reproducible: how many tools the foundry would
+/// propose from the whole real corpus, with and without the reuse floor.
+///
+/// It exists because that number was first obtained from a scratch test that
+/// was thrown away, leaving nobody able to re-check it. **No-ops unless
+/// `STELLA_REPLAY_CC_CORPUS` is set.** Counts and ratios only — no signature,
+/// no command text, nothing derived from a private corpus is printed or
+/// written (§7.1), which is also why this asserts nothing about the *size* of
+/// the inbox: that number is a property of one developer's history, and
+/// hard-coding a bound for it would be asserting a hope.
+#[tokio::test]
+async fn the_real_corpus_measures_the_foundry_inbox_when_opted_in() {
+    use stella_core::tool_foundry::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
+
+    let Some(root) = opted_in_corpus_root() else {
+        return;
+    };
+    let mut history: Vec<ShellInvocation> = Vec::new();
+    for (name, path) in project_directories(&root) {
+        let Ok(trace) = trace_from_directory(&path, &name) else {
+            continue;
+        };
+        for (_, turn) in trace.turns() {
+            history.extend(turn.shell.iter().map(|sh| ShellInvocation {
+                command: sh.command.clone(),
+                succeeded: sh.succeeded,
+            }));
+        }
+    }
+    assert!(
+        !history.is_empty(),
+        "the opt-in was set but no commands read"
+    );
+
+    // The floor disabled is the pre-#2378 behaviour, exactly.
+    let without_floor = GapDetectionConfig {
+        min_reuse_ratio: 1.0,
+        ..GapDetectionConfig::default()
+    };
+    let before = detect_tool_gaps(&history, without_floor);
+    let after = detect_tool_gaps(&history, GapDetectionConfig::default());
+    println!(
+        "foundry over {} invocation(s): {} proposal(s) without the reuse floor, \
+         {} with it (default {:.1}x)",
+        history.len(),
+        before.len(),
+        after.len(),
+        GapDetectionConfig::default().min_reuse_ratio,
+    );
+    for (label, low, high) in [
+        ("1.0x–1.5x", 1.0, 1.5),
+        ("1.5x–3.0x", 1.5, 3.0),
+        ("3.0x–10x", 3.0, 10.0),
+        ("10x+", 10.0, f64::INFINITY),
+    ] {
+        let n = before
+            .iter()
+            .filter(|p| p.reuse_ratio() >= low && p.reuse_ratio() < high)
+            .count();
+        println!("  {label:>10}: {n} proposal(s)");
+    }
+    assert!(
+        after.len() <= before.len(),
+        "the reuse floor is a filter; it can never admit more"
+    );
 }
