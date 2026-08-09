@@ -125,3 +125,136 @@ pub(super) fn assemble_user_message(
     }
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(label: &str, content: &str) -> RecalledFrame {
+        RecalledFrame {
+            citation_label: label.into(),
+            provider: "code-graph".into(),
+            source: "code-graph".into(),
+            kind: "symbol".into(),
+            uri: None,
+            method: None,
+            content: content.into(),
+            token_cost: 5,
+            id: None,
+            content_digest: None,
+        }
+    }
+
+    fn finding(question: &str, answer: &str) -> ResearchFinding {
+        ResearchFinding {
+            question: question.into(),
+            answer: answer.into(),
+        }
+    }
+
+    #[test]
+    fn assemble_user_message_puts_recall_before_the_task() {
+        let frames = vec![RecalledFrame {
+            citation_label: "driver.rs".into(),
+            provider: "code-graph".into(),
+            source: "code-graph".into(),
+            kind: "symbol".into(),
+            uri: None,
+            method: None,
+            content: "run_turn".into(),
+            token_cost: 5,
+            id: None,
+            content_digest: None,
+        }];
+        let msg = assemble_user_message("do the thing", &frames, &[], VerificationContract::None);
+        let recall_idx = msg.find("Recalled context").unwrap();
+        let task_idx = msg.find("do the thing").unwrap();
+        assert!(recall_idx < task_idx, "recall rides before the goal");
+    }
+
+    #[test]
+    fn assemble_user_message_is_just_the_goal_when_no_recall() {
+        assert_eq!(
+            assemble_user_message("hello", &[], &[], VerificationContract::None),
+            "hello"
+        );
+    }
+
+    /// The configured test command is the run's actual oracle, so the worker is
+    /// told it up front instead of discovering it from the first failure's
+    /// disclosure. Only the operator-configured command ever rides here — an
+    /// authored witness's command is airlocked, and does not exist at assembly
+    /// time anyway.
+    #[test]
+    fn assemble_user_message_states_the_configured_verification_contract() {
+        let msg = assemble_user_message(
+            "fix the parser",
+            &[],
+            &[],
+            VerificationContract::Oracle("cargo test -p parser"),
+        );
+        let task_idx = msg.find("fix the parser").unwrap();
+        let contract_idx = msg.find("`cargo test -p parser`").unwrap();
+        assert!(
+            task_idx < contract_idx,
+            "the task leads; the contract qualifies it"
+        );
+        assert!(msg.contains("failing before your change and passing after it"));
+        assert!(msg.contains("Do not modify the tests it runs"));
+    }
+
+    /// With no oracle and no independent author, the worker is told up front that
+    /// its own failing test — written before the fix — is the run's only
+    /// deterministic evidence. This is the same-model degraded posture: the run
+    /// proceeds, but test-first is now the worker's job and the message says so.
+    #[test]
+    fn assemble_user_message_demands_test_first_when_nothing_else_verifies() {
+        let msg = assemble_user_message(
+            "add retries",
+            &[],
+            &[],
+            VerificationContract::WorkerTestFirst,
+        );
+        let task_idx = msg.find("add retries").unwrap();
+        let contract_idx = msg.find("write the failing test").unwrap();
+        assert!(
+            task_idx < contract_idx,
+            "the task leads; the contract qualifies it"
+        );
+        assert!(msg.contains("Before implementing"));
+        assert!(msg.contains("only deterministic evidence"));
+    }
+
+    /// #2415: findings are their own section, ahead of both recall and the
+    /// goal — grounding leads, the ask follows.
+    #[test]
+    fn research_findings_lead_the_message_and_stay_apart_from_recall() {
+        let msg = assemble_user_message(
+            "add retries",
+            &[frame("driver.rs", "run_turn")],
+            &[finding("who owns retries?", "stella-core::retry")],
+            VerificationContract::None,
+        );
+        let findings_at = msg.find("## Research findings").unwrap();
+        let recall_at = msg.find("## Recalled context").unwrap();
+        let task_at = msg.find("## Task").unwrap();
+        assert!(findings_at < recall_at && recall_at < task_at, "{msg}");
+        assert!(msg.contains("who owns retries?"));
+        assert!(msg.contains("stella-core::retry"));
+    }
+
+    /// The advisory contract at its narrowest: adding an empty findings list
+    /// to a message that has recall changes nothing about it.
+    #[test]
+    fn an_empty_findings_list_adds_no_heading() {
+        let frames = [frame("driver.rs", "run_turn")];
+        assert_eq!(
+            assemble_user_message("add retries", &frames, &[], VerificationContract::None),
+            assemble_user_message("add retries", &frames, &[], VerificationContract::None),
+        );
+        assert!(
+            !assemble_user_message("add retries", &frames, &[], VerificationContract::None)
+                .contains("Research findings")
+        );
+    }
+}
