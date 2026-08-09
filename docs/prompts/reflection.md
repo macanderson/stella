@@ -122,8 +122,13 @@ with:
 - **`trigger`** — what has to be true of a future task for it to matter. A
   lesson whose trigger the model cannot state is one it has not finished
   learning; requiring the condition prunes those where the transcript is still
-  there to check them against. Recorded and mined today, **not yet consulted at
-  recall** — that wiring is #2459.
+  there to check them against. It is also **folded into the memory body recall
+  scores on** (#2459), which is the second thing it buys: a trigger is written
+  in the register a goal is written in, so it is the half of a lesson that lives
+  in the space the retrieval query is asked in. The restatement band still
+  compares bodies to bodies — see
+  `crates/stella-cli/src/memory/learning/applicability.rs` for the encoding that
+  keeps those two facts compatible.
 - **`saves`** — what knowing it would have bought in the turn that produced it,
   pointing at the moment it would have changed. This is what makes a lesson
   refutable rather than merely asserted, and it is refutable against the very

@@ -270,11 +270,18 @@ async fn the_per_turn_lesson_cap_is_above_what_a_turn_typically_teaches() {
         "the parser truncates to a different number than the prompt promises, \
          so the model is told a cap it is not held to"
     );
-    assert!(
-        super::MAX_LESSONS_PER_TURN > 3,
-        "the cap is back below what a turn teaches, which makes it the decision \
-         again rather than a backstop"
-    );
+    // A `const` block, because the predicate is constant and clippy's
+    // `assertions_on_constants` is right that a runtime assert on it is
+    // theatre: it can only fail on a code change, never on a run. Const
+    // evaluation makes that literal — a cap put back below what a turn teaches
+    // stops the build rather than waiting for someone to run this test.
+    const {
+        assert!(
+            super::MAX_LESSONS_PER_TURN > 3,
+            "the cap is back below what a turn teaches, which makes it the \
+             decision again rather than a backstop"
+        );
+    }
 }
 
 /// #1847's request-shape half, and #2174's: reflection is a bounded
