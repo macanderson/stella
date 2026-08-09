@@ -94,7 +94,15 @@ async fn session_with_crossed_lessons() -> (tempfile::TempDir, SessionMemory) {
         msg(MessageRole::Assistant, "reconciled"),
     ];
     let report = memory
-        .reflect_and_record(&CrossedTriggers, "crossed", &transcript, true, true, None)
+        .reflect_and_record(
+            &CrossedTriggers,
+            "crossed",
+            &transcript,
+            true,
+            true,
+            None,
+            crate::memory::ReflectionPosture::default(),
+        )
         .await;
     assert_eq!(
         report.recorded, 2,
@@ -221,7 +229,15 @@ async fn a_paraphrase_under_a_new_trigger_is_still_a_restatement() {
         msg(MessageRole::Assistant, "pruned"),
     ];
     let report = memory
-        .reflect_and_record(&Paraphrase, "paraphrase", &transcript, true, true, None)
+        .reflect_and_record(
+            &Paraphrase,
+            "paraphrase",
+            &transcript,
+            true,
+            true,
+            None,
+            crate::memory::ReflectionPosture::default(),
+        )
         .await;
     assert!(
         report.model_error.is_none(),
