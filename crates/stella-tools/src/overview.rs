@@ -10,7 +10,7 @@
 //! Assembly, not new capability: every field comes from a deterministic
 //! source that already exists — the script index (static manifest
 //! detection), the code graph, the storage/schema snapshot, the domain
-//! taxonomy, and the version-control state ([`repository_section`]). No
+//! taxonomy, and the version-control state (`repository_section`). No
 //! model call, no grep, and no shell: the git reads are direct argv spawns
 //! of one pinned binary, never a command string.
 
