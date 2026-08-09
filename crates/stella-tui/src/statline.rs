@@ -876,6 +876,79 @@ mod tests {
         }
     }
 
+    /// One `BudgetTick` with the given wall-clock axis, folded into a running
+    /// model — the shape #2240 puts on the stream and #2435 renders.
+    fn model_with_deadline(remaining_ms: Option<u64>) -> WorkspaceModel {
+        let mut m = running_model();
+        m.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::BudgetTick {
+                spent_usd: 1.25,
+                limit_usd: None,
+                mode: stella_protocol::BudgetMode::Off,
+                session_spent_usd: None,
+                session_limit_usd: None,
+                deadline_remaining_ms: remaining_ms,
+            },
+        });
+        m
+    }
+
+    /// #2435 witness, half one: an armed deadline gets a cell beside SPEND.
+    /// Fails on `main`, where every consumer read the dollar fields and
+    /// dropped the wall-clock one — the HUD's own contract says nothing
+    /// user-visible about a run's ceilings comes from state that is not also
+    /// in this event, and the clock was in the event and on no screen.
+    #[test]
+    fn an_armed_deadline_shows_its_remaining_clock_beside_spend() {
+        let items = statline_items(&model_with_deadline(Some(120_000)), &DeckUi::default());
+        let clock = items
+            .iter()
+            .find(|i| i.key == "clock")
+            .expect("an armed deadline earns a CLOCK cell");
+        assert_eq!(clock.label, "CLOCK");
+        let text: String = clock.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "2m 00s", "the cell states the clock that remains");
+    }
+
+    /// #2435 witness, half two — and the half that matters more: an UNARMED
+    /// deadline renders nothing at all. `None` means nobody is timing this
+    /// run; a cell reading `0s` would put back into the UI exactly the
+    /// confusion #2240 removed from the journal.
+    #[test]
+    fn an_unarmed_deadline_renders_no_cell_rather_than_zero() {
+        let items = statline_items(&model_with_deadline(None), &DeckUi::default());
+        assert!(
+            !keys(&items).contains(&"clock"),
+            "an unarmed run must show no clock, never a zeroed one: {:?}",
+            keys(&items)
+        );
+    }
+
+    /// The two facts `deadline_remaining_ms` exists to separate must not read
+    /// alike: a crossed deadline is a word, an armed one is a quantity, and an
+    /// unarmed one (above) is nothing.
+    #[test]
+    fn a_crossed_deadline_reads_as_expired_not_as_a_duration() {
+        let items = statline_items(&model_with_deadline(Some(0)), &DeckUi::default());
+        let clock = items
+            .iter()
+            .find(|i| i.key == "clock")
+            .expect("a crossed deadline is still an armed one");
+        let text: String = clock.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "expired");
+    }
+
+    /// The countdown's own arithmetic, apart from the model that feeds it.
+    #[test]
+    fn the_clock_label_uses_the_coarsest_unit_that_still_resolves_the_wait() {
+        assert_eq!(fmt_remaining(0), "expired");
+        assert_eq!(fmt_remaining(400), "<1s");
+        assert_eq!(fmt_remaining(45_000), "45s");
+        assert_eq!(fmt_remaining(120_000), "2m 00s");
+        assert_eq!(fmt_remaining(3_600_000 + 420_000), "1h 07m");
+    }
+
     #[test]
     fn every_cell_labels_itself_for_the_row_above() {
         let model = running_model();

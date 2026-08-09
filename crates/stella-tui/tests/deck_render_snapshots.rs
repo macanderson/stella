@@ -786,3 +786,42 @@ fn deck_render_snapshots_diff_explains_a_trailing_newline() {
         "there is no differing character to point at:\n{report}"
     );
 }
+
+/// The statline's CLOCK cell (#2435): a run with an armed task deadline shows
+/// the wall clock it has left beside the money it has spent.
+///
+/// A golden rather than a `contains` assertion because a new cell **moves
+/// columns** — every cell to its right shifts, and only the whole grid can say
+/// whether the band still fits and what it dropped to make room.
+///
+/// The unarmed case needs no golden of its own: every other snapshot in this
+/// file is one, and none of them grew a cell when this landed. That is the
+/// evidence for "absent, not zeroed" — a `0s` would have shown up in all of
+/// them.
+#[test]
+fn deck_render_snapshots_pin_the_armed_deadline_statline() {
+    let mut model = fixture_model();
+    let mut ui = ui_for(DeckTab::Session);
+    let agent = model.agents[ui.focused].meta.id.clone();
+    model.apply_inbound(&stella_tui::envelope::Inbound::Event {
+        agent,
+        event: stella_protocol::AgentEvent::BudgetTick {
+            spent_usd: 3.77,
+            limit_usd: None,
+            mode: stella_protocol::BudgetMode::Off,
+            session_spent_usd: None,
+            session_limit_usd: None,
+            // 12m 34s — long enough to exercise the minutes form, and not a
+            // round number, so a golden that silently truncated would show it.
+            deadline_remaining_ms: Some(754_000),
+        },
+    });
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "statline_deadline_armed",
+        "the statline with a task deadline armed — CLOCK beside SPEND",
+        W,
+        H,
+        &frame,
+    );
+}
