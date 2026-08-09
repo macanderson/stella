@@ -227,10 +227,12 @@ impl SessionMemory {
                         // files it is about, so letting it anchor would claim
                         // `verify.rs` is the subject of every lesson whose
                         // condition merely mentions it.
-                        .with_anchors(crate::memory::anchors::resolve_anchors(
-                            &self.workspace_root,
-                            &l.lesson,
-                        ))
+                        .with_anchors(
+                            crate::memory::anchors::resolve_anchors(
+                                &self.workspace_root,
+                                &l.lesson,
+                            ),
+                        )
                     })
                     .collect(),
                 ..Default::default()

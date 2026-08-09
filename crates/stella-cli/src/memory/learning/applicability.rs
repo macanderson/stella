@@ -47,8 +47,8 @@
 //! Trigger verbosity would decide a question about facts.
 //!
 //! So the band keeps comparing **bodies to bodies**, and this module is what
-//! lets it: [`recall_text`] composes on the way into the store and
-//! [`lesson_body`] recovers the body on the way out. They are exact inverses
+//! lets it: `recall_text` composes on the way into the store and
+//! `lesson_body` recovers the body on the way out. They are exact inverses
 //! for every lesson that has a trigger (`applicability/tests.rs` pins the round
 //! trip as a property over arbitrary bodies and triggers), so the strings
 //! `partition_known` compares are byte-identical to the ones it compared before
@@ -105,7 +105,7 @@ const APPLIES_WHEN_ESCAPED: &str = "applies when: ";
 /// stops being total. Rewriting the one substring that can do that makes the
 /// inverse exact for *every* pair of inputs, which is what
 /// `recomposing_any_body_and_trigger_recovers_the_body` asserts.
-pub(crate) fn recall_text(lesson: &str, trigger: &str) -> String {
+pub(super) fn recall_text(lesson: &str, trigger: &str) -> String {
     let trigger = trigger.trim();
     if trigger.is_empty() {
         return lesson.to_string();
@@ -129,7 +129,7 @@ pub(crate) fn recall_text(lesson: &str, trigger: &str) -> String {
 /// string on one side of a similarity score — and nothing is rewritten in the
 /// store, so the alternative (a marker byte in the content) would cost every
 /// reader a stripping step to avoid a case that has never occurred.
-pub(crate) fn lesson_body(stored: &str) -> &str {
+pub(super) fn lesson_body(stored: &str) -> &str {
     let Some(inner) = stored.strip_suffix(')') else {
         return stored;
     };

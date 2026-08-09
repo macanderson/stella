@@ -23,7 +23,11 @@ fn a_lesson_with_no_trigger_is_stored_exactly_as_it_always_was() {
          otherwise this change rewrites the corpus the restatement band was \
          tuned on, which is the one thing #2459 exists to avoid"
     );
-    assert_eq!(recall_text(body, "   \n  "), body, "whitespace is not a trigger");
+    assert_eq!(
+        recall_text(body, "   \n  "),
+        body,
+        "whitespace is not a trigger"
+    );
 }
 
 #[test]
