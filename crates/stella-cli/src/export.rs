@@ -1,5 +1,5 @@
-//! `/export` — export all session telemetry as a ZIP archive of raw JSON
-//! dumps plus a self-contained HTML dashboard.
+//! `/export` — export **one session's** telemetry as a ZIP archive of raw
+//! JSON dumps plus a self-contained HTML dashboard.
 //!
 //! The archive lives at `.stella/exports/` and is named with the microsecond
 //! timestamp of the **last log entry** included (the data's own clock, not the
@@ -11,22 +11,37 @@
 //! resolve rate, cost-per-resolved-task, token efficiency, tool-call
 //! frequency, retry patterns, and file-edit heat — the same data `stella
 //! stats` summarizes in a table, but visually and interactively.
+//!
+//! **Scope is a safety property here, not a convenience** (#2558). Until the
+//! session argument existed, this module dumped the entire workspace store:
+//! attaching an export to a public PR to show one run disclosed every other
+//! run in that project — their prompts, their tool arguments, their touched
+//! files' contents. The credential masking below and the `0600` archive mode
+//! both assume the blast radius is one session, so the scoping is what makes
+//! the rest of the hardening mean what it says.
 
 use std::path::{Path, PathBuf};
 
-use stella_store::Store;
+use stella_store::{ExportExclusions, Store};
 
 /// One `(table_name, json_array)` pair from the export dump.
 type TableDump = (&'static str, String);
 
-/// Build the export archive. Returns the path to the written file, or an
-/// error message. `workspace_root` is where `.stella/exports/` is created.
-pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
+/// Build the export archive for one session. Returns the path to the written
+/// file, or an error message. `workspace_root` is where `.stella/exports/` is
+/// created; `session_id` is the session registry id
+/// ([`stella_store::SessionRecord::id`]) whose telemetry the archive covers.
+///
+/// There is deliberately no whole-workspace variant on this path. The archive
+/// is built to be shared, and "export everything by default" is the defect
+/// #2558 records — a caller who wants workspace-wide analytics wants `stella
+/// stats`, which is not an artifact that leaves the machine.
+pub fn export_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf, String> {
     let store = Store::open(workspace_root).map_err(|e| format!("cannot open store: {e}"))?;
 
-    // Collect every table's raw data.
+    // Collect this session's raw data — never the workspace's.
     let dumps = store
-        .export_all_json()
+        .export_session_json(session_id)
         .map_err(|e| format!("cannot read telemetry: {e}"))?;
     // #817: the archive leaves the machine (emailed, committed to a PR as
     // evidence), so mask any credential that reached the telemetry — a key
@@ -39,13 +54,20 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
         .collect();
 
     if dumps.iter().all(|(_, json)| json == "[]") {
-        return Err("no session telemetry recorded yet — run a few turns first.".into());
+        return Err("no telemetry recorded for this session yet — run a few turns first.".into());
     }
 
-    // The watermark: the timestamp of the last log entry in this set. Falls
-    // back to "now" only if the store somehow has no timestamps at all.
+    // What the scope left out, so the manifest can state it. A census failure
+    // must not sink an otherwise-good export: an unstated exclusion count is a
+    // gap in the archive's provenance, not a reason to withhold the evidence.
+    let excluded = store.export_exclusions(session_id).unwrap_or_default();
+
+    // The watermark: the timestamp of the last log entry in this set — read
+    // over the same session, or the filename would assert a moment no row in
+    // the archive reaches. Falls back to "now" only if the store somehow has
+    // no timestamps at all.
     let watermark = store
-        .last_log_timestamp()
+        .last_log_timestamp_for_session(session_id)
         .ok()
         .flatten()
         .unwrap_or_else(|| {
@@ -63,12 +85,15 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     // Sanitize the watermark into a filename-safe folder name.
     let folder = sanitize_timestamp(&watermark);
 
+    // Scoped too: the KPI tiles and every chart are computed from these rows,
+    // so workspace totals rendered beside one session's dumps would describe
+    // runs the archive does not contain.
     let usage_stats = store
-        .usage_stats()
+        .usage_stats_for_session(session_id)
         .map_err(|e| format!("cannot read usage stats: {e}"))?;
 
     // Build the self-contained HTML dashboard.
-    let html = render_dashboard(&usage_stats, &dumps, &watermark);
+    let html = render_dashboard(&usage_stats, &dumps, &watermark, session_id, &excluded);
 
     // Assemble the ZIP.
     //
@@ -92,9 +117,16 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     }
     // The dashboard.
     zip.add_file(&format!("{folder}/dashboard.html"), html.as_bytes())?;
-    // A manifest with the watermark and table list.
+    // A manifest with the watermark, the scope, and the table list.
+    //
+    // `session` and `excluded` are the archive's provenance: without them a
+    // reader cannot tell "this session did nothing else" from "the exporter
+    // dropped the rest", and the scope becomes an assumption rather than a
+    // claim they can check.
     let manifest = serde_json::json!({
         "exported_at": watermark,
+        "session": session_id,
+        "excluded": excluded,
         "tables": dumps.iter().map(|(t, j)| {
             let count = serde_json::from_str::<Vec<serde_json::Value>>(j)
                 .map(|v| v.len())
@@ -114,6 +146,33 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("write archive: {e}"))?;
 
     Ok(zip_path)
+}
+
+/// The `/export` deck command: build `session_id`'s archive and return the
+/// message the deck prints.
+///
+/// Runs off the runtime worker. The export opens SQLite, dumps and
+/// pretty-prints every telemetry table, renders the dashboard, and builds the
+/// whole ZIP without yielding — awaiting it inline stalls the deck's event
+/// pump, so keystrokes go unprocessed and the TUI looks hung on the crate's
+/// most I/O-heavy command.
+pub async fn export_command(workspace_root: &Path, session_id: &str) -> String {
+    let root = workspace_root.to_path_buf();
+    let session = session_id.to_string();
+    let exported = tokio::task::spawn_blocking(move || export_session(&root, &session)).await;
+    match exported.map_err(|e| format!("export task failed: {e}")) {
+        Ok(Ok(path)) => format!(
+            "Export Session Telemetry — archive written to {}\n\
+             Scope: this session ({session_id}) only — the archive is safe to attach to a \
+             PR or email without disclosing your other runs in this workspace. The ZIP \
+             holds a `dashboard.html` (open in any browser), raw JSON dumps of this \
+             session's telemetry tables, and a `manifest.json` naming the session and \
+             what was excluded. The timestamped folder name matches the last log entry's \
+             timestamp.",
+            path.display()
+        ),
+        Ok(Err(e)) | Err(e) => format!("export failed: {e}"),
+    }
 }
 
 /// Create `dir` (and parents) owner-only. An existing directory is tightened
@@ -300,6 +359,8 @@ fn render_dashboard(
     usage_stats: &[stella_store::UsageStatsRow],
     dumps: &[TableDump],
     watermark: &str,
+    session_id: &str,
+    excluded: &ExportExclusions,
 ) -> String {
     let total_cost: f64 = usage_stats.iter().map(|r| r.total_cost_usd).sum();
     let total_runs: i64 = usage_stats.iter().map(|r| r.runs).sum();
@@ -324,10 +385,26 @@ fn render_dashboard(
     let total_output_fmt = comma(total_output);
     let total_cache_read_fmt = comma(total_cache_read);
 
-    // The watermark is the only value interpolated into markup rather than
-    // into the `<script>` block; every dump below goes through `script_json`
-    // instead — see its doc for why raw JSON is not safe there.
+    // The watermark and the session id are the only values interpolated into
+    // markup rather than into the `<script>` block; every dump below goes
+    // through `script_json` instead — see its doc for why raw JSON is not safe
+    // there. The session id is a store column like any other, and a store
+    // column is not a place this module gets to assume markup-safety about.
     let watermark = escape_html(watermark);
+    let session = escape_html(session_id);
+
+    // The scope line. The dashboard is the artifact someone opens before
+    // deciding to forward it, so what it does and does not contain belongs on
+    // the page — not only in the manifest beside it.
+    let scope_note = if excluded.is_empty() {
+        "the only session recorded in this workspace".to_string()
+    } else {
+        format!(
+            "{} execution(s) from other sessions and {} unattributed execution(s) in this \
+             workspace were <strong>not</strong> included",
+            excluded.other_session_executions, excluded.unattributed_executions,
+        )
+    };
 
     // Telemetry rows for the timeline chart.
     let telemetry_json = script_json(table_json(dumps, "telemetry"));
@@ -404,7 +481,8 @@ fn render_dashboard(
   }}
   h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--text); }}
   h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--brand); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
-  .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 24px; font-family: monospace; }}
+  .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 8px; font-family: monospace; }}
+  .scope {{ color: var(--text2); font-size: 0.8rem; margin-bottom: 24px; padding: 8px 12px; background: var(--surface); border-left: 3px solid var(--brand); border-radius: 0 6px 6px 0; }}
   .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 8px; }}
   .kpi {{
     background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px;
@@ -442,7 +520,8 @@ fn render_dashboard(
 <body>
 
 <h1>⚡ Stella Session Telemetry</h1>
-<div class="watermark">as of {watermark}</div>
+<div class="watermark">session {session} · as of {watermark}</div>
+<div class="scope">This archive covers <strong>one session</strong> — {scope_note}.</div>
 
 <div class="kpi-grid">
   <div class="kpi"><div class="label">Total Runs</div><div class="value">{total_runs}</div><div class="sub">{total_resolved} resolved</div></div>
@@ -799,6 +878,61 @@ impl ZipWriter {
 mod tests {
     use super::*;
 
+    /// Seed one session's execution, telemetry, and touched file into the
+    /// store at `root`.
+    ///
+    /// Every end-to-end export test needs a REAL `executions` row stamped with
+    /// a session id. Telemetry hanging off a dangling `execution_id` was
+    /// visible to the old workspace-wide dump and is invisible to a scoped
+    /// one — which is the fix working, not a fixture problem.
+    fn seed_session(root: &Path, session: &str, provider: &str, touched: &str) {
+        use stella_store::{FileTouchRow, TelemetryRow};
+        let store = Store::open(root).unwrap();
+        let id = store
+            .begin_execution(
+                "deck",
+                &format!("prompt of {session}"),
+                provider,
+                "claude-test",
+            )
+            .unwrap();
+        store.set_execution_session(id, session).unwrap();
+        store
+            .record_telemetry(
+                id,
+                &TelemetryRow {
+                    step: 0,
+                    call_role: "worker".into(),
+                    provider: provider.into(),
+                    model: "claude-test".into(),
+                    input_tokens: 1000,
+                    estimated_input_tokens: 900,
+                    output_tokens: 200,
+                    cache_read_tokens: 500,
+                    cache_miss_tokens: 500,
+                    cache_write_tokens: 10,
+                    cost_usd: 0.012,
+                    duration_ms: 1500,
+                    retries: 1,
+                    tool_calls: 3,
+                    usage_complete: true,
+                },
+            )
+            .unwrap();
+        store
+            .record_files_touched(
+                id,
+                &[FileTouchRow {
+                    path: touched.into(),
+                    ops: "M".into(),
+                    lines_added: 10,
+                    lines_removed: 2,
+                    events_json: "[]".into(),
+                }],
+            )
+            .unwrap();
+    }
+
     #[test]
     fn zip_writer_produces_a_valid_archive() {
         let mut zip = ZipWriter::new();
@@ -909,7 +1043,13 @@ mod tests {
     fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
         let hostile =
             r#"[{"path":"<img src=x onerror=alert(1)>","lines_added":1,"lines_removed":0}]"#;
-        let html = render_dashboard(&[], &[("files_touched", hostile.to_string())], "now");
+        let html = render_dashboard(
+            &[],
+            &[("files_touched", hostile.to_string())],
+            "now",
+            "ses-x",
+            &ExportExclusions::default(),
+        );
 
         // The payload does reach the page — escaping at the sink, not
         // dropping the datum, is what makes it inert.
@@ -1110,38 +1250,11 @@ mod tests {
     fn full_export_pipeline_creates_valid_zip_with_dashboard() {
         // End-to-end: seed a temp store with data, export it, and verify the
         // archive is a valid ZIP containing the HTML dashboard and raw JSON.
-        use stella_store::TelemetryRow;
         let tmp = tempfile::tempdir().unwrap();
-
-        // Seed: record telemetry so the store has data to export.
-        {
-            let store = Store::open(tmp.path()).unwrap();
-            store
-                .record_telemetry(
-                    1,
-                    &TelemetryRow {
-                        step: 0,
-                        call_role: "worker".into(),
-                        provider: "anthropic".into(),
-                        model: "claude-test".into(),
-                        input_tokens: 1000,
-                        estimated_input_tokens: 900,
-                        output_tokens: 200,
-                        cache_read_tokens: 500,
-                        cache_miss_tokens: 500,
-                        cache_write_tokens: 10,
-                        cost_usd: 0.012,
-                        duration_ms: 1500,
-                        retries: 1,
-                        tool_calls: 3,
-                        usage_complete: true,
-                    },
-                )
-                .unwrap();
-        }
+        seed_session(tmp.path(), "ses-export", "anthropic", "src/main.rs");
 
         // Export.
-        let zip_path = export_session(tmp.path()).expect("export should succeed");
+        let zip_path = export_session(tmp.path(), "ses-export").expect("export should succeed");
         assert!(zip_path.exists(), "the zip file was written");
         assert!(
             zip_path
@@ -1187,34 +1300,9 @@ mod tests {
     #[test]
     fn the_export_archive_and_its_directory_are_owner_only() {
         use std::os::unix::fs::PermissionsExt;
-        use stella_store::TelemetryRow;
 
         let tmp = tempfile::tempdir().unwrap();
-        {
-            let store = Store::open(tmp.path()).unwrap();
-            store
-                .record_telemetry(
-                    1,
-                    &TelemetryRow {
-                        step: 0,
-                        call_role: "worker".into(),
-                        provider: "anthropic".into(),
-                        model: "claude-test".into(),
-                        input_tokens: 10,
-                        estimated_input_tokens: 10,
-                        output_tokens: 2,
-                        cache_read_tokens: 0,
-                        cache_miss_tokens: 0,
-                        cache_write_tokens: 0,
-                        cost_usd: 0.001,
-                        duration_ms: 5,
-                        retries: 0,
-                        tool_calls: 0,
-                        usage_complete: true,
-                    },
-                )
-                .unwrap();
-        }
+        seed_session(tmp.path(), "ses-perms", "anthropic", "src/main.rs");
 
         // A pre-existing world-readable exports dir (an older build's) must be
         // tightened, not accepted.
@@ -1222,7 +1310,7 @@ mod tests {
         std::fs::create_dir_all(&exports).unwrap();
         std::fs::set_permissions(&exports, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let zip_path = export_session(tmp.path()).unwrap();
+        let zip_path = export_session(tmp.path(), "ses-perms").unwrap();
 
         assert_eq!(
             std::fs::metadata(&zip_path).unwrap().permissions().mode() & 0o777,
@@ -1236,16 +1324,93 @@ mod tests {
         );
     }
 
+    /// The witness for #2558, asserted where it actually matters: the bytes of
+    /// the archive that leaves the machine.
+    ///
+    /// This module's own documentation invites you to email the archive or
+    /// attach it to a PR as evidence, and #817 hardened it — masking every
+    /// credential, tightening the file to `0600` — on the premise that its
+    /// blast radius is one session. It was the whole workspace store, so
+    /// attaching an export to show one run disclosed every other run in that
+    /// project: their prompts, their tool arguments, their touched files.
+    ///
+    /// Scanned over the raw archive rather than the dump vector on purpose.
+    /// The dumps are one of three places a row can reach the recipient — the
+    /// dashboard embeds the same JSON in a `<script>` block, and the manifest
+    /// summarizes it — so an assertion over the dumps alone would pass while
+    /// the HTML someone opens still carried the other session. The ZIP is
+    /// store-only (uncompressed), so its bytes are exactly what a reader can
+    /// recover.
+    #[test]
+    fn the_archive_holds_one_session_and_states_what_it_left_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_session(tmp.path(), "ses-mine", "anthropic", "src/mine.rs");
+        seed_session(tmp.path(), "ses-theirs", "openai", "src/their-secret.rs");
+
+        let zip_path = export_session(tmp.path(), "ses-mine").expect("export");
+        let bytes = std::fs::read(&zip_path).unwrap();
+        let archive = String::from_utf8_lossy(&bytes);
+
+        for leaked in [
+            "ses-theirs",
+            "prompt of ses-theirs",
+            "src/their-secret.rs",
+            "openai",
+        ] {
+            assert!(!archive.contains(leaked), "the archive leaked `{leaked}`");
+        }
+
+        // …while this session's own evidence all survived the filter. An
+        // archive that leaks nothing because it contains nothing is not a fix.
+        for kept in ["ses-mine", "prompt of ses-mine", "src/mine.rs", "anthropic"] {
+            assert!(archive.contains(kept), "the archive dropped `{kept}`");
+        }
+
+        // The manifest states the scope and the exclusion count, so a reader
+        // can check the claim instead of trusting it.
+        assert!(
+            archive.contains("\"session\": \"ses-mine\""),
+            "the manifest names the exported session"
+        );
+        assert!(
+            archive.contains("\"other_session_executions\": 1"),
+            "the manifest counts what it left out"
+        );
+        // And the dashboard says so on the page someone actually opens.
+        assert!(
+            archive.contains("This archive covers <strong>one session</strong>"),
+            "the dashboard states its own scope"
+        );
+    }
+
     #[test]
     fn full_export_pipeline_errors_on_empty_store() {
         let tmp = tempfile::tempdir().unwrap();
         // Create the store (so .stella/ exists) but record nothing.
         let _ = Store::open(tmp.path()).unwrap();
-        let result = export_session(tmp.path());
+        let result = export_session(tmp.path(), "ses-nothing");
         assert!(result.is_err(), "exporting an empty store is an error");
         assert!(
-            result.unwrap_err().contains("no session telemetry"),
+            result
+                .unwrap_err()
+                .contains("no telemetry recorded for this session"),
             "error message is helpful"
+        );
+    }
+
+    /// A session with no rows of its own must refuse, not silently widen to
+    /// the workspace. This is the failure mode a "scope it when you can"
+    /// implementation would ship: the one store where scoping is hardest to
+    /// satisfy is exactly where falling back leaks everything.
+    #[test]
+    fn exporting_a_session_with_no_rows_refuses_rather_than_widening() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_session(tmp.path(), "ses-real", "anthropic", "src/main.rs");
+
+        let result = export_session(tmp.path(), "ses-never-ran");
+        assert!(
+            result.is_err(),
+            "a session with no telemetry must not fall back to the workspace"
         );
     }
 
@@ -1256,7 +1421,13 @@ mod tests {
     /// remnant of a retired identity in the product.
     #[test]
     fn the_dashboard_palette_is_generated_from_the_live_theme() {
-        let html = render_dashboard(&[], &[], "2026-01-01 00:00:00");
+        let html = render_dashboard(
+            &[],
+            &[],
+            "2026-01-01 00:00:00",
+            "ses-x",
+            &ExportExclusions::default(),
+        );
 
         for (var, token) in [
             ("--bg", stella_tui::theme::GROUND),
