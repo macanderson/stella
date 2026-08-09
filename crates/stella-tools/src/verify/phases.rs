@@ -349,6 +349,41 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// The last link in the chain: a handle put in
+    /// [`RegistryOptions`](crate::RegistryOptions) has to reach the tool.
+    ///
+    /// Everything else here builds a `VerifyDone` by hand, so a registry that
+    /// dropped the handle between `builtins` and the constructor would pass
+    /// every one of those tests and still record nothing in a real session —
+    /// the failure this whole change exists to prevent, and the one with no
+    /// symptom until someone goes looking for a measurement that was never
+    /// taken.
+    #[tokio::test]
+    async fn the_registry_hands_the_handle_to_the_tool() {
+        let root = scaffold("phases_wiring").await;
+        std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
+        std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
+
+        let (dx, records) = Dx::capturing();
+        let registry = crate::ToolRegistry::with_backends_and_options(
+            root.clone(),
+            None,
+            None,
+            crate::RegistryOptions {
+                diagnostics: Some(Arc::new(dx)),
+                ..Default::default()
+            },
+        );
+        let out = registry.execute("verify_done", &witness_input()).await;
+        assert!(!out.is_error(), "{out:?}");
+        assert!(
+            records.find(PHASES_CODE).is_some(),
+            "the registry built the tool without its diagnostic handle"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// A memo hit (#2208) legitimately reports zero for all four shadow
     /// phases. `shadow_reused` is what tells a census that those zeroes mean
     /// "free", not "never measured" — without it the second call would drag
@@ -374,8 +409,14 @@ mod tests {
             .collect();
         assert_eq!(hits.len(), 2, "one record per call, hit or miss");
 
-        assert_eq!(hits[0].fields.get("shadow_reused"), Some(&FieldValue::Bool(false)));
-        assert_eq!(hits[1].fields.get("shadow_reused"), Some(&FieldValue::Bool(true)));
+        assert_eq!(
+            hits[0].fields.get("shadow_reused"),
+            Some(&FieldValue::Bool(false))
+        );
+        assert_eq!(
+            hits[1].fields.get("shadow_reused"),
+            Some(&FieldValue::Bool(true))
+        );
         for phase in ["worktree_add", "stage_tests", "shadow_run", "cleanup"] {
             assert_eq!(
                 uint(hits[1], phase),
@@ -422,9 +463,9 @@ mod tests {
         }
         assert_eq!(
             record.fields.get("verdict"),
-            Some(&stella_diag::FieldValue::Str(
-                stella_diag::StaticStr::new("confirmed")
-            ))
+            Some(&stella_diag::FieldValue::Str(stella_diag::StaticStr::new(
+                "confirmed"
+            )))
         );
     }
 

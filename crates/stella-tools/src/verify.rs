@@ -556,9 +556,11 @@ impl VerifyDone {
             })
             .unwrap_or_default();
         if test_files.is_empty() {
-            return Err("missing required field `test_files` — name the new/changed test \
+            return Err(
+                "missing required field `test_files` — name the new/changed test \
                         file(s) that witness this change"
-                .to_string());
+                    .to_string(),
+            );
         }
         phases.test_files = u32::try_from(test_files.len()).unwrap_or(u32::MAX);
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
