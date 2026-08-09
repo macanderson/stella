@@ -62,8 +62,9 @@ KNOB_MODEL = "model"
 KNOB_REASONING = "reasoning"
 KNOB_EFFORT = "effort"
 KNOB_BASE_URL = "base_url"
-KNOB_BUDGET = "budget"
-KNOB_MAX_TOKENS = "max_tokens"
+# No `budget` or `max_tokens` knob. They are not knobs an agent may or may not
+# honour any more — no engine can carry one, so there is nothing to declare and
+# nothing to report as unhonoured (#2411).
 KNOB_ROLES = "roles"
 
 
@@ -133,10 +134,6 @@ class AgentSpec:
         missed: list[str] = []
         if engine.base_url and KNOB_BASE_URL not in self.honours:
             missed.append("base_url")
-        if engine.budget_usd is not None and KNOB_BUDGET not in self.honours:
-            missed.append("budget_usd")
-        if engine.max_tokens is not None and KNOB_MAX_TOKENS not in self.honours:
-            missed.append("max_tokens")
         if engine.roles and KNOB_ROLES not in self.honours:
             missed.append("per-role pipeline config")
         if not engine.reasoning and KNOB_REASONING not in self.honours:
@@ -162,8 +159,6 @@ STELLA = AgentSpec(
             KNOB_REASONING,
             KNOB_EFFORT,
             KNOB_BASE_URL,
-            KNOB_BUDGET,
-            KNOB_MAX_TOKENS,
             KNOB_ROLES,
         }
     ),

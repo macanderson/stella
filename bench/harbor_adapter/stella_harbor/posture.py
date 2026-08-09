@@ -138,26 +138,19 @@ _CANDIDATES_CEILING = 5
 # timeout and reports it as a task failure.
 _MODEL_TIMEOUT_CEILING = 21_600
 
-# The output cap, per model, and the silence ceiling that has to absorb it.
+# There is no output-cap table here any more, and its absence is load-bearing.
 #
-# These were one shared number (64000) until the Fable ceiling set was
-# approved (#1211 §6.2). One number was only ever right by coincidence: it is
-# the *model's* ceiling, and models differ. Fable 5 answers up to 128,000
-# output tokens; capping its trials at 64,000 stopped it at half the height
-# the comparator is allowed to fill, and the score then reported that as a
-# capability difference rather than as our own ceiling.
+# It held one number per model, pinned against `catalog.rs` by
+# `TestOutputCeilingParity` so the two could not drift. That guarded the right
+# hazard with the wrong instrument: the safe value of a benchmark output cap is
+# always exactly the model's ceiling, and a table whose every correct entry is
+# a copy of another table is a synchronisation problem invented for no gain.
+# Sending nothing gets the same number from the authority itself (#2411).
 #
-# Keyed by the bare model slug, so a model reached directly
-# (`anthropic/claude-fable-5`) and the same model reached through a gateway
-# (`openrouter/anthropic/claude-fable-5`) get the same ceilings. Booking route
-# is not a model property.
-#
-# `TestOutputCeilingParity` pins the caps here against
-# `crates/stella-model/src/catalog.rs`, which is the authority. Change the
-# catalog and this must follow, which is the point: the two numbers used to be
-# able to drift apart silently, both still looking deliberate.
-_DEFAULT_OUTPUT_CAP = 64_000
-_OUTPUT_CAP_BY_SLUG = {"claude-fable-5": 128_000}
+# What survives is the check that the authority HAS a number:
+# `test_every_bookable_model_has_a_seeded_ceiling`. A booked model missing its
+# catalog ceiling falls back to the engine's global 16384, which is the one way
+# an uncapped posture can still run capped.
 
 # The models an arm can actually book, by bare slug: worker, the two verifiers,
 # and triage. `TestOutputCeilingParity` checks the caps above against
@@ -180,38 +173,22 @@ _BENCHMARKED_SLUGS = frozenset(
     }
 )
 
-# Caps deliberately set BELOW the model's own ceiling, and why.
+# There is no sub-ceiling rationale map either, and it is worth recording what
+# it taught before it went.
 #
-# The default rule is that an arm asks for the model's whole budget — "never be
-# the side that stops first". Every exception is a real decision someone made,
-# so it is written here with its reason rather than living as a literal that
-# merely looks intentional. A slug absent from this map must match its catalog
-# ceiling exactly; that is what `TestOutputCeilingParity` enforces.
-_SUB_CEILING_RATIONALE: dict[str, str] = {
-    "claude-sonnet-5": (
-        "64,000 on purpose, not inherited (#1290). Sonnet 5's own ceiling is "
-        "128,000 — the catalog said 64,000 for months and that was wrong, but "
-        "it was wrong as a statement about the MODEL, not as a statement about "
-        "this comparison. 64,000 is where Claude Code's steps were measured "
-        "stopping, twice landing on it exactly and still finishing the task. "
-        "Matching what the other side actually does is the whole point of a "
-        "head-to-head, so this number stays while the catalog's moves. "
-        "Correcting the catalog is what made this an explicit choice rather "
-        "than a coincidence the two numbers used to share."
-    ),
-    "kimi-k3": (
-        "64,000 against a 131,072 ceiling. This row carried no ceiling at all "
-        "until #1290 seeded it from models.dev, so the posture never diverged "
-        "from anything — the divergence appeared the moment the catalog "
-        "learned a number, which is exactly when it should become a decision "
-        "rather than stay a silence. Kept at the default because kimi-k3 is "
-        "booked as arm B's VERIFIER: it emits a verdict, not a solution, so the "
-        "cap has never bound and 'never be the side that stops first' is a "
-        "claim about the worker's budget. Raising it would also owe a "
-        "`_MODEL_TIMEOUT_BY_SLUG` entry derived from an observed token rate "
-        "this model has never been measured at."
-    ),
-}
+# It let a cap sit below the model's ceiling when someone wrote down why, and
+# both of its entries were honest. The Sonnet 5 one even had the strongest
+# argument available: cap at 64,000 because that is where the comparator's
+# steps were measured stopping, and matching the other side is what a
+# head-to-head is for.
+#
+# It is still the wrong shape. "Where the comparator was measured stopping" is
+# not a ceiling the comparator was given — Claude Code is handed none — it is
+# where a model chose to stop on the tasks someone happened to measure. Turning
+# that observation into OUR limit is how a measurement becomes a handicap while
+# every comment around it still reads as deliberate. A rationale map cannot
+# catch that, because a well-argued entry is exactly what it is designed to
+# accept (#2411).
 
 # The timeout is DERIVED from the cap, not chosen independently, which is why
 # it lives in the same table. It bounds silence between stream fragments, so it
@@ -242,7 +219,7 @@ _ENGINE_DEFAULT_MODEL_TIMEOUT_SECS = 816
 
 # A benchmarked slug with NO `_MODEL_TIMEOUT_BY_SLUG` row inherits the 816s
 # engine default — and that inherit must read as a decision, not an omission
-# (#2070). Same pattern as `_SUB_CEILING_RATIONALE` above: every silence is
+# (#2070). Same pattern the removed sub-ceiling map used: every silence is
 # written down with its reason, so the next slug added to
 # `_BENCHMARKED_SLUGS` fails the suite until someone decides. Deliberately
 # NOT a posture row: writing `model_timeout_secs: 816` explicitly was
@@ -279,9 +256,6 @@ def _model_slug(model: str) -> str:
     return model.rsplit("/", 1)[-1].strip().lower()
 
 
-def default_output_cap(model: str) -> int:
-    """The output-token cap this model's benchmark posture uses."""
-    return _OUTPUT_CAP_BY_SLUG.get(_model_slug(model), _DEFAULT_OUTPUT_CAP)
 
 
 def default_model_timeout(model: str) -> int | None:
@@ -545,19 +519,16 @@ def _benchmark_engine_posture(
     every posture recorded before the knobs were reachable at all.
 
     ``model_timeout_secs`` is the same shape again, for the ceiling that used to
-    be the exception (#1211 §6.2). The output cap is set per role below and the
-    turn budget is a per-trial flag, but the per-generation silence ceiling was
-    an engine constant — so a Fable-class arm, which needs it scaled with the
-    output cap or it merely stops on the timeout instead, could not be
-    expressed as a posture at all. It is now a key like any other: selecting it
-    changes the digest, leaving it unset reproduces every historical one.
+    be the exception (#1211 §6.2). It is the last per-generation ceiling this
+    posture still sets: the output cap and the turn budget are both gone
+    (#2411), leaving the model's catalog maximum and the task's own wall clock.
+    It is a key like any other — selecting it changes the digest, leaving it
+    unset reproduces every historical one.
     """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
         raise ValueError("benchmark model must be a non-empty provider/model spec")
     selected_effort = _validated_worker_effort(worker_effort)
-    # The model's own ceilings, unless the operator selected otherwise below.
-    output_cap = default_output_cap(selected_model)
     posture: dict[str, Any] = {
         "default_model": selected_model,
         "allowed_models": [selected_model],
@@ -595,53 +566,42 @@ def _benchmark_engine_posture(
         # exception to it: it emits a three-line classification and never edits
         # the workspace, so raising it would change what Stella *is* rather than
         # what it was allowed to spend.
-        # `params.max_tokens` raises the engine's 16384 output cap, and at
-        # xhigh it is load-bearing rather than a tuning knob. Measured, not
-        # assumed: in the first xhigh smoke, 2 of 3 Stella trials died with
+        # No role carries `params.max_tokens`, and its ABSENCE is the setting.
         #
-        #   output_tokens=16384, tool_calls=0
-        #   "reached its output-token limit before producing any visible
-        #    response — its budget was likely spent on reasoning"
+        # The engine seeds `max_output_tokens` from the model's catalog entry
+        # and nothing but an explicit cap can lower it — "the DEFAULT is always
+        # the model's maximum" (`stella-cli/src/agent/engine.rs`,
+        # `tuned_engine_config`). So omitting the key asks for the model's own
+        # ceiling on every role, on every model, without this file having to
+        # know what that number is. Writing one here could only ever match the
+        # catalog or sit under it, and the history below is four years of
+        # rediscovering that the second one is a handicap:
         #
-        # The engine default carries a comment saying 16k was itself a raise
-        # from 8k for exactly this failure on glm-5.2, and names per-model caps
-        # as the real fix — which is the accurate reading. The model is not
-        # overrunning a budget it was told about; it is being cut off at a
-        # number we picked without knowing its real ceiling, so the step ends
-        # mid-reasoning with no tool call at all. Effort raises how much of the
-        # ceiling gets spent, but the ceiling is the thing that has to be right.
+        #   16384 -> 32000 -> 64000, each raise chasing the same failure —
+        #   a step ending with `output_tokens` exactly at the cap and
+        #   `tool_calls=0`, the model cut off mid-reasoning with no visible
+        #   answer. On the gate, four trials died at exactly 32000; Claude
+        #   Code passed all four on the same model, same API, same effort,
+        #   spending 45,001, 64,000, 64,000 and 25,965 output tokens. Two
+        #   landed on precisely its ceiling and still emitted the tool call.
         #
-        # 64000, which is the model's own ceiling and therefore the
-        # comparator's. The previous value was 32000, held there because
-        # `model_timeout` was 600s and a 64000-token step would not fit inside
-        # it — one self-imposed ceiling justifying another. Both moved
-        # together; `model_timeout` is now 816s, and neither binds first.
+        # Each fix moved one ceiling while the others held, because the cap,
+        # `model_timeout` and the turn budget are one budget and the rule
+        # governing all three is the same: never be the side that stops first.
+        # #2411 finished the thought — a per-trial dollar budget is that same
+        # ceiling wearing a different unit, and ArenaBench now refuses one.
         #
-        # The 32000 value was falsified directly. On the gate, four trials
-        # ended on a step that emitted exactly 32000 output tokens with zero
-        # tool calls. Claude Code passed all four of those tasks (reward 1.0)
-        # on the same model, same API and same effort, and its winning steps
-        # on them spent 45,001, 64,000, 64,000 and 25,965 output tokens. Two
-        # landed on precisely 64,000 — its ceiling — and still had room to
-        # emit the tool call. Sonnet fills whatever budget it is given in
-        # either agent; the only variable is who stops it first.
+        # `model_timeout` does not become the new binding ceiling. It bounds
+        # IDLE SILENCE between stream fragments, never elapsed time, so a
+        # generation that keeps streaming is never cut by it however long it
+        # runs (see `_ENGINE_DEFAULT_MODEL_TIMEOUT_SECS`).
         #
-        # That is also why 16384 -> 32000 did not fix truncation and 64000
-        # "merely traded truncation for a model_timeout": each attempt moved
-        # one ceiling while the others held. The output cap, `model_timeout`
-        # and the turn budget are one budget, and the rule that sets all three
-        # is the same — never be the side that stops first.
-        #
-        # This is not compute handed to one side. Claude Code does not cap
-        # itself, so every number below the model's ceiling was a Stella-side
-        # handicap and removing it restores parity rather than breaking it.
-        # `triage` keeps the engine default: it runs at low effort and emits a
-        # three-line classification, so the cap was never near binding for it.
+        # This hands compute to nobody: Claude Code does not cap itself, so
+        # every number below the model's ceiling was a Stella-side handicap.
         "agents": {
             "default": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": output_cap},
             },
             # Only the worker's tier moves with the arm. `default` stays at
             # `xhigh` deliberately: it governs roles with no explicit entry
@@ -651,12 +611,10 @@ def _benchmark_engine_posture(
             "worker": {
                 "effort": selected_effort,
                 "reasoning": "on",
-                "params": {"max_tokens": output_cap},
             },
             "verifier": {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": output_cap},
             },
             "triage": {"effort": "low", "reasoning": "off"},
         },

@@ -100,9 +100,11 @@ color = "#FF6B9D"
   # xhigh timed out on every step budget it was given; medium finished.
   effort = "medium"
   # No base_url: this seat runs at Anthropic, authenticated by the
-  # subscription token. No budget_usd either — Claude Code honours no spend
-  # cap, and on the plan the marginal spend is zero; the plan's quota is the
-  # ceiling.
+  # subscription token. No per-trial ceiling either — and now that is the rule
+  # for every seat rather than a property of this one. ArenaBench refuses
+  # `budget_usd` and `max_tokens` outright (#2411), because the arm that
+  # carries one stops where the work finishes and the scoreboard reads that as
+  # the other arm being better.
 
   [contestant.env]
   # Names only — never values.
@@ -119,17 +121,13 @@ color = "#FFB000"
   model = "anthropic/claude-sonnet-5"
   reasoning = true
   effort = "medium"
-  # Sonnet 5's real output ceiling, the same number on both routes — asserted
-  # as an equality in stella-model's catalog tests, not transcribed here.
-  max_tokens = 128000
+  # No output ceiling: omitting it is what asks for the model's own, which the
+  # engine seeds from the catalog. Naming a number here could only ever match
+  # that ceiling or sit under it, and the second one is a handicap.
+  #
   # The whole point of this file: raw step loop, no triage, no witness, no
   # verify, no second model anywhere in the run.
   bare_loop = true
-  # Per-trial cap (becomes STELLA_BUDGET), with per-trial isolation so one
-  # runaway trial cannot eat the other nine tasks' budget. Held at the
-  # pipeline arm's $12 rather than cut: a bare loop spends less per trial
-  # (one role, not three), and a cap that binds would measure the cap.
-  budget_usd = 12.0
 
   [contestant.env]
   required = ["OPENROUTER_API_KEY"]

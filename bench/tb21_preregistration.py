@@ -61,7 +61,7 @@ from stella_harbor import (  # noqa: E402
     _harbor_version,
 )
 from stella_harbor.secure_launcher import (  # noqa: E402
-    _CANONICAL_BUDGET,
+    _CANONICAL_PER_TRIAL_FORECAST_USD,
     _DEDICATED_KEY_HARD_LIMIT_USD,
     _DEDICATED_KEY_LABEL,
     _FIXED_ANALYZER_PATH,
@@ -201,7 +201,7 @@ def _build_intent(stage: str, hi: dict, source_hashes: dict) -> dict:
         "attempts_per_task": s["attempts"],
         "n_concurrent_trials": s["n_concurrent"],
         "retry_max_retries": 0,
-        "per_trial_budget_usd": float(_CANONICAL_BUDGET),
+        "per_trial_forecast_usd": float(_CANONICAL_PER_TRIAL_FORECAST_USD),
         "artifacts": artifacts,
         "execution": {
             "base_url": BASE_URL,
@@ -250,7 +250,7 @@ def do_frozen() -> int:
     print(f"study_id                : {_FIXED_STUDY_ID}")
     print(f"ledger schema           : {LEDGER_SCHEMA}")
     print(f"ledger path             : {LEDGER_PATH}")
-    print(f"per-trial budget (usd)  : {_CANONICAL_BUDGET}")
+    print(f"per-trial budget (usd)  : {_CANONICAL_PER_TRIAL_FORECAST_USD}")
     print(f"dedicated key label     : {_DEDICATED_KEY_LABEL}")
     print(f"dedicated key limit usd : {_DEDICATED_KEY_HARD_LIMIT_USD}")
     print("\nfrozen source/artifact hashes (as the launcher computes them):")
