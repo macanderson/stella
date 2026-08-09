@@ -1,0 +1,53 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.cite-doc-by-id"
+record_id = "rec_macanderson_stella_cite_doc_by_id_7d17012ac76c"
+record_hash = "sha256:4d5ef32113248adc1635ee0e3e5f39a4bc7199940888fafb419f8c25dd530640"
+kind = "rule"
+statement = "A document under docs/ is cited by its stable frontmatter id (for example doc:context-reuse §4), not by its file path."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "must"
+precedence = 100
+
+[record.steering.applies_to]
+paths = [
+    "docs",
+    "docs/manifest.json",
+]
+tasks = [
+    "documentation",
+    "citation",
+]
+keywords = [
+    "doc id",
+    "citation",
+    "doc-links",
+]
+
+[record.enforcement]
+mode = "hard"
+
+[record.truth]
+basis = "decree"
+confidence = 92
+
+[record.truth.probe]
+kind = "path_exists"
+path = "docs/manifest.json"
+expect = "present"

@@ -1,0 +1,41 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.pre-push-runs-gate"
+record_id = "rec_macanderson_stella_pre_push_runs_gate_2eb27e26c242"
+record_hash = "sha256:20b979cad42ffe161427ec3ea9817097e56c54b9909cddc09babb785587c634c"
+kind = "fact"
+statement = "The pre-push hook runs the full gate automatically on every push and aborts the push if it fails."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "info"
+precedence = 15
+
+[record.steering.applies_to]
+paths = [".githooks"]
+keywords = [
+    "pre-push",
+    "gate",
+    "abort",
+]
+
+[record.enforcement]
+mode = "hard"
+
+[record.truth]
+basis = "asserted"
+confidence = 90

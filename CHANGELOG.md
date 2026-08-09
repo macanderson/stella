@@ -39,6 +39,63 @@ are not user-facing and do not appear here.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-08
+
+Everything since 0.7.0 — the verification and scheduling gates got sharper,
+ArenaBench grew into a cloud-scale benchmarking product, and the context
+layer gained one write surface instead of several.
+
+### Added
+
+- **ArenaBench runs on AWS Batch.** `arenabench cloud run|status|fetch` drives
+  scale-to-zero cloud infrastructure, a live web app
+  (arenabench.org) serves trends and a live scoreboard keyed on SUT commit,
+  and a head-to-head against Sonnet 5 with Stella's pipeline off establishes
+  a baseline (#2099, #2103, #2106, #2075, #2389).
+- **An `outcome_reason` taxonomy** distinguishes a trial that never ran, one
+  that solved and errored, and one that was never measured — so an unmeasured
+  trial no longer reads as a $0.00 loss and a partial sum no longer reads as
+  a seat total (#2095, #2213, #2222).
+- **The trace-replay learning harness** runs the whole learning loop from
+  recorded traces with zero model calls, and a local-only Claude Code
+  transcript adapter feeds it (#2304).
+- **A pre-plan step now refuses to start if its deadline cannot fit it**, and
+  the deadline itself can say "closing" before it says "exceeded" — a step
+  no longer burns budget it was never going to finish in (#2278).
+- **Mined rules and promotions publish through one write surface**: both now
+  emit TOML context records instead of two divergent paths (ADR 0014, #2295).
+
+### Changed
+
+- **Invariant #5 is enforced, not aspirational**: public errors must be
+  typed, and the gate now checks it (#2394).
+- **The file-size ratchet judges the change, not the tree**, and a first-time
+  crossing is judged against the base too — so a file that was already over
+  the line before your PR touched it doesn't get blamed on you, and one that
+  crosses it for the first time can't slide through untested (#2004, #2267,
+  #2405).
+- **The code-graph walk honors the repository's own ignore rules** (#2360).
+- **Domain-overlap recall admits again**, scoped to what the query actually
+  narrowed, and the context budget now drops the least important record by
+  force then precedence instead of force-filling (#2298, #2299).
+- **Moving a card no longer bills a model round trip** (#2410).
+
+### Fixed
+
+- **`stella ingest` no longer goes silent for minutes** on a working run that
+  only looked wedged (#2409).
+- **Every deck lane stops wedging at `forwarder.await`** after its turn ends
+  (#2291).
+- **Measurement is voided whenever its producing command errored**, closing
+  a gap where a verify stage could see a false pass behind an errored
+  command (#2126, #2216).
+- **A witness flip is measured against a pinned baseline, never a drifted
+  HEAD** (#2071), and its author/repair turns are bounded in wall clock so
+  one repair can't consume the whole trial's budget (#2151, #2162).
+- **Supervision env vars parse as booleans**, not clap literals (#2145).
+- **The brand identity reverts to the comet** — the Nebula recolor and its
+  three follow-ups are undone (#2226, #2309).
+
 ## [0.7.0] — 2026-08-07
 
 Everything since 0.6.0 — 127 patch releases over nine days, plus the release-
