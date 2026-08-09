@@ -51,7 +51,8 @@ STELLA_BUILD_GIT_SHA="$claim_sha" \
 
 export STELLA_BINARY="$PWD/target/x86_64-unknown-linux-gnu/release/stella"
 export STELLA_SOURCE_COMMIT="$claim_sha"
-export STELLA_BUDGET=0.17
+# No STELLA_BUDGET: a trial runs under no per-trial spend cap, and the launcher
+# refuses one if it is exported (#2411).
 export STELLA_DISABLE_REFLECTION=1
 export PATH="$claim_venv/bin:$PATH"
 ```
@@ -104,7 +105,7 @@ test "$(command -v harbor)" = "$claim_venv/bin/harbor"
 test "$(harbor --version)" = 0.6.1
 test -x "$STELLA_BINARY"
 test "${#STELLA_SOURCE_COMMIT}" = 40
-test "$STELLA_BUDGET" = 0.17
+test -z "${STELLA_BUDGET:-}"
 test "$STELLA_DISABLE_REFLECTION" = 1
 umask 077
 claim_adapter_root="$claim_repo/bench/harbor_adapter"

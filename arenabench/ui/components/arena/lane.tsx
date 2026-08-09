@@ -126,8 +126,8 @@ export function Lane({
 
   return (
     <div className="flex min-w-0 flex-col bg-panel" style={seatStyle(contestant.color)}>
-      <div className="flex items-center gap-[9px] border-b border-line-soft bg-[linear-gradient(90deg,color-mix(in_srgb,var(--seat)_9%,transparent),transparent_55%)] px-[13px] py-[9px]">
-        <span className="size-[7px] rounded-full bg-(--seat)" />
+      <div className="flex items-center gap-[9px] border-b border-line-soft bg-[color-mix(in_srgb,var(--seat)_9%,transparent)] px-[13px] py-[9px]">
+        <span className="size-[7px] bg-(--seat)" />
         <span className="text-[12.5px] font-semibold">{contestant.name}</span>
         <span className={cn("ml-auto font-mono text-[11px]", verdictTone)}>{verdictText}</span>
       </div>
@@ -184,7 +184,7 @@ export function Lane({
             <video
               controls
               preload="none"
-              className="block w-full rounded-[7px] bg-black"
+              className="block w-full bg-black"
               src={`/api/matches/${encodeURIComponent(matchId)}/video/${encodeURIComponent(contestant.id)}/${encodeURIComponent(task)}`}
             />
           </Disclosure>

@@ -41,8 +41,8 @@ pub(crate) fn custom_tool_report_for_scopes(
     if crate::settings::filesystem_settings_disabled() {
         stella_tools::custom::UngatedDiscovery::default()
     } else {
-        let home = crate::paths::user_extension_home();
-        stella_tools::custom::discover_in_scopes(root, home.as_deref(), include_workspace)
+        let user_root = crate::paths::user_extension_root();
+        stella_tools::custom::discover_in_scopes(root, user_root.as_deref(), include_workspace)
     }
 }
 
@@ -425,12 +425,15 @@ pub(crate) fn workspace_ports(
     )?;
     // The candidate registry mirrors the session's custom tool surface —
     // discovered from the same root, so a candidate sees exactly the custom
-    // tools the session does (re-rooted at its snapshot at create time).
-    let home = crate::paths::home();
+    // tools the session does (re-rooted at its snapshot at create time). That
+    // "same root" has to be the same RESOLVER too: reading the OS home here
+    // and the extension root above meant the two surfaces could name different
+    // directories the moment either moved (#2178).
+    let user_root = crate::paths::user_extension_root();
     let custom_tools = crate::tool_foundry::adopt::gate_discovery(
         stella_tools::custom::discover_in_scopes(
             &root,
-            home.as_deref(),
+            user_root.as_deref(),
             cfg.authority.project_custom_tools_allowed,
         ),
         &root,

@@ -141,14 +141,14 @@ export function TaskTable({ snapshot }: { snapshot: Snapshot }) {
   const seats = snapshot.contestants;
 
   return (
-    <section className="min-w-0 overflow-hidden rounded-[10px] border border-line bg-panel">
+    <section className="min-w-0 overflow-hidden border border-line bg-panel">
       <header className="flex items-center gap-3 border-b border-line px-4 py-[11px]">
-        <h2 className="text-[13px] font-semibold lowercase tracking-[0.04em]">tasks</h2>
+        <h2 className="text-[13px] font-semibold tracking-[0.04em]">tasks</h2>
         <span className="font-mono text-[11px] text-muted">{snapshot.rows.length}</span>
         <div className="ml-auto flex items-center gap-3">
           {seats.map((seat) => (
             <span key={seat.id} className="flex items-center gap-1.5" style={seatStyle(seat.color)}>
-              <span className="size-[7px] rounded-full bg-(--seat)" />
+              <span className="size-[7px] bg-(--seat)" />
               <span className="text-[11px] text-muted">{seat.name}</span>
             </span>
           ))}
@@ -160,7 +160,7 @@ export function TaskTable({ snapshot }: { snapshot: Snapshot }) {
       <div className="overflow-x-auto">
         <table className="w-full min-w-[620px] border-collapse text-left">
           <thead>
-            <tr className="border-b border-line-soft text-[10px] lowercase tracking-[0.09em] text-dim">
+            <tr className="border-b border-line-soft text-[10px] tracking-[0.09em] text-dim">
               <th className="px-4 py-2 font-normal">task</th>
               <th className="px-2 py-2 font-normal">seat</th>
               <th className="px-2 py-2 font-normal">verdict</th>
@@ -200,7 +200,7 @@ export function TaskTable({ snapshot }: { snapshot: Snapshot }) {
                     )}
                     <td className="whitespace-nowrap px-2 py-1.5">
                       <span className="flex items-center gap-1.5">
-                        <span className="size-[6px] flex-none rounded-full bg-(--seat)" />
+                        <span className="size-[6px] flex-none bg-(--seat)" />
                         <span className="text-[11.5px] text-muted">{seat.name}</span>
                       </span>
                     </td>
@@ -255,7 +255,7 @@ export function TaskTable({ snapshot }: { snapshot: Snapshot }) {
                             `&task=${encodeURIComponent(row.task)}`
                           }
                           title={`Read the transcripts for ${row.task}`}
-                          className="inline-flex cursor-pointer items-center rounded-[7px] border border-line bg-transparent px-2.5 py-[5px] font-mono text-xs lowercase text-foreground transition-colors hover:border-dim"
+                          className="inline-flex cursor-pointer items-center border border-line bg-transparent px-2.5 py-[5px] font-mono text-xs text-foreground transition-colors hover:border-dim"
                         >
                           transcript
                         </a>

@@ -157,6 +157,29 @@ pub fn body_lines_inline(
     render_body(diff, path, cap, multi)
 }
 
+/// [`body_lines_inline`] dressed as ANSI strings for the plain surface
+/// (#2421), returning the same `(body, hidden)` pair.
+///
+/// The deck shows a capped diff and reveals the rest with ctrl+o. A scrollback
+/// line cannot be revisited, so the plain surface commits to the capped
+/// rendering and says how many lines it withheld — which is why `hidden` is
+/// returned here too rather than dropped: an unannounced truncation reads as
+/// "that was the whole change".
+///
+/// Prose transparency is deliberately *not* applied to a diff: every colour
+/// here is semantic (`+` green, `-` red, hunk headers, the intra-line
+/// highlight), so there is no "default ink" to yield to.
+#[must_use]
+pub fn body_lines_inline_ansi(
+    diff: &str,
+    path: Option<&str>,
+    cap: usize,
+    palette: &crate::ansi::AnsiPalette,
+) -> (Vec<String>, usize) {
+    let (lines, hidden) = body_lines_inline(diff, path, cap);
+    (crate::ansi::lines_to_ansi(&lines, palette), hidden)
+}
+
 fn render_body(
     diff: &str,
     path: Option<&str>,

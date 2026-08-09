@@ -6,55 +6,69 @@
 <title>stella — observatory</title>
 <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
 <style>
-/* ── Brand tokens ────────────────────────────────────────────────────────────
-   Comet kit v1.0 — Phosphor Gold on Ink. Mirrors docs/brand/ (css/tokens.css
-   is the normative token source; BRAND.md explains it). The same values live
-   in website/src/app/tokens.css; the surfaces move together. Inlined rather
-   than imported because this page is served as one self-contained document —
-   see the `dashboard_html_has_no_external_references` test in ../../tests.rs. */
-:root{
-  /* BEGIN brand palette — comet kit v1.0: Phosphor Gold #FFB000 on Ink
-     #0B0B0C, warm neutrals, one face. This block mirrors the kit's dark
-     aliases, so it carries the full core set even where this page uses only
-     part of it. Do not prune it to the tokens currently referenced. */
-  --void:#050506; --ground:#0B0B0C; --surface:#131315; --raised:#1B1B1E;
-  --hairline:#232327; --hairline-strong:#333338;
-  --gold:#FFB000; --gold-bright:#FDC154; --gold-deep:#A37200;
-  --text:#F4F1EA; --text-2:#9B9890; --text-3:#8D8A82;
-  --ok:#4ADE80; --warn:#EAB308; --bad:#FF5C7A;
-  /* Categorical data marks — deliberately NOT the accent hue: a data mark
-     must never read as "active", and gold is the signal, never a series.
-     --c1 is mirrored for completeness but is used on no plotted surface in
-     this document. #E3B341 and gold #FFB000 are hue 42 and hue 41: they
-     measure 1.06:1 against each other, so nothing distinguishes them but
-     size — the amber mark stands down. Charts here pair --c4 (hue 175) with
-     --c2 (hue 256): 81° apart at 1.99:1, and both clear the gold accent.
-     Two further collisions the pairing avoids, both measured:
-       --c3 vs --bad     Δhue  18, 1.30:1 — never in the tool-error chart
-       --c2 vs --neutral Δhue 148, 1.08:1 — never in the stacked runs chart */
-  --c1:#E3B341; --c2:#8F70E8; --c3:#E4408F; --c4:#2FD3C6;
-  --neutral-mark:#8D8A82;          /* the "everything else" mark — --text-3 */
-  /* END brand palette */
+/* ── Instrument tokens ───────────────────────────────────────────────────────
+   Monochrome, hairline-ruled, square. The reference is
+   docs/benchmarks/terminal-bench-2-1-glm-5-2.html, and its governing rule is
+   the one worth restating here: **no accent hue in the chrome. The only colour
+   on the page is semantic** — a thing passed, or it did not.
 
-  /* Semantic alias. Only ONE alias, and only for accent/active/focus. Gold
-     is the signal, never the surface: it marks what is active, selected or
-     focused, and it never carries status — --ok/--warn/--bad stay functional
-     and glyph-paired (--warn sits in gold's region at 1.05:1 in dark, which
-     is exactly why the glyph, never the hue, is the status carrier). Every
-     token above this line is re-pointed for the light theme below — see
-     "Light mode" — except --ink, which never moves: it is the fixed color
-     that sits ON a gold fill (the selected tab, the selected context chip),
-     never the color a gold fill sits on. */
-  --ink:#0B0B0C;
+   That replaces the Phosphor Gold accent this file carried since the comet
+   kit. Gold marked what was active, which meant an instrument's chrome
+   competed with its data for the eye; the ink/paper inversion says the same
+   thing (`background:var(--accent); color:var(--ink)`) and says it in the one
+   dimension a reader cannot mistake for a measurement. The brand's gold now
+   appears on exactly one surface — nowhere. The wordmark ships as the *mono*
+   cut for the same reason.
+
+   Token NAMES are unchanged on purpose. Four hundred lines of component CSS
+   below reference them, and re-pointing values leaves every one of those rules
+   correct; renaming would have meant rewriting the document to change its
+   palette. Inlined rather than imported because this page is served as one
+   self-contained document — see `dashboard_html_has_no_external_references`
+   in ../../tests.rs. */
+:root{
+  /* BEGIN palette — dark: ink ground, paper text, neutral ramp. The surfaces
+     step #0A0A0A → #0F0F0F → #111111 so a card reads as raised by a value
+     step of 1–2 rather than by a shadow. Do not prune this block to the
+     tokens currently referenced; it carries the full set. */
+  --void:#060606; --ground:#0A0A0A; --surface:#0F0F0F; --raised:#111111;
+  --hairline:#1F1F1F; --hairline-strong:#2E2E2E;
+  /* The accent ramp is now the text ramp: "active" is an inversion, not a
+     hue. The names survive so every existing rule keeps working. */
+  --gold:#EDEDED; --gold-bright:#FFFFFF; --gold-deep:#A1A1A1;
+  --text:#EDEDED; --text-2:#A1A1A1; --text-3:#6E6E6E;
+  /* The three semantic colours, and the only colour anywhere. Desaturated to
+     the reference's own register (its --pass/--fail), so they read as marks on
+     an instrument rather than as UI chrome. --warn keeps a hue rather than
+     collapsing to neutral: it is a distinct state, and dropping it to grey
+     would throw the signal away to satisfy the palette. */
+  --ok:#4CC38A; --warn:#C9A227; --bad:#E5715F;
+  /* Categorical data marks — a value ramp, not a hue wheel. Series are
+     separated by lightness alone, which is the one channel that survives
+     greyscale printing, colour-vision deficiency, and a projector. Ordered
+     light → dark so --c1 is the most prominent series. */
+  --c1:#EDEDED; --c2:#A1A1A1; --c3:#6E6E6E; --c4:#4A4A4A;
+  --neutral-mark:#4A4A4A;          /* the "everything else" mark — recedes */
+  /* END palette */
+
+  /* Semantic alias. One alias, for accent/active/focus. The accent is the
+     text colour, so an active surface is an inversion of the page: the fill
+     takes --accent and whatever sits on it takes --ink. Unlike the gold
+     system, --ink is NOT fixed — it is re-pointed by the light theme below,
+     because inverting a light page yields dark chrome with light text. It
+     stays a token of its own rather than reusing --ground: a selector that
+     paints text in the page-background token is the coupling
+     tests/light_mode.rs exists to forbid. */
+  --ink:#0A0A0A;
   --accent:var(--gold);
-  --accent-wash:rgba(255,176,0,.09);   /* gold @9% — hover / selected fill    */
-  --accent-edge:rgba(255,176,0,.42);   /* gold @42% — chip + badge edges      */
-  --sunken:rgba(5,5,6,.55);            /* --void @55% — inset wells           */
+  --accent-wash:rgba(237,237,237,.08); /* paper @8%  — hover / selected fill  */
+  --accent-edge:rgba(237,237,237,.38); /* paper @38% — chip + badge edges     */
+  --sunken:#151515;                    /* inset wells — the reference's --code */
   /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
      an interactive component; no token in the ground ramp reaches it —
-     --hairline-strong measures 1.48:1 on --surface. --text-3 does (5.38:1),
-     so every control that is operable takes it, while purely decorative
-     grouping seams (card edges, table rules) keep the hairlines. */
+     --hairline-strong measures 1.48:1 on --surface. --text-3 does, so every
+     control that is operable takes it, while purely decorative grouping seams
+     (card edges, table rules) keep the hairlines. */
   --control-edge:var(--text-3);
 
   /* Type. One face — JetBrains Mono is the brand voice; the product lives in
@@ -67,23 +81,41 @@
 
   /* Rhythm. One 8px unit; every gutter, gap and pad is a multiple. */
   --sp1:8px; --sp2:16px; --sp3:24px; --sp4:32px;
-  --radius:8px; --radius-sm:4px;
+  /* Square, everywhere. Kept as tokens rather than deleted so the ~40 rules
+     that spell `border-radius:var(--radius)` stay honest about where a corner
+     is being set — and so the decision lives in one line instead of forty. A
+     rounded corner is a soft edge on an instrument: it says "surface" where a
+     hairline says "boundary", and this page is all boundaries. */
+  --radius:0; --radius-sm:0;
 }
 
 /* ── Light mode ───────────────────────────────────────────────────────────
-   Dark is the brand's home (arenabench/ui's own words — ui/app/globals.css),
-   so this maps the same semantic slots onto Paper the way arenabench's own
-   light scheme does, not a re-derivation: --gold, --ok, --warn, --bad and
-   --c1..--c4 below are byte-identical to arenabench's `--accent`, `--ok`,
-   `--warn`/`--acc-citron`, `--bad` and `--acc-{citron,violet,rose,cyan}`
-   (arenabench/ui/app/globals.css, PR #2168) — that fix independently landed
-   on nearly the same values this file already carried, re-picked so every
-   token clears 4.5:1 against arenabench's darkest light surface
-   (`--panel-2`). --text-2/--text-3 are arenabench's `--muted`/`--dim` the
-   same way. Every pair below was re-measured here against WCAG 2.1's
-   relative luminance formula, worst case against --ground (lighter than
-   arenabench's --panel-2, so never the binding constraint), and clears
-   4.5:1; --text and --text-2 clear 7:1 (AAA).
+   The same slots on paper, and byte-identical to arenabench's light scheme
+   (arenabench/ui/app/globals.css) — the two surfaces are one design system
+   and are meant to move together, so a value that differs between them is a
+   bug in whichever moved last.
+
+   Contrast, computed against WCAG 2.1 relative luminance rather than
+   estimated, worst case on --surface (#FAFAFA — the lightest surface a mark
+   can land on, so the binding constraint):
+
+     --text 18.97:1   --text-2 7.49:1   --text-3 3.10:1
+     --ok    5.91:1   --warn   5.99:1   --bad    6.74:1
+
+   and on the dark side against --raised (#111111):
+
+     --text 16.13:1   --text-2 7.31:1   --text-3 3.70:1
+     --ok    8.52:1   --warn   7.81:1   --bad    6.17:1
+
+   Text and --text-2 clear AAA (7:1) on both; the three semantic colours clear
+   AA (4.5:1) on both. --text-3 clears neither and is not meant to, which is
+   the constraint to hold when editing: it carries non-essential labelling
+   only — a legend key, a units suffix — and never a value a reader must act
+   on. The inversion pair (--ink on --accent) is 19.80:1 light, 16.91:1 dark.
+
+   The --c1..--c4 series ramp is lightness-ordered rather than
+   contrast-matched on purpose: a series is identified by its position in the
+   ramp, and --c4 is the recessive "everything else" mark.
 
    Two gates apply it, same pattern as docs/brand/css/tokens.css: the OS
    preference, unless the page has been told "dark" explicitly, and an
@@ -95,30 +127,32 @@
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     color-scheme:light;
-    --void:#E9E5DA; --ground:#F2EFE7; --surface:#FAF8F2; --raised:#FFFFFF;
-    --hairline:#E4E0D3; --hairline-strong:#D8D3C4;
-    --gold:#835B00; --gold-bright:#A37200; --gold-deep:#523900;
-    --text:#1C1B16; --text-2:#5D5A50; --text-3:#66625A;
-    --ok:#1A713D; --warn:#796000; --bad:#B53139;
-    --c1:#796000; --c2:#7048A8; --c3:#BA2358; --c4:#0A6C7E;
-    --neutral-mark:#66625A;
-    --accent-wash:rgba(131,91,0,.10);
-    --accent-edge:rgba(131,91,0,.38);
-    --sunken:rgba(28,27,22,.05);        /* --text @5% — inset wells */
+    --void:#F0F0F0; --ground:#FFFFFF; --surface:#FAFAFA; --raised:#FFFFFF;
+    --hairline:#EAEAEA; --hairline-strong:#D4D4D4;
+    --gold:#0A0A0A; --gold-bright:#000000; --gold-deep:#525252;
+    --text:#0A0A0A; --text-2:#525252; --text-3:#8F8F8F;
+    --ok:#11703A; --warn:#7A5C00; --bad:#A32F1F;
+    --c1:#0A0A0A; --c2:#525252; --c3:#8F8F8F; --c4:#C4C4C4;
+    --neutral-mark:#C4C4C4;
+    --ink:#FFFFFF;                      /* the inversion flips with the page */
+    --accent-wash:rgba(10,10,10,.06);
+    --accent-edge:rgba(10,10,10,.28);
+    --sunken:#F6F6F6;                   /* inset wells */
   }
 }
 :root[data-theme="light"]{
   color-scheme:light;
-  --void:#E9E5DA; --ground:#F2EFE7; --surface:#FAF8F2; --raised:#FFFFFF;
-  --hairline:#E4E0D3; --hairline-strong:#D8D3C4;
-  --gold:#835B00; --gold-bright:#A37200; --gold-deep:#523900;
-  --text:#1C1B16; --text-2:#5D5A50; --text-3:#66625A;
-  --ok:#1A713D; --warn:#796000; --bad:#B53139;
-  --c1:#796000; --c2:#7048A8; --c3:#BA2358; --c4:#0A6C7E;
-  --neutral-mark:#66625A;
-  --accent-wash:rgba(131,91,0,.10);
-  --accent-edge:rgba(131,91,0,.38);
-  --sunken:rgba(28,27,22,.05);
+  --void:#F0F0F0; --ground:#FFFFFF; --surface:#FAFAFA; --raised:#FFFFFF;
+  --hairline:#EAEAEA; --hairline-strong:#D4D4D4;
+  --gold:#0A0A0A; --gold-bright:#000000; --gold-deep:#525252;
+  --text:#0A0A0A; --text-2:#525252; --text-3:#8F8F8F;
+  --ok:#11703A; --warn:#7A5C00; --bad:#A32F1F;
+  --c1:#0A0A0A; --c2:#525252; --c3:#8F8F8F; --c4:#C4C4C4;
+  --neutral-mark:#C4C4C4;
+  --ink:#FFFFFF;
+  --accent-wash:rgba(10,10,10,.06);
+  --accent-edge:rgba(10,10,10,.28);
+  --sunken:#F6F6F6;
 }
 
 /* ── Reset & base ─────────────────────────────────────────────────────── */
@@ -127,15 +161,14 @@ html{color-scheme:dark}
 body{
   font-family:var(--mono); font-size:var(--fs-base); line-height:1.55;
   color:var(--text); background:var(--ground);
-  /* A single faint phosphor wash at the top edge so the masthead sits on
-     ground rather than on a flat fill. The starfield is gone: it read as
-     decoration, and decoration that carries no information is noise on an
-     instrument. */
-  background-image:radial-gradient(72% 36% at 50% -14%,rgba(255,176,0,.05),rgba(11,11,12,0) 70%);
-  background-repeat:no-repeat; background-attachment:fixed;
+  /* Flat. The phosphor wash that used to sit under the masthead followed the
+     starfield out for the same reason it did: decoration that carries no
+     information is noise on an instrument, and a gradient in particular
+     changes the apparent value of every mark drawn over it — which on a page
+     of measurements is a readability cost paid for nothing. */
   min-height:100vh; -webkit-font-smoothing:antialiased;
 }
-::selection{background:rgba(255,176,0,.30)}
+::selection{background:var(--accent-wash)}
 .wrap{max-width:1360px;margin:0 auto;padding:0 var(--sp3) 80px}
 
 /* Every number on the page is tabular, everywhere, without exception. */
@@ -183,7 +216,7 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
           font:var(--fs-micro)/1 var(--mono);color:var(--text-3);flex-wrap:wrap;align-self:center}
 #ws{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .live{display:inline-flex;align-items:center;gap:7px;color:var(--text-2)}
-.live i{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none;
+.live i{width:7px;height:7px;border-radius:0;background:var(--ok);flex:none;
         animation:pulse 2.4s ease-in-out infinite}
 .live[data-state="offline"]{color:var(--bad)}
 .live[data-state="offline"] i{background:var(--bad);animation:none}
@@ -327,11 +360,11 @@ tr:hover td.go{text-decoration:underline}
 svg text{font:10px var(--mono);fill:var(--text-3)}
 .legend{display:flex;gap:var(--sp2);font:var(--fs-micro)/1.4 var(--mono);color:var(--text-2);
         margin:0 0 var(--sp1);flex-wrap:wrap}
-.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:0;margin-right:6px;vertical-align:-1px}
 .hbar{display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr) auto;align-items:center;
       gap:var(--sp2);font:var(--fs-sm)/1.5 var(--mono);color:var(--text-2);padding:4px 0}
 .hbar .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
-.hbar .track{display:block;height:10px;border-radius:0 2px 2px 0;background:var(--c4);min-width:2px}
+.hbar .track{display:block;height:10px;border-radius:0;background:var(--c1);min-width:2px}
 .hbar .val{text-align:right;color:var(--text-3);white-space:nowrap}
 
 /* ── Feed items (lessons, memories) ───────────────────────────────────── */
@@ -367,14 +400,14 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
        font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);padding:3px 0;cursor:pointer;
        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gfile:hover{color:var(--text)}
-.gfile i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;flex:none}
+.gfile i{display:inline-block;width:8px;height:8px;border-radius:0;margin-right:7px;flex:none}
 .gpath{font:600 var(--fs-sm)/1.5 var(--mono);color:var(--text);word-break:break-all;margin-bottom:var(--sp1)}
 
 /* ── Tooltip ──────────────────────────────────────────────────────────── */
 #tip{position:fixed;pointer-events:none;z-index:50;display:none;background:var(--raised);
      border:1px solid var(--hairline-strong);border-radius:var(--radius);padding:8px 11px;
      font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);max-width:340px;
-     box-shadow:0 6px 20px rgba(5,5,6,.6)}
+     }
 #tip b{color:var(--text);display:block;margin-bottom:2px;white-space:normal;word-break:break-all}
 
 /* ── Transcript page ──────────────────────────────────────────────────────
@@ -500,7 +533,7 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .tx-sect .step-row{font-size:var(--fs-sm);color:var(--text-2);padding:4px 0;
                    border-bottom:1px solid var(--hairline)}
 .tx-sect .step-row:last-child{border-bottom:0}
-.tokbar{display:flex;height:10px;border-radius:0 2px 2px 0;overflow:hidden;gap:2px}
+.tokbar{display:flex;height:10px;border-radius:0;overflow:hidden;gap:2px}
 .tokbar i{display:block;height:100%}
 /* The per-turn diff affordance in the sessions turns table (#1870). */
 .turn-diff{background:none;border:1px solid var(--hairline);color:var(--text-2);
@@ -704,7 +737,7 @@ footer b{color:var(--text-2);font-weight:600}
       <div class="card">
         <div class="kick">Spend &amp; volume</div>
         <h2>Tokens per run</h2>
-        <div class="legend"><span><i style="background:var(--c4)"></i>input</span>
+        <div class="legend"><span><i style="background:var(--c1)"></i>input</span>
           <span><i style="background:var(--c2)"></i>output</span></div>
         <div id="timeline"></div>
       </div>
@@ -757,7 +790,7 @@ footer b{color:var(--text-2);font-weight:600}
       <div class="card">
         <div class="kick">Volume</div>
         <h2>Tokens per day</h2>
-        <div class="legend"><span><i style="background:var(--c4)"></i>input</span>
+        <div class="legend"><span><i style="background:var(--c1)"></i>input</span>
           <span><i style="background:var(--c2)"></i>output</span></div>
         <div id="ch-tokens"></div>
       </div>
@@ -766,7 +799,7 @@ footer b{color:var(--text-2);font-weight:600}
       <div class="card">
         <div class="kick">Throughput</div>
         <h2>Runs per day</h2>
-        <div class="legend"><span><i style="background:var(--c4)"></i>resolved</span>
+        <div class="legend"><span><i style="background:var(--c1)"></i>resolved</span>
           <span><i style="background:var(--neutral-mark)"></i>other outcomes</span></div>
         <div id="ch-runs"></div>
       </div>
@@ -1200,7 +1233,7 @@ function renderTimeline() {
     const hIn = innerH * num(r.input_tokens) / max, hOut = innerH * num(r.output_tokens) / max;
     const yIn = padT + innerH - hIn, yOut = padT + innerH - hOut;
     bars += `<g class="bar" data-i="${i}">
-      <rect x="${(x0 - bw - 1).toFixed(1)}" y="${yIn.toFixed(1)}" width="${bw}" height="${Math.max(hIn, 1).toFixed(1)}" rx="1" fill="var(--c4)"/>
+      <rect x="${(x0 - bw - 1).toFixed(1)}" y="${yIn.toFixed(1)}" width="${bw}" height="${Math.max(hIn, 1).toFixed(1)}" rx="1" fill="var(--c1)"/>
       <rect x="${(x0 + 1).toFixed(1)}" y="${yOut.toFixed(1)}" width="${bw}" height="${Math.max(hOut, 1).toFixed(1)}" rx="1" fill="var(--c2)"/>
       <rect x="${(x0 - group / 2).toFixed(1)}" y="0" width="${group.toFixed(1)}" height="${H - padB + 8}" fill="transparent"/>
     </g>`;
@@ -1308,14 +1341,14 @@ function renderActivity() {
   const withOther = days.map(d => ({ ...d, other: Math.max(0, num(d.runs) - num(d.resolved)) }));
   const int = (v) => fmtInt(Math.round(num(v)));
   renderDaily("ch-cost", days,
-    [{ key: "cost_usd", label: "spend", color: "var(--c4)" }],
+    [{ key: "cost_usd", label: "spend", color: "var(--c1)" }],
     fmtUsd, { unit: "USD", noun: "spend" });
   renderDaily("ch-tokens", days,
-    [{ key: "input_tokens", label: "input", color: "var(--c4)" },
+    [{ key: "input_tokens", label: "input", color: "var(--c1)" },
      { key: "output_tokens", label: "output", color: "var(--c2)" }],
     fmtTok, { unit: "tokens", noun: "token traffic" });
   renderDaily("ch-runs", withOther,
-    [{ key: "resolved", label: "resolved", color: "var(--c4)" },
+    [{ key: "resolved", label: "resolved", color: "var(--c1)" },
      { key: "other", label: "other outcomes", color: "var(--neutral-mark)" }],
     int, { unit: "runs", noun: "runs", stacked: true });
   renderDaily("ch-toolcalls", days,
@@ -1896,7 +1929,7 @@ async function openTranscript(id, full = false) {
     const inW = t ? 100 * num(s.input_tokens) / t : 0;
     return `<div class="step-row"><span>${fmtInt(s.step)}</span>
       <span class="tokbar" style="width:${(100 * t / maxTok).toFixed(1)}%">
-        <i style="background:var(--c4);width:${inW.toFixed(1)}%"></i>
+        <i style="background:var(--c1);width:${inW.toFixed(1)}%"></i>
         <i style="background:var(--c2);flex:1"></i></span>
       <span>${fmtTok(s.input_tokens)} in · ${fmtTok(s.output_tokens)} out · ${fmtMs(s.duration_ms)}${
         num(s.retries) ? ` · <span style="color:var(--warn)">◌ ${fmtInt(s.retries)} retries</span>` : ""}</span>
@@ -2301,6 +2334,12 @@ const EPISODE_OUTCOME = {
 function renderLifecycle(d) {
   if (!changed("lifecycle", d)) return;
   const proposals = d.proposals ?? [];
+  /* An empty ledger has two very different causes, and they used to render
+     identically: a workspace that has never learned anything, and a learning
+     loop whose reflection responses cannot be parsed. The second leaves
+     `parse_error` rows behind (#2175); say so instead of showing the fresh
+     workspace's copy to someone whose loop has been dead for nine days. */
+  const starved = d.unreadable_reflections ?? [];
   $("imp-proposals").innerHTML = proposals.length
     ? proposals.map(p => `<div class="feed-item">
         <b>${esc(p.candidate_id)}</b> ${lifecycleBadge(p.status)}
@@ -2310,6 +2349,12 @@ function renderLifecycle(d) {
         <div class="when">${fmtInt(p.distinct_tasks)} distinct task(s) ·
           ${fmtInt(p.occurrences)} observation(s) · confidence ${fmtInt(p.confidence)}</div>
       </div>`).join("")
+    : starved.length
+    ? `<div class="empty">No proposals — and ${fmtInt(starved.length)} reflection(s)
+       produced no readable lessons.<br>
+       The learning loop is running and its output cannot be parsed, so nothing
+       reaches the ledger. This is a starved loop, not a quiet one.
+       <div class="snip">${esc(starved[0].excerpt ?? "")}</div></div>`
     : `<div class="empty">No proposals in the ledger.<br>
        When a lesson recurs across distinct tasks, the loop files a durable
        proposal into <code>.stella/private/context.db</code> — the audit trail
@@ -2471,19 +2516,18 @@ function renderConfig(cfg) {
 }
 
 /* ── code graph ──────────────────────────────────────────────────────── */
-/* Crate colours come from the palette's categorical set, minus --c1: gold is
-   this page's accent and #E3B341 is the same hue at 1.06:1 against #FFB000.
-   The set predates the comet kit (which owns one color and defines no data
-   marks) and survives as this page's functional ramp — the previous eight
-   slots were invented, two of them read as "active", and #008300 measured
-   2.4:1 on this surface. Three legible marks plus a neutral tail is a
-   smaller ramp but an honest one; extending the kit to eight validated
-   slots is filed as a ticket.
+/* Crate colours come from the palette's categorical ramp, minus --c4: the
+   ramp is ordered by prominence (--c1 brightest), and a crate mark competing
+   with the primary series would misread. There is no hue here to collide with
+   an accent any more — the ramp separates series by lightness alone, which is
+   the one channel that survives greyscale printing, colour-vision deficiency
+   and a projector. Three legible steps plus a neutral tail; a longer ramp
+   would need steps closer together than a reader can rank at a glance.
    Assigned to crates in fixed file-count order; the long tail is neutral. */
 /* Canvas needs concrete colours, so the tokens are resolved once from the
    stylesheet rather than restated as hexes that could drift out of sync. */
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const GP = [cssVar("--c4"), cssVar("--c2"), cssVar("--c3")];
+const GP = [cssVar("--c1"), cssVar("--c2"), cssVar("--c3")];
 const G_OTHER = cssVar("--neutral-mark");
 const G_EDGE = cssVar("--neutral-mark"), G_EDGE_LIT = cssVar("--gold");
 const G_LABEL = cssVar("--text"), G_LABEL_DIM = cssVar("--text-2"), G_HALO = cssVar("--ground");

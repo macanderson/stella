@@ -28,8 +28,8 @@ export function ConfirmDialog({
     <BaseAlertDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseAlertDialog.Portal>
         <BaseAlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px]" />
-        <BaseAlertDialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[12px] border border-line bg-panel p-5 shadow-[0_18px_60px_-18px_rgb(0_0_0/0.7)]">
-          <BaseAlertDialog.Title className="text-[15px] font-[650] lowercase">
+        <BaseAlertDialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 border border-line bg-panel p-5 ">
+          <BaseAlertDialog.Title className="text-[15px] font-[650] ">
             {title}
           </BaseAlertDialog.Title>
           <BaseAlertDialog.Description className="mt-2 text-[12.5px] leading-relaxed text-muted">

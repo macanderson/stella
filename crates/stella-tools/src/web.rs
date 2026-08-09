@@ -190,14 +190,18 @@ impl std::fmt::Debug for WebAuthConfig {
 }
 
 impl WebAuthConfig {
-    /// Load `$STELLA_WEB_AUTH_FILE`, else `~/.stella/web_auth.toml`.
-    /// A missing file is the empty config; an unreadable or unparseable one
-    /// is the `Err` every web tool then reports.
+    /// Load `$STELLA_WEB_AUTH_FILE`, else `$STELLA_HOME/web_auth.toml`, else
+    /// `~/.stella/web_auth.toml`. A missing file is the empty config; an
+    /// unreadable or unparseable one is the `Err` every web tool then reports.
+    ///
+    /// The narrow per-file override still wins; the fallback goes through
+    /// `stella-home` so this file moves with the rest of the user tier when
+    /// `STELLA_HOME` redirects it (#2178).
     pub fn load_default() -> WebAuthState {
         let path = match std::env::var_os("STELLA_WEB_AUTH_FILE") {
             Some(explicit) => PathBuf::from(explicit),
-            None => match std::env::var_os("HOME") {
-                Some(home) => PathBuf::from(home).join(".stella").join("web_auth.toml"),
+            None => match stella_home::stella_home() {
+                Some(root) => root.join("web_auth.toml"),
                 None => return Ok(Self::default()),
             },
         };

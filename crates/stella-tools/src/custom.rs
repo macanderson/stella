@@ -69,7 +69,8 @@
 //! # Discovery precedence
 //!
 //! Workspace (`<root>/.stella/tools/`) is scanned before user-global
-//! (`$HOME/.stella/tools/`); on a name collision the workspace tool
+//! (`~/.stella/tools/`, or `$STELLA_HOME/tools/` when the home is
+//! redirected); on a name collision the workspace tool
 //! wins and the global one is reported as a [`ToolDiagnostic`]. A malformed
 //! manifest never aborts discovery — it becomes a typed per-file diagnostic so
 //! `stella tools` can show developers exactly which file is broken and why. A
@@ -342,20 +343,21 @@ pub fn parse_manifest(text: &str, source: &Path) -> Result<CustomTool, String> {
     })
 }
 
-/// Discover custom tools for `workspace_root`, reading the user-global
-/// location from `$HOME`. Thin env-reading wrapper over [`discover_in`] — tests
-/// inject a home directory directly rather than mutating the process env.
+/// Discover custom tools for `workspace_root`, resolving the user-global
+/// location through `stella-home` (`$STELLA_HOME`, else `~/.stella`). Thin
+/// env-reading wrapper over [`discover_in`] — tests inject a root directly
+/// rather than mutating the process env.
 pub fn discover(workspace_root: &Path) -> UngatedDiscovery {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    discover_in_scopes(workspace_root, home.as_deref(), true)
+    discover_in_scopes(workspace_root, stella_home::stella_home().as_deref(), true)
 }
 
 /// Discover custom tools from the workspace directory then the (optional)
-/// user-global home. Workspace wins on name collisions; a `None` home skips the
-/// global scan entirely. Never fails: unreadable or malformed manifests become
+/// user-global stella root (`~/.stella`, or wherever `STELLA_HOME` points).
+/// Workspace wins on name collisions; a `None` root skips the global scan
+/// entirely. Never fails: unreadable or malformed manifests become
 /// diagnostics, not errors.
-pub fn discover_in(workspace_root: &Path, home: Option<&Path>) -> UngatedDiscovery {
-    discover_in_scopes(workspace_root, home, true)
+pub fn discover_in(workspace_root: &Path, user_root: Option<&Path>) -> UngatedDiscovery {
+    discover_in_scopes(workspace_root, user_root, true)
 }
 
 /// Discover custom tools from the allowed configuration scopes.
@@ -365,7 +367,7 @@ pub fn discover_in(workspace_root: &Path, home: Option<&Path>) -> UngatedDiscove
 /// neither parsed nor reported as diagnostics.
 pub fn discover_in_scopes(
     workspace_root: &Path,
-    home: Option<&Path>,
+    user_root: Option<&Path>,
     include_workspace: bool,
 ) -> UngatedDiscovery {
     let mut report = UngatedDiscovery::default();
@@ -376,8 +378,8 @@ pub fn discover_in_scopes(
     if include_workspace {
         dirs.push(workspace_root.join(".stella").join("tools"));
     }
-    if let Some(home) = home {
-        dirs.push(home.join(".stella").join("tools"));
+    if let Some(user_root) = user_root {
+        dirs.push(user_root.join("tools"));
     }
 
     for dir in dirs {
@@ -918,8 +920,16 @@ command = []"#;
         root.join(".stella").join("tools")
     }
 
+    /// The user-global tools dir under a fixture home. The API takes the
+    /// stella ROOT (`<home>/.stella`), so the fixture layout on disk is
+    /// unchanged and only what the caller passes moved (#2178).
     fn global_tools(home: &Path) -> PathBuf {
-        home.join(".stella").join("tools")
+        user_root(home).join("tools")
+    }
+
+    /// The stella root under a fixture home — what `discover_in*` now takes.
+    fn user_root(home: &Path) -> PathBuf {
+        home.join(".stella")
     }
 
     #[test]
@@ -937,7 +947,7 @@ command = []"#;
             "name = \"b_tool\"\ndescription = \"d\"\ncommand = [\"./b.sh\"]",
         );
 
-        let report = discover_in(ws.path(), Some(home.path()));
+        let report = discover_in(ws.path(), Some(&user_root(home.path())));
         let names: Vec<&str> = report.tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"a_tool"), "names: {names:?}");
         assert!(names.contains(&"b_tool"), "names: {names:?}");
@@ -959,7 +969,7 @@ command = []"#;
             "name = \"global_tool\"\ndescription = \"d\"\ncommand = [\"./global.sh\"]",
         );
 
-        let report = discover_in_scopes(ws.path(), Some(home.path()), false);
+        let report = discover_in_scopes(ws.path(), Some(&user_root(home.path())), false);
         let names: Vec<&str> = report.tools.iter().map(|tool| tool.name.as_str()).collect();
         assert_eq!(names, vec!["global_tool"]);
         assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
@@ -1025,7 +1035,7 @@ command = []"#;
             "name = \"dup\"\ndescription = \"GLOBAL\"\ncommand = [\"./g.sh\"]",
         );
 
-        let report = discover_in(ws.path(), Some(home.path()));
+        let report = discover_in(ws.path(), Some(&user_root(home.path())));
         assert_eq!(report.tools.len(), 1);
         assert_eq!(report.tools[0].description, "WORKSPACE");
         assert_eq!(report.diagnostics.len(), 1, "global dup must be flagged");

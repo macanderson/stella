@@ -100,7 +100,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
     "agent_version": "REPLACE_AFTER_FREEZE_WITH_EXACT_REPORTED_VERSION",
     "adapter_version": "0.6.0",
     "adapter_sha256": "REPLACE_AFTER_FINAL_ADAPTER_FREEZE_WITH_64_HEX",
-    "budget_usd": 0.17,
+    "budget_usd": null,
     "disable_reflection": true,
     "base_url": "https://openrouter.ai/api/v1",
     "provider_route_policy": "openrouter-auto",
@@ -122,7 +122,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
         "triage": {"effort": "low", "reasoning": "off"}
       }
     },
-    "engine_posture_sha256": "8ce2e82029af25d9c9ee5d3f0f024f6e97c08fe39543486edb66926cb55b84a9"
+    "engine_posture_sha256": "20de1e34756b0ee86ced24a37fcc5f99ad743cd5c6e91921cd28d1e0570c160e"
   },
   "analysis": {
     "sha256": "REPLACE_AFTER_FINAL_ANALYZER_FREEZE_WITH_64_HEX",
@@ -242,7 +242,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
-        "sha256": "0d732c3e42a394a059be359de78ed153eb840477b946f167b8a0f3048023ff84"
+        "sha256": "1191911e2bc5aeef2949f0592a0c3d2da31f55e05b464018a8440febe0e94bd3"
       },
       "openrouter/z-ai/glm-5.2": {
         "version": "stella-tb21-engine-posture-v1",
@@ -258,7 +258,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
-        "sha256": "41f9be3b5f290529b10a94fcd87e3ad87b4798bdd4dd605bb7e678ecaa5d227d"
+        "sha256": "ebfc67c5d3f2f94f689ad341d53878939ee4576d89651d654d117acb4aee2a28"
       },
       "openrouter/x-ai/grok-4.5": {
         "version": "stella-tb21-engine-posture-v1",
@@ -274,7 +274,7 @@ name and `dataset.ref` carries the same `sha256:` digest separately.
             "triage": {"effort": "low", "reasoning": "off"}
           }
         },
-        "sha256": "4505a9f8a582b25872c7c93bf1c63f3d6a335bac02e474ee5231e240f485802f"
+        "sha256": "2aee47fdf9d277918a48f67b8a53fe569333cce9c3c9041fefeb83a7f386762f"
       }
     },
     "job_name": "stella-tb21-calibration-20260721",
@@ -380,7 +380,7 @@ Claim mode also requires `--run-ledger`. Its exact top-level schema is
         "attempts_per_task": 1,
         "n_concurrent_trials": 1,
         "retry_max_retries": 0,
-        "per_trial_budget_usd": 0.17,
+        "per_trial_forecast_usd": 1.20,
         "artifacts": {
           "binary_sha256": "64_lowercase_hex",
           "source_commit": "40_lowercase_hex",

@@ -5,7 +5,7 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
   return (
     <input
       className={cn(
-        "rounded-[7px] border border-line bg-panel px-2.5 py-[7px] font-mono text-[13px] text-foreground",
+        " border border-line bg-panel px-2.5 py-[7px] font-mono text-[13px] text-foreground",
         "placeholder:text-dim focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/10",
         className,
       )}
@@ -21,7 +21,7 @@ export function Textarea({
   return (
     <textarea
       className={cn(
-        "w-full resize-y rounded-[7px] border border-line bg-panel px-2.5 py-[7px] font-mono text-xs leading-normal text-foreground",
+        "w-full resize-y border border-line bg-panel px-2.5 py-[7px] font-mono text-xs leading-normal text-foreground",
         "placeholder:text-dim focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent/10",
         className,
       )}
@@ -30,7 +30,7 @@ export function Textarea({
   );
 }
 
-/** A form field with the kit's lowercase, letterspaced label. */
+/** A form field with the kit's , letterspaced label. */
 export function Field({
   label,
   className,
@@ -42,7 +42,7 @@ export function Field({
 }) {
   return (
     <label className={cn("flex min-w-0 flex-col gap-[5px]", className)}>
-      <span className="text-[11px] lowercase tracking-[0.06em] text-muted">{label}</span>
+      <span className="text-[11px] tracking-[0.06em] text-muted">{label}</span>
       {children}
     </label>
   );

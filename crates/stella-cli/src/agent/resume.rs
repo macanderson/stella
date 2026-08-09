@@ -419,7 +419,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     {
         warn_store_write_failed("the audit record (files touched / memory citations / outcome)");
     }
-    tui::files_touched_panel(&files);
+    plain::files_touched_panel(&files);
     if let Some(set) = &mcp {
         set.close_all().await;
     }
@@ -432,7 +432,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         };
         println!("\n  {mark} {line}");
     }
-    tui::cost_summary(
+    plain::cost_summary(
         cost_usd,
         &format!("{}/{}", cfg.provider.id, cfg.model_id),
         turn_start.elapsed(),

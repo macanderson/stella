@@ -42,7 +42,7 @@ function Row({
 }) {
   return (
     <div className="flex gap-3 py-[3px]">
-      <span className="w-[104px] flex-none text-[10.5px] lowercase text-dim">{label}</span>
+      <span className="w-[104px] flex-none text-[10.5px] text-dim">{label}</span>
       <span className={cn("min-w-0 flex-1 break-words text-[11.5px]", tone ?? "text-muted")}>
         {children}
       </span>
@@ -53,7 +53,7 @@ function Row({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="border-t border-line-soft py-2.5 first:border-t-0">
-      <h3 className="pb-1 text-[10.5px] font-semibold lowercase tracking-[0.08em] text-dim">
+      <h3 className="pb-1 text-[10.5px] font-semibold tracking-[0.08em] text-dim">
         {title}
       </h3>
       {children}
@@ -83,7 +83,7 @@ function Flag({
 export function ProofPanel({ proof }: { proof: TrialProof | null | undefined }) {
   if (!proof) {
     return (
-      <div className="rounded-[10px] border border-line bg-panel px-3.5 py-3 font-mono text-[11.5px] text-dim">
+      <div className=" border border-line bg-panel px-3.5 py-3 font-mono text-[11.5px] text-dim">
         This seat publishes no proof rail — there is no witness, no oracle and no
         pipeline roster to read. Nothing is missing; the machinery is not there.
       </div>
@@ -102,22 +102,22 @@ export function ProofPanel({ proof }: { proof: TrialProof | null | undefined }) 
   ];
 
   return (
-    <div className="rounded-[10px] border border-line bg-panel px-3.5 py-1 font-mono">
+    <div className=" border border-line bg-panel px-3.5 py-1 font-mono">
       <Section title="proof">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-1">
           <span className={cn("text-[13px] font-semibold", copy.tone)}>{copy.label}</span>
           {proof.claimed_without_proof && (
-            <span className="rounded-[5px] bg-bad/15 px-1.5 py-[1px] text-[10.5px] text-bad">
+            <span className=" bg-bad/15 px-1.5 py-[1px] text-[10.5px] text-bad">
               ⚠ said done, proved nothing
             </span>
           )}
           {proof.verifier_independent === false && (
-            <span className="rounded-[5px] bg-bad/15 px-1.5 py-[1px] text-[10.5px] text-bad">
+            <span className=" bg-bad/15 px-1.5 py-[1px] text-[10.5px] text-bad">
               graded its own work
             </span>
           )}
           {proof.unstable_flip && (
-            <span className="rounded-[5px] bg-warn/15 px-1.5 py-[1px] text-[10.5px] text-warn">
+            <span className=" bg-warn/15 px-1.5 py-[1px] text-[10.5px] text-warn">
               flaky flip
             </span>
           )}
@@ -234,7 +234,7 @@ export function ProofPanel({ proof }: { proof: TrialProof | null | undefined }) 
         <Section title="the pipeline">
           <table className="w-full border-collapse text-left text-[11px]">
             <thead>
-              <tr className="text-[10px] lowercase tracking-[0.08em] text-dim">
+              <tr className="text-[10px] tracking-[0.08em] text-dim">
                 <th className="py-1 pr-3 font-normal">role</th>
                 <th className="py-1 pr-3 font-normal">model</th>
                 <th className="py-1 pr-3 text-right font-normal">calls</th>
@@ -292,7 +292,7 @@ export function ProofPanel({ proof }: { proof: TrialProof | null | undefined }) 
         <Section title="the reasons">
           {reasons.map((reason, index) => (
             <div key={index} className="py-1">
-              <span className="text-[10.5px] lowercase text-warn">{reason.label}</span>
+              <span className="text-[10.5px] text-warn">{reason.label}</span>
               <p className="whitespace-pre-wrap break-words text-[11.5px] leading-[1.55] text-muted">
                 {reason.text}
               </p>
@@ -300,7 +300,7 @@ export function ProofPanel({ proof }: { proof: TrialProof | null | undefined }) 
           ))}
           {proof.verdict_summary && (
             <div className="py-1">
-              <span className="text-[10.5px] lowercase text-dim">
+              <span className="text-[10.5px] text-dim">
                 verdict{proof.honesty ? ` · ${proof.honesty}` : ""}
               </span>
               <p className="whitespace-pre-wrap break-words text-[11.5px] leading-[1.55] text-muted">

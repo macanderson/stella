@@ -30,7 +30,7 @@ export default async function Home() {
   return (
     <main>
       <h1>
-        Arena<span className="gold">Bench</span>{" "}
+        Arena<span className="mark">Bench</span>{" "}
         <span className="note">cloud — early access</span>
       </h1>
       <p className="note">

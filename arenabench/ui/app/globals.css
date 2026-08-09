@@ -1,7 +1,21 @@
 /* ==========================================================================
-   arenabench — styled on the stella brand kit v1.0, now in two schemes.
-   One colour, owned: Phosphor Gold. Dark is the brand's home; light maps the
-   same tokens onto Paper, with gold deepened to keep its contrast honest.
+   arenabench — monochrome instrument chrome.
+
+   The reference is docs/benchmarks/terminal-bench-2-1-glm-5-2.html, the house
+   benchmark report, and its governing rule is the one worth restating: **no
+   accent hue in the chrome. The only colour on the page is semantic** — a
+   trial passed, or it did not.
+
+   That replaces the Phosphor Gold accent. On a scoreboard the cost of an
+   owned accent is specific rather than aesthetic: gold marked what was
+   active, seat colours arrive as data, and pass/fail carry meaning, so three
+   independent colour systems competed inside one table and the eye could not
+   tell which one it was reading. "Active" is now an inversion of the page —
+   ink fill, paper text — which is unmistakable and cannot be confused with a
+   measurement. Seat colours survive, because a seat IS data.
+
+   Token NAMES are unchanged so every component keeps working; the values are
+   re-pointed. The one addition is --radius, pinned at 0.
    ========================================================================== */
 
 @import "tailwindcss";
@@ -37,56 +51,74 @@
    next-themes stamps `.dark` on <html> before first paint anyway. */
 
 :root {
-  --background: #f2efe7;   /* Paper, as a surface */
-  --panel:      #faf8f2;
-  --panel-2:    #e9e5da;
-  --line:       #d8d3c4;
-  --line-soft:  #e4e0d3;
-  --foreground: #1c1b16;
-  --muted:      #5d5a50;
-  --dim:        #66625a;
+  --background: #ffffff;   /* Paper */
+  --panel:      #ffffff;
+  --panel-2:    #fafafa;
+  --line:       #eaeaea;
+  --line-soft:  #f2f2f2;
+  --foreground: #0a0a0a;
+  --muted:      #525252;
+  --dim:        #8f8f8f;
 
-  /* Every one of these is picked to clear 4.5:1 against --panel-2 (#e9e5da),
-     the darkest of the three light surfaces and so the binding constraint —
-     a color that passes against --background can still fail there. */
-  --accent:     #835b00;
-  --ok:         #1a713d;
-  --bad:        #b53139;
-  --warn:       #796000;
-  --acc-cyan:   #0a6c7e;
-  --acc-violet: #7048a8;
-  --acc-rose:   #ba2358;
-  --acc-citron: #796000;
+  /* --accent is the foreground: "active" is an inversion (ink fill, paper
+     text), not a hue. Every component that fills with --accent must put
+     --on-accent on top of it — never --background, which is the coupling that
+     breaks the moment a scheme flips.
 
-  /* Seat colours arrive as data (each contestant carries a hex). As fills
-     they work on both schemes; as *text* on paper they need ink mixed in. */
-  --seat-fg: color-mix(in srgb, var(--seat, #835b00) 62%, #1c1b16);
+     The three semantic colours are the only colour on the page. Computed
+     against WCAG 2.1 relative luminance on --panel-2 (#fafafa), the lightest
+     surface a mark can land on and so the binding constraint:
+     --ok 5.91:1, --bad 6.74:1, --warn 5.99:1 — all clear AA (4.5:1).
+     --foreground 18.97:1 and --muted 7.49:1 clear AAA (7:1); --dim is 3.10:1
+     and clears neither, which is the constraint to hold when editing: it
+     carries labelling only, never a value a reader has to act on. */
+  --accent:     #0a0a0a;
+  --on-accent:  #ffffff;
+  --ok:         #11703a;
+  --bad:        #a32f1f;
+  --warn:       #7a5c00;
 
-  --glow-gold: 0 0 24px rgb(163 114 0 / 0.18), 0 0 96px rgb(163 114 0 / 0.08);
+  /* Categorical marks: a lightness ramp, not a hue wheel. Lightness is the
+     one channel that survives greyscale printing, colour-vision deficiency
+     and a projector. Named for their old slots so components keep compiling;
+     ordered here by prominence. */
+  --acc-cyan:   #0a0a0a;
+  --acc-violet: #525252;
+  --acc-rose:   #8f8f8f;
+  --acc-citron: #c4c4c4;
+
+  /* Seat colours arrive as data (each contestant carries a hex) and stay —
+     a seat IS data, and it is the one place on the page where distinguishing
+     two things by hue is the job. As fills they work on both schemes; as
+     *text* on paper they need ink mixed in. */
+  --seat-fg: color-mix(in srgb, var(--seat, #0a0a0a) 62%, #0a0a0a);
 }
 
 .dark {
-  --background: #0b0b0c;   /* Ink: the terminal, not pure black */
-  --panel:      #131315;
-  --panel-2:    #1a1a1d;
-  --line:       #232327;
-  --line-soft:  #17171a;
-  --foreground: #f4f1ea;   /* Paper, as text */
-  --muted:      #9b9890;
-  --dim:        #6e6a5f;
+  --background: #0a0a0a;   /* Ink: the terminal, not pure black */
+  --panel:      #111111;
+  --panel-2:    #0f0f0f;
+  --line:       #1f1f1f;
+  --line-soft:  #151515;
+  --foreground: #ededed;   /* Paper, as text */
+  --muted:      #a1a1a1;
+  --dim:        #6e6e6e;
 
-  --accent:     #ffb000;   /* Phosphor Gold — the only owned colour */
-  --ok:         #5ce68a;
-  --bad:        #f2545b;
-  --warn:       #ffe066;
-  --acc-cyan:   #37d5f2;
-  --acc-violet: #c77dff;
-  --acc-rose:   #ff6b9d;
-  --acc-citron: #ffe066;
+  /* Same measurement on --panel (#111111), the darkest surface here:
+     --ok 8.52:1, --bad 6.17:1, --warn 7.81:1 clear AA; --foreground 16.13:1
+     and --muted 7.31:1 clear AAA; --dim is 3.70:1 and clears neither. */
+  --accent:     #ededed;
+  --on-accent:  #0a0a0a;
+  --ok:         #4cc38a;
+  --bad:        #e5715f;
+  --warn:       #c9a227;
 
-  --seat-fg: var(--seat, #ffb000);
+  --acc-cyan:   #ededed;
+  --acc-violet: #a1a1a1;
+  --acc-rose:   #6e6e6e;
+  --acc-citron: #4a4a4a;
 
-  --glow-gold: 0 0 24px rgb(255 176 0 / 0.28), 0 0 96px rgb(255 176 0 / 0.12);
+  --seat-fg: var(--seat, #ededed);
 }
 
 @theme inline {
@@ -107,9 +139,22 @@
   --color-acc-rose: var(--acc-rose);
   --color-acc-citron: var(--acc-citron);
 
-  /* Gold as a FILL is the same in both schemes; ink is what sits on it. */
-  --color-gold: #ffb000;
-  --color-ink: #0b0b0c;
+  /* What sits on a fill. Two tokens because they are two different jobs that
+     shared the name `ink` and diverged the moment the accent stopped being a
+     fixed gold:
+       --color-on-accent  flips with the scheme, because the accent fill IS
+                          the text colour (ink page -> paper fill -> ink text)
+       --color-on-seat    is fixed dark, because a seat colour is data from the
+                          match file and is always light and saturated; a
+                          theme-flipping value would put white text on pink. */
+  --color-on-accent: var(--on-accent);
+  --color-on-seat: #0a0a0a;
+
+  /* Square, everywhere. Zeroing the scale means a future `rounded-md` added
+     without thinking is a no-op rather than a visual regression; the
+     component classes were removed as well, so nothing relies on this alone. */
+  --radius-xs: 0; --radius-sm: 0; --radius-md: 0; --radius-lg: 0;
+  --radius-xl: 0; --radius-2xl: 0; --radius-3xl: 0; --radius-4xl: 0;
 
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
@@ -129,33 +174,26 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* A faint grid gives the page a "stage floor" without costing contrast. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    linear-gradient(var(--foreground) 1px, transparent 1px),
-    linear-gradient(90deg, var(--foreground) 1px, transparent 1px);
-  background-size: 56px 56px;
-  opacity: 0.03;
-  mask-image: radial-gradient(ellipse 120% 80% at 50% 0%, #000 30%, transparent 78%);
-}
-body > * { position: relative; z-index: 1; }
+/* The "stage floor" grid is gone with the gradients. It was a radial-masked
+   pair of linear-gradients at 3% opacity, and a gradient under a scoreboard
+   changes the apparent value of every mark drawn over it — a readability cost
+   paid for decoration that carries no information. */
 
 h1, h2, h3 {
   font-weight: 650;
-  letter-spacing: -0.01em;
-  text-transform: lowercase;
+  /* Tightened to the reference's -0.022em, and NO text-transform. The forced
+     lowercase was a brand mannerism; sentence case is what a page of
+     measurements reads as. Removing it here is why the `lowercase` utility
+     came out of the components in the same pass — one of the two alone would
+     have left the UI half-shouting. */
+  letter-spacing: -0.022em;
 }
 code {
   font-size: 0.92em;
-  color: var(--acc-citron);
+  color: var(--muted);
 }
 
-::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 
 /* Assemble on load: the wordmark arrives along its own flight line. */
 @media (prefers-reduced-motion: no-preference) {

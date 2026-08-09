@@ -45,13 +45,54 @@ _CANONICAL_DATASET_ARGUMENT = (
     "terminal-bench/terminal-bench-2-1@"
     "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a"
 )
-_CANONICAL_BUDGET = "0.17"
+# A FORECAST, not a cap. Nothing enforces it: no trial runs under a per-trial
+# ceiling (#2411), and the only bound that can stop spending is the dedicated
+# key's hard limit below. It exists so a pre-registered intent states what the
+# run is expected to cost before it runs, and so the analyzer can check the
+# published claim against what was declared.
+#
+# Derived from measurement rather than chosen. In match 5292a68cdabf, Stella's
+# four trials that finished under the old $1.00 cap spent $0.6554, $0.8306,
+# $0.9553 and $0.9659 — mean $0.85. The other eight are censored: they hit the
+# cap, so their true cost is only known to exceed $1.00, and the three that
+# lost were each a step or four from done. $1.20 sits above the censored bound
+# with room for the tail, which is the honest direction to err for a number
+# whose only job is to not under-state what a run will cost.
+#
+# The old value was `0.17`, and it was an enforced cap. Reading it as a
+# forecast now would be a 7x under-statement — see `_DEDICATED_KEY_HARD_LIMIT_USD`
+# for why that arithmetic matters.
+_CANONICAL_PER_TRIAL_FORECAST_USD = 1.20
 _CANONICAL_DISABLE_REFLECTION = "1"
 _CANONICAL_ADAPTER_VERSION = "0.6.0"
 _CANONICAL_HARBOR_VERSION = "0.6.1"
 _CANONICAL_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _CANONICAL_PROVIDER_ROUTE_POLICY = "openrouter-auto"
-_DEDICATED_KEY_HARD_LIMIT_USD = 180.0
+# The only bound that can actually stop a claim run spending, now that no
+# trial carries one (#2411). It sits at the provider, so exhausting it fails
+# the run visibly rather than truncating a trial into a loss — which is the
+# whole reason a wallet is guarded here and never inside a trial.
+#
+# It is now load-bearing arithmetic rather than a backstop, and it moved from
+# $180 to $600 because of it. The confirmatory stage requests 445 trials: at
+# the frozen $0.17 cap that projected to $75.65, comfortably inside $180
+# *because the cap made it so*, and at the measured forecast above it projects
+# to $534. The old limit did not bound the run's cost — it bounded how much of
+# each task the agent was allowed to finish, and the projection only fit
+# because trials were being stopped short.
+#
+# So this is not new spending appetite; it is the same run, priced honestly for
+# the first time. It is also a PROVISIONING REQUIREMENT, not an authorisation:
+# on 2026-08-08 the account behind this key had $35.72 left of $1,110, so a
+# confirmatory stage cannot run at any per-trial price until it is funded.
+#
+# Nothing here spends money or grants permission to. The real gate is the
+# live-credit check in `_verify_public_paid_intent`, which reads the key's
+# actual remaining credit rather than this constant — so an unfunded key fails
+# preflight instead of launching and abandoning trials that would then score as
+# losses. This number only says what the key must be provisioned to before the
+# stage is runnable at all.
+_DEDICATED_KEY_HARD_LIMIT_USD = 600.0
 _OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 _OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/keys"
 _OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
@@ -269,7 +310,7 @@ _INTENT_FIELDS = frozenset(
         "attempts_per_task",
         "n_concurrent_trials",
         "retry_max_retries",
-        "per_trial_budget_usd",
+        "per_trial_forecast_usd",
         "artifacts",
         "execution",
         "provider_key",
@@ -1125,7 +1166,7 @@ def _validate_current_intent(
         or intent.get("attempts_per_task") != int(options["--n-attempts"][0])
         or intent.get("n_concurrent_trials") != int(options["--n-concurrent"][0])
         or intent.get("retry_max_retries") != int(options["--max-retries"][0])
-        or intent.get("per_trial_budget_usd") != float(_CANONICAL_BUDGET)
+        or intent.get("per_trial_forecast_usd") != float(_CANONICAL_PER_TRIAL_FORECAST_USD)
         or intent.get("preregistration_commit") != subject_commit
     ):
         raise RuntimeError(
@@ -1677,7 +1718,11 @@ def _validate_confirmatory_manifest(
         "agent_version": runtime_identity["agent_version"],
         "adapter_version": runtime_identity["adapter_version"],
         "adapter_sha256": runtime_identity["adapter_sha256"],
-        "budget_usd": float(_CANONICAL_BUDGET),
+        # `None` is the disclosure, not an omission: the SUT genuinely runs
+        # under no per-trial cap (#2411). The forecast lives on the intent,
+        # where it describes what the run is expected to cost; putting a number
+        # here would describe a ceiling no trial was ever held to.
+        "budget_usd": None,
         "disable_reflection": True,
         "base_url": runtime_identity["base_url"],
         "provider_route_policy": runtime_identity["provider_route_policy"],
@@ -1954,7 +1999,7 @@ def _historical_outcomes_by_job_id(
         "attempts_per_task",
         "n_concurrent_trials",
         "retry_max_retries",
-        "per_trial_budget_usd",
+        "per_trial_forecast_usd",
         "preregistration_commit",
     )
     nullable_outcome_fields = _OUTCOME_FIELDS - {
@@ -2118,8 +2163,8 @@ def _prior_public_intent_expectation(
     requested = _finite_nonnegative_number(
         intent.get("requested_trials"), label=f"prior {stage} requested trials"
     )
-    budget = _finite_nonnegative_number(
-        intent.get("per_trial_budget_usd"), label=f"prior {stage} trial budget"
+    forecast = _finite_nonnegative_number(
+        intent.get("per_trial_forecast_usd"), label=f"prior {stage} trial forecast"
     )
     return {
         "kind": stage,
@@ -2128,7 +2173,7 @@ def _prior_public_intent_expectation(
         "runtime_identity": _runtime_identity_from_intent(intent),
         "provider_key": dict(intent["provider_key"]),
         "prior_stage_outcome": prior_stage_outcome,
-        "projected_spend_usd": requested * budget,
+        "projected_spend_usd": requested * forecast,
         "intent_sha256": digest,
     }
 
@@ -2261,7 +2306,11 @@ def _readiness_replay_reasons(
         "adapter_sha256": artifacts.get("adapter_sha256"),
         "harbor_version": artifacts.get("harbor_version"),
         "harbor_sha256": artifacts.get("harbor_sha256"),
-        "budget_usd": intent.get("per_trial_budget_usd"),
+        # Not the intent's forecast: this identity is matched against what the
+        # trials actually ran under, and they ran under no cap (#2411). Reading
+        # the forecast in here would assert every row was capped at a number
+        # that never reached the agent.
+        "budget_usd": None,
         "disable_reflection": execution.get("disable_reflection"),
         "base_url": execution.get("base_url"),
         "provider_route_policy": execution.get("provider_route_policy"),
@@ -2343,7 +2392,14 @@ def _calibration_replay_reasons(
         or intent.get("attempts_per_task") != 2
         or intent.get("n_concurrent_trials") != 3
         or intent.get("retry_max_retries") != 0
-        or intent.get("per_trial_budget_usd") != sut["budget_usd"]
+        # The forecast is checked against the frozen constant, not against
+        # `sut["budget_usd"]`. Those two used to be the same number because a
+        # cap was both the projection and the enforcement; now the SUT declares
+        # `None` (no cap) and the intent declares what the run should cost, so
+        # tying them to each other would only assert `None == 1.20` (#2411).
+        or intent.get("per_trial_forecast_usd")
+        != float(_CANONICAL_PER_TRIAL_FORECAST_USD)
+        or sut["budget_usd"] is not None
         or intent.get("artifacts") != expected_artifacts
         or intent.get("execution") != expected_execution
         or intent.get("preregistration_commit")
@@ -2798,7 +2854,7 @@ def _validate_live_provider_key(
     ):
         raise RuntimeError("live OpenRouter management key record differs from intent")
     projected = float(intent["requested_trials"]) * float(
-        intent["per_trial_budget_usd"]
+        intent["per_trial_forecast_usd"]
     )
     projected_remaining = live_remaining - projected
     if projected_remaining < -1e-9:
@@ -3560,9 +3616,18 @@ def _verifier_env_name() -> str:
 
 def _validate_claim_environment(environ: Mapping[str, str]) -> tuple[Path, str]:
     """Validate immutable claim controls and the exact host Stella artifact."""
-    if environ.get("STELLA_BUDGET") != _CANONICAL_BUDGET:
+    # Inverted by #2411: this used to require the exact frozen cap, and now
+    # requires that there be none. A claim run is where a per-trial ceiling
+    # does the most damage — it measures an agent in order to publish the
+    # number, and a trial the guard stops publishes our ceiling as the agent's
+    # limit.
+    if str(environ.get("STELLA_BUDGET") or "").strip():
         raise RuntimeError(
-            f"secure launcher requires exact STELLA_BUDGET={_CANONICAL_BUDGET}"
+            "secure launcher requires STELLA_BUDGET to be unset: a claim run "
+            "carries no per-trial spend cap. The spend bound is the dedicated "
+            f"provider key's ${_DEDICATED_KEY_HARD_LIMIT_USD:.2f} hard limit, "
+            "which fails the run visibly instead of truncating a trial into a "
+            "loss."
         )
     if environ.get("STELLA_DISABLE_REFLECTION") != _CANONICAL_DISABLE_REFLECTION:
         raise RuntimeError(

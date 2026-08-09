@@ -285,7 +285,6 @@ class TestBuildCommand:
         # Global flags must precede the `run` subcommand; `--output-format`
         # is a flag OF `run` since stella#1493 and must follow it.
         assert cmd.index("--model") < cmd.index("run")
-        assert cmd.index("--budget") < cmd.index("run")
         assert cmd.index("--output-format") > cmd.index("run")
         assert cmd[:3] == [
             _INSTALL_PATH,
@@ -293,13 +292,14 @@ class TestBuildCommand:
             "anthropic/claude-fable-5",
         ]
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
-        assert cmd[cmd.index("--budget") + 1] == "5.0"  # default budget
+        # No `--budget`, ever: a trial runs under no spend cap (#2411).
+        assert "--budget" not in cmd
         assert cmd[-5:] == ["run", "--output-format", "stream-json", "--", "Fix the bug"]
         assert "--base-url" not in cmd  # not set
 
     def test_env_overrides_and_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STELLA_MODEL", "zai/glm-5.2")
-        monkeypatch.setenv("STELLA_BUDGET", "10.0")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("STELLA_BASE_URL", "https://api.z.ai/api/coding/paas/v4")
         agent = _bare_agent()
         agent.model_name = None  # env should win when Harbor didn't set one
@@ -307,7 +307,7 @@ class TestBuildCommand:
         cmd = agent._build_command("Add a feature")
 
         assert cmd[cmd.index("--model") + 1] == "zai/glm-5.2"
-        assert cmd[cmd.index("--budget") + 1] == "10.0"
+        assert "--budget" not in cmd
         assert cmd[cmd.index("--base-url") + 1] == (
             "https://api.z.ai/api/coding/paas/v4"
         )
@@ -474,17 +474,24 @@ class TestNoBudgetCap:
 
         assert "--budget" not in agent._build_command("Fix the bug")
 
-    def test_unset_budget_still_takes_the_development_default(
+    def test_unset_budget_is_no_cap_rather_than_a_development_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No cap must be *opt-in*. Unset keeps the cap it always had."""
+        """No cap is the only state now — it used to be opt-in.
+
+        Unset resolved to `_DEFAULT_BUDGET` ("5.0"), so a trial run without a
+        deliberate `STELLA_BUDGET=""` carried a ceiling nobody chose for it.
+        Match `5292a68cdabf` is what that costs: three losses, every one the
+        guard firing at roughly a third of the task's allowed wall clock with
+        the work all but done (#2411).
+        """
         monkeypatch.delenv("STELLA_BUDGET", raising=False)
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
         cmd = agent._build_command("Fix the bug")
 
-        assert cmd[cmd.index("--budget") + 1] == "5.0"
+        assert "--budget" not in cmd
 
     def test_empty_budget_is_not_forwarded_into_the_container(
         self, monkeypatch: pytest.MonkeyPatch
@@ -501,16 +508,22 @@ class TestNoBudgetCap:
 
         assert "STELLA_BUDGET" not in agent._forwarded_env()
 
-    def test_a_cap_that_is_set_is_still_forwarded(
+    def test_a_cap_that_is_set_is_refused_rather_than_forwarded(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Refused loudly, not dropped quietly.
+
+        Silently ignoring an exported cap would leave an operator believing a
+        run was bounded when it was not — the same class of mistake as running
+        capped without meaning to, pointed the other way. The message names
+        the variable and where the bound belongs instead.
+        """
         monkeypatch.setenv("STELLA_BUDGET", "0.17")
         agent = _bare_agent()
         agent.model_name = "openrouter/z-ai/glm-5.2"
 
-        assert agent._forwarded_env()["STELLA_BUDGET"] == "0.17"
-        cmd = agent._build_command("Fix the bug")
-        assert cmd[cmd.index("--budget") + 1] == "0.17"
+        with pytest.raises(RuntimeError, match="STELLA_BUDGET"):
+            agent._build_command("Fix the bug")
 
     def test_no_cap_is_recorded_as_no_cap_rather_than_as_the_default(
         self, monkeypatch: pytest.MonkeyPatch
@@ -592,13 +605,14 @@ class TestForwardedEnv:
             "model" not in role and "provider" not in role
             for role in posture["agents"].values()
         )
-        # `xhigh` matches the comparator and the raised cap travels with the
-        # tier: at `xhigh` the 16384 default is spent before any tool call.
+        # `xhigh` matches the comparator, and no role carries `params` at all:
+        # the absent output cap is what asks for the model's own ceiling, which
+        # at `xhigh` is the difference between a step that emits a tool call and
+        # one that spends its whole budget reasoning (#2411).
         for role in ("default", "worker", "verifier"):
             assert posture["agents"][role] == {
                 "effort": "xhigh",
                 "reasoning": "on",
-                "params": {"max_tokens": 64000},
             }
         assert posture["agents"]["triage"] == {"effort": "low", "reasoning": "off"}
         assert json.loads(normalized) == posture
@@ -606,7 +620,7 @@ class TestForwardedEnv:
         # edits land here deliberately. Keep it in step with the superseding
         # table in bench/READINESS.md, not the protocol's earlier `max` table.
         assert digest == (
-            "0d732c3e42a394a059be359de78ed153eb840477b946f167b8a0f3048023ff84"
+            "1191911e2bc5aeef2949f0592a0c3d2da31f55e05b464018a8440febe0e94bd3"
         )
 
     def test_excludes_all_provider_keys_and_selects_only_effective_provider(
@@ -621,13 +635,13 @@ class TestForwardedEnv:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-real")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
         monkeypatch.setenv("STELLA_MODEL", "anthropic/claude-fable-5")
-        monkeypatch.setenv("STELLA_BUDGET", "5.0")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("_ADAPTER_TEST_SENTINEL", "not-a-key")
 
         env = _bare_agent()._forwarded_env()
 
         assert "STELLA_MODEL" not in env
-        assert env["STELLA_BUDGET"] == "5.0"
+        assert "STELLA_BUDGET" not in env
         assert "ANTHROPIC_API_KEY" not in env
         assert "OPENAI_API_KEY" not in env
         assert "_ADAPTER_TEST_SENTINEL" not in env
@@ -1384,7 +1398,7 @@ class TestRun:
     def test_mounted_internal_stream_is_source_of_truth_and_is_not_overwritten(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         source_envelope = _trajectory_envelope()
         durable_stream = _stream_for(source_envelope)
@@ -1462,7 +1476,7 @@ class TestRun:
     def test_nonzero_exit_persists_stream_context_and_atif_before_raising(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         agent = _bare_agent()
         agent.logs_dir = tmp_path
@@ -1484,7 +1498,7 @@ class TestRun:
                 assert command[command.index("--base-url") + 1] == (
                     "https://openrouter.ai/api/v1"
                 )
-                assert env["STELLA_BUDGET"] == "0.17"
+                assert "STELLA_BUDGET" not in env
                 assert env["STELLA_DISABLE_REFLECTION"] == "1"
                 assert env["STELLA_NO_ENV_FILE"] == "1"
                 assert env["STELLA_NO_SETTINGS"] == "1"
@@ -1531,7 +1545,7 @@ class TestRun:
         assert trajectory.agent.extra["binary_sha256_verified_in_container"] is True
         assert trajectory.agent.extra["source_commit"] == "d9caba12359a"
         assert trajectory.agent.extra["adapter_version"] == _ADAPTER_VERSION
-        assert trajectory.agent.extra["budget_usd"] == "0.17"
+        assert trajectory.agent.extra["budget_usd"] == "unbounded"
         assert trajectory.agent.extra["credential_handoff"] == "anonymous-fd"
         assert trajectory.agent.extra["launcher_controls"] == {
             "process_invocation": "docker-compose-direct-argv",
@@ -1556,7 +1570,7 @@ class TestRun:
         assert context.metadata["stella_binary_sha256_verified_in_container"] is True
         assert context.metadata["stella_source_commit"] == "d9caba12359a"
         assert context.metadata["stella_adapter_version"] == _ADAPTER_VERSION
-        assert context.metadata["stella_budget_usd"] == "0.17"
+        assert context.metadata["stella_budget_usd"] == "unbounded"
         assert context.metadata["stella_disable_reflection"] == "1"
         assert context.metadata["stella_reflection_policy"] == (
             "disabled_for_ephemeral_benchmark"
@@ -1824,7 +1838,9 @@ class TestPopulateContext:
         assert ctx.metadata["stella_steps"] == 2
         assert ctx.metadata["stella_return_code"] == 0
         assert ctx.metadata["stella_adapter_version"] == "0.6.0"
-        assert ctx.metadata["stella_budget_usd"] == "5.0"
+        # `unbounded`, not a number: no trial runs under a spend cap (#2411),
+        # and the manifest must not name a ceiling that was never in force.
+        assert ctx.metadata["stella_budget_usd"] == "unbounded"
         assert ctx.metadata["stella_disable_reflection"] == "1"
         assert ctx.metadata["stella_host_credential_source"] == ("environment-fallback")
         assert ctx.metadata["stella_host_credential_bundle_count"] == 0
