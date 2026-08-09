@@ -481,3 +481,101 @@ async fn model_verdict_call_is_metered_separately_from_worker() {
         ["triage", "worker", "worker", "verdict"]
     );
 }
+
+/// Every [`ProofStep::TriageDegraded`] reason in a stream, in order.
+fn triage_degraded_reasons(events: &[AgentEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Proof {
+                step: stella_protocol::ProofStep::TriageDegraded { reason },
+            } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// #2414's witness. A triage call that burns its whole ceiling and returns
+/// nothing is *correctly* handled — the class falls to the deterministic
+/// keyword floor and the run proceeds — and was completely invisible: 27 of
+/// 34 triage calls across three Terminal-Bench arm runs took this path,
+/// about four and a half minutes of wall clock purchasing zero bits, with
+/// nothing in the summary layer saying so. A bench conclusion must not be
+/// drawable from a triage that never ran.
+///
+/// The record names the ceiling, because "triage timed out" and "triage timed
+/// out at 30s" are different facts to whoever is deciding whether the ceiling
+/// is the problem.
+#[tokio::test]
+async fn a_timed_out_triage_records_that_the_class_came_from_the_floor() {
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let config = PipelineConfig {
+        triage_latency_ceiling: Duration::from_millis(1),
+        ..PipelineConfig::default()
+    };
+    let (result, _, events) = run_triage_only(&SlowProvider, config, &mut budget).await;
+
+    // The fallback itself is unchanged and load-bearing: never fail a run on
+    // triage.
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+
+    let reasons = triage_degraded_reasons(&events);
+    assert_eq!(reasons.len(), 1, "exactly one record per degraded triage");
+    assert!(
+        reasons[0].contains("timed out") && reasons[0].contains("1ms"),
+        "the record must name the ceiling it hit: {reasons:?}"
+    );
+    // Both channels, like `unproven`/`unverifiable`: the prose account a
+    // human reads and the structured record a census counts.
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, .. } if message.contains("deterministic keyword floor")
+        )),
+        "the degradation is also stated in prose: {events:?}"
+    );
+}
+
+/// A provider error is the same outcome — no class from a model — but a
+/// different fact about the run, and it costs no dead air. Naming them apart
+/// is what makes a census of these records mean anything.
+#[tokio::test]
+async fn a_failed_triage_call_records_a_provider_failure_not_a_timeout() {
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (result, _, events) =
+        run_triage_only(&ErrorProvider, PipelineConfig::default(), &mut budget).await;
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    let reasons = triage_degraded_reasons(&events);
+    assert_eq!(reasons.len(), 1);
+    assert!(
+        reasons[0].contains("failed at the provider") && !reasons[0].contains("timed out"),
+        "{reasons:?}"
+    );
+}
+
+/// A response that arrived and said nothing the protocol recognizes lands on
+/// the same floor, so it is the same record — and exactly one, not one for
+/// the call plus one for the parse.
+#[tokio::test]
+async fn an_off_protocol_triage_response_records_the_same_degradation() {
+    let provider = ScriptedProvider::new(vec![text_result("Sure — happy to help.")]);
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (result, _, events) =
+        run_triage_only(&provider, PipelineConfig::default(), &mut budget).await;
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    let reasons = triage_degraded_reasons(&events);
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].contains("did not follow the classification protocol"));
+}
+
+/// The silence that matters: a triage that answered on protocol records
+/// nothing at all. A degradation marker on a healthy turn would make the
+/// census useless in the other direction.
+#[tokio::test]
+async fn a_triage_that_answers_records_no_degradation() {
+    let provider = ScriptedProvider::new(vec![text_result("lookup")]);
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (_result, _, events) =
+        run_triage_only(&provider, PipelineConfig::default(), &mut budget).await;
+    assert!(triage_degraded_reasons(&events).is_empty(), "{events:?}");
+}

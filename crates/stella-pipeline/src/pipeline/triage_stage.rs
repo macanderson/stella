@@ -14,6 +14,26 @@ use super::*;
 use crate::triage::parse_research_questions;
 
 impl Pipeline<'_> {
+    /// Record that this turn's class came from the deterministic keyword floor
+    /// rather than from a model (#2414).
+    ///
+    /// Both channels, for the same reason [`Pipeline::unproven`] uses both:
+    /// the warning is the prose account a watching human reads, and the proof
+    /// step is the structured record a bench census can count. The fallback
+    /// this reports is correct and load-bearing — triage must never fail a
+    /// run — but it silently became the common case, and every downstream
+    /// decision keyed off the class then looked like a decision while being a
+    /// default.
+    fn triage_degraded(&self, reason: &str) {
+        self.warn(format!(
+            "triage did not answer, so this turn's class came from the deterministic keyword \
+             floor: {reason}"
+        ));
+        self.emit_proof(ProofStep::TriageDegraded {
+            reason: reason.to_string(),
+        });
+    }
+
     /// Classify the goal and resolve the turn's assurance plan.
     ///
     /// Returns the resolved assessment together with the research questions
@@ -59,6 +79,7 @@ impl Pipeline<'_> {
             // route to chat even when the triage provider can't be resolved,
             // since it never depends on a model answer.
             Err(_) => {
+                self.triage_degraded("the triage role could not be routed to a provider");
                 return Ok((
                     TaskAssessment {
                         conversational: resolve_conversational(false, goal),
@@ -90,9 +111,29 @@ impl Pipeline<'_> {
         {
             Ok(result) => Some(result.text),
             Err(RawCallError::Budget(abort)) => return Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => None,
+            // Named apart, because the two cost the run very different things
+            // and only one of them is a bill for dead air. A census of these
+            // records is what turns "triage is slow" into a number (#2414).
+            Err(RawCallError::Timeout) => {
+                self.triage_degraded(&format!(
+                    "the triage call timed out at its {:?} ceiling",
+                    self.config.triage_latency_ceiling
+                ));
+                None
+            }
+            Err(RawCallError::Provider) => {
+                self.triage_degraded("the triage call failed at the provider");
+                None
+            }
         };
         let assessment = response.as_deref().and_then(parse_triage_response);
+        // A response that arrived and said nothing the protocol recognizes is
+        // the same outcome as no response — the class comes from the keyword
+        // floor either way — so it is the same record. Only reported when the
+        // call itself succeeded; a failure already reported above.
+        if response.is_some() && assessment.is_none() {
+            self.triage_degraded("the triage response did not follow the classification protocol");
+        }
         // The class still goes through `resolve_task_class` so a failed or
         // unparseable triage lands on the deterministic floor exactly as
         // before; a real assessment keeps its own assurance flags.

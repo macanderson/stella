@@ -443,6 +443,9 @@ fn all_proof_steps() -> Vec<ProofStep> {
             candidate: 2,
             reason: "the verifier call failed or timed out".into(),
         },
+        ProofStep::TriageDegraded {
+            reason: "the triage call timed out at its 30s ceiling".into(),
+        },
     ]
 }
 

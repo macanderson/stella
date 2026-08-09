@@ -288,7 +288,28 @@ pub struct PipelineConfig {
     /// triage falls through to the full path. The expiry is not silent in
     /// accounting: `run_accounted_call` records a content-free
     /// `UsageIncomplete` envelope for the abandoned attempt (its provider-side
-    /// spend is unknowable once the response never lands).
+    /// spend is unknowable once the response never lands), and — since
+    /// #2414 — the stage emits a [`stella_protocol::ProofStep::TriageDegraded`]
+    /// naming the ceiling it hit.
+    ///
+    /// The default was 10s, and that number was measurably below the
+    /// distribution it was bounding rather than above it. Across three
+    /// Terminal-Bench arm runs, 27 of 34 triage calls burned the full 10,000ms
+    /// and returned nothing — while the 7 that *did* answer took
+    /// 4,684-8,587ms, i.e. even a successful triage was landing within a
+    /// couple of seconds of the wall. A ceiling set inside the answering
+    /// distribution does not bound a pathology, it converts slow-but-correct
+    /// answers into no answer at all, and pays the full ceiling for the
+    /// privilege.
+    ///
+    /// The never-wedge contract is what this exists for and it is unchanged: a
+    /// wedged provider still costs exactly one bounded wait and the run still
+    /// proceeds on the deterministic floor. What changed is which side of the
+    /// observed distribution the bound sits on. It remains an order of
+    /// magnitude under a run's own budget, and the honest reading of the new
+    /// number is that it is sized from 7 answering samples — small, and now at
+    /// least reported rather than assumed, which is what the degradation
+    /// record above is for.
     pub triage_latency_ceiling: Duration,
     /// Latency ceiling on the context-recall port. Recall runs concurrently
     /// with triage and is advisory (L-C6), never a gate — but nothing bounded
@@ -511,12 +532,15 @@ impl Default for PipelineConfig {
             engine: EngineConfig::default(),
             run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
-            triage_latency_ceiling: Duration::from_secs(10),
-            // Half the triage ceiling, and recall runs concurrently with
-            // triage — so this can never extend the critical path, it only
-            // stops recall from becoming it. A remote CGP embedding round
-            // trip is 100-500ms and the local path is single-digit ms, so
-            // this is an order of magnitude above the realistic worst case.
+            triage_latency_ceiling: Duration::from_secs(30),
+            // Sized from the recall port's own round trip, NOT as a fraction
+            // of the triage ceiling above (it was written as "half of it",
+            // which stopped being true when triage's moved). Recall runs
+            // concurrently with triage, so this can never extend the critical
+            // path; it only stops recall from becoming it. A remote CGP
+            // embedding round trip is 100-500ms and the local path is
+            // single-digit ms, so this is an order of magnitude above the
+            // realistic worst case.
             recall_latency_ceiling: Duration::from_secs(5),
             // Wider than triage's because a research child is a bounded
             // multi-step read (up to RESEARCH_MAX_STEPS tool round-trips),
