@@ -143,7 +143,7 @@ impl super::Engine<'_> {
         // existing per-turn `ContinuationBudget` rather than letting a pure
         // decision function read the clock itself.
         check_budget(
-            &mut state.budget,
+            &state.budget,
             state.total_cost_usd,
             state.last_step,
             &mut state.memos.warnings,
