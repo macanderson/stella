@@ -1,29 +1,38 @@
-/* ArenaBench brand tokens — docs/brand/brand-guidelines.html (Comet kit).
-   Dark is the default (matching `arenabench serve`); light is the paper
-   palette the ArenaBench UI itself ships in ui/app/globals.css. */
+/* ArenaBench control-plane tokens. Monochrome instrument chrome, matching
+   ui/app/globals.css and the observatory — the three surfaces are one design
+   system and a value that differs between them is a bug in whichever moved
+   last. The reference is docs/benchmarks/terminal-bench-2-1-glm-5-2.html;
+   its rule is that no accent hue appears in the chrome and the only colour on
+   the page is semantic.
+
+   `--accent` is therefore the text colour: "active" is an inversion of the
+   page, and `--on-accent` is what sits on that fill. Dark is the default
+   (matching `arenabench serve`). */
 :root {
   color-scheme: dark;
-  --bg: #0b0b0c;
-  --panel: #131315;
-  --line: #232327;
-  --text: #f4f1ea;
-  --dim: #9b9890;
-  --accent: #ffb000;
-  --ok: #4fbf72;
-  --bad: #e0565e;
+  --bg: #0a0a0a;
+  --panel: #111111;
+  --line: #1f1f1f;
+  --text: #ededed;
+  --dim: #6e6e6e;
+  --accent: #ededed;
+  --on-accent: #0a0a0a;
+  --ok: #4cc38a;
+  --bad: #e5715f;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
-    --bg: #f2efe7;
-    --panel: #faf8f2;
-    --line: #d8d3c4;
-    --text: #1c1b16;
-    --dim: #6e6a5f;
-    --accent: #a37200;
-    --ok: #1c7c43;
-    --bad: #c0343c;
+    --bg: #ffffff;
+    --panel: #fafafa;
+    --line: #eaeaea;
+    --text: #0a0a0a;
+    --dim: #8f8f8f;
+    --accent: #0a0a0a;
+    --on-accent: #ffffff;
+    --ok: #11703a;
+    --bad: #a32f1f;
   }
 }
 
@@ -50,7 +59,7 @@ h1 {
   letter-spacing: 0.04em;
 }
 
-h1 .gold {
+h1 .mark {
   color: var(--accent);
 }
 
@@ -69,7 +78,7 @@ a {
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 14px 16px;
   overflow-x: auto;
 }
@@ -113,7 +122,7 @@ form {
 input[type="text"] {
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 0;
   color: var(--text);
   padding: 7px 10px;
   font: inherit;
@@ -122,9 +131,9 @@ input[type="text"] {
 
 button {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   padding: 8px 14px;
   font: inherit;
   font-weight: 600;

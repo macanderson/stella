@@ -118,10 +118,16 @@ const ROUTES: &[(&str, Option<&str>)] = &[
         "/api/session-turn-diff?id=ses-1700000000000-424242&turn=1",
         Some("/files/0/hunks/0/lines/0/op"),
     ),
-    // Empty in a store-only fixture: the lifecycle reads context.db, which
-    // this workspace deliberately does not build. Its own real-schema gate is
-    // `context_lifecycle_returns_the_promotion_lineage` below (#1871).
-    ("/api/context-lifecycle", None),
+    // The context.db half is empty in a store-only fixture — this workspace
+    // deliberately does not build that file, and its real-schema gate is
+    // `context_lifecycle_returns_the_promotion_lineage` below (#1871). The
+    // pointer covers the half that reads `store.db`: the `parse_error` column
+    // added in schema v23 (#2175), which is exactly the kind of new column
+    // this suite exists to prove resolvable.
+    (
+        "/api/context-lifecycle",
+        Some("/unreadable_reflections/0/execution_id"),
+    ),
 ];
 
 /// One tool call's full event round-trip — the announcement and its result.
@@ -390,9 +396,22 @@ fn real_store_workspace() -> tempfile::TempDir {
 
     // A last, unfinished execution: the observatory must render a run that
     // is still in flight (outcome NULL, finished_at NULL) without failing.
-    store
+    let unfinished = store
         .begin_execution("goal", "make tests pass", "local", "llama")
         .expect("begin unfinished");
+
+    // #2175: a turn whose reflection response the lesson parser could not
+    // read. Seeded through the real writer so this suite proves the
+    // `parse_error` column the lifecycle route selects — added in store schema
+    // v23 — is resolvable against a store built by the migration path. It is a
+    // different execution from the self-reviewed one above on purpose: the two
+    // producers write the same row and must not clobber each other.
+    store
+        .record_reflection_parse_failure(
+            unfinished,
+            "Let me think about this turn step by step. First,",
+        )
+        .expect("reflection parse failure");
     dir
 }
 

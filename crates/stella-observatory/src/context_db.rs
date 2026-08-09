@@ -65,6 +65,11 @@ const MAX_LISTED_EVENTS: usize = 100;
 /// Selection-health rows returned, worst standing first.
 const MAX_HEALTH_ROWS: usize = 50;
 
+/// Reflection parse failures listed, newest execution first. Small on purpose:
+/// the count is the operational signal and one or two excerpts are enough to
+/// see what shape the unreadable responses take.
+const MAX_LISTED_PARSE_FAILURES: usize = 20;
+
 /// The promotion gate `stella proposals` displays eligibility against
 /// (`proposals_cmd::list` calls `is_eligible(3, 3)`), mirrored so the two
 /// surfaces can never disagree about what "eligible" means.
@@ -74,9 +79,20 @@ const MIN_OBSERVATIONS: u32 = 3;
 
 /// The self-improvement lifecycle payload for `/api/context-lifecycle`.
 pub(crate) fn self_improvement(root: &Path) -> Result<Value, DbError> {
+    // Read FIRST, and reported even when context.db is absent: a lifecycle
+    // that has recorded nothing because every reflection came back unreadable
+    // is precisely the case where context.db stays empty, and reporting the
+    // two together is the whole point of #2175. It lives in `store.db`, a
+    // different file from everything else here.
+    let unreadable = unreadable_reflections(root)?;
     let db = root.join(".stella").join("private").join("context.db");
     let Some(conn) = open_read_only(&db) else {
-        return Ok(empty_payload(false));
+        let mut payload = empty_payload(false);
+        crate::db::merge(
+            &mut payload,
+            json!({ "unreadable_reflections": unreadable }),
+        );
+        return Ok(payload);
     };
 
     let counts = collect_rows(
@@ -104,6 +120,12 @@ pub(crate) fn self_improvement(root: &Path) -> Result<Value, DbError> {
         "events": events,
         "episodes": episodes,
         "selection_health": health,
+        // Turns whose reflection response the lesson parser could not read.
+        // A non-empty list next to an empty `proposals` is a STARVED loop; an
+        // empty list next to an empty `proposals` is a workspace that has
+        // simply never learned anything. They rendered identically until this
+        // existed (#2175).
+        "unreadable_reflections": unreadable,
         // The thresholds the fold above ran with. The CLI reads tuned values
         // out of the settings scope chain; the dashboard runs the shipped
         // defaults and says so, rather than silently presenting a verdict
@@ -128,12 +150,51 @@ fn empty_payload(present: bool) -> Value {
         "events": [],
         "episodes": [],
         "selection_health": [],
+        "unreadable_reflections": [],
         "health_policy": {
             "min_attributable_uses": policy.min_attributable_uses,
             "not_helpful_ratio_threshold": policy.not_helpful_ratio_threshold,
             "min_attribution_confidence": policy.min_attribution_confidence,
         },
     })
+}
+
+/// Turns whose post-turn reflection produced no readable lessons, newest
+/// execution first (#2175).
+///
+/// Reads `store.db`, not `context.db`: the fact belongs to the execution that
+/// reflected, and `execution_reflection` is the row already keyed by it.
+///
+/// Degrades to empty on a missing file, a missing table, AND a missing
+/// `parse_error` column — the column arrived in store schema v23, and this
+/// crate never migrates, so a dashboard opened against a store no turn has
+/// touched since the upgrade must blank the panel rather than 500 the route.
+fn unreadable_reflections(root: &Path) -> Result<Vec<Value>, DbError> {
+    let db = root.join(".stella").join("private").join("store.db");
+    let Some(conn) = open_read_only(&db) else {
+        return Ok(Vec::new());
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT execution_id, parse_error, recorded_at FROM execution_reflection
+         WHERE parse_error IS NOT NULL AND parse_error != ''
+         ORDER BY execution_id DESC LIMIT ?1",
+    ) {
+        Ok(stmt) => stmt,
+        Err(e) if is_missing_schema(&e) => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let rows = stmt.query_map(rusqlite::params![MAX_LISTED_PARSE_FAILURES as i64], |r| {
+        Ok(json!({
+            "execution_id": r.get::<_, i64>(0)?,
+            "excerpt": truncate(&r.get::<_, String>(1)?, 400),
+            "recorded_at": r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+        }))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 /// The newest `limit` `(record_id, body)` pairs of one ledger kind, returned

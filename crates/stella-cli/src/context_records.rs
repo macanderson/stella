@@ -306,8 +306,8 @@ pub(crate) fn append_decision(root: &Path, event: &DecisionEvent) -> Result<(), 
 /// silently loads an untrusted repository's rules into the prompt.
 pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool) -> TieredFiles {
     let user_rules_dir = if include_user {
-        crate::paths::user_extension_home()
-            .map(|home| home.join(".stella").join("rules").display().to_string())
+        crate::paths::user_extension_root()
+            .map(|root| root.join("rules").display().to_string())
             .unwrap_or_default()
     } else {
         String::new()
@@ -463,12 +463,12 @@ fn lineage_from_published_path(path: &str) -> Option<String> {
 /// Compared against the real home directory rather than by looking for
 /// `.stella/rules` in the path, which **both** tiers end with.
 fn trust_of_published_path(path: &str) -> Trust {
-    let Some(user_rules) = crate::paths::user_extension_home() else {
+    let Some(user_root) = crate::paths::user_extension_root() else {
         // No home directory to compare against: nothing can be established as the
         // user's, so nothing is.
         return Trust::Project;
     };
-    if Path::new(path).starts_with(user_rules.join(".stella").join("rules")) {
+    if Path::new(path).starts_with(user_root.join("rules")) {
         Trust::User
     } else {
         Trust::Project
@@ -578,9 +578,7 @@ pub(crate) fn publication_path(
 ) -> Option<PathBuf> {
     let dir = match records::publication_dir(scope) {
         records::PublicationDir::Repository => root.join(RULES_DIR),
-        records::PublicationDir::User => crate::paths::user_extension_home()?
-            .join(".stella")
-            .join("rules"),
+        records::PublicationDir::User => crate::paths::user_extension_root()?.join("rules"),
     };
     Some(dir.join(format!("{lineage}.toml")))
 }

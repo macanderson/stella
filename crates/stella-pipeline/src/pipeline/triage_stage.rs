@@ -14,6 +14,26 @@ use super::*;
 use crate::triage::parse_research_questions;
 
 impl Pipeline<'_> {
+    /// Record that this turn's class came from the deterministic keyword floor
+    /// rather than from a model (#2414).
+    ///
+    /// Both channels, for the same reason [`Pipeline::unproven`] uses both:
+    /// the warning is the prose account a watching human reads, and the proof
+    /// step is the structured record a bench census can count. The fallback
+    /// this reports is correct and load-bearing — triage must never fail a
+    /// run — but it silently became the common case, and every downstream
+    /// decision keyed off the class then looked like a decision while being a
+    /// default.
+    fn triage_degraded(&self, reason: &str) {
+        self.warn(format!(
+            "triage did not answer, so this turn's class came from the deterministic keyword \
+             floor: {reason}"
+        ));
+        self.emit_proof(ProofStep::TriageDegraded {
+            reason: reason.to_string(),
+        });
+    }
+
     /// Classify the goal and resolve the turn's assurance plan.
     ///
     /// Returns the resolved assessment together with the research questions
@@ -28,6 +48,16 @@ impl Pipeline<'_> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<(TaskAssessment, Vec<String>), PipelineStageAbort> {
+        // #2381: the roster may withhold triage entirely. Returning BEFORE the
+        // stage event is the point — an ablated stage must leave no frame in
+        // `stella-events.jsonl`, so a reader sees the ablation rather than
+        // inferring it from a stage that emitted but bought nothing. The
+        // fall-through is `triage_ablated`, NOT the plain floor an outage
+        // takes: see that function for why an ablation must not also strip
+        // verification.
+        if !self.responsibility_enabled(ModelCallRole::Triage) {
+            return Ok((self.triage_ablated(goal), Vec::new()));
+        }
         self.emit(AgentEvent::Stage {
             name: StageKind::Triage,
         });
@@ -50,22 +80,16 @@ impl Pipeline<'_> {
                 Vec::new(),
             ));
         }
-        let resolved = match self.resolve_provider(Role::Triage) {
-            Ok(r) => r,
+        let resolved = match self.assigned(ModelCallRole::Triage) {
+            Assigned::To(r) => r,
             // Triage resolution failure is soft: fall through to the full path
             // via the deterministic floor. Never fail the run on triage.
-            // The conversational route is still resolved deterministically here
-            // (`resolve_conversational(false, goal)`) — a bare greeting must
-            // route to chat even when the triage provider can't be resolved,
-            // since it never depends on a model answer.
-            Err(_) => {
-                return Ok((
-                    TaskAssessment {
-                        conversational: resolve_conversational(false, goal),
-                        ..TaskAssessment::from_class(resolve_task_class(None, goal))
-                    },
-                    Vec::new(),
-                ));
+            // The conversational route is still resolved deterministically
+            // there — a bare greeting must route to chat even when the triage
+            // provider can't be resolved, since it never depends on a model
+            // answer.
+            Assigned::Withheld | Assigned::Unresolvable => {
+                return Ok((self.triage_floor(goal), Vec::new()));
             }
         };
         if let Some(fb) = &resolved.fallback {
@@ -93,9 +117,30 @@ impl Pipeline<'_> {
             // nothing has been produced, so stopping is honest — there is no
             // partial work a pivot could settle with.
             Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => return Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => None,
+            // Timeout and provider error are named apart, because the two cost
+            // the run very different things and only one of them is a bill for
+            // dead air. A census of these records is what turns "triage is
+            // slow" into a number (#2414).
+            Err(RawCallError::Timeout) => {
+                self.triage_degraded(&format!(
+                    "the triage call timed out at its {:?} ceiling",
+                    self.config.triage_latency_ceiling
+                ));
+                None
+            }
+            Err(RawCallError::Provider) => {
+                self.triage_degraded("the triage call failed at the provider");
+                None
+            }
         };
         let assessment = response.as_deref().and_then(parse_triage_response);
+        // A response that arrived and said nothing the protocol recognizes is
+        // the same outcome as no response — the class comes from the keyword
+        // floor either way — so it is the same record. Only reported when the
+        // call itself succeeded; a failure already reported above.
+        if response.is_some() && assessment.is_none() {
+            self.triage_degraded("the triage response did not follow the classification protocol");
+        }
         // The class still goes through `resolve_task_class` so a failed or
         // unparseable triage lands on the deterministic floor exactly as
         // before; a real assessment keeps its own assurance flags.
@@ -144,6 +189,22 @@ impl Pipeline<'_> {
         // class must genuinely plan, and a conversational turn does no work.
         // Everything cheaper degrades to the empty set — the stage that reads
         // this treats empty as "skip", so the fast paths (L-E2) never pay.
+        //
+        // #2415 asked whether `single` should be allowed to ask them too, and
+        // the answer here is **not yet**, deliberately. The case for widening
+        // is real — a `single` turn has no plan and, until #2415's other half,
+        // had no findings either, which is exactly where a worker is most
+        // exposed. But the ask is not free where it is made: the `RESEARCH:`
+        // line is what moved triage from ~17 output tokens to 330–778, and 27
+        // of 34 triage calls in the runs censused for #2414 then burned the
+        // full latency ceiling and returned nothing at all. Widening the class
+        // that pays for the ask would buy more of that before triage's own
+        // latency is back inside its ceiling — and a triage that times out
+        // supplies neither research questions nor a class.
+        //
+        // So the ordering is: fix what research already costs us (its findings
+        // now reach the worker, not the planner alone), then re-measure triage,
+        // then revisit this gate. Tracked as the follow-up on #2415.
         let research = if resolved.class.plans() && !resolved.conversational {
             response
                 .as_deref()
@@ -170,5 +231,53 @@ impl Pipeline<'_> {
             });
         }
         Ok((resolved, research))
+    }
+
+    /// The assessment a turn gets when no triage answer is available — the
+    /// deterministic floor, and nothing else.
+    ///
+    /// One function because three paths reach it and they must agree: triage
+    /// disabled by the roster (#2381), triage unresolvable, and — historically —
+    /// each written out separately, which is how the conversational resolution
+    /// came to be spelled two ways. `resolve_conversational(false, goal)`
+    /// rather than `false`, because a bare greeting routes to chat on the
+    /// deterministic arm alone and must not depend on a model answer that was
+    /// never bought.
+    fn triage_floor(&self, goal: &str) -> TaskAssessment {
+        TaskAssessment {
+            conversational: resolve_conversational(false, goal),
+            ..TaskAssessment::from_class(resolve_task_class(None, goal))
+        }
+    }
+
+    /// The assessment a turn gets when triage was **deliberately ablated**
+    /// (#2381) — which is not the same thing as triage having failed, and the
+    /// difference is the whole point of the roster.
+    ///
+    /// [`Self::triage_floor`] is right for an outage: triage broke, so spend
+    /// as little as the evidence justifies. It is wrong for an ablation,
+    /// because the floor's cheapest class is [`TaskClass::SimpleLookup`],
+    /// which skips the verification ladder — so turning triage off would
+    /// silently turn *verification* off too on any goal whose keywords the
+    /// floor did not recognise. An operator ablating one stage to measure it
+    /// would have quietly ablated two, and the measurement would attribute
+    /// both effects to triage (#2374 F6).
+    ///
+    /// So the fast path — the thing triage *buys* — is what disappears with
+    /// triage, and the floor's own upward evidence is what survives it:
+    /// clamped at [`TaskClass::SingleTask`], a genuinely multi-step goal still
+    /// plans, and nothing routes down to the lookup path without a
+    /// classification that earned it.
+    ///
+    /// The conversational route is deliberately still resolved: it is
+    /// deterministic (`resolve_conversational(false, goal)` consults no model),
+    /// so a bare `hi` must not enter the work pipeline merely because triage
+    /// was ablated.
+    fn triage_ablated(&self, goal: &str) -> TaskAssessment {
+        let floor = self.triage_floor(goal);
+        TaskAssessment {
+            class: floor.class.max(TaskClass::SingleTask),
+            ..floor
+        }
     }
 }

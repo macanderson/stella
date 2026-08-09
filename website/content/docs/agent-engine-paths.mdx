@@ -15,6 +15,24 @@ This page is the map. For the user-level tour of the modes, see
 [Agent Modes](/docs/agent-modes); for what happens *inside* a verified turn,
 see the [Inference Pipeline](/docs/inference-pipeline).
 
+<EnginePathsDiagram />
+
+There are only **two loops**, and the picture above is the whole of it. Four
+doors drive the [staged pipeline](/docs/inference-pipeline), whose `execute`
+stage calls the engine; two skip the pipeline and reach the engine directly.
+Underneath both sits one step loop — `run_step`, twelve fixed phases around a
+single model call — so a fleet worker and a `--plain` prompt run the identical
+code, differing only in what is wrapped around it.
+
+The two direct doors are not the same depth. `stella --plain` calls
+`Engine::run_turn`; `stella-serve` does not — it drives `run_step` itself, one
+step at a time, which is what lets a durable host checkpoint and resume between
+steps.
+
+The map below names eight paths to the diagram's six, because two of them are
+not new routes: `stella monitor` **is** goal mode with a fixed objective, and
+deck sub-agents are raw turns the lead spawns. Both ride a door already drawn.
+
 ## What every path shares
 
 Before the differences, the invariants — these hold no matter which door you
@@ -186,8 +204,9 @@ The scripting workhorse: one prompt in, verified work out, an exit code
 back.
 
 **Pipeline (default).** The prompt runs the full
-[staged pipeline](/docs/inference-pipeline) — triage → recall → plan → scope
-review → witness → execute → verify → verdict, with a bounded revise loop —
+[staged pipeline](/docs/inference-pipeline) — triage → recall → research →
+plan → scope review → execute → witness → verify → verdict, with a bounded
+revise loop —
 with per-role model routing and circuit-breaker fallback. Pass
 `--test-command "cargo test -p …"` and verification gets a
 deterministic oracle: a change that flips a failing test to passing can
@@ -428,8 +447,8 @@ sqlite3 .stella/private/store.db \
 - [Agent Modes](/docs/agent-modes) — the user-level guide to the same
   territory, with deck keybindings and examples.
 - [Inference Pipeline](/docs/inference-pipeline) — inside a staged turn:
-  triage → recall → plan → scope review → witness → execute → verify →
-  verifier, with a bounded revise loop.
+  triage → recall → research → plan → scope review → execute → witness →
+  verify → verdict, with a bounded revise loop.
 - [Agent Fleets](/docs/agent-fleets) — plan files, waves, claims in the
   shared tree, and opt-in isolated worktrees.
 - [Agent engine config](/docs/configuration/agent-engine-config) — per-role

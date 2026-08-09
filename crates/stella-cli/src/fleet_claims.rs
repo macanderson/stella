@@ -26,8 +26,8 @@ use colored::Colorize;
 use serde::Serialize;
 use stella_fleet::{DispatchClaim, Ledger};
 
+use crate::plain;
 use crate::query_format::{QueryFormat, Rows};
-use crate::tui;
 
 /// One claim, as `--format json` reports it.
 ///
@@ -117,7 +117,7 @@ pub(crate) fn claims(root: &Path, all: bool, format: QueryFormat) -> Result<(), 
             println!("{json}");
         }
         QueryFormat::Text => {
-            tui::section_header("Stella — fleet dispatch claims");
+            plain::section_header("Stella — fleet dispatch claims");
             print!("{}", render(&rows, all));
         }
     }

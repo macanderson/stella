@@ -140,15 +140,15 @@ export function TaskPicker({
 
       {seedText && <div className="mb-2 font-mono text-xs text-muted">{seedText}</div>}
 
-      <div className="grid max-h-[460px] gap-1.5 overflow-y-auto rounded-[10px] border border-line bg-panel p-1 [grid-template-columns:repeat(auto-fill,minmax(268px,1fr))]">
+      <div className="grid max-h-[460px] gap-1.5 overflow-y-auto border border-line bg-panel p-1 [grid-template-columns:repeat(auto-fill,minmax(268px,1fr))]">
         {shown.map((task) => {
           const on = selected.has(task.name);
           return (
             <label
               key={task.name}
               className={cn(
-                "flex cursor-pointer items-start gap-[9px] rounded-[7px] border px-[11px] py-[9px] transition-colors",
-                on ? "border-gold/30 bg-gold/8" : "border-transparent hover:bg-panel-2",
+                "flex cursor-pointer items-start gap-[9px] border px-[11px] py-[9px] transition-colors",
+                on ? "border-accent/30 bg-accent/8" : "border-transparent hover:bg-panel-2",
               )}
             >
               <input

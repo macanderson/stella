@@ -21,7 +21,7 @@ before the planner names files.
 | Payload | `triage_prompt`, same file |
 | Sent from | `Pipeline::triage_stage`, `crates/stella-pipeline/src/pipeline/triage_stage.rs` |
 | Retry policy | `RetryPolicy::deterministic()` |
-| Timeout | `config.triage_latency_ceiling` (default 10s) |
+| Timeout | `config.triage_latency_ceiling` (default 30s — see below) |
 | Output cap | 512 visible + 4,096 reasoning headroom |
 | Effort | `Low`, pinned |
 | Override | `agents.triage.prompt` — **wired**, prepended as a system message |
@@ -110,23 +110,64 @@ byte-stability the split exists for.
 
 ## Degradation
 
-Triage never fails a run. Three separate soft paths:
+Triage never fails a run. Four separate soft paths, all landing on the
+deterministic keyword floor (`resolve_task_class(None, goal)`), and all four
+now **named on the record** — see the next section:
 
-- **Provider unresolvable** — falls through to the deterministic floor,
-  `resolve_task_class(None, goal)`. The conversational route is still resolved
+- **Provider unresolvable** — the conversational route is still resolved
   deterministically via `resolve_conversational(false, goal)`, because a bare
   greeting must reach the chat path even when no triage provider exists.
-- **Timeout or provider error** — same floor. The abandoned in-flight call is
-  not silent in accounting: it records a content-free `UsageIncomplete`
-  envelope, since its provider-side spend is unknowable once the response
-  never lands.
-- **Unparseable response** — same floor again; a real assessment keeps its own
-  assurance flags, a missing one does not invent them.
+- **Timeout** — the abandoned in-flight call is not silent in accounting: it
+  records a content-free `UsageIncomplete` envelope, since its provider-side
+  spend is unknowable once the response never lands.
+- **Provider error** — kept distinct from a timeout: same outcome, but it
+  costs no dead air, and a census that conflated the two could not tell a
+  slow ceiling from an outage.
+- **Unparseable response** — a real assessment keeps its own assurance flags,
+  a missing one does not invent them.
 
 An empty response with `finish_reason: length` is the starvation signature and
 is retried once at 32,768 tokens with a warning. Before that retry existed, an
 empty triage silently collapsed the research, plan, scope and witness stages to
 defaults that read like decisions.
+
+## The floor is reported, not silent (#2414)
+
+Each of the four paths above emits `ProofStep::TriageDegraded { reason }` —
+plus the same statement in prose, the both-channels discipline `unproven` and
+`unverifiable` use. The record exists because the fallback stopped being rare:
+across three Terminal-Bench arm runs, **27 of 34 triage calls burned the full
+10,000 ms ceiling and returned nothing**, roughly four and a half minutes of
+wall clock purchasing zero bits, with nothing in the summary layer saying so.
+
+Every downstream reader of `CLASS` — whether to plan, whether to author a
+witness, whether research questions are asked at all — then looks like a
+decision while being a default. A bench conclusion must not be drawable from a
+triage that never ran, so the stream carries the fact:
+
+```json
+{"type":"proof","kind":"triage_degraded","reason":"the triage call timed out at its 30s ceiling"}
+```
+
+Census it the same way the evidence above was gathered:
+
+```bash
+jq -rc 'select(.type=="proof" and .kind=="triage_degraded") | .reason' stella-events.jsonl
+```
+
+## Why the ceiling is 30s
+
+It was 10s, and that number sat *inside* the distribution it was bounding. The
+7 calls that did answer in those runs took **4,684–8,587 ms** — a successful
+triage was landing within a couple of seconds of the wall. A ceiling below the
+answering distribution does not bound a pathology; it converts slow-but-correct
+answers into no answer at all and pays the full ceiling for the privilege.
+
+The never-wedge contract is unchanged: a wedged provider still costs exactly
+one bounded wait and the run still proceeds. The honest caveat is that 7
+answering samples is a small basis for the new number — which is what the
+degradation record above is for, so the next sizing comes from a census rather
+than an assumption.
 
 ## Related
 

@@ -514,9 +514,9 @@ export function SetupView({
 
   const startCard = (on: boolean) =>
     cn(
-      "flex cursor-pointer flex-col gap-[3px] rounded-[10px] border p-[13px_15px] text-left transition-colors",
+      "flex cursor-pointer flex-col gap-[3px] border p-[13px_15px] text-left transition-colors",
       on
-        ? "border-gold bg-[linear-gradient(180deg,rgb(255_176_0/0.07),transparent_70%)]"
+        ? "border-accent bg-accent/6"
         : "border-line bg-panel hover:border-dim hover:bg-panel-2",
     );
 
@@ -545,7 +545,7 @@ export function SetupView({
               setTemplateErrors(null);
             }}
           >
-            <span className="text-[13px] font-bold lowercase">set up from scratch</span>
+            <span className="text-[13px] font-bold ">set up from scratch</span>
             <span className="text-[11px] text-muted">walk the wizard below</span>
           </button>
           <button
@@ -553,7 +553,7 @@ export function SetupView({
             className={startCard(startMode === "upload")}
             onClick={() => fileRef.current?.click()}
           >
-            <span className="text-[13px] font-bold lowercase">load a template</span>
+            <span className="text-[13px] font-bold ">load a template</span>
             <span className="text-[11px] text-muted">upload an arenabench.toml</span>
             <input
               ref={fileRef}
@@ -569,13 +569,13 @@ export function SetupView({
             />
           </button>
           <button type="button" className={startCard(false)} onClick={downloadTemplate}>
-            <span className="text-[13px] font-bold lowercase">download this match</span>
+            <span className="text-[13px] font-bold ">download this match</span>
             <span className="text-[11px] text-muted">save the current setup as .toml</span>
           </button>
         </div>
         {presets.length > 0 && (
           <div className="mt-3">
-            <div className="mb-2 text-[11px] lowercase text-muted">
+            <div className="mb-2 text-[11px] text-muted">
               or one click: stella vs claude code, same model and effort on both
               arms, stella verifying with a stronger independent judge
             </div>
@@ -587,7 +587,7 @@ export function SetupView({
                   className={startCard(startMode === "preset" && presetKey === preset.key)}
                   onClick={() => applyPreset(preset)}
                 >
-                  <span className="text-[13px] font-bold lowercase">{preset.title}</span>
+                  <span className="text-[13px] font-bold ">{preset.title}</span>
                   <span className="text-[11px] text-muted">{preset.blurb}</span>
                 </button>
               ))}
@@ -602,7 +602,7 @@ export function SetupView({
           </ErrorBox>
         )}
         {templateOk && (
-          <div className="mt-3 rounded-[10px] border border-ok/35 bg-ok/6 px-[13px] py-2.5 text-[12.5px] text-ok">
+          <div className="mt-3 border border-ok/35 bg-ok/6 px-[13px] py-2.5 text-[12.5px] text-ok">
             {templateOk}
           </div>
         )}
@@ -797,7 +797,7 @@ export function SetupView({
                 key={m.id}
                 type="button"
                 onClick={() => onOpenMatch(m.id)}
-                className="flex cursor-pointer items-center gap-3 rounded-lg border border-line bg-panel px-[13px] py-[9px] text-left text-[13px] hover:border-dim"
+                className="flex cursor-pointer items-center gap-3 border border-line bg-panel px-[13px] py-[9px] text-left text-[13px] hover:border-dim"
               >
                 <StatusPill status={m.status} />
                 <strong>{m.name}</strong>

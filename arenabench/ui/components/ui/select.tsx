@@ -44,7 +44,7 @@ export function SimpleSelect({
       <BaseSelect.Trigger
         aria-label={ariaLabel}
         className={cn(
-          "inline-flex w-full cursor-pointer items-center justify-between gap-2 rounded-[7px] border border-line bg-panel font-mono text-foreground",
+          "inline-flex w-full cursor-pointer items-center justify-between gap-2 border border-line bg-panel font-mono text-foreground",
           size === "sm" ? "px-2 py-[5px] text-xs" : "px-2.5 py-[7px] text-[13px]",
           "focus-visible:border-accent focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-accent/10",
           "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40",
@@ -58,7 +58,7 @@ export function SimpleSelect({
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
         <BaseSelect.Positioner className="z-50 outline-none" sideOffset={4}>
-          <BaseSelect.Popup className="max-h-[min(24rem,var(--available-height))] min-w-[var(--anchor-width)] overflow-y-auto rounded-[8px] border border-line bg-panel py-1 font-mono text-[13px] shadow-[0_8px_30px_-12px_rgb(0_0_0/0.55)]">
+          <BaseSelect.Popup className="max-h-[min(24rem,var(--available-height))] min-w-[var(--anchor-width)] overflow-y-auto border border-line bg-panel py-1 font-mono text-[13px] ">
             {items.map((item) => (
               <BaseSelect.Item
                 key={item.value}

@@ -38,6 +38,7 @@ use stella_protocol::{
 struct CapturingProvider {
     prompt: Mutex<String>,
     shape: Mutex<(Option<ReasoningEffort>, Option<u32>)>,
+    reasoning: Mutex<Option<bool>>,
 }
 
 #[async_trait]
@@ -58,6 +59,7 @@ impl Provider for CapturingProvider {
             *self.prompt.lock().expect("prompt lock") = user.content.clone();
         }
         *self.shape.lock().expect("shape lock") = (req.effort, req.max_output_tokens);
+        *self.reasoning.lock().expect("reasoning lock") = req.reasoning;
         Ok(CompletionResult {
             text: r#"{"lessons": []}"#.into(),
             tool_calls: vec![],
@@ -90,6 +92,7 @@ async fn prompt_for(succeeded: bool) -> String {
         &["testing".to_string()],
         succeeded,
         None,
+        super::ReflectionPosture::default(),
     )
     .await
     .expect("the stub provider cannot fail");
@@ -274,7 +277,8 @@ async fn the_per_turn_lesson_cap_is_above_what_a_turn_typically_teaches() {
     );
 }
 
-/// #1847's request-shape half: reflection is a bounded management call.
+/// #1847's request-shape half, and #2174's: reflection is a bounded
+/// management call that must also leave a reasoning model room to think.
 ///
 /// `effort` was previously unset, which leaves the provider's own default
 /// reasoning allowance in force — unbounded thinking spent deciding, most
@@ -282,14 +286,75 @@ async fn the_per_turn_lesson_cap_is_above_what_a_turn_typically_teaches() {
 /// bounded management call already has (the pipeline's `management_bounds`
 /// pins triage the same way; so does the engine's overflow summarizer).
 ///
-/// The output cap is asserted alongside because the two bounds are one
-/// dispatch contract, and because this is the cap's one guard. A response that
+/// The cap is asserted alongside because the two bounds are one dispatch
+/// contract, and because this is that cap's one guard — a response that
 /// overruns it parses to zero lessons *exactly like an empty one*, so the
-/// symptom of setting it too low is not a truncated lesson but a turn that
-/// silently taught nothing. It rose to 4096 when a lesson became three fields
-/// and the per-turn cap became [`super::MAX_LESSONS_PER_TURN`].
+/// symptom of undersizing it is not a truncated lesson but a turn that
+/// silently taught nothing. Both halves of the number are pinned here, because
+/// each was undersized once with that same invisible symptom:
+///
+/// - The **written contract** rose to 4096 when a lesson became three prose
+///   fields and the per-turn cap became [`super::MAX_LESSONS_PER_TURN`].
+/// - The **headroom on top** exists because the cap sent for a year was the
+///   written contract alone. `max_output_tokens` is one number on the wire and
+///   a reasoning model bills its thinking against it, so that cap came back
+///   spent entirely on reasoning: `finish_reason: length`, empty text, zero
+///   lessons, and a learning plane frozen for nine days with every surface
+///   reporting health (#2174).
 #[tokio::test]
-async fn reflection_dispatches_low_effort_with_its_bounded_output_cap() {
+async fn reflection_dispatches_low_effort_with_a_cap_that_leaves_room_to_think() {
+    let (shape, reasoning) = dispatch_shape(super::ReflectionPosture::default()).await;
+    assert_eq!(
+        shape,
+        (
+            Some(ReasoningEffort::Low),
+            Some(stella_core::starvation::with_reasoning_headroom(4096)),
+        ),
+        "reflection must dispatch as a bounded, pinned-low management call \
+         whose cap covers its output contract PLUS thinking room"
+    );
+    assert!(
+        shape.1.expect("a cap is sent") > 4096,
+        "sending the written contract alone is the #2174 defect itself"
+    );
+    assert_eq!(
+        reasoning, None,
+        "with no triage posture configured, the provider default stands — \
+         exactly as before the posture was threaded"
+    );
+}
+
+/// #2174 witness: the triage agent's configured posture reaches the wire.
+///
+/// Reflection dispatches on the model the triage pin selected, and built its
+/// request with `reasoning: None` regardless — so `agents.triage.reasoning:
+/// off` selected the model for a call it could not reach. The effort half is
+/// asserted in the same breath: reflection's own low pin is a default, and an
+/// operator's explicit setting is the more specific statement about the call.
+#[tokio::test]
+async fn the_triage_posture_reaches_the_reflection_wire() {
+    let (shape, reasoning) = dispatch_shape(super::ReflectionPosture {
+        reasoning: Some(false),
+        effort: Some(ReasoningEffort::High),
+    })
+    .await;
+    assert_eq!(
+        reasoning,
+        Some(false),
+        "an explicit off must reach the wire"
+    );
+    assert_eq!(
+        shape.0,
+        Some(ReasoningEffort::High),
+        "an explicitly configured triage effort outranks reflection's own \
+         low default"
+    );
+}
+
+/// Drive the real dispatch and hand back `((effort, cap), reasoning)`.
+async fn dispatch_shape(
+    posture: super::ReflectionPosture,
+) -> ((Option<ReasoningEffort>, Option<u32>), Option<bool>) {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(dir.path().join(".stella")).expect("workspace");
     let provider = CapturingProvider::default();
@@ -302,12 +367,11 @@ async fn reflection_dispatches_low_effort_with_its_bounded_output_cap() {
         &["testing".to_string()],
         true,
         None,
+        posture,
     )
     .await
     .expect("the stub provider cannot fail");
-    assert_eq!(
-        *provider.shape.lock().expect("shape lock"),
-        (Some(ReasoningEffort::Low), Some(4096)),
-        "reflection must dispatch as a bounded, pinned-low management call"
-    );
+    let shape = *provider.shape.lock().expect("shape lock");
+    let reasoning = *provider.reasoning.lock().expect("reasoning lock");
+    (shape, reasoning)
 }

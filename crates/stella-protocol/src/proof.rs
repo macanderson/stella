@@ -128,6 +128,29 @@ pub enum ProofStep {
         /// The stated reason a model verdict could not be rendered.
         reason: String,
     },
+    /// This turn's task class came from the deterministic keyword floor
+    /// (`triage::resolve_task_class` with no model answer), because the
+    /// triage call never produced one.
+    ///
+    /// Emitted for the same reason [`ProofStep::VerdictDegraded`] is, one
+    /// stage earlier. The fallback itself is correct by design and
+    /// load-bearing — triage must never fail a run — but it became the
+    /// *common* case while staying completely invisible: across three
+    /// Terminal-Bench arm runs, 27 of 34 triage calls burned the full 10s
+    /// latency ceiling and returned nothing, about four and a half minutes of
+    /// wall clock purchasing zero bits, with nothing in the summary layer
+    /// saying so (#2414). Every downstream decision that reads the class —
+    /// whether to plan, whether a witness is warranted, whether research
+    /// questions are even asked — then looks like a decision and is a default.
+    ///
+    /// A bench conclusion must not be drawn from a triage that never ran, and
+    /// this is the record that makes that checkable.
+    TriageDegraded {
+        /// The stated reason no model classification was available: the call
+        /// timed out at its ceiling, failed, could not be routed, or answered
+        /// off-protocol.
+        reason: String,
+    },
 }
 
 #[cfg(test)]
@@ -147,6 +170,24 @@ mod tests {
         assert_eq!(
             json,
             r#"{"kind":"verdict_degraded","candidate":2,"reason":"the verifier call failed or timed out"}"#
+        );
+        let parsed: ProofStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, step);
+    }
+
+    /// Invariant 4 again, for #2414's step. The wire spelling is pinned here
+    /// because the whole value of the record is that something outside this
+    /// process can census it — a bench harness reading `stella-events.jsonl`
+    /// to tell a real classification from a keyword-floor default.
+    #[test]
+    fn triage_degraded_round_trips_and_pins_its_wire_shape() {
+        let step = ProofStep::TriageDegraded {
+            reason: "the triage call timed out at its 30s ceiling".into(),
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"triage_degraded","reason":"the triage call timed out at its 30s ceiling"}"#
         );
         let parsed: ProofStep = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, step);

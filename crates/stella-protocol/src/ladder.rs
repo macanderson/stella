@@ -208,6 +208,47 @@ pub struct LadderSnapshot {
     /// `unmeasured`, never as either verdict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_coverage: Option<String>,
+    /// The worker's own `verify_done` tool run printed `WITNESS CONFIRMED`
+    /// this round (#2129): a deterministic fail-on-baseline / pass-on-new
+    /// shadow observation the pipeline's flip oracle cannot make, because it
+    /// tracks only its own command.
+    ///
+    /// On the wire because it **changes the verdict** and nothing else here
+    /// records which channel carried it: it rescues the heuristic fallback
+    /// from a verifier outage and counts as corroboration, so a reader of a
+    /// stored verdict otherwise sees a pass whose reasoning cites
+    /// `verify_done` with no structured field to count. `false` covers both
+    /// "no confirmation was observed" and "recorded before this field
+    /// existed"; like every other one-way channel here it is never a claim
+    /// that the worker's witness failed.
+    #[serde(default)]
+    pub verify_done_flip: bool,
+    /// Positive claim that this round had NO tracked test command at all
+    /// (#2129) — neither a configured `--test-command` nor an authored
+    /// witness — so "no flip" is a demand the task structurally cannot meet.
+    ///
+    /// On the wire for the same reason as [`Self::verify_done_flip`]: it turns
+    /// a fallback FAIL into an upward abstention, and a reader auditing a pass
+    /// that rests on nothing deterministic needs to see that the demand was
+    /// unmeetable rather than unmet. `false` on snapshots recorded before
+    /// this existed, which is the conservative reading — the dispensation is
+    /// never assumed.
+    #[serde(default)]
+    pub no_test_surface: bool,
+    /// Command chains this round that reported an error while exiting `0`
+    /// (#2125) — the shape a cited measurement can silently stand on.
+    ///
+    /// Unlike [`Self::verify_done_flip`] and [`Self::no_test_surface`] this
+    /// one never changes a verdict: an errored probe makes a cited quantity
+    /// *unsubstantiated*, not
+    /// *disproven*, so it informs the verifier's opinion and withholds
+    /// nothing. It is here because the question it answers — how often a run
+    /// cites a number that stood on a broken chain — is one only aggregate
+    /// traces can answer, and aggregate traces read this snapshot. One-way:
+    /// `0` is "the closed signature vocabulary matched nothing", never "this
+    /// round's commands were clean".
+    #[serde(default)]
+    pub errored_commands: u32,
     /// Whether the model that graded this verdict was independent of the
     /// worker that produced the work (#1795): `Some(false)` is a self-graded
     /// verdict — the verdict call resolved to the worker's own model — and
@@ -297,6 +338,9 @@ mod tests {
             witness_intact: Some(true),
             witness_mutation: Some(true),
             diff_coverage: Some("covered".into()),
+            verify_done_flip: false,
+            no_test_surface: false,
+            errored_commands: 0,
             verifier_independent: None,
         }
     }
@@ -311,6 +355,14 @@ mod tests {
             snapshot()
                 .with_rung(LadderRung::ModelVerdict)
                 .with_verifier_independence(Some(false)),
+            // #2194: the three channels that joined the snapshot after the
+            // verdict already turned on them.
+            LadderSnapshot {
+                verify_done_flip: true,
+                no_test_surface: true,
+                errored_commands: 3,
+                ..snapshot()
+            },
         ] {
             let json = serde_json::to_string(&value).unwrap();
             let back: LadderSnapshot = serde_json::from_str(&json).unwrap();
@@ -333,6 +385,22 @@ mod tests {
             json.contains("\"verifier_independent\":false"),
             "a self-graded verdict states it: {json}"
         );
+    }
+
+    /// The three #2194 channels are additive in the direction that matters: a
+    /// snapshot recorded before they existed parses, and reads as the
+    /// conservative value on each — no confirmation, no dispensation, no
+    /// errored command. Reading either bool as `true` by default would credit
+    /// evidence nobody observed.
+    #[test]
+    fn the_late_channels_default_conservatively() {
+        let legacy = r#"{"flip_achieved":false,"unstable_flip":false,"diff_lines":0,
+            "diff_budget":0,"diff_available":false,"file_change_events":0,
+            "mutating_actions":0,"new_diag_errors":0,"new_diag_warnings":0}"#;
+        let parsed: LadderSnapshot = serde_json::from_str(legacy).unwrap();
+        assert!(!parsed.verify_done_flip);
+        assert!(!parsed.no_test_surface);
+        assert_eq!(parsed.errored_commands, 0);
     }
 
     /// `rung` is additive: a snapshot recorded before it existed still parses,

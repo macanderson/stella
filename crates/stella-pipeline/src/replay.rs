@@ -43,6 +43,7 @@ pub mod ground_truth;
 pub mod independence;
 pub mod reference_adapter;
 
+use crate::verify::LadderInputs;
 use ground_truth::PendingPass;
 use independence::GraderCohorts;
 use stella_protocol::{AgentEvent, OracleObservation, ProofTree, StageKind, VerdictEvidence};
@@ -73,10 +74,12 @@ pub struct CalibrationReport {
     /// verifier-alone rate below (#1295). Verdicts recorded before snapshots
     /// existed (#865) are excluded rather than assumed either way.
     pub snapshotted_verdicts: u32,
-    /// …of which NOTHING mechanical corroborated the result: no flip, and no
-    /// touched-test run observed green.
+    /// …of which NOTHING mechanical corroborated the result: no flip, no
+    /// touched-test run observed green, and no worker-run `verify_done`
+    /// confirmation (#2194 — that third channel was missing here for as long
+    /// as it existed on the live predicate).
     ///
-    /// This is `LadderInputs::verifier_pass_stands_alone` read back off the
+    /// This is [`LadderInputs::verifier_pass_stands_alone`] read back off the
     /// record, and it is the number #1295 turns on: the gated "send it back
     /// for evidence" behaviour is worth a turn only where this is the
     /// suspicious minority. Counted over every snapshotted verdict, not only
@@ -356,14 +359,31 @@ pub fn calibration_pending(
 
 /// Whether a recorded verdict had no deterministic corroboration behind it
 /// (#1295) — the snapshot-side reading of
-/// `crate::verify::LadderInputs::verifier_pass_stands_alone`.
+/// [`LadderInputs::verifier_pass_stands_alone`].
 ///
-/// Deliberately the same two conjuncts and no more. A readable diff or a
-/// recorded file touch proves the tree **changed**; neither says the change
-/// is **correct**, and only the second claim is what a pass makes — so
-/// counting them here would report a rate the pipeline does not gate on.
+/// **It calls that predicate rather than restating it.** For a while it
+/// restated it, in two conjuncts, and when #2191 taught the live predicate a
+/// third channel (`verify_done_flip`) the copy here stayed at two — so
+/// [`CalibrationReport::uncorroborated_verdicts`] counted a verdict as
+/// uncorroborated over runs where the engine, at decision time, held
+/// corroboration. That rate is the number that decides
+/// `PipelineConfig::verifier_evidence_demand`, so a tuning knob was being set
+/// by a metric that disagreed with the code it claimed to mirror, and the
+/// disagreement grew with every `verify_done`-rescued turn (#2194).
+///
+/// The projection carries only the channels the predicate reads; every other
+/// input keeps its `Default`, which is the "nothing observed" value. A
+/// readable diff or a recorded file touch is deliberately not among them: they
+/// prove the tree **changed**, never that the change is **correct**, and only
+/// the second claim is what a pass makes.
 fn stands_alone(snapshot: &stella_protocol::LadderSnapshot) -> bool {
-    !snapshot.flip_achieved && snapshot.touched_tests_passed != Some(true)
+    LadderInputs {
+        flip_achieved: snapshot.flip_achieved,
+        touched_tests_passed: snapshot.touched_tests_passed,
+        verify_done_flip: snapshot.verify_done_flip,
+        ..LadderInputs::default()
+    }
+    .verifier_pass_stands_alone()
 }
 
 /// Render an oracle trace compactly — `baseline:fail → candidate:pass` —
@@ -453,6 +473,24 @@ pub fn verdict_provenance(evidence: &VerdictEvidence) -> Option<String> {
     // overlap was not measured" is a direct answer to it.
     if let Some(coverage) = &snapshot.diff_coverage {
         out.push_str(&format!("; diff_coverage={coverage}"));
+    }
+    // #2194: the two channels that can change the verdict without appearing
+    // anywhere else in this render. Stated only when they fired — like every
+    // conditional clause here, silence is "the probe had nothing to say",
+    // never "it looked and found nothing".
+    if snapshot.verify_done_flip {
+        out.push_str(
+            "; verify_done_flip=confirmed (worker's witness: baseline fail → change pass)",
+        );
+    }
+    if snapshot.no_test_surface {
+        out.push_str("; no_test_surface=true (no tracked command; a flip was unobtainable)");
+    }
+    if snapshot.errored_commands > 0 {
+        out.push_str(&format!(
+            "; errored_commands={} (exited 0 with a failed command inside)",
+            snapshot.errored_commands
+        ));
     }
     // #1795: a provenance reader asking "who graded this?" gets the stored
     // fact — `self-graded` is the finding this field exists to surface, and
@@ -687,6 +725,11 @@ pub fn event_signature(event: &AgentEvent) -> String {
                 ProofStep::VerdictDegraded { candidate, .. } => {
                     format!("proof:verdict_degraded:{candidate}")
                 }
+                // Same reading as the verdict's: *that* the class came from
+                // the deterministic floor is structural, and the reason is
+                // prose about which outage caused it — a timeout and a
+                // provider error are the same shape of run.
+                ProofStep::TriageDegraded { .. } => "proof:triage_degraded".to_string(),
             }
         }
         AgentEvent::ToolStart { call } => format!("tool_start:{}", call.name),
@@ -1274,174 +1317,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod calibration_tests {
-    use super::*;
-    use stella_protocol::{CiStatus, PrStatus, VerdictEvidence};
-
-    fn verdict(passed: bool, deterministic: bool) -> AgentEvent {
-        AgentEvent::Verdict {
-            passed,
-            evidence: VerdictEvidence {
-                summary: String::new(),
-                deterministic,
-                evidence_refs: vec![],
-                ladder: None,
-            },
-        }
-    }
-
-    fn ci(status: CiStatus) -> AgentEvent {
-        AgentEvent::Pr {
-            url: "https://example.test/pr/1".into(),
-            status: PrStatus::Open,
-            number: Some(1),
-            ci: Some(status),
-        }
-    }
-
-    /// The #871 acceptance: a VerifierPass that later fails CI is recorded as a
-    /// false positive; the deterministic cohort reconciles beside it.
-    #[test]
-    fn a_verifier_pass_that_fails_ci_is_a_false_positive() {
-        let events = vec![
-            verdict(true, false), // verifier PASS
-            verdict(true, true),  // deterministic pass
-            ci(CiStatus::Failing),
-        ];
-        let report = calibration(&events);
-        assert_eq!(report.verifier_passes, 1);
-        assert_eq!(report.verifier_reconciled, 1);
-        assert_eq!(report.verifier_false_positives, 1);
-        assert_eq!(report.verifier_false_positive_rate(), Some(1.0));
-        assert_eq!(report.deterministic_false_positives, 1);
-    }
-
-    /// Pending/Running reconcile nothing, and passes after the last terminal
-    /// CI verdict stay unreconciled — an unmeasured rate reads None.
-    #[test]
-    fn non_terminal_ci_and_trailing_passes_stay_unreconciled() {
-        let events = vec![
-            verdict(true, false),
-            ci(CiStatus::Running),
-            ci(CiStatus::Passing),
-            verdict(true, false), // after the last terminal verdict
-        ];
-        let report = calibration(&events);
-        assert_eq!(report.verifier_passes, 2);
-        assert_eq!(report.verifier_reconciled, 1);
-        assert_eq!(report.verifier_false_positives, 0);
-        assert_eq!(report.verifier_false_positive_rate(), Some(0.0));
-
-        let unmeasured = calibration(&[verdict(true, false)]);
-        assert_eq!(unmeasured.verifier_false_positive_rate(), None);
-    }
-
-    /// Failed verdicts and revise-loop reds never enter the tallies — the
-    /// question is the false-POSITIVE rate of passes.
-    #[test]
-    fn failed_verdicts_are_not_tallied() {
-        let events = vec![
-            verdict(false, true),
-            verdict(false, false),
-            ci(CiStatus::Passing),
-        ];
-        let report = calibration(&events);
-        assert_eq!(report.verifier_passes, 0);
-        assert_eq!(report.deterministic_passes, 0);
-    }
-
-    #[test]
-    fn merge_adds_componentwise() {
-        let a = calibration(&[verdict(true, false), ci(CiStatus::Failing)]);
-        let b = calibration(&[verdict(true, false), ci(CiStatus::Passing)]);
-        let merged = a.merge(b);
-        assert_eq!(merged.verifier_passes, 2);
-        assert_eq!(merged.verifier_reconciled, 2);
-        assert_eq!(merged.verifier_false_positives, 1);
-    }
-
-    /// A verdict carrying its ladder snapshot, so the verifier-alone fold has
-    /// something to read. `corroborated` decides whether the recorded turn
-    /// had a flip behind it.
-    fn snapshotted(passed: bool, deterministic: bool, corroborated: bool) -> AgentEvent {
-        let snapshot = stella_protocol::LadderSnapshot {
-            rung: None,
-            tracked_command: None,
-            oracle_trace: vec![],
-            flip_achieved: corroborated,
-            unstable_flip: false,
-            flip_refused_different_failure: false,
-            touched_tests_passed: corroborated.then_some(true),
-            test_infra: None,
-            diff_lines: 4,
-            diff_budget: 400,
-            diff_available: true,
-            file_change_events: 1,
-            mutating_actions: 2,
-            new_diag_errors: 0,
-            new_diag_warnings: 0,
-            witness_intact: None,
-            witness_mutation: None,
-            diff_coverage: None,
-            verifier_independent: None,
-        };
-        AgentEvent::Verdict {
-            passed,
-            evidence: VerdictEvidence {
-                summary: String::new(),
-                deterministic,
-                evidence_refs: vec![],
-                ladder: Some(Box::new(snapshot)),
-            },
-        }
-    }
-
-    /// #1295: the rate that decides whether asking for evidence is worth a
-    /// turn is measured off what is already recorded — every snapshotted
-    /// verdict counts toward the denominator, and a model-verifier PASS with
-    /// nothing behind it is separately identified as a turn the gated
-    /// behaviour would have sent back.
-    #[test]
-    fn the_verifier_alone_rate_is_measured_from_recorded_snapshots() {
-        let events = vec![
-            snapshotted(true, false, false),  // verifier PASS, nothing behind it
-            snapshotted(true, true, true),    // deterministic pass, flip achieved
-            snapshotted(false, false, false), // a FAILING verdict, also uncorroborated
-            snapshotted(true, false, true),   // verifier PASS with a flip behind it
-        ];
-        let report = calibration(&events);
-        assert_eq!(report.snapshotted_verdicts, 4);
-        assert_eq!(
-            report.uncorroborated_verdicts, 2,
-            "the denominator is every verdict, not only the passing ones — the question is how \
-             often the CONDITION holds"
-        );
-        assert_eq!(report.uncorroborated_rate(), Some(0.5));
-        assert_eq!(
-            report.verifier_passes_standing_alone, 1,
-            "only the verifier PASS with no flip and no green test would be sent back"
-        );
-        // The pass cohorts are untouched by the new fold.
-        assert_eq!(report.verifier_passes, 2);
-        assert_eq!(report.deterministic_passes, 1);
-    }
-
-    /// A rate with no denominator is reported as unmeasured, never as 0% —
-    /// the same discipline the false-positive rates already keep. Verdicts
-    /// recorded before ladder snapshots existed (#865) contribute nothing
-    /// rather than being assumed corroborated.
-    #[test]
-    fn a_stream_without_snapshots_leaves_the_verifier_alone_rate_unmeasured() {
-        let report = calibration(&[verdict(true, false), verdict(false, true)]);
-        assert_eq!(report.snapshotted_verdicts, 0);
-        assert_eq!(report.uncorroborated_rate(), None);
-        assert!(
-            render_calibration(&report).contains("verifier-alone rate: unmeasured"),
-            "an unmeasured rate must say so: {}",
-            render_calibration(&report)
-        );
-    }
-}
+mod calibration_tests;
 
 #[cfg(test)]
 mod late_reconciliation_tests;

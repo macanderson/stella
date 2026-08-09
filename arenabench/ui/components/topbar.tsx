@@ -14,11 +14,18 @@ export interface ConnState {
 /*
  * The lockup: the stella wordmark from the brand kit, a hairline pipe, and
  * the arena's domain. The artwork is a byte-copy of
- * docs/brand/logo/svg/wordmark-color-{dark,light}.svg served from
+ * docs/brand/logo/svg/wordmark-mono-{dark,light}.svg served from
  * public/brand/ — never redrawn here, so the kit stays the single source of
  * the mark. Two fixed cuts swap with the scheme because next-themes stamps
  * `.dark` on <html>; the kit's *-adaptive.svg follows only the OS media
  * query and would ignore the in-app toggle.
+ *
+ * The MONO cuts, not the colour ones: this chrome carries no accent hue, and
+ * the wordmark is the largest thing on the page — a gold mark here would
+ * reintroduce, at the top of every view, exactly the competition with the
+ * data that removing the gold accent was for. The mono cuts are a single
+ * fill each (#F4F1EA on the ink page, #0B0B0C on the paper one), so the
+ * lockup reads as type rather than as a logo.
  */
 function Brand() {
   return (
@@ -30,14 +37,14 @@ function Brand() {
        * transparent frame, on the content edge.
        */}
       <img
-        src="/brand/wordmark-color-light.svg"
+        src="/brand/wordmark-mono-light.svg"
         alt="stella"
         width={157}
         height={57}
         className="brand-mark -ml-[5px] block h-[57px] w-auto flex-none dark:hidden"
       />
       <img
-        src="/brand/wordmark-color-dark.svg"
+        src="/brand/wordmark-mono-dark.svg"
         alt="stella"
         width={157}
         height={57}
@@ -62,11 +69,18 @@ export function Topbar({
   arenaEnabled: boolean;
   conn: ConnState;
 }) {
+  /*
+   * The bar is opaque, not translucent-and-blurred. A backdrop blur is a soft
+   * surface effect in the same family as the gradients this pass removed, and
+   * it makes the value of the bar depend on whatever is scrolling under it —
+   * which on a page whose content is measurements means the chrome shifts
+   * while the reader is comparing numbers. A hairline is enough.
+   */
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-background/85 backdrop-blur-md">
+    <header className="sticky top-0 z-40 border-b border-line bg-background">
       {/*
-       * The bar itself spans the viewport (so the border and blur do too);
-       * this inner rail mirrors the active view's container — setup is
+       * The bar itself spans the viewport (so the border does too); this
+       * inner rail mirrors the active view's container — setup is
        * mx-auto max-w-[1180px] px-5, arena max-w-[1600px] px-5 sm:px-7 —
        * so the wordmark's left edge lands on the content's left edge, not
        * the page's.
@@ -83,9 +97,9 @@ export function Topbar({
             <Tabs.Tab
               value="setup"
               className={cn(
-                "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
+                "cursor-pointer px-3.5 py-[7px] text-[13px] text-muted",
                 "hover:bg-panel hover:text-foreground",
-                "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
+                "data-[active]:bg-accent data-[active]:font-semibold data-[active]:text-on-accent",
               )}
             >
               Setup
@@ -94,9 +108,9 @@ export function Topbar({
               value="arena"
               disabled={!arenaEnabled}
               className={cn(
-                "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
+                "cursor-pointer px-3.5 py-[7px] text-[13px] text-muted",
                 "hover:bg-panel hover:text-foreground",
-                "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
+                "data-[active]:bg-accent data-[active]:font-semibold data-[active]:text-on-accent",
                 "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-35",
               )}
             >
@@ -105,9 +119,9 @@ export function Topbar({
             <Tabs.Tab
               value="trends"
               className={cn(
-                "cursor-pointer rounded-[7px] px-3.5 py-[7px] text-[13px] lowercase text-muted",
+                "cursor-pointer px-3.5 py-[7px] text-[13px] text-muted",
                 "hover:bg-panel hover:text-foreground",
-                "data-[active]:bg-gold data-[active]:font-semibold data-[active]:text-ink",
+                "data-[active]:bg-accent data-[active]:font-semibold data-[active]:text-on-accent",
               )}
             >
               Trends
@@ -117,8 +131,8 @@ export function Topbar({
         <div className="ml-auto flex items-center gap-2 text-xs">
           <span
             className={cn(
-              "size-[7px] rounded-full transition-all",
-              conn.tone === "live" && "bg-ok shadow-[0_0_0_3px_rgb(92_230_138/0.16)]",
+              "size-[7px] transition-all",
+              conn.tone === "live" && "bg-ok ",
               conn.tone === "error" && "bg-bad",
               conn.tone === "" && "bg-dim",
             )}

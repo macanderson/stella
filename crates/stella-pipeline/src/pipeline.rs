@@ -78,6 +78,7 @@ use crate::ports::{
     WorkspaceError,
 };
 use crate::research::ResearchFinding;
+use crate::roster::Roster;
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
     needs_scope_review,
@@ -122,11 +123,18 @@ mod raw_usage;
 mod repair_gate;
 mod research_stage;
 mod resume_stage;
+mod roster_wiring;
+use roster_wiring::Assigned;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
 mod task_frame;
 mod triage_stage;
+/// The worker's opening user message (recall, research findings, goal,
+/// verification contract) — pure text assembly, in its own module because
+/// `pipeline.rs` is closed to growth.
+mod user_message;
+use user_message::{VerificationContract, assemble_user_message};
 mod verifier_stage;
 mod verify_probes;
 use verify_probes::DiffProbe;
@@ -234,9 +242,8 @@ pub struct RoleCallOverrides {
     pub params: Option<stella_protocol::GenerationParams>,
 }
 
-/// The pipeline's per-role override set. Worker (and plan, which rides the
-/// worker's tier) is configured through [`PipelineConfig::engine`] directly;
-/// only the two roles with their own models get their own request shaping.
+/// The pipeline's per-role override set.
+///
 /// The witness author/repair engines ride the verifier's model, so they take
 /// the `verifier` row's shaping too (#1785) — everything except `prompt`,
 /// which stays scoped to the raw verdict/guidance calls
@@ -245,6 +252,23 @@ pub struct RoleCallOverrides {
 pub struct PipelineRoleOverrides {
     pub triage: RoleCallOverrides,
     pub verifier: RoleCallOverrides,
+    /// The worker row (`agents.worker`), which the **plan** stage consumes —
+    /// plan rides the worker's tier in the router, and the planner writes the
+    /// worker's work order (#2416).
+    ///
+    /// Everything except `prompt` also reaches the plan call through
+    /// [`PipelineConfig::engine`], which is already built from this same
+    /// worker tuning: `metered_raw_call` falls back to the engine's
+    /// temperature/effort/reasoning/params for any field left unset here. What
+    /// this row adds that the engine base structurally cannot is `prompt` — a
+    /// system message has nowhere to ride in an [`EngineConfig`], so operator
+    /// prose reached worker turns (`build_pipeline_system_prompt`) and stopped
+    /// at the planner, which then emitted steps the worker's own instructions
+    /// forbade.
+    ///
+    /// Deliberately NOT consumed by the conversational fast path — see
+    /// `Pipeline::run_conversational`.
+    pub worker: RoleCallOverrides,
 }
 
 /// Tuning for the whole staged flow.
@@ -278,12 +302,38 @@ pub struct PipelineConfig {
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
     pub role_overrides: PipelineRoleOverrides,
+    /// Who performs each responsibility, and whether it runs at all (#2381).
+    /// [`Roster::default`] is the pipeline that shipped; see [`crate::roster`]
+    /// for why assignment and enablement are configurable while stage ORDER
+    /// deliberately is not.
+    pub roster: Roster,
     /// Decision latency ceiling on the triage classification call (L-M4): if
     /// it doesn't answer within this, the in-flight call is dropped and
     /// triage falls through to the full path. The expiry is not silent in
     /// accounting: `run_accounted_call` records a content-free
     /// `UsageIncomplete` envelope for the abandoned attempt (its provider-side
-    /// spend is unknowable once the response never lands).
+    /// spend is unknowable once the response never lands), and — since
+    /// #2414 — the stage emits a [`stella_protocol::ProofStep::TriageDegraded`]
+    /// naming the ceiling it hit.
+    ///
+    /// The default was 10s, and that number was measurably below the
+    /// distribution it was bounding rather than above it. Across three
+    /// Terminal-Bench arm runs, 27 of 34 triage calls burned the full 10,000ms
+    /// and returned nothing — while the 7 that *did* answer took
+    /// 4,684-8,587ms, i.e. even a successful triage was landing within a
+    /// couple of seconds of the wall. A ceiling set inside the answering
+    /// distribution does not bound a pathology, it converts slow-but-correct
+    /// answers into no answer at all, and pays the full ceiling for the
+    /// privilege.
+    ///
+    /// The never-wedge contract is what this exists for and it is unchanged: a
+    /// wedged provider still costs exactly one bounded wait and the run still
+    /// proceeds on the deterministic floor. What changed is which side of the
+    /// observed distribution the bound sits on. It remains an order of
+    /// magnitude under a run's own budget, and the honest reading of the new
+    /// number is that it is sized from 7 answering samples — small, and now at
+    /// least reported rather than assumed, which is what the degradation
+    /// record above is for.
     pub triage_latency_ceiling: Duration,
     /// Latency ceiling on the context-recall port. Recall runs concurrently
     /// with triage and is advisory (L-C6), never a gate — but nothing bounded
@@ -506,6 +556,7 @@ impl Default for PipelineConfig {
             engine: EngineConfig::default(),
             run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
+            roster: Roster::default(),
             triage_latency_ceiling: Duration::from_secs(10),
             // Half the triage ceiling, and recall runs concurrently with
             // triage — so this can never extend the critical path, it only
@@ -1028,6 +1079,12 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
+        // Before triage, before recall, before a single paid call — for the
+        // same reason the two independence refusals above sit here.
+        if let Err(error) = self.roster_refusal() {
+            return Err(PipelineRunError::new(error, total_cost));
+        }
+        self.report_roster_posture();
         if messages.is_empty() {
             messages.push(CompletionMessage::system(DEFAULT_SYSTEM_PROMPT));
         }
@@ -1105,6 +1162,7 @@ impl<'a> Pipeline<'a> {
         let authored_witness = !assessment.conversational
             && self.config.test_command.is_none()
             && self.config.witness_writer
+            && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
             && assessment.wants_witness()
             && task_class.verifies_unconditionally()
             && self.can_author_independent_witness();
@@ -1118,8 +1176,24 @@ impl<'a> Pipeline<'a> {
             }
             None => VerificationContract::None,
         };
+        // --- 2b. Pre-plan research (#1778): triage named questions, so
+        // parallel read-only sub-agents answer them before anything is
+        // prompted. Empty questions skip the stage byte-for-byte (L-E2),
+        // which is what lets it sit ahead of the conversational branch below:
+        // triage never names questions for a chat turn, so a greeting reaches
+        // `research_stage` and returns from its first line with no events and
+        // no spend.
+        //
+        // It runs BEFORE the user message is assembled because the worker's
+        // message is now one of its sinks (#2415) — findings used to reach
+        // the planner alone, so a fact a read-only sub-agent verified against
+        // this workspace survived to the worker only as whatever residue of
+        // it the planner encoded into a step string.
+        let research = self
+            .research_stage(goal, &research_questions, budget, &mut total_cost)
+            .await;
         messages.push(CompletionMessage::user(assemble_user_message(
-            goal, &frames, contract,
+            goal, &frames, &research, contract,
         )));
 
         // --- Conversational fast path. -------------------------------------
@@ -1135,34 +1209,30 @@ impl<'a> Pipeline<'a> {
                 .await;
         }
 
-        // --- 2b. Pre-plan research (#1778): triage named questions, so
-        // parallel read-only sub-agents answer them before the planner runs.
-        // Empty questions skip the stage byte-for-byte (L-E2).
-        let research = self
-            .research_stage(goal, &research_questions, budget, &mut total_cost)
-            .await;
-
         // --- 3+4. Plan, then scope review — one phase, because a reviewer who
         // asks for a different scope sends us back to the planner. -----------
-        let plan: Option<Vec<PlanStep>> = if task_class.plans() {
-            match self
-                .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
-                .await
-            {
-                Ok(PlannedScope::Steps(steps)) => Some(steps),
-                Ok(PlannedScope::Ended { reason }) => {
-                    return Ok(self.aborted_before_execute(
-                        task_class,
-                        total_cost,
-                        &reason,
-                        AbortKind::DeliberateStop,
-                    ));
+        // A withheld `plan` takes the branch a non-planning class takes — no
+        // frame, no call ([`Pipeline::responsibility_enabled`], #2381).
+        let plan: Option<Vec<PlanStep>> =
+            if task_class.plans() && self.responsibility_enabled(ModelCallRole::Plan) {
+                match self
+                    .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
+                    .await
+                {
+                    Ok(PlannedScope::Steps(steps)) => Some(steps),
+                    Ok(PlannedScope::Ended { reason }) => {
+                        return Ok(self.aborted_before_execute(
+                            task_class,
+                            total_cost,
+                            &reason,
+                            AbortKind::DeliberateStop,
+                        ));
+                    }
+                    Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
                 }
-                Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         if let Some(steps) = &plan {
             // The frame needs the whole plan, not the transcript's echo of it:
             // step prompts are pushed one turn at a time, so at a mid-plan
@@ -1350,6 +1420,20 @@ impl<'a> Pipeline<'a> {
             convo.insert(0, CompletionMessage::system(CONVERSATIONAL_SYSTEM_PROMPT));
         }
 
+        // Deliberately NOT `role_overrides.worker`, unlike the plan stage
+        // (#2416). Both halves of that row would undo what this path exists to
+        // do. `agents.worker.prompt` is the operator's *engineering* persona —
+        // it replaces the base instruction set on worker turns
+        // (`build_pipeline_system_prompt`), and prepending it here would re-arm
+        // exactly the behaviour `CONVERSATIONAL_SYSTEM_PROMPT` suppresses two
+        // lines above ("no tools, no code, no plan, no test") on a turn that
+        // has no task. And the worker's `effort` would displace the
+        // `ReasoningEffort::Low` this role is pinned to in `management_bounds`,
+        // buying deliberation for a greeting.
+        //
+        // The tuning this path does want — temperature, params — still applies:
+        // `metered_raw_call` falls back to `config.engine`, which is already
+        // built from the worker's own settings.
         let overrides = RoleCallOverrides::default();
         let reply = match self
             .metered_raw_call(
@@ -1436,25 +1520,31 @@ impl<'a> Pipeline<'a> {
         });
         let fallback_plan = || vec![PlanStep::new(goal)];
 
-        let resolved = match self.resolve_provider(Role::Plan) {
-            Ok(r) => r,
-            Err(_) => return Ok(fallback_plan()),
+        let resolved = match self.assigned(ModelCallRole::Plan) {
+            Assigned::To(r) => r,
+            Assigned::Withheld | Assigned::Unresolvable => return Ok(fallback_plan()),
         };
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
         }
 
         let prompt = build_planner_prompt(goal, recall, research, repo_structure, revision);
-        // Plan rides the worker's settings (same router tier, same tuning).
-        let worker_overrides = RoleCallOverrides::default();
+        // Plan rides the worker's settings — the same router tier AND the same
+        // request shaping, which is what this row makes true (#2416). The
+        // non-prompt knobs also arrive via `config.engine` (built from the
+        // worker's tuning); `prompt` has no seat there and reaches the planner
+        // only here, prepended as a system message ahead of
+        // `PLANNER_INSTRUCTIONS` so the JSON-array contract `parse_plan` reads
+        // is never replaced.
+        let worker_overrides = &self.config.role_overrides.worker;
         let result = match self
             .metered_raw_call(
                 RawCall {
                     role: ModelCallRole::Plan,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(prompt)],
+                    messages: prompt.into_messages(),
                     policy: RetryPolicy::standard(),
-                    overrides: &worker_overrides,
+                    overrides: worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
                 spend.budget,
@@ -1479,9 +1569,9 @@ impl<'a> Pipeline<'a> {
                 RawCall {
                     role: ModelCallRole::PlanRepair,
                     resolved: &resolved,
-                    messages: vec![CompletionMessage::user(plan_repair_prompt(&result.text))],
+                    messages: plan_repair_prompt(&result.text).into_messages(),
                     policy: RetryPolicy::deterministic(),
-                    overrides: &worker_overrides,
+                    overrides: worker_overrides,
                     timeout: self.config.engine.model_timeout,
                 },
                 spend.budget,
@@ -1674,26 +1764,8 @@ impl<'a> Pipeline<'a> {
         // `n == 1 && !authored_witness && !isolate`, so reaching here with
         // `n == 1 && !author_witness` means `isolate` was the only reason.
         let single_shot_isolation = n == 1 && !author_witness;
-        // `can_author_independent_witness` already gated `author_witness` and
-        // announced any degradation, so this is the invariant guard for that
-        // decision — silent on purpose, never a second warning.
-        let mut author_witness = author_witness;
-        let witness_author = match author_witness
-            .then(|| self.resolve_provider(Role::Verifier))
-            .and_then(Result::ok)
-            .filter(|author| author.model_ref != worker.model_ref)
-        {
-            Some(author) => {
-                if let Some(fallback) = &author.fallback {
-                    self.emit_fallback(fallback);
-                }
-                Some(author)
-            }
-            None => {
-                author_witness = false;
-                None
-            }
-        };
+        let witness_author = self.resolve_witness_author(author_witness, &worker);
+        let author_witness = witness_author.is_some();
 
         // Isolation is created in index order even when the candidates then
         // run together, and so is the second snapshot a witness author needs —
@@ -3060,83 +3132,6 @@ fn bound_recalled_frames(frames: Vec<RecalledFrame>) -> Vec<RecalledFrame> {
         out.push(frame);
     }
     out
-}
-
-/// What the worker's user message says about how this run will be verified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VerificationContract<'a> {
-    /// An operator-configured oracle: disclose the command.
-    Oracle(&'a str),
-    /// No oracle and no independent witness author: the worker's own failing
-    /// test, written first, is the only deterministic evidence the run will
-    /// carry — say so on the channel the worker plans from.
-    WorkerTestFirst,
-    /// Nothing to add: a conversational turn, a class that never verifies, or
-    /// an authored witness that will supply the oracle post-execution (its
-    /// disclosure stays governed by the airlock).
-    None,
-}
-
-fn assemble_user_message(
-    goal: &str,
-    frames: &[RecalledFrame],
-    contract: VerificationContract<'_>,
-) -> String {
-    if frames.is_empty() && contract == VerificationContract::None {
-        return goal.to_string();
-    }
-    let mut s = String::new();
-    if !frames.is_empty() {
-        s.push_str("## Recalled context\n");
-        for f in frames {
-            // Cite by human label (L-C4); include content as grounding.
-            s.push_str("- [");
-            s.push_str(&f.citation_label);
-            s.push_str("] (");
-            s.push_str(&f.source);
-            s.push_str(")\n");
-            if !f.content.trim().is_empty() {
-                s.push_str("  ");
-                s.push_str(f.content.trim());
-                s.push('\n');
-            }
-        }
-        s.push('\n');
-    }
-    s.push_str("## Task\n");
-    s.push_str(goal.trim());
-    // The verification contract, when the operator configured one. The
-    // methodology prompt tells the worker to "run the target test" without
-    // ever saying which — the command that actually gates the run was
-    // withheld until the first failure disclosed it (the airlock's L1 brief
-    // names it anyway). Saying it up front moves that information one failed
-    // revision earlier, on the exact channel the worker plans from. Only the
-    // operator-CONFIGURED command is ever disclosed here: an authored
-    // witness's command does not exist yet at assembly time, and its
-    // disclosure stays governed by the airlock (`crate::witness::airlock`).
-    match contract {
-        VerificationContract::Oracle(command) => {
-            s.push_str("\n\n## Verification\n");
-            s.push_str(&format!(
-                "This run's primary verification is `{command}`: the accepted deterministic \
-                 evidence is this command failing before your change and passing after it. \
-                 Reproduce the failure with it before editing; make it pass before finishing. \
-                 Do not modify the tests it runs."
-            ));
-        }
-        VerificationContract::WorkerTestFirst => {
-            s.push_str("\n\n## Verification\n");
-            s.push_str(
-                "No test command is configured for this run and no independent test author \
-                 is available: nothing outside your own work will check this change. Before \
-                 implementing, write the failing test that captures this task and run it to \
-                 watch it fail; make it pass before finishing. That test is the only \
-                 deterministic evidence this run will carry.",
-            );
-        }
-        VerificationContract::None => {}
-    }
-    s
 }
 
 /// One digest over everything a model verdict depends on — goal, the (witness

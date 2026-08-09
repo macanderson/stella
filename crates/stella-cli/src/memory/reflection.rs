@@ -75,6 +75,48 @@ const REFLECTED_TAIL_MESSAGES: usize = 12;
 /// serves both halves.
 pub(crate) const MAX_LESSONS_PER_TURN: usize = 8;
 
+/// What reflection is asked to **write**: at most [`MAX_LESSONS_PER_TURN`]
+/// lesson objects, each three prose fields, plus a five-field self-review.
+/// Thinking room is added on top by
+/// [`stella_core::starvation::with_reasoning_headroom`] — the number here stays
+/// readable against the prompt that justifies it instead of silently encoding
+/// someone's guess at a reasoning budget.
+///
+/// 512 was the original, enough for a model that answers with bare JSON and
+/// nothing else. A model that narrates first spends the whole allowance on
+/// prose and never reaches the array, so every lesson from every turn is lost
+/// — silently, because a truncated response parses to zero lessons exactly
+/// like an empty one.
+///
+/// 2,048 was that repair, and it is no longer the number: it was sized for a
+/// one-field lesson capped at three per turn. A lesson now carries `insight`,
+/// `trigger` and `saves`, and up to [`MAX_LESSONS_PER_TURN`] of them may come
+/// back — call it eight times the ~90 tokens a grounded lesson takes, plus the
+/// self-review. Headroom here is only ever spent by a response that was going
+/// to be truncated, and a truncation here is invisible.
+const LESSONS_OUTPUT_CONTRACT: u32 = 4_096;
+
+/// The thinking posture one reflection call sends on the wire.
+///
+/// Reflection dispatches on the model the **triage** pin selected (#1847), so
+/// the triage agent's configured posture is the one that governs it. Left
+/// unthreaded, `agents.triage.reasoning` chose the model for a call it could
+/// not otherwise reach — and an operator who switched thinking off still paid
+/// for a reasoning stream billed against the output cap (#2174).
+///
+/// The default is the worker-ridden case: no route, no triage posture, and the
+/// pinned-low effort below stands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ReflectionPosture {
+    /// `agents.triage.reasoning` — thinking on/off. `None` leaves the
+    /// provider's default, exactly as before this was threaded.
+    pub(crate) reasoning: Option<bool>,
+    /// `agents.triage.effort`. `None` keeps reflection's own low pin, which is
+    /// the right default for a bounded JSON contract; an explicit setting wins
+    /// because it is the more specific statement about this call.
+    pub(crate) effort: Option<ReasoningEffort>,
+}
+
 /// The slice of `messages` worth copying for a reflection transcript.
 ///
 /// A caller that appends turn context (the final answer, a files-changed
@@ -110,7 +152,11 @@ pub(crate) async fn reflect_routed(
 ) -> ReflectionReport {
     let routed =
         crate::agent::reflection_route(cfg, &crate::config::discover_configured_providers());
-    let (provider, model_hint) = match &routed {
+    // The posture travels with the route, not with the adapter: a triage pin
+    // that resolves to the session's own model builds no second adapter and
+    // still governs the call (#2174).
+    let posture = routed.as_ref().map(|r| r.posture).unwrap_or_default();
+    let (provider, model_hint) = match routed.as_ref().and_then(|r| r.provider.as_ref()) {
         Some((model, provider)) => (provider.as_ref(), model.model_id.as_str()),
         None => (worker, cfg.model_id.as_str()),
     };
@@ -122,6 +168,7 @@ pub(crate) async fn reflect_routed(
             quiet,
             succeeded,
             budget_limit,
+            posture,
         )
         .await
 }
@@ -130,6 +177,15 @@ pub(crate) async fn reflect_routed(
 /// `SessionMemory::reflect_and_record`, in the same pass that stamps
 /// `task_id`, from the session clock — so neither this dispatch nor the parser
 /// below ever reads a clock, and the mining log they feed is reproducible.
+// Eight parameters, and the lint is wrong here: every one is an independent
+// fact about THIS dispatch that the caller alone knows (which provider, which
+// model slug, which workspace, which transcript slice, which domain
+// vocabulary, whether the turn succeeded, what budget is left, what posture
+// the route declared). Bundling them into a struct would rename the arguments
+// without reducing what a caller must decide, and this is a leaf dispatch with
+// three call sites — the shape the lint exists to catch is a growing function
+// that has become several, which this is not.
+#[allow(clippy::too_many_arguments)]
 pub async fn reflect_on_turn(
     provider: &dyn Provider,
     model_hint: &str,
@@ -138,6 +194,7 @@ pub async fn reflect_on_turn(
     domain_names: &[String],
     succeeded: bool,
     budget_limit: Option<f64>,
+    posture: ReflectionPosture,
 ) -> Result<
     (ReflectionParse, Option<SelfReviewRow>, f64, Vec<AgentEvent>),
     crate::accounted_call::StandaloneCallError,
@@ -336,21 +393,21 @@ pub async fn reflect_on_turn(
             ),
             CompletionMessage::user(prompt),
         ],
-        // The cap has to clear the worst honest answer, not the typical one.
-        // A truncated response parses to zero lessons *exactly like an empty
-        // one*, so overrunning it does not degrade the turn's learning — it
-        // deletes it, and says nothing. 512 was enough for a model that
-        // answers with bare JSON; a model that narrates first spent the whole
-        // allowance on prose and was cut off before reaching the array, which
-        // is why 2048 followed.
-        //
-        // 2048 is no longer that number. A lesson is now three prose fields
-        // rather than one, and up to [`MAX_LESSONS_PER_TURN`] of them may be
-        // returned — call it eight times the ~90 tokens a grounded lesson
-        // takes, plus the self-review, against a narrating model's preamble.
-        // The headroom is only ever spent by responses that were going to be
-        // truncated, and a truncation here is invisible.
-        max_output_tokens: Some(4096),
+        // Two independent things have to fit under one number, and each was
+        // sent alone once. [`LESSONS_OUTPUT_CONTRACT`] is what reflection is
+        // asked to WRITE — now three prose fields per lesson, up to
+        // [`MAX_LESSONS_PER_TURN`] of them. The headroom on top is what a
+        // reasoning model spends before it writes anything, and sending the
+        // contract alone is what froze this workspace's learning plane for
+        // nine days: execution 63 came back at exactly 2,048 output tokens
+        // with `finish_reason: length` and no visible text, which
+        // `extract_lesson_array` reads as zero lessons — indistinguishable,
+        // from every surface, from a turn that genuinely taught nothing
+        // (#2174). Undersizing either half has the same invisible symptom, so
+        // both are sized here rather than one being left to chance.
+        max_output_tokens: Some(stella_core::starvation::with_reasoning_headroom(
+            LESSONS_OUTPUT_CONTRACT,
+        )),
         temperature: Some(0.0),
         // Pinned low, like every bounded management call (the pipeline's
         // `management_bounds` pins triage the same way, and the overflow
@@ -361,9 +418,15 @@ pub async fn reflect_on_turn(
         // Providers that cannot express effort drop it per their declared
         // `ReasoningPosture` (provider-parity invariant #8), the same path
         // every pinned management call rides.
-        effort: Some(ReasoningEffort::Low),
+        //
+        // The operator's own triage posture wins over both pins where they set
+        // one: reflection dispatches on the model the triage pin selected
+        // (#1847), and a knob that chooses the model for a call but cannot
+        // reach the call is a knob that lies. An `agents.triage.reasoning: off`
+        // now actually reaches the wire.
+        effort: posture.effort.or(Some(ReasoningEffort::Low)),
         tools: Vec::new(),
-        reasoning: None,
+        reasoning: posture.reasoning,
         params: None,
     };
     let accounted = crate::accounted_call::complete_standalone(

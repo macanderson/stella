@@ -22,13 +22,13 @@ export function Checkbox({
       onCheckedChange={(next) => onCheckedChange(next)}
       aria-label={ariaLabel}
       className={cn(
-        "flex size-[15px] shrink-0 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-panel",
-        "data-[checked]:border-gold data-[checked]:bg-gold",
+        "flex size-[15px] shrink-0 cursor-pointer items-center justify-center border border-line bg-panel",
+        "data-[checked]:border-accent data-[checked]:bg-accent",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
         className,
       )}
     >
-      <BaseCheckbox.Indicator className="text-ink data-[unchecked]:hidden">
+      <BaseCheckbox.Indicator className="text-on-accent data-[unchecked]:hidden">
         <Check className="size-3" strokeWidth={3} />
       </BaseCheckbox.Indicator>
     </BaseCheckbox.Root>

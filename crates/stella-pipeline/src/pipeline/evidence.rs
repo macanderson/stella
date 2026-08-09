@@ -131,6 +131,19 @@ impl<'a> Pipeline<'a> {
             // as a count the pipeline observed, never as transcript text.
             evidence_summary.push_str(&clause);
         }
+        if inputs.verify_done_flip {
+            // #2194: the worker's own `verify_done` run confirmed a
+            // baseline-pinned fail→pass flip. The verifier could not see it —
+            // the marker lives in the worker's tool results, which it must not
+            // read (L-E11) — so before this the one deterministic channel that
+            // rescues a degraded verdict was invisible to the model verdict
+            // that runs first. Stated as the pipeline's own observation, never
+            // as quoted transcript text.
+            evidence_summary.push_str(
+                "; verify_done_flip=true (the worker's verify_done run observed the witness \
+                 failing on the pinned baseline and passing on the change)",
+            );
+        }
         if let Some(label) = test_infra {
             // #860: the run ended without observing an assertion. Named so the
             // verifier reads "the suite timed out", not "the suite failed".

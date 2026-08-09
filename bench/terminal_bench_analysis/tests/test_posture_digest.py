@@ -26,12 +26,20 @@ import tb21_analysis as analysis_module
 
 _MODEL = analysis_module.PRIMARY_MODEL
 
-# The digest every registered TB2.1 arm was claimed under. Re-frozen when the
-# `judge` agent slot became `verifier`: a slot rename is a NEW posture
-# generation, not a cosmetic edit, because runs under `8530a36f…` booked an
-# agent under the old key and are not hash-comparable with runs under this one.
+# The digest every registered TB2.1 arm was claimed under. Re-frozen twice.
+#
+# First when the `judge` agent slot became `verifier`: a slot rename is a NEW
+# posture generation, not a cosmetic edit, because runs under `8530a36f…`
+# booked an agent under the old key and are not hash-comparable with runs
+# under this one.
+#
+# Again when the output cap left the posture (#2411), which is the first
+# re-freeze where the arm itself changed rather than a key being renamed. Runs
+# under `8ce2e820…` asked for 64,000 output tokens; runs under this digest ask
+# for the model's own ceiling. Those are different arms, and comparing their
+# solve rates compares two configurations.
 _REGISTERED_POSTURE_SHA256 = (
-    "8ce2e82029af25d9c9ee5d3f0f024f6e97c08fe39543486edb66926cb55b84a9"
+    "20de1e34756b0ee86ced24a37fcc5f99ad743cd5c6e91921cd28d1e0570c160e"
 )
 
 

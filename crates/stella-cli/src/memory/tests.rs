@@ -211,6 +211,13 @@ fn recall_section_tags_memory_frames_with_ids_and_asks_for_citations() {
         section.contains("cite_memory"),
         "instruction present: {section}"
     );
+    // #2195: one wording, shared with the pipeline's render of the same
+    // frames. Two copies of this sentence is how the pipeline path came to
+    // have none at all while this one read as evidence the affordance existed.
+    assert!(
+        section.contains(stella_pipeline::CITE_MEMORY_REQUEST),
+        "the ask is the shared constant, verbatim: {section}"
+    );
 }
 
 #[test]
@@ -867,7 +874,15 @@ async fn reflect_and_record_stores_the_models_self_review_against_its_execution(
         msg(MessageRole::Assistant, "swapped db() for withTenantDb"),
     ];
     let report = memory
-        .reflect_and_record(&StubProvider, "stub", &transcript, true, true, None)
+        .reflect_and_record(
+            &StubProvider,
+            "stub",
+            &transcript,
+            true,
+            true,
+            None,
+            crate::memory::ReflectionPosture::default(),
+        )
         .await;
     assert_eq!(report.recorded, 1, "lesson mining still works");
 
@@ -968,6 +983,7 @@ async fn without_an_execution_id_the_self_review_is_dropped_not_misattributed() 
             true,
             true,
             None,
+            crate::memory::ReflectionPosture::default(),
         )
         .await;
     assert_eq!(report.recorded, 1, "lessons are unaffected");
@@ -1070,7 +1086,15 @@ async fn reflect_and_record_writes_lessons_to_log_and_store() {
         msg(MessageRole::Assistant, "swapped db() for withTenantDb"),
     ];
     let report = memory
-        .reflect_and_record(&StubProvider, "stub", &transcript, true, true, None)
+        .reflect_and_record(
+            &StubProvider,
+            "stub",
+            &transcript,
+            true,
+            true,
+            None,
+            crate::memory::ReflectionPosture::default(),
+        )
         .await;
 
     assert_eq!(report.recorded, 1, "the lesson was stored");
@@ -1113,6 +1137,105 @@ async fn reflect_and_record_writes_lessons_to_log_and_store() {
             mode(&dir.path().join(".stella/private/reflections.jsonl")),
             0o600
         );
+    }
+}
+
+/// #2175 witness: an unreadable reflection response leaves a durable record,
+/// and a legitimately empty one does not.
+///
+/// The two must stay distinguishable — that is the entire reason
+/// `ReflectionParse::Unreadable` exists. Before this, both produced
+/// `recorded: 0` with nothing in the store, the reflection execution closed
+/// `outcome = 'completed'` (the model call DID complete; only the parse
+/// failed), and the only trace of the failure was an `eprintln!`. An operator
+/// looking at the Improve tab a week later could not tell "nothing to learn
+/// yet" from "the learning loop has been broken for nine days".
+#[tokio::test]
+async fn an_unreadable_reflection_is_recorded_and_an_empty_one_is_not() {
+    use async_trait::async_trait;
+    use stella_protocol::{
+        CompletionRequestRef, CompletionResult, CompletionUsage, Provider, ProviderError,
+    };
+
+    /// Answers with whatever text it was built with.
+    struct Scripted(&'static str);
+    #[async_trait]
+    impl Provider for Scripted {
+        fn id(&self) -> &str {
+            "scripted"
+        }
+        async fn complete_ref(
+            &self,
+            _req: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            Ok(CompletionResult {
+                text: self.0.into(),
+                tool_calls: vec![],
+                usage: CompletionUsage {
+                    reported: true,
+                    input_tokens: 1,
+                    ..CompletionUsage::default()
+                },
+                model: "scripted".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            })
+        }
+    }
+
+    // The shape a truncated reasoning model actually produces: narration, cut
+    // off before the JSON. It is not an empty lessons array, and recording it
+    // as one is the defect.
+    let unreadable = "Let me analyze this turn step by step. First, I should";
+    // The shape a model that read the prompt and had nothing to add produces.
+    let empty = r#"{"lessons": []}"#;
+
+    for (response, expect_recorded) in [(unreadable, true), (empty, false)] {
+        let dir = tempfile::tempdir().expect("workspace");
+        std::fs::create_dir_all(dir.path().join(".stella")).expect("workspace");
+        let store = stella_store::Store::open(dir.path()).expect("store");
+        let execution = store
+            .begin_execution("reflection", "convert the totals", "scripted", "scripted")
+            .expect("execution");
+        let mut memory = SessionMemory::open(dir.path(), false).expect("memory");
+        memory.set_execution_id(execution);
+
+        let report = memory
+            .reflect_and_record(
+                &Scripted(response),
+                "scripted",
+                &[msg(MessageRole::User, "convert the totals")],
+                true,
+                true,
+                None,
+                crate::memory::ReflectionPosture::default(),
+            )
+            .await;
+        assert_eq!(report.recorded, 0, "neither response carries a lesson");
+
+        let recorded = store
+            .reflection_parse_failure(execution)
+            .expect("query the parse-failure column");
+        if expect_recorded {
+            assert_eq!(
+                recorded.flatten().as_deref(),
+                Some(unreadable),
+                "an unreadable response must leave the excerpt behind — \
+                 stderr is not an artifact"
+            );
+            assert!(
+                report.model_error.is_some(),
+                "and it must still be reported to the caller in-band"
+            );
+        } else {
+            assert!(
+                recorded.flatten().is_none(),
+                "a turn with genuinely nothing to learn is not a broken \
+                 learning loop, and marking it as one would make every healthy \
+                 workspace look starved"
+            );
+            assert!(report.model_error.is_none());
+        }
     }
 }
 
@@ -1161,6 +1284,7 @@ async fn reflection_preserves_settled_cost_when_budget_rejects_model_output() {
             true,
             true,
             Some(0.001),
+            crate::memory::ReflectionPosture::default(),
         )
         .await;
     assert_eq!(report.recorded, 0);

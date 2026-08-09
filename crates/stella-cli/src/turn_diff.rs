@@ -22,6 +22,18 @@
 //! Best-effort like the turn mark itself: a turn that ended is not made less
 //! ended by an unrecordable diff, so every failure here degrades to "that
 //! turn has no replayable diff" rather than surfacing.
+//!
+//! # Every turn boundary writes here, not just the interactive one
+//!
+//! For its first release this projection was written by exactly one caller —
+//! the Command Deck's `run_deck_session`, reached only from a real TTY or
+//! `stella resume`. The read side was universal from the start, so every
+//! headless surface (`stella run`, CI, benchmarks, fleet workers) showed a
+//! permanently empty turn drill with nothing distinguishing "this turn changed
+//! nothing" from "this surface never records diffs at all" (#2177). The
+//! headless drivers now mark their turns too; `crate::durability`'s
+//! `every_turn_boundary_in_the_crate_marks_the_turn_it_ended` is the fence
+//! that keeps it that way.
 
 use stella_store::{Store, work_journal::WorkJournal};
 

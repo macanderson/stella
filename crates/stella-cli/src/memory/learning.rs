@@ -55,6 +55,12 @@ impl SessionMemory {
     /// `execution_reflection` half the Observatory's self-improve panels read.
     /// It rides here rather than in a call of its own because the model already
     /// has this transcript in front of it.
+    // Seven parameters, and the lint is wrong here for the same reason it is
+    // on `reflect_on_turn` below it: each is an independent fact about this
+    // one dispatch that only the caller holds. A parameter object would move
+    // the argument list to a struct literal at every call site and decide
+    // nothing.
+    #[allow(clippy::too_many_arguments)]
     pub async fn reflect_and_record(
         &mut self,
         provider: &dyn Provider,
@@ -63,6 +69,7 @@ impl SessionMemory {
         quiet: bool,
         succeeded: bool,
         budget_limit: Option<f64>,
+        posture: crate::memory::ReflectionPosture,
     ) -> ReflectionReport {
         let reflected = match reflect_on_turn(
             provider,
@@ -72,6 +79,7 @@ impl SessionMemory {
             &self.domains.names(),
             succeeded,
             budget_limit,
+            posture,
         )
         .await
         {
@@ -118,6 +126,17 @@ impl SessionMemory {
         let lessons = match parsed {
             crate::memory::reflection::ReflectionParse::Lessons(lessons) => lessons,
             crate::memory::reflection::ReflectionParse::Unreadable(excerpt) => {
+                // Durably, not just to stderr (#2175). The reflection execution
+                // itself closes as `outcome = 'completed'` — the model call DID
+                // complete; only the parse failed — so without this row there
+                // is no artifact anywhere saying the learning loop lost this
+                // turn, and once the scrollback is gone a starved lifecycle and
+                // a workspace that has never learned anything are the same
+                // picture. Best-effort like every store write on this path.
+                if let (Some(store), Some(execution_id)) = (turn_store.as_ref(), self.execution_id)
+                {
+                    let _ = store.record_reflection_parse_failure(execution_id, &excerpt);
+                }
                 return ReflectionReport {
                     recorded: 0,
                     model_error: Some(format!(

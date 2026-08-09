@@ -62,9 +62,9 @@ color = "#FF6B9D"
   # produced that measurement — the wrong direction to raise effort in.
   effort = "medium"
   # No base_url: this seat runs at Anthropic itself, authenticated by the
-  # subscription token. No budget_usd either — Claude Code does not honour a
-  # spend cap, and on the plan the marginal spend is zero; the plan's own
-  # quota is the ceiling.
+  # subscription token. No per-trial ceiling either — and that is now every
+  # seat's rule rather than this one's property: ArenaBench refuses
+  # `budget_usd` and `max_tokens` outright (#2411).
 
   [contestant.env]
   # Names only — never values. Any ONE of these credentials the seat;
@@ -82,12 +82,9 @@ color = "#FFB000"
   model = "anthropic/claude-fable-5"
   reasoning = true
   effort = "medium"
-  # Fable's real output ceiling, same number on both routes (#1211 §6.2).
-  max_tokens = 128000
-  # Per-trial cap (becomes STELLA_BUDGET). Six trials x $16 = $96, inside the
-  # $100-per-agent envelope for the run, with per-trial isolation: one
-  # runaway trial cannot eat the other five tasks' budget.
-  budget_usd = 16.0
+  # No ceiling on either axis, matching the seat above. The run's envelope is
+  # bounded at the provider key, where exhaustion fails the whole run visibly
+  # instead of truncating one trial into a loss.
 
   # Per-role overrides — the "full pipeline" arm. Every model named here is in
   # Stella's OFFLINE seed catalog under `openrouter`: the adapter pins

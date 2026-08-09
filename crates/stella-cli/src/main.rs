@@ -77,6 +77,11 @@ mod memory_index;
 mod memory_retire_cmd;
 mod model_catalog;
 mod paths;
+// The plain terminal surface — the line-oriented renderer `term_policy`
+// falls back to when the Command Deck cannot run. Named for the decision
+// that selects it (`--plain`, `STELLA_PLAIN`, `plain_fallback`); it was
+// `tui` until #2421, which was the one name it is not.
+mod plain;
 mod scoreboard_cmd;
 mod self_driving_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
@@ -106,7 +111,6 @@ mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
 mod trace;
-mod tui;
 mod tune_cmd;
 mod turn_diff;
 mod usage_cmd;

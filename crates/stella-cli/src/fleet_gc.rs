@@ -21,7 +21,7 @@ use std::path::Path;
 use colored::Colorize;
 use stella_fleet::{BranchAction, Gc, GcOptions, GcReport, Ledger, SystemGitCli, WorktreeAction};
 
-use crate::tui;
+use crate::plain;
 
 /// Sweep the workspace's finished worktrees and `fleet/*` branches.
 pub(crate) async fn clean(root: &Path, opts: &GcOptions) -> Result<(), String> {
@@ -60,7 +60,7 @@ pub(crate) async fn clean(root: &Path, opts: &GcOptions) -> Result<(), String> {
 }
 
 fn print_report(report: &GcReport) {
-    tui::section_header("Stella — fleet clean");
+    plain::section_header("Stella — fleet clean");
     println!(
         "  base {}{}\n",
         report.base_ref,

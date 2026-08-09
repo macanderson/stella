@@ -19,12 +19,24 @@
 //! 2. **No selector recolors `--ground`-as-text.** Before this change,
 //!    `.tf button[aria-checked="true"]` and `.ctx-row button.on` painted
 //!    their selected-state text in `color:var(--ground)` — reusing the page
-//!    background token to get ink-on-gold contrast in the (then dark-only)
-//!    page. Once `--ground` became theme-dependent, that coupling would have
-//!    put light-theme text on a gold fill, which is close to unreadable —
-//!    the exact failure mode `--ink` (a fixed token, never repointed by the
-//!    theme) exists to prevent. This asserts the coupling is gone for good,
-//!    not just fixed today.
+//!    background token to get readable contrast on a selected fill in the
+//!    (then dark-only) page. Once `--ground` became theme-dependent, that
+//!    coupling put light-theme text on a light fill, which is close to
+//!    unreadable — the exact failure mode `--ink` exists to prevent. This
+//!    asserts the coupling is gone for good, not just fixed today.
+//!
+//!    **`--ink` is no longer a fixed hex, and that is the point of the
+//!    change that moved it.** It was `#0B0B0C` on every theme because it sat
+//!    on a Phosphor Gold fill, and gold is dark enough for ink either way.
+//!    The page's accent is now the *text* colour, so "selected" is an
+//!    inversion of the page rather than a hue: the fill takes `--accent` and
+//!    `--ink` is whatever the page's ground is, which necessarily flips with
+//!    the theme (`#0A0A0A` on the ink page, `#FFFFFF` on the paper one).
+//!    Pinning the old literal here would pin the old design, so this now
+//!    asserts the *invariant* the literal was standing in for: `--ink` is
+//!    declared in the dark root and re-pointed in both light gates, and the
+//!    selectors that need an on-accent colour still reach for it rather than
+//!    for `--ground`.
 
 use stella_observatory::respond;
 use tempfile::TempDir;
@@ -68,10 +80,24 @@ fn no_selector_recolors_the_page_background_as_text() {
          worked because dark mode's --ground happens to be dark"
     );
     for needle in [
-        "--ink:#0B0B0C",
+        // Declared on the ink page, and re-pointed by BOTH light gates — the
+        // media query and the explicit attribute. Two declarations is the
+        // load-bearing count: a light theme that inherited the dark `--ink`
+        // would paint dark text on the dark selected fill, which is the same
+        // unreadable pair this test was written to catch, arrived at from the
+        // other direction.
+        "--ink:#0A0A0A",
+        "--ink:#FFFFFF",
         ".tf button[aria-checked=\"true\"]{color:var(--ink)",
         ".ctx-row button.on{color:var(--ink)",
     ] {
         assert!(page.contains(needle), "missing {needle}");
     }
+    assert_eq!(
+        page.matches("--ink:#FFFFFF").count(),
+        2,
+        "--ink must be re-pointed by both light gates (the \
+         prefers-color-scheme media query and [data-theme=\"light\"]); one \
+         alone leaves the other inheriting the ink-page value"
+    );
 }

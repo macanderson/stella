@@ -23,9 +23,9 @@ export function DatasetGrid({
             type="button"
             onClick={() => onPick(dataset)}
             className={cn(
-              "cursor-pointer rounded-[10px] border bg-panel p-3 text-left transition-[border-color,background,transform] hover:-translate-y-px hover:border-dim",
+              "cursor-pointer border bg-panel p-3 text-left transition-[border-color,background,transform] hover:-translate-y-px hover:border-dim",
               selected
-                ? "border-gold bg-[linear-gradient(180deg,rgb(255_176_0/0.07),transparent_70%)]"
+                ? "border-accent bg-accent/6"
                 : "border-line",
             )}
           >
