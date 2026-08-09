@@ -585,6 +585,23 @@ class Contestant:
     #: meaningful on a ``stella`` seat; :meth:`MatchSpec.validate` refuses it
     #: anywhere else rather than ignoring it in silence.
     sut_ref: str | None = None
+    #: Which *release* of a self-installing agent this seat runs, e.g.
+    #: ``"2.1.226"``. Empty means "whatever the vendor is shipping when the
+    #: container builds", which is the historical behaviour and is not a
+    #: constant: Harbor installs Claude Code per trial from
+    #: ``claude.ai/install.sh`` with no pin, so the archive holds arms spanning
+    #: eight product versions and one match that ran two of them *inside a
+    #: single arm* because a release landed between two of its trials.
+    #:
+    #: This is the ``sut_ref`` of the other side. Stella's identity was always
+    #: pinnable and the opponent's was not, so a head-to-head could hold our
+    #: variable fixed and let theirs drift — and every such comparison reads as
+    #: a measurement of us. Passed to Harbor as ``--agent-kwarg version=…``,
+    #: which its installed-agent base turns into a versioned install.
+    #:
+    #: Meaningless on a ``stella`` seat, which is pinned by ``sut_ref``;
+    #: :meth:`MatchSpec.validate` refuses it there rather than ignoring it.
+    agent_version: str = ""
 
     @property
     def slug(self) -> str:
@@ -608,6 +625,7 @@ class Contestant:
             "required_env": list(self.required_env),
             "color": self.color,
             "sut_ref": self.sut_ref,
+            "agent_version": self.agent_version,
         }
 
     @classmethod
@@ -660,6 +678,10 @@ class Contestant:
             sut_ref=(
                 None if raw.get("sut_ref") is None else str(raw["sut_ref"]).strip()
             ),
+            # No absent/empty distinction here, unlike `sut_ref`: there is no
+            # match-level default for a vendor's release to inherit, so empty
+            # and unset both mean "whatever installs".
+            agent_version=str(raw.get("agent_version") or "").strip(),
         )
 
 
@@ -804,6 +826,16 @@ class MatchSpec:
                 problems.append(
                     f"{contestant.name}: sut_ref applies only to a stella "
                     f"seat — {contestant.agent!r} runs no Stella binary"
+                )
+            if contestant.agent_version and contestant.agent == "stella":
+                # The mirror of the rule above, refused for the same reason: a
+                # Stella seat is pinned by commit through `sut_ref`, and a
+                # version string beside it would name a second, unread
+                # identity — the exact ambiguity per-seat provenance exists to
+                # remove.
+                problems.append(
+                    f"{contestant.name}: agent_version applies only to a "
+                    "self-installing agent — pin a stella seat with sut_ref"
                 )
         return problems
 

@@ -13,11 +13,42 @@ things define that apparatus, and both can change under you:
   number, and those numbers are not comparable: a Harbor that predates a task
   setting drops it (pydantic ``extra="ignore"``) and grades against a
   different container topology. Nothing errors. Nothing looks wrong.
+* **each contestant's own product version.** The system under test was always
+  pinned — :attr:`Provenance.sut_commit` names the Stella that ran — but the
+  *opponent* was not, and an opponent is a moving target too. Claude Code ships
+  most days; it gets better and worse exactly like we do, and a scoreboard that
+  labels our commit while leaving theirs blank is measuring one variable and
+  reporting two.
 
-So every match writes a :class:`Provenance` beside its jobs, and the pair
-``(dataset_digest, harbor_version)`` is its :attr:`~Provenance.comparability_key`.
-Two matches with the same key may be compared; two with different keys may be
-*shown together*, but only labelled, never summed.
+So every match writes a :class:`Provenance` beside its jobs, and the tuple
+``(dataset_digest, harbor_version, sut, agent products)`` is its
+:attr:`~Provenance.comparability_key`. Two matches with the same key may be
+compared; two with different keys may be *shown together*, but only labelled,
+never summed.
+
+# Why the opponent's version is observed rather than resolved
+
+Stella's identity is resolved before launch: ArenaBench builds the binary, so
+it knows the commit and can hash the artifact. Every other contestant installs
+itself **inside the task container**, per trial, from its vendor's installer —
+Harbor's Claude Code agent runs ``curl -fsSL https://claude.ai/install.sh``
+with no version pin unless one is given. The host therefore cannot know the
+opponent's version at launch, and only learns it from what the trials left
+behind: Harbor's ATIF trajectory records ``agent.version`` for every agent that
+supports the format.
+
+That makes agent versions a **second write**. :func:`write_match` records the
+apparatus before the first trial, because a match killed mid-run must still be
+attributable; :func:`stamp_agent_versions` adds what only the finished trials
+could say. Both are best-effort, and a missing stamp reads as unknown.
+
+This is not hypothetical drift. At the time this was written the local archive
+held Claude Code arms spanning **eight** product versions (2.1.220 through
+2.1.226) with nothing recording any of them, and match ``f23fbcd61adc`` ran
+*two* versions inside a single arm — a release landed between two trials of one
+job, so half its tasks were graded against a product the other half never saw.
+That match's solve rate is a blend of two agents, and until :attr:`mixed_version_seats`
+existed nothing on the scoreboard could say so.
 
 # Why history is labelled rather than guessed
 
@@ -45,10 +76,14 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "AGENT_SOURCE_OBSERVED",
+    "AGENT_SOURCE_PINNED",
     "PROVENANCE_FILE",
     "Provenance",
     "backfill_match",
+    "observe_agent_versions",
     "read_match",
+    "stamp_agent_versions",
     "write_match",
 ]
 
@@ -64,6 +99,17 @@ _POST_0_20_JOB_FIELDS = ("install_only", "extra_instruction_paths")
 #: reconstructed afterwards from what Harbor happened to leave on disk.
 SOURCE_RECORDED = "recorded"
 SOURCE_BACKFILLED = "backfilled"
+
+#: How a seat's product version was learned. ``observed`` means it was read
+#: back from what the trials wrote, which is the only channel available for an
+#: agent that installs itself in the container. ``pinned`` means the operator
+#: named the version and the installer was told to fetch exactly it — the
+#: stronger fact, because it holds for trials that have not run yet.
+AGENT_SOURCE_OBSERVED = "observed"
+AGENT_SOURCE_PINNED = "pinned"
+
+#: Where an agent that speaks ATIF records the product that ran.
+_TRAJECTORY_NAME = "agent/trajectory.json"
 
 
 @dataclass
@@ -109,6 +155,18 @@ class Provenance:
     #: records written before per-seat pins existed and for matches with no
     #: Stella seat; readers fall back to the single fields then.
     sut_seats: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: Per-seat **product** identity for contestants ArenaBench does not build,
+    #: keyed by contestant id: ``{"agent", "name", "versions", "source",
+    #: "trials", "unversioned"}``. ``versions`` is a sorted list because one
+    #: seat can genuinely run more than one — an agent that installs itself per
+    #: trial picks up whatever its vendor published that hour — and collapsing
+    #: that to a single value would erase the very fact worth recording.
+    #:
+    #: Stella seats are deliberately absent: their identity is the SUT pin in
+    #: :attr:`sut_seats`, which is finer-grained (a commit and a binary hash)
+    #: than any version string, and recording it twice invites the two copies
+    #: to disagree.
+    agent_seats: dict[str, dict[str, Any]] = field(default_factory=dict)
     arenabench_version: str = ""
     recorded_at: float = field(default_factory=time.time)
     source: str = SOURCE_RECORDED
@@ -122,6 +180,80 @@ class Provenance:
         else:
             grader = "harbor?"
         return f"{self.dataset_key or 'unknown'}@{digest}/{grader}/{sut}"
+
+    @staticmethod
+    def _product_label(seat: dict[str, Any]) -> str:
+        """One seat's product as a key component, e.g. ``claude-code2.1.226``.
+
+        A seat that ran several versions names them all, joined by ``+``, for
+        the same reason :attr:`comparability_key` names several SUT commits: a
+        blend is its own apparatus and must never collapse into the key of
+        either half. A seat with no observed version gets a trailing ``?`` —
+        unknown, and visibly so.
+
+        A seat whose **pin was violated** is labelled by what ran, never by
+        what was asked for. The pin is the intent and the observation is the
+        apparatus; a key that reported the intent would group a match with
+        others that genuinely ran that release, which is the precise error the
+        pin was added to prevent.
+        """
+        agent = str(seat.get("agent") or "agent")
+        source = seat.get("versions") or []
+        if seat.get("pin_violated"):
+            source = seat.get("observed") or seat["pin_violated"]
+        versions = [str(v) for v in source if v]
+        if not versions:
+            return f"{agent}?"
+        label = f"{agent}{'+'.join(sorted(versions))}"
+        # A seat that also produced trials with no version at all is only
+        # partly known, and saying "2.1.226" flat would overclaim.
+        return f"{label}+?" if seat.get("unversioned") else label
+
+    @property
+    def agent_products(self) -> tuple[str, ...]:
+        """Every non-Stella seat's product label, sorted by contestant id."""
+        return tuple(
+            self._product_label(self.agent_seats[seat_id])
+            for seat_id in sorted(self.agent_seats)
+        )
+
+    @property
+    def mixed_version_seats(self) -> tuple[str, ...]:
+        """Contestant ids whose arm ran more than one product version.
+
+        Such an arm's numbers are a blend, and no single version label is true
+        of it. Surfaced as its own property rather than left implicit in the
+        key because the key is a grouping token an operator compares, while
+        this is a warning an operator has to *read* — the failure it catches
+        looks exactly like a normal result until someone asks which product
+        produced it.
+        """
+        return tuple(
+            seat_id
+            for seat_id in sorted(self.agent_seats)
+            if len(self._observed_versions(self.agent_seats[seat_id])) > 1
+        )
+
+    @property
+    def violated_pins(self) -> dict[str, list[str]]:
+        """Seats told to run one release that ran another, and what they ran.
+
+        Empty is the normal case, including for every unpinned seat — a seat
+        with no pin cannot violate one. Non-empty means a match believed it was
+        holding the opponent fixed and was not, which is worse than never
+        pinning, because the belief is what makes the comparison quotable.
+        """
+        return {
+            seat_id: list(seat["pin_violated"])
+            for seat_id, seat in sorted(self.agent_seats.items())
+            if seat.get("pin_violated")
+        }
+
+    @staticmethod
+    def _observed_versions(seat: dict[str, Any]) -> set[str]:
+        """What a seat actually ran, preferring evidence over intent."""
+        source = seat.get("observed") or seat.get("versions") or []
+        return {str(v) for v in source if v}
 
     @property
     def sut_commits(self) -> tuple[str, ...]:
@@ -156,17 +288,34 @@ class Provenance:
             sut = f"stella{commits[0][:8]}" if commits[0] else "stella?"
         else:
             sut = "stella" + "+".join(c[:8] if c else "?" for c in commits)
-        return self._key(sut)
+        key = self._key(sut)
+        # Appended only when something is known, so every key written before
+        # agent versions were recorded keeps its exact spelling and the whole
+        # archive stays groupable against itself. A match that DID record the
+        # opponent is a different apparatus from one that could not, and the
+        # longer key says so rather than pretending they are the same.
+        products = self.agent_products
+        return f"{key}/{'+'.join(products)}" if products else key
 
     def comparability_key_for(self, contestant_id: str) -> str:
         """The key for one arm of the match.
 
         Two arms — from the same match or different ones — are comparable
-        exactly when their keys differ in nothing but the ``stella<commit>``
-        half, which is the variable under test. Everything else differing
-        (dataset digest, grader) makes them different measurements, and this
-        key is what refuses to let that difference hide (#2082).
+        exactly when their keys differ in nothing but the product half, which
+        is the variable under test. Everything else differing (dataset digest,
+        grader) makes them different measurements, and this key is what refuses
+        to let that difference hide (#2082).
+
+        Which product that is depends on the seat. A Stella seat is identified
+        by the commit ArenaBench built; every other seat by the version its
+        vendor shipped. Before agent versions were recorded this returned
+        ``stella?`` for a Claude Code arm — a key that names the wrong product
+        entirely, so two Claude Code arms four releases apart grouped as one
+        series and their difference read as noise.
         """
+        agent_seat = self.agent_seats.get(contestant_id)
+        if agent_seat is not None:
+            return self._key(self._product_label(agent_seat))
         seat = self.sut_seats.get(contestant_id)
         commit = (seat.get("commit") or "") if seat else self.sut_commit
         return self._key(f"stella{commit[:8]}" if commit else "stella?")
@@ -183,11 +332,16 @@ class Provenance:
         # without having to reimplement how it is built.
         out["comparability_key"] = self.comparability_key
         out["measured"] = self.measured
-        if self.sut_seats:
+        seats = {*self.sut_seats, *self.agent_seats}
+        if seats:
             out["comparability_key_by_seat"] = {
                 seat_id: self.comparability_key_for(seat_id)
-                for seat_id in self.sut_seats
+                for seat_id in sorted(seats)
             }
+        if self.agent_seats:
+            out["agent_products"] = list(self.agent_products)
+            out["mixed_version_seats"] = list(self.mixed_version_seats)
+            out["violated_pins"] = self.violated_pins
         return out
 
     @classmethod
@@ -220,6 +374,155 @@ def read_match(match_dir: Path) -> Provenance | None:
         return Provenance.from_json(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError, TypeError):
         return None
+
+
+def _seat_of(job_dir: Path) -> dict[str, Any] | None:
+    """The launch record beside a job directory, or ``None``.
+
+    Reuses the runner's existing seat manifest (``<job>.seat.json``) rather
+    than parsing the job's name. The name is ``<match id>-<contestant slug>``
+    and a slug may itself contain a dash, so splitting it is ambiguous exactly
+    where seats are most likely to be named descriptively; the manifest states
+    the contestant id outright.
+    """
+    path = job_dir.with_name(job_dir.name + ".seat.json")
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def observe_agent_versions(match_dir: Path) -> dict[str, dict[str, Any]]:
+    """Which product each non-Stella seat actually ran, read off its trials.
+
+    ATIF is the channel: every Harbor agent that opts into the format writes
+    ``agent.version`` into ``agent/trajectory.json``, and for a self-installing
+    CLI that is the only statement of the version that exists anywhere on the
+    host. Trials are counted as well as versioned, so ``unversioned`` can say
+    how much of the arm the answer covers — a seat whose version is known for
+    two of eight trials is not the same fact as one known for all eight, and
+    :meth:`Provenance._product_label` marks the difference.
+
+    Stella seats are skipped: :attr:`Provenance.sut_seats` already identifies
+    them by commit, and a version string derived from the same build would be
+    a second copy of a fact that is better recorded once.
+
+    Best-effort throughout. A trial with no trajectory, a torn JSON file, a job
+    with no seat manifest — each subtracts from what is known and none of them
+    raises, because a benchmark that refuses to report because one artifact is
+    unreadable is worse than one that reports what it has and says so.
+    """
+    seats: dict[str, dict[str, Any]] = {}
+    for job_dir in sorted(match_dir.glob("jobs/*")):
+        if not job_dir.is_dir():
+            continue
+        record = _seat_of(job_dir)
+        agent = str((record or {}).get("agent") or "")
+        if agent == "stella":
+            continue
+        seat_id = str((record or {}).get("contestant") or "") or job_dir.name
+        name = str((record or {}).get("name") or "")
+
+        versions: set[str] = set()
+        trials = 0
+        unversioned = 0
+        for trajectory_path in sorted(job_dir.glob(f"*/{_TRAJECTORY_NAME}")):
+            payload = _load_trajectory(trajectory_path)
+            if payload is None:
+                continue
+            trials += 1
+            version = str(payload.get("version") or "")
+            if version and version.lower() != "unknown":
+                versions.add(version)
+            else:
+                unversioned += 1
+            # An archive with no seat manifest still knows what ran, because
+            # ATIF names the agent. Trusted only as a fallback: the manifest is
+            # what the launcher *asked for*, which outranks what the artifact
+            # reports about itself.
+            agent = agent or str(payload.get("name") or "")
+
+        if not trials:
+            continue
+        # The Stella skip has to be re-tested here, not only against the
+        # manifest. Every archive predating the seat manifest has no manifest
+        # to skip on, so the check above passes an empty `agent` for both arms
+        # and a Stella seat would be recorded as a product version — competing
+        # with the SUT pin that already identifies it, in a spelling
+        # (`stella 0.6.76 [binary-sha256:…]`) that no key should ever carry.
+        if agent == "stella":
+            continue
+        seats[seat_id] = {
+            "agent": agent or "agent",
+            "name": name,
+            "versions": sorted(versions),
+            "source": AGENT_SOURCE_OBSERVED,
+            "trials": trials,
+            "unversioned": unversioned,
+        }
+    return seats
+
+
+def _load_trajectory(path: Path) -> dict[str, Any] | None:
+    """The ``agent`` block of an ATIF trajectory, or ``None``."""
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    agent = loaded.get("agent")
+    return agent if isinstance(agent, dict) else None
+
+
+def stamp_agent_versions(match_dir: Path) -> Provenance | None:
+    """Fold observed agent versions into a match's record, in place.
+
+    The second of provenance's two writes. :func:`write_match` runs before the
+    first trial so a killed match is still attributable; this runs after the
+    trials, because an agent that installs itself in the container cannot be
+    interrogated any earlier. Idempotent — re-reading finished trials yields
+    the same answer, so a match may be stamped again after a partial run
+    completes.
+
+    Returns the updated record, or ``None`` when there is no record to update
+    or nothing new to say. Never *downgrades*: a re-stamp against a
+    half-deleted archive must not turn a known apparatus into an unknown one.
+
+    A **pinned** seat keeps its pin but is still checked against what ran. A
+    pin is an instruction to an installer, not evidence — the installer can
+    fall back, resolve a range, or fail to a cached build — and a pin believed
+    without checking is worth less than no pin at all, because it is believed.
+    A disagreement is recorded on the seat as ``pin_violated`` rather than
+    quietly resolved in either direction.
+    """
+    record = read_match(match_dir)
+    if record is None:
+        return None
+    observed = observe_agent_versions(match_dir)
+    if not observed:
+        return None
+    changed = False
+    for seat_id, seat in observed.items():
+        existing = record.agent_seats.get(seat_id)
+        if existing and existing.get("source") == AGENT_SOURCE_PINNED:
+            pinned = {str(v) for v in (existing.get("versions") or []) if v}
+            actually = {str(v) for v in (seat.get("versions") or []) if v}
+            violated = sorted(actually - pinned)
+            if violated and existing.get("pin_violated") != violated:
+                existing["pin_violated"] = violated
+                existing["observed"] = sorted(actually)
+                changed = True
+            continue
+        if existing == seat:
+            continue
+        record.agent_seats[seat_id] = seat
+        changed = True
+    if not changed:
+        return record
+    write_match(match_dir, record)
+    return record
 
 
 def _job_configs(match_dir: Path) -> list[dict[str, Any]]:
@@ -336,6 +639,12 @@ def backfill_match(match_dir: Path, dataset_key: str = "") -> Provenance | None:
         harbor_version=None,
         harbor_bound=bound,
         harbor_bin="",
+        # Unlike the Harbor version, the opponent's product IS recoverable from
+        # history: ATIF has carried `agent.version` all along and nothing read
+        # it. So a backfill recovers the one half of the apparatus that was
+        # always on disk, and the whole existing archive becomes groupable by
+        # the product that produced it rather than by our commit alone.
+        agent_seats=observe_agent_versions(match_dir),
         arenabench_version=__version__,
         source=SOURCE_BACKFILLED,
     )

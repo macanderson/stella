@@ -145,8 +145,23 @@ def _provenance_for(
         version, binary = resolved.version, resolved.binary
 
     sut_seats: dict[str, dict[str, str]] = {}
+    agent_seats: dict[str, dict[str, Any]] = {}
     for contestant in match.spec.contestants:
         if contestant.agent != "stella":
+            # A pinned release is knowable *before* the trials, unlike an
+            # observed one, so it is recorded at launch alongside the SUT.
+            # `stamp_agent_versions` will not overwrite it: the pin is what the
+            # installer was told to fetch, which outranks a reading taken from
+            # one trial's artifacts.
+            if contestant.agent_version:
+                agent_seats[contestant.id] = {
+                    "agent": contestant.agent,
+                    "name": contestant.name,
+                    "versions": [contestant.agent_version],
+                    "source": provenance.AGENT_SOURCE_PINNED,
+                    "trials": 0,
+                    "unversioned": 0,
+                }
             continue
         pin = match.sut_pin_for(contestant)
         sut_seats[contestant.id] = {
@@ -175,6 +190,7 @@ def _provenance_for(
         sut_commit=sut_commit,
         sut_sha256=sut_sha256,
         sut_seats=sut_seats,
+        agent_seats=agent_seats,
         arenabench_version=__version__,
         source=provenance.SOURCE_RECORDED,
     )
@@ -791,6 +807,14 @@ class MatchRunner:
                 "--agent-timeout-multiplier",
                 str(match.spec.agent_timeout_multiplier),
             ]
+        if contestant.agent_version:
+            # The opponent's `sut_ref`. Harbor's installed-agent base takes a
+            # `version` kwarg and hands it to the vendor's installer, so this
+            # is the difference between "we ran Claude Code" and "we ran Claude
+            # Code 2.1.226" — and, across a series, between a trend and a
+            # sequence of measurements of different products.
+            command += ["--agent-kwarg", f"version={contestant.agent_version}"]
+            run.notes.append(f"{contestant.agent} pinned to {contestant.agent_version}")
         # Task names are namespaced by the *registry*, not by the task itself.
         # Filtering a ref'd dataset therefore needs `<namespace>/<task>`, while
         # an export on disk is just directories and answers to the bare name.
@@ -1067,6 +1091,32 @@ class MatchRunner:
             match.snapshots.stop()
 
         match.finished_at = time.time()
+
+        # Provenance's second write. The opponent's product version cannot be
+        # known at launch — an agent that installs itself from its vendor's
+        # script inside each task container only exists once a trial has run —
+        # so it is folded in here, from the trajectories those trials left.
+        # Runs on a cancelled match too: trials that completed before the
+        # cancellation are real results, and their apparatus is worth
+        # recording even though the match as a whole proved nothing.
+        try:
+            stamped = provenance.stamp_agent_versions(match.workspace)
+        except Exception:  # never let bookkeeping fail a finished match
+            log.exception("could not stamp agent versions for %s", match.spec.id)
+        else:
+            if stamped is not None:
+                match.provenance = stamped
+                for seat_id in stamped.mixed_version_seats:
+                    versions = stamped.agent_seats[seat_id].get("versions") or []
+                    log.warning(
+                        "match %s seat %s ran %d product versions (%s): its "
+                        "numbers are a blend, not a measurement of either",
+                        match.spec.id,
+                        seat_id,
+                        len(versions),
+                        ", ".join(str(v) for v in versions),
+                    )
+
         if match.status != "cancelled":
             # "finished" is a claim that a contest happened. A match whose
             # every seat died without producing a single trial — Docker down,

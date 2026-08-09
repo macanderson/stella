@@ -164,6 +164,7 @@ agent = "stella"
 id = "claude-code"
 name = "Claude Code"
 agent = "claude-code"
+agent_version = "2.1.226"                  # pin the opponent's release too
 
   [contestant.engine]
   api = "openrouter"
@@ -189,6 +190,12 @@ spelling still loads.
 routes that seat there — Claude Code reads `ANTHROPIC_BASE_URL`, and because
 OpenRouter serves an Anthropic-shaped `/v1/messages`, both arms above hit one
 endpoint with one key. Same provider, same quota, no routing confound.
+
+**`agent_version` is the `sut_ref` of the other side.** Without it, Harbor
+installs that CLI fresh per container from its vendor's script and the match
+races whatever shipped that hour — see
+[Which product did you actually race](#which-product-did-you-actually-race).
+It is refused on a `stella` seat, which is pinned by commit instead.
 
 ---
 
@@ -439,6 +446,105 @@ scoring it 0 would move the flip earlier than the truth.
 
 Capture is off by default and degrades to nothing — no Docker, or no `git` in
 the task image, yields a run with no snapshots and a warning.
+
+---
+
+## Which product did you actually race
+
+The system under test was always pinned — `sut_ref` names the Stella commit, and
+provenance records the binary's hash. The **opponent** was not, and an opponent
+ships most days.
+
+Harbor installs a self-installing CLI fresh in every task container, from the
+vendor's own script, with no version pin. So a match races whatever that vendor
+published that hour. The local archive shows what that costs: Claude Code arms
+spanning **eight product versions** with nothing recording any of them, and one
+match that ran **two versions inside a single arm** — a release landed between
+two of its trials, so half its tasks were graded against a product the other
+half never saw. That arm's solve rate is a blend of two agents, and nothing on
+the scoreboard could say so.
+
+Pin the seat:
+
+```toml
+[[contestant]]
+name = "Claude Code"
+agent = "claude-code"
+agent_version = "2.1.226"     # the sut_ref of the other side
+```
+
+Then check what the whole archive actually ran:
+
+```bash
+arenabench provenance
+# 2 arm(s) ran more than one product version:
+#   f23fbcd61adc   claude-code    2.1.223 + 2.1.224
+# Such an arm's numbers are a blend of those releases, not a measurement of
+# any one of them.
+```
+
+The product version joins the dataset digest and the Harbor version in a
+match's **comparability key**, so two arms four releases apart no longer group
+into one series and read their difference as noise.
+
+**A pin is checked, not believed.** It is an instruction to an installer, and an
+installer can fall back, resolve a range, or serve a cached build. After the
+trials, provenance compares the pin against what ran and reports a
+`violated_pin` rather than quietly resolving it — the key then names what ran,
+never what was asked for. A pin believed without checking is worth less than no
+pin, because the belief is what makes the comparison quotable.
+
+Versions are recovered for **matches that already ran**, too: ATIF has carried
+`agent.version` all along and nothing read it. `arenabench provenance --migrate`
+labels the existing archive.
+
+---
+
+## How the other harness spends its turn
+
+A solve rate cannot tell you that two arms tied at 5/8 got there differently.
+`arenabench harness <match>` reads what each agent's own harness disclosed and
+how it behaved:
+
+```bash
+arenabench harness b952369cafd8
+# === b952369cafd8-claude-code-opus-5-xhigh  (6 trials)
+#   product        2.1.226
+#   model          claude-opus-5
+#   permission     bypassPermissions
+#   credential     none
+#   tools offered  25  (Task, Bash, Edit, Read, Skill, Write, …)
+#   subagents      claude, Explore, general-purpose, Plan, statusline-setup
+#   turns          134 model steps, 176 tool calls, 5 of them errors
+#   tool mix       Bashx167 (2549s), Readx5 (2s), Writex4 (1s)
+#   clock          1688s wall, 956s in provider calls, 2553s in tools
+```
+
+167 of 176 tool calls being `Bash` is a fact about that harness, not about the
+model — and it is the sort of fact a head-to-head is supposed to surface.
+
+**Where this comes from, and why not hooks.** Claude Code can be instrumented
+with `PreToolUse`/`PostToolUse` hooks written into `$CLAUDE_CONFIG_DIR`, which
+Harbor points at `/logs/agent/sessions`. That was the obvious design and it is
+the wrong one: a hook is a process spawn on the critical path of the arm whose
+numbers are the bar. Perturbing the reference to observe it buys a worse
+measurement than the one already on disk — Harbor tees the CLI's
+`--output-format=stream-json` to `agent/claude-code.txt` as the agent works, and
+only one field of it was ever read.
+
+So the instrument costs the measured arm nothing, is **live** (the arm used to
+report 0 steps, 0 tools, 0 tokens and $0 for the whole length of a match, and
+only became real at teardown), and works on every archived match.
+
+Two details that would otherwise produce plausible wrong numbers:
+
+- The stream **re-emits a message once per content block**, so a naive sum over
+  events overstates output tokens by 1.76× and steps by 2.4× on measured data.
+  Usage is credited per message id, as a delta, so the incremental reader agrees
+  with a one-shot one.
+- A seat routed through `ANTHROPIC_BASE_URL` to a non-Anthropic gateway streams
+  **zeroed** usage counters while its transcript carries the real figures. That
+  is reported as "the stream said nothing", never as a free trial.
 
 ---
 
