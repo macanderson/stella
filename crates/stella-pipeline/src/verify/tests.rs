@@ -149,7 +149,7 @@ fn unstable_ignores_other_commands_like_every_locked_state() {
 }
 
 /// The binding #859 property at the ladder level: an unconfirmed flip
-/// must escalate, never fast-submit.
+/// must withhold the credit, never fast-submit.
 #[test]
 fn an_unstable_oracle_does_not_credit_a_deterministic_pass() {
     let mut oracle = FlipOracle::new();
@@ -169,7 +169,7 @@ fn an_unstable_oracle_does_not_credit_a_deterministic_pass() {
     assert_eq!(
         ladder_decision(&inputs),
         LadderDecision::Unverified,
-        "an unconfirmed flip must escalate to the verifier, not SubmitFast"
+        "an unconfirmed flip must be recorded unproven, not SubmitFast"
     );
 }
 
@@ -262,8 +262,9 @@ fn every_channel_blind_abstains_instead_of_asking_a_verifier_to_guess() {
 
 /// The single signal that rescues the blind case, and the one the bug
 /// suppressed: the recorder saw the tree change even though nothing could
-/// render *how*. That is real evidence, so the ladder must escalate rather
-/// than abstain — and the verifier is told a positive fact instead of a zero.
+/// render *how*. That is real evidence, so the ladder must report the turn
+/// unproven rather than abstain — the two are different claims, and only the
+/// first is true when something positively saw the tree move.
 #[test]
 fn a_recorded_file_touch_is_evidence_even_with_no_readable_diff() {
     let inputs = LadderInputs {
@@ -309,12 +310,10 @@ fn a_red_test_outranks_blindness() {
 /// The *decision* moved in #1701 while that property did not. A readable
 /// zero-line diff over dispatched mutating calls used to escalate, on the
 /// reading that an empty diff is merely inconclusive. It is not merely
-/// inconclusive: the verifier reached from here has no flip and no green test
-/// behind it, so a PASS it returns is restamped `Unverifiable` anyway
-/// (`verifier_pass_stands_alone`, #1295/#1540), and a FAIL is a model guessing
-/// from an empty record about a workspace this run never collected — the #973
-/// shape, which produced a confident false negative in the wild. So the ladder
-/// abstains here directly and spends nothing to do it.
+/// inconclusive — the work landed somewhere this run does not collect — and
+/// `Unverifiable` says exactly that, where `Unverified` would say the weaker
+/// and wrong thing: that the channels reported and fell short. They did not
+/// report at all about the place the work went.
 #[test]
 fn a_readable_empty_diff_is_not_blindness() {
     let inputs = LadderInputs {
@@ -333,7 +332,8 @@ fn a_readable_empty_diff_is_not_blindness() {
     );
     assert_eq!(ladder_decision(&inputs), LadderDecision::Unverifiable);
     // The property the rung above still owns: a readable diff with content in
-    // it is genuinely inconclusive, and that is what a verifier is for.
+    // it is genuinely inconclusive — unproven, which is a different rung from
+    // unobservable.
     assert_eq!(
         ladder_decision(&LadderInputs {
             diff_lines: 12,
@@ -521,6 +521,32 @@ fn new_warnings_veto_only_when_opted_in() {
     );
 }
 
+/// #861: a flipped witness plus a fresh type error in an untested module is
+/// exactly the inconclusive case rung 4 must refuse. Errors always veto —
+/// warnings only when opted in (the test below).
+#[test]
+fn a_new_diagnostic_error_vetoes_the_fast_submit() {
+    let clean = LadderInputs {
+        flip_achieved: true,
+        touched_tests_passed: Some(true),
+        diff_lines: 10,
+        diff_budget: 100,
+        diff_available: true,
+        mutating_actions: 1,
+        ..Default::default()
+    };
+    assert_eq!(ladder_decision(&clean), LadderDecision::SubmitFast);
+    let regressed = LadderInputs {
+        new_diag_errors: 1,
+        ..clean
+    };
+    assert_eq!(
+        ladder_decision(&regressed),
+        LadderDecision::Unverified,
+        "a flipped witness plus a fresh error must withhold the credit, not ship"
+    );
+}
+
 /// The veto only ever withholds rung 4 — it must not leak into any other
 /// rung's decision (a red test still revises, a no-op is still a no-op).
 #[test]
@@ -540,7 +566,7 @@ fn the_veto_touches_no_other_rung() {
 }
 
 #[test]
-fn flip_and_green_but_over_diff_budget_escalates_to_verifier() {
+fn flip_and_green_but_over_diff_budget_is_unproven() {
     let decision = ladder_decision(&LadderInputs {
         flip_achieved: true,
         touched_tests_passed: Some(true),
@@ -554,7 +580,7 @@ fn flip_and_green_but_over_diff_budget_escalates_to_verifier() {
     assert_eq!(
         decision,
         LadderDecision::Unverified,
-        "a large diff deserves a second opinion even with green tests"
+        "a flip does not account for a diff far larger than it, even with green tests"
     );
 }
 
