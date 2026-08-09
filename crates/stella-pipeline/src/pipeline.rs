@@ -141,7 +141,7 @@ use fanout_stage::SerialCreates;
 use raw_usage::{RawCall, RawCallError};
 pub use run_error::{PipelineError, PipelineRunError};
 use run_error::{RoleResolveError, WitnessAuthorIndependence};
-use stage_budget::{PipelineBudgetAbort, Spend, budget_abort};
+use stage_budget::{PipelineStageAbort, Spend, budget_abort};
 use task_frame::TaskFrame;
 use verifier_stage::{VerdictDegradation, VerifierNotices};
 use witness_stage::{BoundHookRunner, WitnessAuthoring};
@@ -280,10 +280,21 @@ pub struct PipelineConfig {
     /// engine turn: a multi-step plan runs one engine turn per step plus the
     /// witness author's and every revision's, so metering the run's elapsed
     /// time against a per-turn allowance under-reported the remaining clock
-    /// and refused repairs a long run could still afford (#1507). Like
-    /// `turn_budget` it enforces nothing — no future is cancelled when it
-    /// elapses — and `None` means "nobody is measuring": the clock axis
-    /// abstains rather than inventing a deadline the caller never declared.
+    /// and refused repairs a long run could still afford (#1507).
+    ///
+    /// **This field is an estimate, not a ceiling.** Nothing is cancelled when
+    /// it elapses and no call is refused because of it; it sizes the repair
+    /// gate's headroom question and the witness-repair bound, and `None` means
+    /// "nobody is measuring" — the clock axis abstains rather than inventing a
+    /// deadline the caller never declared.
+    ///
+    /// The enforcing wall clock is a different field elsewhere:
+    /// `BudgetGuard::set_task_deadline`, an absolute instant on the guard
+    /// threaded into [`Pipeline::run`]. That one IS honoured — by the engine's
+    /// step loop (`stella_core::driver::settlement`) and, since #2238, before
+    /// every raw stage dispatch (`stella_core::run_accounted_call`). Both are
+    /// fed the same `--turn-budget` by `stella-cli`, which is exactly why they
+    /// are easy to confuse and worth this paragraph.
     pub run_budget: Option<Duration>,
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
@@ -1424,7 +1435,9 @@ impl<'a> Pipeline<'a> {
             .await
         {
             Ok(result) => result.text,
-            Err(RawCallError::Budget(abort)) => {
+            // The conversational path IS the whole run — there is no executed
+            // work either ceiling could settle with, so both stop the same way.
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => {
                 return Ok(self.aborted_before_execute(
                     TaskClass::SimpleLookup,
                     *total_cost,
@@ -1485,7 +1498,7 @@ impl<'a> Pipeline<'a> {
         repo_structure: &str,
         revision: Option<&str>,
         spend: &mut Spend<'_>,
-    ) -> Result<Vec<PlanStep>, PipelineBudgetAbort> {
+    ) -> Result<Vec<PlanStep>, PipelineStageAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Plan,
         });
@@ -1524,7 +1537,9 @@ impl<'a> Pipeline<'a> {
             .await
         {
             Ok(r) => r,
-            Err(RawCallError::Budget(abort)) => return Err(abort),
+            // Still before execute: a fallback plan here would only buy the
+            // worker turns the run has no clock left to run.
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => return Err(abort),
             Err(RawCallError::Provider | RawCallError::Timeout) => return Ok(fallback_plan()),
         };
 
@@ -1553,7 +1568,7 @@ impl<'a> Pipeline<'a> {
                     return Ok(steps);
                 }
             }
-            Err(RawCallError::Budget(abort)) => return Err(abort),
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => return Err(abort),
             Err(RawCallError::Provider | RawCallError::Timeout) => {}
         }
 

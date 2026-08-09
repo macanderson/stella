@@ -1959,13 +1959,12 @@ pub(crate) fn settle_reflection_budget(report: &mut ReflectionReport, guard: &mu
         let _ = guard.record_spend(report.cost_usd);
     }
     if had_accounting {
-        report.events.push(AgentEvent::BudgetTick {
-            spent_usd: guard.spent_usd(),
-            limit_usd: guard.turn_limit_usd(),
-            mode: guard.mode(),
-            session_spent_usd: None,
-            session_limit_usd: None,
-        });
+        // Through the guard's own constructor, not a literal: the session axis
+        // was hardcoded `None` here while this very guard tracked one, and the
+        // wall-clock axis (#2240) would have gone missing the same way.
+        report
+            .events
+            .push(guard.tick_event(std::time::Instant::now()));
     }
 }
 /// Open the workspace SQLite store (`.stella/private/store.db`). Persistence is

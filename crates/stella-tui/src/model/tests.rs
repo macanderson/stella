@@ -193,6 +193,7 @@ fn text_deltas_accumulate_as_a_preview_the_authoritative_text_replaces() {
         mode: BudgetMode::Observed,
         session_spent_usd: None,
         session_limit_usd: None,
+        deadline_remaining_ms: None,
     });
     model.apply(&text("Hello!"));
     assert!(
@@ -264,6 +265,7 @@ fn replaying_a_log_with_deltas_is_deterministic() {
             mode: BudgetMode::Observed,
             session_spent_usd: None,
             session_limit_usd: None,
+            deadline_remaining_ms: None,
         },
         text("Hello"),
         AgentEvent::Complete {
@@ -286,6 +288,7 @@ fn budget_tick_folds_into_the_hud_gauge_but_never_the_transcript() {
         mode: BudgetMode::Enforced,
         session_spent_usd: None,
         session_limit_usd: None,
+        deadline_remaining_ms: None,
     });
     assert_eq!(model.hud.spent_usd, 0.42);
     assert_eq!(model.hud.limit_usd, Some(2.0));

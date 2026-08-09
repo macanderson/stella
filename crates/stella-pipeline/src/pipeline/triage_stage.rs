@@ -47,7 +47,7 @@ impl Pipeline<'_> {
         goal: &str,
         budget: &mut BudgetGuard,
         total: &mut f64,
-    ) -> Result<(TaskAssessment, Vec<String>), PipelineBudgetAbort> {
+    ) -> Result<(TaskAssessment, Vec<String>), PipelineStageAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Triage,
         });
@@ -110,10 +110,14 @@ impl Pipeline<'_> {
             .await
         {
             Ok(result) => Some(result.text),
-            Err(RawCallError::Budget(abort)) => return Err(abort),
-            // Named apart, because the two cost the run very different things
-            // and only one of them is a bill for dead air. A census of these
-            // records is what turns "triage is slow" into a number (#2414).
+            // Triage is the run's first paid call: an expired clock here means
+            // nothing has been produced, so stopping is honest — there is no
+            // partial work a pivot could settle with.
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => return Err(abort),
+            // Timeout and provider error are named apart, because the two cost
+            // the run very different things and only one of them is a bill for
+            // dead air. A census of these records is what turns "triage is
+            // slow" into a number (#2414).
             Err(RawCallError::Timeout) => {
                 self.triage_degraded(&format!(
                     "the triage call timed out at its {:?} ceiling",

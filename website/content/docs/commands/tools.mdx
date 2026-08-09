@@ -93,8 +93,12 @@ stella tools --foundry           # what was adopted, and what it has been worth
 ## Self-authored tools
 
 When the agent keeps reconstructing the same shell shape by hand, the tool foundry
-proposes a reusable tool in `/inbox`. `--author` turns one proposal into a reviewable
-manifest + script pair. The generated script expands every parameter as a quoted
+proposes a reusable tool in `/inbox`. What qualifies is a shape that is genuinely
+*reused*: it must recur across at least two distinct argument sets, each of them
+retyped about three times over. A command whose arguments are different every single
+time — `sed -n '<expr>' <file>` across a thousand files — is the shell, not a tool, and
+never reaches the inbox. Proposals are listed most-reused-first, not most-run-first.
+`--author` turns one proposal into a reviewable manifest + script pair. The generated script expands every parameter as a quoted
 `"$STELLA_INPUT_*"` reference, so parameter values stay data rather than shell syntax.
 
 An authored tool carries a `[foundry]` table, and a manifest carrying one registers only
