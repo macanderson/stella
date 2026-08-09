@@ -20,9 +20,17 @@ than a description of a persona.
 | Dispatch | raw completion, `tools: []` |
 | Built by | `creation_messages`, `crates/stella-cli/src/agents_installed.rs` |
 | Sent from | `create_agent`, `crates/stella-cli/src/command_deck/authoring.rs` |
-| Output cap | 1,200 |
+| Output cap | 4,096 visible + 4,096 reasoning headroom |
 | Temperature | 0.2 |
+| Effort | inherited — the written artifact *is* the product |
 | Override | none |
+
+The cap was 1,200 until #2444, which is below the median definition of this
+exact shape (five sampled real definitions span ~870-2,590 tokens) — and that
+1,200 was the *whole* budget, since a reasoning model bills its thinking against
+the same number. It is now declared by `standalone_bounds`
+(`crates/stella-cli/src/accounted_call.rs`); see
+[README.md](README.md#output-caps).
 
 ## Wire shape
 
