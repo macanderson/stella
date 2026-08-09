@@ -37,9 +37,11 @@ from typing import Any
 from .agents import resolve_agent
 from .model import (
     ARENA_COLORS,
+    RESPONSIBILITIES,
     Contestant,
     Engine,
     MatchSpec,
+    ResponsibilityConfig,
     RoleConfig,
     declared_flag,
     is_credential_name,
@@ -155,6 +157,35 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
             if not role.is_empty:
                 roles[_role_key(name)] = role
 
+    # `[contestant.engine.responsibilities.<name>]` (#2381). Refused rather
+    # than dropped, for the reason the whole key exists: a template that
+    # spells an ablation and silently does not get one produces a number
+    # described by the wrong posture, which is worse than no number.
+    responsibilities: dict[str, ResponsibilityConfig] = {}
+    responsibilities_raw = raw.get("responsibilities")
+    if responsibilities_raw is not None and not isinstance(responsibilities_raw, dict):
+        problems.append(f"{where}: engine.responsibilities must be a table")
+    elif isinstance(responsibilities_raw, dict):
+        for name, entry in responsibilities_raw.items():
+            if not isinstance(entry, dict):
+                problems.append(f"{where}: responsibility {name!r} must be a table")
+                continue
+            if name not in RESPONSIBILITIES:
+                problems.append(
+                    f"{where}: {name!r} is not an ablatable responsibility — "
+                    f"known ones are {', '.join(RESPONSIBILITIES)}"
+                )
+                continue
+            if "enabled" in entry and declared_flag(entry["enabled"]) is None:
+                problems.append(
+                    f"{where}: responsibility {name!r} enabled must be a boolean — "
+                    f"{entry['enabled']!r} declares neither arm"
+                )
+                continue
+            row = ResponsibilityConfig.from_json(entry)
+            if not row.is_empty:
+                responsibilities[name] = row
+
     return Engine(
         api=str(raw.get("api") or "openrouter"),
         model=str(raw.get("model") or ""),
@@ -169,6 +200,7 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
         ),
         bare_loop=bare_loop,
         roles=roles,
+        responsibilities=responsibilities,
     )
 
 
