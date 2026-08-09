@@ -368,6 +368,59 @@ async fn a_failed_tool_result_reaches_the_reflection_prompt() {
     );
 }
 
+/// #2460's definition of done, item 2: what reflection costs per turn, reported
+/// rather than asserted into invisibility.
+///
+/// The digest half of the comparison lives in `digest::tests` (which can measure
+/// the old tail rendering directly). This one measures the whole billed prompt —
+/// instructions plus digest — because that is the number an operator pays, and
+/// the instruction block is the larger of the two on a short turn.
+///
+/// Run it with `--nocapture` to read the numbers. The assertion is only a
+/// ceiling: pinning an exact size would fail on every prompt edit, for reasons
+/// that are not about cost.
+#[tokio::test]
+async fn the_billed_prompt_size_is_reported_and_bounded() {
+    let bare = vec![CompletionMessage::user("fix the leak")];
+    let instructions = prompt_for_evidence(super::TurnEvidence::from_transcript(&bare, true))
+        .await
+        .chars()
+        .count();
+
+    let mut heavy = vec![CompletionMessage::user("make the suite green")];
+    for step in 0..40 {
+        let id = format!("call_{step}");
+        heavy.extend(tool_exchange(
+            &id,
+            "bash",
+            ToolOutput::Ok {
+                content: format!("step {step}: {}", "running 412 tests ... ok ".repeat(30)),
+            },
+        ));
+    }
+    heavy.push(CompletionMessage::assistant("done"));
+    let loaded = prompt_for_evidence(super::TurnEvidence::from_transcript(&heavy, true))
+        .await
+        .chars()
+        .count();
+
+    println!(
+        "#2460 reflection prompt: instructions alone = {instructions} chars \
+         (~{} tokens); with a full {}-message turn selected = {loaded} chars \
+         (~{} tokens)",
+        instructions / 4,
+        heavy.len(),
+        loaded / 4
+    );
+    assert!(
+        loaded <= instructions + super::digest::DIGEST_BUDGET_CHARS + 4_000,
+        "the billed prompt is {loaded} chars, past the instruction block plus the \
+         digest budget plus its bounded pinned allowance. The budget is the one \
+         knob that keeps reflection's per-turn cost arguable — if this fires, it \
+         moved without anyone deciding to move it"
+    );
+}
+
 /// The event-derived half of the evidence (#2460's definition of done, item 1):
 /// cost, wall clock, retries and loop firings leave no message at all, so no
 /// window over the transcript can reach them.

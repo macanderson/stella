@@ -242,6 +242,16 @@ fn the_selection_costs_more_than_the_tail_it_replaces_and_says_how_much() {
     let new = build(TurnEvidence::from_transcript(&transcript, false));
 
     let (before, after) = (old.chars().count(), new.chars().count());
+    // Reported, not just asserted: `cargo test -- --nocapture
+    // the_selection_costs_more` is how the number in the PR description is
+    // obtained, so it can be re-derived instead of trusted.
+    println!(
+        "#2460 digest cost on an {}-message tool-heavy turn: tail={before} chars \
+         (~{} tokens) → selection={after} chars (~{} tokens)",
+        transcript.len(),
+        before / 4,
+        after / 4
+    );
     assert!(
         before < 400,
         "the old digest of an 82-message tool-heavy turn was {before} \
