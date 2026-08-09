@@ -319,7 +319,10 @@ async fn the_witness_gate_follows_the_assignment() {
     let resolver = OneProvider(&fixture.provider);
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut roster = Roster::default();
-    roster.set_agent(ModelCallRole::WitnessAuthor, crate::roster::AgentId::new("triage"));
+    roster.set_agent(
+        ModelCallRole::WitnessAuthor,
+        crate::roster::AgentId::new("triage"),
+    );
     let pipeline = fixture.pipeline(&resolver, tx, witness_config(roster));
 
     assert!(
@@ -353,7 +356,10 @@ async fn an_author_bound_to_the_worker_makes_the_run_ask_for_a_worker_test() {
     let resolver = OneProvider(&fixture.provider);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut roster = Roster::default();
-    roster.set_agent(ModelCallRole::WitnessAuthor, crate::roster::AgentId::new("worker"));
+    roster.set_agent(
+        ModelCallRole::WitnessAuthor,
+        crate::roster::AgentId::new("worker"),
+    );
     let pipeline = fixture.pipeline(&resolver, tx, witness_config(roster));
 
     assert!(
