@@ -16,6 +16,22 @@ fn snapshot_identity_matches_the_verify_done_walk_vocabulary() {
     );
 }
 
+/// The third copy: the witness author is told to exclude commits by this
+/// identity, and a stale spelling there is worse than a missing note — the
+/// author would filter on an address that matches nothing and write exactly
+/// the enumeration that cannot pass. `stella-pipeline` depends on neither of
+/// the other two crates, so this test is the only place all three meet.
+#[test]
+fn snapshot_identity_matches_what_the_witness_author_is_told_to_exclude() {
+    assert_eq!(
+        SNAPSHOT_IDENT[3],
+        format!(
+            "user.email={}",
+            stella_pipeline::witness::MACHINERY_COMMIT_EMAIL
+        )
+    );
+}
+
 #[test]
 fn candidate_port_keeps_the_exact_host_operation_journal() {
     let journal: Arc<dyn stella_media::MediaOperationJournal> = Arc::new(
