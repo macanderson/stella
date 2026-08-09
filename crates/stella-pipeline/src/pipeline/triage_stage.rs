@@ -88,7 +88,15 @@ impl Pipeline<'_> {
             // there — a bare greeting must route to chat even when the triage
             // provider can't be resolved, since it never depends on a model
             // answer.
-            Assigned::Withheld | Assigned::Unresolvable => {
+            // Only the unresolvable arm is a degradation. A withheld triage is
+            // a deliberate ablation (#2381) — the operator asked for the floor
+            // and got it, and recording that as degradation would poison the
+            // very census the record exists to feed (#2414).
+            Assigned::Unresolvable => {
+                self.triage_degraded("the triage role could not be routed to a provider");
+                return Ok((self.triage_floor(goal), Vec::new()));
+            }
+            Assigned::Withheld => {
                 return Ok((self.triage_floor(goal), Vec::new()));
             }
         };
