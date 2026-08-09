@@ -777,6 +777,62 @@ pub const WITNESS_SYSTEM_PROMPT: &str = "You are the WITNESS AUTHOR for a coding
 /// snapshot's directory carries a pid and a sequence number, so naming it
 /// would put per-run noise into a prompt that wants to cache (invariant 7),
 /// and it is not the root the goal's paths are written against anyway.
+/// The committer email on the pipeline's own plumbing commits, as the witness
+/// author must spell it to exclude them.
+///
+/// `stella-tools::verify::CANDIDATE_SNAPSHOT_EMAIL` and `stella-cli`'s
+/// `SNAPSHOT_IDENT` are the other two copies. This crate depends on neither, so
+/// the spellings are pinned together by the parity test in `stella-cli` rather
+/// than shared — the same arrangement those two already use.
+pub const MACHINERY_COMMIT_EMAIL: &str = "pipeline@stella.invalid";
+
+/// Warn the author off the pipeline's own commits.
+///
+/// A candidate workspace is a detached-HEAD shadow, and the pipeline seals a
+/// baseline commit into it before the agent starts. That commit is authored by
+/// [`MACHINERY_COMMIT_EMAIL`], is reachable only from a `refs/worktree/` pin,
+/// and is therefore **indistinguishable from a lost commit** to any check that
+/// enumerates history — `git rev-list --all --reflog --not master`,
+/// `git fsck --dangling`, and every variation an author reaches for.
+///
+/// On Terminal-Bench `fix-git` — whose goal is literally "find my lost changes
+/// and merge them into master" — an author wrote exactly that enumeration. It
+/// returned the one commit the task hid *and two of the pipeline's own*, so the
+/// witness could not pass however correctly the agent merged the real one:
+///
+/// ```text
+/// WITNESS FAIL: found lost change(s) not merged into master:
+///   3ba48af stella: candidate baseline snapshot   <- the pipeline's
+///   7fa97c1 stella: candidate baseline snapshot   <- the pipeline's
+///   c499730 Move to Stanford                      <- the task's
+/// ```
+///
+/// The agent merged `c499730`, the witness stayed red on the other two, and the
+/// run spent its remaining budget on a defect that did not exist. A witness the
+/// agent cannot satisfy by doing the task correctly is worse than no witness:
+/// it converts a solved task into a deadline.
+///
+/// Told to the author rather than filtered afterwards because only the author
+/// knows what its check enumerates. There is no arrangement of refs that hides
+/// a commit object from every git query — `--all` sees the pin, `--reflog` sees
+/// the HEAD move, `fsck` sees it dangling if we remove both — so the honest fix
+/// is to name the identity and let the check exclude it.
+const MACHINERY_COMMIT_NOTE: &str = concat!(
+    "\nIMPORTANT if your check enumerates repository history (`git log`, \
+     `git rev-list`, `git fsck`, reflog walks): this workspace is an isolated \
+     copy in which the pipeline has committed its OWN bookkeeping snapshots, \
+     authored by `",
+    "pipeline@stella.invalid",
+    "` with subjects beginning `stella: `. They sit on a detached HEAD and so \
+     look exactly like unreachable or lost commits, but they are not part of \
+     the task and the agent cannot merge, remove or otherwise dispose of them. \
+     EXCLUDE them — for example `git log --invert-grep --author=",
+    "pipeline@stella.invalid",
+    "` or by filtering that author out of any commit list you build. A witness \
+     that counts them can never pass, however correctly the agent does the \
+     task.\n"
+);
+
 pub fn witness_prompt(
     goal: &str,
     recall: &[RecalledFrame],
@@ -817,6 +873,7 @@ pub fn witness_prompt(
                  `TEST_COMMAND: sh <path-to-script>`. Do NOT write a pytest, cargo, or \
                  other framework test here: nothing exists to collect it.\n",
             );
+            s.push_str(MACHINERY_COMMIT_NOTE);
         }
     }
     if !repo_structure.trim().is_empty() {
