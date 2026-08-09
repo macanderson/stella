@@ -2509,8 +2509,7 @@ impl<'a> Pipeline<'a> {
                     // is `Unverified`, so this candidate can never tie a
                     // genuinely verified sibling in best-of-N and then win the
                     // smaller-diff tiebreak.
-                    let mut evidence =
-                        unverified_evidence(&inputs, state.oracle.tracked_command());
+                    let mut evidence = unverified_evidence(&inputs, state.oracle.tracked_command());
                     evidence.ladder = Some(Box::new(snapshot.clone()));
                     self.unproven_verdict(&evidence.summary);
                     self.emit(AgentEvent::Verdict {
@@ -2845,7 +2844,6 @@ fn bound_recalled_frames(frames: Vec<RecalledFrame>) -> Vec<RecalledFrame> {
     }
     out
 }
-
 
 /// Count changed lines in a unified diff: lines beginning with `+`/`-` but not
 /// the `+++`/`---` file headers. A coarse but deterministic size proxy for the

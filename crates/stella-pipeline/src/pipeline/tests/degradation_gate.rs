@@ -19,7 +19,6 @@
 
 use super::verification_hardening::{ScriptedLint, lint_error};
 use super::*;
-use stella_protocol::FinishReason;
 
 /// What one scenario pins. `roles` is the full ordered model-call sequence
 /// (from `StepManifest` events) — order matters, because "verifier before
@@ -140,7 +139,7 @@ async fn run_scenario(s: Scenario) {
     );
 }
 
-use ModelCallRole::{Triage, Verdict, Worker};
+use ModelCallRole::{Triage, Worker};
 
 /// The paved road: a genuine fail→pass flip fast-submits deterministically.
 /// Exactly two paid calls (triage, worker) and three suite runs (baseline,
@@ -166,7 +165,6 @@ async fn gate_clean_flip_fast_submits_with_two_calls_and_three_runs() {
     })
     .await;
 }
-
 
 /// A timed-out baseline (#860) arms nothing: no flip exists, so no
 /// confirmation run is ever bought — two suite runs, one verifier call.
@@ -279,18 +277,6 @@ async fn gate_a_no_op_turn_fails_closed_without_spend() {
     .await;
 }
 
-
-/// The cap-starvation signature (#2128): the provider stopped at the token
-/// limit having emitted nothing. On a reasoning model this is what a role cap
-/// sized for the visible output contract produces — the reasoning stream
-/// bills against the same budget.
-fn starved_result() -> CompletionResult {
-    CompletionResult {
-        finish_reason: Some(FinishReason::Length),
-        ..text_result("")
-    }
-}
-
 /// Fix-by-disappearance (#867): the baseline names its failing test, the
 /// candidate's suite passes with a complete listing that no longer contains
 /// it (deleted/renamed). The exit code says flip; the same-failure rule says
@@ -330,43 +316,3 @@ async fn gate_a_vanished_failing_test_earns_no_flip() {
     })
     .await;
 }
-
-/// A tool registry advertising only `verify_done`, whose result carries the
-/// confirmed-witness marker the real tool prints
-/// (`stella-tools/src/verify.rs`). Mutating like the real one, so a turn that
-/// calls it is never written off as a no-op.
-struct ConfirmingVerifyDone;
-
-#[async_trait]
-impl ToolExecutor for ConfirmingVerifyDone {
-    fn schemas(&self) -> Vec<ToolSchema> {
-        vec![ToolSchema {
-            name: "verify_done".into(),
-            description: "prove the change with a witness test".into(),
-            input_schema: serde_json::json!({ "type": "object" }),
-            read_only: false,
-            speculation_safe: false,
-        }]
-    }
-    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
-        ToolOutput::Ok {
-            content: "WITNESS CONFIRMED — deterministic definition of done met:\n\
-                      - new code:      `pytest -q` exit 0 (PASS)\n\
-                      - previous code: baseline abc1234 (pinned) → exit 1 (FAIL)"
-                .into(),
-        }
-    }
-}
-
-/// One completion that calls `verify_done` and nothing else.
-fn verify_done_call() -> CompletionResult {
-    CompletionResult {
-        tool_calls: vec![ToolCall {
-            call_id: "verify-1".into(),
-            name: "verify_done".into(),
-            input: serde_json::json!({}),
-        }],
-        ..text_result("")
-    }
-}
-

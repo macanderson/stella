@@ -517,7 +517,6 @@ async fn a_readable_empty_diff_over_mutating_calls_is_never_a_deterministic_pass
     );
 }
 
-
 /// The other half of the same claim: a blind probe that says WHY it is blind.
 ///
 /// Terminal-Bench task images are plain directories, so `git diff` there does

@@ -71,40 +71,6 @@ impl RepoStatusPort for FakeRepoStatus {
     }
 }
 
-/// A [`FileTouchPort`] serving a scripted SEQUENCE of readings — one per
-/// `mutations_recorded` call, holding the last once exhausted.
-///
-/// A sequence rather than a constant because the real counter is monotonic and
-/// the pipeline reads it twice: once for the candidate's baseline, before any
-/// work, and again when it folds each observation. A fixture that returned the
-/// same number to both would report a delta of zero and silently reproduce the
-/// bug under test.
-struct SeqTouches {
-    readings: std::sync::Mutex<VecDeque<u64>>,
-    last: std::sync::atomic::AtomicU64,
-}
-
-impl SeqTouches {
-    fn new(readings: Vec<u64>) -> Self {
-        Self {
-            readings: std::sync::Mutex::new(readings.into()),
-            last: std::sync::atomic::AtomicU64::new(0),
-        }
-    }
-}
-
-impl crate::ports::FileTouchPort for SeqTouches {
-    fn mutations_recorded(&self) -> u64 {
-        match self.readings.lock().unwrap().pop_front() {
-            Some(next) => {
-                self.last.store(next, std::sync::atomic::Ordering::Relaxed);
-                next
-            }
-            None => self.last.load(std::sync::atomic::Ordering::Relaxed),
-        }
-    }
-}
-
 /// A [`RepoStatusPort`] serving a scripted SEQUENCE of snapshots — one per
 /// `untracked_fingerprints` call, holding the last once exhausted. Lets a
 /// test make the working tree "change" between the witness stage, the
@@ -1710,7 +1676,10 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         .iter()
         .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
         .count();
-    assert_eq!(calls, 2, "no plan, witness-author or verdict call is bought: {s:?}");
+    assert_eq!(
+        calls, 2,
+        "no plan, witness-author or verdict call is bought: {s:?}"
+    );
 }
 
 /// The observed failure, end to end at the seam that actually decides it.
@@ -1922,7 +1891,6 @@ async fn a_witness_that_never_fails_finishes_the_run_without_re_executing_it() {
         "a rejected witness is never grafted into the candidate: {log:?}"
     );
 }
-
 
 // best-of-N candidate isolation
 

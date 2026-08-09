@@ -380,8 +380,6 @@ async fn witness_author_and_repair_are_individually_metered_before_degrade() {
     );
 }
 
-
-
 /// Every [`ProofStep::TriageDegraded`] reason in a stream, in order.
 fn triage_degraded_reasons(events: &[AgentEvent]) -> Vec<String> {
     events

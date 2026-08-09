@@ -205,7 +205,6 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
     );
 }
 
-
 /// Switched off, the pipeline is byte-for-byte the behaviour that shipped:
 /// relabel on the spot, no revision, no second verifier call. The flag is what
 /// makes the measurement in #1295 a two-arm comparison rather than a rebuild.
@@ -306,3 +305,62 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
     );
 }
 
+/// The wild scenario that produced #871's asymmetric trust, re-pinned for a
+/// ladder with nothing to be asymmetric about: a warranted witness whose runner
+/// is not installed.
+///
+/// `TestScript::Infra` observes no assertion, so there is no flip and no green
+/// test. Under the old design a verifier's "done" was all that was left
+/// standing, and the run had to be talked back down from it — relabelled
+/// UNVERIFIED, its rung restamped, so reward extraction would not train on a
+/// verdict the ladder had declined to believe.
+///
+/// Nothing has to be talked down now. The pass was never claimed: the ladder
+/// reaches the same state and reports it directly. The assertions are
+/// deliberately the same ones, because the *observable* contract they pin is
+/// what mattered and it has not moved — a missing toolchain is not a failing
+/// change, and it is not a passing one either.
+#[tokio::test]
+async fn a_missing_runner_is_unproven_rather_than_passed_or_failed() {
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    let runner = ScriptedRunner::scripted(
+        vec![TestScript::Fail, TestScript::Infra],
+        "@@ -1 +1 @@\n-old\n+new",
+    );
+    let config = PipelineConfig {
+        test_command: Some("pytest -q".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        // The ask is a separate axis with its own tests above; switching it off
+        // keeps this scenario on the branch it is about.
+        verifier_evidence_demand: false,
+        ..PipelineConfig::default()
+    };
+
+    let (outcome, _events, _calls) = run_scenario!(provider, runner, config);
+
+    let verdict = outcome.verdict.expect("a verdict was produced");
+    assert!(
+        verdict.passed && !verdict.deterministic,
+        "an unproven turn is still not a failure"
+    );
+    assert_eq!(
+        outcome.score,
+        Some(crate::candidate::CandidateScore::Unverified),
+        "the score says plainly that nothing proved this"
+    );
+    assert!(
+        verdict.summary.starts_with("UNVERIFIED"),
+        "and so does the summary: {}",
+        verdict.summary
+    );
+    assert_eq!(
+        verdict
+            .ladder
+            .as_deref()
+            .expect("the verdict carries its snapshot")
+            .rung,
+        Some(stella_protocol::LadderRung::Unverified),
+        "the rung must agree with the summary — reward extraction reads the rung \
+         and nothing else, so a disagreement here trains on the wrong label"
+    );
+}

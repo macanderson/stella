@@ -11,12 +11,6 @@
 
 use super::*;
 
-
-
-
-
-
-
 impl<'a> Pipeline<'a> {
     /// Assemble one verification round's [`LadderInputs`] from the candidate's
     /// accumulated state — the evidence record `ladder_decision` and the
@@ -53,5 +47,4 @@ impl<'a> Pipeline<'a> {
             errored_commands: state.signals.errored_commands,
         }
     }
-
 }

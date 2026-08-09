@@ -237,8 +237,6 @@ fn distrusting(judged: f64) -> RewardPolicy {
     }
 }
 
-
-
 /// The ceiling: a judged weight above the deterministic one is refused, at both
 /// the places it can arrive. Above that line a model's opinion outranks a
 /// test's observation, which inverts the ladder.

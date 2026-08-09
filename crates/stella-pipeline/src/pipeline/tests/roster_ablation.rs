@@ -166,7 +166,6 @@ async fn ablating_triage_removes_its_frame_and_leaves_execute_and_verify_running
     );
 }
 
-
 /// Requirement 4: a roster nobody configured changes nothing.
 ///
 /// The weakest-looking test here and the one that matters most, because it is

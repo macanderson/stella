@@ -318,7 +318,6 @@ impl<'a> Pipeline<'a> {
         }
         Some(author)
     }
-
 }
 
 /// A responsibility's configuration key, for prose an operator will act on.

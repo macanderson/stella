@@ -158,7 +158,9 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
         "the result must say plainly what was found"
     );
     assert!(
-        verdict.summary.contains("NOT a finding that the work is absent or wrong"),
+        verdict
+            .summary
+            .contains("NOT a finding that the work is absent or wrong"),
         "an unproven overlap must SAY it is unproven rather than leaving a reader to \
          infer a defect from a missing badge: {}",
         verdict.summary

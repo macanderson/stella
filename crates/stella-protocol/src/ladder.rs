@@ -98,7 +98,11 @@ pub enum LadderRung {
     /// parse loudly and totally. New writes use `unverified`; old reads still
     /// land, and land on the rung whose semantics they always actually had —
     /// unproven.
-    #[serde(alias = "model_judge", alias = "model_verdict", alias = "heuristic_fallback")]
+    #[serde(
+        alias = "model_judge",
+        alias = "model_verdict",
+        alias = "heuristic_fallback"
+    )]
     Unverified,
     /// No independent review was bought at all: triage waived it and the
     /// warrant agreed, or the change warranted no witness test. A pass

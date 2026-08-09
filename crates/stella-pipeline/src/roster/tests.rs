@@ -245,7 +245,10 @@ fn no_configuration_can_put_a_model_back_in_the_judgement_seat() {
 
         // Both spellings an operator would reach for: turn it on, and point it
         // at an agent. Each is refused by name rather than silently ignored.
-        for spec in [override_of(Some(true), None), override_of(None, Some("verifier"))] {
+        for spec in [
+            override_of(Some(true), None),
+            override_of(None, Some("verifier")),
+        ] {
             let mut roster = Roster::default();
             let errors = roster.apply([(token.clone(), spec)]);
             assert_eq!(
@@ -335,7 +338,10 @@ fn apply_reports_every_problem_rather_than_the_first() {
     let mut roster = Roster::default();
     let errors = roster.apply([
         ("nonsense".to_string(), override_of(Some(false), None)),
-        ("witness_author".to_string(), override_of(None, Some("nobody"))),
+        (
+            "witness_author".to_string(),
+            override_of(None, Some("nobody")),
+        ),
     ]);
 
     assert_eq!(errors.len(), 2, "both rows must be reported: {errors:?}");

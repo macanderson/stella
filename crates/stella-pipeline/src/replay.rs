@@ -717,9 +717,7 @@ pub fn event_signature(event: &AgentEvent) -> String {
                 ProofStep::VerificationUnavailable { .. } => {
                     "proof:verification_unavailable".to_string()
                 }
-                ProofStep::VerificationUnproven { .. } => {
-                    "proof:verification_unproven".to_string()
-                }
+                ProofStep::VerificationUnproven { .. } => "proof:verification_unproven".to_string(),
                 ProofStep::Oracle { passed, tree, .. } => {
                     format!("proof:oracle:{tree:?}:{passed}")
                 }

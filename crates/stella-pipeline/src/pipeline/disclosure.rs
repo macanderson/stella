@@ -11,7 +11,6 @@
 //!
 //! Design: [`docs/spec/witness-protocol.md`](../../../../docs/spec/witness-protocol.md) §4.
 
-
 use super::*;
 use crate::witness::airlock::FailureBrief;
 use crate::witness::warrant::warrant;
@@ -46,7 +45,6 @@ impl Pipeline<'_> {
         paths.sort();
         paths
     }
-
 
     /// Turn one deterministic failure into the pair the revise loop needs: the
     /// operator-facing evidence, and the worker-facing brief.

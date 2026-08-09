@@ -870,4 +870,3 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
         "baseline + the killed run + its one bounded retry — retries never run away"
     );
 }
-

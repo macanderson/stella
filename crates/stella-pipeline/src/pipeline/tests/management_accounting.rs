@@ -194,8 +194,6 @@ async fn triage_budget_crossing_aborts_before_a_second_provider_call() {
     );
 }
 
-
-
 /// #1501, the residual of #1483: `verifier`/`verifier_guidance` got their
 /// clock, but `plan_stage` — which is on the ordinary `stella run` path, not
 /// a verification-only one — still dispatched with `RawCall.timeout: None`.
