@@ -24,8 +24,8 @@
 //!
 //! ## What replaces it
 //!
-//! [`build`] renders the turn under a total character budget
-//! ([`DIGEST_BUDGET_CHARS`]), spending it in priority order rather than in
+//! `build` renders the turn under a total character budget
+//! (`DIGEST_BUDGET_CHARS`), spending it in priority order rather than in
 //! reverse transcript order:
 //!
 //! 1. **Pinned** — the goal (the turn's first user message) and the last few
@@ -139,7 +139,7 @@ struct ToolPass {
     call_id: String,
     /// Empty when the ledger saw the result but not the start (a tap installed
     /// mid-turn, or the entry cap). The transcript's own tool calls can still
-    /// name it — see [`call_names`].
+    /// name it — see `call_names`.
     name: String,
     duration_ms: u64,
     /// The failure message when the output was [`ToolOutput::Error`]. `None` is
@@ -157,7 +157,7 @@ struct ToolPass {
 ///
 /// [`Default`] is an honest empty ledger, not a degraded one. A surface with no
 /// tap wired still selects on the transcript's own typed tool results, and the
-/// friction section is simply omitted — nothing here is required for [`build`]
+/// friction section is simply omitted — nothing here is required for `build`
 /// to be correct.
 #[derive(Debug, Clone, Default)]
 pub struct TurnFriction {
@@ -316,7 +316,7 @@ impl TurnFriction {
     }
 
     /// The `tools` entries this ledger says a reflection must see: every call
-    /// that failed, and the [`FRICTION_TOP_N`] that dominated wall clock.
+    /// that failed, and the `FRICTION_TOP_N` that dominated wall clock.
     fn flagged(&self) -> Vec<&str> {
         let mut flagged: Vec<&str> = self
             .tools
@@ -433,7 +433,7 @@ impl TurnFriction {
 ///
 /// One argument rather than three, because the three are one question and were
 /// already threaded separately through four surfaces. The bundle is also what
-/// makes [`build`] a pure function of the turn: there is nothing else it may
+/// makes `build` a pure function of the turn: there is nothing else it may
 /// consult.
 #[derive(Clone, Copy)]
 pub struct TurnEvidence<'a> {
