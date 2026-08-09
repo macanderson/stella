@@ -557,12 +557,15 @@ impl Default for PipelineConfig {
             run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
             roster: Roster::default(),
-            triage_latency_ceiling: Duration::from_secs(10),
-            // Half the triage ceiling, and recall runs concurrently with
-            // triage — so this can never extend the critical path, it only
-            // stops recall from becoming it. A remote CGP embedding round
-            // trip is 100-500ms and the local path is single-digit ms, so
-            // this is an order of magnitude above the realistic worst case.
+            triage_latency_ceiling: Duration::from_secs(30),
+            // Sized from the recall port's own round trip, NOT as a fraction
+            // of the triage ceiling above (it was written as "half of it",
+            // which stopped being true when triage's moved). Recall runs
+            // concurrently with triage, so this can never extend the critical
+            // path; it only stops recall from becoming it. A remote CGP
+            // embedding round trip is 100-500ms and the local path is
+            // single-digit ms, so this is an order of magnitude above the
+            // realistic worst case.
             recall_latency_ceiling: Duration::from_secs(5),
             // Wider than triage's because a research child is a bounded
             // multi-step read (up to RESEARCH_MAX_STEPS tool round-trips),

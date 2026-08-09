@@ -64,6 +64,17 @@ impl Provider for SlowProvider {
     }
 }
 
+/// A resolver that routes nothing, so every responsibility comes back
+/// [`Assigned::Unresolvable`] — a missing credential or an unknown model slug,
+/// as seen from the call site.
+struct NoProviderResolver;
+
+impl ProviderResolver for NoProviderResolver {
+    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
+        None
+    }
+}
+
 async fn run_triage_only(
     provider: &dyn Provider,
     config: PipelineConfig,
@@ -73,7 +84,18 @@ async fn run_triage_only(
     f64,
     Vec<AgentEvent>,
 ) {
-    let resolver = AnyProvider(provider);
+    run_triage_with_resolver(&AnyProvider(provider), config, budget).await
+}
+
+async fn run_triage_with_resolver(
+    resolver: &dyn ProviderResolver,
+    config: PipelineConfig,
+    budget: &mut BudgetGuard,
+) -> (
+    Result<TaskAssessment, PipelineStageAbort>,
+    f64,
+    Vec<AgentEvent>,
+) {
     let tools = EmptyTools;
     let recall = NoContextRecall;
     let repo = NoRepoStructure;
@@ -86,7 +108,7 @@ async fn run_triage_only(
     let pipeline = Pipeline::new(
         PipelinePorts {
             router: &router,
-            providers: &resolver,
+            providers: resolver,
             tools: &tools,
             recall: &recall,
             repo: &repo,
@@ -578,4 +600,59 @@ async fn a_triage_that_answers_records_no_degradation() {
     let (_result, _, events) =
         run_triage_only(&provider, PipelineConfig::default(), &mut budget).await;
     assert!(triage_degraded_reasons(&events).is_empty(), "{events:?}");
+}
+
+/// The fourth degradation path, and the one with no paid call behind it:
+/// triage resolved to no provider at all (a missing credential, an unknown
+/// model slug). The class comes from the deterministic floor exactly as it
+/// does for a timeout, so it is the same kind of record — and it was silent.
+///
+/// **Witness.** #2430 added this emit site; #2462's rewrite of the branch to
+/// introduce `Assigned` carried a version without it over the top, so on
+/// `main` an unroutable triage falls to the floor recording nothing. A census
+/// of `triage_degraded` (#2414, #2429) would attribute those turns to a triage
+/// that ran and answered, which is the one reading the record exists to
+/// prevent.
+#[tokio::test]
+async fn an_unroutable_triage_records_that_it_could_not_be_routed() {
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (result, total, events) =
+        run_triage_with_resolver(&NoProviderResolver, PipelineConfig::default(), &mut budget).await;
+
+    // The fallback is unchanged and load-bearing: never fail a run on triage.
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
+    assert_eq!(total, 0.0, "an unroutable triage buys nothing");
+
+    let reasons = triage_degraded_reasons(&events);
+    assert_eq!(reasons.len(), 1, "exactly one record, got {reasons:?}");
+    assert!(
+        reasons[0].contains("could not be routed"),
+        "the record must name routing, not a timeout it never waited for: {reasons:?}"
+    );
+}
+
+/// **Witness for the ceiling itself.** #2414 moved this from 10s to 30s
+/// because the old bound sat *inside* the answering distribution: 27 of 34
+/// calls burned the full 10,000ms and returned nothing, while the 7 that
+/// answered took 4,684-8,587ms — so the bound was converting slow-but-correct
+/// answers into no answer at all, and paying the full ceiling to do it.
+///
+/// It is asserted here because it was silently reverted once already. #2462
+/// rewrote `PipelineConfig::default` from a branch that predated #2430 and
+/// carried the stale `10` over the top, leaving the field's own doc comment —
+/// which explains the move in full, and names the 7-sample caveat — describing
+/// a value the struct no longer had. A merge that does that again fails this
+/// test instead of quietly halving the ceiling.
+///
+/// This asserts the number, not its correctness: 30s is sized from 7 answering
+/// samples and #2429 is open to re-measure it. Moving it deliberately means
+/// editing this line and saying which side of the distribution the new bound
+/// buys.
+#[test]
+fn the_default_triage_ceiling_is_the_one_the_doc_comment_describes() {
+    assert_eq!(
+        PipelineConfig::default().triage_latency_ceiling,
+        Duration::from_secs(30),
+        "triage's ceiling regressed away from the measured value (#2414, #2429)"
+    );
 }
