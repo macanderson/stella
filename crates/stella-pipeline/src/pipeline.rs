@@ -286,18 +286,18 @@ pub struct PipelineConfig {
     /// and refused repairs a long run could still afford (#1507).
     ///
     /// **This field is an estimate, not a ceiling.** Nothing is cancelled when
-    /// it elapses and no call is refused because of it; it sizes the repair
-    /// gate's headroom question and the witness-repair bound, and `None` means
-    /// "nobody is measuring" — the clock axis abstains rather than inventing a
-    /// deadline the caller never declared.
+    /// it elapses and no call is refused because of it; together with the
+    /// deadline below it sizes the repair gate's headroom and the
+    /// witness-repair bound, and both being `None` means "nobody is measuring"
+    /// — the clock axis abstains rather than inventing one nobody declared.
     ///
     /// The enforcing wall clock is a different field elsewhere:
     /// `BudgetGuard::set_task_deadline`, an absolute instant on the guard
     /// threaded into [`Pipeline::run`]. That one IS honoured — by the engine's
     /// step loop (`stella_core::driver::settlement`) and, since #2238, before
-    /// every raw stage dispatch (`stella_core::run_accounted_call`). Both are
-    /// fed the same `--turn-budget` by `stella-cli`, which is exactly why they
-    /// are easy to confuse and worth this paragraph.
+    /// every raw stage dispatch (`stella_core::run_accounted_call`). Both feed
+    /// `Pipeline::remaining_wall_clock`, which since #2433 reports whichever
+    /// binds first, so a surface arming only one of them is still measured.
     pub run_budget: Option<Duration>,
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.

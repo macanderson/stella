@@ -12,6 +12,8 @@
 //! the in-flight turn past it, and degrade honestly to
 //! `WitnessUnavailable` so verify/verdict proceed with what they have.
 
+use std::time::Instant;
+
 use super::*;
 
 /// The one sentence only the repair prompt carries
@@ -167,5 +169,107 @@ async fn a_stalled_witness_repair_is_bounded_and_degrades_honestly() {
         on_the_rail,
         "the breach is recorded on the rail as an honest degradation, \
          never ridden into an external timeout: {events:?}"
+    );
+}
+
+/// #2433's witness: the same stalled repair, but the run's clock is armed on
+/// the *guard* rather than declared in the config. `run_budget` is generous —
+/// ten minutes — while the deadline threaded into `run` is a second away.
+///
+/// On `main` the bound is derived from `run_budget` alone, so it comes out at
+/// the full [`WITNESS_REPAIR_CEILING`], nothing drops the stalled stream, and
+/// this test dies on its detector — #2141's failure re-armed by the clock the
+/// stage was not reading. With the fix the bound is sized from whichever clock
+/// binds first, so the armed deadline halves into a sub-second bound.
+///
+/// Both fixed paths satisfy the assertion below and neither is reachable on
+/// `main`: a machine slow enough to cross the deadline before the repair
+/// dispatches takes the pre-dispatch "no wall-clock room remains" refusal
+/// instead of the in-flight drop, which is the same fix arriving earlier.
+#[tokio::test]
+async fn the_repair_bound_sizes_itself_to_the_armed_deadline() {
+    let provider = StallsOnRepair::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("TEST_COMMAND: cargo test --test witness always_green -- --exact"),
+        text_result("PASS looks right"),
+    ]);
+    let resolver = StallingResolver(&provider);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    let baseline = FakeWorkspace::new(1, vec![true], Ok(vec![]), log.clone());
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log);
+    let session_runner = NeverRunner;
+    let session_status = NeverRepoStatus;
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &session_status,
+            touches: &NoFileTouches,
+            diagnostics: &session_runner,
+            tests: &session_runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: Some(&port),
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig {
+            // Deliberately generous: this alone derives the 300s ceiling, so
+            // the declared allowance can only pass this test by being ignored
+            // in favour of the armed deadline.
+            run_budget: Some(Duration::from_secs(600)),
+            ..PipelineConfig::default()
+        },
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    // The enforcing clock, armed the way `stella-cli`'s `one_shot_budget_guard`
+    // arms it — and the way an embedder that never sets `run_budget` would.
+    // A deadline is never gated by `BudgetMode`, so `Off` still carries it.
+    budget.set_task_deadline(Some(Instant::now() + Duration::from_millis(1200)));
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(30),
+        pipeline.run("Fix the retry bug", &mut messages, &mut budget),
+    )
+    .await
+    .expect(
+        "the witness repair must be bounded by the ARMED deadline, not by the \
+         advisory run_budget — otherwise a stalled repair spends a clock the \
+         run does not have (#2433)",
+    )
+    .expect("a bounded repair is a degradation, never a run-ending error");
+    let _ = outcome;
+
+    let events = drain(&mut rx);
+    let on_the_rail = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::Proof {
+                step: ProofStep::WitnessUnavailable { reason }
+            } if reason.contains("witness repair") && reason.contains("wall-clock")
+        )
+    });
+    assert!(
+        on_the_rail,
+        "the deadline-derived bound is recorded on the rail as an honest \
+         degradation: {events:?}"
     );
 }

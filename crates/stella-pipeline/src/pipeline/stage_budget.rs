@@ -1,9 +1,9 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use stella_core::{AbortKind, BudgetGuard, BudgetOutcome};
 use stella_protocol::AgentEvent;
 
-use super::{PipelineOutcome, PipelineStatus};
+use super::{Pipeline, PipelineOutcome, PipelineStatus};
 use crate::triage::TaskClass;
 
 /// The turn's money, threaded through the candidate plane as one parameter
@@ -78,6 +78,61 @@ pub(super) fn deadline_abort(overrun: Duration) -> PipelineStageAbort {
     }
 }
 
+/// The tighter of the two clocks that can stop a pipeline run, or `None` when
+/// neither is set.
+///
+/// Pure and free-standing so the arithmetic is testable apart from the
+/// pipeline that supplies its inputs — the same posture
+/// `witness_stage::witness_repair_bound` takes for its own derivation.
+fn binding_clock(armed: Option<Duration>, declared: Option<Duration>) -> Option<Duration> {
+    [armed, declared].into_iter().flatten().min()
+}
+
+impl Pipeline<'_> {
+    /// The wall clock this run actually has left as of `now`, or `None` when
+    /// nothing is measuring it.
+    ///
+    /// Two clocks can stop a run and they have different standing.
+    /// [`super::PipelineConfig::run_budget`] is the caller's declared
+    /// allowance — an estimate that enforces nothing.
+    /// [`BudgetGuard::task_deadline`] is the armed one: since #2238 it is what
+    /// actually refuses a stage call, and since #2240 it is what the journal
+    /// reports. A consumer asking "how much room is left" wants whichever
+    /// expires first, so this is their minimum rather than a preference for
+    /// either.
+    ///
+    /// Preferring one outright would be wrong in a different direction each
+    /// way. An armed deadline further out than the declared allowance must not
+    /// buy back room the caller never declared; a generous allowance must not
+    /// hide a deadline five seconds away — the defect this closes (#2433),
+    /// where the repair gate bought a round the raw-call seam then refused
+    /// mid-round. The two agree whenever `stella-cli` arms both from one
+    /// `--turn-budget`, so the minimum changes nothing for the surface that
+    /// has both today and fixes every surface that arms only one: an embedder
+    /// on `stella-engine`/`stella-serve`, a fleet worker, or anything arming a
+    /// deadline from another source.
+    ///
+    /// `None` from both is preserved deliberately: nobody is measuring, and
+    /// the clock axis abstains rather than inventing a deadline the caller
+    /// never declared (`run_budget`'s own contract).
+    ///
+    /// `now` is the caller's, for the reason
+    /// [`BudgetGuard::deadline_remaining`] takes it (invariant 2): the clock is
+    /// read at a boundary, never from inside the decision.
+    pub(super) fn remaining_wall_clock(
+        &self,
+        budget: &BudgetGuard,
+        now: Instant,
+    ) -> Option<Duration> {
+        binding_clock(
+            budget.deadline_remaining(now),
+            self.config.run_budget.map(|allowance| {
+                allowance.saturating_sub(now.saturating_duration_since(self.started))
+            }),
+        )
+    }
+}
+
 /// The terminal `Error` event and the `Aborted` outcome for a run that stopped
 /// before execution ever started. Returned as a pair instead of taking a sink,
 /// so this stays a pure function over owned data and the caller keeps its one
@@ -107,4 +162,52 @@ pub(super) fn aborted_before_execute(
         candidates_run: 0,
     };
     (event, outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2433: an armed deadline five seconds out binds a run whose declared
+    /// allowance still shows ten minutes. Reading only the allowance is what
+    /// sold the repair gate a round the raw-call seam then refused.
+    #[test]
+    fn the_armed_deadline_binds_a_generous_declared_allowance() {
+        assert_eq!(
+            binding_clock(Some(Duration::from_secs(5)), Some(Duration::from_secs(600))),
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    /// The converse, and the reason this is a minimum rather than a preference
+    /// for the deadline: an allowance the caller declared is not bought back
+    /// by a deadline armed further out.
+    #[test]
+    fn a_distant_deadline_does_not_buy_back_the_declared_allowance() {
+        assert_eq!(
+            binding_clock(Some(Duration::from_secs(600)), Some(Duration::from_secs(5))),
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    /// Either clock alone is the whole answer — the two surfaces that arm only
+    /// one, which is the case #2433 exists for.
+    #[test]
+    fn one_clock_alone_is_the_answer() {
+        assert_eq!(
+            binding_clock(Some(Duration::from_secs(5)), None),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            binding_clock(None, Some(Duration::from_secs(5))),
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    /// Abstention survives: neither clock set means nobody is measuring, which
+    /// must stay distinguishable from "no time left".
+    #[test]
+    fn neither_clock_abstains_rather_than_reporting_zero() {
+        assert_eq!(binding_clock(None, None), None);
+    }
 }
