@@ -131,6 +131,12 @@ const PALETTE: [(&str, Color); 7] = [
 static ACCENT: AtomicUsize = AtomicUsize::new(0);
 
 /// The session accent color (defaults to the brand gold, `PALETTE[0]`).
+///
+/// `agent.rs` imports this **by name** rather than reaching for it through the
+/// module path. That is not style: `plain::accent()` is two characters longer
+/// than the `tui::accent()` it replaced in #2421, which was enough to make
+/// rustfmt wrap a call site and push that god file two lines over its ceiling.
+/// A rename must not cost a baseline bump.
 pub fn accent() -> Color {
     PALETTE[ACCENT.load(Ordering::Relaxed) % PALETTE.len()].1
 }

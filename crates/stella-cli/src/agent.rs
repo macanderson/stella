@@ -41,7 +41,7 @@ use crate::memory::{
     ReflectionReport, SessionMemory, inject_recall_block, reflect_routed, reflection_tail,
     should_reflect_on, turn_warrants_reflection,
 };
-use crate::plain;
+use crate::plain::{self, accent};
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::{OutputFormat, config::Config, resume_frame};
 use stella_context::EpisodeOutcome;
@@ -957,10 +957,8 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 // so re-printing it would silently ignore the change.
                 println!(
                     "  {} {}\n",
-                    "◆".color(plain::accent()),
-                    format!("accent set to {name}")
-                        .color(plain::accent())
-                        .bold()
+                    "◆".color(accent()),
+                    format!("accent set to {name}").color(accent()).bold()
                 );
             }
             continue;
