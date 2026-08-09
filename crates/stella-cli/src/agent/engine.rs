@@ -715,6 +715,21 @@ pub(crate) fn resolve_engine_wiring(
 
     let triage_tuning = tuning_for(&engine, EngineAgentKind::Triage);
     let verifier_tuning = tuning_for(&engine, EngineAgentKind::Verifier);
+    // The worker row, which the pipeline's PLAN stage consumes (#2416). Plan
+    // is pinned to the worker's model above; this is the other half of "plan
+    // rides the worker" — the request shaping, and above all `prompt`, which
+    // is the one field `pipeline_engine_config_for` structurally cannot carry
+    // (an `EngineConfig` has no system-message seat, so `agents.worker.prompt`
+    // reached worker turns and stopped at the planner).
+    let worker_tuning = tuning_for(&engine, EngineAgentKind::Worker);
+    wiring.role_overrides.worker = stella_pipeline::RoleCallOverrides {
+        prompt: worker_tuning.prompt,
+        effort: worker_tuning.effort,
+        reasoning: worker_tuning.reasoning,
+        temperature: worker_tuning.temperature,
+        max_output_tokens: worker_tuning.max_output_tokens,
+        params: worker_tuning.params,
+    };
     wiring.role_overrides.triage = stella_pipeline::RoleCallOverrides {
         prompt: triage_tuning.prompt,
         effort: triage_tuning.effort,
@@ -778,6 +793,10 @@ pub(crate) fn resolve_engine_wiring(
         };
         clamp(&mut wiring.role_overrides.triage, triage_spec.as_ref());
         clamp(&mut wiring.role_overrides.verifier, verifier_spec.as_ref());
+        // `None` resolves to the ACTUAL (possibly overridden) worker model,
+        // which is what the plan role is pinned to — so a non-reasoning worker
+        // model clamps the plan call's effort exactly as it clamps its own.
+        clamp(&mut wiring.role_overrides.worker, None);
     }
 
     let role_specs = [

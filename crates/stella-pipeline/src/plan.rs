@@ -11,6 +11,18 @@
 //! **never** the accumulated message list. That assembly is explicit and
 //! testable precisely because it is a pure function over owned data.
 //!
+//! # Two messages, not one (#1434)
+//!
+//! Both prompts here are [`ManagementPrompt`]s: a byte-stable `&'static str`
+//! instruction block that rides as the SYSTEM message, and the per-call
+//! payload that rides as the USER message. The planner was the last raw
+//! pipeline role sending one undifferentiated user message, so its fixed
+//! opener — the planner persona and the JSON-array output contract
+//! [`parse_plan`] depends on — was re-billed as uncached user text on every
+//! plan call and again on every repair. Splitting it changes no rendered text
+//! (see [`ManagementPrompt::rendered`]); it just puts the fixed bytes where
+//! the provider adapters' cache marking can see them.
+//!
 //! # Parsing with a fallback (not a fake)
 //!
 //! Models return plans as either a JSON array or a plain numbered list.
@@ -23,6 +35,7 @@
 
 use serde::Deserialize;
 
+use crate::management_prompt::ManagementPrompt;
 use crate::ports::RecalledFrame;
 use crate::research::ResearchFinding;
 
@@ -196,11 +209,28 @@ fn balanced_span(text: &str, open: char, close: char) -> Option<&str> {
     None
 }
 
+/// The planner's fixed instruction block (#1434): fully literal, so it is a
+/// plain `&'static str` — byte-identical on every plan call, riding as the
+/// system message the provider adapters can cache-mark.
+///
+/// It carries the JSON-array output contract [`parse_plan`] reads, which is
+/// why a settings-supplied `agents.worker.prompt` is *prepended* as a separate
+/// system message rather than replacing this one
+/// (`Pipeline::metered_raw_call`).
+const PLANNER_INSTRUCTIONS: &str = "You are the planner for a coding agent. Produce a short ordered plan of \
+     concrete steps to accomplish the goal. Respond with a JSON array of \
+     step strings, e.g. [\"step one\", \"step two\"]. Keep it minimal — the \
+     fewest steps that fully accomplish the goal.";
+
 /// Assemble the planner's split context (L-E6): goal + recalled frames +
 /// repo-structure summary, and an instruction to emit a JSON array of steps.
 /// **Never** includes the running transcript — the whole point of the split.
 /// The recall frames are cited by label (L-C4), and their content is included
 /// as grounding.
+///
+/// Everything assembled here is the *volatile* half — goal, revision,
+/// research, recall, structure all change per call, so all of it lands in the
+/// payload and none of it in [`PLANNER_INSTRUCTIONS`].
 ///
 /// `revision` is the reviewer's note from a rejected scope card
 /// ([`crate::ScopeDecision::Revise`]) — `None` on the first plan of a turn. It
@@ -214,14 +244,8 @@ pub fn build_planner_prompt(
     research: &[ResearchFinding],
     repo_structure: &str,
     revision: Option<&str>,
-) -> String {
+) -> ManagementPrompt {
     let mut prompt = String::new();
-    prompt.push_str(
-        "You are the planner for a coding agent. Produce a short ordered plan of \
-         concrete steps to accomplish the goal. Respond with a JSON array of \
-         step strings, e.g. [\"step one\", \"step two\"]. Keep it minimal — the \
-         fewest steps that fully accomplish the goal.\n\n",
-    );
 
     prompt.push_str("## Goal\n");
     prompt.push_str(goal.trim());
@@ -279,7 +303,10 @@ pub fn build_planner_prompt(
     }
 
     prompt.push_str("## Plan (JSON array of step strings)\n");
-    prompt
+    ManagementPrompt {
+        instructions: PLANNER_INSTRUCTIONS,
+        payload: prompt,
+    }
 }
 
 /// Ceiling on the unparseable response echoed back in the repair prompt, in
@@ -289,13 +316,20 @@ pub fn build_planner_prompt(
 /// leads the response; the tail of a rambling one is the part worth losing.
 const PLAN_REPAIR_ECHO_CHARS: usize = 16_000;
 
+/// The repair call's fixed instruction block (#1434). Literal for the same
+/// reason [`PLANNER_INSTRUCTIONS`] is: the echoed response is the only part
+/// that varies, and it belongs in the payload.
+const PLAN_REPAIR_INSTRUCTIONS: &str = "Your previous response could not be parsed as a plan. Re-emit the plan as \
+     a strict JSON array of step strings and NOTHING else — no prose, no code \
+     fences.";
+
 /// A short re-prompt asking a model that returned unparseable plan output to
 /// re-emit it as a strict JSON array — the pipeline's one bounded repair
 /// retry (L-V2 "bounded repair loops"). Kept here beside the parsers it feeds.
 /// The echo is clamped to `PLAN_REPAIR_ECHO_CHARS`: an unbounded echo paid
 /// for a pathological response twice, once to receive it and once to repeat
 /// it back.
-pub fn plan_repair_prompt(previous_response: &str) -> String {
+pub fn plan_repair_prompt(previous_response: &str) -> ManagementPrompt {
     let mut echoed: String = previous_response
         .chars()
         .take(PLAN_REPAIR_ECHO_CHARS)
@@ -303,11 +337,10 @@ pub fn plan_repair_prompt(previous_response: &str) -> String {
     if echoed.chars().count() < previous_response.chars().count() {
         echoed.push_str("\n[… response truncated for the repair prompt …]");
     }
-    format!(
-        "Your previous response could not be parsed as a plan. Re-emit the plan as \
-         a strict JSON array of step strings and NOTHING else — no prose, no code \
-         fences. Previous response:\n{echoed}\n\nJSON array:"
-    )
+    ManagementPrompt {
+        instructions: PLAN_REPAIR_INSTRUCTIONS,
+        payload: format!("Previous response:\n{echoed}\n\nJSON array:"),
+    }
 }
 
 #[cfg(test)]
@@ -398,6 +431,54 @@ mod tests {
         assert_eq!(steps, vec![PlanStep::new("real step")]);
     }
 
+    /// The planner's fixed opener rides the SYSTEM half and every volatile
+    /// section rides the USER half — the #1434 split, which is what gives the
+    /// planner a cacheable prefix at all. Asserted over the halves rather than
+    /// the rendered text, because "which half a section landed in" is the
+    /// whole contract here.
+    #[test]
+    fn planner_prompt_keeps_its_instructions_out_of_the_volatile_payload() {
+        let prompt = build_planner_prompt(
+            "Fix the failing budget test",
+            &[frame("engine driver (driver.rs)", "run_turn drives steps")],
+            &[ResearchFinding {
+                question: "who owns retries?".into(),
+                answer: "stella-core::retry".into(),
+            }],
+            "crates/\n  stella-core/src/budget.rs",
+            Some("only the budget path"),
+        );
+        assert!(prompt.instructions.contains("You are the planner"));
+        assert!(
+            prompt.instructions.contains("JSON array"),
+            "the output contract `parse_plan` reads must be in the stable half"
+        );
+        for volatile in [
+            "Fix the failing budget test",
+            "run_turn drives steps",
+            "stella-core::retry",
+            "stella-core/src/budget.rs",
+            "only the budget path",
+        ] {
+            assert!(
+                !prompt.instructions.contains(volatile),
+                "`{volatile}` is per-call and must never enter the cacheable block"
+            );
+            assert!(prompt.payload.contains(volatile));
+        }
+    }
+
+    /// The split is a wire-shape change, not a text change: the bytes a model
+    /// reads are exactly what the single-message prompt rendered.
+    #[test]
+    fn planner_prompt_renders_instructions_then_payload() {
+        let prompt = build_planner_prompt("goal", &[], &[], "", None);
+        assert_eq!(
+            prompt.rendered(),
+            format!("{PLANNER_INSTRUCTIONS}\n\n## Goal\ngoal\n\n## Plan (JSON array of step strings)\n")
+        );
+    }
+
     #[test]
     fn planner_prompt_includes_goal_recall_and_structure_but_not_transcript() {
         let recall = vec![frame("engine driver (driver.rs)", "run_turn drives steps")];
@@ -407,7 +488,8 @@ mod tests {
             &[],
             "crates/\n  stella-core/src/budget.rs",
             None,
-        );
+        )
+        .rendered();
         assert!(prompt.contains("Fix the failing budget test"));
         assert!(prompt.contains("engine driver (driver.rs)"));
         assert!(prompt.contains("run_turn drives steps"));
@@ -417,7 +499,7 @@ mod tests {
 
     #[test]
     fn planner_prompt_omits_empty_recall_and_structure_sections() {
-        let prompt = build_planner_prompt("goal", &[], &[], "", None);
+        let prompt = build_planner_prompt("goal", &[], &[], "", None).rendered();
         assert!(!prompt.contains("Recalled context"));
         assert!(!prompt.contains("Repository structure"));
     }
@@ -426,7 +508,7 @@ mod tests {
     /// exists once a human has rejected something.
     #[test]
     fn planner_prompt_omits_the_revision_section_without_a_note() {
-        let prompt = build_planner_prompt("goal", &[], &[], "", None);
+        let prompt = build_planner_prompt("goal", &[], &[], "", None).rendered();
         assert!(!prompt.contains("Revision requested"));
     }
 
@@ -440,7 +522,8 @@ mod tests {
             &[],
             "",
             Some("only the ctrl+O dialog, skip the rest"),
-        );
+        )
+        .rendered();
         assert!(prompt.contains("Revision requested"));
         assert!(prompt.contains("overrides the goal"));
         assert!(prompt.contains("only the ctrl+O dialog, skip the rest"));
@@ -454,13 +537,13 @@ mod tests {
     /// it nothing to act on.
     #[test]
     fn planner_prompt_treats_a_blank_revision_as_no_revision() {
-        let prompt = build_planner_prompt("goal", &[], &[], "", Some("   \n  "));
+        let prompt = build_planner_prompt("goal", &[], &[], "", Some("   \n  ")).rendered();
         assert!(!prompt.contains("Revision requested"));
     }
 
     #[test]
     fn repair_prompt_asks_for_strict_json_and_echoes_the_bad_response() {
-        let p = plan_repair_prompt("here's a plan in prose");
+        let p = plan_repair_prompt("here's a plan in prose").rendered();
         assert!(p.contains("JSON array"));
         assert!(p.contains("here's a plan in prose"));
     }
@@ -470,7 +553,7 @@ mod tests {
     #[test]
     fn repair_prompt_clamps_a_pathological_response() {
         let rambling: String = (0..10_000).map(|i| format!("thought {i}; ")).collect();
-        let p = plan_repair_prompt(&rambling);
+        let p = plan_repair_prompt(&rambling).rendered();
         assert!(p.contains("thought 0; "), "the head must survive");
         assert!(p.contains("[… response truncated for the repair prompt …]"));
         assert!(

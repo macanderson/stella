@@ -2330,6 +2330,10 @@ mod mcp_prefetch;
 /// The plan-step walk and its early close-out (#1702). A child module, so it
 /// reaches the scripted ports above via `super::*`.
 mod plan_walk;
+/// The plan call's `[system, user]` split and its share of `agents.worker`
+/// (#2416). A child module, so it reaches the scripted ports above via
+/// `super::*`.
+mod plan_shaping;
 mod research;
 /// The resumed execute stage and its verdict (#1671). A child module, so it
 /// reaches the scripted ports above via `super::*`.

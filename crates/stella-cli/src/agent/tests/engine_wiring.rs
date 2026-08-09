@@ -1250,3 +1250,34 @@ fn reflection_rides_the_worker_when_the_triage_tier_is_unroutable() {
     let same_model = cfg_with_engine("zai", r#"{ "pipeline_triage_model": "zai/glm-5.2" }"#);
     assert!(reflection_route(&same_model, &[configured_provider("zai")]).is_none());
 }
+
+/// #2416: `agents.worker.prompt` must reach the pipeline's worker row, which
+/// is what carries it to the PLAN call. Everything else under `agents.worker`
+/// already reaches plan through `pipeline_engine_config_for`; a system prompt
+/// has no seat in an `EngineConfig`, so this row is the only wire it has.
+#[test]
+fn the_worker_row_carries_agents_worker_tuning_to_the_pipeline() {
+    let cfg = cfg_with_engine(
+        "zai",
+        r#"{ "agents": { "worker": {
+            "prompt": "Never use npm in this repository.",
+            "params": { "temperature": 0.2 }
+        } } }"#,
+    );
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &[configured_provider("zai")]);
+
+    assert_eq!(
+        wiring.role_overrides.worker.prompt.as_deref(),
+        Some("Never use npm in this repository."),
+        "the planner writes the worker's work order and must see the worker's own instructions"
+    );
+    assert_eq!(wiring.role_overrides.worker.temperature, Some(0.2));
+
+    // Absent stays absent: an unconfigured worker must add no system message
+    // to the plan call at all.
+    let stock = cfg_for("zai");
+    let stock_ref = ModelRef::new(stock.provider.id, stock.model_id.clone());
+    let stock_wiring = resolve_engine_wiring(&stock, &stock_ref, &[configured_provider("zai")]);
+    assert_eq!(stock_wiring.role_overrides.worker.prompt, None);
+}
