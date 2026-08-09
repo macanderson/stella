@@ -211,6 +211,13 @@ fn recall_section_tags_memory_frames_with_ids_and_asks_for_citations() {
         section.contains("cite_memory"),
         "instruction present: {section}"
     );
+    // #2195: one wording, shared with the pipeline's render of the same
+    // frames. Two copies of this sentence is how the pipeline path came to
+    // have none at all while this one read as evidence the affordance existed.
+    assert!(
+        section.contains(stella_pipeline::CITE_MEMORY_REQUEST),
+        "the ask is the shared constant, verbatim: {section}"
+    );
 }
 
 #[test]
