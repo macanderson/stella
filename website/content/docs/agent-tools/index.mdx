@@ -21,7 +21,7 @@ Each tool is either **read-only** (it only observes your workspace and environme
 
 A subset of the read-only tools is also **speculation-safe** (the schema's `speculation_safe: true` flag): the engine executes a step's leading run of speculation-safe calls concurrently — while the model is still streaming — and harvests the results at dispatch, so those lookups cost almost no wall-clock. Speculation is a separate, narrower claim than read-only because a retried stream can run a speculated call twice. A web search burns a metered API call on every run, an issue lookup spends a rate-limited API, and the graph-backed tools write catch-up state to `codegraph.db` on the read path — so those reads run only at dispatch, exactly once per committed call. A mutating tool is never speculated, and MCP-provided tools never opt in.
 
-The speculation-safe subset is exactly: `read_file`, `grep`, `glob`, `explorations`, `list_scripts`, `repo_status`, `repo_diff`, `task_list` — plus `tool_search` and `skill_search` at the session layer.
+The speculation-safe subset is exactly: `read_file`, `grep`, `glob`, `explorations`, `list_scripts`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `task_list` — plus `tool_search` and `skill_search` at the session layer.
 
 Tool names are their exact identifiers — the agent dispatches by name, and these are the names `stella tools` prints.
 
@@ -31,7 +31,7 @@ This page is not maintained by hand. `crates/stella-tools/tests/docs_in_sync.rs`
 
 ### Always available
 
-These 47 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 49 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
@@ -173,6 +173,12 @@ These 47 tools register in every session — no configuration, no prerequisites.
   <ToolCard name="repo_diff" access="read">
     The pending changes as patch hunks plus a per-file +added/-removed summary — self-review before committing. Unstaged by default, `staged: true` for staged changes, optionally scoped to `paths`; the patch is capped with a loud elision marker.
   </ToolCard>
+  <ToolCard name="repo_history" access="read">
+    Where the repository has *been*: recent commits, every branch with its ahead/behind vs the default, shelved changes (`git stash`), the working-position log (`git reflog`), and whether the position is currently detached. One call, no shell — and the first move when work seems to have gone missing after a branch switch.
+  </ToolCard>
+  <ToolCard name="repo_recover" access="read">
+    Find committed work no branch points at — the commits a checkout strands. Each carries `sits_on_target`, so a fast-forward is distinguishable from a merge that could conflict. Walks the whole object store, so it is the slower second move after `repo_history`; stella's own candidate-workspace snapshot commits are excluded and counted separately.
+  </ToolCard>
   <ToolCard name="repo_commit" access="mutating">
     Commit exactly the named paths — there is no stage-everything mode.
   </ToolCard>
@@ -230,7 +236,7 @@ These 47 tools register in every session — no configuration, no prerequisites.
 <Callout type="info">
 `verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. `web_download` is mutating for the same reason — it writes a file.
 
-The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `repo_status`, `repo_diff`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
+The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `repo_status`, `repo_diff`, `repo_history`, `repo_recover`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
 </Callout>
 
 ### Conditionally registered
@@ -422,7 +428,7 @@ The default core is exactly eleven tools: `read_file`, `write_file`, `edit_file`
 
 Matched tools are *activated* — advertised for the rest of the session. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 47 always-on tools, up to 59 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
+All told: 49 always-on tools, up to 61 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 
