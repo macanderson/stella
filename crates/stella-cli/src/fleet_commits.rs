@@ -126,6 +126,17 @@ impl ToolExecutor for CommitObserver<'_> {
         output
     }
 
+    fn drain_verification_requests(&self) -> Vec<Value> {
+        self.inner.drain_verification_requests()
+    }
+
+    async fn replay_verification_request(
+        &self,
+        input: &Value,
+    ) -> Option<stella_core::VerificationOracleResult> {
+        self.inner.replay_verification_request(input).await
+    }
+
     /// Forwarded: a decorator that let the default `0.0` stand would drop
     /// sub-agent spend out of the parent's budget (see the port's contract).
     fn drain_sub_agent_spend_usd(&self) -> f64 {

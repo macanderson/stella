@@ -4,9 +4,8 @@
 //! `stella-pipeline` — the orchestration plane that sits *above*
 //! `stella-core::Engine`. It drives one prompt
 //! through the staged turn flow — **evaluate → enhance → route → execute →
-//! witness → verify → verdict → revise** (the witness is authored on demand,
-//! after execution, once the warrant has read the diff) — over injected
-//! ports, emitting an `AgentEvent` at every stage boundary.
+//! deterministic verify → bounded revise** — over injected ports, emitting an
+//! `AgentEvent` at every stage boundary.
 //!
 //! # What lives here vs. the engine
 //!
@@ -14,8 +13,7 @@
 //! crate composes turns into a governed pipeline: it classifies the prompt
 //! (triage), recalls context, plans multi-step work, gates large plans behind
 //! interactive scope review, executes each step through the engine, and
-//! verifies the result with a deterministic-first ladder before ever spending
-//! a model-verifier call.
+//! verifies the result without granting a model completion authority.
 //!
 //! # The design lessons this crate encodes
 //!
@@ -28,22 +26,14 @@
 //! - **L-E7** — single-shot default; best-of-N opt-in. [`candidate`].
 //! - **L-E8** — recall rides as a volatile message after the stable system
 //!   prefix (cache discipline). [`pipeline`].
-//! - **L-E11** — the deterministic verification ladder: the flip-oracle state
-//!   machine, the evidence ladder that skips the verifier on strong evidence, and
-//!   a model verifier (verifier ≠ worker) only on inconclusive evidence with a
-//!   heuristic fallback. [`verify`]. Its front half is **witness authoring**:
-//!   when the user armed no `--test-command`, an independent model (the
-//!   verifier's resolution) writes the failing witness test that the flip oracle
-//!   tracks — visible to the worker, integrity-checked by tamper exclusion,
-//!   never hidden. [`witness`].
-//! - **The feedback airlock** — the one channel from verification back to the
-//!   worker. A deterministic failure no longer replays the raw test-runner
-//!   output into the revision prompt: it is disclosed at a grain (`L0`–`L3`)
-//!   that tightens when the same failure repeats, and every model-authored
-//!   text crossing inbound (distress guidance, verifier reasoning) is scrubbed
-//!   against the sealed material first. The operator still sees the real
-//!   output; only the worker's prompt is redacted.
-//!   [`witness::airlock`]. Design: `docs/spec/witness-protocol.md` §4.
+//! - **L-E11** — deterministic completion authority: either the same normalized
+//!   configured command fails on the baseline and passes on the candidate, or
+//!   the concrete built-in `verify_done` oracle is replayed against the final
+//!   candidate state. Everything else abstains. [`verify`].
+//! - **The feedback boundary** — when a candidate test completes unsuccessfully,
+//!   the worker receives only a bounded structured receipt containing command,
+//!   exit code, stdout, and stderr. No reviewer prose or model-authored test can
+//!   enter the revision loop (`pipeline::revision::revision_prompt`).
 //! - **Proportionate verification** — escalate on evidence, never on a
 //!   prediction made before any work exists. Deterministic routes resolve
 //!   before the paid triage call rather than after it (a greeting no longer
@@ -55,11 +45,9 @@
 //!   `docs/spec/witness-protocol.md` §7.
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
-//! - **Distress guidance** — on a candidate's second deterministic
-//!   verification failure (cumulative, not necessarily consecutive — #868),
-//!   one verifier call steers the next revision (event-triggered
-//!   course-correction, never a fixed mid-run checkpoint).
-//!   [`verify::guidance_prompt`], wired in [`pipeline`].
+//! Historical verifier/witness wire tokens and pure parsers remain readable for
+//! stored traces and configuration compatibility, but live orchestration never
+//! dispatches those model roles.
 //!
 //! # The port surface the CLI glue implements
 //!

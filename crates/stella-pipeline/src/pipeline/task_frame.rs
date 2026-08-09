@@ -26,9 +26,6 @@ use crate::triage::TaskAssessment;
 /// `run_best_of_n` down to `verify_candidate` reads the parts it needs.
 #[derive(Clone, Copy)]
 pub(super) struct TaskFrame<'a> {
-    /// The user's goal, verbatim — what triage classified and what the
-    /// verifier is ultimately asked to judge the work against.
-    pub(super) goal: &'a str,
     /// The staged conversation prefix every candidate starts from (recall,
     /// skills, scope — everything before the worker's first turn).
     pub(super) base_messages: &'a [CompletionMessage],

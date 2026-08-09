@@ -60,8 +60,8 @@ the interesting part:
 1. **Watch.** `ci_status` with `wait: true` blocks until the latest run for the
    target finishes, then returns its conclusion and the failing jobs' logs.
 2. **Diagnose and fix.** A working round runs the full
-   [staged pipeline](/docs/inference-pipeline) — triage, plan, witness, execute,
-   verify. It is not a raw step loop: `monitor` always runs pipelined, and unlike
+   [staged pipeline](/docs/inference-pipeline) — triage, plan, execute,
+   deterministic verify. It is not a raw step loop: `monitor` always runs pipelined, and unlike
    `stella goal` it exposes no `--no-pipeline` escape hatch.
 3. **Commit and push.** The remote is the only thing that can produce the next
    round's evidence.
@@ -80,7 +80,7 @@ use it.
 
 **Inside each round**, verification runs the deterministic
 [evidence ladder](/docs/inference-pipeline#6-verify--the-deterministic-ladder)
-before any model is asked for an opinion. The load-bearing rung is the **flip
+without asking a model for an opinion. The load-bearing rung is the **flip
 oracle**: the relevant test must have *failed before* the change and *passed
 after* it. A suite that was already green proves nothing about the fix, so it
 cannot be used to claim one. That structurally excludes the failure mode you
@@ -98,9 +98,10 @@ ran locally passed". Not "I believe this is fixed". A run on the remote, green,
 that you can open in a browser.
 
 <Callout type="info">
-Pipelined goal rounds mean **double verification**: the pipeline's own verifier
-checks each round's work, and the outer goal verifier checks the objective. A fix
-that passes locally but doesn't turn CI green gets caught by the second one.
+Pipelined goal rounds mean two distinct gates: the pipeline accepts only
+deterministic proof for each round's work, and the outer goal verifier checks
+the objective. A fix that passes locally but doesn't turn CI green gets caught
+by the second one.
 </Callout>
 
 ## When the fix doesn't hold
@@ -115,11 +116,10 @@ the new root cause. That is what the round loop is for.
 
 ### The same failure comes back
 
-A revision that has already deterministically failed triggers **distress
-guidance**: stella spends one verifier call producing a course-correction note that
-rides along with the next revision prompt, rather than letting the worker keep
-digging in the same direction. You will see the same-failure case resolve or
-change shape rather than repeat identically.
+A deterministic failure returns the exact test receipt to the worker: normalized
+command, exit code, stdout, and stderr. The revision prompt asks it to diagnose
+that evidence and try a different solution; no verifier agent writes guidance
+or performs repair work.
 
 ### It hits the round cap
 

@@ -451,6 +451,17 @@ impl ToolExecutor for HunkGate<'_> {
         }
     }
 
+    fn drain_verification_requests(&self) -> Vec<Value> {
+        self.inner.drain_verification_requests()
+    }
+
+    async fn replay_verification_request(
+        &self,
+        input: &Value,
+    ) -> Option<stella_core::VerificationOracleResult> {
+        self.inner.replay_verification_request(input).await
+    }
+
     /// Forwarded — a decorator that swallows this drops real sub-agent spend
     /// out of the budget accounting with no compiler to catch it.
     fn drain_sub_agent_spend_usd(&self) -> f64 {

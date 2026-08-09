@@ -150,6 +150,28 @@ async fn a_resumed_pipeline_run_verifies_and_records_a_verdict() {
     );
 }
 
+/// Historical frames may contain the configured command before command
+/// normalization was applied at write time. Equivalent shell whitespace must
+/// not discard a genuine pre-execution baseline during resume.
+#[tokio::test]
+async fn a_resumed_baseline_matches_the_normalized_configured_command() {
+    let mut resume = spec(killed_mid_execute());
+    resume.baseline.as_mut().unwrap().command = " cargo   test -p x ".into();
+    let (outcome, _events, _prompts) = resume_scenario!(
+        ScriptedProvider::new(vec![text_result("finished the fix")]),
+        ScriptedRunner::new(vec![true, true], "@@ -1 +1 @@\n-old\n+new"),
+        resume
+    );
+
+    let verdict = outcome
+        .verdict
+        .expect("the equivalent baseline is restored");
+    assert!(
+        verdict.passed && verdict.deterministic,
+        "normalization must preserve the fail-to-pass oracle: {verdict:?}"
+    );
+}
+
 /// A mid-plan kill: the resumed turn finishes its step, and the steps the
 /// crash never reached still run — numbered from the plan's own cursor, not
 /// re-planned — before verification.
