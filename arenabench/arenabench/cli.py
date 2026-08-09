@@ -38,6 +38,34 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
+def _watch_line(match_id: str, watch_port: int | None) -> str:
+    """Where to watch a started match, as the operator-facing ``watch`` line.
+
+    A pure function of the two facts that were each wrong when this was
+    inlined in :func:`_cmd_run`, and that nothing executed until an operator
+    ran a real match:
+
+    * **which id** — the CLI read ``match.id``, which :class:`~.runner.Match`
+      does not define (it holds the spec rather than copying its identity).
+      The ``AttributeError`` landed *after* ``runner.start``, so every
+      ``arenabench run`` launched its trials and then died on the line telling
+      the operator where to watch them: harbor kept running unsupervised, no
+      ``--results`` snapshot was written, and the arena reported the match
+      ``finished`` while its container was still up.
+    * **which URL** — the client is one static export whose only routes are
+      ``/``, ``/_not-found`` and ``/transcript``, and it selects a match from
+      the ``match`` query parameter. A ``/matches/<id>`` path falls through to
+      static file serving and 404s.
+
+    ``watch_port`` is already resolved by the caller so this stays free of
+    I/O — a string an operator pastes into a browser is worth being able to
+    assert on directly.
+    """
+    if watch_port is None:
+        return f"arenabench serve   (then open match {match_id})"
+    return f"http://127.0.0.1:{watch_port}/?match={match_id}"
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run a committed ``arenabench.toml`` headlessly — the CI entry point.
 
@@ -159,11 +187,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     # headless by contract and must not start a server, but it knows the match
     # id and the operator's next question is always "where do I watch it" —
     # answered previously by starting another arena and forgetting the port.
+    #
+    # The id is `spec.id`, not `match.id`: `Match` holds the spec rather than
+    # copying its identity, and the server reads it the same way (its match
+    # list emits `match.spec.id`).
     watch_port = find_running_arena(workspace, "127.0.0.1")
-    if watch_port is not None:
-        print(f"watch     : http://127.0.0.1:{watch_port}/matches/{match.id}")
-    else:
-        print(f"watch     : arenabench serve   (then open match {match.id})")
+    print(f"watch     : {_watch_line(match.spec.id, watch_port)}")
     # The built-in supervisor: the same rules `arenabench watch` runs from
     # another process, reported inline so a CI log shows a dead arm at the
     # minute it died rather than in the postmortem (#1480).
