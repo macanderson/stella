@@ -185,7 +185,7 @@ pub use drain::{
     RejectionClass, drain_org, schema_version_supported,
 };
 pub use efficacy::FinishedExecution;
-pub use export::{ExportExclusions, ExportScope};
+pub use export::ExportExclusions;
 pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppressed};
 pub use foundry::{AdoptedTool, FoundryReuse};
 pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};

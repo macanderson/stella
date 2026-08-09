@@ -18,9 +18,15 @@
 //! [`Store::set_execution_session`] and indexed by `executions_by_session` —
 //! so what was missing was only a predicate and a way to ask for it.
 //!
-//! [`ExportScope`] is that way, and it is why the scoped and unscoped reads
+//! `ExportScope` is that way, and it is why the scoped and unscoped reads
 //! share one SQL body rather than owning one each: two copies of this SQL
 //! would drift, and the drifted copy is the one that leaks.
+//!
+//! It stays **private**, and the choice is surfaced as named methods —
+//! [`Store::export_all_json`] against [`Store::export_session_json`],
+//! [`Store::usage_stats`] against [`Store::usage_stats_for_session`]. A caller
+//! that never holds a scope value cannot pair one table's scope with
+//! another's, and a scope nothing accepts would be public API in name only.
 
 use base64::Engine as _;
 use rusqlite::ToSql;
@@ -35,7 +41,7 @@ use crate::{Result, Store, UsageStatsRow};
 /// tables reach it through `execution_id`. Both are served from here so a
 /// caller cannot pair one table's scope with another's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExportScope<'a> {
+enum ExportScope<'a> {
     /// Every execution recorded in this workspace's store.
     ///
     /// This is the right scope for `stella stats`, which is explicitly a
@@ -43,7 +49,7 @@ pub enum ExportScope<'a> {
     /// produces an artifact meant to be shared — see the module docs.
     Workspace,
     /// Only executions stamped with this session registry id
-    /// ([`crate::SessionRecord::id`]).
+    /// (`SessionRecord::id`).
     Session(&'a str),
 }
 
@@ -108,17 +114,10 @@ pub struct ExportExclusions {
 }
 
 impl ExportExclusions {
-    /// Whether anything at all was left out — the manifest and the CLI both
-    /// want to stay quiet when the store holds exactly one session.
+    /// Whether anything at all was left out — the dashboard says "the only
+    /// session recorded in this workspace" rather than listing three zeroes.
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
-    }
-
-    /// Every excluded row this census counts, as one number.
-    pub fn total(&self) -> i64 {
-        self.other_session_executions
-            .saturating_add(self.unattributed_executions)
-            .saturating_add(self.unattributed_reflections)
     }
 }
 
@@ -661,7 +660,6 @@ mod tests {
         assert_eq!(excluded.other_session_executions, 1, "ses-b");
         assert_eq!(excluded.unattributed_executions, 1, "the unstamped one");
         assert_eq!(excluded.unattributed_reflections, 0);
-        assert_eq!(excluded.total(), 2);
         assert!(!excluded.is_empty());
 
         // A store holding only the exported session has nothing to declare.
