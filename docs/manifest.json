@@ -366,6 +366,81 @@
       "status": "living",
       "title": "The journey of a prompt \u2014 full pipeline mode, in plain language"
     },
+    "prompt-agent-author": {
+      "path": "docs/prompts/agent-author.md",
+      "status": "living",
+      "title": "agent_author \u2014 the effective prompt"
+    },
+    "prompt-distress-guidance": {
+      "path": "docs/prompts/distress-guidance.md",
+      "status": "living",
+      "title": "distress_guidance \u2014 the effective prompt"
+    },
+    "prompt-domain-inference": {
+      "path": "docs/prompts/domain-inference.md",
+      "status": "living",
+      "title": "domain_inference \u2014 the effective prompt"
+    },
+    "prompt-plan": {
+      "path": "docs/prompts/plan.md",
+      "status": "living",
+      "title": "plan \u2014 the effective prompt"
+    },
+    "prompt-plan-repair": {
+      "path": "docs/prompts/plan-repair.md",
+      "status": "living",
+      "title": "plan_repair \u2014 the effective prompt"
+    },
+    "prompt-reflection": {
+      "path": "docs/prompts/reflection.md",
+      "status": "living",
+      "title": "reflection \u2014 the effective prompt"
+    },
+    "prompt-research": {
+      "path": "docs/prompts/research.md",
+      "status": "living",
+      "title": "research \u2014 the effective prompt"
+    },
+    "prompt-skill-author": {
+      "path": "docs/prompts/skill-author.md",
+      "status": "living",
+      "title": "skill_author \u2014 the effective prompt"
+    },
+    "prompt-summarization": {
+      "path": "docs/prompts/summarization.md",
+      "status": "living",
+      "title": "summarization \u2014 the effective prompt"
+    },
+    "prompt-triage": {
+      "path": "docs/prompts/triage.md",
+      "status": "living",
+      "title": "triage \u2014 the effective prompt"
+    },
+    "prompt-verdict": {
+      "path": "docs/prompts/verdict.md",
+      "status": "living",
+      "title": "verdict \u2014 the effective prompt"
+    },
+    "prompt-witness-author": {
+      "path": "docs/prompts/witness-author.md",
+      "status": "living",
+      "title": "witness_author \u2014 the effective prompt"
+    },
+    "prompt-witness-repair": {
+      "path": "docs/prompts/witness-repair.md",
+      "status": "living",
+      "title": "witness_repair \u2014 the effective prompt"
+    },
+    "prompt-worker": {
+      "path": "docs/prompts/worker.md",
+      "status": "living",
+      "title": "worker \u2014 the effective prompt"
+    },
+    "prompts": {
+      "path": "docs/prompts/README.md",
+      "status": "living",
+      "title": "The effective prompts \u2014 one document per agent role"
+    },
     "remote-sandboxes": {
       "path": "docs/spec/remote-sandboxes.md",
       "sections": [
