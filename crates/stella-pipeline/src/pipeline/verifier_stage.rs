@@ -62,9 +62,14 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<Option<String>, PipelineBudgetAbort> {
-        let resolved = match self.resolve_provider(Role::Verifier) {
-            Ok(resolved) => resolved,
-            Err(_) => return Ok(None),
+        // A withheld or unresolvable guidance agent degrades identically:
+        // evidence-only revision. Both land above the stage event, so an
+        // ablated guidance call leaves no frame (#2381) — and unlike the
+        // verdict below, nothing needs to be *said* about it, because
+        // guidance is steering rather than proof and its absence cannot make
+        // a run look more verified than it is.
+        let Assigned::To(resolved) = self.assigned(ModelCallRole::DistressGuidance) else {
+            return Ok(None);
         };
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
@@ -117,13 +122,23 @@ impl<'a> Pipeline<'a> {
         inputs: &LadderInputs,
         spend: &mut Spend<'_>,
     ) -> Result<ModelVerifierVerdict, PipelineBudgetAbort> {
+        // #2381 requirement 3, and the one ablation that could quietly turn a
+        // run into a claimed-done. Checked BEFORE the stage event so the
+        // ablation leaves no frame, and routed to the ABSTENTION rung rather
+        // than to the degradation rung below: nothing degraded here — the
+        // operator removed the stage — so the run must report that no model
+        // reviewed it, which is what makes the resulting `passed: true` read
+        // as "nothing failed this" instead of as proof.
+        if !self.responsibility_enabled(ModelCallRole::Verdict) {
+            return Ok(self.verdict_withheld(inputs));
+        }
         self.emit(AgentEvent::Stage {
             name: StageKind::Verdict,
         });
-        let resolved = match self.resolve_provider(Role::Verifier) {
-            Ok(r) => r,
+        let resolved = match self.assigned(ModelCallRole::Verdict) {
+            Assigned::To(r) => r,
             // Verifier unresolvable → conservative heuristic verdict (L-E11).
-            Err(_) => {
+            Assigned::Withheld | Assigned::Unresolvable(_) => {
                 self.warn_verifier_fallback(
                     degradation,
                     "the verifier role is unresolvable (no routable provider); check the \

@@ -78,6 +78,7 @@ use crate::ports::{
     WorkspaceError,
 };
 use crate::research::ResearchFinding;
+use crate::roster::Roster;
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
     needs_scope_review,
@@ -122,6 +123,8 @@ mod raw_usage;
 mod repair_gate;
 mod research_stage;
 mod resume_stage;
+mod roster_wiring;
+use roster_wiring::Assigned;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
@@ -267,6 +270,11 @@ pub struct PipelineConfig {
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
     pub role_overrides: PipelineRoleOverrides,
+    /// Who performs each responsibility, and whether it runs at all (#2381).
+    /// [`Roster::default`] is the pipeline that shipped; see [`crate::roster`]
+    /// for why assignment and enablement are configurable while stage ORDER
+    /// deliberately is not.
+    pub roster: Roster,
     /// Decision latency ceiling on the triage classification call (L-M4): if
     /// it doesn't answer within this, the in-flight call is dropped and
     /// triage falls through to the full path. The expiry is not silent in
@@ -495,6 +503,7 @@ impl Default for PipelineConfig {
             engine: EngineConfig::default(),
             run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
+            roster: Roster::default(),
             triage_latency_ceiling: Duration::from_secs(10),
             // Half the triage ceiling, and recall runs concurrently with
             // triage — so this can never extend the critical path, it only
@@ -1017,6 +1026,7 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
+        self.report_roster_posture();
         if messages.is_empty() {
             messages.push(CompletionMessage::system(DEFAULT_SYSTEM_PROMPT));
         }
@@ -1094,6 +1104,7 @@ impl<'a> Pipeline<'a> {
         let authored_witness = !assessment.conversational
             && self.config.test_command.is_none()
             && self.config.witness_writer
+            && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
             && assessment.wants_witness()
             && task_class.verifies_unconditionally()
             && self.can_author_independent_witness();
@@ -1133,25 +1144,28 @@ impl<'a> Pipeline<'a> {
 
         // --- 3+4. Plan, then scope review — one phase, because a reviewer who
         // asks for a different scope sends us back to the planner. -----------
-        let plan: Option<Vec<PlanStep>> = if task_class.plans() {
-            match self
-                .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
-                .await
-            {
-                Ok(PlannedScope::Steps(steps)) => Some(steps),
-                Ok(PlannedScope::Ended { reason }) => {
-                    return Ok(self.aborted_before_execute(
-                        task_class,
-                        total_cost,
-                        &reason,
-                        AbortKind::DeliberateStop,
-                    ));
+        // A withheld `plan` takes the branch a non-planning class takes — no
+        // frame, no call ([`Pipeline::responsibility_enabled`], #2381).
+        let plan: Option<Vec<PlanStep>> =
+            if task_class.plans() && self.responsibility_enabled(ModelCallRole::Plan) {
+                match self
+                    .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
+                    .await
+                {
+                    Ok(PlannedScope::Steps(steps)) => Some(steps),
+                    Ok(PlannedScope::Ended { reason }) => {
+                        return Ok(self.aborted_before_execute(
+                            task_class,
+                            total_cost,
+                            &reason,
+                            AbortKind::DeliberateStop,
+                        ));
+                    }
+                    Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
                 }
-                Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         if let Some(steps) = &plan {
             // The frame needs the whole plan, not the transcript's echo of it:
             // step prompts are pushed one turn at a time, so at a mid-plan
@@ -1423,9 +1437,9 @@ impl<'a> Pipeline<'a> {
         });
         let fallback_plan = || vec![PlanStep::new(goal)];
 
-        let resolved = match self.resolve_provider(Role::Plan) {
-            Ok(r) => r,
-            Err(_) => return Ok(fallback_plan()),
+        let resolved = match self.assigned(ModelCallRole::Plan) {
+            Assigned::To(r) => r,
+            Assigned::Withheld | Assigned::Unresolvable(_) => return Ok(fallback_plan()),
         };
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
@@ -1664,8 +1678,10 @@ impl<'a> Pipeline<'a> {
         // decision — silent on purpose, never a second warning.
         let mut author_witness = author_witness;
         let witness_author = match author_witness
-            .then(|| self.resolve_provider(Role::Verifier))
-            .and_then(Result::ok)
+            .then(|| self.assigned(ModelCallRole::WitnessAuthor).ok())
+            .flatten()
+            // Unconditional, and NOT a roster question: a witness the worker
+            // wrote proves nothing about the worker's diff (#2381).
             .filter(|author| author.model_ref != worker.model_ref)
         {
             Some(author) => {

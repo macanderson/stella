@@ -28,6 +28,16 @@ impl Pipeline<'_> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<(TaskAssessment, Vec<String>), PipelineBudgetAbort> {
+        // #2381: the roster may withhold triage entirely. Returning BEFORE the
+        // stage event is the point — an ablated stage must leave no frame in
+        // `stella-events.jsonl`, so a reader sees the ablation rather than
+        // inferring it from a stage that emitted but bought nothing. The
+        // fall-through is the deterministic floor, which is exactly the path an
+        // unresolvable triage already took: losing triage costs the turn its
+        // classification, never the turn.
+        if !self.responsibility_enabled(ModelCallRole::Triage) {
+            return Ok((self.triage_floor(goal), Vec::new()));
+        }
         self.emit(AgentEvent::Stage {
             name: StageKind::Triage,
         });
@@ -50,22 +60,16 @@ impl Pipeline<'_> {
                 Vec::new(),
             ));
         }
-        let resolved = match self.resolve_provider(Role::Triage) {
-            Ok(r) => r,
+        let resolved = match self.assigned(ModelCallRole::Triage) {
+            Assigned::To(r) => r,
             // Triage resolution failure is soft: fall through to the full path
             // via the deterministic floor. Never fail the run on triage.
-            // The conversational route is still resolved deterministically here
-            // (`resolve_conversational(false, goal)`) — a bare greeting must
-            // route to chat even when the triage provider can't be resolved,
-            // since it never depends on a model answer.
-            Err(_) => {
-                return Ok((
-                    TaskAssessment {
-                        conversational: resolve_conversational(false, goal),
-                        ..TaskAssessment::from_class(resolve_task_class(None, goal))
-                    },
-                    Vec::new(),
-                ));
+            // The conversational route is still resolved deterministically
+            // there — a bare greeting must route to chat even when the triage
+            // provider can't be resolved, since it never depends on a model
+            // answer.
+            Assigned::Withheld | Assigned::Unresolvable(_) => {
+                return Ok((self.triage_floor(goal), Vec::new()));
             }
         };
         if let Some(fb) = &resolved.fallback {
@@ -167,5 +171,22 @@ impl Pipeline<'_> {
             });
         }
         Ok((resolved, research))
+    }
+
+    /// The assessment a turn gets when no triage answer is available — the
+    /// deterministic floor, and nothing else.
+    ///
+    /// One function because three paths reach it and they must agree: triage
+    /// disabled by the roster (#2381), triage unresolvable, and — historically —
+    /// each written out separately, which is how the conversational resolution
+    /// came to be spelled two ways. `resolve_conversational(false, goal)`
+    /// rather than `false`, because a bare greeting routes to chat on the
+    /// deterministic arm alone and must not depend on a model answer that was
+    /// never bought.
+    fn triage_floor(&self, goal: &str) -> TaskAssessment {
+        TaskAssessment {
+            conversational: resolve_conversational(false, goal),
+            ..TaskAssessment::from_class(resolve_task_class(None, goal))
+        }
     }
 }
