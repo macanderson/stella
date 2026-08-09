@@ -150,6 +150,46 @@ impl Provenance {
     }
 }
 
+/// How one path's provenance survives a second touch.
+///
+/// The subtle cell is `Declared` meeting `Observed`, and it turns entirely on
+/// whether the observation *restates content the ledger already held*:
+///
+/// * **It restates it** — the probe is re-reporting the tool's own write, which
+///   it does for every declared write it can see. Downgrading there would erase
+///   authorship from exactly the files that have it.
+/// * **It differs** — something that is not a file tool put different bytes on
+///   disk after the tool wrote. The ledger's `latest` is about to become those
+///   bytes, and no file tool authored them. Keeping the entry `Declared` renders
+///   that foreign content as an authored hunk and tells a verifier the agent
+///   hand-wrote it.
+///
+/// The second case is not hypothetical, and its cost was an *unwinnable* trap
+/// rather than a bad line of diff. On Terminal-Bench `fix-git`, an agent edited
+/// a conflicted file with `edit_file`, was told by the verifier that recovered
+/// content must come from git rather than be hand-authored, and then did
+/// exactly that — `git checkout --theirs`, pure plumbing, zero typed text. The
+/// probe observed the overwrite, this fold kept the path `Declared`, and the
+/// git blob rendered under the authored header. The verifier returned the same
+/// verdict, correctly, because the evidence still said the agent wrote it.
+/// Nothing the agent could do cleared the flag; it re-tried for 876 seconds and
+/// stopped on a deadline. Provenance that only ever ratchets one way is a state
+/// machine with no exit.
+///
+/// An observation whose predecessor content is unknown (never measurable, or
+/// dropped for size) counts as differing. That is the conservative direction on
+/// purpose: over-claiming authorship is the failure that traps an agent, while
+/// under-claiming costs a marker line instead of a hunk and leaves the
+/// tree-state channel reporting the change either way.
+fn fold_provenance(existing: Provenance, incoming: Provenance, restates_known: bool) -> Provenance {
+    match (existing, incoming) {
+        (_, Provenance::Declared) => Provenance::Declared,
+        (Provenance::Declared, Provenance::Observed) if restates_known => Provenance::Declared,
+        (Provenance::Declared, Provenance::Observed) => Provenance::Observed,
+        (Provenance::Observed, Provenance::Observed) => Provenance::Observed,
+    }
+}
+
 /// One path's cumulative story across the session.
 #[derive(Debug, Clone)]
 struct Entry {
@@ -249,19 +289,27 @@ impl AuthoredDiffLedger {
         }
         let oversized = pre.len() > MAX_RETAINED_BYTES || post.len() > MAX_RETAINED_BYTES;
         if let Some(entry) = self.entries.get_mut(path) {
+            // Captured before `latest` is overwritten: whether the incoming
+            // post-image differs from what this ledger already believed was on
+            // disk is the only thing separating a probe *re-reporting* a
+            // declared write from a probe reporting that something else
+            // *overwrote* it. See the provenance fold below.
+            let restates_known_content = entry.latest.as_deref() == Some(post);
             entry.last_op = op;
             entry.latest = (!oversized).then(|| post.to_string());
             entry.oversized |= oversized;
-            // A path a CRUD tool declared stays declared even if the probe
-            // later observes it again: the probe re-reports every declared
-            // write it can see, and letting that downgrade the provenance
-            // would erase authorship from exactly the files that have it.
-            if provenance == Provenance::Declared && entry.provenance == Provenance::Observed {
-                entry.provenance = Provenance::Declared;
-                // It has moved off the observed budget onto the declared one.
-                // Reachable at most once per path — the guard above is false
-                // ever after — so the counter cannot drift or underflow.
-                self.observed -= 1;
+            let folded = fold_provenance(entry.provenance, provenance, restates_known_content);
+            if folded != entry.provenance {
+                // The observed budget counts entries *currently* classified
+                // observed, so it is adjusted on every transition in either
+                // direction. Both arms are reachable repeatedly for one path
+                // (declare, shell-overwrite, declare again), and staying in
+                // step with the classification is what keeps it from drifting.
+                match folded {
+                    Provenance::Declared => self.observed -= 1,
+                    Provenance::Observed => self.observed += 1,
+                }
+                entry.provenance = folded;
             }
             return;
         }
@@ -783,5 +831,152 @@ mod tests {
         );
         assert_eq!(Provenance::for_tool("write_file"), Provenance::Declared);
         assert_eq!(Provenance::for_tool("edit_file"), Provenance::Declared);
+    }
+
+    /// The `fix-git` trap, at the grain that caused it.
+    ///
+    /// A tool writes a file, then a shell command (here: `git checkout
+    /// --theirs`) replaces its content with something the agent never typed.
+    /// The ledger must stop calling that content authored — otherwise the
+    /// verifier is shown git's blob under the authored header and reports that
+    /// the agent hand-wrote it, which is a verdict no subsequent action can
+    /// clear.
+    #[test]
+    fn content_a_shell_command_overwrote_stops_being_authored() {
+        let mut ledger = AuthoredDiffLedger::default();
+        ledger.record(
+            "about.md",
+            FileOp::Update,
+            Provenance::Declared,
+            "original\n",
+            "hand typed by the agent\n",
+        );
+        // `git checkout --theirs` — the probe sees new content it did not write.
+        ledger.record(
+            "about.md",
+            FileOp::Update,
+            Provenance::Observed,
+            "hand typed by the agent\n",
+            "recovered from the git object\n",
+        );
+
+        let rendered = ledger.render();
+        assert!(
+            !rendered.text.contains("recovered from the git object"),
+            "git-recovered content must not render as authored: {}",
+            rendered.text
+        );
+        assert_eq!(
+            rendered.declared_files, 0,
+            "the path is no longer an authored change: {}",
+            rendered.text
+        );
+        assert_eq!(
+            rendered.observed_files, 1,
+            "it is still reported, as observed"
+        );
+        assert!(
+            rendered.text.contains(MARKER_PREFIX),
+            "it renders as a marker: {}",
+            rendered.text
+        );
+    }
+
+    /// The case the one-way ratchet existed to protect, which must keep working:
+    /// the probe re-reports a declared write it can see, restating content the
+    /// ledger already holds. That is the same change observed twice, not a
+    /// foreign overwrite, and authorship survives it.
+    #[test]
+    fn a_probe_restating_a_declared_write_does_not_erase_authorship() {
+        let mut ledger = AuthoredDiffLedger::default();
+        ledger.record(
+            "solution.py",
+            FileOp::Update,
+            Provenance::Declared,
+            "old\n",
+            "def ok():\n    return True\n",
+        );
+        ledger.record(
+            "solution.py",
+            FileOp::Update,
+            Provenance::Observed,
+            "def ok():\n    return True\n",
+            "def ok():\n    return True\n",
+        );
+
+        let rendered = ledger.render();
+        assert_eq!(
+            rendered.declared_files, 1,
+            "still authored: {}",
+            rendered.text
+        );
+        assert!(rendered.text.contains("def ok():"), "{}", rendered.text);
+    }
+
+    /// A tool that writes again *after* a shell overwrite re-claims the path:
+    /// the agent really did author what is there now.
+    #[test]
+    fn a_declared_write_after_a_shell_overwrite_reclaims_authorship() {
+        let mut ledger = AuthoredDiffLedger::default();
+        ledger.record("f.txt", FileOp::Update, Provenance::Declared, "a\n", "b\n");
+        ledger.record("f.txt", FileOp::Update, Provenance::Observed, "b\n", "c\n");
+        ledger.record("f.txt", FileOp::Update, Provenance::Declared, "c\n", "d\n");
+
+        let rendered = ledger.render();
+        assert_eq!(rendered.declared_files, 1, "{}", rendered.text);
+        assert_eq!(rendered.observed_files, 0, "{}", rendered.text);
+        assert!(rendered.text.contains("+d"), "{}", rendered.text);
+    }
+
+    /// The observed budget counts entries *currently* observed, so it has to
+    /// stay in step across repeated transitions rather than drifting or
+    /// underflowing. Alternating the two provenances on one path exercises both
+    /// arms several times; a counter that only handled the upgrade would go
+    /// negative and panic in debug.
+    #[test]
+    fn the_observed_budget_survives_repeated_reclassification() {
+        let mut ledger = AuthoredDiffLedger::default();
+        for round in 0..4 {
+            ledger.record(
+                "churn.txt",
+                FileOp::Update,
+                Provenance::Declared,
+                "x\n",
+                &format!("declared {round}\n"),
+            );
+            ledger.record(
+                "churn.txt",
+                FileOp::Update,
+                Provenance::Observed,
+                "x\n",
+                &format!("observed {round}\n"),
+            );
+        }
+        assert_eq!(ledger.observed, 1, "one path, currently observed");
+        assert_eq!(ledger.render().observed_files, 1);
+    }
+
+    /// An observation whose predecessor content was never measurable cannot be
+    /// proven to be a re-report, so it downgrades. Over-claiming authorship is
+    /// the failure that traps an agent; a marker line is the recoverable one.
+    #[test]
+    fn an_observation_over_unknown_content_downgrades() {
+        let mut ledger = AuthoredDiffLedger::default();
+        let huge = "x".repeat(MAX_RETAINED_BYTES + 1);
+        ledger.record(
+            "big.bin",
+            FileOp::Update,
+            Provenance::Declared,
+            "seed\n",
+            &huge,
+        );
+        ledger.record(
+            "big.bin",
+            FileOp::Update,
+            Provenance::Observed,
+            &huge,
+            "small\n",
+        );
+        assert_eq!(ledger.render().declared_files, 0);
     }
 }
