@@ -160,8 +160,8 @@ pub struct RepoStatus {
     /// answer and had to go to raw `git fsck` / `git reflog` to learn anything
     /// (observed on Terminal-Bench `fix-git`, whose whole task is this shape).
     ///
-    /// Capped at [`MAX_UNREACHABLE_ROWS`]; the pipeline's own bookkeeping
-    /// commits are never listed (see [`GitCli::unreachable_commits`]).
+    /// Capped at `MAX_UNREACHABLE_ROWS`; the pipeline's own bookkeeping
+    /// commits are never listed (see `GitCli::unreachable_commits`).
     pub unreachable: Vec<CommitRef>,
     /// True when the unreachable list was truncated at the cap.
     pub unreachable_truncated: bool,
