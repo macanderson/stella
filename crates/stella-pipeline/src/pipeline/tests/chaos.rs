@@ -95,7 +95,7 @@ struct Scenario {
     /// The triage class token the model returns (`lookup` / `single` / `multi`).
     class: &'static str,
     single_model: bool,
-    witness_writer: bool,
+    authors_witness: bool,
     tiny_budget: bool,
     headless_bypass: bool,
 }
@@ -116,7 +116,7 @@ impl Scenario {
             },
             self.class,
             self.single_model,
-            self.witness_writer,
+            self.authors_witness,
             self.tiny_budget,
             self.headless_bypass,
         )
@@ -178,7 +178,8 @@ impl Scenario {
 
     fn config(&self) -> PipelineConfig {
         PipelineConfig {
-            witness_writer: self.witness_writer,
+            roster: Roster::default()
+                .with_enabled(ModelCallRole::WitnessAuthor, self.authors_witness),
             // A candidate count > 1 exercises the best-of-N isolation path.
             candidates: Some(if matches!(self.port, PortShape::Works) {
                 2
@@ -406,7 +407,7 @@ fn matrix() -> Vec<Scenario> {
         for port in [PortShape::Absent, PortShape::Fails, PortShape::Works] {
             for class in ["lookup", "single", "multi"] {
                 for single_model in [false, true] {
-                    for witness_writer in [false, true] {
+                    for authors_witness in [false, true] {
                         for tiny_budget in [false, true] {
                             for headless_bypass in [false, true] {
                                 out.push(Scenario {
@@ -414,7 +415,7 @@ fn matrix() -> Vec<Scenario> {
                                     port,
                                     class,
                                     single_model,
-                                    witness_writer,
+                                    authors_witness,
                                     tiny_budget,
                                     headless_bypass,
                                 });

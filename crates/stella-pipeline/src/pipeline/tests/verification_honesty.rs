@@ -131,7 +131,7 @@ async fn the_verifier_reads_an_untracked_files_content_not_just_its_name() {
         PipelineConfig {
             test_command: None,
             diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );
@@ -263,7 +263,7 @@ async fn verifier_prompt_for_shell_output(shell_output: &'static str) -> String 
         PipelineConfig {
             test_command: None,
             diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-            witness_writer: false,
+            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
             ..PipelineConfig::default()
         },
     );

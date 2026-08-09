@@ -38,7 +38,7 @@ async fn a_two_candidate_fanout_records_which_candidates_degraded() {
         candidates: Some(2),
         max_revisions: 0,
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-        distress_guidance: false,
+        roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
         ..PipelineConfig::default()
     };
 
@@ -115,7 +115,7 @@ async fn a_candidate_degrading_on_every_round_records_a_fact_per_occurrence() {
         test_command: Some("cargo test -p x".into()),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         max_revisions: 1,
-        distress_guidance: false,
+        roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
         ..PipelineConfig::default()
     };
     let pipeline = Pipeline::new(

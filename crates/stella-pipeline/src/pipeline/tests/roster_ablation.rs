@@ -55,6 +55,14 @@ impl Fixture {
         }
     }
 
+    /// Swap the router, for the cases that need three agents to resolve to
+    /// three *different* models — the only way to make the verifier and the
+    /// assigned witness author disagree (#2467).
+    fn with_router(mut self, router: Router) -> Self {
+        self.router = router;
+        self
+    }
+
     fn pipeline<'p>(
         &'p self,
         resolver: &'p OneProvider<'p>,
@@ -256,5 +264,171 @@ async fn an_unhonourable_roster_refuses_before_spending_anything() {
     assert!(
         fixture.provider.shapes().is_empty(),
         "the refusal must land before any paid call"
+    );
+}
+
+/// A router whose worker, triage and verifier agents resolve to three named
+/// models, so a case can make the verifier and the *assigned* witness author
+/// disagree. `Fixture`'s own `router()` resolves everything to one model,
+/// which is precisely the posture under which #2467 is unreachable.
+fn triple_router(worker: &str, triage: &str, verifier: &str) -> Router {
+    let mut roles = RoleTable::new();
+    roles.pin(Role::Worker, ModelRef::new("scripted", worker));
+    roles.pin(Role::Triage, ModelRef::new("scripted", triage));
+    roles.pin(Role::Verifier, ModelRef::new("scripted", verifier));
+    Router::new(
+        roles,
+        vec![ProviderProfile::new(
+            "scripted",
+            ModelRef::new("scripted", "worker"),
+            ModelRef::new("scripted", "triage"),
+            ModelRef::new("scripted", "verifier"),
+        )],
+        CircuitBreaker::new(Box::new(ZeroClock)),
+    )
+}
+
+/// A config with witness authoring live — no `test_command`, since an explicit
+/// oracle pre-empts authoring before the gate is ever consulted.
+fn witness_config(roster: Roster) -> PipelineConfig {
+    PipelineConfig {
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        max_revisions: 0,
+        roster: roster.with_enabled(ModelCallRole::DistressGuidance, false),
+        ..PipelineConfig::default()
+    }
+}
+
+/// **#2467's witness, false-negative direction.**
+///
+/// The gate resolved `Role::Verifier` literally while the resolution went
+/// through the roster, so moving `witness_author` elsewhere made the two
+/// disagree. Here the verifier resolves to the worker's own model — the
+/// posture that legitimately blocks authoring — but authoring has been
+/// reassigned to the `triage` agent, which resolves to a third model. An
+/// independent author exists, and the gate must say so.
+///
+/// Fails on this PR's HEAD before the fix: the gate probes the verifier,
+/// finds the worker's model, and declines to author with a message advising a
+/// change to `pipeline_verifier_model` — a row the operator deliberately moved
+/// authoring off.
+#[tokio::test]
+async fn the_witness_gate_follows_the_assignment() {
+    let fixture = Fixture::new(vec![]).with_router(triple_router("shared", "third", "shared"));
+    let resolver = OneProvider(&fixture.provider);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut roster = Roster::default();
+    roster.set_agent(
+        ModelCallRole::WitnessAuthor,
+        crate::roster::AgentId::new("triage"),
+    );
+    let pipeline = fixture.pipeline(&resolver, tx, witness_config(roster));
+
+    assert!(
+        pipeline.can_author_independent_witness(),
+        "the `triage` agent resolves to a model the worker does not use, so an independent \
+         author exists — the gate must answer for the assigned agent, not for the verifier"
+    );
+}
+
+/// **#2467's witness, false-positive direction — the one that loses evidence.**
+///
+/// The mirror: the verifier resolves to a model distinct from the worker's, so
+/// the old gate answered "independent" and the run therefore did NOT tell the
+/// worker its own failing test was the only deterministic evidence it would
+/// carry. Authoring is assigned to the `worker` agent, so
+/// `resolve_witness_author`'s worker-model filter then dropped the author —
+/// silently, by contract, because the gate was supposed to have spoken. The
+/// run finished with no witness, no test-first instruction, and nothing said.
+///
+/// Both halves are asserted: the gate declines, and the worker's prompt
+/// carries `VerificationContract::WorkerTestFirst`, which is chosen off the
+/// gate several steps before the resolution could have healed it.
+#[tokio::test]
+async fn an_author_bound_to_the_worker_makes_the_run_ask_for_a_worker_test() {
+    let fixture = Fixture::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS"),
+    ])
+    .with_router(triple_router("w-model", "t-model", "v-model"));
+    let resolver = OneProvider(&fixture.provider);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut roster = Roster::default();
+    roster.set_agent(
+        ModelCallRole::WitnessAuthor,
+        crate::roster::AgentId::new("worker"),
+    );
+    let pipeline = fixture.pipeline(&resolver, tx, witness_config(roster));
+
+    assert!(
+        !pipeline.can_author_independent_witness(),
+        "a witness the worker wrote proves nothing about the worker's diff, so authoring \
+         bound to the worker must not read as independent"
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("losing the author costs the witness, never the task");
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+
+    // Not merely "the prompt carrying the goal": the triage classification
+    // prompt quotes the goal too, and matching it first is how this assertion
+    // passes for the wrong reason. `CLASS:` is the classifier's own answer
+    // grammar and appears in no other call.
+    let worker_prompt = fixture
+        .provider
+        .prompts()
+        .into_iter()
+        .find(|prompt| prompt.contains("Fix the failing test") && !prompt.contains("CLASS:"))
+        .expect("the worker was prompted");
+    assert!(
+        worker_prompt.contains("write the failing test"),
+        "with no independent author the worker must be told test-first, up front — the \
+         contract is fixed before the resolution could heal the flag: {worker_prompt}"
+    );
+
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, .. }
+                if message.contains("no model independent of the worker")
+        )),
+        "the degradation is announced rather than silent: {events:?}"
+    );
+    assert!(!stages(&events).contains(&StageKind::Witness));
+}
+
+/// A responsibility the operator switched **off** is not an outage, and must
+/// not be reported as one.
+///
+/// `report_roster_posture` already states the ablation once, before any spend.
+/// The gate seeing `Independence::Withheld` therefore declines in silence —
+/// the distinction #2381 exists to keep legible, and the reason the probe
+/// returns four states rather than three.
+#[tokio::test]
+async fn an_ablated_witness_author_is_not_announced_as_a_degradation() {
+    let fixture = Fixture::new(vec![]).with_router(triple_router("w-model", "t-model", "v-model"));
+    let resolver = OneProvider(&fixture.provider);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = fixture.pipeline(
+        &resolver,
+        tx,
+        witness_config(Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false)),
+    );
+
+    assert!(!pipeline.can_author_independent_witness());
+    let events = drain(&mut rx);
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, .. }
+                if message.contains("no model independent of the worker")
+        )),
+        "an ablation the operator asked for must not be filed as a degradation: {events:?}"
     );
 }

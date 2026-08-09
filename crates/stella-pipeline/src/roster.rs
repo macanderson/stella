@@ -59,8 +59,10 @@
 //! maintenance contract: a responsibility cannot enter the pipeline without
 //! someone stating who owns it.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
 use stella_protocol::{ModelCallRole, Role};
 
 /// The agent a responsibility is assigned to.
@@ -75,7 +77,12 @@ use stella_protocol::{ModelCallRole, Role};
 /// The names are [`Role`]'s own serde tokens, so an operator who has already
 /// written `pipeline_verifier_model` reads `actor = "verifier"` without
 /// learning a second spelling.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// `#[serde(transparent)]` so a persisted binding is the bare name an operator
+/// wrote, not a wrapper object: the stored form and the configured form are
+/// then the same text, which is what lets one decoder read both (#2458).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct AgentId(String);
 
 impl AgentId {
@@ -293,11 +300,13 @@ pub enum RosterError {
 /// difference between "enabled = true" and "did not mention enabled" is the
 /// difference between a deployment that pinned today's default and one that
 /// inherits tomorrow's.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssignmentOverride {
     /// Whether the responsibility runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     /// Who performs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentId>,
 }
 
@@ -425,6 +434,21 @@ impl Roster {
         }
     }
 
+    /// [`Self::set_enabled`] by value, for a caller building a roster inside a
+    /// struct literal.
+    ///
+    /// [`crate::PipelineConfig`] is almost always written as one literal, and
+    /// before #2458 the way to say "this run authors no witness" was a `bool`
+    /// field in it. Forcing every such caller to break the literal apart into
+    /// a `let mut` and a statement is how a mechanical change acquires a
+    /// dozen incidental diffs — and how the next author reaches for a second
+    /// field instead.
+    #[must_use]
+    pub fn with_enabled(mut self, responsibility: ModelCallRole, enabled: bool) -> Self {
+        self.set_enabled(responsibility, enabled);
+        self
+    }
+
     /// Reassign a responsibility to a different agent.
     ///
     /// Ignores an unowned responsibility for the same reason as
@@ -491,6 +515,49 @@ impl Roster {
             }
         }
         self.validate()
+    }
+
+    /// This roster as the smallest override block that reproduces it from
+    /// [`Self::default`] — the inverse of [`Self::apply`], in the same
+    /// vocabulary.
+    ///
+    /// Deliberately the same vocabulary, because that is what lets a caller
+    /// which must *persist* a roster (the resume frame, #2458) write this and
+    /// read it back through `apply`. The decoder for a stored roster is then
+    /// literally the decoder for a configured one, and a stored row cannot
+    /// come to mean something a settings row does not.
+    ///
+    /// A diff from the default rather than the whole table, for durability
+    /// rather than size: a responsibility added to [`ModelCallRole`] after a
+    /// block was written must come back at its new default, not absent. A
+    /// roster that configured nothing yields an empty map, so the common case
+    /// costs nothing to carry.
+    ///
+    /// The roster's rejected rows are deliberately not represented. Those
+    /// describe configuration text this roster could not turn into bindings,
+    /// and text that is not being re-parsed cannot be re-rejected — a run
+    /// holding one was refused before spend
+    /// ([`crate::PipelineError::InvalidRoster`]), so no checkpoint of it
+    /// exists to restore.
+    #[must_use]
+    pub fn overrides(&self) -> BTreeMap<String, AssignmentOverride> {
+        let baseline = Self::default();
+        self.rows
+            .iter()
+            .filter_map(|row| {
+                let default = baseline.assignment(row.responsibility);
+                let enabled =
+                    (default.map(|d| d.enabled) != Some(row.enabled)).then_some(row.enabled);
+                let agent =
+                    (default.map(|d| &d.agent) != Some(&row.agent)).then(|| row.agent.clone());
+                (enabled.is_some() || agent.is_some()).then(|| {
+                    (
+                        responsibility_token(row.responsibility),
+                        AssignmentOverride { enabled, agent },
+                    )
+                })
+            })
+            .collect()
     }
 
     /// Every problem this roster has, in row order.

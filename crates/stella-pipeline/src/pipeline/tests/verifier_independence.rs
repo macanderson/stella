@@ -89,7 +89,7 @@ fn verdict_config() -> PipelineConfig {
         // No repair round: the first model verdict is the outcome under test,
         // and a revise turn after it would only lengthen the script.
         max_revisions: 0,
-        distress_guidance: false,
+        roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
         ..PipelineConfig::default()
     }
 }

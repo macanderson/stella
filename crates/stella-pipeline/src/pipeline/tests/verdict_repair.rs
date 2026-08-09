@@ -52,7 +52,7 @@ macro_rules! repair_scenario {
             PipelineConfig {
                 test_command: Some("cargo test -p x".into()),
                 max_revisions: 1,
-                distress_guidance: false,
+                roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
                 ..PipelineConfig::default()
             }
         )
@@ -192,7 +192,7 @@ async fn an_engine_turn_budget_no_longer_meters_the_repair_clock() {
         PipelineConfig {
             test_command: Some("cargo test -p x".into()),
             max_revisions: 1,
-            distress_guidance: false,
+            roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
             engine: EngineConfig {
                 // Any elapsed time exceeds this, so a gate that reads it as
                 // the run deadline refuses the FIRST repair. On `main` this
@@ -229,7 +229,7 @@ async fn an_elapsed_run_deadline_refuses_repair_and_still_reports_the_verdict() 
         PipelineConfig {
             test_command: Some("cargo test -p x".into()),
             max_revisions: 1,
-            distress_guidance: false,
+            roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
             run_budget: Some(Duration::ZERO),
             ..PipelineConfig::default()
         }
@@ -267,7 +267,7 @@ async fn a_run_deadline_with_room_grants_repair_past_the_allowance() {
         PipelineConfig {
             test_command: Some("cargo test -p x".into()),
             max_revisions: 1,
-            distress_guidance: false,
+            roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
             run_budget: Some(Duration::from_secs(3600)),
             ..PipelineConfig::default()
         }
