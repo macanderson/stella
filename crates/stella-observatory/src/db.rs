@@ -950,7 +950,9 @@ impl Observatory {
     /// The newest `MAX_LISTED_REFLECTIONS` post-turn self-reflections joined
     /// to their executions: the self-improvement tab's ratings feed.
     ///
-    /// Only rows the model actually graded ([`HAS_SELF_REVIEW`]). Filtering in
+    /// Only rows the model actually graded — the crate-private
+    /// `HAS_SELF_REVIEW` predicate, deliberately not linked because this
+    /// method is public and that constant is not. Filtering in
     /// SQL rather than after the fact is what makes the window mean "the newest
     /// N ratings": the predicate applies before `LIMIT`, so a workspace whose
     /// most recent `MAX_LISTED_REFLECTIONS` rows are all ungraded still shows
