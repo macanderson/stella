@@ -12,6 +12,16 @@
 /* ==========================================================================
    stella brand kit v1.0 "the comet": Phosphor Gold on Ink, JetBrains Mono.
    Gold is the signal, never the surface. Assemble, don't spin.
+
+   LAYOUT MODEL — a fixed 16:9 stage, scaled to fit (exemplar: reveal.js).
+   Every slide is laid out inside a deterministic 1600x900 canvas and the whole
+   canvas is transform-scaled to the viewport by `fit()` in the script below.
+   This is what makes the viewport question decidable: a slide either fits the
+   canvas or it does not, and that answer is the same on a 1440x900 laptop, a
+   1920x1080 projector, and a 4K display. The previous fluid layout could only
+   be checked one viewport at a time, and it clipped or scrolled on four
+   slides at 1440x900 (issue #2373). Content is measured against the canvas by
+   scripts/deck-fit.mjs; nothing here may exceed it.
    ========================================================================== */
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("../brand/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("../brand/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); }
@@ -27,52 +37,75 @@
   --surface: #131315;
   --border: #232327;
   --muted: #9B9890;
+  --pass: #2FD3C6;
+  --fail: #E4408F;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);
-  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --glow-gold: 0 0 24px rgb(255 176 0 / 0.28), 0 0 96px rgb(255 176 0 / 0.12);
+  --W: 1600px;
+  --H: 900px;
+  --k: 1;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; }
+/* Every type size in this deck is a rem off this one number, so the whole
+   deck's density is a single knob measured against the canvas by
+   scripts/deck-fit.mjs. 17px is the largest value at which all 21 slides
+   still fit 1600x900. */
+html { font-size: 18px; }
 body {
   background: var(--ink);
   color: var(--paper);
   font-family: var(--mono);
   font-weight: 400;
-  font-size: clamp(14px, 1.35vw, 18px);
-  line-height: 1.65;
+  line-height: 1.6;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
+/* ---- the stage ---------------------------------------------------------- */
+.viewport { position: fixed; inset: 0; overflow: hidden; }
+/* Centre by offsetting half the canvas rather than by a centring layout: a
+   grid or flex container start-aligns an item wider than itself (safe
+   alignment), so the canvas landed 80px off-centre at 1440 wide and clipped
+   its right edge. Absolute placement plus a half-size translate cannot do
+   that — the element's own centre is pinned to the viewport's centre whatever
+   the scale. */
+.stage {
+  position: absolute; top: 50%; left: 50%;
+  width: var(--W); height: var(--H);
+  transform: translate(-50%, -50%) scale(var(--k));
+  transform-origin: center center;
+}
+
 /* terminal grid + starfield texture, behind everything */
 .texture {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
   background-image:
     linear-gradient(rgb(244 241 234 / 0.035) 1px, transparent 1px),
     linear-gradient(90deg, rgb(244 241 234 / 0.035) 1px, transparent 1px);
   background-size: 48px 48px;
 }
-.starfield { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+.starfield { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.starfield circle { animation: twinkle 6s ease-in-out infinite; }
+@keyframes twinkle { 0%, 100% { opacity: var(--o, 0.12); } 50% { opacity: calc(var(--o, 0.12) * 2.2); } }
 
 /* ---- deck chrome -------------------------------------------------------- */
 .progress {
-  position: fixed; top: 0; left: 0; height: 2px; width: 0%;
+  position: absolute; top: 0; left: 0; height: 2px; width: 0%;
   background: var(--gold); z-index: 40;
-  transition: width 280ms var(--ease-arrive);
+  transition: width 320ms var(--ease-arrive);
 }
 .chrome {
-  position: fixed; z-index: 30; font-size: 0.72em; font-weight: 500;
-  letter-spacing: 0.14em; color: var(--muted); user-select: none;
+  position: absolute; z-index: 30; font-size: 0.72rem; font-weight: 500;
+  letter-spacing: 0.16em; color: var(--muted); user-select: none;
 }
-.chrome.brand { top: 20px; left: 28px; display: flex; align-items: center; gap: 10px; }
+.chrome.brand { top: 26px; left: 40px; display: flex; align-items: center; gap: 10px; }
 .chrome.brand svg { display: block; }
-.chrome.counter { top: 22px; right: 28px; font-variant-numeric: tabular-nums; }
-.chrome.hint { bottom: 18px; left: 28px; }
-@media (max-width: 640px) { .chrome.hint { display: none; } }
+.chrome.counter { top: 28px; right: 40px; font-variant-numeric: tabular-nums; }
+.chrome.hint { bottom: 24px; left: 40px; }
 
-.navbtns { position: fixed; bottom: 14px; right: 20px; z-index: 30; display: flex; gap: 8px; }
+.navbtns { position: absolute; bottom: 18px; right: 34px; z-index: 30; display: flex; gap: 8px; }
 .navbtns button {
   font-family: var(--mono); font-size: 14px; font-weight: 500;
   color: var(--paper); background: var(--surface);
@@ -86,219 +119,282 @@ body {
 .slide {
   position: absolute; inset: 0; z-index: 1;
   display: none;
-  align-items: flex-start;
-  /* Vertical padding is charged against the slide's usable height, so it is
-     scaled to the viewport height rather than its width — 6vw of top and
-     bottom gutter cost ~170px on a 900px screen and pushed dense slides off
-     the bottom. Horizontal gutter is unchanged. */
-  padding: clamp(18px, 3vh, 44px) clamp(24px, 6vw, 96px);
-  overflow-y: auto;
+  padding: 52px 84px 44px;
 }
-.slide.active { display: flex; }
-/* `margin: auto` centres the frame while free space exists and collapses to
-   zero when it does not — so a slide taller than the viewport scrolls from the
-   top instead of having its heading and its conclusion centred off both edges.
-   `align-items: center` would clip them silently; this cannot. */
-.frame { max-width: 1060px; margin: auto; width: 100%; position: relative; z-index: 2; }
+.slide.active { display: block; }
+.frame { display: flex; flex-direction: column; height: 100%; position: relative; z-index: 2; }
 
-.overline {
-  font-size: 0.72em; font-weight: 500; letter-spacing: 0.14em;
-  color: var(--gold); margin-bottom: 1.6em;
-}
+.overline { font-size: 0.8rem; font-weight: 500; letter-spacing: 0.18em; color: var(--gold); margin-bottom: 14px; }
 .overline .idx { color: var(--muted); }
-h1, h2 {
-  font-weight: 800; letter-spacing: -0.02em; line-height: 1.15;
-  font-size: clamp(1.9rem, 5vw, 3.4rem);
-  margin-bottom: 0.55em;
-}
+h1, h2 { font-weight: 800; letter-spacing: -0.025em; line-height: 1.08; }
+h1 { font-size: 4.1rem; }
+h2 { font-size: 2.7rem; margin-bottom: 16px; }
 h1 em, h2 em { font-style: normal; color: var(--gold); }
-.lead { font-size: clamp(0.95rem, 1.8vw, 1.2rem); color: var(--paper); max-width: 44em; }
-.lead + .lead { margin-top: 1em; }
+.lead { font-size: 1.08rem; line-height: 1.62; max-width: 52em; }
+.lead + .lead { margin-top: 0.7em; }
 .muted { color: var(--muted); }
+.gold { color: var(--gold); }
 .kicker {
-  margin-top: 2em; padding-left: 1em; border-left: 3px solid var(--gold);
-  font-weight: 700; max-width: 40em;
+  padding-left: 16px; border-left: 3px solid var(--gold);
+  font-weight: 700; font-size: 1.02rem; line-height: 1.5; max-width: 62em;
 }
-.fine { font-size: 0.68em; color: var(--muted); margin-top: 2.2em; max-width: 60em; }
+.kicker em { font-style: normal; color: var(--gold); }
+.fine { font-size: 0.7rem; line-height: 1.55; color: var(--muted); }
+.foot { margin-top: auto; padding-top: 22px; display: flex; flex-direction: column; gap: 12px; }
 
-/* status chip: a visible slot the founder fills before the deck ships */
-.chip {
-  display: inline-block; font-size: 0.72em; font-weight: 700; letter-spacing: 0.06em;
-  color: var(--gold-300); border: 1px dashed var(--gold-deep); border-radius: 6px;
-  padding: 1px 10px; vertical-align: middle;
-}
+/* layout helpers ---------------------------------------------------------- */
+/* The body block claims the room between the heading and the footer and
+   centres its content in it, so a slide that runs short reads as composed
+   rather than as a heading with a hole under it. */
+.body { margin-top: 22px; flex: 1 1 auto; display: grid; align-content: center; }
+.cols { display: grid; gap: 22px; align-items: start; }
+.c-2 { grid-template-columns: 1fr 1fr; }
+.c-7-5 { grid-template-columns: 7fr 5fr; }
+.c-5-7 { grid-template-columns: 5fr 7fr; }
+.c-6-4 { grid-template-columns: 6fr 4fr; }
+.stack { display: grid; gap: 12px; align-content: start; }
 
 /* stat tiles */
-.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 2.4em; }
-@media (max-width: 760px) { .tiles { grid-template-columns: 1fr; } }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .tiles.four { grid-template-columns: repeat(4, 1fr); }
-@media (max-width: 960px) { .tiles.four { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 560px) { .tiles.four { grid-template-columns: 1fr; } }
+.tiles.two { grid-template-columns: repeat(2, 1fr); }
+.tiles.one { grid-template-columns: 1fr; }
 .tile {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 14px; padding: 20px 22px;
+  border-radius: 14px; padding: 16px 18px;
+  position: relative; overflow: hidden;
 }
-.tile .big { font-size: clamp(1.5rem, 3.4vw, 2.2rem); font-weight: 800; letter-spacing: -0.02em; color: var(--gold); line-height: 1.15; }
-.tile .cap { font-size: 0.78em; color: var(--muted); margin-top: 0.5em; line-height: 1.5; }
-.tile .tag { font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; color: var(--gold); }
-.tile .name { font-weight: 800; font-size: 1.2em; margin-top: 0.3em; }
+.tile::after {
+  content: ""; position: absolute; left: 0; top: 0; width: 100%; height: 2px;
+  background: linear-gradient(90deg, var(--gold), transparent);
+  transform: scaleX(0); transform-origin: left;
+}
+.slide.active .tile::after { animation: swipe 620ms var(--ease-arrive) 260ms forwards; }
+@keyframes swipe { to { transform: scaleX(1); } }
+.tile .big { font-size: 2.1rem; font-weight: 800; letter-spacing: -0.03em; color: var(--gold); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tile .cap { font-size: 0.82rem; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+.tile .tag { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.16em; color: var(--gold); }
+.tile .name { font-weight: 800; font-size: 1rem; margin-top: 2px; }
+.tile code { font-size: 0.68rem; color: var(--gold-deep); word-break: break-all; }
 
-/* flow steps (oracle flip, protocol limits) */
-.steps { display: grid; gap: 12px; margin-top: 2em; counter-reset: step; }
+/* numbered steps */
+.steps { display: grid; gap: 10px; }
+.steps.two { grid-template-columns: 1fr 1fr; }
+.steps.four { grid-template-columns: repeat(4, 1fr); }
 .step {
-  display: grid; grid-template-columns: 44px 1fr; gap: 16px; align-items: baseline;
+  display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 10px; padding: 14px 18px;
+  border-radius: 10px; padding: 12px 16px;
 }
-.step .n { font-weight: 800; color: var(--gold); font-size: 1.1em; }
-.step .t { font-weight: 700; }
-.step .d { color: var(--muted); font-size: 0.85em; margin-top: 0.2em; }
+.step .n { font-weight: 800; color: var(--gold); font-size: 0.95rem; line-height: 1.5; }
+.step .t { display: block; font-weight: 700; font-size: 0.92rem; line-height: 1.45; }
+.step .d { display: block; color: var(--muted); font-size: 0.78rem; margin-top: 3px; line-height: 1.5; }
 .badge {
-  display: inline-block; font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em;
-  border: 1px solid var(--border); border-radius: 999px; padding: 2px 12px;
-  vertical-align: middle;
+  display: inline-block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em;
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 10px;
+  vertical-align: middle; white-space: nowrap;
 }
-.badge.fail { color: #E4408F; border-color: #E4408F; }
-.badge.pass { color: #2FD3C6; border-color: #2FD3C6; }
-
-/* the run → verify → learn → compound loop */
-.loop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 1.8em; }
-@media (max-width: 760px) { .loop { grid-template-columns: 1fr; } }
-.lstep {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 10px; padding: 14px 16px;
-}
-.lstep .n { font-weight: 800; color: var(--gold); }
-.lstep .t { font-weight: 700; margin-left: 0.4em; }
-.lstep .d { color: var(--muted); font-size: 0.78em; margin-top: 0.4em; line-height: 1.5; }
+.badge.fail { color: var(--fail); border-color: var(--fail); }
+.badge.pass { color: var(--pass); border-color: var(--pass); }
 
 /* comparison table */
-table.vs { width: 100%; border-collapse: collapse; margin-top: 2em; font-size: 0.9em; }
-table.vs th, table.vs td { text-align: left; padding: 12px 16px; border: 1px solid var(--border); vertical-align: top; }
-table.vs th { font-weight: 700; font-size: 0.8em; letter-spacing: 0.14em; color: var(--muted); }
+table.vs { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+table.vs th, table.vs td { text-align: left; padding: 9px 13px; border: 1px solid var(--border); vertical-align: top; line-height: 1.45; }
+table.vs th { font-weight: 700; font-size: 0.68rem; letter-spacing: 0.14em; color: var(--muted); }
 table.vs td.gold { color: var(--gold); font-weight: 700; }
-table.vs.compact { font-size: 0.74em; }
-table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
+table.vs.compact { font-size: 0.74rem; }
+table.vs.compact th, table.vs.compact td { padding: 7px 12px; }
 
 /* terminal card */
 .term {
-  background: var(--ink); border: 1px solid var(--border); border-radius: 14px;
-  padding: 18px 22px; margin-top: 2em; font-size: 0.88em; line-height: 1.9;
+  background: var(--ink); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 18px; font-size: 0.84rem; line-height: 1.85;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 28px rgb(0 0 0 / 0.35);
-  max-width: 46em;
 }
 .term .p { color: var(--muted); }
-.term .g { color: var(--gold); }
-.term .ok { color: #2FD3C6; }
-.term .no { color: #E4408F; }
+.term .ok { color: var(--pass); }
+.term .no { color: var(--fail); }
+.term .cursor { display: inline-block; width: 8px; height: 1em; background: var(--gold); vertical-align: -0.15em; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 
-/* two-card splits (product, founder) */
-.split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 2.2em; }
-@media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 14px; padding: 22px 24px;
-}
-.card h3 { font-weight: 800; font-size: 1.35em; letter-spacing: -0.02em; }
+/* cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+.card h3 { font-weight: 800; font-size: 1.2rem; letter-spacing: -0.02em; }
 .card h3 em { font-style: normal; color: var(--gold); }
-.card .role { color: var(--gold); font-size: 0.78em; font-weight: 700; letter-spacing: 0.1em; margin: 0.4em 0 0.9em; }
-.card p { font-size: 0.88em; line-height: 1.7; }
-.card p + p { margin-top: 0.9em; }
-.card .sub { color: var(--muted); font-size: 0.82em; }
+.card .role { color: var(--gold); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em; margin: 4px 0 10px; }
+.card p { font-size: 0.84rem; line-height: 1.6; }
+.card p + p { margin-top: 8px; }
+.card .sub { color: var(--muted); font-size: 0.78rem; }
 
-/* callout (the trap) */
+/* callout */
 .callout {
   background: var(--surface); border: 1px solid var(--gold); border-radius: 14px;
-  padding: 22px 26px; margin-top: 2em; max-width: 34em;
-  font-weight: 800; font-size: clamp(1.05rem, 2.2vw, 1.45rem); line-height: 1.4;
+  padding: 18px 22px; font-weight: 800; font-size: 1.25rem; line-height: 1.35;
 }
 .callout .g2 { color: var(--gold); }
 
 /* benchmark bars */
-.bench { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 2.2em; }
-@media (max-width: 760px) { .bench { grid-template-columns: 1fr; } }
-.bench .bh { font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; color: var(--gold); }
-.bench .bsub { font-size: 0.72em; color: var(--muted); margin-bottom: 0.6em; }
-.brow { margin-top: 1.1em; }
-.brow .blabel { font-size: 0.8em; margin-bottom: 0.45em; }
-.brow .blabel strong { font-weight: 700; }
+.bh { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.16em; color: var(--gold); }
+.bsub { font-size: 0.7rem; color: var(--muted); margin-bottom: 10px; }
+.brow { margin-top: 12px; }
+.brow .blabel { font-size: 0.78rem; margin-bottom: 5px; }
 .btrack { display: flex; align-items: center; gap: 10px; }
 .btrack .fill { flex: 1; }
-.bar { height: 20px; border-radius: 4px; background: var(--border); }
-.bar.gold { background: var(--gold); box-shadow: 0 0 18px rgb(255 176 0 / 0.22); }
-.bval { font-size: 0.8em; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bar { height: 18px; border-radius: 4px; background: var(--border); width: 0; }
+.slide.active .bar { width: var(--w); transition: width 900ms var(--ease-arrive) 240ms; }
+.bar.gold { background: linear-gradient(90deg, var(--gold-deep), var(--gold)); box-shadow: 0 0 18px rgb(255 176 0 / 0.22); }
+.bval { font-size: 0.78rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.delta {
+  margin-top: 14px; border: 1px solid var(--gold); border-radius: 10px;
+  padding: 10px 14px; font-weight: 800; font-size: 0.95rem; color: var(--gold);
+}
+.delta span { color: var(--paper); font-weight: 400; font-size: 0.78rem; }
 
-/* founder bio */
+/* founder */
 .avatar {
-  width: 64px; height: 64px; border-radius: 50%; margin-bottom: 14px;
+  width: 52px; height: 52px; border-radius: 50%; margin-bottom: 10px;
   border: 1px solid var(--gold-deep); color: var(--gold);
   display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 1.2em; letter-spacing: 0.04em;
-  background: var(--ink);
+  font-weight: 800; font-size: 1.05rem; letter-spacing: 0.04em; background: var(--ink);
 }
+.creds { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.cred { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; color: var(--gold-300); border: 1px solid var(--gold-deep); border-radius: 999px; padding: 2px 12px; }
 
 /* the ask */
-.askbox {
-  border: 1px solid var(--gold); border-radius: 14px;
-  padding: 22px 26px; margin-top: 1.8em;
-  background: var(--surface);
-}
-.askbox .at { color: var(--gold); font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; }
-.askbox .ah { font-weight: 800; font-size: clamp(1.1rem, 2.4vw, 1.5rem); margin-top: 0.3em; }
+.askbox { border: 1px solid var(--gold); border-radius: 14px; padding: 18px 22px; background: var(--surface); }
+.askbox .at { color: var(--gold); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.16em; }
+.askbox .ah { font-weight: 800; font-size: 1.25rem; margin-top: 4px; line-height: 1.3; }
 .askbox .ah em { font-style: normal; color: var(--gold); }
-.askbox ul { margin: 0.9em 0 0 1.2em; font-size: 0.85em; }
-.askbox li + li { margin-top: 0.45em; }
+.askbox ul { margin: 12px 0 0 18px; font-size: 0.8rem; line-height: 1.5; }
+.askbox li + li { margin-top: 7px; }
 
 /* cover */
-.cover { text-align: left; }
-.cover .lockup { display: flex; align-items: center; gap: 22px; margin: 0.6em 0 0.4em; }
-.cover .wordmark { font-size: clamp(3rem, 9vw, 6rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
-.cover .wordmark sup { color: var(--gold); font-size: 0.45em; }
-.cover .comet { filter: drop-shadow(0 0 24px rgb(255 176 0 / 0.28)); }
+.lockup { display: flex; align-items: center; gap: 18px; margin: 6px 0; }
+.wordmark { font-size: 4.6rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+.wordmark sup { color: var(--gold); font-size: 0.42em; }
+.comet { filter: drop-shadow(0 0 24px rgb(255 176 0 / 0.28)); }
+.slide.active .comet { animation: comet-in 900ms var(--ease-arrive) both; }
+@keyframes comet-in { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: none; } }
 .links a { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(--gold-deep); }
 .links a:hover { border-bottom-color: var(--gold); }
+a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(--gold-deep); }
+
+/* rail of proof stats on the cover */
+.rail { display: grid; gap: 12px; align-content: center; }
+.rail .r { border-left: 2px solid var(--gold-deep); padding-left: 14px; }
+.rail .rv { font-size: 1.7rem; font-weight: 800; color: var(--gold); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.rail .rc { font-size: 0.76rem; color: var(--muted); line-height: 1.45; }
+
+/* ---- diagrams ----------------------------------------------------------- */
+.dia { width: 100%; height: auto; display: block; }
+.dia text { font-family: var(--mono); fill: var(--paper); }
+.dia .lbl { font-size: 13px; font-weight: 700; }
+.dia .sm { font-size: 11px; fill: var(--muted); }
+.dia .gd { fill: var(--gold); }
+.dia .box { fill: var(--surface); stroke: var(--border); }
+.dia .boxg { fill: none; stroke: var(--gold); }
+.dia .ln { stroke: var(--border); fill: none; }
+.dia .lng { stroke: var(--gold); fill: none; }
+.dia .lnp { stroke: var(--pass); fill: none; }
+.dia .lnf { stroke: var(--fail); fill: none; }
+.dia .fp { fill: var(--pass); }
+.dia .ff { fill: var(--fail); }
+/* stroke-draw: the script measures each path and animates it on activation */
+.draw { stroke-dasharray: var(--len, 400); stroke-dashoffset: var(--len, 400); }
+.slide.active .draw { animation: draw 900ms var(--ease-arrive) 200ms forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.flow { stroke-dasharray: 4 7; animation: flow 1.4s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -22; } }
+.pulse { animation: pulse 2.4s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.spin { transform-origin: center; animation: spin 14s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* assemble, don't spin: content arrives with a small rise, staggered */
-.rise { opacity: 0; transform: translateY(14px); }
-.slide.active .rise {
-  animation: arrive 280ms var(--ease-arrive) forwards;
-}
-.slide.active .rise:nth-child(2) { animation-delay: 70ms; }
-.slide.active .rise:nth-child(3) { animation-delay: 140ms; }
-.slide.active .rise:nth-child(4) { animation-delay: 210ms; }
-.slide.active .rise:nth-child(5) { animation-delay: 280ms; }
-.slide.active .rise:nth-child(6) { animation-delay: 350ms; }
+.rise { opacity: 0; transform: translateY(12px); }
+.slide.active .rise { animation: arrive 300ms var(--ease-arrive) forwards; animation-delay: calc(var(--d, 0) * 65ms); }
+.stagger > * { opacity: 0; transform: translateY(12px); }
+.slide.active .stagger > * { animation: arrive 300ms var(--ease-arrive) forwards; }
+.slide.active .stagger > *:nth-child(1) { animation-delay: 120ms; }
+.slide.active .stagger > *:nth-child(2) { animation-delay: 190ms; }
+.slide.active .stagger > *:nth-child(3) { animation-delay: 260ms; }
+.slide.active .stagger > *:nth-child(4) { animation-delay: 330ms; }
+.slide.active .stagger > *:nth-child(5) { animation-delay: 400ms; }
 @keyframes arrive { to { opacity: 1; transform: none; } }
+
 @media (prefers-reduced-motion: reduce) {
-  .rise { opacity: 1; transform: none; }
-  .slide.active .rise { animation: none; }
+  .rise, .stagger > * { opacity: 1; transform: none; }
+  .slide.active .rise, .slide.active .stagger > *, .slide.active .tile::after,
+  .slide.active .comet, .starfield circle, .flow, .pulse, .spin, .term .cursor { animation: none; }
+  .slide.active .tile::after { transform: scaleX(1); }
+  .draw, .slide.active .draw { stroke-dashoffset: 0; animation: none; }
+  .slide.active .bar { transition: none; }
   .progress { transition: none; }
 }
 
-/* print: every slide on its own page */
+/* ---- reader mode: narrow screens get a scrolling document, not a 0.24x
+   scaled canvas nobody can read. Same markup, fluid layout. --------------- */
+@media (max-width: 900px), (max-height: 460px) {
+  body { overflow: auto; }
+  .viewport { position: static; overflow: visible; }
+  .stage { position: static; width: auto; height: auto; transform: none; }
+  .slide { position: static; display: block !important; padding: 40px 20px; border-bottom: 1px solid var(--border); }
+  .frame { height: auto; }
+  .cols, .tiles, .tiles.four, .tiles.two, .steps.two, .steps.four { grid-template-columns: 1fr; }
+  /* the connector strips only restate the cards beside them; at phone width
+     their labels are unreadable and they earn nothing. */
+  .dia.strip { display: none; }
+  h1 { font-size: 2.2rem; }
+  h2 { font-size: 1.75rem; }
+  .wordmark { font-size: 2.6rem; }
+  .callout { font-size: 1.05rem; }
+  .chrome, .navbtns, .progress { display: none; }
+  .texture, .starfield { position: fixed; }
+  .foot { margin-top: 22px; }
+  /* A table's min-content width is the one thing on a slide that will not
+     reflow on its own; fixing the layout makes the columns share the phone's
+     width and wrap instead of pushing the page sideways. */
+  table.vs, table.vs.compact { font-size: 0.7rem; table-layout: fixed; }
+  table.vs th, table.vs td { word-break: break-word; padding: 7px 8px; }
+  table.vs tr > *:first-child { width: 26%; }
+  .rise, .stagger > * { opacity: 1; transform: none; }
+  .bar { width: var(--w); }
+}
+
+/* print: every slide on its own landscape page */
 @media print {
-  body { overflow: visible; background: #fff; color: #0B0B0C; }
-  .slide { display: flex !important; position: relative; page-break-after: always; min-height: 100vh; overflow: visible; }
-  .rise { opacity: 1 !important; transform: none !important; }
-  .chrome, .navbtns, .progress, .texture, .starfield { display: none !important; }
+  @page { size: 1600px 900px; margin: 0; }
+  body { overflow: visible; }
+  .viewport { position: static; overflow: visible; }
+  .stage { position: static; transform: none; }
+  .slide { position: relative; display: block !important; page-break-after: always; width: 1600px; height: 900px; }
+  /* without this the final break emits a 22nd, empty page */
+  .slide:last-of-type { page-break-after: auto; }
+  .rise, .stagger > * { opacity: 1 !important; transform: none !important; }
+  .bar { width: var(--w) !important; }
+  .draw { stroke-dashoffset: 0 !important; }
+  .chrome, .navbtns, .progress { display: none !important; }
 }
 </style>
 </head>
 <body>
 
+<div class="viewport">
+<div class="stage" id="stage">
+
 <div class="texture" aria-hidden="true"></div>
-<svg class="starfield" aria-hidden="true" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+<svg class="starfield" aria-hidden="true" viewBox="0 0 1600 900" preserveAspectRatio="none">
   <g fill="#F4F1EA">
-    <circle cx="140" cy="120" r="1.2" opacity="0.16"/><circle cx="420" cy="80" r="0.9" opacity="0.10"/>
-    <circle cx="820" cy="150" r="1.1" opacity="0.13"/><circle cx="1240" cy="90" r="0.8" opacity="0.10"/>
-    <circle cx="1520" cy="210" r="1.2" opacity="0.14"/><circle cx="240" cy="520" r="0.9" opacity="0.09"/>
-    <circle cx="90" cy="780" r="1.0" opacity="0.12"/><circle cx="680" cy="820" r="1.1" opacity="0.11"/>
-    <circle cx="1100" cy="740" r="0.9" opacity="0.10"/><circle cx="1460" cy="600" r="1.2" opacity="0.15"/>
-    <circle cx="980" cy="420" r="0.8" opacity="0.08"/><circle cx="1330" cy="380" r="0.9" opacity="0.10"/>
+    <circle cx="140" cy="120" r="1.2" style="--o:.16"/><circle cx="420" cy="80" r="0.9" style="--o:.10;animation-delay:-1s"/>
+    <circle cx="820" cy="150" r="1.1" style="--o:.13;animation-delay:-2s"/><circle cx="1240" cy="90" r="0.8" style="--o:.10;animation-delay:-3s"/>
+    <circle cx="1520" cy="210" r="1.2" style="--o:.14;animation-delay:-4s"/><circle cx="240" cy="520" r="0.9" style="--o:.09;animation-delay:-5s"/>
+    <circle cx="90" cy="780" r="1.0" style="--o:.12;animation-delay:-1.5s"/><circle cx="680" cy="820" r="1.1" style="--o:.11;animation-delay:-2.5s"/>
+    <circle cx="1100" cy="740" r="0.9" style="--o:.10;animation-delay:-3.5s"/><circle cx="1460" cy="600" r="1.2" style="--o:.15;animation-delay:-4.5s"/>
+    <circle cx="980" cy="420" r="0.8" style="--o:.08;animation-delay:-0.5s"/><circle cx="1330" cy="380" r="0.9" style="--o:.10;animation-delay:-5.5s"/>
   </g>
   <g fill="#FFB000">
-    <circle cx="560" cy="260" r="1.1" opacity="0.14"/><circle cx="1560" cy="820" r="1.0" opacity="0.12"/>
-    <circle cx="60" cy="360" r="0.9" opacity="0.10"/>
+    <circle cx="560" cy="260" r="1.1" style="--o:.14;animation-delay:-2.2s"/><circle cx="1560" cy="820" r="1.0" style="--o:.12;animation-delay:-3.8s"/>
+    <circle cx="60" cy="360" r="0.9" style="--o:.10;animation-delay:-1.2s"/>
   </g>
 </svg>
 
@@ -321,21 +417,30 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 </div>
 
 <!-- 01 · cover -->
-<section class="slide cover" aria-label="cover">
+<section class="slide" aria-label="cover">
   <div class="frame">
-    <p class="overline rise">oxagen · investor briefing · august 2026</p>
-    <div class="lockup rise">
-      <svg class="comet" width="96" height="96" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-        <line x1="10" y1="48" x2="30" y2="48" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
-        <line x1="18" y1="34" x2="30" y2="34" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
-        <line x1="18" y1="62" x2="30" y2="62" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
-        <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#FFB000"/>
-      </svg>
-      <div class="wordmark">stella<sup>*</sup></div>
+    <div class="cols c-7-5" style="margin: auto 0;">
+      <div>
+        <p class="overline rise">oxagen · investor briefing · august 2026</p>
+        <div class="lockup rise" style="--d:1">
+          <svg class="comet" width="80" height="80" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+            <line x1="10" y1="48" x2="30" y2="48" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+            <line x1="18" y1="34" x2="30" y2="34" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+            <line x1="18" y1="62" x2="30" y2="62" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+            <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#FFB000"/>
+          </svg>
+          <div class="wordmark">stella<sup>*</sup></div>
+        </div>
+        <h1 class="rise" style="--d:2">AI that proves its own work,<br><em>then trains on it.</em></h1>
+        <p class="lead rise" style="--d:3; margin-top: 20px;"><strong>stella is the engine. Oxagen is the control plane.</strong> Every task closes on a deterministic fail&nbsp;&rarr;&nbsp;pass witness, never the model's opinion. Oxagen turns that verified work into a private model you alone own — without a byte leaving your network.</p>
+        <p class="kicker rise" style="--d:4; margin-top: 22px;">We don't sell tokens. We sell verified work — and the models that produce it.</p>
+      </div>
+      <div class="rail stagger">
+        <div class="r"><div class="rv" data-count="15.7" data-prefix="+" data-dec="1" data-suffix=" pts">+15.7 pts</div><div class="rc">over Claude Code with the model held constant — all 89 Terminal-Bench 2.1 tasks, preregistered</div></div>
+        <div class="r"><div class="rv" data-count="1.35" data-prefix="$" data-dec="2">$1.35</div><div class="rc">per solved task, on stock open weights, inference only</div></div>
+        <div class="r"><div class="rv">0 bytes</div><div class="rc">of your code, prompts or traces cross the wire to a frontier lab</div></div>
+      </div>
     </div>
-    <h1 class="rise">AI that proves its own work,<br><em>then trains on it.</em></h1>
-    <p class="lead rise"><strong>stella is the engine. Oxagen is the control plane.</strong> stella proves every step with a deterministic fail &rarr; pass witness. In our preregistered head-to-head on all 89 Terminal-Bench 2.1 tasks — same model in both arms — stella's harness beat Claude Code by 15.7 points, at $1.35 per solved task on stock open weights. Oxagen turns that verified work into private models you alone own. Nothing leaves your network.</p>
-    <p class="kicker rise">We don't sell tokens. We sell verified work — and the models that produce it.</p>
   </div>
 </section>
 
@@ -343,20 +448,38 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the problem: expensive, opaque, unverifiable">
   <div class="frame">
     <p class="overline rise">the problem</p>
-    <h2 class="rise">Expensive. Opaque. <em>Unverifiable.</em></h2>
-    <p class="lead rise">Frontier AI is rented by the token, and agents never get tired — they retry until the budget is gone and invoice you either way. Cost attribution is broken: short of a custom instrumentation project, you cannot tie a dollar of AI spend to the value it returned. And what comes back is a black box's word for it — graded, if at all, by another probabilistic model, so the doubt compounds instead of cancelling.</p>
-    <div class="tiles rise">
-      <div class="tile"><div class="big">$37B</div><div class="cap">enterprise spend on AI in 2025 — tripled in one year, and the meter never stops</div></div>
-      <div class="tile"><div class="big">45%</div><div class="cap">of test tasks where AI-generated code introduced OWASP Top&nbsp;10 vulnerabilities — across 80 tasks and 100+ models</div></div>
-      <div class="tile"><div class="big">0</div><div class="cap">built-in reasons for the model to stop and say "good enough"</div></div>
+    <h2 class="rise" style="--d:1">Expensive. Opaque. <em>Unverifiable.</em></h2>
+    <div class="body cols c-7-5">
+      <div class="stack">
+        <p class="lead rise" style="--d:2">Frontier AI is rented by the token, and agents never tire — they retry until the budget is gone and invoice you either way. What comes back is a black box's word for it, graded (if at all) by another probabilistic model. The doubt compounds instead of cancelling.</p>
+        <div class="term rise" style="--d:3" role="img" aria-label="terminal showing an agent claiming completion while the test suite fails">
+          <div><span class="p">agent:</span> all tests pass, task complete <span class="ok">&check;</span></div>
+          <div><span class="p">$</span> npm test</div>
+          <div><span class="no">4 failed</span>, 2 passed <span class="cursor"></span></div>
+        </div>
+        <svg class="dia rise" style="--d:4" viewBox="0 0 620 150" role="img" aria-label="diagram: a loop from attempt to unverified claim to retry, with the meter running on every pass and no stopping rule">
+          <path class="ln lng draw" d="M120 34 H430" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+          <path class="ln lng draw" d="M430 34 C520 34 520 94 430 94" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+          <path class="ln lng draw" d="M430 94 H120" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+          <path class="ln lng draw" d="M120 94 C30 94 30 34 120 34" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+          <rect class="box" x="118" y="16" width="150" height="36" rx="8"/><text class="lbl" x="193" y="39" text-anchor="middle">attempt</text>
+          <rect class="box" x="300" y="16" width="150" height="36" rx="8"/><text class="lbl" x="375" y="39" text-anchor="middle">"done"</text>
+          <rect class="box" x="300" y="76" width="150" height="36" rx="8"/><text class="lbl" x="375" y="99" text-anchor="middle">not checked</text>
+          <rect class="box" x="118" y="76" width="150" height="36" rx="8"/><text class="lbl" x="193" y="99" text-anchor="middle">retry</text>
+          <text class="sm gd pulse" x="284" y="70" text-anchor="middle">$ billed every pass</text>
+          <text class="sm" x="284" y="142" text-anchor="middle">no stopping rule, so it never stops</text>
+        </svg>
+      </div>
+      <div class="tiles one stagger">
+        <div class="tile"><div class="big" data-count="37" data-prefix="$" data-suffix="B">$37B</div><div class="cap">enterprise spend on AI in 2025 — tripled in one year, and the meter never stops</div></div>
+        <div class="tile"><div class="big" data-count="45" data-suffix="%">45%</div><div class="cap">of test tasks where AI-generated code introduced OWASP Top&nbsp;10 vulnerabilities — 80 tasks, 100+ models</div></div>
+        <div class="tile"><div class="big">0</div><div class="cap">built-in reasons for the model to stop and say "good enough"</div></div>
+      </div>
     </div>
-    <div class="term rise" role="img" aria-label="terminal showing a false done claim">
-      <div><span class="p">agent:</span> all tests pass, task complete <span class="ok">&check;</span></div>
-      <div><span class="p">$</span> npm test</div>
-      <div><span class="no">4 failed</span>, 2 passed</div>
+    <div class="foot">
+      <p class="kicker rise" style="--d:5">Nobody trusts the code AI ships — everybody LGTMs it anyway. The world named the result: <em>AI slop</em> — earned by shipping agents with no definition of done.</p>
+      <p class="fine rise" style="--d:5">Sources: Menlo Ventures, State of Generative AI in the Enterprise (Dec 2025); Veracode, GenAI Code Security Report (Jul 2025), paraphrased.</p>
     </div>
-    <p class="kicker rise">Nobody trusts the code AI ships — everybody LGTMs it anyway. The world named the result: <em>AI slop</em> — earned by shipping agents with no definition of done.</p>
-    <p class="fine rise">Sources: Menlo Ventures, State of Generative AI in the Enterprise (Dec 2025); Veracode, GenAI Code Security Report (Jul 2025), paraphrased.</p>
   </div>
 </section>
 
@@ -364,26 +487,68 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the origin: a thesis test, and the agent that lied about its work">
   <div class="frame">
     <p class="overline rise">the origin</p>
-    <h2 class="rise">I built stella with AI &mdash; <em>and it lied to me.</em></h2>
-    <p class="lead rise">It began as a thesis test, not a company: whatever can be handled deterministically should be, by a tool with a strict IO contract — the model asked only for what no tool can do. The motive was economics, so the core shipped with no IO and protocol-driven wire contracts.</p>
-    <div class="steps rise">
-      <div class="step"><span class="n">1</span><span><span class="t">The thesis held.</span><br><span class="d">Deterministic tools took the deterministic work. Token spend fell; capability did not.</span></span></div>
-      <div class="step"><span class="n">2</span><span><span class="t">Then I caught the agent claiming work it had not done.</span><br><span class="d">Complete, it said — with the test never run, the file never saved. Routinely, and confidently.</span></span></div>
-      <div class="step"><span class="n">3</span><span><span class="t">So "done" stopped being the model's opinion.</span><br><span class="d">Nothing closes until an independent oracle flips a test from fail to pass on real evidence.</span></span></div>
-      <div class="step"><span class="n">4</span><span><span class="t">And then the side effect nobody planned.</span><br><span class="d">Every verified run is a trace pre-labeled with its outcome — agent training's scarcest asset.</span></span></div>
+    <h2 class="rise" style="--d:1">I built stella with AI &mdash; <em>and it lied to me.</em></h2>
+    <p class="lead rise" style="--d:2">It began as a thesis test, not a company: whatever can be handled deterministically should be, by a tool with a strict IO contract — the model asked only for what no tool can do. The motive was economics, so the core shipped with no IO and protocol-driven wire contracts.</p>
+    <div class="body">
+    <svg class="dia strip rise" style="--d:3; max-height: 62px;" viewBox="0 0 1420 62" role="img" aria-label="timeline connecting the four steps below">
+      <path class="ln lng draw" d="M60 30 H1360" stroke-width="1.5"/>
+      <g class="gd"><circle cx="60" cy="30" r="7"/><circle cx="493" cy="30" r="7"/><circle cx="926" cy="30" r="7"/><circle cx="1360" cy="30" r="7"/></g>
+      <g class="sm" text-anchor="middle"><text x="60" y="54">the thesis</text><text x="493" y="54">the lie</text><text x="926" y="54">the fix</text><text x="1360" y="54">the byproduct</text></g>
+    </svg>
+    <div class="steps four" style="margin-top: 14px;">
+      <div class="step"><span class="n">1</span><span><span class="t">The thesis held.</span><span class="d">Deterministic tools took the deterministic work. Token spend fell; capability did not.</span></span></div>
+      <div class="step"><span class="n">2</span><span><span class="t">Then it claimed work it had not done.</span><span class="d">"Complete," it said — test never run, file never saved. Routinely, and confidently.</span></span></div>
+      <div class="step"><span class="n">3</span><span><span class="t">So "done" stopped being an opinion.</span><span class="d">Nothing closes until an independent oracle flips a test from fail to pass on real evidence.</span></span></div>
+      <div class="step"><span class="n">4</span><span><span class="t">Then the side effect nobody planned.</span><span class="d">Every verified run is a trace pre-labeled with its outcome — agent training's scarcest asset.</span></span></div>
     </div>
-    <p class="kicker rise">The verification we built to stop being lied to turned out to be a data factory. That is the platform.</p>
+    </div>
+    <div class="foot">
+      <p class="kicker rise" style="--d:4">The verification we built to stop being lied to turned out to be a data factory. That is the platform.</p>
+    </div>
   </div>
 </section>
 
 <!-- 04 · the trap -->
-<section class="slide" aria-label="the trap: your traces are the asset">
+<section class="slide" aria-label="the trap: your traces are the asset, and today you give them away">
   <div class="frame">
     <p class="overline rise">the trap</p>
-    <h2 class="rise">You're paying to <em>train the lab</em> you depend on.</h2>
-    <p class="lead rise">The most valuable thing your team makes with a coding tool is not the code. It is the traces: every step, every fix, every decision. Today those traces vanish into someone else's model.</p>
-    <div class="callout rise">Your traces are the asset.<br><span class="g2">And you're giving them away.</span></div>
-    <p class="kicker rise">stella captures and verifies those traces, so the hardest part of training your own model is already done.</p>
+    <h2 class="rise" style="--d:1">You're paying to <em>train the lab</em> you depend on.</h2>
+    <p class="lead rise" style="--d:2">The most valuable thing your team makes with a coding tool is not the code. It is the traces: every step, every fix, every decision. Today they vanish into someone else's model.</p>
+    <div class="body cols c-2">
+      <svg class="dia rise" style="--d:3" viewBox="0 0 660 232" role="img" aria-label="diagram: today, your engineers' traces flow out of your network into a frontier lab's shared model, which every competitor also rents">
+        <text class="lbl" x="0" y="14" fill="#9B9890">TODAY</text>
+        <rect class="box" x="0" y="34" width="240" height="182" rx="12" stroke-dasharray="5 5"/>
+        <text class="sm" x="120" y="58" text-anchor="middle">your network</text>
+        <rect class="box" x="28" y="80" width="184" height="44" rx="8"/><text class="lbl" x="120" y="108" text-anchor="middle">your engineers</text>
+        <rect class="box" x="28" y="150" width="184" height="44" rx="8"/><text class="lbl" x="120" y="178" text-anchor="middle">every trace</text>
+        <path class="ln lng" d="M120 124 V150" stroke-width="1.5"/>
+        <path class="lng flow" d="M212 172 H400" stroke-width="2" marker-end="url(#ar-gold)"/>
+        <rect class="boxg" x="410" y="110" width="230" height="110" rx="12" stroke-width="1.5"/>
+        <text class="lbl gd" x="525" y="150" text-anchor="middle">frontier lab</text>
+        <text class="sm" x="525" y="172" text-anchor="middle">one shared model</text>
+        <text class="sm" x="525" y="192" text-anchor="middle">your rivals rent it too</text>
+        <text class="sm ff" x="306" y="162" text-anchor="middle">your asset, leaving</text>
+      </svg>
+      <svg class="dia rise" style="--d:4" viewBox="0 0 660 232" role="img" aria-label="diagram: with stella, traces are verified and stay inside your network and train a private model that is yours alone; nothing crosses the boundary">
+        <text class="lbl" x="0" y="14" fill="#FFB000">WITH STELLA</text>
+        <rect class="boxg" x="0" y="34" width="470" height="182" rx="12" stroke-width="1.5"/>
+        <text class="sm" x="235" y="58" text-anchor="middle">your network</text>
+        <rect class="box" x="28" y="80" width="180" height="44" rx="8"/><text class="lbl" x="118" y="108" text-anchor="middle">your engineers</text>
+        <rect class="box" x="28" y="150" width="180" height="44" rx="8"/><text class="lbl" x="118" y="178" text-anchor="middle">verified traces</text>
+        <path class="ln lng" d="M118 124 V150" stroke-width="1.5"/>
+        <path class="lng flow" d="M208 172 H262" stroke-width="2" marker-end="url(#ar-gold)"/>
+        <rect class="box" x="272" y="116" width="172" height="94" rx="10" stroke="#FFB000"/>
+        <text class="lbl gd" x="358" y="152" text-anchor="middle">your model</text>
+        <text class="sm" x="358" y="174" text-anchor="middle">yours alone</text>
+        <path class="lnf" d="M480 149 H560" stroke-width="2" stroke-dasharray="5 5"/>
+        <g stroke="#E4408F" stroke-width="2.5"><line x1="510" y1="134" x2="534" y2="164"/><line x1="534" y1="134" x2="510" y2="164"/></g>
+        <text class="sm ff" x="600" y="154" text-anchor="middle">0 bytes</text>
+      </svg>
+    </div>
+    <div class="foot">
+      <div class="callout rise" style="--d:5">Your traces are the asset. <span class="g2">And you're giving them away.</span></div>
+      <p class="kicker rise" style="--d:5">stella captures and verifies those traces, so the hardest part of training your own model is already done.</p>
+    </div>
   </div>
 </section>
 
@@ -391,15 +556,40 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the invention: the witness protocol and the oracle flip">
   <div class="frame">
     <p class="overline rise">the invention</p>
-    <h2 class="rise">The <em>witness protocol.</em></h2>
-    <p class="lead rise">Oxagen replaced the judge with an oracle. A task is done only when a witness test proves it — failing on the old code, passing on the new. Not an opinion. A flip.</p>
-    <div class="steps rise">
-      <div class="step"><span class="n">1</span><span><span class="t">An independent verifier authors the witness in a shadow sandbox.</span><br><span class="d">A separate model, in a detached workspace, after reading the executed diff. The worker never touches it, and the working tree is never mutated.</span></span></div>
-      <div class="step"><span class="n">2</span><span><span class="t">The test runs on the old code. <span class="badge fail">must fail</span></span><br><span class="d">Proof the behavior was genuinely absent before the change.</span></span></div>
-      <div class="step"><span class="n">3</span><span><span class="t">The test runs on the new code. <span class="badge pass">must pass</span></span><br><span class="d">Proof the behavior is genuinely present after it.</span></span></div>
-      <div class="step"><span class="n">4</span><span><span class="t">Tamper evidence voids the flip.</span><br><span class="d">If the worker modified the witness files, the proof is invalidated. No credit. And the flip is additional evidence, never a substitute: the project's own test suite still gates the change.</span></span></div>
+    <h2 class="rise" style="--d:1">The <em>witness protocol.</em></h2>
+    <p class="lead rise" style="--d:2">Oxagen replaced the judge with an oracle. A task is done only when a witness test proves it — failing on the old code, passing on the new. Not an opinion. A flip.</p>
+    <div class="body cols c-5-7">
+      <svg class="dia rise" style="--d:3" viewBox="0 0 560 340" role="img" aria-label="diagram: an independent verifier writes one witness test in a shadow sandbox; run against the old code it must fail, run against the new code it must pass; if the worker touched the witness, the flip is void">
+        <rect class="box" x="150" y="0" width="260" height="52" rx="10" stroke="#FFB000"/>
+        <text class="lbl gd" x="280" y="24" text-anchor="middle">independent verifier</text>
+        <text class="sm" x="280" y="42" text-anchor="middle">separate model · shadow sandbox</text>
+        <path class="ln lng draw" d="M280 52 V96" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+        <rect class="box" x="180" y="96" width="200" height="44" rx="10"/>
+        <text class="lbl" x="280" y="124" text-anchor="middle">one witness test</text>
+        <path class="ln draw" d="M280 140 V168 H92 V196" stroke-width="1.5" marker-end="url(#ar-mute)"/>
+        <path class="ln draw" d="M280 140 V168 H468 V196" stroke-width="1.5" marker-end="url(#ar-mute)"/>
+        <rect class="box" x="12" y="196" width="160" height="76" rx="10" stroke="#E4408F"/>
+        <text class="lbl" x="92" y="222" text-anchor="middle">old code</text>
+        <text class="lbl ff" x="92" y="250" text-anchor="middle">&#10007; must fail</text>
+        <rect class="box" x="388" y="196" width="160" height="76" rx="10" stroke="#2FD3C6"/>
+        <text class="lbl" x="468" y="222" text-anchor="middle">new code</text>
+        <text class="lbl fp" x="468" y="250" text-anchor="middle">&#10003; must pass</text>
+        <path class="lng flow" d="M172 234 H388" stroke-width="2" marker-end="url(#ar-gold)"/>
+        <text class="sm gd" x="280" y="226" text-anchor="middle">the flip</text>
+        <rect class="box" x="150" y="292" width="260" height="44" rx="10"/>
+        <text class="sm" x="280" y="312" text-anchor="middle">worker touched the witness?</text>
+        <text class="sm ff" x="280" y="329" text-anchor="middle">flip void — no credit</text>
+      </svg>
+      <div class="steps stagger">
+        <div class="step"><span class="n">1</span><span><span class="t">An independent verifier authors the witness in a shadow sandbox.</span><span class="d">A separate model, in a detached workspace, after reading the executed diff. The worker never touches it, and the working tree is never mutated.</span></span></div>
+        <div class="step"><span class="n">2</span><span><span class="t">The test runs on the old code. <span class="badge fail">must fail</span></span><span class="d">Proof the behavior was genuinely absent before the change.</span></span></div>
+        <div class="step"><span class="n">3</span><span><span class="t">The test runs on the new code. <span class="badge pass">must pass</span></span><span class="d">Proof the behavior is genuinely present after it.</span></span></div>
+        <div class="step"><span class="n">4</span><span><span class="t">Tamper evidence voids the flip.</span><span class="d">If the worker modified the witness files, the proof is invalidated — no credit. The flip is additional evidence, never a substitute: the project's own suite still gates the change.</span></span></div>
+      </div>
     </div>
-    <p class="kicker rise">A deterministic system controls the definition of done. Models do the work — they never grade it. Failure modes, named and guarded: appendix A2.</p>
+    <div class="foot">
+      <p class="kicker rise" style="--d:5">A deterministic system controls the definition of done. Models do the work — they never grade it. Failure modes, named and guarded: appendix A2.</p>
+    </div>
   </div>
 </section>
 
@@ -407,40 +597,45 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the proof: same model, same tasks, 15.7 points ahead of claude code">
   <div class="frame">
     <p class="overline rise">the proof</p>
-    <h2 class="rise">Same model. Same tasks. <em>+15.7 points.</em></h2>
-    <p class="lead rise">A leaderboard row entangles the model with the harness. So we ran the controlled experiment: all 89 Terminal-Bench 2.1 tasks, one attempt each, both arms on the same open-weight model — glm-5.2 at max effort — back-to-back on the same machine, preregistered before the first trial. The endpoint was the only permitted difference.</p>
-    <div class="bench rise" role="img" aria-label="bar chart: stella solves 58 of 89 tasks, 65.2 percent; claude code solves 44 of 89, 49.4 percent; both arms ran the same model. Published leaderboard context: claude code with fable 5 at 83.8 percent">
-      <div>
+    <h2 class="rise" style="--d:1">Same model. Same tasks. <em>+15.7 points.</em></h2>
+    <p class="lead rise" style="--d:2">A leaderboard row entangles the model with the harness. So we ran the controlled experiment: all 89 Terminal-Bench 2.1 tasks, one attempt each, both arms on the same open-weight model — glm-5.2 at max effort — back-to-back on the same machine, preregistered before the first trial. The endpoint was the only permitted difference.</p>
+    <div class="body cols c-2">
+      <div class="rise" style="--d:3">
         <div class="bh">our paired run · model held constant</div>
         <div class="bsub">solve rate, higher is better · both arms glm-5.2</div>
         <div class="brow">
           <div class="blabel"><strong>stella</strong> &middot; 58/89</div>
-          <div class="btrack"><div class="fill"><div class="bar gold" style="width: 65.2%"></div></div><span class="bval">65.2%</span></div>
+          <div class="btrack"><div class="fill"><div class="bar gold" style="--w: 65.2%"></div></div><span class="bval">65.2%</span></div>
         </div>
         <div class="brow">
           <div class="blabel">Claude Code &middot; 44/89</div>
-          <div class="btrack"><div class="fill"><div class="bar" style="width: 49.4%"></div></div><span class="bval">49.4%</span></div>
+          <div class="btrack"><div class="fill"><div class="bar" style="--w: 49.4%"></div></div><span class="bval">49.4%</span></div>
         </div>
+        <div class="delta">+15.7 points &nbsp;·&nbsp; 32% more tasks solved<br><span>harness isolated — the model was identical in both arms</span></div>
       </div>
-      <div>
+      <div class="rise" style="--d:4">
         <div class="bh">the public frontier, for context</div>
         <div class="bsub">Terminal-Bench 2.1 leaderboard, tbench.ai &middot; frontier models</div>
         <div class="brow">
           <div class="blabel">Claude Code &middot; Fable 5</div>
-          <div class="btrack"><div class="fill"><div class="bar" style="width: 83.8%"></div></div><span class="bval">83.8% &plusmn;1.2</span></div>
+          <div class="btrack"><div class="fill"><div class="bar" style="--w: 83.8%"></div></div><span class="bval">83.8% &plusmn;1.2</span></div>
         </div>
         <div class="brow">
           <div class="blabel">Codex &middot; GPT-5.5</div>
-          <div class="btrack"><div class="fill"><div class="bar" style="width: 83.1%"></div></div><span class="bval">83.1%</span></div>
+          <div class="btrack"><div class="fill"><div class="bar" style="--w: 83.1%"></div></div><span class="bval">83.1% &plusmn;1.1</span></div>
         </div>
         <div class="brow">
           <div class="blabel">Terminus 2 &middot; Fable 5</div>
-          <div class="btrack"><div class="fill"><div class="bar" style="width: 80.4%"></div></div><span class="bval">80.4%</span></div>
+          <div class="btrack"><div class="fill"><div class="bar" style="--w: 80.4%"></div></div><span class="bval">80.4% &plusmn;1.2</span></div>
+        </div>
+        <div class="brow" style="margin-top:16px">
+          <div class="fine">Those rows measure model and harness together, on frontier weights. Ours isolates the harness on open weights. Closing that model gap — and earning an audited row of our own — is what this raise funds.</div>
         </div>
       </div>
     </div>
-    <p class="kicker rise">The frontier rows measure model and harness together. Ours isolates the harness: +15.7 points, 32% more tasks solved, model held constant. Closing the model gap on frontier-class open weights — and earning an audited public row — is what this raise funds.</p>
-    <p class="fine rise">Run tb21-hh10-20260731, 2026-07-31 &middot; Harbor 0.6.1 &middot; dataset terminal-bench-2-1@sha256:7d7bdc1c&hellip; &middot; pass@1, one attempt per task, no retries &middot; both arms glm-5.2, effort max, unbounded per-trial budget &middot; identical tasks, verifier, timeouts, resources, host, and day &middot; stella spend $78.25 total = $1.35 per solved task, inference only at provider list prices; arm costs are not directly comparable (different providers and token accounting; Claude Code cost reported on 71 of 89 trials) &middot; both arms ran stock weights — nothing we trained touched this benchmark, and when customer training ships, Terminal-Bench tasks are excluded from every corpus by protocol &middot; witness tier off in this run, so 65.2% is a lower bound on the full verification ladder &middot; self-reported development baseline, not an audited leaderboard row &middot; full methodology, raw trials, and per-task results: <a class="links" href="https://github.com/macanderson/stella/blob/74daf6c3e179f02784f1a056805244e4cce4d081/website/public/presentations/BENCHMARK_METHODOLOGY.md" style="color: var(--gold);">BENCHMARK_METHODOLOGY.md</a> &middot; leaderboard figures: tbench.ai, retrieved Aug 2026.</p>
+    <div class="foot">
+      <p class="fine rise" style="--d:5">Run tb21-hh10-20260731, 2026-07-31 &middot; Harbor 0.6.1 &middot; dataset terminal-bench-2-1@sha256:7d7bdc1c&hellip; &middot; pass@1, one attempt per task, no retries &middot; both arms glm-5.2 at effort max, identical tasks, verifier, timeouts, resources, host and day &middot; stella spend $78.25 = $1.35 per solved task, inference only at list prices; the two arms are <em>not</em> cost-comparable (different providers and token accounting; Claude Code reported cost on 71 of 89 trials) &middot; both arms ran stock weights — nothing we trained touched this benchmark &middot; witness tier off in this run, so 65.2% is a lower bound on the full verification ladder &middot; self-reported development baseline, not an audited leaderboard row. Full parity, identity digests, contamination protocol and per-task results: <strong>appendix A1</strong> and <a class="ref" href="https://github.com/macanderson/stella/blob/01987f1e9ee81195b956d8df0cb4a094fc4d0aa8/website/public/presentations/BENCHMARK_METHODOLOGY.md">BENCHMARK_METHODOLOGY.md</a> &middot; leaderboard figures: tbench.ai, re-checked 2026-08-09.</p>
+    </div>
   </div>
 </section>
 
@@ -448,15 +643,40 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the slope: stella builds stella, and the self-improvement mechanisms ship today">
   <div class="frame">
     <p class="overline rise">the slope</p>
-    <h2 class="rise">stella <em>builds stella.</em></h2>
-    <p class="lead rise">This repository's development loop is agent-first: stella does the work, the witness protocol gates it, and a human reviews the result. The mechanisms that make it better each cycle are shipped features with tests and storage schemas behind them — not a roadmap slide.</p>
-    <div class="tiles rise">
-      <div class="tile"><div class="name">It writes its own skills</div><div class="cap">recurring lessons mined from its own post-turn reflections auto-promote into versioned skill files, which it then selects from on later tasks</div></div>
-      <div class="tile"><div class="name">It builds its own tools</div><div class="cap">a capability-gap detector authors new tools, and each one must pass a capability witness proving it is a genuinely new capability before the adoption ledger accepts it</div></div>
-      <div class="tile"><div class="name">It checks whether that helped</div><div class="cap">an A/B control withholds recalled context on a share of turns, so a gain is measured against a control rather than assumed — the loop can tell improvement from noise</div></div>
+    <h2 class="rise" style="--d:1">stella <em>builds stella.</em></h2>
+    <p class="lead rise" style="--d:2">This repository's development loop is agent-first: stella does the work, the witness protocol gates it, a human reviews the result. The mechanisms that make it better each cycle are shipped features with tests and storage schemas behind them — not a roadmap slide. Every one is in the open-source tree and reviewable today.</p>
+    <div class="body">
+    <div class="tiles stagger">
+      <div class="tile">
+        <div class="name">It writes its own skills</div>
+        <div class="cap">recurring lessons mined from its own post-turn reflections auto-promote into versioned skill files, which it then selects from on later tasks</div>
+        <div class="cap"><code>stella-core/src/skills.rs</code> · <code>stella-cli/src/memory/learning.rs</code></div>
+      </div>
+      <div class="tile">
+        <div class="name">It builds its own tools</div>
+        <div class="cap">a capability-gap detector authors new tools, and each must pass a capability witness proving it is genuinely new before the adoption ledger accepts it</div>
+        <div class="cap"><code>stella-cli/src/tool_foundry.rs</code> · <code>stella-tools/src/foundry_witness.rs</code> · store schema v20</div>
+      </div>
+      <div class="tile">
+        <div class="name">It checks whether that helped</div>
+        <div class="cap">an A/B control withholds recalled context on a share of turns, so a gain is measured against a control rather than assumed — the loop can tell improvement from noise</div>
+        <div class="cap"><code>stella-cli/src/agent/skill_usage.rs</code></div>
+      </div>
     </div>
-    <p class="kicker rise">The point is not any single benchmark number. The point is the slope: the system improves itself, and the commit history is the audit trail.</p>
-    <p class="fine rise">All three mechanisms are in the open-source tree and reviewable today: skill promotion in <code>stella-core/src/skills.rs</code> and <code>stella-cli/src/memory/learning.rs</code>; the tool foundry in <code>stella-cli/src/tool_foundry.rs</code> with its capability witness in <code>stella-tools/src/foundry_witness.rs</code> and its adoption ledger at store schema v20; the recall control in <code>stella-cli/src/agent/skill_usage.rs</code>.</p>
+    <svg class="dia strip rise" style="--d:4; margin-top: 26px; max-height: 116px;" viewBox="0 0 1420 116" role="img" aria-label="diagram: a cycle in which stella does the work, the witness gates it, the lesson is promoted, and the next cycle starts better">
+      <path class="ln lng draw" d="M110 30 H370" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+      <path class="ln lng draw" d="M510 30 H770" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+      <path class="ln lng draw" d="M910 30 H1170" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+      <path class="ln lng draw" d="M1310 46 C1370 104 50 104 110 46" stroke-width="1.5" stroke-dasharray="6 6" marker-end="url(#ar-gold)"/>
+      <g class="sm" text-anchor="middle" fill="#F4F1EA" font-weight="700">
+        <text x="55" y="35">work</text><text x="440" y="35">witness</text><text x="840" y="35">lesson</text><text x="1240" y="35">next cycle</text>
+      </g>
+      <text class="sm" x="710" y="70" text-anchor="middle">the commit history is the audit trail</text>
+    </svg>
+    </div>
+    <div class="foot">
+      <p class="kicker rise" style="--d:5">The point is not any single benchmark number. The point is the slope: the system improves itself, and every improvement is a commit somebody can read.</p>
+    </div>
   </div>
 </section>
 
@@ -464,14 +684,46 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="self-labelling training data">
   <div class="frame">
     <p class="overline rise">the byproduct</p>
-    <h2 class="rise">Verified work <em>labels itself.</em></h2>
-    <p class="lead rise">Every flip yields a training example with ground truth attached: the goal, the context, the diff, and a deterministic proof that it worked. No human labelers. No judge models. The label is the flip.</p>
-    <div class="tiles rise">
-      <div class="tile"><div class="big">goal</div><div class="cap">what was asked, in the language of your business</div></div>
-      <div class="tile"><div class="big">diff</div><div class="cap">what the agent actually changed to deliver it</div></div>
-      <div class="tile"><div class="big">proof</div><div class="cap">the fail &rarr; pass flip that certifies the pair</div></div>
+    <h2 class="rise" style="--d:1">Verified work <em>labels itself.</em></h2>
+    <p class="lead rise" style="--d:2">Every flip yields a training example with ground truth attached: the goal, the context, the diff, and a deterministic proof that it worked. No human labelers. No judge models. The label is the flip.</p>
+    <div class="body cols c-6-4">
+      <svg class="dia rise" style="--d:3" viewBox="0 0 780 276" role="img" aria-label="diagram: goal plus diff plus the fail-to-pass proof compose one labeled training example">
+        <rect class="box" x="0" y="30" width="200" height="66" rx="10"/>
+        <text class="lbl gd" x="100" y="60" text-anchor="middle">goal</text>
+        <text class="sm" x="100" y="80" text-anchor="middle">what was asked</text>
+        <rect class="box" x="0" y="112" width="200" height="66" rx="10"/>
+        <text class="lbl gd" x="100" y="142" text-anchor="middle">diff</text>
+        <text class="sm" x="100" y="162" text-anchor="middle">what the agent changed</text>
+        <rect class="box" x="0" y="194" width="200" height="66" rx="10"/>
+        <text class="lbl gd" x="100" y="224" text-anchor="middle">proof</text>
+        <text class="sm" x="100" y="244" text-anchor="middle">the fail &#8594; pass flip</text>
+        <path class="ln lng draw" d="M200 63 H300 V132" stroke-width="1.5"/>
+        <path class="ln lng draw" d="M200 145 H300" stroke-width="1.5"/>
+        <path class="ln lng draw" d="M200 227 H300 V158" stroke-width="1.5"/>
+        <path class="lng flow" d="M300 145 H400" stroke-width="2" marker-end="url(#ar-gold)"/>
+        <rect class="boxg" x="410" y="88" width="360" height="114" rx="12" stroke-width="1.5"/>
+        <text class="lbl gd" x="590" y="130" text-anchor="middle">one labeled training example</text>
+        <text class="sm" x="590" y="154" text-anchor="middle">ground truth attached at creation —</text>
+        <text class="sm" x="590" y="174" text-anchor="middle">no labeler, no judge model, no scraping</text>
+      </svg>
+      <div class="rise" style="--d:4">
+        <svg class="dia" viewBox="0 0 420 230" role="img" aria-label="venn diagram of the 89 task panel: 36 tasks solved by both arms, 22 solved only by stella, 8 solved only by Claude Code, 23 solved by neither">
+          <circle cx="165" cy="110" r="86" fill="rgb(255 176 0 / 0.12)" stroke="#FFB000" stroke-width="1.5"/>
+          <circle cx="255" cy="110" r="86" fill="rgb(155 152 144 / 0.10)" stroke="#232327" stroke-width="1.5"/>
+          <text class="lbl gd" x="100" y="106" text-anchor="middle" font-size="22" font-weight="800">22</text>
+          <text class="sm" x="100" y="126" text-anchor="middle">stella only</text>
+          <text class="lbl" x="210" y="106" text-anchor="middle" font-size="18" font-weight="800">36</text>
+          <text class="sm" x="210" y="126" text-anchor="middle">both</text>
+          <text class="lbl" x="320" y="106" text-anchor="middle" font-size="18" font-weight="800">8</text>
+          <text class="sm" x="320" y="126" text-anchor="middle">CC only</text>
+          <text class="sm" x="210" y="18" text-anchor="middle">the 89-task panel</text>
+          <text class="sm" x="210" y="220" text-anchor="middle">23 solved by neither arm</text>
+        </svg>
+      </div>
     </div>
-    <p class="kicker rise">In the July head-to-head, stella solved 22 tasks Claude Code did not — each one a labeled example no scraped corpus contains. Self-labelling training data, produced as a side effect of doing the job.</p>
+    <div class="foot">
+      <p class="kicker rise" style="--d:5">In the July head-to-head, stella solved <em>22 tasks Claude Code did not</em> — each one a labeled example no scraped corpus contains. Self-labelling training data, produced as a side effect of doing the job.</p>
+    </div>
   </div>
 </section>
 
@@ -479,27 +731,49 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the product: stella does the work, oxagen governs it">
   <div class="frame">
     <p class="overline rise">the product</p>
-    <h2 class="rise"><em>stella</em> does the work. oxagen governs it.</h2>
-    <div class="split rise">
-      <div class="card">
-        <h3><em>stella</em></h3>
-        <p class="role">the verified agent</p>
-        <p>It writes, fixes, and ships inside your environment — open source, bring-your-own-key, and holding itself to the witness protocol on every task.</p>
+    <h2 class="rise" style="--d:1"><em>stella</em> does the work. oxagen governs it.</h2>
+    <div class="body cols c-5-7">
+      <div class="stack rise" style="--d:2">
+        <div class="card">
+          <h3><em>stella</em></h3>
+          <p class="role">the verified agent</p>
+          <p>It writes, fixes, and ships inside your environment — open source, bring-your-own-key, holding itself to the witness protocol on every task.</p>
+        </div>
+        <div class="card">
+          <h3>oxagen</h3>
+          <p class="role">the control plane</p>
+          <p>It sets the rules, checks every step, and owns the pipeline that turns verified traces into a private model that is yours alone.</p>
+        </div>
       </div>
-      <div class="card">
-        <h3>oxagen</h3>
-        <p class="role">the control plane</p>
-        <p>It sets the rules, checks every step, and owns the pipeline that turns verified traces into a private model that is yours alone.</p>
-      </div>
+      <svg class="dia rise" style="--d:3" viewBox="0 0 700 348" role="img" aria-label="diagram: a closed loop of run, verify, learn and compound; steps one to three ship today and step four is what this raise builds">
+        <circle cx="350" cy="174" r="104" class="ln lng spin" stroke-width="1.5" stroke-dasharray="10 12" fill="none"/>
+        <g>
+          <rect class="box" x="190" y="8" width="320" height="56" rx="10" stroke="#FFB000"/>
+          <text class="lbl gd" x="350" y="32" text-anchor="middle">1 · RUN</text>
+          <text class="sm" x="350" y="52" text-anchor="middle">real work in your environment, under RBAC</text>
+        </g>
+        <g>
+          <rect class="box" x="470" y="146" width="230" height="56" rx="10" stroke="#FFB000"/>
+          <text class="lbl gd" x="585" y="170" text-anchor="middle">2 · VERIFY</text>
+          <text class="sm" x="585" y="190" text-anchor="middle">deterministic gates, not guesses</text>
+        </g>
+        <g>
+          <rect class="box" x="190" y="284" width="320" height="56" rx="10" stroke="#FFB000"/>
+          <text class="lbl gd" x="350" y="308" text-anchor="middle">3 · LEARN</text>
+          <text class="sm" x="350" y="328" text-anchor="middle">goal · diff · proof land in your store</text>
+        </g>
+        <g>
+          <rect class="box" x="0" y="146" width="230" height="56" rx="10" stroke-dasharray="5 5"/>
+          <text class="lbl" x="115" y="170" text-anchor="middle">4 · COMPOUND</text>
+          <text class="sm" x="115" y="190" text-anchor="middle">your private model — this raise</text>
+        </g>
+        <g class="gd"><circle cx="350" cy="70" r="4"/><circle cx="454" cy="174" r="4"/><circle cx="350" cy="278" r="4"/><circle cx="246" cy="174" r="4"/></g>
+      </svg>
     </div>
-    <div class="loop rise">
-      <div class="lstep"><span class="n">1</span><span class="t">Run</span><div class="d">stella does real work in your environment, under role-based access control.</div></div>
-      <div class="lstep"><span class="n">2</span><span class="t">Verify</span><div class="d">every step is checked against your rules with deterministic gates, not guesses.</div></div>
-      <div class="lstep"><span class="n">3</span><span class="t">Learn</span><div class="d">every verified trace lands in your context store — goal, diff, proof — schema-ready for training.</div></div>
-      <div class="lstep"><span class="n">4</span><span class="t">Compound</span><div class="d">the training pipeline this raise stands up turns those traces into your private model.</div></div>
+    <div class="foot">
+      <p class="kicker rise" style="--d:4">Deterministic first, model last. Steps 1&ndash;3 ship today; step 4 is what $2M builds.</p>
+      <p class="fine rise" style="--d:5">Two sides, one loop: the open engine drives bottom-up adoption among the engineers who choose their own tools, and the commercial control plane is what their enterprise pays for. Nobody ships the second half out of the box today.</p>
     </div>
-    <p class="kicker rise">Deterministic first, model last. Steps 1&ndash;3 ship today; step 4 is what $2M builds.</p>
-    <p class="fine rise">Two sides, one loop: the open engine drives bottom-up adoption among the engineers who choose their own tools, and the commercial control plane is what their enterprise pays for. Nobody ships the second half out of the box today.</p>
   </div>
 </section>
 
@@ -507,14 +781,36 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the moat examined: what compounds for oxagen if no data leaves the network">
   <div class="frame">
     <p class="overline rise">the moat, examined</p>
-    <h2 class="rise">If nothing leaves your network, <em>what compounds for us?</em></h2>
-    <p class="lead rise">The right question to ask about an air-gapped flywheel. Here is the answer we give in diligence — not the one we hope you won't ask for.</p>
-    <div class="tiles rise">
-      <div class="tile"><div class="name">The substrate compounds</div><div class="cap">the verification protocol, oracle generation, curriculum recipes, and training pipeline improve with every deployment. Lessons cross customers; data never does.</div></div>
-      <div class="tile"><div class="name">Telemetry is content-free by construction</div><div class="cap">default deployments send nothing at all. Enrolled enterprises send one aggregate operational rollup — pass rates, failure taxonomies, protocol metrics — to a single allowlisted sink. The exportable columns are a reviewed allowlist enforced in CI; prompts, code, and paths are unexportable by construction.</div></div>
-      <div class="tile"><div class="name">The lock-in is the pipeline</div><div class="cap">your model is your asset, and you can leave with the weights. What you cannot take is the machine that made them — the oracles, the verification ladder, the curriculum. Reproducibility is the switching cost.</div></div>
+    <h2 class="rise" style="--d:1">If nothing leaves your network, <em>what compounds for us?</em></h2>
+    <p class="lead rise" style="--d:2">The right question to ask about an air-gapped flywheel. Here is the answer we give in diligence — not the one we hope you won't ask for.</p>
+    <div class="body cols c-5-7">
+      <svg class="dia rise" style="--d:3" viewBox="0 0 560 290" role="img" aria-label="diagram: each customer's data and model stay inside their own boundary; only the protocol, oracles and curriculum — the substrate — improve across customers">
+        <rect class="box" x="0" y="10" width="260" height="112" rx="12" stroke-dasharray="5 5"/>
+        <text class="sm" x="130" y="34" text-anchor="middle">customer A</text>
+        <text class="lbl" x="130" y="62" text-anchor="middle">data · traces · model</text>
+        <text class="sm ff" x="130" y="86" text-anchor="middle">never leaves</text>
+        <rect class="box" x="300" y="10" width="260" height="112" rx="12" stroke-dasharray="5 5"/>
+        <text class="sm" x="430" y="34" text-anchor="middle">customer B</text>
+        <text class="lbl" x="430" y="62" text-anchor="middle">data · traces · model</text>
+        <text class="sm ff" x="430" y="86" text-anchor="middle">never leaves</text>
+        <path class="ln lng draw" d="M130 122 V186" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+        <path class="ln lng draw" d="M430 122 V186" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+        <text class="sm gd" x="142" y="158">protocol lessons</text>
+        <text class="sm gd" x="442" y="158">protocol lessons</text>
+        <rect class="boxg" x="60" y="192" width="440" height="86" rx="12" stroke-width="1.5"/>
+        <text class="lbl gd" x="280" y="222" text-anchor="middle">the substrate</text>
+        <text class="sm" x="280" y="244" text-anchor="middle">verification protocol · oracle generation ·</text>
+        <text class="sm" x="280" y="264" text-anchor="middle">curriculum recipes · training pipeline</text>
+      </svg>
+      <div class="tiles one stagger">
+        <div class="tile"><div class="name">The substrate compounds</div><div class="cap">the verification protocol, oracle generation, curriculum recipes and training pipeline improve with every deployment. Lessons cross customers; data never does.</div></div>
+        <div class="tile"><div class="name">Telemetry is content-free by construction</div><div class="cap">default deployments send nothing at all. Enrolled enterprises send one aggregate operational rollup — pass rates, failure taxonomies, protocol metrics — to a single allowlisted sink. The exportable columns are a reviewed allowlist enforced in CI; prompts, code and paths are unexportable by construction.</div></div>
+        <div class="tile"><div class="name">The lock-in is the pipeline</div><div class="cap">your model is your asset and you can leave with the weights. What you cannot take is the machine that made them — the oracles, the verification ladder, the curriculum. Reproducibility is the switching cost.</div></div>
+      </div>
     </div>
-    <p class="kicker rise">Each customer's model is private. The machine that makes models is ours — and it is the thing that gets better with every customer.</p>
+    <div class="foot">
+      <p class="kicker rise" style="--d:5">Each customer's model is private. The machine that makes models is ours — and it is the thing that gets better with every customer.</p>
+    </div>
   </div>
 </section>
 
@@ -522,17 +818,35 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="we don't sell tokens: the incentive inversion and the measured economics">
   <div class="frame">
     <p class="overline rise">the business we are in</p>
-    <h2 class="rise">We don't <em>sell tokens.</em></h2>
-    <p class="lead rise">A frontier vendor's revenue is your consumption — every retry is their upside. Ours is the inverse. stella is free and bring-your-own-key: the agent is not the meter. We are paid for verified outcomes and the private models that produce them, so every token the routing takes off your bill is a feature, not lost revenue.</p>
-    <p class="lead rise muted">That routing is the founding thesis, priced: deterministic tools do deterministic work at zero inference, models tuned on your traces do the routine work, frontier models only where novelty earns them.</p>
-    <div class="tiles four rise">
-      <div class="tile"><div class="big">$1.35</div><div class="cap">per solved task — full Terminal-Bench 2.1 run on a stock open-weight model, inference only, before any fine-tuning (2026-07-31)</div></div>
-      <div class="tile"><div class="big">~1/27th</div><div class="cap">the API list price of an open frontier-class model at launch (DeepSeek-R1 vs o1)</div></div>
-      <div class="tile"><div class="big">~90%</div><div class="cap">target cost reduction against a frontier-only stack at equal or better verified quality <span class="chip">target — end-to-end measurement is a funded milestone</span></div></div>
-      <div class="tile"><div class="big">0 bytes</div><div class="cap">of your data crossing the wire to a frontier lab</div></div>
+    <h2 class="rise" style="--d:1">We don't <em>sell tokens.</em></h2>
+    <p class="lead rise" style="--d:2">A frontier vendor's revenue is your consumption — every retry is their upside. Ours is the inverse. stella is free and bring-your-own-key: the agent is not the meter. We are paid for verified outcomes and the private models that produce them, so every token the routing takes off your bill is a feature, not lost revenue.</p>
+    <div class="body cols c-6-4">
+      <svg class="dia rise" style="--d:3" viewBox="0 0 700 250" role="img" aria-label="diagram of the routing thesis: deterministic tools do deterministic work at zero inference cost, a model tuned on your traces does the routine work, and frontier models are called only where novelty earns them">
+        <text class="sm" x="0" y="12">THE ROUTING THESIS &mdash; cheapest capable layer first</text>
+        <rect class="box" x="0" y="30" width="700" height="58" rx="10" stroke="#FFB000"/>
+        <text class="lbl gd" x="20" y="56">deterministic tools</text>
+        <text class="sm" x="20" y="76">parse, edit, search, run, diff — a strict IO contract, no model in the loop</text>
+        <text class="lbl gd" x="680" y="64" text-anchor="end">$0</text>
+        <rect class="box" x="0" y="98" width="700" height="58" rx="10"/>
+        <text class="lbl" x="20" y="124">your tuned model</text>
+        <text class="sm" x="20" y="144">trained on your own verified traces — the routine work, on your hardware</text>
+        <text class="lbl gd" x="680" y="132" text-anchor="end">$</text>
+        <rect class="box" x="0" y="166" width="700" height="58" rx="10"/>
+        <text class="lbl" x="20" y="192">frontier model</text>
+        <text class="sm" x="20" y="212">called only where genuine novelty earns it</text>
+        <text class="lbl gd" x="680" y="200" text-anchor="end">$$$</text>
+        <text class="sm" x="350" y="244" text-anchor="middle">schematic — layer shares are measured per deployment, not asserted here</text>
+      </svg>
+      <div class="tiles one stagger">
+        <div class="tile"><div class="big" data-count="1.35" data-prefix="$" data-dec="2">$1.35</div><div class="cap">per solved task — the full Terminal-Bench 2.1 run on a stock open-weight model, inference only, before any fine-tuning (2026-07-31)</div></div>
+        <div class="tile"><div class="big">~1/27th</div><div class="cap">the API list price of an open frontier-class model at launch (DeepSeek-R1 vs o1)</div></div>
+        <div class="tile"><div class="big">0 bytes</div><div class="cap">of your data crossing the wire to a frontier lab</div></div>
+      </div>
     </div>
-    <p class="kicker rise">Every execution records its own cost, tokens, and outcome — the cost-to-value question, answered per run.</p>
-    <p class="fine rise">The ~90% is a design target, not a measurement: no valid paired frontier-cost measurement exists yet, and producing one is named in the use of funds. Measured figures: run tb21-hh10-20260731 (methodology on the proof slide). Sources: Stanford HAI AI Index 2025 — best open model trailed best closed by 8.04% in 2024, 1.70% a year later; DeepSeek-R1 vs o1 API pricing, Jan 2025.</p>
+    <div class="foot">
+      <p class="kicker rise" style="--d:5">Every execution records its own cost, tokens and outcome — the cost-to-value question, answered per run.</p>
+      <p class="fine rise" style="--d:5">Measured figures come from run tb21-hh10-20260731 (methodology on the proof slide). Sources: Stanford HAI AI Index 2025 — best open model trailed best closed by 8.04% in 2024, 1.70% a year later; DeepSeek-R1 vs o1 API pricing, Jan 2025.</p>
+    </div>
   </div>
 </section>
 
@@ -540,14 +854,31 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="software first, then every vertical with a checkable outcome">
   <div class="frame">
     <p class="overline rise">the expansion</p>
-    <h2 class="rise">Software first &mdash; then <em>every vertical with a checkable outcome.</em></h2>
-    <p class="lead rise">The loop needs one thing: an oracle that can say pass or fail without asking a human. Wherever that exists, this engine works. We enter where oracles are free and instant, and climb toward where they are expensive but already built.</p>
-    <div class="steps rise">
-      <div class="step"><span class="n">1</span><span><span class="t">Wedge &mdash; software engineering.</span><br><span class="d">The oracle is free, instant, and already running: tests, compilers, type checkers, benchmarks.</span></span></div>
-      <div class="step"><span class="n">2</span><span><span class="t">Rung two &mdash; engine builders and optimizers.</span><br><span class="d">Compilers, databases, CI/CD, simulation — industries that already maintain their own benchmark suites.</span></span></div>
-      <div class="step"><span class="n">3</span><span><span class="t">Rung three &mdash; robotics and physical systems.</span><br><span class="d">The oracle is a simulator, and the digital twin is already that industry's standard practice.</span></span></div>
+    <h2 class="rise" style="--d:1">Software first &mdash; then <em>every vertical with a checkable outcome.</em></h2>
+    <p class="lead rise" style="--d:2">The loop needs one thing: an oracle that can say pass or fail without asking a human. Wherever that exists, this engine works. We enter where oracles are free and instant, and climb toward where they are expensive but already built.</p>
+    <div class="body">
+      <svg class="dia rise" style="--d:3; max-height: 300px;" viewBox="0 0 1420 300" role="img" aria-label="diagram: a three-rung ladder — software engineering where the oracle is free and instant, engine builders and optimizers who maintain their own benchmark suites, and robotics where the oracle is a simulator">
+        <path class="ln lng" d="M42 282 V22" stroke-width="1.5" marker-end="url(#ar-gold)"/>
+        <text class="sm gd" transform="rotate(-90 22 152)" x="22" y="152" text-anchor="middle">cost of the oracle</text>
+        <path class="ln lng draw" d="M60 268 H440 V186 H860 V104 H1300" stroke-width="2"/>
+        <rect class="box" x="82" y="188" width="340" height="72" rx="10" stroke="#FFB000"/>
+        <text class="lbl gd" x="102" y="214">1 · WEDGE &mdash; software engineering</text>
+        <text class="sm" x="102" y="236">free, instant, already running: tests,</text>
+        <text class="sm" x="102" y="252">compilers, type checkers, benchmarks</text>
+        <rect class="box" x="502" y="106" width="340" height="72" rx="10"/>
+        <text class="lbl" x="522" y="132">2 · engine builders &amp; optimizers</text>
+        <text class="sm" x="522" y="154">compilers, databases, CI/CD, simulation —</text>
+        <text class="sm" x="522" y="170">industries that already run benchmark suites</text>
+        <rect class="box" x="922" y="24" width="340" height="72" rx="10"/>
+        <text class="lbl" x="942" y="50">3 · robotics &amp; physical systems</text>
+        <text class="sm" x="942" y="72">the oracle is a simulator, and the digital twin</text>
+        <text class="sm" x="942" y="88">is already that industry’s standard practice</text>
+        <text class="sm" x="60" y="292">same engine at every rung &mdash; a vertical is an adapter, never a rewrite</text>
+      </svg>
     </div>
-    <p class="kicker rise">The engine does not change between rungs. <em>stella-core has no IO and speaks protocol-driven wire contracts</em> — a vertical is an adapter, never a rewrite. That is invariant #1 in the repository, and CI fails the build when it breaks.</p>
+    <div class="foot">
+      <p class="kicker rise" style="--d:4">The engine does not change between rungs. <em>stella-core has no IO and speaks protocol-driven wire contracts</em> — that is architecture invariant #1 in the repository, and CI fails the build when it breaks.</p>
+    </div>
   </div>
 </section>
 
@@ -555,14 +886,37 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the market">
   <div class="frame">
     <p class="overline rise">the market</p>
-    <h2 class="rise">A new line item, <em>growing fast.</em></h2>
-    <div class="tiles rise">
-      <div class="tile"><div class="big">$37B</div><div class="cap">enterprise spend on AI in 2025, up 3.2&times; from $11.5B in a single year</div></div>
-      <div class="tile"><div class="big">$4B</div><div class="cap">of it on AI coding — the breakout enterprise category, and the wedge we enter through</div></div>
-      <div class="tile"><div class="big">~$50B</div><div class="cap">projected AI agents market by 2030, growing about 46% a year</div></div>
+    <h2 class="rise" style="--d:1">A new line item, <em>growing fast.</em></h2>
+    <div class="body cols c-6-4">
+      <svg class="dia rise" style="--d:2" viewBox="0 0 780 332" role="img" aria-label="column chart: enterprise AI spend grew from 11.5 billion dollars in 2024 to 37 billion in 2025, of which about 4 billion is AI coding; the AI agents market is projected at about 50 billion by 2030">
+        <line class="ln" x1="0" y1="266" x2="780" y2="266" stroke-width="1"/>
+        <rect x="40" y="200" width="120" height="66" rx="4" fill="#232327"/>
+        <text class="lbl" x="100" y="190" text-anchor="middle">$11.5B</text>
+        <text class="sm" x="100" y="286" text-anchor="middle">2024</text>
+        <rect x="230" y="52" width="120" height="214" rx="4" fill="#232327"/>
+        <rect x="230" y="243" width="120" height="23" rx="4" fill="#FFB000"/>
+        <text class="lbl gd" x="290" y="42" text-anchor="middle">$37B</text>
+        <text class="sm" x="290" y="286" text-anchor="middle">2025</text>
+        <path class="lng" d="M248 254 V308" stroke-width="1" stroke-dasharray="3 3"/>
+        <text class="sm gd" x="290" y="322" text-anchor="middle">$4B of it is AI coding &mdash; our wedge</text>
+        <rect x="420" y="98" width="120" height="168" rx="4" fill="none" stroke="#A37200" stroke-dasharray="6 5"/>
+        <text class="lbl" x="480" y="88" text-anchor="middle">~$50B</text>
+        <text class="sm" x="480" y="286" text-anchor="middle">2030 · projected</text>
+        <text class="sm" x="566" y="164">AI agents market,</text>
+        <text class="sm" x="566" y="182">growing ~46% a year</text>
+        <text class="sm" x="0" y="14">enterprise AI spend, and the agents market it is becoming</text>
+      </svg>
+      <div class="stack">
+        <div class="tiles one stagger">
+          <div class="tile"><div class="big" data-count="3.2" data-dec="1" data-suffix="&times;">3.2&times;</div><div class="cap">growth in enterprise AI spend in a single year — $11.5B to $37B</div></div>
+          <div class="tile"><div class="big" data-count="4" data-prefix="$" data-suffix="B">$4B</div><div class="cap">of it on AI coding — the breakout enterprise category, and the wedge we enter through</div></div>
+        </div>
+        <p class="lead rise" style="--d:4; font-size: 0.95rem;">We sell to large enterprise and government: regulated, security-first, and where we already have warm relationships.</p>
+      </div>
     </div>
-    <p class="lead rise" style="margin-top: 2em;">We sell to large enterprise and government: regulated, security-first, and where we already have warm relationships.</p>
-    <p class="fine rise">Sources: Menlo Ventures, 2025: The State of Generative AI in the Enterprise (Dec 2025); Grand View Research, AI Agents Market (2025).</p>
+    <div class="foot">
+      <p class="fine rise" style="--d:5">Sources: Menlo Ventures, 2025: The State of Generative AI in the Enterprise (Dec 2025); Grand View Research, AI Agents Market (2025). The 2030 figure is a third-party projection, not a company forecast.</p>
+    </div>
   </div>
 </section>
 
@@ -570,15 +924,33 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="business model and go to market">
   <div class="frame">
     <p class="overline rise">the business model</p>
-    <h2 class="rise">Land on trust. <em>Expand to the control plane.</em></h2>
-    <p class="lead rise">We start where the pain is sharpest: verifying AI work. That is an easy yes. From there we expand to the full control plane and the private model, which become core infrastructure you cannot rip out.</p>
-    <div class="tiles rise">
-      <div class="tile"><div class="tag">LAND</div><div class="name">Verification</div><div class="cap">prove trust on one team</div></div>
-      <div class="tile"><div class="tag">EXPAND</div><div class="name">Control plane</div><div class="cap">govern every agent in the org</div></div>
-      <div class="tile"><div class="tag">ANCHOR</div><div class="name">Private model</div><div class="cap">trained on your data, hard to leave</div></div>
+    <h2 class="rise" style="--d:1">Land on trust. <em>Expand to the control plane.</em></h2>
+    <p class="lead rise" style="--d:2">We start where the pain is sharpest: verifying AI work. That is an easy yes. From there we expand to the full control plane and the private model, which become core infrastructure you cannot rip out.</p>
+    <div class="body">
+      <svg class="dia rise" style="--d:3; max-height: 210px;" viewBox="0 0 1420 210" role="img" aria-label="diagram: land on verification with one team, expand to governing every agent in the organization, anchor on a private model trained on the customer's own data">
+        <path class="lng flow" d="M40 172 H1380" stroke-width="2" marker-end="url(#ar-gold)"/>
+        <rect class="box" x="40" y="18" width="410" height="128" rx="12" stroke="#FFB000"/>
+        <text class="lbl gd" x="64" y="48">LAND</text>
+        <text class="lbl" x="64" y="76" font-size="17">Verification</text>
+        <text class="sm" x="64" y="100">prove trust on one team — the sharpest</text>
+        <text class="sm" x="64" y="118">pain, the easiest yes, the shortest cycle</text>
+        <rect class="box" x="505" y="18" width="410" height="128" rx="12"/>
+        <text class="lbl gd" x="529" y="48">EXPAND</text>
+        <text class="lbl" x="529" y="76" font-size="17">Control plane</text>
+        <text class="sm" x="529" y="100">govern every agent in the org — rules,</text>
+        <text class="sm" x="529" y="118">RBAC, audit, spend, one place</text>
+        <rect class="box" x="970" y="18" width="410" height="128" rx="12"/>
+        <text class="lbl gd" x="994" y="48">ANCHOR</text>
+        <text class="lbl" x="994" y="76" font-size="17">Private model</text>
+        <text class="sm" x="994" y="100">trained on your own verified traces —</text>
+        <text class="sm" x="994" y="118">core infrastructure, hard to leave</text>
+        <text class="sm gd" x="710" y="200" text-anchor="middle">contract value grows with the depth of the deployment, never with your token burn</text>
+      </svg>
+      <div class="cols c-2" style="margin-top: 26px;">
+      <p class="fine rise" style="--d:4"><strong class="gold">How we bill.</strong> stella is free and bring-your-own-key — the agent is not the meter. Oxagen bills a platform subscription per team, plus usage metered on verified traces entering the training pipeline: an integer the control plane counts inside your network. We bill on the count; we never see the content.</p>
+      <p class="fine rise" style="--d:5"><strong class="gold">Design partners.</strong> Town of Cary, NC (municipal government) and Lumenium (combustion-engine R&amp;D) — both verbal today, both repeat buyers. The founder has sold software to each before; Cary has transacted north of $1M a year across three of his companies, and its R&amp;D department can waive competitive bid. Not signed yet — but not cold, and not blocked on procurement.</p>
+      </div>
     </div>
-    <p class="lead rise muted" style="margin-top: 2em; font-size: 0.85em;">stella is free and bring-your-own-key — the agent is not the meter. Oxagen bills a platform subscription per team, plus usage metered on verified traces entering the training pipeline: an integer the control plane counts inside your network. We bill on the count; we never see the content.</p>
-    <p class="lead rise muted" style="margin-top: 1em; font-size: 0.85em;">Design partners: Town of Cary, NC (municipal government) &middot; Lumenium (combustion-engine R&amp;D) — both verbal today, both repeat buyers. The founder has sold software to each before; Cary has transacted north of $1M a year across three of his companies, and its R&amp;D department can waive competitive bid. Not signed yet — but not cold, and not blocked on procurement.</p>
   </div>
 </section>
 
@@ -586,16 +958,20 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="competition: agents, labs, open harnesses, fine-tune platforms">
   <div class="frame">
     <p class="overline rise">the competition</p>
-    <h2 class="rise">stella is free. <em>The control plane is not.</em></h2>
-    <p class="lead rise">stella is open source and bring-your-own-key, head-to-head with every agent below — with one thing none of them claim: a deterministic definition of done. Oxagen sells the layer above it. The honest table: what each rival sells, why we win, and what actually stops a copy.</p>
-    <table class="vs compact rise" aria-label="comparison across four competitor categories">
-      <tr><th></th><th>they sell</th><th>why we win</th><th>what stops the copy</th></tr>
-      <tr><td class="muted">IDE &amp; CLI agents<br>cursor &middot; claude code &middot; codex</td><td>a rented loop on a rented model — done is the model's word</td><td class="gold">a witnessed flip, your data on your network, a model you own</td><td>verification-first is an architecture, not a feature flag; their revenue is the subscription, not your weights</td></tr>
-      <tr><td class="muted">frontier labs<br>anthropic &middot; openai &middot; google</td><td>centralized weights that improve on aggregate usage</td><td class="gold">we need your tokens out of the shared model; their business needs them in it</td><td>shipping air-gapped private weights per customer cannibalizes the API</td></tr>
-      <tr><td class="muted">open harnesses<br>swe-agent &middot; openhands &middot; aider</td><td>capable open loops — no oracle of done, no governance plane</td><td class="gold">the flip, the trace schema, and the enterprise control plane above the agent</td><td>pieces are copyable; the compounding substrate — protocol, corpus schema, pipeline — is the distance</td></tr>
-      <tr><td class="muted">fine-tune platforms<br>together &middot; fireworks &middot; predibase</td><td>training compute for data you already have</td><td class="gold">we generate the labeled corpus as a side effect of doing the work</td><td>a training platform without labels is a kiln without clay</td></tr>
-    </table>
-    <p class="kicker rise">Any one piece can be copied. The moat is the compounding: every deployment improves the protocol that every other deployment runs.</p>
+    <h2 class="rise" style="--d:1">stella is free. <em>The control plane is not.</em></h2>
+    <p class="lead rise" style="--d:2">stella goes head-to-head with every agent below, open source and bring-your-own-key, with one thing none of them claim: a deterministic definition of done. Oxagen sells the layer above it.</p>
+    <div class="body">
+      <table class="vs compact rise" style="--d:3" aria-label="comparison across four competitor categories">
+        <tr><th></th><th>they sell</th><th>why we win</th><th>what stops the copy</th></tr>
+        <tr><td class="muted">IDE &amp; CLI agents<br>cursor &middot; claude code &middot; codex</td><td>a rented loop on a rented model — done is the model's word</td><td class="gold">a witnessed flip, your data on your network, a model you own</td><td>verification-first is an architecture, not a feature flag; their revenue is the subscription, not your weights</td></tr>
+        <tr><td class="muted">frontier labs<br>anthropic &middot; openai &middot; google</td><td>centralized weights that improve on aggregate usage</td><td class="gold">we need your tokens out of the shared model; their business needs them in it</td><td>shipping air-gapped private weights per customer cannibalizes the API</td></tr>
+        <tr><td class="muted">open harnesses<br>swe-agent &middot; openhands &middot; aider</td><td>capable open loops — no oracle of done, no governance plane</td><td class="gold">the flip, the trace schema, and the enterprise control plane above the agent</td><td>pieces are copyable; the compounding substrate — protocol, corpus schema, pipeline — is the distance</td></tr>
+        <tr><td class="muted">fine-tune platforms<br>together &middot; fireworks &middot; predibase</td><td>training compute for data you already have</td><td class="gold">we generate the labeled corpus as a side effect of doing the work</td><td>a training platform without labels is a kiln without clay</td></tr>
+      </table>
+    </div>
+    <div class="foot">
+      <p class="kicker rise" style="--d:4">Any one piece can be copied. The moat is the compounding: every deployment improves the protocol that every other deployment runs.</p>
+    </div>
   </div>
 </section>
 
@@ -603,21 +979,28 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="the team">
   <div class="frame">
     <p class="overline rise">the team</p>
-    <h2 class="rise">A founder who has <em>done this before.</em></h2>
-    <div class="split rise">
-      <div class="card">
+    <h2 class="rise" style="--d:1">A founder who has <em>done this before.</em></h2>
+    <div class="body cols c-2">
+      <div class="card rise" style="--d:2">
         <div class="avatar" aria-hidden="true">MA</div>
         <h3>Mac Anderson</h3>
         <p class="role">Founder &amp; CEO</p>
         <p><strong>Cofounded and sold Fonteva for $125M in 2021</strong> on $6M raised, keeping about 60%. Eight-time Inc 5000 recipient and member of Inc magazine's hall of fame.</p>
-        <p>Deep roots in enterprise and government software — the exact buyers we are selling to now.</p>
+        <p>Sixteen years in software engineering and engineering leadership, with deep roots in enterprise and government software — the exact buyers we are selling to now.</p>
+        <div class="creds">
+          <span class="cred">$125M exit</span><span class="cred">Inc 5000 &times;8</span><span class="cred">16 yrs engineering</span>
+        </div>
       </div>
-      <div class="card">
-        <p><strong>16 years</strong> software engineering &amp; engineering leadership experience.</p>
-        <p><strong>BS, Machine Learning &amp; Algorithms</strong><br><span class="sub">University of Tennessee, Knoxville</span></p>
-        <p><strong>MS, Machine Learning</strong><br><span class="sub">Georgia Institute of Technology</span></p>
-        <p><strong>Who builds the product:</strong> the founder, pair-building with stella itself — the repository's development loop is agent-first, and the commit history is the demo. First hire on this raise is a founding engineer; GTM follows the revenue milestones.</p>
+      <div class="card rise" style="--d:3">
+        <h3>Who builds the product</h3>
+        <p class="role">today, and on this raise</p>
+        <p><strong>The founder, pair-building with stella itself.</strong> This repository's development loop is agent-first: stella does the work, the witness protocol gates it, a human reviews it. The commit history is the demo — and the benchmark in this deck was produced by that loop.</p>
+        <p><strong>First hire on this raise is a founding engineer</strong>, then GTM for enterprise and GTM for public sector, following the revenue milestones. Four people and the training pipeline is the whole 18-month plan.</p>
+        <p class="sub">Fonteva figures are founder-attested; the 2021 Togetherwork acquisition is public, its terms were not disclosed.</p>
       </div>
+    </div>
+    <div class="foot">
+      <p class="kicker rise" style="--d:4">A small team is the point: the loop that builds this product is the product.</p>
     </div>
   </div>
 </section>
@@ -626,44 +1009,51 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="traction and the ask">
   <div class="frame">
     <p class="overline rise">traction &amp; the ask</p>
-    <h2 class="rise">Where we are today, and what $2M <em>buys.</em></h2>
-    <div class="tiles four rise">
-      <div class="tile"><div class="big">+15.7 pts</div><div class="cap">over Claude Code, model held constant — full TB 2.1 suite, preregistered</div></div>
-      <div class="tile"><div class="big">$1.35</div><div class="cap">per solved task on stock open weights, measured</div></div>
-      <div class="tile"><div class="big">89/89</div><div class="cap">tasks run, one attempt each — artifacts public, reproducible from the pinned commit</div></div>
-      <div class="tile"><div class="big">0 bytes</div><div class="cap">of customer data leave the network — enforced in CI, not in a policy PDF</div></div>
+    <h2 class="rise" style="--d:1">Where we are today, and what $2M <em>buys.</em></h2>
+    <div class="body cols c-5-7">
+      <div class="tiles two stagger">
+        <div class="tile"><div class="big" data-count="15.7" data-prefix="+" data-dec="1">+15.7</div><div class="cap">points over Claude Code, model held constant — full TB 2.1 suite, preregistered</div></div>
+        <div class="tile"><div class="big" data-count="1.35" data-prefix="$" data-dec="2">$1.35</div><div class="cap">per solved task on stock open weights, measured</div></div>
+        <div class="tile"><div class="big">89/89</div><div class="cap">tasks run, one attempt each — artifacts public, reproducible from the pinned commit</div></div>
+        <div class="tile"><div class="big">0 bytes</div><div class="cap">of customer data leave the network — enforced in CI, not in a policy PDF</div></div>
+      </div>
+      <div class="askbox rise" style="--d:3">
+        <div class="at">THE ASK</div>
+        <div class="ah">Raising a <em>$2M SAFE</em> at an <em>$18M post-money cap</em> &mdash; 11.1% dilution</div>
+        <ul>
+          <li>Four people and the pipeline: a founding engineer, GTM for enterprise, GTM for public sector, and the training infrastructure for continuous private-model delivery — an 18-month plan.</li>
+          <li>An audited public Terminal-Bench row — submission requires four verified runs of the full suite, and funding that submission is milestone one — with the model gap closed on frontier-class open weights.</li>
+          <li>3&ndash;5 paid pilots in regulated and government accounts; both design partnerships converted to paid contracts.</li>
+          <li>The seed prices on: the first customer-trained model in production beating its stock base on that customer's own tasks, reference logos in government, and $1M ARR run-rate.</li>
+        </ul>
+      </div>
     </div>
-    <div class="askbox rise">
-      <div class="at">THE ASK</div>
-      <div class="ah">Raising a <em>$2M SAFE</em> at an <em>$18M post-money cap</em> &mdash; 11.1% dilution</div>
-      <ul>
-        <li>Four people and the pipeline: a founding engineer, GTM for enterprise, GTM for public sector, and the training infrastructure for continuous private-model delivery — an 18-month plan.</li>
-        <li>An audited public Terminal-Bench row — submission requires four verified runs of the full suite, and funding that submission is milestone one — with the model gap closed on frontier-class open weights. We intend to own the adjacent agent benchmarks too.</li>
-        <li>3&ndash;5 paid pilots in regulated and government accounts; both design partnerships converted to paid contracts.</li>
-        <li>The seed prices on: the first customer-trained model in production beating its stock base on that customer's own tasks, reference logos in government, and $1M ARR run-rate.</li>
-      </ul>
+    <div class="foot">
+      <p class="fine rise" style="--d:5">Milestones and targets on this slide are the plan this raise funds, not results. The measured figures are the two on the left; their methodology is the proof slide and appendix A1.</p>
     </div>
   </div>
 </section>
 
 <!-- 18 · close -->
-<section class="slide cover" aria-label="close">
+<section class="slide" aria-label="close">
   <div class="frame">
-    <div class="lockup rise">
-      <svg class="comet" width="72" height="72" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-        <line x1="10" y1="48" x2="30" y2="48" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
-        <line x1="18" y1="34" x2="30" y2="34" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
-        <line x1="18" y1="62" x2="30" y2="62" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
-        <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#FFB000"/>
-      </svg>
+    <div style="margin: auto 0;">
+      <div class="lockup rise">
+        <svg class="comet" width="72" height="72" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+          <line x1="10" y1="48" x2="30" y2="48" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+          <line x1="18" y1="34" x2="30" y2="34" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+          <line x1="18" y1="62" x2="30" y2="62" stroke="#FFB000" stroke-width="7" stroke-linecap="round"/>
+          <path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#FFB000"/>
+        </svg>
+      </div>
+      <h2 class="rise" style="--d:1; margin-top: 18px;"><em>verified done,</em><br>not claimed done.</h2>
+      <p class="lead rise" style="--d:2">We don't sell tokens. We sell verified work, and the models that produce it. Software is the wedge — the hardest, most valuable traces there are, and the only place the oracle is free. The loop underneath it — act, verify, learn — is not about code, and every vertical with a checkable outcome is downstream of getting this one right.</p>
+      <p class="lead rise links" style="--d:3; margin-top: 24px;">
+        <a href="https://stella.oxagen.sh">stella.oxagen.sh</a> &nbsp;·&nbsp;
+        <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a> &nbsp;·&nbsp;
+        <a href="mailto:mac@oxagen.sh">mac@oxagen.sh</a>
+      </p>
     </div>
-    <h2 class="rise">verified done,<br>not claimed done.</h2>
-    <p class="lead rise">We don't sell tokens. We sell verified work, and the models that produce it. Software is the wedge — the hardest, most valuable traces there are, and the only place the oracle is free. The loop underneath it — act, verify, learn — is not about code, and every vertical with a checkable outcome is downstream of getting this one right.</p>
-    <p class="lead rise links">
-      <a href="https://stella.oxagen.sh">stella.oxagen.sh</a> &nbsp;·&nbsp;
-      <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a> &nbsp;·&nbsp;
-      <a href="mailto:mac@oxagen.sh">mac@oxagen.sh</a>
-    </p>
   </div>
 </section>
 
@@ -671,17 +1061,22 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="appendix A1: benchmark methodology">
   <div class="frame">
     <p class="overline rise">appendix <span class="idx">· A1 · for technical diligence</span></p>
-    <h2 class="rise">The run behind <em>the number.</em></h2>
-    <table class="vs compact rise" aria-label="benchmark run methodology summary">
-      <tr><td class="muted">run</td><td>tb21-hh10-20260731 &middot; preregistered 2026-07-31T21:02:14Z, five seconds before the first trial (github issue #1013)</td></tr>
-      <tr><td class="muted">result</td><td class="gold">stella 58/89 = 65.17% &middot; 95% CI [54.3%, 75.0%] exact &nbsp;·&nbsp; Claude Code 44/89 = 49.44% &middot; [38.7%, 60.3%]</td></tr>
-      <tr><td class="muted">panel</td><td>passed by both 36 &middot; stella only 22 &middot; Claude Code only 8 &middot; neither 23</td></tr>
-      <tr><td class="muted">parity</td><td>same 89 tasks, the dataset's own unmodified verifier, Harbor 0.6.1, one attempt, no retries, same timeouts and per-task resources, same host (EC2 m6id.8xlarge, native x86_64), same day, glm-5.2 at effort max in both arms. The endpoint was the only permitted difference.</td></tr>
-      <tr><td class="muted">cost</td><td>stella $78.25 total &rarr; $1.35 per solved task, inference only at provider list prices. Arms not cost-comparable: different providers, different token accounting, and Claude Code reports cost on 71 of 89 trials.</td></tr>
-      <tr><td class="muted">identity</td><td>SUT commit 62a8ae2d&hellip; &middot; binary SHA-256 a6392dcc&hellip; &middot; every trial re-recorded commit, binary, and posture digests — all 89 agree with the manifest.</td></tr>
-      <tr><td class="muted">what it is not</td><td>not an audited leaderboard row — the manifest names five reasons in full. Witness tier off in this run, so 65.17% is a lower bound on the full verification ladder.</td></tr>
-    </table>
-    <p class="fine rise">Full methodology, raw trials, per-task results, and the scoring script: <a class="links" href="https://github.com/macanderson/stella/blob/74daf6c3e179f02784f1a056805244e4cce4d081/website/public/presentations/BENCHMARK_METHODOLOGY.md" style="color: var(--gold);">BENCHMARK_METHODOLOGY.md</a> &middot; bench/evidence/tb21-hh10-20260731/. The number reproduces from that directory alone — seeded bootstrap, one committed script.</p>
+    <h2 class="rise" style="--d:1">The run behind <em>the number.</em></h2>
+    <div class="body">
+      <table class="vs compact rise" style="--d:2" aria-label="benchmark run methodology summary">
+        <tr><td class="muted">run</td><td>tb21-hh10-20260731 &middot; preregistered 2026-07-31T21:02:14Z, five seconds before the first trial (github issue #1013)</td></tr>
+        <tr><td class="muted">result</td><td class="gold">stella 58/89 = 65.17% &middot; 95% CI [54.3%, 75.0%] exact &nbsp;·&nbsp; Claude Code 44/89 = 49.44% &middot; [38.7%, 60.3%]</td></tr>
+        <tr><td class="muted">panel</td><td>passed by both 36 &middot; stella only 22 &middot; Claude Code only 8 &middot; neither 23</td></tr>
+        <tr><td class="muted">parity</td><td>same 89 tasks, the dataset's own unmodified verifier, Harbor 0.6.1, dataset terminal-bench-2-1@sha256:7d7bdc1c&hellip;, one attempt, no retries, same timeouts and per-task resources, same host (EC2 m6id.8xlarge, native x86_64), same day, glm-5.2 at effort max in both arms. The endpoint was the only permitted difference.</td></tr>
+        <tr><td class="muted">cost</td><td>stella $78.25 total &rarr; $1.35 per solved task, inference only at provider list prices. Arms not cost-comparable: different providers, different token accounting, and Claude Code reports cost on 71 of 89 trials.</td></tr>
+        <tr><td class="muted">contamination</td><td>both arms ran stock weights — nothing we trained touched this benchmark. When customer training ships, Terminal-Bench tasks are excluded from every corpus by protocol.</td></tr>
+        <tr><td class="muted">identity</td><td>SUT commit 62a8ae2d&hellip; &middot; binary SHA-256 a6392dcc&hellip; &middot; every trial re-recorded commit, binary and posture digests — all 89 agree with the manifest.</td></tr>
+        <tr><td class="muted">what it is not</td><td>not an audited leaderboard row — the manifest names five reasons in full. Witness tier off in this run, so 65.17% is a lower bound on the full verification ladder.</td></tr>
+      </table>
+    </div>
+    <div class="foot">
+      <p class="fine rise" style="--d:3">Full methodology, raw trials, per-task results and the scoring script: <a class="ref" href="https://github.com/macanderson/stella/blob/01987f1e9ee81195b956d8df0cb4a094fc4d0aa8/website/public/presentations/BENCHMARK_METHODOLOGY.md">BENCHMARK_METHODOLOGY.md</a> &middot; bench/evidence/tb21-hh10-20260731/. The number reproduces from that directory alone — seeded bootstrap, one committed script. Leaderboard comparison figures: tbench.ai, re-checked 2026-08-09.</p>
+    </div>
   </div>
 </section>
 
@@ -689,14 +1084,17 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="appendix A2: witness protocol failure modes and guards">
   <div class="frame">
     <p class="overline rise">appendix <span class="idx">· A2 · for technical diligence</span></p>
-    <h2 class="rise">What the flip does <em>not</em> prove.</h2>
-    <div class="steps rise">
-      <div class="step"><span class="n">1</span><span><span class="t">A flip can be shallow.</span><br><span class="d">A weak witness proves something changed, not that the right thing was delivered. Guards today: the witness is authored by an independent verifier model after reading the executed diff — never by the worker — and tampering voids credit. Roadmap: mutation-scored witness quality and adversarial witness review.</span></span></div>
-      <div class="step"><span class="n">2</span><span><span class="t">A flip is silent about regressions.</span><br><span class="d">It proves the named behavior arrived, not that nothing else broke. The project's own test suite still gates the change; the flip is additional evidence, never a substitute.</span></span></div>
-      <div class="step"><span class="n">3</span><span><span class="t">Not all work has an oracle.</span><br><span class="d">UI, refactors, performance, migrations, and design have no clean fail &rarr; pass test. We have not yet published a measured oracle-able share of enterprise work — we measure it per pilot, and non-oracle work runs under the warrant system: typed, pre-action justification instead of a flip. The corpus bias toward testable work is real; the training curriculum weights against it.</span></span></div>
-      <div class="step"><span class="n">4</span><span><span class="t">Flips are optimizable.</span><br><span class="d">A model trained on flips could learn to produce trivially-flippable work. Guards: the witness is written against the executed diff by a model with no stake in the reward; the worker never sees it in advance; voided flips are excluded from training; and the ladder abstains rather than credit an unprovable claim — an abstention is never training data.</span></span></div>
+    <h2 class="rise" style="--d:1">What the flip does <em>not</em> prove.</h2>
+    <p class="lead rise" style="--d:2">A protocol with no named failure modes is an unexamined protocol. These are ours — with the guards that ship today, and the gaps that do not.</p>
+    <div class="body steps two stagger">
+      <div class="step"><span class="n">1</span><span><span class="t">A flip can be shallow.</span><span class="d">A weak witness proves something changed, not that the right thing was delivered. <strong class="gold">Guards:</strong> the witness is authored by an independent verifier model after reading the executed diff — never by the worker — and tampering voids credit. <strong class="gold">Roadmap:</strong> mutation-scored witness quality, adversarial witness review.</span></span></div>
+      <div class="step"><span class="n">2</span><span><span class="t">A flip is silent about regressions.</span><span class="d">It proves the named behavior arrived, not that nothing else broke. <strong class="gold">Guard:</strong> the project's own test suite still gates the change; the flip is additional evidence, never a substitute.</span></span></div>
+      <div class="step"><span class="n">3</span><span><span class="t">Not all work has an oracle.</span><span class="d">UI, refactors, performance, migrations and design have no clean fail&nbsp;&rarr;&nbsp;pass test. We have published no measured oracle-able share of enterprise work — we measure it per pilot. <strong class="gold">Guard:</strong> non-oracle work runs under the warrant system, typed pre-action justification instead of a flip. The corpus bias toward testable work is real; the curriculum weights against it.</span></span></div>
+      <div class="step"><span class="n">4</span><span><span class="t">Flips are optimizable.</span><span class="d">A model trained on flips could learn to produce trivially-flippable work. <strong class="gold">Guards:</strong> the witness is written against the executed diff by a model with no stake in the reward; the worker never sees it in advance; voided flips are excluded from training; and the ladder abstains rather than credit an unprovable claim — an abstention is never training data.</span></span></div>
     </div>
-    <p class="kicker rise">A protocol with no named failure modes is an unexamined protocol. These are ours — with the guards, and the gaps.</p>
+    <div class="foot">
+      <p class="fine rise" style="--d:5">The oracle-coverage percentage is deliberately unnumbered: no measured figure exists yet, and this deck does not carry a number without a measurement behind it.</p>
+    </div>
   </div>
 </section>
 
@@ -704,34 +1102,95 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
 <section class="slide" aria-label="appendix A3: licensing and intellectual property">
   <div class="frame">
     <p class="overline rise">appendix <span class="idx">· A3 · for counsel</span></p>
-    <h2 class="rise">Who owns <em>what.</em></h2>
-    <div class="tiles rise">
+    <h2 class="rise" style="--d:1">Who owns <em>what.</em></h2>
+    <p class="lead rise" style="--d:2">Government counsel asks this first. The answer is written down before they ask.</p>
+    <div class="body tiles stagger">
       <div class="tile"><div class="name">the agent</div><div class="cap">stella is AGPL-3.0 and dual-licensed; Oxagen holds the commercial track. Enterprises and government deploy under the commercial license — no AGPL obligations inside your network.</div></div>
-      <div class="tile"><div class="name">your model</div><div class="cap">customer-trained weights are the customer's asset by contract. Base models are pinned to permissive-license weights (MIT / Apache-2.0 class); community-licensed weights are used only where their terms permit the customer's use, reviewed per engagement. <span class="chip">base-weight license matrix: [verification pending]</span></div></div>
-      <div class="tile"><div class="name">your traces</div><div class="cap">traces, ontology, and the context store never leave your network and are never Oxagen's to license. The content-free telemetry rollup is contractual, aggregate, and enforced in CI.</div></div>
+      <div class="tile"><div class="name">your model</div><div class="cap">customer-trained weights are the customer's asset by contract. Every base model offered for fine-tuning is license-reviewed per engagement for three specific rights — commercial fine-tuning, redistribution of derivatives to the customer, and government deployment — and a base whose terms do not grant all three is not offered for that engagement.</div></div>
+      <div class="tile"><div class="name">your traces</div><div class="cap">traces, ontology and the context store never leave your network and are never Oxagen's to license. The content-free telemetry rollup is contractual, aggregate and enforced in CI.</div></div>
     </div>
-    <p class="kicker rise">Government counsel asks this first. The answer is written down before they ask.</p>
+    <div class="foot">
+      <p class="kicker rise" style="--d:4">Your data, your model, your network. Ours is the machine that makes the model &mdash; and the contract says so before counsel asks.</p>
+    </div>
   </div>
 </section>
+
+<!-- shared svg arrowheads -->
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <defs>
+    <marker id="ar-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#FFB000"/>
+    </marker>
+    <marker id="ar-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#232327"/>
+    </marker>
+  </defs>
+</svg>
+
+</div><!-- /stage -->
+</div><!-- /viewport -->
 
 <script>
 (function () {
   "use strict";
   var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var stage = document.getElementById("stage");
   var progress = document.getElementById("progress");
   var counter = document.getElementById("counter");
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var idx = 0;
+
+  /* Scale the fixed 1600x900 canvas to fit the viewport, preserving aspect.
+     CSS cannot express min(vw/W, vh/H) as a unitless factor for scale(), so
+     this is the one layout job the script must own. Reader mode (narrow
+     screens) neutralises the transform in CSS and this becomes a no-op. */
+  function fit() {
+    var w = window.innerWidth, h = window.innerHeight;
+    stage.style.setProperty("--k", Math.min(w / 1600, h / 900).toFixed(4));
+  }
 
   function pad(n) { return (n < 10 ? "0" : "") + n; }
 
-  function fromHash() {
-    var m = /^#s(\d+)$/.exec(location.hash);
-    return m ? Math.min(slides.length - 1, Math.max(0, parseInt(m[1], 10) - 1)) : 0;
+  /* Count a number up on arrival. Purely decorative: the element's markup
+     already contains the final value, so a failure here shows the true number
+     rather than a zero. */
+  function countUp(el) {
+    var target = parseFloat(el.getAttribute("data-count"));
+    if (isNaN(target)) { return; }
+    var dec = parseInt(el.getAttribute("data-dec") || "0", 10);
+    var pre = el.getAttribute("data-prefix") || "";
+    var suf = el.getAttribute("data-suffix") || "";
+    var final = pre + target.toFixed(dec) + suf;
+    if (reduced) { el.innerHTML = final; return; }
+    var t0 = null, dur = 700;
+    function frame(ts) {
+      if (t0 === null) { t0 = ts; }
+      var p = Math.min(1, (ts - t0) / dur);
+      var eased = 1 - Math.pow(1 - p, 3);
+      el.innerHTML = p < 1 ? pre + (target * eased).toFixed(dec) + suf : final;
+      if (p < 1) { requestAnimationFrame(frame); }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  /* Give every stroke-drawn path its own exact length, so the draw animation
+     finishes on the last pixel of the path rather than a guessed constant.
+     Only measurable once the slide is displayed, hence on activation. */
+  function armDraws(slide) {
+    slide.querySelectorAll(".draw").forEach(function (p) {
+      if (p.dataset.armed) { return; }
+      var len = typeof p.getTotalLength === "function" ? p.getTotalLength() : 0;
+      if (len) { p.style.setProperty("--len", Math.ceil(len)); }
+      p.dataset.armed = "1";
+    });
   }
 
   function go(i, replace) {
     idx = Math.min(slides.length - 1, Math.max(0, i));
     slides.forEach(function (s, j) { s.classList.toggle("active", j === idx); });
+    var cur = slides[idx];
+    armDraws(cur);
+    cur.querySelectorAll("[data-count]").forEach(countUp);
     progress.style.width = (((idx + 1) / slides.length) * 100) + "%";
     counter.textContent = pad(idx + 1) + " / " + pad(slides.length);
     var h = "#s" + (idx + 1);
@@ -739,6 +1198,11 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
       if (replace) { history.replaceState(null, "", h); }
       else { history.pushState(null, "", h); }
     }
+  }
+
+  function fromHash() {
+    var m = /^#s(\d+)$/.exec(location.hash);
+    return m ? Math.min(slides.length - 1, Math.max(0, parseInt(m[1], 10) - 1)) : 0;
   }
 
   document.getElementById("next").addEventListener("click", function () { go(idx + 1); });
@@ -763,7 +1227,9 @@ table.vs.compact th, table.vs.compact td { padding: 10px 12px; }
     if (Math.abs(dx) > 48) { go(dx < 0 ? idx + 1 : idx - 1); }
   }, { passive: true });
 
+  window.addEventListener("resize", fit);
   window.addEventListener("hashchange", function () { go(fromHash(), true); });
+  fit();
   go(fromHash(), true);
 })();
 </script>
