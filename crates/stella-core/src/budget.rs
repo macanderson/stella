@@ -57,7 +57,7 @@
 
 use std::time::{Duration, Instant};
 
-use stella_protocol::BudgetMode;
+use stella_protocol::{AgentEvent, BudgetMode};
 
 /// Which scope a [`BudgetOutcome`] is reporting against. A guard configured
 /// with both a turn and a session limit checks them independently — the
@@ -347,6 +347,47 @@ impl BudgetGuard {
             return DeadlineOutcome::Closing { remaining };
         }
         DeadlineOutcome::Continue
+    }
+
+    /// Wall clock left before [`task_deadline`](Self::task_deadline) as of
+    /// `now`, or `None` when no deadline is armed. Pure, for the same reason
+    /// [`check_deadline`](Self::check_deadline) is.
+    ///
+    /// `Some(Duration::ZERO)` is an armed deadline that has already passed —
+    /// deliberately distinct from `None`, because "out of time" and "nobody
+    /// was timing this" are the two answers a reader needs to tell apart.
+    #[must_use]
+    pub fn deadline_remaining(&self, now: Instant) -> Option<Duration> {
+        self.task_deadline
+            .map(|deadline| deadline.saturating_duration_since(now))
+    }
+
+    /// The [`AgentEvent::BudgetTick`] describing this guard as of `now`.
+    ///
+    /// Every emitter goes through here rather than writing the literal, so
+    /// "each axis reaches the journal" is structural instead of a convention
+    /// three call sites happen to keep. It was a convention until #2240: the
+    /// wall-clock axis existed in the guard and in no tick, and reconstructing
+    /// whether a killed trial had a deadline armed at all meant reading the
+    /// adapter, the runner, the harness, and the trial's `config.json`.
+    ///
+    /// Takes `now` rather than reading the clock (module docs, invariant 2):
+    /// the caller is at a settled boundary and already holds one.
+    #[must_use]
+    pub fn tick_event(&self, now: Instant) -> AgentEvent {
+        AgentEvent::BudgetTick {
+            spent_usd: self.spent_usd(),
+            limit_usd: self.turn_limit_usd(),
+            mode: self.mode(),
+            session_spent_usd: Some(self.session_spent_usd()),
+            session_limit_usd: self.session_limit_usd(),
+            deadline_remaining_ms: self
+                .deadline_remaining(now)
+                // Saturating, not `as`: a deadline armed absurdly far out
+                // would otherwise wrap to a small number, which reads as
+                // "nearly out of time" — the exact inversion of the truth.
+                .map(|left| u64::try_from(left.as_millis()).unwrap_or(u64::MAX)),
+        }
     }
 
     /// Remaining headroom before the *tightest* configured limit trips, or

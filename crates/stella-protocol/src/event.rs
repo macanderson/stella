@@ -534,6 +534,25 @@ pub enum AgentEvent {
         /// `session_spent_usd`.
         #[serde(default)]
         session_limit_usd: Option<f64>,
+        /// Wall clock left before the task deadline at this tick — the third
+        /// axis, and the only one a journal could not otherwise state (#2240).
+        ///
+        /// `None` means **no deadline was armed**, which is exactly the
+        /// distinction that used to require reading argv: a trial killed by its
+        /// harness emitted dozens of these against a dollar cap it never
+        /// approached, while the 900s wall clock that actually stopped it
+        /// appeared nowhere in the journal. `Some(0)` is the opposite fact — a
+        /// deadline is armed and has already passed.
+        ///
+        /// Milliseconds rather than a `Duration` because this is a wire type
+        /// (invariant 4): a whole-millisecond integer round-trips through JSON
+        /// byte-for-byte, where a float of seconds would not.
+        ///
+        /// `serde(default)` — absent on every journal written before this
+        /// field existed, where it reads as "unarmed". That is the honest
+        /// decode: those journals genuinely could not say otherwise.
+        #[serde(default)]
+        deadline_remaining_ms: Option<u64>,
     },
     /// One committed model call — the metering record. Emitted exactly once
     /// per step that lands, carrying the normalized usage envelope plus

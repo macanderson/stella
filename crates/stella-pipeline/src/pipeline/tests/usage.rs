@@ -69,7 +69,7 @@ async fn run_triage_only(
     config: PipelineConfig,
     budget: &mut BudgetGuard,
 ) -> (
-    Result<TaskAssessment, PipelineBudgetAbort>,
+    Result<TaskAssessment, PipelineStageAbort>,
     f64,
     Vec<AgentEvent>,
 ) {
