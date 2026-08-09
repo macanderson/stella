@@ -187,7 +187,7 @@ Plus three file-backed stores under `~/.stella/`: `sessions/` (one JSON record
 per session, one writer per file), `sessions/<id>/` (the resume sidecar), and
 `notifications/`. `~/.stella` resolves the same on every platform — no OS
 data-dir guessing — with `STELLA_HOME` moving the whole home and
-`STELLA_DATA_DIR` / `STELLA_CONFIG_DIR` as narrower overrides. The resolution
+`STELLA_DATA_DIR` as the one narrower override. The resolution
 itself lives in [`stella-home`](../stella-home), a dependency-free leaf crate,
 because [`stella-observatory`](../stella-observatory) needs the same answer and
 must not link this one; [`home.rs`](src/home.rs) keeps the part that is

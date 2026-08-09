@@ -64,10 +64,11 @@ fn file_len(path: &Path) -> u64 {
 /// Shared through `stella-home` rather than copied: this is the one resolver
 /// both sides must agree on, and the observatory may not link `stella-cli`.
 /// It honours `STELLA_HOME` because the loader does since #2178 — and only
-/// `STELLA_HOME`: `STELLA_CONFIG_DIR` moves nothing today, and honouring it
-/// here (as this once did) made the tab claim a `settings.json` the CLI never
-/// opens. If the loader grows another override, mirror it here in the same
-/// order.
+/// `STELLA_HOME`, which is the whole of what can move this path. This
+/// resolver used to honour `STELLA_CONFIG_DIR` too, which made the tab claim
+/// a `settings.json` the CLI never opens; that variable reached no resolver
+/// on either side and was retired in #2442. If the loader grows another
+/// override, mirror it here in the same order.
 pub fn user_config_dir() -> Option<PathBuf> {
     stella_home::stella_home()
 }
@@ -1004,24 +1005,20 @@ tags       = ["testing", "pins"]
 
     /// The config tab must name the settings file the CLI actually loads
     /// (`stella_cli::paths::stella_root`). Since #2178 that is `$STELLA_HOME`
-    /// when set, else `$HOME/.stella` — and still never `STELLA_CONFIG_DIR`,
-    /// which moves nothing on the CLI side; honouring it here once pointed the
-    /// tab at a `settings.json` the CLI never opens.
+    /// when set, else `$HOME/.stella` — and since #2442 there is no second
+    /// override to mirror: this test used to set `STELLA_CONFIG_DIR` and
+    /// assert it was ignored, which stopped being a claim about anything once
+    /// the variable named no resolver on either side and was retired.
     #[test]
     fn user_config_dir_mirrors_the_cli_settings_loader() {
-        // The old note here reasoned that no parallel test could observe the
-        // transient value because nothing else reads STELLA_CONFIG_DIR. That
-        // is an argument about one variable, and the hazard is the shared
-        // environment: this test also reads HOME, which other crates' tests
-        // override, and stella-store's `any_override_set` reads
-        // STELLA_CONFIG_DIR. Take the crate-wide lock like every other
-        // env-mutating test here (#1137).
+        // The hazard is the shared environment, not any one variable: this
+        // test reads HOME, which other crates' tests override. Take the
+        // crate-wide lock like every other env-mutating test here (#1137).
         let _env = crate::test_env::lock();
-        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_CONFIG_DIR", "STELLA_HOME"]);
+        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_HOME"]);
         // SAFETY: the lock is held for the whole test, and `_restore` undoes
-        // both on drop — including if `user_config_dir` panics.
+        // this on drop — including if `user_config_dir` panics.
         unsafe {
-            std::env::set_var("STELLA_CONFIG_DIR", "/tmp/elsewhere");
             std::env::remove_var("STELLA_HOME");
         }
         let home = std::env::var_os("HOME")
@@ -1030,8 +1027,7 @@ tags       = ["testing", "pins"]
         assert_eq!(
             user_config_dir(),
             Some(home.join(".stella")),
-            "STELLA_CONFIG_DIR moves nothing on the CLI side, so it must move \
-             nothing here"
+            "with nothing overriding it, the tab names the loader's default"
         );
 
         // SAFETY: same lock, same guard.
