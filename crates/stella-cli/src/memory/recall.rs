@@ -557,13 +557,11 @@ pub(super) fn render_context_section(frames: &[RecalledFrame]) -> Option<String>
     }
     let mut section = format!("Relevant context:\n{}", lines.join("\n"));
     if citable {
-        section.push_str(
-            "\n\nWhen a memory above (a [nod_…]-tagged line) actually informs your work this \
-             turn, call cite_memory with that id once you can judge it: useful_score 1-5 for \
-             how much it helped the actual work, truthful for whether its content still holds \
-             (verify against the workspace, don't assume), and a one-sentence remark. Cite \
-             only memories you genuinely used — no courtesy citations.",
-        );
+        // The one wording, shared with the pipeline's own render of the same
+        // frames (#2195). This surface asked and the pipeline did not, for as
+        // long as both existed — see `CITE_MEMORY_REQUEST` for what that cost.
+        section.push_str("\n\n");
+        section.push_str(stella_pipeline::CITE_MEMORY_REQUEST);
     }
     Some(section)
 }

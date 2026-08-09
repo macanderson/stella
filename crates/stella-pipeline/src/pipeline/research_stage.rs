@@ -54,9 +54,12 @@ impl Pipeline<'_> {
             return Vec::new();
         }
         // Resolution failure degrades to no research — never fail a turn on
-        // an advisory stage. Plan-tier on purpose: the findings exist for the
-        // planner, so they ride the planner's model choice and overrides.
-        let Ok(resolved) = self.resolve_provider(Role::Plan) else {
+        // an advisory stage — and so does a roster that withholds it (#2381).
+        // Both land above the stage event, so an ablated research stage leaves
+        // the stream exactly as an empty question list does. Plan-tier by
+        // default: the findings exist for the planner, so they ride the
+        // planner's agent unless the roster says otherwise.
+        let Assigned::To(resolved) = self.assigned(ModelCallRole::Research) else {
             return Vec::new();
         };
         self.emit(AgentEvent::Stage {

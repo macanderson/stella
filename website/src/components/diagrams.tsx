@@ -1166,3 +1166,107 @@ export function EngineSequenceDiagram() {
     </svg>
   );
 }
+
+/**
+ * Agent engine paths: which door drives which loop.
+ *
+ * The layout is the argument. Every descriptive label here owns a band nothing
+ * else is drawn in, because the earlier hand-drawn version of this picture put
+ * its annotations wherever there was room and they landed on top of the boxes
+ * they described. Three rules keep that from recurring:
+ *
+ * - The four pipeline doors sit directly above the lane they feed, so every
+ *   drop is a straight vertical and no wire needs an elbow to label around.
+ * - The two always-raw doors sit *beside* the loop they drive rather than
+ *   above it. That is also the honest position: they are not a third route
+ *   through the pipeline, they start below it.
+ * - Edge annotations sit clear of their wire (anchored to one side), never
+ *   centred over it.
+ *
+ * The two raw doors enter at different depths on purpose. `stella --plain`
+ * calls `run_turn`; `stella-serve` does not — it drives `run_step` in a loop
+ * of its own (`crates/stella-serve/src/session.rs`), which is exactly why the
+ * checkpoint seam is public. Drawing both into `run_turn` would be one box
+ * too shallow, and would quietly misstate who owns the loop.
+ */
+export function EnginePathsDiagram() {
+  // [x, width, command, what it is] — widths are sized to the longest of the
+  // two strings, so the labels never need shortening to fit a uniform box.
+  const pipelineDoors: [number, number, string, string][] = [
+    [16, 92, "stella", "Command Deck"],
+    [118, 88, "stella run", "one-shot"],
+    [216, 98, "stella goal", "judged rounds"],
+    [324, 104, "stella fleet", "N workers, DAG"],
+  ];
+  return (
+    <svg
+      className="sdg"
+      viewBox="0 0 720 382"
+      role="img"
+      aria-label="Six ways a session starts. stella, stella run, stella goal and stella fleet drive the staged pipeline, whose execute stage calls the engine's turn loop. stella --plain and stella-serve skip the pipeline: the plain REPL drives run_turn, and stella-serve drives run_step itself. Every path ends in the same step loop."
+    >
+      <title>Six doors, two loops, one step loop underneath</title>
+      <Defs />
+
+      <text className="sdg-sub" x={16} y={16}>
+        four doors — the staged pipeline, by default
+      </text>
+      {pipelineDoors.map(([x, w, cmd, sub]) => (
+        <g key={cmd}>
+          <Node x={x} y={26} w={w} h={52} label={cmd} sub={sub} />
+          <Wire d={`M${x + w / 2} 78 V112`} />
+        </g>
+      ))}
+
+      {/* The lane spans exactly the four doors above it, which is what buys the
+       * straight drops. Hand-rolled rather than a Node: three lines of text. */}
+      <rect className="sdg-box-accent" x={16} y={114} width={412} height={76} rx={6} />
+      <text className="sdg-label" x={222} y={140} textAnchor="middle">
+        stella-pipeline :: Pipeline::run
+      </text>
+      {/* `->`, not U+2192 — and this is not a downgrade. The self-hosted
+       * JetBrains Mono is the latin subset, which carries ↑ and ↓ but no →, so
+       * a real arrow falls out to a system font for that one glyph: different
+       * face, different advance, tofu where nothing fills in. JetBrains Mono
+       * ligates `->` into an arrow anyway, so this *renders* as → while staying
+       * two in-subset characters on a stable monospace advance. Guarded by
+       * diagrams.test.ts. */}
+      <text className="sdg-sub" x={222} y={160} textAnchor="middle">
+        triage -&gt; recall -&gt; research -&gt; plan -&gt; scope
+      </text>
+      <text className="sdg-sub" x={222} y={176} textAnchor="middle">
+        execute -&gt; witness -&gt; verify -&gt; verdict
+      </text>
+
+      <Wire d="M222 190 V222" />
+      <text className="sdg-sub" x={210} y={212} textAnchor="end">
+        execute + revise call it N×
+      </text>
+
+      <Node
+        x={72}
+        y={224}
+        w={300}
+        h={52}
+        label="stella-core :: Engine::run_turn"
+        sub="loop { run_step }"
+        accent
+      />
+      <Wire d="M222 276 V294" />
+      <Node x={72} y={296} w={300} h={52} label="run_step" sub="12 fixed phases, one model call" />
+
+      {/* The raw doors, each level with the loop it actually drives. */}
+      <text className="sdg-sub" x={520} y={212}>
+        two doors — no stages, ever
+      </text>
+      <Node x={520} y={224} w={184} h={52} label="stella --plain" sub="line REPL" />
+      <Wire d="M518 250 H374" />
+      <Node x={520} y={296} w={184} h={52} label="stella-serve" sub="drives run_step itself" />
+      <Wire d="M518 322 H374" />
+
+      <text className="sdg-sub" x={360} y={368} textAnchor="middle">
+        --no-pipeline on run · goal · fleet skips every stage and drives the loop directly
+      </text>
+    </svg>
+  );
+}
