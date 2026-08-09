@@ -113,7 +113,9 @@ use crate::witness::{
 };
 pub use resume_stage::{FrameProgress, PipelineResume, RecordedBaseline};
 mod attachments;
-mod authored;
+// `pub(crate)` for one constant: `verify`'s instruction block names the
+// authored section's header so the prompt and the header cannot drift apart.
+pub(crate) mod authored;
 mod candidate_result;
 mod disclosure;
 mod evidence;
