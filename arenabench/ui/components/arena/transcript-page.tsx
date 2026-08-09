@@ -3,7 +3,7 @@
 import * as React from "react";
 import { api } from "@/lib/api";
 import type { Cell, Snapshot, TranscriptEntry } from "@/lib/types";
-import { fmtClock, fmtMoney, fmtTokens } from "@/lib/format";
+import { fmtClock, fmtDuration, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn, seatStyle } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,15 @@ import { ProofPanel } from "@/components/arena/proof-panel";
  *   never outshouts the response.
  * - **The label is coloured, the value is read.** Tool names take the
  *   accent; bodies stay plain. A colour earns its place by being rare.
+ * - **The rails are the deck's**: `●` opens a call, `⎿` its result, `✗` a
+ *   failed one — a distinct glyph *and* column, so a failure is findable by
+ *   margin-scan alone (`crates/stella-tui/src/render/row.rs::Rail`).
+ *
+ * One deliberate departure: the deck renders a call and its result as one
+ * tight block that nothing can split, so the result row need not repeat the
+ * tool's name. Here the kind filters can hide every call row, which would
+ * leave a column of results naming nothing — so a result row carries its
+ * tool's name, subordinate to the call's.
  *
  * Playback matches the drawer it replaced: a finished trial replays paced by
  * each entry's own elapsed stamp, a live one streams. Search and filters are
@@ -221,43 +230,100 @@ function Entry({
   }
 
   if (entry.kind === "tool") {
+    // `● name  argument`, the deck's call row. The name is soft-padded to a
+    // common column so arguments line up down a run of calls — soft, not
+    // hard, because a long MCP name (`mcp__github__create_pull_request`)
+    // overruns the column rather than being truncated: the tool's identity
+    // outranks the alignment it would cost.
+    const meta = (entry.meta || {}) as Record<string, unknown>;
+    const raw = typeof meta.raw === "string" ? meta.raw : "";
+    const expandable = Boolean(raw) && raw !== "{}";
     return (
       <div>
-        <span className="text-acc-cyan">
-          ⚙ <Highlight text={entry.title ?? "tool"} query={query} />
-        </span>
-        {body && (
-          <div className="whitespace-pre-wrap break-words text-muted">
-            <Highlight text={body} query={query} />
-          </div>
+        <div className="flex items-baseline gap-2">
+          <span className="select-none text-dim">●</span>
+          <span className="min-w-[8.5rem] shrink-0 font-semibold text-accent">
+            <Highlight text={entry.title ?? "tool"} query={query} />
+          </span>
+          {body && (
+            <span className="min-w-0 flex-1 truncate text-muted">
+              <Highlight text={body} query={query} />
+            </span>
+          )}
+          {expandable && (
+            <button
+              type="button"
+              onClick={toggleResult}
+              aria-label={resultOpen ? "hide arguments" : "show arguments"}
+              className="shrink-0 cursor-pointer text-[10.5px] text-dim hover:text-muted"
+            >
+              {resultOpen ? "⏶" : "⋯"}
+            </button>
+          )}
+        </div>
+        {expandable && resultOpen && (
+          <pre className="ml-5 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-dim">
+            <Highlight text={raw} query={query} />
+          </pre>
         )}
       </div>
     );
   }
 
   if (entry.kind === "tool_result") {
-    const isError = Boolean((entry.meta as Record<string, unknown> | undefined)?.error);
-    const lines = body.split("\n");
+    // `⎿ name · 141ms · 12 lines`, then the body — the deck's result rail,
+    // subordinate to the call above it. A failure takes `✗` and its own
+    // colour so it is findable by margin-scan alone.
+    //
+    // The name is on the row rather than left implicit in the call above,
+    // which is where this page departs from the deck on purpose: the deck
+    // renders a call and its result as one tight block that cannot be split,
+    // while here the kind filters can hide every call row and leave a column
+    // of results naming nothing.
+    const meta = (entry.meta || {}) as Record<string, unknown>;
+    const isError = Boolean(meta.error);
+    const lines = body ? body.split("\n") : [];
     const folded = !resultOpen && lines.length > RESULT_PREVIEW_LINES;
     const shown = resultOpen ? lines : lines.slice(0, RESULT_PREVIEW_LINES);
+    const metrics = [
+      meta.duration_ms != null ? fmtDuration(meta.duration_ms) : null,
+      lines.length > 1 ? `${lines.length} lines` : null,
+      // ⚡ marks a speculated result: its duration overlapped the model's own
+      // streaming instead of following it, so the number is not latency the
+      // run actually spent waiting.
+      meta.speculated ? "⚡ speculated" : null,
+      // The protocol grew a `ToolOutput` arm this page predates. Say so
+      // rather than presenting the JSON fallback as if it were output.
+      meta.unrecognized ? "unrecognized output shape" : null,
+    ].filter(Boolean);
     return (
       <div>
-        <span className={cn("text-[10.5px]", isError ? "text-bad" : "text-dim")}>
-          ↳ {isError ? "error" : "result"}
-        </span>
-        <div
-          className={cn(
-            "whitespace-pre-wrap break-words",
-            isError ? "text-bad/90" : "text-muted",
+        <div className="flex items-baseline gap-2">
+          <span className={cn("select-none", isError ? "text-bad" : "text-dim")}>
+            {isError ? "✗" : "⎿"}
+          </span>
+          <span className={cn("font-medium", isError ? "text-bad" : "text-dim")}>
+            <Highlight text={entry.title ?? "tool"} query={query} />
+          </span>
+          {metrics.length > 0 && (
+            <span className="text-[10.5px] text-dim">· {metrics.join(" · ")}</span>
           )}
-        >
-          <Highlight text={shown.join("\n")} query={query} />
         </div>
+        {shown.length > 0 && (
+          <pre
+            className={cn(
+              "ml-5 overflow-x-auto whitespace-pre-wrap break-words",
+              isError ? "text-bad/90" : "text-muted",
+            )}
+          >
+            <Highlight text={shown.join("\n")} query={query} />
+          </pre>
+        )}
         {folded && (
           <button
             type="button"
             onClick={toggleResult}
-            className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
+            className="ml-5 cursor-pointer text-[10.5px] text-dim hover:text-muted"
           >
             ⋯ {lines.length - RESULT_PREVIEW_LINES} more lines
           </button>
@@ -266,7 +332,7 @@ function Entry({
           <button
             type="button"
             onClick={toggleResult}
-            className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
+            className="ml-5 cursor-pointer text-[10.5px] text-dim hover:text-muted"
           >
             ⏶ collapse
           </button>

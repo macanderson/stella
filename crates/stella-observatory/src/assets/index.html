@@ -1608,10 +1608,30 @@ function journalEntryHtml(e) {
     return `<div class="jrnl"><div class="kick">⏳ parked · ${esc(e.description ?? "")} · every ${esc(String(e.poll_interval_secs ?? "?"))}s, up to ${esc(String(e.deadline_secs ?? "?"))}s</div></div>`;
   if (e.type === "turn_woken")
     return `<div class="jrnl"><div class="kick">▶ woke · ${e.reason === "changed" ? "the watched state changed" : e.reason === "deadline_expired" ? "the deadline expired with no change" : esc(e.reason ?? "")} · ${esc(String(e.polls_used ?? 0))} probe(s)</div></div>`;
+  /* The Command Deck's rails (`crates/stella-tui/src/render/row.rs::Rail`):
+     `●` opens a call, `⎿` its result, `✗` a failed one — a distinct glyph for
+     the failure so it is findable by margin-scan alone. `stella observe` and
+     `stella run` are looking at the same journal, and a reader who lives in
+     one should not have to relearn the other.
+
+     The result row names its tool. `ToolResult` carries only a `call_id` on
+     the wire, so the name is resolved server-side from the matching
+     `tool_start` (`journal::tool_names`) — before that, every result row in
+     this dashboard read `✓ result` and a reader scrolling a fan-out could not
+     tell which row answered which call. */
+  const lines = e.body ? e.body.split("\n").length : 0;
+  const bits = [];
+  if (e.duration_ms != null) bits.push(fmtMs(e.duration_ms));
+  if (lines > 1) bits.push(`${lines} lines`);
+  /* ⚡ marks a speculated result: the call was read-only and began executing
+     while the model was still streaming, so its duration overlapped the model
+     call instead of following it — not latency the run spent waiting. */
+  if (e.speculated) bits.push("⚡ speculated");
   const head =
-    e.type === "tool_start" ? `▸ ${esc(e.name ?? "")}` :
-    e.type === "tool_result" ? `${e.ok ? "✓" : "✕"} result${e.duration_ms != null ? ` · ${fmtMs(e.duration_ms)}` : ""}${e.speculated ? " · speculated" : ""}` :
-    e.type === "reasoning" ? "reasoning" : "answer";
+    e.type === "tool_start" ? `● ${esc(e.name ?? "tool")}` :
+    e.type === "tool_result"
+      ? `${e.ok ? "⎿" : "✗"} ${esc(e.name ?? "tool")}${bits.length ? ` · ${bits.join(" · ")}` : ""}`
+    : e.type === "reasoning" ? "reasoning" : "answer";
   return `<div class="jrnl${e.type === "tool_result" && !e.ok ? " err" : ""}">
     <div class="kick">${head}${e.truncated ? ` · <span style="color:var(--warn)">clipped</span>` : ""}</div>
     ${e.body ? `<pre class="jrnl-body">${esc(e.body)}</pre>` : ""}</div>`;

@@ -5,6 +5,7 @@
 use super::*;
 use proptest::prelude::*;
 
+mod diff_provenance;
 mod parse;
 mod uncollected;
 mod witness_strip;

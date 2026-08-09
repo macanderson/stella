@@ -728,6 +728,63 @@ fn a_shell_only_workspace_prompts_a_shell_witness() {
     );
 }
 
+/// A shell-witness author enumerating history must be told to skip the
+/// pipeline's own commits.
+///
+/// A candidate workspace is a detached-HEAD shadow carrying a pipeline-authored
+/// baseline snapshot, which is reachable only from a `refs/worktree/` pin and so
+/// is indistinguishable from a lost commit to `git rev-list --all --reflog`,
+/// `git fsck --dangling`, or anything similar.
+///
+/// On Terminal-Bench `fix-git` — goal: "find my lost changes and merge them
+/// into master" — an author wrote precisely that enumeration and the witness
+/// returned the task's one hidden commit plus TWO of the pipeline's. The agent
+/// merged the real one; the witness stayed red on the machinery it could not
+/// dispose of, and the run spent the rest of its budget chasing a defect that
+/// did not exist. A witness the agent cannot satisfy by doing the task
+/// correctly turns a solved task into a deadline.
+#[test]
+fn a_shell_witness_author_is_told_to_exclude_the_pipelines_own_commits() {
+    let p = witness_prompt(
+        "find my lost changes and merge them into master",
+        &[],
+        "README.md",
+        &["sh".to_string()],
+        "",
+    );
+    assert!(
+        p.contains(crate::witness::MACHINERY_COMMIT_EMAIL),
+        "the identity to exclude must be named verbatim so a filter can match it: {p}"
+    );
+    assert!(
+        p.contains("EXCLUDE them"),
+        "naming the commits without saying to drop them is not guidance: {p}"
+    );
+    assert!(
+        p.contains("git fsck") && p.contains("rev-list"),
+        "the note must reach the enumerations an author actually reaches for: {p}"
+    );
+}
+
+/// …and it is not spent on workspaces that cannot hit it. A toolchain witness
+/// is a framework test, not a history walk, and the note is prompt budget on
+/// every single authoring call — so it rides with the shell-only branch that
+/// tells the author to assert a git fact in the first place.
+#[test]
+fn the_machinery_commit_note_rides_only_with_the_shell_witness_guidance() {
+    let with_cargo = witness_prompt(
+        "add a parser",
+        &[],
+        "Cargo.toml",
+        &["cargo".to_string(), "sh".to_string()],
+        "",
+    );
+    assert!(
+        !with_cargo.contains(crate::witness::MACHINERY_COMMIT_EMAIL),
+        "{with_cargo}"
+    );
+}
+
 /// #2130's prompt half: the author is TOLD the frame it is authoring in.
 ///
 /// The goal routinely phrases deliverables in the project's absolute paths
