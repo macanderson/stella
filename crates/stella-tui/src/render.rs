@@ -531,7 +531,16 @@ pub(crate) fn render_slash_popup(
 /// Most styled diff lines a collapsed tool result shows inline before folding
 /// the rest behind ctrl+o — a mutation stays glanceable in the transcript
 /// without a large diff flooding it uninvited.
-pub(crate) const INLINE_DIFF_CAP: usize = 20;
+///
+/// Public because the plain surface renders the same capped diff (#2421) and
+/// a second number would be a second policy: "how much diff is glanceable" is
+/// one judgement about reading, not about ratatui.
+pub const INLINE_DIFF_CAP: usize = 20;
+
+/// Re-exported for the same reason as [`INLINE_DIFF_CAP`]: the plain surface
+/// previews a chain of thought to the same depth the deck does, and the depth
+/// is a reading judgement both surfaces should lose or keep together.
+pub use entry::THINKING_ROWS;
 
 /// Resolve a tool result's [`InlineDiffRef`] to the diff text it may render,
 /// or `None` when the reference went stale: the diff shown must be the one

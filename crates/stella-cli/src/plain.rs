@@ -41,19 +41,50 @@
 //! the network call, then froze for the entire real wait — a decorative
 //! pre-roll, not a live indicator. A correct live spinner would need its own
 //! concurrent task racing the event-draining task below, both writing to the
-//! terminal — real interleaving risk for a cosmetic win. `Stage::Execute`
-//! below gives one clean, immediate "thinking" line instead. There is no
+//! terminal — real interleaving risk for a cosmetic win. [`stage_rule`] gives
+//! one clean, immediate line per stage instead (it replaced a lone dim
+//! `thinking…` on `Execute` in #2421). There is no
 //! decorative "rocket"/spinner animation either — activity is reported by the
 //! command deck's honest run progress bar (`stella_tui::progress`), never by a
 //! cosmetic character-noise loop.
 
 use std::io::{self, Write};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use colored::{Color, ColoredString, Colorize};
-use stella_protocol::{AgentEvent, BudgetMode, StageKind};
+use stella_protocol::{AgentEvent, BudgetMode, FileChangeKind, StageKind};
+use stella_tui::ansi::AnsiPalette;
+use stella_tui::render::{INLINE_DIFF_CAP, THINKING_ROWS};
 use stella_tui::textline::{self, EventLine, Tone, fmt_cost};
+
+/// Width of the stage rules and the banner's closing rule.
+///
+/// A constant rather than the terminal's width: this surface's output is
+/// routinely *not* going to a terminal at all (a supervised run's console
+/// file, a pipe, CI), and a rule sized to whatever `stella` happened to see at
+/// launch would make two runs of the same task diff against each other for no
+/// reason. The banner already picked 60 for the same reason.
+const RULE_WIDTH: usize = 60;
+
+/// How this surface dresses the shared renderers' output.
+///
+/// The colour decision is `colored`'s, not ours — it already folds `NO_COLOR`,
+/// `CLICOLOR_FORCE`, `TERM=dumb` (via [`crate::term_policy`]) and a non-tty
+/// stream, and a second opinion here is how the two would drift apart.
+///
+/// [`stella_tui::theme::INK`] is transparent because this surface paints no
+/// ground: the deck asserts an explicit white for prose over its own black
+/// frame, and inheriting that would put our idea of "text" on a reader's light
+/// terminal profile. The structure around the prose keeps its colours.
+fn palette() -> AnsiPalette {
+    if colored::control::SHOULD_COLORIZE.should_colorize() {
+        AnsiPalette::colored().with_transparent_fg(stella_tui::theme::INK)
+    } else {
+        AnsiPalette::monochrome()
+    }
+}
 
 /// Truncate `s` to at most `max` characters, appending `…` when it was
 /// shortened. Char-boundary-safe: operates on `char`s, never byte indices,
@@ -299,10 +330,27 @@ pub fn section_header(title: &str) {
     );
 }
 
-/// Print the assistant's complete response (after streaming).
+/// Print the assistant's complete response (after streaming), rendered as
+/// markdown.
+///
+/// Agent responses are markdown-capable and this surface used to print them
+/// with a bare `println!`, so headings arrived as `### text`, emphasis as
+/// literal asterisks and code blocks as rows of backticks. That is the
+/// transcript a `stella run` leaves behind, and the *only* one a supervised
+/// run leaves behind — the deck's readers were never the ones who needed this
+/// most.
+///
+/// The parse is [`stella_tui::markdown`]'s, the same one the deck folds with:
+/// a second markdown implementation here would be a second set of edge cases
+/// (the `snake_case`-outranks-`_emphasis_` rule alone is a page of reasoning)
+/// drifting out of step with the first.
 pub fn assistant_response(text: &str) {
-    if !text.is_empty() {
-        println!("\n{}", text);
+    if text.is_empty() {
+        return;
+    }
+    println!();
+    for line in stella_tui::markdown::render_ansi(text, &palette()) {
+        println!("{line}");
     }
 }
 
@@ -403,7 +451,144 @@ pub fn welcome_banner(provider: &str, model: &str, workspace: &str) {
     println!("  {}\n", "─".repeat(60).dimmed());
 }
 
+/// Print a stage divider — the plain surface's form of the deck's section
+/// rule.
+///
+/// Until #2421 this surface printed one dim `thinking…` for `Execute` and
+/// nothing whatever for the other eleven stages, so a staged `stella run` — the
+/// default path — rendered as an undifferentiated wall of tool calls with no
+/// sign that triage, planning, witness authoring, verification and the verdict
+/// had each happened. The stage vocabulary is
+/// [`stella_tui::textline::stage_label`], shared with the deck, so the two
+/// surfaces cannot come to call the same stage different things (#1465 was
+/// exactly that bug, five surfaces wide).
+///
+/// The label alone, without the word "stage": the divider already says what
+/// kind of thing this is.
+pub fn stage_rule(stage: StageKind) {
+    let label = textline::stage_label(stage);
+    // "  " + "──" + " " + label + " " — what the trailing rule has to clear.
+    let used = label.chars().count() + 5;
+    let tail = RULE_WIDTH.saturating_sub(used);
+    println!(
+        "\n  {} {} {}",
+        "──".dimmed(),
+        label.bold(),
+        "─".repeat(tail).dimmed()
+    );
+}
+
+/// The chain of thought accumulated since the last non-`Reasoning` event.
+///
+/// `Reasoning` arrives as token-sized deltas, so it has to be coalesced before
+/// it can be measured or previewed; the deck coalesces into a
+/// `TranscriptEntry::Reasoning` it can re-render, and this surface cannot
+/// re-render anything it has already written, so it buffers until the thought
+/// is over and prints once.
+///
+/// A `Mutex<String>` rather than a channel or a field because `render_event`
+/// is a free function called from a single event-draining task — the same
+/// reason [`ACCENT`] is a static. Poisoning is recovered from rather than
+/// propagated: a panic elsewhere must not turn the transcript off.
+static REASONING: Mutex<String> = Mutex::new(String::new());
+
+/// Buffer a reasoning delta (see [`REASONING`]).
+fn reasoning_delta(delta: &str) {
+    let mut buf = match REASONING.lock() {
+        Ok(buf) => buf,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    buf.push_str(delta);
+}
+
+/// Print the buffered thought, if any, and clear it.
+///
+/// Bounded to [`THINKING_ROWS`] — the deck's own preview depth, shared rather
+/// than re-chosen — and dimmed. Reasoning was dropped entirely here before
+/// #2421, with no comment saying why, which is the signature of an omission
+/// rather than a policy: every other suppression in [`render_event`] states
+/// its reason. Printing it *whole* is the other wrong answer, since a long
+/// thought is the largest text a turn produces and this surface is often
+/// writing to a log file.
+fn flush_reasoning() {
+    let mut buf = match REASONING.lock() {
+        Ok(buf) => buf,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if buf.trim().is_empty() {
+        buf.clear();
+        return;
+    }
+    let text = std::mem::take(&mut *buf);
+    drop(buf);
+
+    // Blank lines are dropped rather than previewed: in a window this small a
+    // paragraph break costs a row of thought and says nothing. Same call the
+    // deck makes.
+    let rows: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let total = rows.len();
+    println!("  {} {}", "✻".dimmed(), format!("{total} lines").dimmed());
+    for row in rows.iter().take(THINKING_ROWS) {
+        println!("    {}", row.trim_end().dimmed().italic());
+    }
+    if let Some(folded) = total.checked_sub(THINKING_ROWS).filter(|n| *n > 0) {
+        println!("    {}", format!("⋯ {folded} more").dimmed());
+    }
+}
+
+/// Print a file mutation and the diff it produced, capped.
+///
+/// This is the surface's answer to "what actually changed", and until #2421 it
+/// had none: the row said `± write src/foo.rs` and stopped, while the diff rode
+/// the very same event unread. The deck has shown a capped inline diff for some
+/// time; the surface that a `stella run` and every supervised run actually
+/// write to had never shown one.
+///
+/// Layout comes from [`stella_tui::diff`] — the one implementation of "how a
+/// diff looks" — in its inline form, which drops the file header and the
+/// counts footer because the row above already carries both.
+///
+/// [`INLINE_DIFF_CAP`] bounds it, and the withheld count is *printed*: a
+/// truncation nobody announces reads as the whole change. Unlike the deck
+/// there is no ctrl+o here — a scrollback line cannot be revisited — so the
+/// cap is the final answer and has to say so.
+pub fn file_change_card(
+    path: &str,
+    kind: FileChangeKind,
+    added: u32,
+    removed: u32,
+    diff: Option<&str>,
+) {
+    let line = textline::file_change(path, kind);
+    // Counts ride the event from the emitter's own LCS measurement. They are
+    // never recounted from the diff text: `changed_region_diff` is a bounded,
+    // coarse rendering of the changed span and disagrees with the real delta
+    // by any shared line.
+    let counts = if added == 0 && removed == 0 {
+        String::new()
+    } else {
+        format!(" {}", format!("+{added} −{removed}").dimmed())
+    };
+    println!("  {}{}", styled_event_line(&line), counts);
+
+    let Some(diff) = diff.filter(|d| !d.trim().is_empty()) else {
+        return;
+    };
+    let (body, hidden) =
+        stella_tui::diff::body_lines_inline_ansi(diff, Some(path), INLINE_DIFF_CAP, &palette());
+    for row in body {
+        println!("    {row}");
+    }
+    if hidden > 0 {
+        println!(
+            "    {}",
+            format!("⋯ {hidden} more line{}", if hidden == 1 { "" } else { "s" }).dimmed()
+        );
+    }
+}
+
 /// Render one `AgentEvent` from `stella_core::Engine::run_turn`'s stream.
+///
 /// `ToolStart`/`ToolResult` are intentionally a no-op here: `ToolResult`
 /// doesn't carry the tool's name (only `call_id`), so the call site keeps a
 /// small `call_id -> name` map and calls `tool_call_card`/`tool_result_card`
@@ -412,23 +597,39 @@ pub fn welcome_banner(provider: &str, model: &str, workspace: &str) {
 /// `Text` — the engine emits one per step, not just at turn-end, since a
 /// step with tool calls can still carry commentary text) is rendered here.
 ///
-/// Wording comes from `stella_tui::textline` — the one event→text table
-/// both this surface and the deck consume (issue #66); the arms below carry
-/// only this surface's *policy* (what to suppress, what goes to stderr) and
-/// styling. A new annotation variant needs a `textline` entry, nothing here.
+/// **Everything shared is shared, and the rest is policy.** Wording comes from
+/// `stella_tui::textline` (the one event→text table both surfaces consume,
+/// #66), stage names from its `stage_label`, prose from
+/// `stella_tui::markdown`, diffs from `stella_tui::diff` (#2421). What the
+/// arms below own is only this surface's *policy* — what to suppress, what
+/// goes to stderr, how deep to preview — and its styling. A new annotation
+/// variant needs a `textline` entry, nothing here.
+///
+/// Every suppression states its reason. An arm that silently drops an event
+/// is how `Reasoning` went unrendered for as long as it did.
 pub fn render_event(event: &AgentEvent) {
+    // A thought ends the instant anything else lands — the same positional
+    // rule the deck uses (`render::entry::reasoning_is_live`) rather than a
+    // liveness flag or a timer. Doing it here, once, is what keeps every arm
+    // below from having to remember it.
+    if !matches!(event, AgentEvent::Reasoning { .. }) {
+        flush_reasoning();
+    }
     match event {
-        AgentEvent::Stage {
-            name: StageKind::Execute,
-        } => {
-            println!("  {}", "thinking…".dimmed());
-        }
-        AgentEvent::Stage { .. } | AgentEvent::ToolStart { .. } | AgentEvent::ToolResult { .. } => {
-            // Complete-stage and ToolStart/ToolResult: handled inline at the
-            // call site or by a more specific event (see the module doc).
+        AgentEvent::Stage { name } => stage_rule(*name),
+        AgentEvent::ToolStart { .. } | AgentEvent::ToolResult { .. } => {
+            // Handled inline at the call site, which holds the `call_id ->
+            // name` correlation this event pair needs (see the module doc).
         }
         AgentEvent::Text { text } => assistant_response(text),
-        AgentEvent::Reasoning { .. } => {}
+        AgentEvent::FileChange {
+            path,
+            kind,
+            added,
+            removed,
+            diff,
+        } => file_change_card(path, *kind, *added, *removed, diff.as_deref()),
+        AgentEvent::Reasoning { delta } => reasoning_delta(delta),
         AgentEvent::BudgetTick {
             mode: BudgetMode::Off,
             ..
