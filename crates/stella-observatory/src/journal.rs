@@ -127,7 +127,10 @@ fn tool_names(conn: &Connection, id: i64) -> Result<HashMap<String, String>, DbE
         Err(e) => return Err(e.into()),
     };
     let rows = stmt.query_map([id], |r| {
-        Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+        Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, Option<String>>(1)?,
+        ))
     })?;
     let mut out = HashMap::new();
     for row in rows {

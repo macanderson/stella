@@ -433,7 +433,7 @@ impl Observatory {
         let Some(conn) = self.store() else {
             return Ok(Value::Array(Vec::new()));
         };
-        crate::journal::entries(conn, id, full, after_seq)
+        crate::journal::entries(&conn, id, full, after_seq)
     }
 
     /// One model call's **sent context** (#1475): the messages that call was
