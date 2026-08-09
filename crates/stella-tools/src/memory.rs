@@ -61,11 +61,19 @@ impl Tool for SaveMemory {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let slug = match crate::input::required_str(input, "slug") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let memory = match crate::input::required_str(input, "memory") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         if slug.is_empty()
             || slug.len() > 64
@@ -189,7 +197,11 @@ impl Tool for CiteMemory {
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
         let memory_id = match crate::input::required_str(input, "memory_id") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         if !is_memory_id(memory_id) && !is_record_handle(memory_id) {
             return ToolOutput::Error {

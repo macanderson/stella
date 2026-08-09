@@ -522,7 +522,11 @@ impl Tool for ReadOutput {
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let clear = input
             .get("clear")
@@ -625,11 +629,19 @@ impl Tool for SendStdin {
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let text = match crate::input::required_str(input, "text") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         // Take stdin out under the lock, write outside it (a lock guard
         // must not cross an await), then put it back.
@@ -711,7 +723,11 @@ impl Tool for StopProcess {
     async fn execute(&self, input: &Value, _root: &std::path::Path) -> ToolOutput {
         let handle = match crate::input::required_str(input, "handle") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         // Phase 1, under the lock: close stdin (EOF lets well-behaved
         // REPLs/servers exit on their own) and send the group SIGTERM.

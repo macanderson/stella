@@ -49,11 +49,19 @@ impl Tool for WriteFile {
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
         let path = match crate::input::required_str(input, "path") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
         let content = match crate::input::required_str(input, "content") {
             Ok(v) => v,
-            Err(message) => return ToolOutput::Error { message },
+            Err(err) => {
+                return ToolOutput::Error {
+                    message: err.to_string(),
+                };
+            }
         };
 
         // The root is opened once and held; every component of `path` is then
