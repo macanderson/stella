@@ -815,8 +815,22 @@ impl Tool for RepoStatusTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "repo_status".into(),
-            description: "Repository status: current branch, commits ahead/behind upstream, \
-                          and the changed files as structured rows."
+            // Names the WHOLE payload, and says where the next rung starts
+            // (#2575). It used to describe three of ten fields, so nothing
+            // told a model that the cheap zero-argument tool already answers
+            // "where did my commit go" — which is how three git tools came to
+            // look interchangeable when only their descriptions were.
+            description: "Repository state right now, in one git call and with no arguments: \
+                          current branch, commits ahead/behind upstream, changed files as \
+                          structured rows, the HEAD commit, whether this is a linked worktree, \
+                          how many changes are shelved (git stash), and up to 20 commits that \
+                          no branch, tag or remote points at. Reach for this FIRST, including \
+                          when work seems to have gone missing after a checkout or reset — a \
+                          detached position, a shelved change, or a commit under `unreachable` \
+                          is usually the entire answer. Escalate only if it is not: \
+                          `repo_history` adds the commit log, the position log (git reflog), \
+                          and every branch's ahead/behind; `repo_recover` scans the object \
+                          store for commits even the reflog has forgotten."
                 .into(),
             input_schema: serde_json::json!({ "type": "object", "properties": {} }),
             read_only: true,
