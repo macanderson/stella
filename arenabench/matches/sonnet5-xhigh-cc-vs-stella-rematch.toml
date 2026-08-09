@@ -1,0 +1,219 @@
+# arenabench match — Sonnet 5 at xhigh effort, Claude Code vs Stella
+#
+#   local:  arenabench run matches/sonnet5-xhigh-cc-vs-stella-rematch.toml --progress
+#   cloud:  arenabench cloud run matches/sonnet5-xhigh-cc-vs-stella-rematch.toml
+#
+# READ THIS BEFORE QUOTING A NUMBER FROM THIS RUN.
+#
+# The panel is **adverse-selected**: these eight tasks are the ones Stella lost
+# in the previous Sonnet 5 cycle, chosen precisely because Claude Code passed
+# every one of them. A solve rate measured here is therefore NOT a
+# Terminal-Bench 2.1 score and must never be reported as one — the dataset's
+# 89 tasks were filtered on Stella's own prior failure, which is the strongest
+# selection bias a panel can carry. What this run can honestly answer is one
+# question: **does raising effort to xhigh convert any of Stella's known
+# losses?** Every count off this file is a delta against the prior cycle's
+# 0/8, never a rate against the benchmark.
+#
+# The companion unbiased panels are the house 10-task mix
+# (`matches/fable5-cc-vs-stella-10task.toml`, the `*-h2h` presets and
+# `matches/sonnet5-cc-vs-stella-bare-loop.toml`), which share a task list on
+# purpose so their numbers compare to each other. This file deliberately does
+# not, and cannot be pooled with them.
+#
+# The seats authenticate differently on purpose, exactly as every prior cycle
+# did:
+#
+#   Claude Code  Anthropic first-party, on a Claude subscription
+#                (CLAUDE_CODE_OAUTH_TOKEN — no metered spend)
+#   Stella       OpenRouter, metered (OPENROUTER_API_KEY)
+#
+# The API gateway is the ONLY permitted difference between the two workers:
+# model, reasoning and effort are identical below, so the variable under test
+# stays the agent architecture. Claude Code cannot take the OpenRouter route in
+# any case — 2.1.222 refuses every model against it, including a plain
+# `claude-sonnet-5`, before issuing a request (measured 2026-08-04, see
+# matches/glm52-claude-code-vs-stella.toml).
+#
+# This file carries no secrets. Export CLAUDE_CODE_OAUTH_TOKEN and
+# OPENROUTER_API_KEY before running; in the cloud both are read from SSM
+# parameters under /arenabench/ and a seat whose credential is absent is
+# refused at submit time rather than scored as a loss.
+
+[match]
+name = "sonnet 5 xhigh: claude code vs stella (rematch panel)"
+dataset = "terminal-bench-2.1"
+
+# The tip of `main` at authoring time, pinned as a full SHA rather than the
+# branch name. `arenabench cloud run` resolves a ref through
+# `binaries/<ref>/latest.json` and only builds on a MISS, so `sut_ref = "main"`
+# silently reuses whatever main-built artifact is already in the bucket —
+# which is "some earlier main", not the latest one. A commit SHA has no cached
+# artifact, so it builds exactly this tree. Override per-run with `--ref`.
+#
+# Re-pin this before launching if main has moved: a SUT more than a handful of
+# commits behind tip measures a Stella nobody is shipping.
+sut_ref = "8d3a57c30532b0141ef2718fb3837a6675fa00c4"
+
+# --- Panel -------------------------------------------------------------------
+#
+# Stella's loss set from the prior Sonnet 5 cycle, verified against the dataset
+# export rather than transcribed: every name below resolves to a task
+# directory, and difficulty/category/resources are read from its `task.toml`.
+#
+#   task                      diff    category               prior stella outcome
+#   fix-git                   easy    software-engineering   fail                   1m10
+#   constraints-scheduling    medium  personal-assistant     NonZeroAgentExitCode  16m27
+#   crack-7z-hash             medium  security               AgentTimeout          34m07
+#   kv-store-grpc             medium  software-engineering   fail                   3m28
+#   openssl-selfsigned-cert   medium  security               fail                   3m15
+#   sanitize-git-repo         medium  security               not reported
+#   dna-assembly              hard    scientific-computing   AgentTimeout          31m53
+#   fix-code-vulnerability    hard    security               fail                   4m47
+#
+# Claude Code passed all seven of the reported tasks, so its arm here is a
+# control that should stay near 8/8 — an unexplained Claude Code regression is
+# evidence about the harness, not about Stella.
+#
+# The mix is 1 easy / 5 medium / 2 hard across four categories, security being
+# half of it. That spread is a *consequence* of the selection, not a design:
+# it is what Stella happened to lose, and it is another reason the result does
+# not stand in for the dataset's own 4/54/30 shape.
+#
+# No task here is tagged [heavy] — all eight ask for 1 CPU and <=4096 MB, so
+# none forces concurrency down to 1.
+tasks = [
+  "fix-git",
+  "constraints-scheduling",
+  "crack-7z-hash",
+  "kv-store-grpc",
+  "openssl-selfsigned-cert",
+  "sanitize-git-repo",
+  "dna-assembly",
+  "fix-code-vulnerability",
+]
+attempts = 1
+
+# Local-run setting only, and honest at 1 for a laptop-class Docker
+# allocation: one task slot is two contestant containers racing. In the cloud
+# it is not read at all — `arenabench cloud run` slices the match into one
+# (task, seat) trial per Batch container and pins each slice to concurrency 1,
+# because there the container is the unit of isolation. On the 32 vCPU rig,
+# raise it to 3 the way the 10-task panel does.
+concurrency = 1
+
+# Off, deliberately, because this file is written to be launched in the cloud:
+# the Batch runner image ships no recorder build context, so the supervisor
+# would start, find no image, and record nothing. Flip it to `true` for a
+# local run where `arenabench build-recorder` has been run once.
+record_video = false
+
+# Claude Code installs itself per trial: apt-get plus the claude.ai installer,
+# measured at 229s against a 360s default.
+setup_timeout_multiplier = 4.0
+
+# LEFT AT 1.0, AND THIS IS THE KNOB MOST LIKELY TO NEED CHANGING.
+#
+# Two tasks on this panel ended in `AgentTimeout` last cycle at Terminal-Bench's
+# own budgets — crack-7z-hash and dna-assembly both allow the agent 1800s, and
+# Stella spent all of it. This run raises effort to xhigh, which buys more
+# reasoning per step and therefore fewer steps inside the same wall clock, so
+# the prior timeouts are the *likely* outcome again rather than an unlucky one.
+# The repository's own measurement says as much: on 2026-08-03 xhigh timed out
+# on every step budget it was given while medium finished, which is why every
+# other committed match pins medium.
+#
+# It stays at 1.0 anyway, because the multiplier changes what the run measures
+# and that is a decision to take deliberately rather than inherit:
+#
+#   * 1.0 keeps each task's published agent budget, so a timeout here is a real
+#     finding about xhigh under Terminal-Bench's clock.
+#   * >1.0 buys xhigh room to finish and answers "can xhigh solve these at
+#     all", at the cost of a number that no longer sits on the benchmark's own
+#     terms. It applies to BOTH arms, so the head-to-head stays fair either way
+#     — but it must be disclosed beside any number compared outside this arena.
+#
+# To take the second reading, set `agent_timeout_multiplier = 2.0` here (the
+# runner clamps below 1.0, so it can only ever lengthen the budget) and say so
+# in the write-up.
+agent_timeout_multiplier = 1.0
+
+[[contestant]]
+id = "claude-code"
+name = "Claude Code (Sonnet 5, xhigh)"
+agent = "claude-code"
+color = "#FF6B9D"
+
+  [contestant.engine]
+  api = "anthropic"
+  model = "claude-sonnet-5"
+  reasoning = true
+  # xhigh on BOTH arms, so effort is not a confound. Carried into the CLI via
+  # CLAUDE_CODE_EFFORT_LEVEL — without that env fallback a match TOML's effort
+  # silently ran this arm at its default, which is the shape of bug this whole
+  # file is written to avoid.
+  effort = "xhigh"
+  # No base_url: this seat runs at Anthropic, authenticated by the
+  # subscription token. No budget_usd or max_tokens either — Claude Code
+  # honours neither knob, and declaring one would be a claim this run cannot
+  # support (`arenabench/tests/test_matches.py` fails on exactly that).
+
+  [contestant.env]
+  # Names only — never values.
+  required = ["CLAUDE_CODE_OAUTH_TOKEN"]
+
+[[contestant]]
+id = "stella"
+name = "Stella (Sonnet 5 pipeline, xhigh)"
+agent = "stella"
+color = "#FFB000"
+
+  [contestant.engine]
+  api = "openrouter"
+  model = "anthropic/claude-sonnet-5"
+  # Identical to the Claude Code seat above, field for field. The only
+  # permitted difference between the two workers is the gateway.
+  reasoning = true
+  effort = "xhigh"
+  #
+  # NO `budget_usd` AND NO `max_tokens` — the omission is deliberate, do not
+  # restore them. A per-trial spend cap does not reduce spend, it wastes it:
+  # match 5292a68cdabf carried `budget_usd = 1.0` and 9 of its 16 trials ended
+  # on `finish_reason: tool_calls` with the model still requesting tools —
+  # every one of them paid for its tokens, produced nothing, and was then
+  # reported as an agent loss. The tell was a median cost of $1.003 against a
+  # $1.00 cap; a cost median sitting on the ceiling means the ceiling is
+  # binding and the measurement is void. A token ceiling fails the same way by
+  # truncating mid-task. If a balance cannot fund this run, add credit and
+  # relaunch — do not shrink the request.
+  #
+  # This arm runs Stella's SHIPPING configuration: the full staged pipeline, no
+  # `bare_loop`. The bare-loop A/B is a separate file
+  # (`matches/sonnet5-cc-vs-stella-bare-loop.toml`) on the unbiased panel,
+  # which is where that comparison belongs.
+
+  # Per-role overrides, following the tier policy the presets construct
+  # (`_VERIFIER_FOR` in arenabench/presets.py) rather than re-deciding it here.
+  # Every model named is in Stella's OFFLINE seed catalog under `openrouter`:
+  # the adapter pins STELLA_CATALOG_AUTO_REFRESH=0, and a role pinned to an
+  # unlisted slug refuses the run rather than silently falling back.
+    [contestant.engine.roles.verifier]
+    # Never the worker, and never a weaker tier. Independence is the point —
+    # a verifier that is the model it verifies checks its own work, and a
+    # verifier below its worker rubber-stamps. Fable 5 is the declared
+    # verifier for a Sonnet 5 worker.
+    model = "anthropic/claude-fable-5"
+    effort = "high"
+    reasoning = "on"
+
+    [contestant.engine.roles.triage]
+    # Cheapest fast family member, classification only, never touches the
+    # workspace. Deliberately not raised to xhigh: xhigh is the variable under
+    # test on the WORKER, and paying it on a classifier would spend the panel's
+    # wall clock on the one role whose answer is a label.
+    model = "anthropic/claude-haiku-4.5"
+    effort = "low"
+    reasoning = "off"
+
+  [contestant.env]
+  required = ["OPENROUTER_API_KEY"]
