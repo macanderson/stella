@@ -34,6 +34,95 @@ import shutil
 import sys
 import textwrap
 import time
+from typing import Any
+
+# --- Stella's tool events, decoded ---------------------------------------
+# An ACKNOWLEDGED COPY of `arenabench.toolout.decode_tool_output` and
+# `strip_ansi`. This file is the entire Python payload of the recorder image —
+# its Docker build context is `arenabench/recorder/`, which cannot reach the
+# package — so importing the canonical module is not available here and a copy
+# is the honest alternative to a fifth hand-rolled decoder.
+#
+# The copy is not left to trust: `tests/test_toolout.py::
+# TestRecorderCopyStaysHonest` imports this file by path and holds both
+# functions to the canonical ones input for input. Change one, change the
+# other, or that test goes red. Keep the signatures identical (a plain tuple
+# stands in for the canonical NamedTuple) so the comparison stays direct.
+
+
+def decode_tool_output(output: Any) -> tuple[str, bool, bool]:
+    """``ToolOutput`` as ``(text, ok, recognized)`` — see the canonical copy.
+
+    The enum is externally tagged and the tag is the verdict: a `tool_result`
+    carries no `error` field, so `output["error"]` is the only thing that says
+    a call failed. Passing the dict to `str()` — which this file used to do —
+    puts a Python repr on screen with every newline escaped.
+    """
+    if isinstance(output, dict):
+        ok_arm = output.get("ok")
+        if isinstance(ok_arm, dict) and "content" in ok_arm:
+            return _as_text(ok_arm["content"]), True, True
+        error_arm = output.get("error")
+        if isinstance(error_arm, dict) and "message" in error_arm:
+            return _as_text(error_arm["message"]), False, True
+    if output is None:
+        return "", True, False
+    if isinstance(output, str):
+        return output, True, False
+    return _as_text(output), True, False
+
+
+def _as_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+_CSI_FINAL = range(0x40, 0x7F)
+_NF_INTERMEDIATE = range(0x20, 0x30)
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences, leaving the visible text.
+
+    The recorder paints its *own* colour, so a tool's escapes are not merely
+    ugly here — they reset the renderer's foreground mid-row and bleed the
+    tool's palette across the rest of the frame.
+    """
+    if "\x1b" not in text:
+        return text
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch != "\x1b":
+            out.append(ch)
+            i += 1
+            continue
+        i += 1
+        if i >= n:
+            break
+        intro = text[i]
+        i += 1
+        if intro == "[":
+            while i < n and ord(text[i]) not in _CSI_FINAL:
+                i += 1
+            i += 1
+        elif intro == "]":
+            while i < n:
+                if text[i] == "\x07":
+                    i += 1
+                    break
+                if text[i] == "\x1b" and i + 1 < n and text[i + 1] == "\\":
+                    i += 2
+                    break
+                i += 1
+        elif ord(intro) in _NF_INTERMEDIATE:
+            while i < n and ord(text[i]) in _NF_INTERMEDIATE:
+                i += 1
+            i += 1
+    return "".join(out)
+
 
 # --- palette -------------------------------------------------------------
 # 24-bit colour; xterm in the recorder image supports it. Chosen for contrast
@@ -176,6 +265,9 @@ class Renderer:
         }
         self.model = ""
         self.state = "waiting"
+        #: ``call_id`` -> tool name, so a result row can name the call it
+        #: answers. A `tool_result` carries only the id.
+        self.tool_names: dict[str, str] = {}
         #: Rendered body lines. Bounded: a long trial can emit tens of
         #: thousands, and only the last screenful can ever be visible.
         self.body: list[str] = []
@@ -296,18 +388,34 @@ class Renderer:
             self.line("stage", f"── {name} ".ljust(46, "─"))
         elif kind == "tool_start":
             call = event.get("call") or {}
-            args = call.get("arguments")
+            call_id = str(call.get("call_id") or call.get("id") or "")
+            name = str(call.get("name") or "tool")
+            # The arguments ride under `input` — `ToolCall { call_id, name,
+            # input }`. Asking for `arguments` (a key the wire never carried)
+            # rendered every tool row in every recording as a bare name with
+            # no command, path or query beside it.
+            args = call.get("input", call.get("arguments"))
             summary = (
-                json.dumps(args) if isinstance(args, (dict, list)) else str(args or "")
+                json.dumps(args, ensure_ascii=False)
+                if isinstance(args, (dict, list))
+                else str(args or "")
             )[:220]
+            if call_id:
+                self.tool_names[call_id] = name
             self.totals["tools"] += 1
-            self.line("tool", f"{call.get('name', 'tool')}  {summary}")
+            self.line("tool", f"{name}  {summary}")
         elif kind == "tool_result":
-            body = str(event.get("output") or event.get("result") or "").strip()
+            text, ok, _ = decode_tool_output(
+                event.get("output", event.get("result"))
+            )
+            body = strip_ansi(text).strip()
+            # The name is on the call, not the result: a video row reading
+            # `-> ok` names nothing a viewer can follow, and at video pace
+            # scrolling back to find the matching call is not an option.
+            name = self.tool_names.get(str(event.get("call_id") or ""), "tool")
             first = body.splitlines()[0][:220] if body else "(no output)"
             extra = f"  (+{body.count(chr(10))} lines)" if "\n" in body else ""
-            failed = bool(event.get("error") or event.get("is_error"))
-            self.line("error" if failed else "tool_result", first + extra)
+            self.line("error" if not ok else "tool_result", f"{name}  {first}{extra}")
         elif kind == "step_usage":
             self.totals["steps"] += 1
             self.totals["tin"] += int(event.get("input_tokens") or 0)

@@ -128,12 +128,63 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
     );
 }
 
-/// A body past [`db::JOURNAL_BODY_CLIP`] chars is clipped and flagged in the
+/// A tool result names the tool that produced it.
+///
+/// `ToolResult` is `{call_id, output, duration_ms, speculated}` — the name
+/// lives on the `ToolStart` that opened the call, so a result row can only be
+/// labelled by correlating back to it. Until it was, every result row in the
+/// dashboard read `✓ result`, and a reader scrolling a fan-out of parallel
+/// calls could not tell which row answered which.
+#[test]
+fn execution_journal_labels_a_result_with_its_tools_name() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/execution-journal?id=1");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let result = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["type"] == "tool_result")
+        .expect("the fixture seeds a tool_result");
+    assert_eq!(result["name"], "read_file");
+    assert_eq!(result["ok"], true);
+    // The body is the decoded `ok.content`, never the tagged wrapper.
+    assert_eq!(result["body"], "fn a() {}");
+}
+
+/// The name survives the incremental poll, which is where a batch-local index
+/// would fail.
+///
+/// A live transcript polls with `after_seq` set to the highest row it already
+/// has, so a `tool_result` routinely arrives in a page that does not contain
+/// the `tool_start` it answers. Resolving names only within the returned rows
+/// would label the first fetch and silently stop labelling every later one —
+/// the failure mode that looks exactly like the feature working.
+#[test]
+fn a_result_polled_without_its_call_is_still_named() {
+    let ws = seeded_workspace();
+    // Seq 3 is the `tool_start`; asking for rows after it excludes the call
+    // from the batch entirely.
+    let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=3");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let batch = v.as_array().unwrap();
+    assert!(
+        !batch.iter().any(|e| e["type"] == "tool_start"),
+        "the call must not be in this batch, or the test proves nothing"
+    );
+    let result = batch
+        .iter()
+        .find(|e| e["type"] == "tool_result")
+        .expect("the result is in this batch");
+    assert_eq!(result["name"], "read_file");
+}
+
+/// A body past [`crate::journal::JOURNAL_BODY_CLIP`] chars is clipped and flagged in the
 /// default payload, and returned whole under `?full=1` — the elision must
 /// announce itself, never pose as the data.
 #[test]
 fn execution_journal_clips_long_bodies_unless_full() {
-    use crate::db::JOURNAL_BODY_CLIP;
+    use crate::journal::JOURNAL_BODY_CLIP;
     let ws = seeded_workspace();
     let long = "x".repeat(JOURNAL_BODY_CLIP + 100);
     Connection::open(ws.path().join(".stella/private/store.db"))
@@ -262,12 +313,12 @@ fn execution_context_without_receipts_says_so_instead_of_erroring() {
 }
 
 /// A reconstructed message obeys the transcript route's clip policy: past
-/// `db::JOURNAL_BODY_CLIP` chars it is cut and flagged, and `?full=1` returns
+/// `journal::JOURNAL_BODY_CLIP` chars it is cut and flagged, and `?full=1` returns
 /// the bytes. A system prompt is thousands of stable lines, so this is the
 /// common case here rather than the edge one.
 #[test]
 fn execution_context_clips_long_messages_unless_full() {
-    use crate::db::JOURNAL_BODY_CLIP;
+    use crate::journal::JOURNAL_BODY_CLIP;
     let ws = seeded_workspace();
     let long = "x".repeat(JOURNAL_BODY_CLIP + 100);
     Connection::open(ws.path().join(".stella/private/store.db"))

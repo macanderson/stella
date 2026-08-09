@@ -23,10 +23,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .toolout import (
+    cap_middle,
+    decode_tool_output,
+    format_tool_input,
+    strip_ansi,
+)
+
 __all__ = [
     "TranscriptReader",
     "TranscriptState",
 ]
+
+#: How much of one tool result the transcript keeps. Generous, because the
+#: page folds a long body behind a disclosure rather than making the reader
+#: leave — and because the cut is a *middle* elision (:func:`cap_middle`), so
+#: raising it costs bytes on the wire and never costs the end of a payload.
+TOOL_RESULT_BUDGET = 8000
+
+#: The same for a tool call's full argument object, kept beside the one-line
+#: label as ``meta.raw`` for the page's expanded view.
+TOOL_INPUT_BUDGET = 4000
 
 
 def _proof_line(step: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -119,6 +136,12 @@ class TranscriptState:
     open_entries: dict[str, int] = field(default_factory=dict)
     #: ``call_id`` -> entry sequence, so a tool result can find its call.
     tool_index: dict[str, int] = field(default_factory=dict)
+    #: ``call_id`` -> tool name. A ``tool_result`` carries only the id, so the
+    #: name a result row is labelled with is recovered from the ``tool_start``
+    #: that opened the call — the correlation the deck's fold has always done
+    #: (``crates/stella-tui/src/model.rs``) and this reader never did, which is
+    #: why every result in every arena transcript read "result".
+    tool_names: dict[str, str] = field(default_factory=dict)
     #: The last fragment-built text entry not yet superseded by its
     #: consolidated ``text`` event. Outlives ``open_entries`` on purpose:
     #: ``step_usage`` routinely closes the run *before* the consolidated
@@ -305,40 +328,59 @@ class TranscriptReader:
 
         if kind == "tool_start":
             call = event.get("call") if isinstance(event.get("call"), dict) else {}
-            call_id = str(call.get("id") or call.get("call_id") or "")
+            call_id = str(call.get("call_id") or call.get("id") or "")
+            name = str(call.get("name") or "tool")
             seq = self._next_seq(state)
             if call_id:
                 state.tool_index[call_id] = seq
-            arguments = call.get("arguments")
-            body = (
-                json.dumps(arguments, indent=2)[:4000]
-                if isinstance(arguments, (dict, list))
-                else str(arguments or "")[:4000]
-            )
+                state.tool_names[call_id] = name
+            # The arguments ride under `input` — `ToolCall { call_id, name,
+            # input }`. This read used to ask for `arguments`, a key the wire
+            # has never carried, so every tool row in every arena transcript
+            # rendered with an empty body: a `bash` call did not show its
+            # command, an `edit_file` did not show its path.
+            #
+            # The row gets the one-line label the deck puts beside the name;
+            # the whole object rides as `meta.raw` for the expanded view, so
+            # nothing is lost by summarizing here.
+            arguments = call.get("input", call.get("arguments"))
             return [
                 entry(
                     seq,
                     "tool",
-                    str(call.get("name") or "tool"),
-                    body,
+                    name,
+                    format_tool_input(name, arguments),
                     call_id=call_id,
                     state="running",
+                    raw=cap_middle(
+                        json.dumps(arguments, indent=2, ensure_ascii=False)
+                        if isinstance(arguments, (dict, list))
+                        else "",
+                        TOOL_INPUT_BUDGET,
+                    ),
                 )
             ]
 
         if kind == "tool_result":
             call_id = str(event.get("call_id") or "")
-            output = str(event.get("output") or event.get("result") or "")
-            is_error = bool(event.get("error") or event.get("is_error"))
+            # `ToolOutput` is externally tagged, and the tag is the verdict.
+            # Reading `event["error"]` — a key the wire does not carry — meant
+            # every failed call rendered as a success, in the success colour,
+            # with the failure message presented as ordinary output.
+            decoded = decode_tool_output(event.get("output", event.get("result")))
+            body = cap_middle(strip_ansi(decoded.text), TOOL_RESULT_BUDGET)
             return [
                 entry(
                     self._next_seq(state),
                     "tool_result",
-                    "error" if is_error else "result",
-                    output[:8000],
+                    state.tool_names.get(call_id, "tool"),
+                    body,
                     call_id=call_id,
-                    error=is_error,
+                    error=not decoded.ok,
+                    unrecognized=not decoded.recognized,
                     duration_ms=event.get("duration_ms"),
+                    speculated=bool(event.get("speculated")),
+                    lines=body.count("\n") + 1 if body else 0,
                 )
             ]
 

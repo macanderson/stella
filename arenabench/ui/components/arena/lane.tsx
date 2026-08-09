@@ -56,6 +56,9 @@ const KIND_TONE: Record<string, string> = {
   text: "text-foreground",
   tool: "text-acc-cyan",
   tool_result: "text-muted",
+  // A failed result reads in the failure colour, like everywhere else. The
+  // tone map is keyed by kind alone, so the error case is applied at the row
+  // (see `KIND_TONE` use below) rather than added here as a phantom kind.
   stage: "text-accent",
   error: "text-bad",
   verdict: "font-semibold text-ok",
@@ -74,10 +77,19 @@ function entryBody(entry: TranscriptEntry): string {
       ` · ${Math.round(((meta.duration_ms as number) || 0) / 100) / 10}s`
     );
   }
-  if (entry.kind === "tool") return `${entry.title ?? ""} ${body}`;
+  if (entry.kind === "tool") return `● ${entry.title ?? ""}  ${body}`;
   if (entry.kind === "tool_result") {
-    const lines = body.split("\n");
-    return lines.slice(0, 12).join("\n") + (lines.length > 12 ? `\n… +${lines.length - 12} lines` : "");
+    // The name, then the body. A `tool_result` carries only a `call_id` on
+    // the wire, so the lane used to show a bare payload with nothing saying
+    // which call produced it — and in a lane you are watching two seats race,
+    // where "which tool is it on" is most of what you are reading for.
+    const rail = meta.error ? "✗" : "⎿";
+    const head = `${rail} ${entry.title ?? "tool"}`;
+    const lines = body ? body.split("\n") : [];
+    const shown =
+      lines.slice(0, 12).join("\n") +
+      (lines.length > 12 ? `\n… +${lines.length - 12} lines` : "");
+    return shown ? `${head}\n${shown}` : head;
   }
   if (entry.kind === "stage" || entry.kind === "complete" || entry.kind === "verdict") {
     return (entry.title ?? "") + (body ? ` — ${body}` : "");
@@ -222,6 +234,12 @@ export function Lane({
                   "min-w-0 flex-1 whitespace-pre-wrap break-words",
                   KIND_TONE[entry.kind] ?? "text-foreground",
                   entry.kind === "usage" && "text-[10.5px]",
+                  // A failed tool call outranks its kind's tone. Until the
+                  // reader could see the ok/error tag at all, every failure
+                  // in the lane rendered in the ordinary result grey.
+                  entry.kind === "tool_result" &&
+                    Boolean((entry.meta as Record<string, unknown> | undefined)?.error) &&
+                    "text-bad",
                 )}
               >
                 {entryBody(entry)}

@@ -2,7 +2,7 @@
   "name": "arenabench-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "ArenaBench's web client. Built to static files and committed into arenabench/web/, so the Python package never needs Node at runtime.",
+  "description": "ArenaBench's web client. `npm run build` static-exports it into arenabench/arenabench/web/ — the directory the Python server serves and the wheel ships — so the package never needs Node at runtime. That export is generated and gitignored, not committed: a checkout has to run this build before `arenabench serve` shows any UI change.",
   "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev --port 3900",

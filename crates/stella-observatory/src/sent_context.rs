@@ -513,7 +513,7 @@ pub(crate) fn reconstruct(
                 "role": message.role,
                 "blocks": Value::Array(message.blocks),
             });
-            crate::db::set_journal_body(&mut out, &message.body, full);
+            crate::journal::set_journal_body(&mut out, &message.body, full);
             out
         })
         .collect();
