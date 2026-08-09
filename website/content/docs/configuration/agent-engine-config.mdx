@@ -1,10 +1,10 @@
 ---
 title: Agent engine config
-description: Give each engine agent — default, worker, verifier, triage — its own model, gateway, prompt, reasoning effort, and sampling parameters via agent_engine_config.
+description: Give each engine agent — default, worker, verifier, triage, research, plan — its own model, gateway, prompt, reasoning effort, and sampling parameters via agent_engine_config.
 ---
 
 The `agent_engine_config` object in [`settings.json`](/docs/configuration/settings)
-configures the four engine agents individually:
+configures each engine agent individually:
 
 <CardGrid size="md">
   <OptionCard name="default">
@@ -14,8 +14,9 @@ configures the four engine agents individually:
   </OptionCard>
   <OptionCard name="worker">
     The [pipeline](/docs/inference-pipeline)'s execute turns — both the model
-    they route to and their tuning (prompt, effort, reasoning, params). Plan
-    and witness turns share the worker's tier, so they follow it.
+    they route to and their tuning (prompt, effort, reasoning, params). It is
+    also the base **research** and **plan** inherit, field by field, so
+    configuring the worker alone still configures all three.
   </OptionCard>
   <OptionCard name="verifier">
     The pipeline's verify verifier and
@@ -28,6 +29,17 @@ configures the four engine agents individually:
     The pipeline's fast task classifier. One call, roughly one token out, under
     a hard 10-second latency ceiling — route it to the cheapest, fastest model
     you have.
+  </OptionCard>
+  <OptionCard name="research">
+    The read-only sub-agents that answer triage's pre-plan questions, one child
+    per question. A fan-out of short lookups rather than one long call, so it
+    is the role where a tier chosen for the worker is paid the most times over.
+    Its `prompt` is the one field that does **not** apply — see
+    [Custom prompts](#custom-prompts).
+  </OptionCard>
+  <OptionCard name="plan">
+    The planner — one call that writes the work order every later stage is
+    judged against.
   </OptionCard>
 </CardGrid>
 
@@ -42,11 +54,14 @@ pin just the verifier model while your user scope keeps everything else.
   "agent_engine_config": {
     // Flat per-role models ("provider/slug", or a bare catalog slug).
     // default_model is the session default AND the fallback every other
-    // role lands on when it sets nothing (see Model precedence below).
+    // role lands on when it sets nothing (see Model precedence below) —
+    // except research and plan, which land on the WORKER instead.
     "default_model": "zai/glm-5.2",
     "pipeline_worker_model": "zai/glm-5.2",
     "pipeline_verifier_model": "openrouter/openai/gpt-5.5",
     "pipeline_triage_model": "deepseek/deepseek-chat",
+    "pipeline_research_model": "deepseek/deepseek-chat",
+    "pipeline_plan_model": "zai/glm-5.2",
 
     // The model vocabulary the TUI pickers offer and auto_mode selects from.
     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2",
@@ -56,10 +71,12 @@ pin just the verifier model while your user scope keeps everything else.
     // different model family than the worker's, then the highest catalog
     // price tier. You never worry about it.
     "auto_mode": "off",
-    // "on" = per-agent effort chosen for you (verifier high, worker and
-    // default medium, triage low), overriding any per-agent "effort".
+    // "on" = per-agent effort chosen for you (verifier high, worker,
+    // default and plan medium, triage and research low), overriding any
+    // per-agent "effort".
     "effort_auto": "off",
-    // "on" = thinking mode chosen for you (on everywhere except triage).
+    // "on" = thinking mode chosen for you (on everywhere except triage and
+    // research).
     "reasoning_auto": "off",
 
     // "on" = a headless run may proceed past scope review instead of
@@ -111,8 +128,10 @@ pin just the verifier model while your user scope keeps everything else.
 Every role resolves on its own chain. `--model` sets the **session default** —
 the model the interactive agent runs on and the one every unconfigured role
 falls back to — and it additionally pins the **worker**, since overriding the
-worker model for one invocation is the flag's whole purpose. An explicitly
-configured **verifier or triage** keeps its own model even under a `--model` flag.
+worker model for one invocation is the flag's whole purpose. Research and plan
+follow the worker there, so the flag moves all three together. An explicitly
+configured **verifier, triage, research or plan** keeps its own model even under
+a `--model` flag.
 
 **Default agent** (interactive / step-loop) — first hit wins:
 
@@ -121,8 +140,7 @@ configured **verifier or triage** keeps its own model even under a `--model` fla
 3. `default_model`
 4. Auto-detection / the provider's own default
 
-**Worker** (the pipeline's execute turns, and the plan and witness turns that
-share its tier) — first hit wins:
+**Worker** (the pipeline's execute turns) — first hit wins:
 
 1. The `--model` CLI flag (or `STELLA_MODEL`) — suppresses the settings below
    for this invocation
@@ -137,6 +155,25 @@ share its tier) — first hit wins:
 2. `pipeline_verifier_model` / `pipeline_triage_model`
 3. `default_model`
 4. No configuration — the role rides the session default
+
+**Research and plan** — first hit wins, and the chain ends one rung earlier:
+
+1. `agents.research.model` / `agents.plan.model`
+2. `pipeline_research_model` / `pipeline_plan_model`
+3. No configuration — the role rides **the worker**, whatever the worker
+   resolved to above
+
+That last rung is the difference, and it is deliberate. `--model` re-points the
+worker for one invocation and does not touch settings, so a research call
+falling back to `default_model` would split off onto the model the flag just
+overrode: the run would report one model and buy two. Inheriting the worker
+means an unconfigured research or plan call is always on the model you can see.
+
+The inheritance is **field by field**, and it covers request shaping as well as
+the model — `effort`, `reasoning`, `temperature`, `params`, and `prompt` each
+fall back to `agents.worker`'s value on their own. So `agents.worker.prompt`
+still reaches the planner when `agents.plan.prompt` is unset, and setting
+`agents.plan.effort` alone changes the effort without disturbing anything else.
 
 `auto_mode: "on"` replaces the verifier spec with the cross-family pick from
 `allowed_models` (below), compared against the model the worker **actually**
@@ -153,10 +190,11 @@ a GPT verifier, which is usually exactly what you want from a cross-family setup
   absent.
 </Callout>
 
-Every override here is **soft**. A worker, verifier, or triage model whose provider
+Every override here is **soft**. A configured role model whose provider
 has no resolvable credential — or whose adapter fails to build — is skipped with
-a notice on stderr, and that role rides the session default exactly as it would
-with no config at all:
+a notice on stderr, and that role falls back exactly as it would with no config
+at all: to the session default for worker, verifier and triage, to the worker
+for research and plan. The notice names the role and the fallback:
 
 ```text
   ! engine config: verifier model `openrouter/openai/gpt-5.5` skipped — no resolvable
@@ -218,12 +256,15 @@ Set any of the three autos to `"on"` and stop thinking about it:
     resolves to.
   </OptionCard>
   <OptionCard name="effort_auto" defaultValue="off">
-    Reasoning effort per agent: verifier `high`, worker and default `medium`,
-    triage `low`.
+    Reasoning effort per agent: verifier `high`, worker, default and plan
+    `medium`, triage and research `low`. Research sits at the bottom for the
+    same reason triage does rather than by analogy — a child that greps a tree
+    and reports what it found is doing retrieval, not deliberation.
   </OptionCard>
   <OptionCard name="reasoning_auto" defaultValue="off">
-    Thinking mode on for verifier, worker, and default; off for triage — a
-    latency-bound, one-token classification that gains nothing from it.
+    Thinking mode on for verifier, worker, plan, and default; off for triage —
+    a latency-bound, one-token classification that gains nothing from it — and
+    off for research, a read-only lookup reporting what it read.
   </OptionCard>
   <OptionCard name="headless_scope_bypass" defaultValue="off">
     A headless run may proceed past [scope review](/docs/inference-pipeline)
@@ -483,10 +524,16 @@ knob never fails a request.
 
 An agent's `prompt` **replaces the built-in base instructions** for that
 agent. Workspace memories and rules still append to it — they are workspace
-context, not part of the base persona. The pipeline's triage and verifier keep
-their built-in output contracts (the classification token, the `PASS`/`FAIL`
-verdict line); a custom prompt for those agents is prepended as an extra
-system message rather than replacing the task prompt.
+context, not part of the base persona. The pipeline's triage, plan and verifier
+keep their built-in output contracts (the classification token, the planner's
+JSON array, the `PASS`/`FAIL` verdict line); a custom prompt for those agents is
+prepended as an extra system message rather than replacing the task prompt.
+
+**`agents.research.prompt` is not honoured.** A research child is an engine
+sub-agent turn, and its built-in read-only system prompt is the contract that
+makes it read-only — not a preference to override. Every other field of
+`agents.research` (`model`, `provider`, `effort`, `reasoning`, `params`) applies
+normally.
 
 ## The config panel in the Command Deck
 
@@ -496,7 +543,8 @@ then the AGENT ENGINE tab's right column, now a tab of its own; open it with
 `/settings` or by tabbing to it):
 
 - **`e`** on the SETTINGS tab focuses the panel — a tab per agent plus
-  a GLOBAL tab (auto modes, `allowed_models`). Navigate with ↑/↓, press ⏎
+  a GLOBAL tab (auto modes, `allowed_models`), in the order `GLOBAL default
+  worker verifier triage research plan`. Navigate with ↑/↓, press ⏎
   to edit a row (enum rows cycle; numeric and text rows take inline input),
   `x` clears a field back to "provider default", Esc hands the keyboard back
   to the tab.
@@ -511,8 +559,8 @@ then the AGENT ENGINE tab's right column, now a tab of its own; open it with
 
 ## Degradation is always soft
 
-Configuration can never turn a runnable pipeline into an error. A verifier or
-triage model whose provider has no resolvable credential — or whose adapter
+Configuration can never turn a runnable pipeline into an error. A configured
+role model whose provider has no resolvable credential — or whose adapter
 fails to build — is skipped with a visible notice, and that role rides the
 worker's model exactly as it would with no config at all.
 

@@ -13,6 +13,10 @@ pub(super) fn builtins(
 ) -> Vec<Arc<dyn Tool>> {
     let processes: crate::process::ProcessTableHandle = Arc::default();
     let repo: Arc<dyn crate::repo::RepoBackend> = Arc::new(crate::repo::GitCli);
+    // Same adapter, separate port: history is read-only and survives the
+    // `ReadOnlyTools` filter that withholds `bash`, which is the whole
+    // reason these two exist (see `repo::history`'s module doc).
+    let history: Arc<dyn crate::repo::history::HistoryBackend> = Arc::new(crate::repo::GitCli);
     vec![
         // `bash` belongs to this list and to no switch. It is the same
         // authority class as `run_script` and the process group beside it —
@@ -32,6 +36,8 @@ pub(super) fn builtins(
         Arc::new(crate::process::StopProcess(processes)),
         Arc::new(crate::repo::RepoStatusTool(repo.clone())),
         Arc::new(crate::repo::RepoDiffTool(repo.clone())),
+        Arc::new(crate::repo::history::RepoHistoryTool(history.clone())),
+        Arc::new(crate::repo::history::RepoRecoverTool(history)),
         Arc::new(crate::repo::RepoCommit(repo.clone())),
         Arc::new(crate::repo::RepoPush(repo.clone())),
         Arc::new(crate::repo::RepoPull(repo.clone())),

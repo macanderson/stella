@@ -180,6 +180,10 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_triage_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_research_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_plan_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_mode: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort_auto: Option<Toggle>,
@@ -208,7 +212,7 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_wait_secs: Option<u64>,
 
-    // The four built-in agents, as tables. Serialized LAST so the flat scalars
+    // The built-in agents, as tables. Serialized LAST so the flat scalars
     // above are not stranded after a table header — TOML would then read them
     // as keys of that table, which is the same hazard `[run]` exists to avoid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -219,6 +223,10 @@ pub struct AgentsSection {
     pub verifier: Option<AgentEngineAgent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triage: Option<AgentEngineAgent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<AgentEngineAgent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<AgentEngineAgent>,
     /// `[agents.responsibilities.<responsibility>]` — who performs each
     /// pipeline responsibility and whether it runs (#2381). A table of
     /// tables, so it sits with the agents above rather than among the flat
@@ -602,6 +610,8 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         pipeline_verifier_model: cfg.pipeline_verifier_model.clone(),
         pipeline_worker_model: cfg.pipeline_worker_model.clone(),
         pipeline_triage_model: cfg.pipeline_triage_model.clone(),
+        pipeline_research_model: cfg.pipeline_research_model.clone(),
+        pipeline_plan_model: cfg.pipeline_plan_model.clone(),
         auto_mode: cfg.auto_mode,
         effort_auto: cfg.effort_auto,
         reasoning_auto: cfg.reasoning_auto,
@@ -620,6 +630,8 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection) {
         worker: per_agent.worker,
         verifier: per_agent.verifier,
         triage: per_agent.triage,
+        research: per_agent.research,
+        plan: per_agent.plan,
         responsibilities: cfg.responsibilities.clone(),
     };
     let models = ModelsSection {
@@ -667,6 +679,8 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         worker: agents.worker,
         verifier: agents.verifier,
         triage: agents.triage,
+        research: agents.research,
+        plan: agents.plan,
     };
     let agents_field = (per_agent != AgentEngineAgents::default()).then_some(per_agent);
 
@@ -675,6 +689,8 @@ fn lower_agents(agents: AgentsSection, models: ModelsSection) -> Option<AgentEng
         pipeline_verifier_model: agents.pipeline_verifier_model,
         pipeline_worker_model: agents.pipeline_worker_model,
         pipeline_triage_model: agents.pipeline_triage_model,
+        pipeline_research_model: agents.pipeline_research_model,
+        pipeline_plan_model: agents.pipeline_plan_model,
         allowed_models: models.allowed,
         model_output_caps: models.output_caps,
         auto_mode: agents.auto_mode,

@@ -167,6 +167,8 @@ fn kind_label(kind: EngineAgentKind) -> &'static str {
         EngineAgentKind::Worker => "worker",
         EngineAgentKind::Verifier => "verifier",
         EngineAgentKind::Triage => "triage",
+        EngineAgentKind::Research => "research",
+        EngineAgentKind::Plan => "plan",
     }
 }
 
@@ -305,11 +307,15 @@ fn flat_source_label(engine: &AgentEngineConfig, kind: EngineAgentKind) -> &'sta
         EngineAgentKind::Worker => engine.pipeline_worker_model.as_deref(),
         EngineAgentKind::Verifier => engine.pipeline_verifier_model.as_deref(),
         EngineAgentKind::Triage => engine.pipeline_triage_model.as_deref(),
+        EngineAgentKind::Research => engine.pipeline_research_model.as_deref(),
+        EngineAgentKind::Plan => engine.pipeline_plan_model.as_deref(),
     };
     match (kind, flat_specific.is_some()) {
         (EngineAgentKind::Worker, true) => "pipeline_worker_model",
         (EngineAgentKind::Verifier, true) => "pipeline_verifier_model",
         (EngineAgentKind::Triage, true) => "pipeline_triage_model",
+        (EngineAgentKind::Research, true) => "pipeline_research_model",
+        (EngineAgentKind::Plan, true) => "pipeline_plan_model",
         _ => "default_model",
     }
 }

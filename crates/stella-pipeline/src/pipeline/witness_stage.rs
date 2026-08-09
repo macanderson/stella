@@ -84,7 +84,14 @@ fn bound_witness_output_tokens(mut config: EngineConfig) -> EngineConfig {
 /// testable without a pipeline. Only the knobs `EngineConfig` itself carries
 /// participate; `RoleCallOverrides::prompt` is a raw-call concern and is
 /// deliberately absent (see the caller's doc for why).
-fn apply_role_shaping(mut config: EngineConfig, overrides: &RoleCallOverrides) -> EngineConfig {
+///
+/// `pub(super)` for the research stage, whose children are engine sub-agent
+/// turns rather than raw calls — the same "shape an `EngineConfig`, not a
+/// request" problem this already solves for the witness author.
+pub(super) fn apply_role_shaping(
+    mut config: EngineConfig,
+    overrides: &RoleCallOverrides,
+) -> EngineConfig {
     if let Some(effort) = overrides.effort {
         config.effort = Some(effort);
     }

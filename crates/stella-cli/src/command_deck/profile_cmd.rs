@@ -157,6 +157,8 @@ fn role_label(kind: EngineAgentKind) -> &'static str {
         EngineAgentKind::Worker => "worker",
         EngineAgentKind::Verifier => "verifier",
         EngineAgentKind::Triage => "triage",
+        EngineAgentKind::Research => "research",
+        EngineAgentKind::Plan => "plan",
     }
 }
 

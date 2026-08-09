@@ -9,8 +9,10 @@
 //!
 //! Assembly, not new capability: every field comes from a deterministic
 //! source that already exists — the script index (static manifest
-//! detection), the code graph, the storage/schema snapshot, and the domain
-//! taxonomy. No model call, no shell, no grep.
+//! detection), the code graph, the storage/schema snapshot, the domain
+//! taxonomy, and the version-control state (`repository_section`). No
+//! model call, no grep, and no shell: the git reads are direct argv spawns
+//! of one pinned binary, never a command string.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -43,11 +45,15 @@ impl Tool for ProjectOverview {
             description: "CALL THIS FIRST on an unfamiliar repository. Returns one JSON \
                           object describing the whole project — language and frameworks, \
                           the build/test/lint commands, entry-point files, the storage \
-                          schema, domain taxonomy, and index freshness — assembled from \
-                          static manifests and the code graph. Takes no arguments and \
-                          costs no model call. Replaces the usual opening burst of \
+                          schema, domain taxonomy, index freshness, and the version-control \
+                          state (current branch or DETACHED position, uncommitted and \
+                          shelved/stashed changes, branches with ahead/behind vs the \
+                          default, and the last 10 commits) — assembled from static \
+                          manifests, the code graph and git. Takes no arguments and costs \
+                          no model call. Replaces the usual opening burst of \
                           glob/grep/read_file: use it before those, then reach for \
-                          graph_query or gather_context once you know what to ask about."
+                          graph_query or gather_context once you know what to ask about, \
+                          or repo_history / repo_recover to go deeper on git."
                 .into(),
             input_schema: json!({ "type": "object", "properties": {} }),
             // Read-only in the sense the flag means: it mutates no
@@ -216,6 +222,189 @@ fn listing_orientation_block(root: &Path) -> Option<String> {
     ))
 }
 
+/// Recent commits named in the `repository` section. Ten is the ask a
+/// person actually makes ("what were the last ten commits?"); `repo_history`
+/// goes deeper on request.
+const OVERVIEW_COMMITS: usize = 10;
+
+/// Branches placed against the default branch here at most. Each one past
+/// the first costs a `rev-list --count` spawn, so this bounds *work* — the
+/// full list is `repo_history`'s job.
+const OVERVIEW_BRANCHES: usize = 8;
+
+/// Non-empty stdout lines from one `git` read, or `None` when git is absent,
+/// the directory is not a repository, or the command failed.
+///
+/// Direct argv — no shell, nothing interpolated into a command string.
+///
+/// Synchronous on purpose: every caller here already runs on the blocking
+/// pool (`build_overview` is dispatched there), and these are single ref
+/// reads.
+///
+/// `current_dir` is **not** sufficient to say which repository this reads.
+/// `GIT_DIR` overrides it, and git *exports* `GIT_DIR` to every hook it runs —
+/// so an overview assembled from inside a pre-push hook would report the outer
+/// repository's branches, remotes and languages as this workspace's, silently
+/// and with no error to notice. `an_ambient_git_dir_cannot_retarget_the_overview`
+/// is the witness.
+///
+/// [`scrub_spawn_std_env`](crate::subprocess_env::scrub_spawn_std_env) is the
+/// whole answer and the only correct call here: it removes the retargeting
+/// family (`GIT_REPO_ENV_VARS`) and the forced-colour family *before*
+/// delegating to the credential/ambient-authority scrub. Reaching for
+/// `scrub_sensitive_std_env` and re-removing `GIT_REPO_ENV_VARS` by hand is
+/// the exact partial application that helper exists to prevent — and it
+/// silently drops the colour half, which matters because this output goes to
+/// a captured pipe rather than a terminal.
+fn git_lines(root: &Path, args: &[&str]) -> Option<Vec<String>> {
+    let mut command = std::process::Command::new("git");
+    command
+        .args(args)
+        .current_dir(root)
+        // Nothing here reads stdin; inheriting it lets a git that decides to
+        // prompt (a credential helper on a remote URL) hang the overview.
+        .stdin(std::process::Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0");
+    crate::subprocess_env::scrub_spawn_std_env(&mut command);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// Version-control orientation: where the working position is, what is
+/// uncommitted, what is shelved, which branches exist and how they sit
+/// against the default, and the last [`OVERVIEW_COMMITS`] commits.
+///
+/// This is the fifth deterministic source (beside the script index, the code
+/// graph, the storage snapshot and the domain taxonomy) and the module doc's
+/// "no shell" still holds literally: these are direct argv spawns of one
+/// pinned binary, never a shell string.
+///
+/// It earns its place because the questions it answers were previously
+/// reachable only through `bash` — and a read-only role does not have
+/// `bash`. A `fix-git` bench trial opened with `project_overview`, learned
+/// nothing about git from it, and spent the next 45 seconds failing to find
+/// a tool that could tell it. `detached` alone would have ended that search.
+///
+/// It also carries the remotes and the branch-naming convention the existing
+/// branches imply — one section, because two sibling keys each answering
+/// "what does git say about this tree" is the same false-orientation defect
+/// in a politer form. #2551 and this change arrived at the same payload from
+/// opposite ends and merged without a textual conflict; the union is stated
+/// once, here.
+///
+/// `{"repository": false}` when this is not a repository — stated plainly,
+/// because an absent key reads as "the overview forgot" rather than "there
+/// is no version control here".
+fn git_section(root: &Path) -> Value {
+    // `remote -v` doubles as the is-this-a-repository probe: it is the
+    // cheapest command that fails outside a work tree and is needed anyway.
+    let Some(remote_lines) = git_lines(root, &["remote", "-v"]) else {
+        return json!({ "repository": false });
+    };
+    let mut remotes: BTreeMap<String, String> = BTreeMap::new();
+    for line in &remote_lines {
+        let mut parts = line.split_whitespace();
+        if let (Some(name), Some(url)) = (parts.next(), parts.next()) {
+            remotes
+                .entry(name.to_string())
+                .or_insert_with(|| url.to_string());
+        }
+    }
+
+    let branch = git_lines(root, &["symbolic-ref", "-q", "--short", "HEAD"])
+        .and_then(|lines| lines.into_iter().next())
+        .filter(|b| !b.is_empty());
+    let default_branch = git_lines(root, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
+        .and_then(|lines| lines.into_iter().next())
+        .and_then(|full| full.split_once('/').map(|(_, name)| name.to_string()))
+        .filter(|b| !b.is_empty());
+
+    let count = OVERVIEW_COMMITS.to_string();
+    let commits: Vec<Value> = git_lines(
+        root,
+        &["log", "--no-color", "--max-count", &count, "--format=%h %s"],
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .map(Value::from)
+    .collect();
+
+    let shelved: Vec<Value> = git_lines(root, &["stash", "list", "--format=%gd %s"])
+        .unwrap_or_default()
+        .into_iter()
+        .map(Value::from)
+        .collect();
+
+    let names = git_lines(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .unwrap_or_default();
+    let branch_total = names.len();
+    let convention = branch_convention(&names);
+    let mut branches = Vec::new();
+    for name in names.iter().take(OVERVIEW_BRANCHES) {
+        let mut row = json!({ "name": name, "current": Some(name) == branch.as_ref() });
+        if let Some(base) = default_branch.as_deref()
+            && base != name.as_str()
+            && let Some(counts) = git_lines(
+                root,
+                &[
+                    "rev-list",
+                    "--left-right",
+                    "--count",
+                    &format!("{base}...{name}"),
+                ],
+            )
+            .and_then(|lines| lines.into_iter().next())
+        {
+            let mut cols = counts.split_whitespace();
+            let behind = cols.next().and_then(|c| c.parse::<u64>().ok());
+            let ahead = cols.next().and_then(|c| c.parse::<u64>().ok());
+            if let (Some(ahead), Some(behind)) = (ahead, behind) {
+                let map = row.as_object_mut().expect("object literal");
+                map.insert("ahead".into(), json!(ahead));
+                map.insert("behind".into(), json!(behind));
+            }
+        }
+        branches.push(row);
+    }
+
+    let uncommitted = git_lines(root, &["status", "--porcelain"])
+        .map(|lines| lines.iter().filter(|l| !l.trim().is_empty()).count())
+        .unwrap_or(0);
+
+    json!({
+        "repository": true,
+        // The single most useful fact when work has gone missing: a detached
+        // position is why a commit "vanished" after a checkout. `repo_status`
+        // states it too (#2551) — the point of repeating it here is *when*,
+        // not whether: this is the first call of a session.
+        "detached": branch.is_none(),
+        "branch": branch,
+        "default_branch": default_branch,
+        "uncommitted_files": uncommitted,
+        "shelved": shelved,
+        "remotes": remotes.iter().map(|(n, u)| json!({"name": n, "url": u}))
+            .collect::<Vec<_>>(),
+        "branches": branches,
+        "branch_count": branch_total,
+        "branch_convention": convention,
+        "recent_commits": commits,
+        "note": "orientation only — `repo_history` goes deeper (position log, \
+                 full branch list) and `repo_recover` finds commits no branch points at",
+    })
+}
+
 /// Assemble the overview. Total by construction: every source degrades to
 /// its empty shape, because an orientation call that errors sends the agent
 /// straight back to the glob loop this exists to replace.
@@ -230,6 +419,8 @@ pub fn build_overview(root: &Path) -> Value {
     let mut out = json!({
         "workspace": root.display().to_string(),
         "scripts": scripts_section(&scripts),
+        "manifests": manifests_section(&scripts),
+        "git": git_section(root),
         "domains": domains_section(root),
     });
 
@@ -252,12 +443,104 @@ pub fn build_overview(root: &Path) -> Value {
                 json!({
                     "built": false,
                     "note": "no code graph index — run `stella init` to build one; \
-                             language, entry points, and storage are unavailable until then",
+                             entry points and storage are unavailable until then",
                 }),
             );
+            // Languages without the graph. `code_section` derives them from
+            // indexed files, so the one moment a caller most needs to know what
+            // kind of tree this is — the first call, before any index exists —
+            // was the one moment the field was missing entirely. Tracked files
+            // only, via git, so a vendored `node_modules` cannot rename the
+            // project's language.
+            let languages = tracked_languages(root);
+            if !languages.is_empty() {
+                map.insert("languages".into(), json!(languages));
+            }
         }
     }
     out
+}
+
+/// Every package-manager manifest the script index parsed, with its path.
+///
+/// `scripts_section` reports the *verbs* those manifests bind (`build`,
+/// `test`) and the runners behind them, which answers "how do I run this
+/// project". It cannot answer "what kind of project is this and where are its
+/// package boundaries" — a monorepo with a root `Cargo.toml`, three
+/// `package.json` files and a `pyproject.toml` renders as two runner names.
+///
+/// The paths come from `ScriptEntry::source`, which the index already
+/// resolved, so this is a projection rather than a second detection pass.
+/// `synthesized` entries are dropped: they name an ecosystem default
+/// (`cargo build --workspace`), not a file on disk, and a path that cannot be
+/// opened is worse than an absent one.
+fn manifests_section(scripts: &ScriptIndex) -> Value {
+    let mut paths: BTreeSet<&str> = BTreeSet::new();
+    for entry in &scripts.scripts {
+        if entry.source != "synthesized" {
+            paths.insert(entry.source.as_str());
+        }
+    }
+    json!(paths.into_iter().collect::<Vec<_>>())
+}
+
+/// The branch-name shape this repository already uses.
+///
+/// A new branch should look like the ones beside it, and the repository is the
+/// only place that answer lives when no context record states a convention.
+/// Reported as the dominant prefix segment (`feat/`, `fix/`, `worktree-`) plus
+/// the separator, with the share of branches that follow it — a convention two
+/// of nine branches use is a coincidence, and the count is what lets a reader
+/// tell the difference rather than trusting a bare string.
+///
+/// `None` when nothing dominates. Guessing a convention from noise is worse
+/// than admitting there is not one: a caller told "the convention is `x/`"
+/// will follow it.
+fn branch_convention(branches: &[String]) -> Value {
+    let mut prefixes: BTreeMap<String, usize> = BTreeMap::new();
+    for branch in branches {
+        // First separator only: `feat/auth/login` is the `feat/` convention,
+        // not a `feat/auth/` one.
+        if let Some(idx) = branch.find(['/', '-']) {
+            let sep = &branch[idx..idx + 1];
+            let head = &branch[..idx];
+            if !head.is_empty() {
+                *prefixes.entry(format!("{head}{sep}")).or_default() += 1;
+            }
+        }
+    }
+    let total = branches.len();
+    match prefixes.iter().max_by_key(|(_, n)| **n) {
+        // Two is the floor for a pattern: one branch is an example, not a rule.
+        Some((prefix, n)) if *n >= 2 => json!({
+            "prefix": prefix,
+            "branches_following": n,
+            "branches_total": total,
+        }),
+        _ => Value::Null,
+    }
+}
+
+/// Languages present among git-TRACKED files, for the pre-index case.
+///
+/// Tracked rather than walked, for the reason the code graph is indexed rather
+/// than globbed: a vendored `node_modules` or `target/` dwarfs the project and
+/// would rename its language. `git ls-files` already answers "what is actually
+/// ours", and honours `.gitignore` for free.
+///
+/// Reuses [`language_of`] so this fallback and the indexed answer can never
+/// disagree about what a `.rs` file is.
+fn tracked_languages(root: &Path) -> Vec<&'static str> {
+    let Some(files) = git_lines(root, &["ls-files"]) else {
+        return Vec::new();
+    };
+    let mut found: BTreeSet<&'static str> = BTreeSet::new();
+    for file in &files {
+        if let Some(language) = language_of(file) {
+            found.insert(language);
+        }
+    }
+    found.into_iter().collect()
 }
 
 fn open_graph(root: &Path) -> Option<crate::graph::OpenedGraph> {
@@ -449,6 +732,103 @@ mod tests {
         assert_eq!(out["index"]["files"], serde_json::json!(0));
     }
 
+    /// A tree under no version control says so *in the assembled payload*,
+    /// rather than omitting the section and leaving the reader to guess
+    /// whether it was forgotten. The sibling
+    /// `a_non_repository_says_so_rather_than_erroring` pins the same fact at
+    /// the section function; this one pins that the section reaches the
+    /// caller at all.
+    #[test]
+    fn a_non_repository_says_so_in_the_assembled_overview() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\n").unwrap();
+        assert_eq!(
+            build_overview(dir.path())["git"],
+            json!({ "repository": false })
+        );
+    }
+
+    /// Witness: the first call of a session must be able to say that the
+    /// working position is DETACHED, which is the answer to a large share of
+    /// "my changes are gone after a checkout". Before this the `git` section
+    /// named the remotes and the branch count and could not say where the
+    /// position *was* — and a read-only role has no `bash` to ask with.
+    #[test]
+    fn the_overview_reports_a_detached_position_and_recent_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let mut c = std::process::Command::new("git");
+            c.args(args).current_dir(dir.path());
+            crate::subprocess_env::scrub_spawn_std_env(&mut c);
+            c.output().expect("git must be installed for this test")
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "T"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["commit", "-q", "-m", "first commit"]);
+
+        let attached = build_overview(dir.path());
+        let repo = &attached["git"];
+        assert_eq!(repo["repository"], json!(true), "{repo}");
+        assert_eq!(repo["detached"], json!(false), "{repo}");
+        assert_eq!(repo["branch"], json!("main"), "{repo}");
+        assert!(
+            repo["recent_commits"].as_array().is_some_and(|c| c
+                .iter()
+                .any(|l| l.as_str().is_some_and(|s| s.contains("first commit")))),
+            "the last commits must be in the overview: {repo}"
+        );
+
+        // Detach exactly the way the bench task's user did.
+        let head = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout)
+            .trim()
+            .to_string();
+        git(&["checkout", "-q", &head]);
+        let detached = build_overview(dir.path());
+        assert_eq!(detached["git"]["detached"], json!(true));
+        assert_eq!(detached["git"]["branch"], json!(null));
+    }
+
+    /// Uncommitted and shelved work are both counted — the two states a
+    /// "where did my change go?" question resolves to most often.
+    #[test]
+    fn the_overview_counts_uncommitted_and_shelved_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let mut c = std::process::Command::new("git");
+            c.args(args).current_dir(dir.path());
+            crate::subprocess_env::scrub_spawn_std_env(&mut c);
+            c.output().expect("git must be installed for this test")
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "T"]);
+        // `build_overview` builds the code graph under `.stella/`, which is
+        // then a legitimately untracked path. Ignore it so this test counts
+        // the fixture's own changes and not Stella's working state.
+        std::fs::write(dir.path().join(".gitignore"), ".stella/\n").unwrap();
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(&["add", "a.txt", ".gitignore"]);
+        git(&["commit", "-q", "-m", "first"]);
+
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        assert_eq!(
+            build_overview(dir.path())["git"]["uncommitted_files"],
+            json!(1)
+        );
+
+        git(&["stash", "-q"]);
+        let repo = &build_overview(dir.path())["git"];
+        assert_eq!(repo["uncommitted_files"], json!(0), "{repo}");
+        assert_eq!(
+            repo["shelved"].as_array().map(Vec::len),
+            Some(1),
+            "a stashed change must be visible without `bash`: {repo}"
+        );
+    }
+
     /// The #643 witness for this tool: the overview's `freshness` line claims
     /// the index is caught up, so a failed catch-up pass has to retract that
     /// claim **in the JSON the model reads** rather than on the TUI's stderr.
@@ -545,6 +925,100 @@ mod tests {
         assert_eq!(
             out["domains"],
             serde_json::json!(["scheduling", "transport"])
+        );
+    }
+
+    /// A new branch should look like the ones beside it, and when no context
+    /// record states a convention the repository is the only place that answer
+    /// lives.
+    #[test]
+    fn the_dominant_branch_prefix_is_reported_with_its_share() {
+        let branches: Vec<String> = ["feat/auth", "feat/billing", "feat/search", "main"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let out = branch_convention(&branches);
+        assert_eq!(out["prefix"], "feat/");
+        assert_eq!(out["branches_following"], 3);
+        assert_eq!(out["branches_total"], 4);
+    }
+
+    /// A nested branch evidences its FIRST segment's convention.
+    /// `feat/auth/login` is a `feat/` branch, never a `feat/auth/` rule.
+    #[test]
+    fn nesting_does_not_invent_a_deeper_convention() {
+        let branches: Vec<String> = ["feat/auth/login", "feat/auth/logout"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        assert_eq!(branch_convention(&branches)["prefix"], "feat/");
+    }
+
+    /// Guessing from noise is worse than admitting there is no convention: a
+    /// caller told "the convention is `x/`" will follow it. One branch is an
+    /// example, not a rule.
+    #[test]
+    fn no_convention_is_reported_when_nothing_dominates() {
+        assert!(branch_convention(&["main".to_string()]).is_null());
+        assert!(branch_convention(&[]).is_null());
+        assert!(
+            branch_convention(&["feat/one".to_string(), "main".to_string()]).is_null(),
+            "a single prefixed branch is an example, not a convention"
+        );
+    }
+
+    /// A workspace that is not a git repository is an ordinary state, not an
+    /// error — the overview still assembles around it.
+    #[test]
+    fn a_non_repository_says_so_rather_than_erroring() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(git_section(dir.path())["repository"], false);
+    }
+
+    /// An ambient `GIT_DIR` must not re-aim the overview at another repository.
+    ///
+    /// `current_dir` does not decide which repo git reads — `GIT_DIR` overrides
+    /// it, and git EXPORTS `GIT_DIR` to every hook it runs. So an overview
+    /// assembled from inside a pre-push hook would report the outer
+    /// repository's branches and remotes as this workspace's, with no error to
+    /// notice. The failure is silent and the answer is confidently wrong, which
+    /// is the worst combination a orientation tool can have.
+    ///
+    /// Set on the *process*, because that is how a hook delivers it.
+    #[test]
+    fn an_ambient_git_dir_cannot_retarget_the_overview() {
+        // Serialised against nothing else: this mutates process env, so it must
+        // restore it before returning even on failure.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let here = tempfile::tempdir().unwrap();
+
+        let init = |dir: &Path, remote: &str| {
+            for args in [
+                vec!["init", "--quiet"],
+                vec!["remote", "add", "origin", remote],
+            ] {
+                let _ = std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(dir)
+                    .output();
+            }
+        };
+        init(elsewhere.path(), "https://example.invalid/OUTER.git");
+        init(here.path(), "https://example.invalid/INNER.git");
+
+        let previous = std::env::var_os("GIT_DIR");
+        // SAFETY: single-threaded test body; restored below before returning.
+        unsafe { std::env::set_var("GIT_DIR", elsewhere.path().join(".git")) };
+        let section = git_section(here.path());
+        match previous {
+            Some(value) => unsafe { std::env::set_var("GIT_DIR", value) },
+            None => unsafe { std::env::remove_var("GIT_DIR") },
+        }
+
+        let rendered = section.to_string();
+        assert!(
+            !rendered.contains("OUTER"),
+            "an ambient GIT_DIR re-aimed the overview at another repository: {rendered}"
         );
     }
 
