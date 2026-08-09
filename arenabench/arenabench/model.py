@@ -285,6 +285,57 @@ class RoleConfig:
         return self.model is None and self.reasoning is None and self.effort is None
 
 
+#: The pipeline responsibilities an arm may ablate or reassign, matching
+#: ``stella_pipeline::roster`` (#2381). Names are Stella's ``ModelCallRole``
+#: wire tokens, so a match template and the engine it configures spell each job
+#: identically — the same agreement :data:`ROLES` has with the settings keys.
+#:
+#: This is what makes a single-stage ablation expressible at all. ``bare_loop``
+#: settles triage, plan, witness and verify together because all four ARE the
+#: pipeline, so an arm using it can attribute a measured effect to "the
+#: pipeline" and to nothing smaller.
+RESPONSIBILITIES: tuple[str, ...] = (
+    "triage",
+    "research",
+    "plan",
+    "witness_author",
+    "worker",
+    "distress_guidance",
+    "verdict",
+)
+
+
+@dataclass(frozen=True)
+class ResponsibilityConfig:
+    """Whether one pipeline responsibility runs, and which agent performs it.
+
+    Both fields optional, and ``None`` means *leave the shipped binding
+    alone* — the same inherit-is-recorded-as-inherit honesty
+    :class:`RoleConfig` keeps. An arm that ablates triage says so in one field
+    and pins nothing else, so its posture cannot claim a reassignment it never
+    made.
+    """
+
+    enabled: bool | None = None
+    agent: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        return {"enabled": self.enabled, "agent": self.agent}
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> ResponsibilityConfig:
+        return cls(
+            enabled=declared_flag(raw.get("enabled"))
+            if raw.get("enabled") is not None
+            else None,
+            agent=(str(raw["agent"]).strip() or None) if raw.get("agent") else None,
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return self.enabled is None and self.agent is None
+
+
 #: Stella's own truthy vocabulary (``crates/stella-cli/src/settings.rs``),
 #: plus its negations, so a match file and the agent it configures agree on
 #: what "true" means.
@@ -323,6 +374,27 @@ def declared_flag(value: Any) -> bool | None:
     return None
 
 
+def _responsibilities_from_json(raw: Any) -> dict[str, ResponsibilityConfig]:
+    """Read a round-tripped responsibilities block, dropping anything empty.
+
+    Keyed off :data:`RESPONSIBILITIES` rather than iterating the input, so a
+    key this build does not know cannot enter an ``Engine`` and reach a seat.
+    An unknown responsibility is not a harmless extra field here: it is an
+    ablation the operator believes is happening, and the engine would refuse
+    the run for it anyway (``PipelineError::InvalidRoster``). Dropping it on
+    the way in is what keeps the recorded posture equal to what actually ran.
+    """
+    rows = raw if isinstance(raw, dict) else {}
+    out: dict[str, ResponsibilityConfig] = {}
+    for name in RESPONSIBILITIES:
+        entry = rows.get(name)
+        if isinstance(entry, dict):
+            row = ResponsibilityConfig.from_json(entry)
+            if not row.is_empty:
+                out[name] = row
+    return out
+
+
 @dataclass(frozen=True)
 class Engine:
     """How one contestant's model calls are pinned — the full engine config.
@@ -357,6 +429,15 @@ class Engine:
     bare_loop: bool = False
     #: Per-role overrides, keyed by a member of :data:`ROLES`.
     roles: dict[str, RoleConfig] = field(default_factory=dict)
+    #: Per-responsibility ablation/reassignment, keyed by a member of
+    #: :data:`RESPONSIBILITIES` (#2381). Empty is the shipped pipeline.
+    #:
+    #: The narrow instrument next to ``bare_loop``'s blunt one: this is how an
+    #: arm turns off exactly triage, or exactly the verifier, and leaves the
+    #: rest of the staged flow running — which is the only way a measured
+    #: difference can be attributed to one stage. Agents with no pipeline
+    #: ignore it, like the role overrides above.
+    responsibilities: dict[str, ResponsibilityConfig] = field(default_factory=dict)
 
     @property
     def qualified_model(self) -> str:
@@ -413,6 +494,9 @@ class Engine:
             "base_url": self.base_url,
             "bare_loop": self.bare_loop,
             "roles": {name: role.to_json() for name, role in self.roles.items()},
+            "responsibilities": {
+                name: row.to_json() for name, row in self.responsibilities.items()
+            },
         }
 
     @classmethod
@@ -445,6 +529,7 @@ class Engine:
             # nor `false` is corruption, and corruption must not select an arm.
             bare_loop=declared_flag(raw.get("bare_loop")) is True,
             roles=roles,
+            responsibilities=_responsibilities_from_json(raw.get("responsibilities")),
         )
 
     @property

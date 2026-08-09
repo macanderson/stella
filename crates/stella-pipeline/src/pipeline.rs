@@ -78,6 +78,7 @@ use crate::ports::{
     WorkspaceError,
 };
 use crate::research::ResearchFinding;
+use crate::roster::Roster;
 use crate::scope::{
     MAX_SCOPE_REVISIONS, PlannedScope, ScopeEstimate, ScopeVerdict, apply_trim, build_proposal,
     needs_scope_review,
@@ -123,6 +124,8 @@ mod repair_gate;
 mod research_stage;
 mod resume_stage;
 mod role_pace;
+mod roster_wiring;
+use roster_wiring::Assigned;
 mod run_error;
 mod scope_stage;
 mod stage_budget;
@@ -299,6 +302,11 @@ pub struct PipelineConfig {
     /// Per-role request overrides (`agent_engine_config`) for the raw
     /// triage/verifier completion calls.
     pub role_overrides: PipelineRoleOverrides,
+    /// Who performs each responsibility, and whether it runs at all (#2381).
+    /// [`Roster::default`] is the pipeline that shipped; see [`crate::roster`]
+    /// for why assignment and enablement are configurable while stage ORDER
+    /// deliberately is not.
+    pub roster: Roster,
     /// Decision latency ceiling on the triage classification call (L-M4): if
     /// it doesn't answer within this, the in-flight call is dropped and
     /// triage falls through to the full path. The expiry is not silent in
@@ -548,15 +556,13 @@ impl Default for PipelineConfig {
             engine: EngineConfig::default(),
             run_budget: None,
             role_overrides: PipelineRoleOverrides::default(),
-            triage_latency_ceiling: Duration::from_secs(30),
-            // Sized from the recall port's own round trip, NOT as a fraction
-            // of the triage ceiling above (it was written as "half of it",
-            // which stopped being true when triage's moved). Recall runs
-            // concurrently with triage, so this can never extend the critical
-            // path; it only stops recall from becoming it. A remote CGP
-            // embedding round trip is 100-500ms and the local path is
-            // single-digit ms, so this is an order of magnitude above the
-            // realistic worst case.
+            roster: Roster::default(),
+            triage_latency_ceiling: Duration::from_secs(10),
+            // Half the triage ceiling, and recall runs concurrently with
+            // triage — so this can never extend the critical path, it only
+            // stops recall from becoming it. A remote CGP embedding round
+            // trip is 100-500ms and the local path is single-digit ms, so
+            // this is an order of magnitude above the realistic worst case.
             recall_latency_ceiling: Duration::from_secs(5),
             // Wider than triage's because a research child is a bounded
             // multi-step read (up to RESEARCH_MAX_STEPS tool round-trips),
@@ -1076,6 +1082,12 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
+        // Before triage, before recall, before a single paid call — for the
+        // same reason the two independence refusals above sit here.
+        if let Err(error) = self.roster_refusal() {
+            return Err(PipelineRunError::new(error, total_cost));
+        }
+        self.report_roster_posture();
         if messages.is_empty() {
             messages.push(CompletionMessage::system(DEFAULT_SYSTEM_PROMPT));
         }
@@ -1153,6 +1165,7 @@ impl<'a> Pipeline<'a> {
         let authored_witness = !assessment.conversational
             && self.config.test_command.is_none()
             && self.config.witness_writer
+            && self.responsibility_enabled(ModelCallRole::WitnessAuthor)
             && assessment.wants_witness()
             && task_class.verifies_unconditionally()
             && self.can_author_independent_witness();
@@ -1201,25 +1214,28 @@ impl<'a> Pipeline<'a> {
 
         // --- 3+4. Plan, then scope review — one phase, because a reviewer who
         // asks for a different scope sends us back to the planner. -----------
-        let plan: Option<Vec<PlanStep>> = if task_class.plans() {
-            match self
-                .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
-                .await
-            {
-                Ok(PlannedScope::Steps(steps)) => Some(steps),
-                Ok(PlannedScope::Ended { reason }) => {
-                    return Ok(self.aborted_before_execute(
-                        task_class,
-                        total_cost,
-                        &reason,
-                        AbortKind::DeliberateStop,
-                    ));
+        // A withheld `plan` takes the branch a non-planning class takes — no
+        // frame, no call ([`Pipeline::responsibility_enabled`], #2381).
+        let plan: Option<Vec<PlanStep>> =
+            if task_class.plans() && self.responsibility_enabled(ModelCallRole::Plan) {
+                match self
+                    .plan_with_review(goal, &frames, &research, budget, &mut total_cost)
+                    .await
+                {
+                    Ok(PlannedScope::Steps(steps)) => Some(steps),
+                    Ok(PlannedScope::Ended { reason }) => {
+                        return Ok(self.aborted_before_execute(
+                            task_class,
+                            total_cost,
+                            &reason,
+                            AbortKind::DeliberateStop,
+                        ));
+                    }
+                    Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
                 }
-                Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         if let Some(steps) = &plan {
             // The frame needs the whole plan, not the transcript's echo of it:
             // step prompts are pushed one turn at a time, so at a mid-plan
@@ -1507,9 +1523,9 @@ impl<'a> Pipeline<'a> {
         });
         let fallback_plan = || vec![PlanStep::new(goal)];
 
-        let resolved = match self.resolve_provider(Role::Plan) {
-            Ok(r) => r,
-            Err(_) => return Ok(fallback_plan()),
+        let resolved = match self.assigned(ModelCallRole::Plan) {
+            Assigned::To(r) => r,
+            Assigned::Withheld | Assigned::Unresolvable => return Ok(fallback_plan()),
         };
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
@@ -1751,26 +1767,8 @@ impl<'a> Pipeline<'a> {
         // `n == 1 && !authored_witness && !isolate`, so reaching here with
         // `n == 1 && !author_witness` means `isolate` was the only reason.
         let single_shot_isolation = n == 1 && !author_witness;
-        // `can_author_independent_witness` already gated `author_witness` and
-        // announced any degradation, so this is the invariant guard for that
-        // decision — silent on purpose, never a second warning.
-        let mut author_witness = author_witness;
-        let witness_author = match author_witness
-            .then(|| self.resolve_provider(Role::Verifier))
-            .and_then(Result::ok)
-            .filter(|author| author.model_ref != worker.model_ref)
-        {
-            Some(author) => {
-                if let Some(fallback) = &author.fallback {
-                    self.emit_fallback(fallback);
-                }
-                Some(author)
-            }
-            None => {
-                author_witness = false;
-                None
-            }
-        };
+        let witness_author = self.resolve_witness_author(author_witness, &worker);
+        let author_witness = witness_author.is_some();
 
         // Isolation is created in index order even when the candidates then
         // run together, and so is the second snapshot a witness author needs —
