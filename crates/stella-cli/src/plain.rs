@@ -466,16 +466,23 @@ pub fn welcome_banner(provider: &str, model: &str, workspace: &str) {
 /// The label alone, without the word "stage": the divider already says what
 /// kind of thing this is.
 pub fn stage_rule(stage: StageKind) {
+    println!("\n{}", stage_rule_line(stage));
+}
+
+/// [`stage_rule`]'s composition, kept pure so the layout is testable without
+/// capturing stdout — the same split [`crate::term_policy`] uses for its
+/// decisions, and for the same reason.
+fn stage_rule_line(stage: StageKind) -> String {
     let label = textline::stage_label(stage);
     // "  " + "──" + " " + label + " " — what the trailing rule has to clear.
     let used = label.chars().count() + 5;
     let tail = RULE_WIDTH.saturating_sub(used);
-    println!(
-        "\n  {} {} {}",
+    format!(
+        "  {} {} {}",
         "──".dimmed(),
         label.bold(),
         "─".repeat(tail).dimmed()
-    );
+    )
 }
 
 /// The chain of thought accumulated since the last non-`Reasoning` event.
@@ -521,19 +528,31 @@ fn flush_reasoning() {
     }
     let text = std::mem::take(&mut *buf);
     drop(buf);
+    for line in reasoning_block(&text) {
+        println!("{line}");
+    }
+}
 
-    // Blank lines are dropped rather than previewed: in a window this small a
-    // paragraph break costs a row of thought and says nothing. Same call the
-    // deck makes.
+/// [`flush_reasoning`]'s composition, kept pure (see [`stage_rule_line`]).
+///
+/// Blank lines are dropped rather than previewed: in a window this small a
+/// paragraph break costs a row of thought and says nothing — the same call the
+/// deck makes.
+fn reasoning_block(text: &str) -> Vec<String> {
     let rows: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let total = rows.len();
-    println!("  {} {}", "✻".dimmed(), format!("{total} lines").dimmed());
+    let mut out = vec![format!(
+        "  {} {}",
+        "✻".dimmed(),
+        format!("{total} lines").dimmed()
+    )];
     for row in rows.iter().take(THINKING_ROWS) {
-        println!("    {}", row.trim_end().dimmed().italic());
+        out.push(format!("    {}", row.trim_end().dimmed().italic()));
     }
     if let Some(folded) = total.checked_sub(THINKING_ROWS).filter(|n| *n > 0) {
-        println!("    {}", format!("⋯ {folded} more").dimmed());
+        out.push(format!("    {}", format!("⋯ {folded} more").dimmed()));
     }
+    out
 }
 
 /// Print a file mutation and the diff it produced, capped.
@@ -559,6 +578,19 @@ pub fn file_change_card(
     removed: u32,
     diff: Option<&str>,
 ) {
+    for line in file_change_lines(path, kind, added, removed, diff) {
+        println!("{line}");
+    }
+}
+
+/// [`file_change_card`]'s composition, kept pure (see [`stage_rule_line`]).
+fn file_change_lines(
+    path: &str,
+    kind: FileChangeKind,
+    added: u32,
+    removed: u32,
+    diff: Option<&str>,
+) -> Vec<String> {
     let line = textline::file_change(path, kind);
     // Counts ride the event from the emitter's own LCS measurement. They are
     // never recounted from the diff text: `changed_region_diff` is a bounded,
@@ -569,22 +601,21 @@ pub fn file_change_card(
     } else {
         format!(" {}", format!("+{added} −{removed}").dimmed())
     };
-    println!("  {}{}", styled_event_line(&line), counts);
+    let mut out = vec![format!("  {}{}", styled_event_line(&line), counts)];
 
     let Some(diff) = diff.filter(|d| !d.trim().is_empty()) else {
-        return;
+        return out;
     };
     let (body, hidden) =
         stella_tui::diff::body_lines_inline_ansi(diff, Some(path), INLINE_DIFF_CAP, &palette());
-    for row in body {
-        println!("    {row}");
-    }
+    out.extend(body.into_iter().map(|row| format!("    {row}")));
     if hidden > 0 {
-        println!(
+        out.push(format!(
             "    {}",
             format!("⋯ {hidden} more line{}", if hidden == 1 { "" } else { "s" }).dimmed()
-        );
+        ));
     }
+    out
 }
 
 /// Render one `AgentEvent` from `stella_core::Engine::run_turn`'s stream.
@@ -808,6 +839,185 @@ mod tests {
             strip_ansi(&styled_event_line(&textline::budget_tick(0.42, None))),
             "$ spend: $0.4200"
         );
+    }
+
+    // ── #2421: what the plain surface stopped throwing away ────────────────
+    //
+    // Four witnesses, one per gap. Each asserts on the *visible* text, so a
+    // restyling does not break them but a silent drop does. On `main` before
+    // #2421 every one of them fails, and fails for the right reason: the
+    // renderer it exercises did not exist.
+
+    /// Prose is markdown, and this surface used to print it raw.
+    #[test]
+    fn assistant_prose_is_rendered_not_printed_with_its_delimiters() {
+        let out = stella_tui::markdown::render_ansi(
+            "## Heading\n\nSome **bold** and `code`.\n\n- one\n- two\n",
+            &AnsiPalette::colored().with_transparent_fg(stella_tui::theme::INK),
+        );
+        let visible: String = out
+            .iter()
+            .map(|l| strip_ansi(l).into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // The delimiters are consumed, not shown.
+        assert!(
+            !visible.contains("**") && !visible.contains('`') && !visible.contains("## "),
+            "markdown delimiters survived into the output:\n{visible}"
+        );
+        // …and the content they wrapped is still there.
+        for word in ["Heading", "bold", "code", "one", "two"] {
+            assert!(visible.contains(word), "lost {word:?} from:\n{visible}");
+        }
+        // A bullet became a glyph rather than vanishing.
+        assert!(visible.contains('•'), "no bullet glyph in:\n{visible}");
+    }
+
+    /// Prose must NOT be given a foreground: this surface paints no ground, so
+    /// the deck's explicit `theme::INK` would fight a light terminal profile.
+    /// The structure around it still gets colour — that is the whole point of
+    /// the transparency, and a palette that simply dropped colour would pass a
+    /// weaker version of this test while losing the headings.
+    #[test]
+    fn prose_keeps_the_readers_foreground_while_structure_keeps_colour() {
+        let palette = AnsiPalette::colored().with_transparent_fg(stella_tui::theme::INK);
+        let plain = stella_tui::markdown::render_ansi("just prose", &palette);
+        assert_eq!(plain, vec!["just prose".to_string()], "prose was tinted");
+
+        let heading = stella_tui::markdown::render_ansi("# Title", &palette);
+        assert!(
+            heading[0].contains('\u{1b}'),
+            "the heading lost its styling too: {:?}",
+            heading[0]
+        );
+    }
+
+    /// Every stage draws a rule. Before #2421 only `Execute` printed anything
+    /// at all, and what it printed was the word "thinking…".
+    #[test]
+    fn every_stage_draws_a_rule_naming_itself() {
+        for (stage, label) in [
+            (StageKind::Triage, "triage"),
+            (StageKind::Plan, "plan"),
+            (StageKind::Witness, "witness"),
+            (StageKind::Execute, "execute"),
+            (StageKind::Verdict, "verdict"),
+        ] {
+            let line = strip_ansi(&stage_rule_line(stage)).into_owned();
+            assert!(line.contains(label), "stage rule lost its label: {line:?}");
+            assert!(line.contains('─'), "stage rule drew no rule: {line:?}");
+            // The vocabulary is `textline`'s, not a local copy — #1465 was
+            // five surfaces disagreeing about one stage's name.
+            assert!(
+                line.contains(textline::stage_label(stage)),
+                "stage rule stopped using the shared label: {line:?}"
+            );
+        }
+    }
+
+    /// A chain of thought is previewed and *counted*, never dropped and never
+    /// dumped whole.
+    #[test]
+    fn reasoning_is_previewed_bounded_and_says_how_much_it_withheld() {
+        let thought: String = (1..=12).map(|n| format!("step {n}\n")).collect();
+        let block = reasoning_block(&thought);
+        let visible: Vec<String> = block.iter().map(|l| strip_ansi(l).into_owned()).collect();
+
+        assert!(
+            visible[0].contains("12 lines"),
+            "no total in the header: {:?}",
+            visible[0]
+        );
+        // Header + the preview + the fold marker, and nothing beyond.
+        assert_eq!(visible.len(), THINKING_ROWS + 2, "preview is unbounded");
+        assert!(visible[1].contains("step 1"));
+        assert!(
+            visible.last().unwrap().contains(&format!("{} more", 12 - THINKING_ROWS)),
+            "withheld count not stated: {:?}",
+            visible.last()
+        );
+        // The 12th step must not have reached the terminal.
+        assert!(
+            !visible.iter().any(|l| l.contains("step 12")),
+            "the whole thought was dumped"
+        );
+    }
+
+    /// Blank lines cost a row of thought and say nothing, so they are dropped
+    /// before the budget is spent — the same call the deck makes.
+    #[test]
+    fn reasoning_spends_its_budget_on_content_not_paragraph_breaks() {
+        let spaced = "a\n\n\nb\n\n\nc\n";
+        let visible: Vec<String> = reasoning_block(spaced)
+            .iter()
+            .map(|l| strip_ansi(l).into_owned())
+            .collect();
+        assert!(visible[0].contains("3 lines"), "blanks were counted");
+        assert_eq!(visible.len(), 4, "blanks were previewed: {visible:?}");
+    }
+
+    /// The headline gap: a mutation prints the diff that rode its own event.
+    #[test]
+    fn a_file_change_prints_its_diff_and_its_measured_counts() {
+        let diff = "@@ -1,3 +1,3 @@\n fn main() {\n-    let x = 1;\n+    let x = 2;\n }\n";
+        let visible: Vec<String> =
+            file_change_lines("src/main.rs", FileChangeKind::Modified, 1, 1, Some(diff))
+                .iter()
+                .map(|l| strip_ansi(l).into_owned())
+                .collect();
+        let all = visible.join("\n");
+
+        assert!(all.contains("src/main.rs"), "path missing:\n{all}");
+        // Counts come off the event, not off the diff text.
+        assert!(all.contains("+1 −1"), "measured counts missing:\n{all}");
+        // The actual change, both sides of it.
+        assert!(all.contains("let x = 1;"), "removed line missing:\n{all}");
+        assert!(all.contains("let x = 2;"), "added line missing:\n{all}");
+        assert!(
+            visible.len() > 1,
+            "the row printed but the diff did not:\n{all}"
+        );
+    }
+
+    /// A big diff is capped and *says* it was capped. An unannounced
+    /// truncation reads as the whole change, and unlike the deck there is no
+    /// ctrl+o here to prove otherwise.
+    #[test]
+    fn a_large_diff_is_capped_and_names_the_lines_it_withheld() {
+        let mut diff = String::from("@@ -1,80 +1,80 @@\n");
+        for n in 0..80 {
+            diff.push_str(&format!("-old {n}\n+new {n}\n"));
+        }
+        let visible: Vec<String> =
+            file_change_lines("big.rs", FileChangeKind::Modified, 80, 80, Some(&diff))
+                .iter()
+                .map(|l| strip_ansi(l).into_owned())
+                .collect();
+
+        // One header row, at most the shared cap of diff rows, one fold note.
+        assert!(
+            visible.len() <= INLINE_DIFF_CAP + 2,
+            "diff flooded the transcript: {} lines",
+            visible.len()
+        );
+        assert!(
+            visible.last().unwrap().contains("more line"),
+            "truncated silently: {:?}",
+            visible.last()
+        );
+    }
+
+    /// A read is not a change: no counts, no diff, just the row.
+    #[test]
+    fn a_read_prints_one_row_with_no_diff_and_no_counts() {
+        let visible: Vec<String> =
+            file_change_lines("src/lib.rs", FileChangeKind::Read, 0, 0, None)
+                .iter()
+                .map(|l| strip_ansi(l).into_owned())
+                .collect();
+        assert_eq!(visible.len(), 1, "a read grew a body: {visible:?}");
+        assert!(!visible[0].contains('+'), "a read reported a delta");
     }
 
     // ── wordmark ───────────────────────────────────────────────────────────
