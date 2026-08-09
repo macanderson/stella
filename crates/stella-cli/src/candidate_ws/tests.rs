@@ -23,9 +23,14 @@ fn snapshot_identity_matches_the_verify_done_walk_vocabulary() {
 /// the other two crates, so this test is the only place all three meet.
 #[test]
 fn snapshot_identity_matches_what_the_witness_author_is_told_to_exclude() {
+    let email_entry = SNAPSHOT_IDENT
+        .iter()
+        .find(|entry| entry.starts_with("user.email="))
+        .expect("SNAPSHOT_IDENT must contain a user.email entry");
+
     assert_eq!(
-        SNAPSHOT_IDENT[3],
-        format!(
+        email_entry,
+        &format!(
             "user.email={}",
             stella_pipeline::witness::MACHINERY_COMMIT_EMAIL
         )
