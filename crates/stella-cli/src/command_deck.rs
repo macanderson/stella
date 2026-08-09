@@ -1406,6 +1406,7 @@ pub async fn run_deck_session(
             &custom,
             &mut pipeline_on,
             agent::remaining_budget(&budget),
+            &session_record.id,
         )
         .await;
         if matches!(command, DeckCommand::Handled | DeckCommand::InitCompleted) {
@@ -3884,6 +3885,9 @@ async fn run_deck_command(
     custom: &crate::extensions::CustomExtensions,
     pipeline_on: &mut bool,
     budget_limit: Option<f64>,
+    // This deck's session registry id — what scopes `/export` to the session
+    // the user is actually in (#2558).
+    session_id: &str,
 ) -> DeckCommand {
     let trimmed = prompt.trim();
     if !trimmed.starts_with('/') {
@@ -3981,31 +3985,11 @@ async fn run_deck_command(
                 Err(e) => say(format!("init failed: {e}")),
             }
         }
-        "/export" => {
-            // Export all session telemetry to a timestamped ZIP archive
-            // containing raw JSON dumps + a self-contained HTML dashboard.
-            //
-            // Off the runtime worker: the export opens SQLite, dumps and
-            // pretty-prints every telemetry table, renders the dashboard, and
-            // builds the whole ZIP without yielding — awaiting it inline
-            // stalls the deck's event pump, so keystrokes go unprocessed and
-            // the TUI looks hung on the crate's most I/O-heavy command.
-            let root = cfg.workspace_root.clone();
-            let exported =
-                tokio::task::spawn_blocking(move || crate::export::export_session(&root)).await;
-            match exported.map_err(|e| format!("export task failed: {e}")) {
-                Ok(Ok(path)) => {
-                    let display = path.display();
-                    say(format!(
-                        "Export Session Telemetry — archive written to {display}\n\
-                         The ZIP contains a `dashboard.html` (open in any browser) and raw \
-                         JSON dumps of every telemetry table. The timestamped folder name \
-                         matches the last log entry's timestamp."
-                    ));
-                }
-                Ok(Err(e)) | Err(e) => say(format!("export failed: {e}")),
-            }
-        }
+        // Export THIS session's telemetry to a timestamped ZIP archive of raw
+        // JSON dumps + a self-contained HTML dashboard. The session id is what
+        // scopes it: the archive is built to be shared, and #2558 records what
+        // shipping the whole workspace store cost.
+        "/export" => say(crate::export::export_command(&cfg.workspace_root, session_id).await),
         "/reload" => say(settings_io::reload_command(cfg, in_tx)),
         "/donate" => {
             say("❤️  Support Stella\n\

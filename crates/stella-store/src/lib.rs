@@ -91,7 +91,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use base64::Engine as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use stella_protocol::{AgentEvent, TaskStatus};
@@ -113,6 +112,9 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //   enterprise_telemetry
 //               the closed operational event schema, its bounded at-least-once
 //               spool, and the per-store export ledger
+//   export      the `/export` telemetry dump and `stella stats`' usage
+//               aggregate, plus the `ExportScope` that decides whether either
+//               covers one session or the whole workspace (#2558)
 //   forget      tombstone policy: surfaces, and the lexical restatement check
 //               that keeps a re-mined paraphrase from walking back in
 //   home        `~/.stella` resolution + the one-time legacy-layout migration
@@ -147,6 +149,7 @@ pub mod drain;
 pub mod durable;
 pub mod efficacy;
 pub mod enterprise_telemetry;
+pub mod export;
 pub mod forget;
 pub mod foundry;
 pub mod home;
@@ -182,6 +185,7 @@ pub use drain::{
     RejectionClass, drain_org, schema_version_supported,
 };
 pub use efficacy::FinishedExecution;
+pub use export::ExportExclusions;
 pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppressed};
 pub use foundry::{AdoptedTool, FoundryReuse};
 pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};
@@ -1624,274 +1628,6 @@ impl Store {
                     row.get(0)
                 })?;
         Ok(count)
-    }
-
-    /// Aggregate usage/cost analytics per (provider, model) — the data
-    /// behind `stella stats` and every "$-per-resolved-task" receipt.
-    ///
-    /// Semantics:
-    /// - One output row per distinct `executions.(provider, model)` pair;
-    ///   telemetry is attributed to its execution's provider/model.
-    /// - `runs` counts every execution; `resolved` counts
-    ///   `outcome = 'completed'` (aborted and still-open runs are not
-    ///   resolved).
-    /// - Cost comes from `executions.cost_usd` (the per-run total written
-    ///   at finish); token and duration sums come from `telemetry`,
-    ///   pre-aggregated per execution before the join so a multi-step run
-    ///   can never fan out the executions side.
-    /// - `cost_per_resolved_usd` is `None` when `resolved = 0`.
-    /// - Rows are ordered by total cost descending (ties broken by
-    ///   provider, then model, so output is deterministic).
-    ///
-    /// Division mapping: only provider `local` maps to the off-grid cost
-    /// tier (`off-grid`); all other rows carry `"-"` — see [`UsageStatsRow`].
-    pub fn usage_stats(&self) -> Result<Vec<UsageStatsRow>> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT e.provider,
-                    e.model,
-                    count(*) AS runs,
-                    count(*) FILTER (WHERE e.outcome = 'completed') AS resolved,
-                    coalesce(sum(e.cost_usd), 0) AS total_cost_usd,
-                    CAST(coalesce(sum(t.input_tokens), 0) AS INTEGER) AS input_tokens,
-                    CAST(coalesce(sum(t.output_tokens), 0) AS INTEGER) AS output_tokens,
-                    CAST(coalesce(sum(t.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
-                    CAST(coalesce(sum(t.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
-                    CAST(coalesce(sum(t.duration_ms), 0) AS INTEGER) AS total_duration_ms
-             FROM executions e
-             LEFT JOIN (
-               SELECT execution_id,
-                      sum(input_tokens) AS input_tokens,
-                      sum(output_tokens) AS output_tokens,
-                      sum(cache_read_tokens) AS cache_read_tokens,
-                      sum(cache_write_tokens) AS cache_write_tokens,
-                      sum(duration_ms) AS duration_ms
-               FROM telemetry
-               GROUP BY execution_id
-             ) t ON t.execution_id = e.id
-             GROUP BY e.provider, e.model
-             ORDER BY total_cost_usd DESC, e.provider ASC, e.model ASC",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            let provider: String = row.get(0)?;
-            let model: String = row.get(1)?;
-            let runs: i64 = row.get(2)?;
-            let resolved: i64 = row.get(3)?;
-            let total_cost_usd: f64 = row.get(4)?;
-            let input_tokens: i64 = row.get(5)?;
-            let output_tokens: i64 = row.get(6)?;
-            let cache_read_tokens: i64 = row.get(7)?;
-            let cache_write_tokens: i64 = row.get(8)?;
-            let total_duration_ms: i64 = row.get(9)?;
-            let division = UsageStatsRow::division_for_provider(&provider).to_string();
-            Ok(UsageStatsRow {
-                provider,
-                model,
-                division,
-                runs,
-                resolved,
-                // A GROUP BY group always holds ≥ 1 execution row.
-                resolve_rate: resolved as f64 / runs as f64,
-                total_cost_usd,
-                cost_per_resolved_usd: (resolved > 0).then(|| total_cost_usd / resolved as f64),
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cache_write_tokens,
-                avg_duration_ms: total_duration_ms as f64 / runs as f64,
-            })
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
-    /// Dump the telemetry tables as JSON arrays — the data behind `/export`.
-    /// Each entry is `(table_name, json_array_string)`.
-    ///
-    /// This is the analytics export, not a database dump: it covers exactly
-    /// the nine telemetry tables the export archive bundles — `executions`,
-    /// `telemetry`, `tool_calls`, `files_touched`, `mcp_usage`, `agent_uses`,
-    /// `skill_usage`, `execution_reflection`, and `reflections`. The rest of
-    /// the store stays out deliberately: `events` and the receipts plane
-    /// (`context_blocks` / `step_manifest` / `step_receipt`) carry full
-    /// payloads and reconstruction preimages the archive must not ship, and
-    /// the state tables (`rules`, `file_locks`, `memory_citations`,
-    /// `forgotten`, `tasks`, `pull_requests`) are live workspace state, not
-    /// session telemetry.
-    ///
-    /// The JSON is constructed in Rust (not by SQLite's json1 extension,
-    /// which may be absent from a bundled build), so the shape is stable
-    /// across platforms. Rows are ordered by the table's natural key; the
-    /// exact order per table is documented in the module-level schema
-    /// comments.
-    pub fn export_all_json(&self) -> Result<Vec<(&'static str, String)>> {
-        let conn = self.lock();
-        let mut out: Vec<(&'static str, String)> = Vec::new();
-
-        // Executions — the spine everything else keys off.
-        {
-            let mut stmt = conn.prepare(
-                "SELECT id, kind, prompt, provider, model, started_at, finished_at, outcome, \
-                 cost_usd, usage_complete FROM executions ORDER BY id ASC",
-            )?;
-            let rows = stmt.query_map([], |row| {
-                Ok(serde_json::json!({
-                    "id": row.get::<_, i64>(0)?,
-                    "kind": row.get::<_, String>(1)?,
-                    "prompt": row.get::<_, String>(2)?,
-                    "provider": row.get::<_, String>(3)?,
-                    "model": row.get::<_, String>(4)?,
-                    "started_at": row.get::<_, Option<String>>(5)?,
-                    "finished_at": row.get::<_, Option<String>>(6)?,
-                    "outcome": row.get::<_, Option<String>>(7)?,
-                    "cost_usd": row.get::<_, f64>(8)?,
-                    "usage_complete": row.get::<_, bool>(9)?,
-                }))
-            })?;
-            let mut arr = Vec::new();
-            for r in rows {
-                arr.push(r?);
-            }
-            // `[]`, not `""`, on the (unreachable) serialization failure: every
-            // entry of this vec is consumed as a JSON document, and an empty
-            // string is not one — it would turn an export hiccup into a parse
-            // error downstream. Matches `query_to_json`'s fallback.
-            out.push((
-                "executions",
-                serde_json::to_string(&arr).unwrap_or_else(|_| "[]".into()),
-            ));
-        }
-
-        // Telemetry — per-model-call token/cost/duration rows.
-        for (name, sql) in [
-            (
-                "telemetry",
-                "SELECT execution_id, step, ts, provider, call_role, model, input_tokens, \
-                 estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
-                 cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete \
-                 FROM telemetry \
-                 ORDER BY execution_id ASC, step ASC"
-                    .to_string(),
-            ),
-            (
-                "tool_calls",
-                "SELECT execution_id, seq, call_id, name, surface, args_json, args_digest, \
-                 reason, ok, error, bytes_out, duration_ms FROM tool_calls ORDER BY execution_id \
-                 ASC, seq ASC"
-                    .to_string(),
-            ),
-            (
-                "files_touched",
-                "SELECT execution_id, path, ops, lines_added, lines_removed, events FROM \
-                 files_touched ORDER BY execution_id ASC, path ASC"
-                    .to_string(),
-            ),
-            (
-                "mcp_usage",
-                "SELECT execution_id, server, tool, reason, called_at_ms FROM mcp_usage ORDER BY \
-                 called_at_ms ASC"
-                    .to_string(),
-            ),
-            (
-                "agent_uses",
-                "SELECT execution_id, agent, version, reason, ts FROM agent_uses ORDER BY \
-                 execution_id ASC, ts ASC"
-                    .to_string(),
-            ),
-            (
-                "skill_usage",
-                "SELECT execution_id, skill, version, reason, ts FROM skill_usage ORDER BY \
-                 execution_id ASC, ts ASC"
-                    .to_string(),
-            ),
-            (
-                "execution_reflection",
-                "SELECT execution_id, prompt, delivered, self_rating, what_went_well, \
-                 what_to_improve, critique, produced_output, wrote_files, truncated FROM \
-                 execution_reflection ORDER BY execution_id ASC"
-                    .to_string(),
-            ),
-            (
-                "reflections",
-                "SELECT id, execution_id, kind, content, domains, occurred_at FROM reflections \
-                 ORDER BY id ASC"
-                    .to_string(),
-            ),
-        ] {
-            let arr = self.query_to_json(&conn, &sql)?;
-            out.push((name, arr));
-        }
-
-        Ok(out)
-    }
-
-    /// Execute a `SELECT *`-style query and return a JSON array string, one
-    /// object per row. Column names come from the query cursor. Used by
-    /// [`export_all_json`](Store::export_all_json) for the uniform tables.
-    fn query_to_json(&self, conn: &Connection, sql: &str) -> Result<String> {
-        let mut stmt = conn.prepare(sql)?;
-        let col_count = stmt.column_count();
-        let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        let rows = stmt.query_map([], |row| {
-            let mut obj = serde_json::Map::with_capacity(col_count);
-            for (i, name) in col_names.iter().enumerate() {
-                // sqlite_type → JSON type: text→string, integer→number,
-                // real→number, null/blob→null-or-string. rusqlite's
-                // value_ref covers all of them.
-                use rusqlite::types::ValueRef;
-                let val = match row.get_ref(i)? {
-                    ValueRef::Null => serde_json::Value::Null,
-                    ValueRef::Integer(n) => serde_json::Value::Number(n.into()),
-                    ValueRef::Real(f) => serde_json::Number::from_f64(f)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::Null),
-                    ValueRef::Text(bytes) => {
-                        serde_json::Value::String(String::from_utf8_lossy(bytes).into_owned())
-                    }
-                    ValueRef::Blob(bytes) => serde_json::Value::String(
-                        base64::engine::general_purpose::STANDARD.encode(bytes),
-                    ),
-                };
-                obj.insert(name.clone(), val);
-            }
-            Ok(serde_json::Value::Object(obj))
-        })?;
-        let mut arr = Vec::new();
-        for r in rows {
-            arr.push(r?);
-        }
-        Ok(serde_json::to_string(&arr).unwrap_or_else(|_| "[]".into()))
-    }
-
-    /// The timestamp of the most recent log entry across all tables — the
-    /// "as-of" watermark for the export. Returns the max of: executions
-    /// `finished_at`/`started_at`, telemetry `ts`, reflections `occurred_at`,
-    /// and mcp_usage `called_at_ms`. Returns `None` when the store is empty.
-    pub fn last_log_timestamp(&self) -> Result<Option<String>> {
-        let conn = self.lock();
-        // Try the most reliable chronological markers in priority order.
-        let candidates: [&str; 4] = [
-            "SELECT MAX(ts) FROM telemetry",
-            "SELECT MAX(started_at) FROM executions",
-            "SELECT MAX(finished_at) FROM executions WHERE finished_at IS NOT NULL",
-            "SELECT datetime(MAX(called_at_ms) / 1000, 'unixepoch') FROM mcp_usage",
-        ];
-        let mut latest: Option<String> = None;
-        for sql in candidates {
-            let row: rusqlite::Result<Option<String>> = conn.query_row(sql, [], |row| row.get(0));
-            if let Ok(Some(ts)) = row
-                && !ts.is_empty()
-            {
-                latest = Some(match latest {
-                    Some(prev) if prev >= ts => prev,
-                    _ => ts,
-                });
-            }
-        }
-        Ok(latest)
     }
 }
 

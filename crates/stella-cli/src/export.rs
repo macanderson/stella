@@ -1,5 +1,5 @@
-//! `/export` — export all session telemetry as a ZIP archive of raw JSON
-//! dumps plus a self-contained HTML dashboard.
+//! `/export` — export **one session's** telemetry as a ZIP archive of raw
+//! JSON dumps plus a self-contained HTML dashboard.
 //!
 //! The archive lives at `.stella/exports/` and is named with the microsecond
 //! timestamp of the **last log entry** included (the data's own clock, not the
@@ -11,22 +11,37 @@
 //! resolve rate, cost-per-resolved-task, token efficiency, tool-call
 //! frequency, retry patterns, and file-edit heat — the same data `stella
 //! stats` summarizes in a table, but visually and interactively.
+//!
+//! **Scope is a safety property here, not a convenience** (#2558). Until the
+//! session argument existed, this module dumped the entire workspace store:
+//! attaching an export to a public PR to show one run disclosed every other
+//! run in that project — their prompts, their tool arguments, their touched
+//! files' contents. The credential masking below and the `0600` archive mode
+//! both assume the blast radius is one session, so the scoping is what makes
+//! the rest of the hardening mean what it says.
 
 use std::path::{Path, PathBuf};
 
-use stella_store::Store;
+use stella_store::{ExportExclusions, Store};
 
 /// One `(table_name, json_array)` pair from the export dump.
 type TableDump = (&'static str, String);
 
-/// Build the export archive. Returns the path to the written file, or an
-/// error message. `workspace_root` is where `.stella/exports/` is created.
-pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
+/// Build the export archive for one session. Returns the path to the written
+/// file, or an error message. `workspace_root` is where `.stella/exports/` is
+/// created; `session_id` is the session registry id
+/// ([`stella_store::SessionRecord::id`]) whose telemetry the archive covers.
+///
+/// There is deliberately no whole-workspace variant on this path. The archive
+/// is built to be shared, and "export everything by default" is the defect
+/// #2558 records — a caller who wants workspace-wide analytics wants `stella
+/// stats`, which is not an artifact that leaves the machine.
+pub fn export_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf, String> {
     let store = Store::open(workspace_root).map_err(|e| format!("cannot open store: {e}"))?;
 
-    // Collect every table's raw data.
+    // Collect this session's raw data — never the workspace's.
     let dumps = store
-        .export_all_json()
+        .export_session_json(session_id)
         .map_err(|e| format!("cannot read telemetry: {e}"))?;
     // #817: the archive leaves the machine (emailed, committed to a PR as
     // evidence), so mask any credential that reached the telemetry — a key
@@ -39,13 +54,20 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
         .collect();
 
     if dumps.iter().all(|(_, json)| json == "[]") {
-        return Err("no session telemetry recorded yet — run a few turns first.".into());
+        return Err("no telemetry recorded for this session yet — run a few turns first.".into());
     }
 
-    // The watermark: the timestamp of the last log entry in this set. Falls
-    // back to "now" only if the store somehow has no timestamps at all.
+    // What the scope left out, so the manifest can state it. A census failure
+    // must not sink an otherwise-good export: an unstated exclusion count is a
+    // gap in the archive's provenance, not a reason to withhold the evidence.
+    let excluded = store.export_exclusions(session_id).unwrap_or_default();
+
+    // The watermark: the timestamp of the last log entry in this set — read
+    // over the same session, or the filename would assert a moment no row in
+    // the archive reaches. Falls back to "now" only if the store somehow has
+    // no timestamps at all.
     let watermark = store
-        .last_log_timestamp()
+        .last_log_timestamp_for_session(session_id)
         .ok()
         .flatten()
         .unwrap_or_else(|| {
@@ -63,12 +85,15 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     // Sanitize the watermark into a filename-safe folder name.
     let folder = sanitize_timestamp(&watermark);
 
+    // Scoped too: the KPI tiles and every chart are computed from these rows,
+    // so workspace totals rendered beside one session's dumps would describe
+    // runs the archive does not contain.
     let usage_stats = store
-        .usage_stats()
+        .usage_stats_for_session(session_id)
         .map_err(|e| format!("cannot read usage stats: {e}"))?;
 
     // Build the self-contained HTML dashboard.
-    let html = render_dashboard(&usage_stats, &dumps, &watermark);
+    let html = render_dashboard(&usage_stats, &dumps, &watermark, session_id, &excluded);
 
     // Assemble the ZIP.
     //
@@ -92,9 +117,16 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     }
     // The dashboard.
     zip.add_file(&format!("{folder}/dashboard.html"), html.as_bytes())?;
-    // A manifest with the watermark and table list.
+    // A manifest with the watermark, the scope, and the table list.
+    //
+    // `session` and `excluded` are the archive's provenance: without them a
+    // reader cannot tell "this session did nothing else" from "the exporter
+    // dropped the rest", and the scope becomes an assumption rather than a
+    // claim they can check.
     let manifest = serde_json::json!({
         "exported_at": watermark,
+        "session": session_id,
+        "excluded": excluded,
         "tables": dumps.iter().map(|(t, j)| {
             let count = serde_json::from_str::<Vec<serde_json::Value>>(j)
                 .map(|v| v.len())
@@ -114,6 +146,33 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("write archive: {e}"))?;
 
     Ok(zip_path)
+}
+
+/// The `/export` deck command: build `session_id`'s archive and return the
+/// message the deck prints.
+///
+/// Runs off the runtime worker. The export opens SQLite, dumps and
+/// pretty-prints every telemetry table, renders the dashboard, and builds the
+/// whole ZIP without yielding — awaiting it inline stalls the deck's event
+/// pump, so keystrokes go unprocessed and the TUI looks hung on the crate's
+/// most I/O-heavy command.
+pub async fn export_command(workspace_root: &Path, session_id: &str) -> String {
+    let root = workspace_root.to_path_buf();
+    let session = session_id.to_string();
+    let exported = tokio::task::spawn_blocking(move || export_session(&root, &session)).await;
+    match exported.map_err(|e| format!("export task failed: {e}")) {
+        Ok(Ok(path)) => format!(
+            "Export Session Telemetry — archive written to {}\n\
+             Scope: this session ({session_id}) only — the archive is safe to attach to a \
+             PR or email without disclosing your other runs in this workspace. The ZIP \
+             holds a `dashboard.html` (open in any browser), raw JSON dumps of this \
+             session's telemetry tables, and a `manifest.json` naming the session and \
+             what was excluded. The timestamped folder name matches the last log entry's \
+             timestamp.",
+            path.display()
+        ),
+        Ok(Err(e)) | Err(e) => format!("export failed: {e}"),
+    }
 }
 
 /// Create `dir` (and parents) owner-only. An existing directory is tightened
@@ -300,6 +359,8 @@ fn render_dashboard(
     usage_stats: &[stella_store::UsageStatsRow],
     dumps: &[TableDump],
     watermark: &str,
+    session_id: &str,
+    excluded: &ExportExclusions,
 ) -> String {
     let total_cost: f64 = usage_stats.iter().map(|r| r.total_cost_usd).sum();
     let total_runs: i64 = usage_stats.iter().map(|r| r.runs).sum();
@@ -324,10 +385,26 @@ fn render_dashboard(
     let total_output_fmt = comma(total_output);
     let total_cache_read_fmt = comma(total_cache_read);
 
-    // The watermark is the only value interpolated into markup rather than
-    // into the `<script>` block; every dump below goes through `script_json`
-    // instead — see its doc for why raw JSON is not safe there.
+    // The watermark and the session id are the only values interpolated into
+    // markup rather than into the `<script>` block; every dump below goes
+    // through `script_json` instead — see its doc for why raw JSON is not safe
+    // there. The session id is a store column like any other, and a store
+    // column is not a place this module gets to assume markup-safety about.
     let watermark = escape_html(watermark);
+    let session = escape_html(session_id);
+
+    // The scope line. The dashboard is the artifact someone opens before
+    // deciding to forward it, so what it does and does not contain belongs on
+    // the page — not only in the manifest beside it.
+    let scope_note = if excluded.is_empty() {
+        "the only session recorded in this workspace".to_string()
+    } else {
+        format!(
+            "{} execution(s) from other sessions and {} unattributed execution(s) in this \
+             workspace were <strong>not</strong> included",
+            excluded.other_session_executions, excluded.unattributed_executions,
+        )
+    };
 
     // Telemetry rows for the timeline chart.
     let telemetry_json = script_json(table_json(dumps, "telemetry"));
@@ -404,7 +481,8 @@ fn render_dashboard(
   }}
   h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--text); }}
   h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--brand); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
-  .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 24px; font-family: monospace; }}
+  .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 8px; font-family: monospace; }}
+  .scope {{ color: var(--text2); font-size: 0.8rem; margin-bottom: 24px; padding: 8px 12px; background: var(--surface); border-left: 3px solid var(--brand); border-radius: 0 6px 6px 0; }}
   .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 8px; }}
   .kpi {{
     background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px;
@@ -442,7 +520,8 @@ fn render_dashboard(
 <body>
 
 <h1>⚡ Stella Session Telemetry</h1>
-<div class="watermark">as of {watermark}</div>
+<div class="watermark">session {session} · as of {watermark}</div>
+<div class="scope">This archive covers <strong>one session</strong> — {scope_note}.</div>
 
 <div class="kpi-grid">
   <div class="kpi"><div class="label">Total Runs</div><div class="value">{total_runs}</div><div class="sub">{total_resolved} resolved</div></div>
@@ -796,516 +875,4 @@ impl ZipWriter {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zip_writer_produces_a_valid_archive() {
-        let mut zip = ZipWriter::new();
-        zip.add_file("a.txt", b"hello").unwrap();
-        zip.add_file("b.txt", b"world!!!").unwrap();
-        let bytes = zip.finish().unwrap();
-
-        // Minimum valid ZIP with 2 entries: 2 local headers + 2 central + EOCD.
-        // Each local header is 30 + name_len; central is 46 + name_len; EOCD is 22.
-        assert!(bytes.len() > 100);
-        // Starts with PK\x03\x04.
-        assert_eq!(&bytes[..4], &[0x50, 0x4b, 0x03, 0x04]);
-        // Ends with EOCD PK\x05\x06.
-        assert_eq!(
-            &bytes[bytes.len() - 22..bytes.len() - 18],
-            &[0x50, 0x4b, 0x05, 0x06]
-        );
-
-        // Verify the content is stored verbatim (store-only).
-        let hello_pos = find_subsequence(&bytes, b"hello");
-        assert!(hello_pos.is_some(), "file content stored in the zip");
-    }
-
-    #[test]
-    fn zip_writer_handles_empty_files() {
-        let mut zip = ZipWriter::new();
-        zip.add_file("empty.txt", b"").unwrap();
-        let bytes = zip.finish().unwrap();
-        assert_eq!(&bytes[..4], &[0x50, 0x4b, 0x03, 0x04]);
-    }
-
-    /// The four-byte size/offset guard, exercised with plain lengths — the
-    /// point is refusing loudly at the ZIP32 boundary, not allocating 4 GiB.
-    #[test]
-    fn zip32_field_refuses_lengths_the_headers_cannot_store() {
-        assert_eq!(zip32_field(0, "entry `x`"), Ok(0));
-        assert_eq!(
-            zip32_field(u32::MAX as usize, "entry `x`"),
-            Ok(u32::MAX),
-            "the last representable length still fits"
-        );
-        let err = zip32_field(u32::MAX as usize + 1, "entry `big.json`").unwrap_err();
-        assert!(err.contains("entry `big.json`"), "{err}");
-        assert!(err.contains("4 GiB"), "{err}");
-        assert!(err.contains("ZIP64"), "{err}");
-    }
-
-    /// Past 65,535 entries the EOCD's two-byte counts wrap — `finish` must
-    /// refuse rather than emit an archive most tools would misread.
-    #[test]
-    fn zip_writer_refuses_more_entries_than_the_eocd_can_count() {
-        let mut zip = ZipWriter::new();
-        for i in 0..=u16::MAX as u32 {
-            zip.add_file(&format!("{i}"), b"").unwrap();
-        }
-        let err = zip.finish().unwrap_err();
-        assert!(err.contains("65,535"), "{err}");
-        assert!(err.contains("ZIP64"), "{err}");
-    }
-
-    #[test]
-    fn crc32_matches_known_values() {
-        // CRC-32 of "hello" is 0x3610a686.
-        assert_eq!(crc32(b"hello"), 0x3610a686);
-        // CRC-32 of "" is 0.
-        assert_eq!(crc32(b""), 0);
-        // CRC-32 of "123456789" is 0xcbf43926 (the standard check value).
-        assert_eq!(crc32(b"123456789"), 0xcbf43926);
-    }
-
-    #[test]
-    fn sanitize_timestamp_strips_unsafe_chars() {
-        assert_eq!(
-            sanitize_timestamp("2024-01-15 10:30:00"),
-            "2024-01-15-10-30-00"
-        );
-        assert_eq!(sanitize_timestamp("1705312200000000"), "1705312200000000");
-        assert_eq!(sanitize_timestamp("../etc/passwd"), "etc-passwd");
-    }
-
-    /// A workspace file path, a tool name, and a prompt all reach the
-    /// dashboard's `<script>` block verbatim, and all three are text an agent
-    /// or a cloned repo chooses. A literal `</script` in any of them would end
-    /// the element and turn the rest of the page into attacker markup — in an
-    /// artifact the module doc tells you to email or attach to a PR.
-    #[test]
-    fn script_json_cannot_close_the_script_element() {
-        let hostile = r#"[{"path":"</script><img src=x onerror=alert(1)>"}]"#;
-        let safe = script_json(hostile);
-        assert!(!safe.contains('<'), "{safe}");
-        assert!(!safe.contains('>'), "{safe}");
-        // …and it is still the same document to a JSON parser.
-        let parsed: serde_json::Value = serde_json::from_str(&safe).expect("valid JSON");
-        assert_eq!(parsed[0]["path"], "</script><img src=x onerror=alert(1)>");
-    }
-
-    /// A file path an agent created lands in `FILES`, flows into `barChart`
-    /// as `d.label`, and is assigned to `innerHTML`. `script_json` only stops
-    /// the payload from closing the `<script>` element — the JS parser decodes
-    /// `<` straight back and the live string reaches the sink — so every
-    /// `innerHTML` interpolation of agent-, MCP-, or repo-chosen text has to
-    /// escape at the sink.
-    ///
-    /// The assertion is structural (over the emitted JS) rather than over the
-    /// rendered DOM on purpose: the escaping happens in the browser, so no
-    /// Rust-side output ever contains the escaped `&lt;img` form.
-    #[test]
-    fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
-        let hostile =
-            r#"[{"path":"<img src=x onerror=alert(1)>","lines_added":1,"lines_removed":0}]"#;
-        let html = render_dashboard(&[], &[("files_touched", hostile.to_string())], "now");
-
-        // The payload does reach the page — escaping at the sink, not
-        // dropping the datum, is what makes it inert.
-        assert!(
-            html.contains("onerror=alert(1)"),
-            "the hostile path is embedded in the dashboard data"
-        );
-        assert!(
-            html.contains("const esc ="),
-            "the dashboard defines an HTML escape helper"
-        );
-
-        // Every interpolation that reaches `innerHTML` goes through it…
-        for wrapped in [
-            "${esc(t.label)}",
-            "${esc(t.text)}",
-            "${esc(r.provider)}",
-            "${esc(r.model)}",
-            "${esc(d.label)}",
-            "${esc(d.display)}",
-        ] {
-            assert!(html.contains(wrapped), "escaped at the sink: {wrapped}");
-        }
-        // …and none of them is left raw.
-        for raw in [
-            "${t.label}",
-            "${t.text}",
-            "${r.provider}",
-            "${r.model}",
-            "${d.label}",
-            "${d.display}",
-        ] {
-            assert!(!html.contains(raw), "no unescaped sink remains: {raw}");
-        }
-    }
-
-    #[test]
-    fn script_json_leaves_ordinary_payloads_alone() {
-        let plain = r#"[{"model":"glm-5.2","runs":3}]"#;
-        assert_eq!(script_json(plain), plain);
-    }
-
-    #[test]
-    fn table_json_falls_back_to_an_empty_array() {
-        let dumps: Vec<TableDump> = vec![("telemetry", "[1]".to_string())];
-        assert_eq!(table_json(&dumps, "telemetry"), "[1]");
-        assert_eq!(table_json(&dumps, "missing"), "[]");
-    }
-
-    #[test]
-    fn sanitize_timestamp_collapses_dash_runs() {
-        assert_eq!(sanitize_timestamp("a--b---c"), "a-b-c");
-    }
-
-    fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack
-            .windows(needle.len())
-            .position(|window| window == needle)
-    }
-
-    #[test]
-    fn export_all_json_from_an_in_memory_store() {
-        let store = Store::in_memory().unwrap();
-        // An empty store should produce empty arrays, not errors.
-        let dumps = store.export_all_json().unwrap();
-        assert!(
-            dumps.iter().all(|(_, j)| j == "[]"),
-            "an empty store exports empty arrays"
-        );
-    }
-
-    #[test]
-    fn redact_dump_masks_secrets_and_keeps_valid_json() {
-        // #817: a GitHub PAT in a prompt and an AWS key inside a nested
-        // `args_json` string. Both must be gone, the dump must stay valid JSON,
-        // and the non-secret content must survive.
-        let raw = r#"[{"prompt":"deploy with ghp_016C7e4a9b2d3f5081726354ABCDabcd1234","args_json":"{\"key\":\"AKIAIOSFODNN7EXAMPLE\"}"},{"n":42}]"#;
-        let out = redact_dump(raw);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&out).expect("a redacted dump is still valid JSON");
-        assert!(parsed.is_array(), "shape preserved");
-        assert!(
-            !out.contains("ghp_016C7e4a9b2d3f5081726354"),
-            "github token leaked: {out}"
-        );
-        assert!(
-            !out.contains("AKIAIOSFODNN7EXAMPLE"),
-            "aws key leaked: {out}"
-        );
-        assert!(out.contains("[redacted]"), "placeholder present: {out}");
-        assert!(out.contains("deploy with"), "non-secret prose survives");
-        assert!(out.contains("42"), "non-string values survive");
-    }
-
-    #[test]
-    fn export_dumps_redact_a_secret_that_reached_the_telemetry() {
-        // The end-to-end guarantee: a credential recorded in real telemetry is
-        // masked by the same redaction `export_session` applies before writing.
-        let store = Store::in_memory().unwrap();
-        use stella_store::FileTouchRow;
-        store
-            .record_files_touched(
-                1,
-                &[FileTouchRow {
-                    path: "deploy.env".into(),
-                    ops: "A".into(),
-                    lines_added: 1,
-                    lines_removed: 0,
-                    events_json: r#"[{"note":"leaked ghp_016C7e4a9b2d3f5081726354ABCDabcd1234"}]"#
-                        .into(),
-                }],
-            )
-            .unwrap();
-        let dumps: Vec<TableDump> = store
-            .export_all_json()
-            .unwrap()
-            .into_iter()
-            .map(|(t, j)| (t, redact_dump(&j)))
-            .collect();
-        let files = dumps
-            .iter()
-            .find(|(t, _)| *t == "files_touched")
-            .map(|(_, j)| j.as_str())
-            .expect("files_touched present");
-        assert!(
-            !files.contains("ghp_016C7e4a9b2d3f5081726354"),
-            "secret leaked into the export: {files}"
-        );
-        assert!(files.contains("[redacted]"), "secret was masked: {files}");
-    }
-
-    #[test]
-    fn export_round_trips_through_a_real_store() {
-        // Record a minimal execution + telemetry, then export and verify the
-        // JSON round-trips.
-        let store = Store::in_memory().unwrap();
-        use stella_store::{FileTouchRow, TelemetryRow};
-
-        // We need an execution id — use the internal record path via a direct
-        // SQL insert since start_execution is on the CLI side.
-        store
-            .record_telemetry(
-                1,
-                &TelemetryRow {
-                    step: 0,
-                    call_role: "worker".into(),
-                    provider: "test".into(),
-                    model: "test-model".into(),
-                    input_tokens: 100,
-                    estimated_input_tokens: 90,
-                    output_tokens: 50,
-                    cache_read_tokens: 0,
-                    cache_miss_tokens: 100,
-                    cache_write_tokens: 10,
-                    cost_usd: 0.001,
-                    duration_ms: 500,
-                    retries: 0,
-                    tool_calls: 1,
-                    usage_complete: true,
-                },
-            )
-            .unwrap();
-        store
-            .record_files_touched(
-                1,
-                &[FileTouchRow {
-                    path: "src/main.rs".into(),
-                    ops: "M".into(),
-                    lines_added: 10,
-                    lines_removed: 2,
-                    events_json: "[]".into(),
-                }],
-            )
-            .unwrap();
-
-        let dumps = store.export_all_json().unwrap();
-        let telemetry = dumps
-            .iter()
-            .find(|(t, _)| *t == "telemetry")
-            .map(|(_, j)| j.as_str())
-            .unwrap();
-        let parsed: Vec<serde_json::Value> = serde_json::from_str(telemetry).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0]["provider"], "test");
-        assert_eq!(parsed[0]["input_tokens"], 100);
-
-        let files = dumps
-            .iter()
-            .find(|(t, _)| *t == "files_touched")
-            .map(|(_, j)| j.as_str())
-            .unwrap();
-        let parsed: Vec<serde_json::Value> = serde_json::from_str(files).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0]["path"], "src/main.rs");
-    }
-
-    #[test]
-    fn full_export_pipeline_creates_valid_zip_with_dashboard() {
-        // End-to-end: seed a temp store with data, export it, and verify the
-        // archive is a valid ZIP containing the HTML dashboard and raw JSON.
-        use stella_store::TelemetryRow;
-        let tmp = tempfile::tempdir().unwrap();
-
-        // Seed: record telemetry so the store has data to export.
-        {
-            let store = Store::open(tmp.path()).unwrap();
-            store
-                .record_telemetry(
-                    1,
-                    &TelemetryRow {
-                        step: 0,
-                        call_role: "worker".into(),
-                        provider: "anthropic".into(),
-                        model: "claude-test".into(),
-                        input_tokens: 1000,
-                        estimated_input_tokens: 900,
-                        output_tokens: 200,
-                        cache_read_tokens: 500,
-                        cache_miss_tokens: 500,
-                        cache_write_tokens: 10,
-                        cost_usd: 0.012,
-                        duration_ms: 1500,
-                        retries: 1,
-                        tool_calls: 3,
-                        usage_complete: true,
-                    },
-                )
-                .unwrap();
-        }
-
-        // Export.
-        let zip_path = export_session(tmp.path()).expect("export should succeed");
-        assert!(zip_path.exists(), "the zip file was written");
-        assert!(
-            zip_path
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("session-"),
-            "filename starts with session-"
-        );
-        assert!(
-            zip_path.extension().is_some_and(|e| e == "zip"),
-            "extension is .zip"
-        );
-
-        // Verify the archive content.
-        let bytes = std::fs::read(&zip_path).unwrap();
-        assert_eq!(&bytes[..2], b"PK", "valid ZIP magic bytes");
-        let content = String::from_utf8_lossy(&bytes);
-        assert!(
-            content.contains("Stella Session Telemetry"),
-            "HTML dashboard is embedded"
-        );
-        assert!(
-            content.contains("anthropic"),
-            "provider name appears in the data"
-        );
-        assert!(
-            content.contains("claude-test"),
-            "model name appears in the data"
-        );
-        assert!(content.contains("manifest"), "manifest is present");
-    }
-
-    /// #817 masks credentials from the dump, but what remains is the whole
-    /// session — every prompt, tool argument, and touched file's content. It
-    /// was written at the process umask (0644 on a stock system) inside the
-    /// project tree, so on a shared machine any other account could read the
-    /// complete transcript just by looking. Archive and directory are both
-    /// owner-only now; the directory matters as much as the file, because an
-    /// archive nobody can open is still an archive everybody can list.
-    #[cfg(unix)]
-    #[test]
-    fn the_export_archive_and_its_directory_are_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
-        use stella_store::TelemetryRow;
-
-        let tmp = tempfile::tempdir().unwrap();
-        {
-            let store = Store::open(tmp.path()).unwrap();
-            store
-                .record_telemetry(
-                    1,
-                    &TelemetryRow {
-                        step: 0,
-                        call_role: "worker".into(),
-                        provider: "anthropic".into(),
-                        model: "claude-test".into(),
-                        input_tokens: 10,
-                        estimated_input_tokens: 10,
-                        output_tokens: 2,
-                        cache_read_tokens: 0,
-                        cache_miss_tokens: 0,
-                        cache_write_tokens: 0,
-                        cost_usd: 0.001,
-                        duration_ms: 5,
-                        retries: 0,
-                        tool_calls: 0,
-                        usage_complete: true,
-                    },
-                )
-                .unwrap();
-        }
-
-        // A pre-existing world-readable exports dir (an older build's) must be
-        // tightened, not accepted.
-        let exports = tmp.path().join(".stella/exports");
-        std::fs::create_dir_all(&exports).unwrap();
-        std::fs::set_permissions(&exports, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-        let zip_path = export_session(tmp.path()).unwrap();
-
-        assert_eq!(
-            std::fs::metadata(&zip_path).unwrap().permissions().mode() & 0o777,
-            0o600,
-            "the session archive must not be readable by other accounts"
-        );
-        assert_eq!(
-            std::fs::metadata(&exports).unwrap().permissions().mode() & 0o777,
-            0o700,
-            "the exports directory must not be listable by other accounts"
-        );
-    }
-
-    #[test]
-    fn full_export_pipeline_errors_on_empty_store() {
-        let tmp = tempfile::tempdir().unwrap();
-        // Create the store (so .stella/ exists) but record nothing.
-        let _ = Store::open(tmp.path()).unwrap();
-        let result = export_session(tmp.path());
-        assert!(result.is_err(), "exporting an empty store is an error");
-        assert!(
-            result.unwrap_err().contains("no session telemetry"),
-            "error message is helpful"
-        );
-    }
-
-    /// The dashboard's `:root` palette is generated from the live theme, not
-    /// typed into the template. The block it replaced was two recolours stale
-    /// — a true-black ground and the retired sky/violet pair — in an artifact
-    /// users mail around and attach to PRs, so it was the most widely seen
-    /// remnant of a retired identity in the product.
-    #[test]
-    fn the_dashboard_palette_is_generated_from_the_live_theme() {
-        let html = render_dashboard(&[], &[], "2026-01-01 00:00:00");
-
-        for (var, token) in [
-            ("--bg", stella_tui::theme::GROUND),
-            ("--brand", stella_tui::theme::ACCENT),
-            ("--brand-fill", stella_tui::theme::ACCENT_FILL),
-            ("--violet", stella_tui::theme::VIOLET),
-            ("--text3", stella_tui::theme::TEXT_TERTIARY),
-        ] {
-            let declaration = format!("{var}: {};", css_hex(token));
-            assert!(
-                html.contains(&declaration),
-                "expected `{declaration}` in the dashboard's :root block"
-            );
-        }
-
-        // The retired values must not survive anywhere in the document —
-        // including the chart JS, which referenced a `--azure` the `:root`
-        // block no longer defines.
-        for retired in [
-            "#7dd3fc", "#38bdf8", "#a78bfa", "#6c7b90", "#4d9fff", "--sky", "--azure",
-        ] {
-            assert!(
-                !html.contains(retired),
-                "retired brand value `{retired}` still ships in the dashboard"
-            );
-        }
-
-        // Every custom property the chart code asks for must exist, or the bar
-        // renders with no colour at all.
-        for used in ["--brand-fill", "--violet", "--success"] {
-            assert!(
-                html.contains(&format!("{used}: #")),
-                "chart JS references `{used}` but :root never defines it"
-            );
-        }
-    }
-
-    /// The watermark is the one store-supplied value that reaches markup
-    /// rather than the `<script>` block, so it gets the markup escape.
-    #[test]
-    fn escape_html_neutralizes_markup() {
-        assert_eq!(escape_html("2024-01-15 10:30:00"), "2024-01-15 10:30:00");
-        assert_eq!(
-            escape_html("<img src=x onerror=alert(1)>"),
-            "&lt;img src=x onerror=alert(1)&gt;"
-        );
-        assert_eq!(
-            escape_html("a & \"b\" 'c'"),
-            "a &amp; &quot;b&quot; &#39;c&#39;"
-        );
-    }
-}
+mod tests;
