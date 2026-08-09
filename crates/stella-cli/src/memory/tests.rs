@@ -17,6 +17,10 @@ mod record_channel;
 // Spec §8 (#737): the seam where auto-created skill files meet what is
 // already on disk — its own module, and the reason tests.rs fits the ratchet.
 mod skill_creation;
+// #2459: a lesson's `trigger` decides what recall returns. The experiment
+// needs two goals, two crossed lessons and a scripted provider to set up, so it
+// lives beside the other multi-fixture seams rather than inline here.
+mod trigger_recall;
 
 use super::*;
 

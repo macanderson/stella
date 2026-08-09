@@ -148,10 +148,18 @@ pub struct ReflectionLesson {
     /// instead of leaving them to be judged later by a reader who never saw
     /// the turn.
     ///
-    /// Recorded and mined; **not yet consulted at recall** — that wiring is
-    /// #2459. Folding it into the stored body would move the text that
-    /// `partition_known`'s restatement band was tuned on (#2358), which needs
-    /// the same measurement that band got and not an assumption.
+    /// Recorded, mined, **and folded into the memory body recall scores on**
+    /// (#2459) — which is where it earns its keep a second time: a trigger is
+    /// written in the register a *goal* is written in, so it is the half of a
+    /// lesson that lives in the space the retrieval query is asked in.
+    ///
+    /// The fold is why it cannot be done naively: `partition_known`'s
+    /// restatement band (#2358) compares candidate lessons against stored
+    /// bodies, and moving that text would move every similarity score in the
+    /// comparison at once. `memory::learning::applicability` carries the
+    /// encoding that keeps the band's input byte-identical, and the argument
+    /// for why folding beat a separate scored field and a post-retrieval
+    /// filter.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub trigger: String,
     /// What knowing this would have bought *in the turn that produced it* —

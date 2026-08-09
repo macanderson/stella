@@ -3060,6 +3060,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "libc",
+ "proptest",
  "ratatui",
  "reqwest",
  "rpassword",
