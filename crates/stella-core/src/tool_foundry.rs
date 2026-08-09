@@ -182,8 +182,22 @@ impl ProposedTool {
     }
 }
 
-/// Thresholds for [`detect_tool_gaps`]. `Default` gives sensible starting
-/// values; callers may tune per workspace.
+/// Thresholds for [`detect_tool_gaps`].
+///
+/// **One shipped value, and today no way to change it.** Every production call
+/// site constructs `GapDetectionConfig::default()` — the end-of-execution
+/// mining pass and `stella tools --author` (both in `stella-cli`'s
+/// `tool_foundry`), and the trace-replay harness (`stella-cli`'s
+/// `memory::replay`). No settings key reads any field, so what this struct
+/// holds is the shipped policy rather than a preference, and the numbers below
+/// are the ones every workspace gets. Exposing the two knobs a workspace would
+/// actually want to move is #2471.
+///
+/// It is a parameter rather than a constant because this crate does no I/O
+/// (invariant #2): thresholds are data the caller owns, which is what lets the
+/// property tests sweep them across ranges no shipped configuration would take.
+/// That is the seam a settings surface would attach to — it is not evidence
+/// that one exists.
 ///
 /// Not `Eq`: [`GapDetectionConfig::min_reuse_ratio`] is a ratio, and a ratio
 /// whose useful range is 1.0–5.0 has nothing to say in integers.
