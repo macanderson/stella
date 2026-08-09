@@ -1085,12 +1085,7 @@ impl<'a> Engine<'a> {
                 };
             }
         }
-        if let Some(aborted) = self.check_budget(
-            &mut state.budget,
-            &mut state.total_cost_usd,
-            &mut state.memos.warnings,
-            events,
-        ) {
+        if let Some(aborted) = self.check_budget(state, events) {
             return aborted.into();
         }
         // BEFORE compaction, never after: the pass rewrites tool results
@@ -1137,12 +1132,7 @@ impl<'a> Engine<'a> {
         ) {
             return aborted.into();
         }
-        if let Some(aborted) = self.check_budget(
-            &mut state.budget,
-            &mut state.total_cost_usd,
-            &mut state.memos.warnings,
-            events,
-        ) {
+        if let Some(aborted) = self.check_budget(state, events) {
             return aborted.into();
         }
 
