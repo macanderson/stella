@@ -58,8 +58,9 @@ per-role output caps and the starvation retry live.
 
 ## The management-prompt split
 
-Every raw *pipeline* role except the planner is built as a `ManagementPrompt`
-(`crates/stella-pipeline/src/management_prompt.rs`):
+Every raw *pipeline* role is built as a `ManagementPrompt`
+(`crates/stella-pipeline/src/management_prompt.rs`) — the planner was the last
+holdout and joined in #2416:
 
 ```rust
 pub struct ManagementPrompt {
@@ -129,7 +130,7 @@ The mapping to call roles is not one-to-one, and the gaps are real:
 | Setting | Reaches | Does not reach |
 |---|---|---|
 | `agents.default.prompt` | the interactive worker's base persona | anything in the pipeline |
-| `agents.worker.prompt` | the pipeline worker's base persona | `plan`, `plan_repair`, the conversational reply — all three pass `RoleCallOverrides::default()` |
+| `agents.worker.prompt` | the pipeline worker's base persona, `plan`, `plan_repair` | the conversational reply — by design, see below |
 | `agents.verifier.prompt` | `verdict`, `distress_guidance` | `witness_author`, `witness_repair` — by design, see below |
 | `agents.triage.prompt` | `triage` | — |
 
@@ -141,12 +142,18 @@ because it is a raw-call concern: that role's system message is
 `WITNESS_SYSTEM_PROMPT`, whose hard requirements the create boundary enforces
 mechanically.
 
-The `worker` row is the surprising one. `plan_stage` resolves its *provider*
-from the worker tier and says so in a comment ("Plan rides the worker's
-settings"), but hands `metered_raw_call` a default override struct — so the
-model routing rides the worker's settings and the prompt does not. Tracked as
-**#2416**, along with the fact that the planner is also the one raw role never
-given the `ManagementPrompt` split.
+The `worker` row reaches the plan stage (#2416): the planner writes the
+worker's work order, so operator prose constraining the worker has to be
+visible to the role that names its steps. It is prepended, never substituted —
+the built-in block carries the JSON-array contract `parse_plan` reads.
+
+The conversational reply is the exclusion, and it is a decision. That path
+exists to swap the engineering persona for `CONVERSATIONAL_SYSTEM_PROMPT` ("no
+tools, no code, no plan, no test"); prepending the worker's prose would re-arm
+what it just suppressed, and the worker's `effort` would displace the `Low`
+that role is pinned to — deliberation bought for a greeting. The non-prompt
+tuning it *does* want still arrives via `PipelineConfig::engine`, which is
+already built from the worker's own settings.
 
 Six roles have no override door at all: `research`, `agent_author`,
 `skill_author`, `domain_inference`, `reflection`, `summarization`.

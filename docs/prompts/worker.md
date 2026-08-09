@@ -194,6 +194,53 @@ Rules:
 - When a choice is ambiguous AND getting it wrong would be costly, use ask_user rather than guessing; otherwise proceed with your best judgment.
 ```
 
+## Opening user message
+
+The pipeline's worker gets one assembled user message before any step prompt,
+built by `assemble_user_message` (`crates/stella-pipeline/src/pipeline.rs`).
+Sections are conditional, in this order:
+
+```text
+## Research findings
+### {question}
+{answer}
+
+## Recalled context
+- [{citation_label}] ({source})
+  {content}
+
+## Task
+{goal}
+
+## Verification
+{contract}
+```
+
+With no frames, no findings and no contract the whole thing collapses to the
+bare goal string — byte-for-byte, which is the property the advisory stages
+depend on.
+
+**Research findings reach the worker as well as the planner (#2415).** They
+used to reach `build_planner_prompt` and nowhere else, so a fact a read-only
+sub-agent verified against this workspace survived to the worker only as
+whatever residue the planner encoded into a step string — evidence compressed
+through a lossy intermediary that was never asked to preserve it, and on a
+class that does not plan, through no intermediary at all. They ride before the
+goal and in their own section, kept distinct from recall for the reason the
+planner keeps them distinct: recall is what the context plane remembered,
+research is what a sub-agent verified moments ago.
+
+`## Verification` is the contract this run will be judged by, and only the
+**operator-configured** command is ever named here. An authored witness's
+command does not exist at assembly time and its disclosure stays governed by
+the airlock. Three shapes:
+
+| Contract | When |
+|---|---|
+| `Oracle(command)` | `--test-command` set, and the class verifies |
+| `WorkerTestFirst` | no oracle *and* no independent witness author — the worker's own failing test is the run's only deterministic evidence, and it is told so up front |
+| `None` | conversational, a class that never verifies, or an authored witness will supply the oracle |
+
 ## Per-step user message
 
 In the pipeline's step loop each plan step arrives as `step_prompt`
@@ -246,6 +293,13 @@ Twelve messages is roughly the last half-dozen exchanges — enough that "and th
 other one?" still resolves.
 
 Output cap 2,048 visible + headroom, effort pinned `Low`.
+
+`agents.worker.prompt` deliberately does **not** reach this call, unlike the
+plan stage (#2416). It is the operator's engineering persona — the thing this
+path exists to replace — so prepending it would re-arm exactly the behaviour
+`CONVERSATIONAL_SYSTEM_PROMPT` suppresses, on a turn that has no task. The
+worker's `effort` is excluded for the same kind of reason: it would displace
+the pinned `Low` above, buying deliberation for a greeting.
 
 ## Sub-agent children (`task` tool)
 

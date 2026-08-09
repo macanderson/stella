@@ -230,7 +230,7 @@ const PLANNER_INSTRUCTIONS: &str = "You are the planner for a coding agent. Prod
 ///
 /// Everything assembled here is the *volatile* half — goal, revision,
 /// research, recall, structure all change per call, so all of it lands in the
-/// payload and none of it in [`PLANNER_INSTRUCTIONS`].
+/// payload and none of it in `PLANNER_INSTRUCTIONS`.
 ///
 /// `revision` is the reviewer's note from a rejected scope card
 /// ([`crate::ScopeDecision::Revise`]) — `None` on the first plan of a turn. It
@@ -317,7 +317,7 @@ pub fn build_planner_prompt(
 const PLAN_REPAIR_ECHO_CHARS: usize = 16_000;
 
 /// The repair call's fixed instruction block (#1434). Literal for the same
-/// reason [`PLANNER_INSTRUCTIONS`] is: the echoed response is the only part
+/// reason `PLANNER_INSTRUCTIONS` is: the echoed response is the only part
 /// that varies, and it belongs in the payload.
 const PLAN_REPAIR_INSTRUCTIONS: &str = "Your previous response could not be parsed as a plan. Re-emit the plan as \
      a strict JSON array of step strings and NOTHING else — no prose, no code \
