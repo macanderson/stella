@@ -119,6 +119,135 @@ def _proof_line(step: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
     ), meta
 
 
+#: Columns a citation label is elided to in the rendered recall table. Labels
+#: are heterogeneous by nature — ``fn review`` beside a whole recalled user
+#: prompt — so the column is capped rather than sized to the widest, which one
+#: episodic memory would otherwise stretch across the page on its own.
+RECALL_LABEL_COL = 40
+
+#: Columns a frame's location is elided to. Left-elided, never right: a recall
+#: row is actionable because of its filename and line.
+RECALL_LOCATION_COL = 44
+
+
+def _elide_left(text: str, cap: int) -> str:
+    """``…/command_deck/hunk_gate.rs:32`` — keep the tail, drop the prefix.
+
+    A frame's URI is a ``path:line`` whose *tail* identifies it; the head is a
+    repo prefix every row on the page already shares. Cutting from the right —
+    what a plain CSS truncation does — removes exactly the discriminating part.
+    """
+    if len(text) <= cap:
+        return text
+    tail = text[-(cap - 1):]
+    cut = tail.find("/")
+    return "…" + (tail[cut:] if 0 <= cut <= cap // 3 else tail)
+
+
+def _recall_line(event: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    """One ``context_recall`` event as a transcript line: title, body, metadata.
+
+    This reader had **no arm for the event at all** — it fell through to
+    ``return []`` — so every arena transcript ever produced silently dropped the
+    entire context-recall stage. That is the stage that decides what the model
+    sees before it does anything, and the transcript is the artifact used to
+    argue about whether recall helped a run.
+
+    The body is the same table the Command Deck renders
+    (``crates/stella-tui/src/render/entry.rs``), in plain text: one row per
+    frame with its kind, citation, location and token cost. A recall is a small
+    table and every surface that rendered it as comma-joined prose lost the
+    boundary between records, the kind that separates an 800-token episodic
+    memory from a 60-token graph symbol, and the per-frame cost that turns a
+    total into a finding.
+
+    ``meta`` carries the frames structured as well, so the React page can lay
+    out its own table without re-parsing this one.
+    """
+    frames = event.get("frames")
+    frames = frames if isinstance(frames, list) else []
+    tokens = event.get("tokens") or 0
+    latency = event.get("latency_ms") or 0
+    ann = event.get("used_ann_index")
+
+    head = f"recall · {len(frames)} frames · {tokens} tok"
+    # `0` means *not measured* on the wire, never "instant", so it is omitted
+    # rather than reported as a measurement nobody took.
+    if latency:
+        head += f" · {latency}ms"
+    if ann is not None:
+        head += " · ann" if ann else " · scan"
+
+    rows: list[dict[str, Any]] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        # An empty kind is a stream recorded before the field existed. `frame`
+        # says that honestly; a blank column reads as a rendering bug.
+        rows.append(
+            {
+                "kind": str(frame.get("kind") or "frame"),
+                "label": str(frame.get("citation_label") or ""),
+                "uri": frame.get("uri"),
+                "provider": str(frame.get("provider") or ""),
+                "source": str(frame.get("source") or ""),
+                "method": frame.get("method"),
+                "id": frame.get("id"),
+                # A missing digest is not nothing: per the context-reuse spec
+                # such a frame is *not verifiable* and a host must re-query
+                # rather than reuse it, so the page reports the absence.
+                "digest": frame.get("content_digest"),
+                "tokens": frame.get("token_cost") or 0,
+            }
+        )
+
+    width = max((len(r["kind"]) for r in rows), default=0)
+    body = "\n".join(
+        "  ".join(
+            part
+            for part in (
+                r["kind"].ljust(width),
+                _elide(r["label"], RECALL_LABEL_COL).ljust(RECALL_LABEL_COL),
+                _elide_left(str(r["uri"]), RECALL_LOCATION_COL).ljust(RECALL_LOCATION_COL)
+                if r["uri"]
+                else " " * RECALL_LOCATION_COL,
+                f"{r['tokens']:>6} tok",
+            )
+            if part
+        ).rstrip()
+        for r in rows
+    )
+
+    usage = event.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    legs = usage.get("providers")
+    mix = event.get("provider_mix")
+    meta: dict[str, Any] = {
+        "frames": rows,
+        "tokens": tokens,
+        "latency_ms": latency,
+        "ann": ann,
+        # The frames that *won fusion and reached the prompt*, per leg.
+        "providers": mix if isinstance(mix, list) else [],
+        # What each leg served and what the host rejected — a strictly
+        # different question, and the only place a provider that misdeclared
+        # its cost is visible, since a rejected frame never reaches `frames`.
+        "budget": {
+            "requested": usage.get("budget_requested"),
+            "consumed": usage.get("budget_consumed"),
+            "providers": legs if isinstance(legs, list) else [],
+        }
+        if usage
+        else None,
+    }
+    return head, body, meta
+
+
+def _elide(text: str, cap: int) -> str:
+    """Truncate to ``cap`` characters with a trailing ellipsis."""
+    return text if len(text) <= cap else text[: cap - 1].rstrip() + "…"
+
+
 @dataclass
 class TranscriptState:
     """Cursor into one trial's transcript."""
@@ -425,6 +554,12 @@ class TranscriptReader:
                 return []
             title, body, meta = _proof_line(step)
             return [entry(self._next_seq(state), "proof", title, body, **meta)]
+
+        if kind == "context_recall":
+            title, body, meta = _recall_line(event)
+            return [
+                entry(self._next_seq(state), "context_recall", title, body, **meta)
+            ]
 
         if kind in ("verdict", "judge_verdict"):
             passed = event.get("passed")
