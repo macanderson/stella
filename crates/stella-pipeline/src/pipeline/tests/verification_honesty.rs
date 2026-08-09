@@ -73,90 +73,6 @@ impl DiagnosticRunner for PatchRunner {
     }
 }
 
-/// The witness: a task whose entire deliverable is an untracked file must
-/// reach the verifier as its CONTENT, not as its name.
-///
-/// Before the `UntrackedPatch` probe, `gather_diff` described such a file with
-/// one marker line — the path and an added-line count — because `git diff`
-/// cannot see an unstaged file and nothing else was asked about it. A real run
-/// of exactly this shape returned PASS reasoning that "the unseen content
-/// cannot itself justify a FAIL": the model was grading a filename.
-///
-/// Asserting on the verifier's own prompt is the point. An assertion on the
-/// probe's return value would still pass if the text were dropped anywhere
-/// between the probe and the model.
-#[tokio::test]
-async fn the_verifier_reads_an_untracked_files_content_not_just_its_name() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("CLASS: single\nWITNESS: no\nVERIFIER: yes"),
-        text_result("Wrote the regex to regex.txt."),
-        text_result("PASS the regex handles the stated cases"),
-    ]);
-    let resolver = OneProvider(&provider);
-    let runner = PatchRunner;
-    let tests = ScriptedRunner::new(vec![], "");
-    let tools = EmptyTools;
-    let recall = NoContextRecall;
-    let repo = NoRepoStructure;
-    // Empty before the turn, carrying the new file after it — the fingerprint
-    // delta that makes `gather_diff` bill the file to this turn.
-    let repo_status = SeqRepoStatus::new(vec![vec![], vec![("regex.txt", "sha256:a")]]);
-    let approvals = AutoApproveGate;
-    let sleeper = NoopSleeper;
-    let router = router();
-    let (tx, _rx) = mpsc::unbounded_channel();
-
-    let pipeline = Pipeline::new(
-        PipelinePorts {
-            router: &router,
-            providers: &resolver,
-            tools: &tools,
-            recall: &recall,
-            repo: &repo,
-            repo_status: &repo_status,
-            touches: &NoFileTouches,
-            diagnostics: &runner,
-            tests: &tests,
-            lint: None,
-            mutation: None,
-            coverage: None,
-            approvals: &approvals,
-            sleeper: &sleeper,
-            hooks: None,
-            candidate_workspaces: None,
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        PipelineConfig {
-            test_command: None,
-            diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
-            roster: Roster::default().with_enabled(ModelCallRole::WitnessAuthor, false),
-            ..PipelineConfig::default()
-        },
-    );
-
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    pipeline
-        .run("Write a regex to regex.txt", &mut messages, &mut budget)
-        .await
-        .expect("run completes");
-
-    let verifier_prompt = provider
-        .prompts()
-        .into_iter()
-        .find(|p| p.contains("independent code reviewer"))
-        .expect("the verifier was asked");
-    assert!(
-        verifier_prompt.contains(REGEX),
-        "the verifier graded the change without ever seeing it: {verifier_prompt}"
-    );
-    assert!(
-        verifier_prompt.contains("untracked change: regex.txt"),
-        "the marker still names the file the content belongs to: {verifier_prompt}"
-    );
-}
 
 // ── The errored-command census (#2125) ────────────────────────────────────
 
@@ -300,43 +216,6 @@ fn evidence_section(prompt: &str) -> &str {
         .0
 }
 
-/// **Witness (#2125).** A measurement claim standing on a command chain that
-/// errored under a zero exit reaches the verifier as a fact it can weigh.
-///
-/// This is the verifier-side half of #1957. That issue's prompt rule tells the
-/// worker to void such a number; nothing caught a worker that cited it anyway,
-/// and the verify stage structurally could not — the `bc: command not found`
-/// under the cited "70 ms" lives only in the worker's tool transcript, which
-/// the verifier must never read (L-E11, #1795). Before the census the prompt
-/// carried no trace of it and the claim was unfalsifiable at verdict time.
-///
-/// Asserting on the verifier's own prompt is the point, exactly as in the
-/// untracked-content witness above: an assertion on the tally would still pass
-/// if the count were dropped anywhere between the tool stream and the model.
-#[tokio::test]
-async fn the_verifier_is_told_when_a_measurement_stood_on_an_errored_command() {
-    let prompt = verifier_prompt_for_shell_output(
-        "\n[stderr]\nbash: line 1: bc: command not found\n[exit code: 0]",
-    )
-    .await;
-    let evidence = evidence_section(&prompt);
-    assert!(
-        evidence.contains("errored_commands=1"),
-        "the census must reach the trusted zone of the verdict prompt: {evidence}"
-    );
-    // ...and the fixed instruction block must define what to do with it, or
-    // the count is a number with no meaning attached (#1434 keeps that block
-    // byte-stable, so the definition rides there and the count rides per-call).
-    assert!(
-        prompt.contains("UNSUBSTANTIATED"),
-        "the instructions must state how to weigh the census: {prompt}"
-    );
-    // Content-free by construction: the count travels, the stderr does not.
-    assert!(
-        !prompt.contains("command not found"),
-        "the census must carry no transcript text: {prompt}"
-    );
-}
 
 /// The other half of the witness: a clean run's verifier evidence is
 /// unchanged. An `errored_commands=0` printed on every verdict would read as

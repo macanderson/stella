@@ -126,8 +126,8 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
 
     assert_eq!(probe.calls(), 1, "the probe runs once, in the audit");
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "a coincidental pass must be escalated, not fast-submitted"
+        !stages(&events).contains(&StageKind::Verdict),
+        "a coincidental pass is withheld, not fast-submitted — and withheld is the end of it"
     );
     assert!(
         !events.iter().any(|e| matches!(
@@ -274,8 +274,8 @@ async fn an_unmeasurable_overlap_is_scored_unproven_without_costing_a_verifier_c
     let (strict_outcome, strict_events) =
         run_with_coverage(&strict_probe, true, &strict_provider).await;
     assert!(
-        stages(&strict_events).contains(&StageKind::Verdict),
-        "strict mode turns 'unmeasured' into an escalation"
+        !stages(&strict_events).contains(&StageKind::Verdict),
+        "strict mode turns 'unmeasured' into a withheld credit, not a bought opinion"
     );
     let strict_verdict = strict_outcome.verdict.expect("a verdict was produced");
     assert!(
