@@ -1,0 +1,46 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.verify-done-shadow-worktree"
+record_id = "rec_macanderson_stella_verify_done_shadow_worktree_2857edc217a4"
+record_hash = "sha256:59ada0e6dfe32948217d8687f566e92b8a9ae4baeead1070e45e8bf3156ebc69"
+kind = "fact"
+statement = "The verify_done tool in crates/stella-tools/src/verify.rs runs the suite in a detached shadow git worktree at HEAD, copying only test files from the working tree and expecting a failure there."
+origin = "imported"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "document"
+source_uri = "AGENTS.md"
+source_digest = "sha256:73fd3ccab45e7b2f50264c73439dcd07cc78e97f99b8b164f117d24ef6d3f66b"
+repo = "git@github.com:macanderson/stella"
+commit = "8b63b88a"
+ingest_run_id = "ing_6a77cd04"
+extracted_at = "2026-08-09T00:42:44Z"
+extractor = "anthropic/claude-opus-5"
+
+[record.steering]
+force = "info"
+precedence = 15
+
+[record.steering.applies_to]
+paths = ["crates/stella-tools/src/verify.rs"]
+keywords = [
+    "verify_done",
+    "shadow worktree",
+    "HEAD",
+]
+
+[record.enforcement]
+mode = "none"
+
+[record.truth]
+basis = "asserted"
+confidence = 88
+
+[record.truth.probe]
+kind = "path_exists"
+path = "crates/stella-tools/src/verify.rs"
+expect = "present"
