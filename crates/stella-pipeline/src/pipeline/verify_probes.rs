@@ -210,6 +210,15 @@ impl<'a> Pipeline<'a> {
             // and the absence of the field would be a third, unintended
             // meaning.
             diff_coverage: Some(inputs.diff_coverage.as_str().to_string()),
+            // #2194: the three channels the ladder gained after this snapshot
+            // was first written. The two flags change the verdict — one
+            // rescues the heuristic fallback, the other turns a fallback FAIL
+            // into an abstention — so a stored verdict that omitted them named
+            // `verify_done` in its prose with no field a reader could count.
+            // `errored_commands` changes nothing and is here to be counted.
+            verify_done_flip: inputs.verify_done_flip,
+            no_test_surface: inputs.no_test_surface,
+            errored_commands: inputs.errored_commands,
             // Stamped by the model-verdict arm alone
             // (`LadderSnapshot::with_verifier_independence`): on every other
             // rung nothing graded, so independence is not a fact about them.

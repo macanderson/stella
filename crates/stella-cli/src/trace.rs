@@ -885,6 +885,9 @@ mod tests {
             witness_intact: None,
             witness_mutation: None,
             diff_coverage: None,
+            verify_done_flip: false,
+            no_test_surface: false,
+            errored_commands: 0,
             verifier_independent: None,
         }
     }

@@ -543,4 +543,33 @@ async fn a_confirmed_verify_done_flip_survives_a_degraded_verdict() {
         )),
         "the verdict degraded to the heuristic; that is the state under test"
     );
+
+    // #2194's witness: the channel that carried the rescue is on the verdict's
+    // provenance record, not only in its prose. `summary.contains("verify_done")`
+    // above is a sentence a reader parses; this is the structured fact replay,
+    // the Observatory and `stella-events.jsonl` count — and without it the
+    // replay projection scored this exact turn "uncorroborated" while the
+    // engine held corroboration.
+    let ladder = events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::Verdict { evidence, .. } => evidence.ladder.as_deref(),
+            _ => None,
+        })
+        .expect("the verdict carries a ladder snapshot");
+    assert!(
+        ladder.verify_done_flip,
+        "the snapshot must state WHICH channel rescued the verdict: {ladder:?}"
+    );
+    let provenance = crate::replay::verdict_provenance(&stella_protocol::VerdictEvidence {
+        summary: String::new(),
+        deterministic: false,
+        evidence_refs: vec![],
+        ladder: Some(Box::new(ladder.clone())),
+    })
+    .expect("a snapshotted verdict has provenance");
+    assert!(
+        provenance.contains("verify_done_flip=confirmed"),
+        "the rendered provenance answers \"why did this pass?\": {provenance}"
+    );
 }
