@@ -821,6 +821,19 @@ pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
         } else {
             stella_tools::shell_touch::IgnorePolicy::WalkAll
         },
+        // Where a built-in's own diagnostics go — `verify_done`'s per-phase
+        // wall clock today (#2486). Wired here, on the same "every session
+        // lane" reasoning as the line above, rather than through a
+        // post-construction setter beside `attach_events`: that setter would
+        // have to be remembered at ten call sites, and forgetting one fails
+        // silently by recording nothing.
+        //
+        // Always `Some`, never conditional on a log file existing:
+        // `diag_boot::dx()` returns a disabled handle before boot, and even a
+        // disabled one fills the crash ring — so a run that panics carries
+        // its last phase records into the dump whether or not anyone asked
+        // for a log.
+        diagnostics: Some(crate::diag_boot::dx()),
         ..Default::default()
     }
 }

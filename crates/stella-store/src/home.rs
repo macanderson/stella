@@ -7,8 +7,9 @@
 //! macOS, Linux, and Windows all resolve to the home directory.
 //!
 //! Overrides: `STELLA_HOME` moves the whole home; the narrower
-//! `STELLA_DATA_DIR` / `STELLA_CONFIG_DIR` overrides still win where they
-//! always did (tests, sandboxes, org-managed layouts).
+//! `STELLA_DATA_DIR` moves the data tier alone and wins over it where it
+//! always did (tests, sandboxes, org-managed layouts). Those two are the
+//! entire list (`stella_home::OVERRIDE_ENV_VARS`).
 //!
 //! [`migrate_legacy_global_dirs`] performs the one-time move from the old
 //! split layout (platform data dir + `~/.config/stella`) into `~/.stella`.
@@ -260,9 +261,14 @@ fn copy_into(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
 }
 
 /// One-time (per process), best-effort migration of the legacy split layout
-/// into `~/.stella`. A no-op when `STELLA_HOME`, `STELLA_DATA_DIR`, or
-/// `STELLA_CONFIG_DIR` is set (resolution isn't pointing at the defaults, so
-/// moving real user data would be wrong), or when there is nothing to move.
+/// into `~/.stella`. A no-op when `STELLA_HOME` or `STELLA_DATA_DIR` is set
+/// (resolution isn't pointing at the defaults, so moving real user data would
+/// be wrong), or when there is nothing to move.
+///
+/// Those two are the whole test, and the list they come from earns its
+/// exactness here: until #2442 it also carried `STELLA_CONFIG_DIR`, which no
+/// resolver read — so setting that variable declined this migration for a
+/// process whose every path still resolved to the defaults.
 pub fn migrate_legacy_global_dirs() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {

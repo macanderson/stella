@@ -558,8 +558,12 @@ error and leave the legacy files untouched.
 
 Everything **user-global** lives under `~/.stella` on every platform (like
 Claude Code's `~/.claude`) — no OS-specific data dir. `STELLA_HOME` moves the
-whole home; the narrower `STELLA_DATA_DIR` / `STELLA_CONFIG_DIR` still win
-where they always did. Key entries: `settings.json`, `credentials.toml`,
+whole home; the narrower `STELLA_DATA_DIR` still wins for the data tier where
+it always did. Those two are the entire list of redirecting overrides
+(`stella_home::OVERRIDE_ENV_VARS`), which is exact in both directions — a name
+on it that resolves nothing declines the legacy-layout migration for a process
+sitting on the defaults, which is what `STELLA_CONFIG_DIR` did until #2442
+retired it. Key entries: `settings.json`, `credentials.toml`,
 `skills/`, `agents/`, `rules/`, `tools/` (config); `usage.db` (the
 cross-project telemetry hub), `sessions/`, `notifications/`, `catalog.db`,
 `enterprise-telemetry.db`, `installation-id`, `cloud.json` (data). On first

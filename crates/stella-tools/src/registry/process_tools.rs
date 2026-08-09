@@ -9,6 +9,7 @@ pub(super) fn builtins(
     task_board: crate::tasks::TaskBoardHandle,
     spawn_queue: crate::tasks::SpawnQueue,
     shadow_memo: crate::verify::ShadowMemoHandle,
+    diagnostics: Option<Arc<stella_diag::Dx>>,
 ) -> Vec<Arc<dyn Tool>> {
     let processes: crate::process::ProcessTableHandle = Arc::default();
     let repo: Arc<dyn crate::repo::RepoBackend> = Arc::new(crate::repo::GitCli);
@@ -18,7 +19,7 @@ pub(super) fn builtins(
         // an operator who wants it gone writes `"tools": {"bash": "off"}`,
         // which the policy layer above enforces for MCP and custom tools too.
         Arc::new(crate::bash::Bash),
-        Arc::new(crate::verify::VerifyDone::with_memo(shadow_memo)),
+        Arc::new(crate::verify::VerifyDone::new(shadow_memo, diagnostics)),
         Arc::new(crate::project::BuildProject),
         Arc::new(crate::project::RunTests),
         Arc::new(crate::diagnostics::Diagnostics),

@@ -157,10 +157,40 @@ and no query may join the two. AGENTS.md's glossary is the authority.
 
 A workspace that has never run `stella` renders an empty dashboard, not a 500.
 An absent file yields `None` and an empty payload at the call site; an absent
-*table* is caught by `is_missing_table` (`src/db.rs:843`), degrading
-`collect_rows`/`or_empty` to `[]`/`{}`. `global.rs` goes further — `query_rows`
-treats any `prepare` failure as empty, because a `usage.db` predating the hub
-replica has no `telemetry` table at all.
+table *or column* is caught by `is_missing_schema`, degrading
+`collect_rows`/`or_empty` to `[]`/`{}`. The column half matters as much as the
+table half: this crate never migrates, so a store no turn has touched since an
+upgrade is missing the newest columns while every table it reads exists —
+matching only "no such table" left the degradation unfired and the route 500'd
+anyway. `global.rs` goes further — `query_rows` treats any `prepare` failure as
+empty, because a `usage.db` predating the hub replica has no `telemetry` table
+at all.
+
+### A reflection row is not a rating
+
+`execution_reflection` has one row per turn and **three** producers writing
+disjoint columns (`stella_store::reflection`'s module doc): the derived half,
+the model's own grade, and — since store schema v23 — the excerpt of a
+reflection response that would not parse. Only the middle one records an
+assessment, so "a row exists" and "the model graded this turn" are different
+facts, and a reader that conflates them shows a turn nobody ever asked for a
+grade as one the model declined to grade (#2443).
+
+Both readers here filter on `HAS_SELF_REVIEW` (`src/db.rs`), the SQL mirror of
+`stella_store::SelfReviewRow::is_empty`: the ratings feed lists graded turns
+only, and the execution drawer reports `reflection: null` rather than a panel
+of blanks. The predicate is applied inside the query, before
+`MAX_LISTED_REFLECTIONS` — a broken reflection loop writes an ungraded row
+every turn, and filtering after the limit would let a few hundred of them push
+every real rating past the window.
+
+"Did this turn reflect at all" is a different question, answered on the same
+tab from `parse_error` itself (`/api/context-lifecycle`'s
+`unreadable_reflections`). Mirroring rather than calling `is_empty` is forced
+by the isolation above — this crate must not link `stella-store` — so
+[`tests/schema_conformance.rs`](tests/schema_conformance.rs) drives both
+readers against a store built by the real migration path, and a column renamed
+underneath the predicate fails there.
 
 ### Secrets never reach the browser
 
