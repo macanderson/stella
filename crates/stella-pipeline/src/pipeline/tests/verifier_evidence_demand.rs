@@ -316,7 +316,7 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
         // Off so the model script stays a pure count of worker turns — the
         // second deterministic red would otherwise buy a guidance call, which
         // has its own witnesses.
-        distress_guidance: false,
+        roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
         // `max_revisions` stays at the default 2: the subject is that BOTH
         // configured rounds survive the demand, not a bigger allowance.
         ..PipelineConfig::default()

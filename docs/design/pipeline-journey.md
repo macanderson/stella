@@ -387,16 +387,16 @@ instead of a degradation, for callers whose published posture claims one.
 
 `PipelineConfig` (`src/pipeline.rs`) is the single tuning surface: latency
 ceilings, scope thresholds, headless behavior, `test_command`, `roster`,
-`keep_witness`, `distress_guidance`, `diff_budget_lines`
+`keep_witness`, `diff_budget_lines`
 (400), `diagnostics_veto_warnings`, `max_revisions` (2),
 `verifier_evidence_demand`, `require_independent_witness`, `candidates`, and
 `create_worktrees`.
 
 `roster` (`src/roster.rs`) holds who performs each responsibility and whether
-it runs at all — including whether a witness is authored, which was briefly a
-separate `witness_writer` bool ANDed with the roster row at run time until
-#2458 collapsed the two. One decision, one place; the whole roster rides the
-resume frame, so an ablation survives a kill. The
+it runs at all — including whether a witness is authored and whether distress
+guidance is bought, each of which was briefly a separate bool ANDed with its
+roster row at run time until #2458 collapsed them. One decision, one place;
+the whole roster rides the resume frame, so an ablation survives a kill. The
 verification half's design history and remaining work are tracked in
 [`ROADMAP.md`](../ROADMAP.md); every decision and its spend is pinned by the
 per-PR degradation gate (`crates/stella-pipeline/src/pipeline/tests/degradation_gate.rs`,

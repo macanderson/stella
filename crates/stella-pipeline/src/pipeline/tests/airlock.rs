@@ -48,7 +48,7 @@ assertion `left == right` failed
         max_revisions: 2,
         // Isolate the airlock: guidance is a separate model call with its own
         // scrub, and this witness is about the deterministic path.
-        distress_guidance: false,
+        roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
         ..PipelineConfig::default()
     };
     let pipeline = Pipeline::new(

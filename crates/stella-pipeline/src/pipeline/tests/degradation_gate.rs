@@ -481,7 +481,7 @@ async fn a_confirmed_verify_done_flip_survives_a_degraded_verdict() {
         test_command: Some("cargo test -p x".into()),
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         max_revisions: 0,
-        distress_guidance: false,
+        roster: Roster::default().with_enabled(ModelCallRole::DistressGuidance, false),
         ..PipelineConfig::default()
     };
     let pipeline = Pipeline::new(

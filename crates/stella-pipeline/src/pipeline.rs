@@ -307,27 +307,37 @@ pub struct PipelineConfig {
     /// for why assignment and enablement are configurable while stage ORDER
     /// deliberately is not.
     ///
-    /// **This is the only storage for any of it** (#2458). Witness authoring
-    /// briefly carried a second switch — a `witness_writer` bool ANDed with
-    /// the `witness_author` row at run time — and two knobs for one decision
-    /// is a defect waiting on a reader: a surface that flipped the bool did
-    /// nothing when the row was off, and neither answer named the other. The
-    /// concrete bug was in persistence. Only the bool rode the resume frame,
-    /// so a killed run came back having reconstructed half the decision and
-    /// defaulted the rest, and a deliberately witness-free run started
-    /// authoring witnesses on its resumed leg. The row is now the whole
-    /// answer, and the whole roster is what `stella_cli::resume_frame`
+    /// **This is the only storage for any of it** (#2458). Two responsibilities
+    /// briefly carried a second switch each — a `witness_writer` bool and a
+    /// `distress_guidance` bool, each ANDed with its row at run time — and two
+    /// knobs for one decision is a defect waiting on a reader: a surface that
+    /// flipped the bool did nothing when the row was off, and neither answer
+    /// named the other. The concrete bug was in persistence. Only the bool rode
+    /// the resume frame, so a killed run came back having reconstructed half
+    /// the decision and defaulted the rest, and a deliberately witness-free run
+    /// started authoring witnesses on its resumed leg. The rows are now the
+    /// whole answer, and the whole roster is what `stella_cli::resume_frame`
     /// persists.
     ///
-    /// Witness authoring itself (L-E11 front half), for the row spelled
-    /// `witness_author`: when no [`Self::test_command`] is configured and the
-    /// task class verifies unconditionally, an independent model authors a
-    /// failing witness test whose command arms the flip oracle, with tamper
-    /// exclusion at verify time ([`crate::witness`]). Costs one engine turn +
-    /// up to two test runs per *candidate*: each best-of-N candidate authors
-    /// its own witness inside its own snapshot, because a witness written
-    /// against a sibling's tree witnesses nothing about this one's work. At
-    /// the default `candidates = None` that is once.
+    /// The two rows whose switch used to live here, since a reader of this
+    /// struct still needs to know what they buy:
+    ///
+    /// - **`witness_author`** — witness authoring (L-E11 front half). When no
+    ///   [`Self::test_command`] is configured and the task class verifies
+    ///   unconditionally, an independent model authors a failing witness test
+    ///   whose command arms the flip oracle, with tamper exclusion at verify
+    ///   time ([`crate::witness`]). Costs one engine turn + up to two test runs
+    ///   per *candidate*: each best-of-N candidate authors its own witness
+    ///   inside its own snapshot, because a witness written against a sibling's
+    ///   tree witnesses nothing about this one's work. At the default
+    ///   `candidates = None` that is once.
+    /// - **`distress_guidance`** — distress-triggered course-correction. On a
+    ///   candidate's *second* deterministic verification failure — cumulative,
+    ///   not necessarily consecutive (#868) — spend one call for guidance that
+    ///   rides with the next revision prompt
+    ///   ([`crate::verify::guidance_prompt`]). Event-triggered by design, never
+    ///   a fixed mid-run checkpoint, and bounded by [`Self::max_revisions`] (at
+    ///   most `max_revisions - 1` guidance calls per candidate).
     pub roster: Roster,
     /// Decision latency ceiling on the triage classification call (L-M4): if
     /// it doesn't answer within this, the in-flight call is dropped and
@@ -418,13 +428,6 @@ pub struct PipelineConfig {
     /// unchanged either way, since the witness has already done its job by
     /// the time adoption happens.
     pub keep_witness: bool,
-    /// Distress-triggered course-correction: on a candidate's *second*
-    /// deterministic verification failure — cumulative, not necessarily
-    /// consecutive (#868) — spend one verifier call for guidance that rides
-    /// with the next revision prompt ([`crate::verify::guidance_prompt`]).
-    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded by
-    /// `max_revisions` (at most `max_revisions - 1` guidance calls per candidate).
-    pub distress_guidance: bool,
     /// The closed diagnostic that reports what the turn changed. `None`
     /// disables diff-size and zero-diff inspection.
     pub diff_diagnostic: Option<DiagnosticInvocation>,
@@ -591,7 +594,6 @@ impl Default for PipelineConfig {
             plan_mode: false,
             test_command: None,
             keep_witness: false,
-            distress_guidance: true,
             diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
             diff_budget_lines: 400,
             diagnostics_veto_warnings: false,
@@ -2489,7 +2491,9 @@ impl<'a> Pipeline<'a> {
                     // and gating on it paid a guidance call on the FIRST deterministic
                     // red while telling the verifier the agent had "failed twice in a row".
                     let mut reason = brief.message();
-                    if self.config.distress_guidance && state.failures.len() >= 2 {
+                    if self.responsibility_enabled(ModelCallRole::DistressGuidance)
+                        && state.failures.len() >= 2
+                    {
                         // Same witness exclusion as the verdict call (#1433):
                         // guidance reads the change under correction, and the
                         // verifier's own test is not part of it.

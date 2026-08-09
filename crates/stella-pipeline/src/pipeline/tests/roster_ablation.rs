@@ -294,8 +294,7 @@ fn witness_config(roster: Roster) -> PipelineConfig {
     PipelineConfig {
         diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
         max_revisions: 0,
-        distress_guidance: false,
-        roster,
+        roster: roster.with_enabled(ModelCallRole::DistressGuidance, false),
         ..PipelineConfig::default()
     }
 }
