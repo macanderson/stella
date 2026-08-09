@@ -71,6 +71,51 @@ _ADMISSIBLE_WORKER_EFFORTS = ("high", "xhigh", "max")
 # selector existed still describes the posture that produced it.
 _TRIAGE_MODEL_ENV = "STELLA_TRIAGE_MODEL"
 
+# Host-side selectors for the two read-only pipeline roles. Research greps a
+# tree and reports what it found; plan writes the one work order every later
+# stage is judged against. Until #2553 neither could be configured at all — the
+# engine had no `research`/`plan` surface, so the roles resolved purely by
+# inheritance and there was nothing for a posture to select.
+#
+# What they inherit is the WORKER, field by field, not the `default` row: see
+# `over_worker` in `crates/stella-cli/src/agent/engine.rs`, which merges each
+# role's own tuning over the worker's and leaves an unset field on the worker's
+# value. So a claim run that pins `agents.worker.effort = xhigh` pins research
+# to `xhigh` with it. On match `7d025330abad` that was 76s across 15 research
+# calls to emit a few hundred reasoning tokens, against 8.5s for the single
+# plan call. #2553 built the knob that turns that down; this is the harness
+# reaching it.
+#
+# Unset omits the row, and here that rule carries more weight than anywhere
+# else in this file. The digest identifies every registered arm
+# (`bench/READINESS.md` §8.4.4), so emitting two rows unconditionally would
+# re-hash every arm already registered in order to describe postures that
+# behave exactly as the recorded ones did — spending the comparability that
+# digest exists to provide, for nothing. A rename did precisely that once
+# (#1394) and ended cross-boundary comparison; this is the same hazard with a
+# cheaper answer, because a row nobody asked for is a row that need not exist.
+_RESEARCH_EFFORT_ENV = "STELLA_RESEARCH_EFFORT"
+_RESEARCH_REASONING_ENV = "STELLA_RESEARCH_REASONING"
+_RESEARCH_MODEL_ENV = "STELLA_RESEARCH_MODEL"
+_PLAN_EFFORT_ENV = "STELLA_PLAN_EFFORT"
+_PLAN_REASONING_ENV = "STELLA_PLAN_REASONING"
+_PLAN_MODEL_ENV = "STELLA_PLAN_MODEL"
+
+# All five tiers, where the worker admits three. The worker's list is short
+# because its rule is parity — spend what the comparator spends — and a
+# head-to-head worker at `low` is not a posture anyone would register. These
+# two roles have the opposite rule: the reason to configure them at all is to
+# spend *less* than the worker, so the tiers below it are the ones that matter.
+# `max` stays admissible because refusing a measurement someone might want is
+# not this file's job; the enum exists to catch a typo, not to pick an arm.
+_ADMISSIBLE_ROLE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+# The worker's frozen `reasoning` value, named once because two places depend
+# on it meaning "what research and plan inherit today": the `worker` row below
+# and `_role_row`, which uses it as the value an unselected `reasoning` takes so
+# that emitting a row changes nothing an operator did not ask for.
+_WORKER_REASONING = "on"
+
 # Host-side selectors for the two pipeline knobs that decide how many times a
 # task may be attempted: revision turns after a *failed* verification, and
 # best-of-N candidate executions. Both were fully implemented in the pipeline
@@ -328,27 +373,72 @@ def resolve_candidates(value: str | None) -> int | None:
     )
 
 
-def resolve_verifier_evidence_demand(value: str | None) -> bool | None:
-    """Resolve the corroboration-ask arm, or ``None`` to inherit the default.
+def _validated_toggle(value: str, *, label: str) -> bool:
+    """Parse a host-side on/off selector, or refuse it with the reason.
 
     Fails closed on anything that is not one of the four accepted spellings,
     for the reason every selector here does: a run scored under a configuration
     nobody chose is worse than a run that refused to start. In particular a
     bare ``"false"`` is *not* silently read as off — the accepted vocabulary is
-    the one the setting itself uses (``on``/``off``), plus ``1``/``0`` for the
-    shell that has an integer to hand.
+    the one the settings themselves use (``on``/``off``), plus ``1``/``0`` for
+    the shell that has an integer to hand.
     """
-    if value is None:
-        return None
     text = value.strip().lower()
     if text in ("on", "1"):
         return True
     if text in ("off", "0"):
         return False
-    raise ValueError(
-        "benchmark verifier evidence demand must be one of on/off/1/0; "
-        f"got `{value}`"
-    )
+    raise ValueError(f"benchmark {label} must be one of on/off/1/0; got `{value}`")
+
+
+def resolve_verifier_evidence_demand(value: str | None) -> bool | None:
+    """Resolve the corroboration-ask arm, or ``None`` to inherit the default."""
+    if value is None:
+        return None
+    return _validated_toggle(value, label="verifier evidence demand")
+
+
+def resolve_role_effort(value: str | None, *, role: str) -> str | None:
+    """Resolve a read-only role's effort tier, or ``None`` to emit no row.
+
+    Unlike the worker's tier this has no frozen default to fall back to, and
+    that asymmetry is the design: absent means *omit the row entirely*, which is
+    the posture every registered arm was hashed under. An explicitly empty value
+    is still refused, for the reason `resolve_worker_effort` refuses one — it
+    means an operator meant to select an arm and the value was lost on the way
+    here, which is exactly when inheriting silently would attribute the run to a
+    tier nobody chose.
+    """
+    if value is None:
+        return None
+    return _validated_role_effort(value, role)
+
+
+def resolve_role_reasoning(value: str | None, *, role: str) -> bool | None:
+    """Resolve a read-only role's thinking toggle, or ``None`` to emit no row.
+
+    The tier is only half of what makes research expensive. Turning effort down
+    while `reasoning` still rides the worker's `on` leaves the role thinking on
+    every call, which on a lookup that reports what it read is most of the cost
+    #2553 measured — so the two are selectable separately, and either one alone
+    materialises the row.
+    """
+    if value is None:
+        return None
+    return _validated_toggle(value, label=f"{role} reasoning")
+
+
+def resolve_role_model(value: str | None) -> str | None:
+    """Resolve a per-role model pin, or ``None`` to inherit.
+
+    Whitespace-only is treated as unset, because unlike the effort tier "no pin"
+    is a meaningful and previously-default configuration for every role that has
+    one — so an empty value cannot be the lost-arm case that refusal exists to
+    catch.
+    """
+    if value is None:
+        return None
+    return value.strip() or None
 
 
 def resolve_model_timeout(value: str | None) -> int | None:
@@ -386,12 +476,71 @@ def resolve_triage_model(value: str | None) -> str | None:
 
     Same shape as the witness author: the pin has to be asked for, so a tree
     that merely carries this code keeps producing the historical posture.
-    Whitespace-only is treated as unset here because, unlike the effort tier,
-    "no pin" is a meaningful and previously-default configuration.
     """
-    if value is None:
-        return None
-    return value.strip() or None
+    return resolve_role_model(value)
+
+
+#: Every host-side posture selector, in one tuple.
+#:
+#: The adapter registers these as host-only environment (`_HOST_ONLY_STELLA_ENV`)
+#: and its ambient check fails **closed**, so a selector this module reads and
+#: that list does not name refuses the run instead of enabling the arm — an
+#: unregistered `STELLA_TURN_BUDGET` once killed all ten trials of a run. One
+#: tuple, unpacked there, is what keeps the two lists from being two lists.
+#: The witness author is deliberately absent: it reaches the builder as
+#: ``verifier=``, resolved by `StellaAgent._verifier_model`, not through here.
+POSTURE_SELECTOR_ENV = (
+    _WORKER_EFFORT_ENV,
+    _TRIAGE_MODEL_ENV,
+    _RESEARCH_EFFORT_ENV,
+    _RESEARCH_REASONING_ENV,
+    _RESEARCH_MODEL_ENV,
+    _PLAN_EFFORT_ENV,
+    _PLAN_REASONING_ENV,
+    _PLAN_MODEL_ENV,
+    _MAX_REVISIONS_ENV,
+    _CANDIDATES_ENV,
+    _VERIFIER_EVIDENCE_DEMAND_ENV,
+    _MODEL_TIMEOUT_ENV,
+)
+
+
+def read_posture_selectors(get: Callable[[str], str | None]) -> dict[str, Any]:
+    """Resolve every host-side selector into `_benchmark_engine_posture` kwargs.
+
+    ``get`` reads one configured value by name — `StellaAgent._configured_value`
+    on the adapter, a plain dict lookup in a test.
+
+    It lives beside the selectors rather than at the call site because the call
+    site is reached **twice**: once when trial metadata is collected, and again
+    when the exec boundary recomputes the posture and refuses the run unless it
+    matches byte for byte. Two spellings of "read the selectors" is two chances
+    for those to disagree, and a disagreement there is a refused run at best.
+    Keeping the list here also keeps it in one place with `POSTURE_SELECTOR_ENV`,
+    which is the half the ambient check reads.
+    """
+    return {
+        "worker_effort": resolve_worker_effort(get(_WORKER_EFFORT_ENV)),
+        "triage_model": resolve_triage_model(get(_TRIAGE_MODEL_ENV)),
+        "research_effort": resolve_role_effort(
+            get(_RESEARCH_EFFORT_ENV), role="research"
+        ),
+        "research_reasoning": resolve_role_reasoning(
+            get(_RESEARCH_REASONING_ENV), role="research"
+        ),
+        "research_model": resolve_role_model(get(_RESEARCH_MODEL_ENV)),
+        "plan_effort": resolve_role_effort(get(_PLAN_EFFORT_ENV), role="plan"),
+        "plan_reasoning": resolve_role_reasoning(
+            get(_PLAN_REASONING_ENV), role="plan"
+        ),
+        "plan_model": resolve_role_model(get(_PLAN_MODEL_ENV)),
+        "max_revisions": resolve_max_revisions(get(_MAX_REVISIONS_ENV)),
+        "candidates": resolve_candidates(get(_CANDIDATES_ENV)),
+        "verifier_evidence_demand": resolve_verifier_evidence_demand(
+            get(_VERIFIER_EVIDENCE_DEMAND_ENV)
+        ),
+        "model_timeout_secs": resolve_model_timeout(get(_MODEL_TIMEOUT_ENV)),
+    }
 
 
 def _validated_role_model(model: str, candidate: str, role: str) -> str:
@@ -434,6 +583,85 @@ def _validated_worker_effort(worker_effort: str) -> str:
             f"{', '.join(_ADMISSIBLE_WORKER_EFFORTS)}; got `{worker_effort}`"
         )
     return effort
+
+
+def _validated_role_effort(value: str, role: str) -> str:
+    """Return a read-only role's effort tier, or refuse an unrecognised one.
+
+    Same fail-closed rule as the worker's tier over a wider vocabulary, and the
+    refusal matters more here rather than less: the tiers this admits and the
+    worker's do not overlap on the low end, so a typo that fell back to the
+    worker would produce a run measuring the exact configuration the arm was
+    selected to move away from.
+    """
+    effort = value.strip().lower()
+    if effort not in _ADMISSIBLE_ROLE_EFFORTS:
+        raise ValueError(
+            f"benchmark {role} effort must be one of "
+            f"{', '.join(_ADMISSIBLE_ROLE_EFFORTS)}; got `{value}`"
+        )
+    return effort
+
+
+def _role_row(
+    *, role: str, effort: str | None, reasoning: bool | None, worker_effort: str
+) -> dict[str, str] | None:
+    """The ``agents.<role>`` row for a read-only role, or ``None`` to omit it.
+
+    Emitted whole or not at all, and the unselected half takes the value the
+    role inherits *today* — the worker's tier, and the worker's ``reasoning:
+    on``. Two properties follow, and both are the point:
+
+    * the row's mere presence is a behavioural no-op, so a one-knob arm moves
+      one variable rather than two; and
+    * every row this writes has the same two fields as every other role's,
+      which is what lets the manifest schema keep validating an exact shape
+      instead of accepting whatever a partial row happened to carry.
+
+    It validates rather than trusting its caller, for the reason
+    ``_validated_worker_effort`` is called inside the builder and not beside the
+    selector: the builder is the one function *both* the collection path and the
+    exec-boundary recompute call, so a check anywhere else is a check one of
+    them can skip.
+    """
+    if effort is None and reasoning is None:
+        return None
+    if reasoning is not None and not isinstance(reasoning, bool):
+        raise ValueError(
+            f"benchmark {role} reasoning must be a bool or None; got {reasoning!r}"
+        )
+    thinking = _WORKER_REASONING == "on" if reasoning is None else reasoning
+    return {
+        "effort": (
+            worker_effort if effort is None else _validated_role_effort(effort, role)
+        ),
+        "reasoning": "on" if thinking else "off",
+    }
+
+
+def _pin_role_model(
+    posture: dict[str, Any], *, model: str, pin: str, role: str
+) -> None:
+    """Pin one role's model in its flat key and widen the model vocabulary.
+
+    The flat root key, never ``agents.<role>.model``. Both resolve — the engine
+    reads ``agents.<role>.model`` first and falls through to the flat key
+    (``AgentEngineConfig::model_for``) — but the flat key is what
+    ``settings_check`` and ``stella config`` report as the role's origin, so the
+    disclosed posture and the engine's own account of its wiring name the same
+    field.
+
+    ``allowed_models`` has to widen with it, and that half is load-bearing: the
+    vocabulary is a whitelist, so a pin outside it is refused at resolve time
+    and the role drops back to whatever it inherits — billing one model while
+    the digest claims another.
+    """
+    validated = _validated_role_model(model, pin, role)
+    posture[_FLAT_ROLE_MODEL_KEY[role]] = validated
+    allowed = list(posture["allowed_models"])
+    if validated not in allowed:
+        allowed.append(validated)
+    posture["allowed_models"] = allowed
 
 
 def _validated_verifier(model: str, verifier: str) -> str:
@@ -480,6 +708,12 @@ def _benchmark_engine_posture(
     verifier: str | None = None,
     worker_effort: str = "xhigh",
     triage_model: str | None = None,
+    research_effort: str | None = None,
+    research_reasoning: bool | None = None,
+    research_model: str | None = None,
+    plan_effort: str | None = None,
+    plan_reasoning: bool | None = None,
+    plan_model: str | None = None,
     max_revisions: int | None = None,
     candidates: int | None = None,
     verifier_evidence_demand: bool | None = None,
@@ -524,6 +758,14 @@ def _benchmark_engine_posture(
     (#2411), leaving the model's catalog maximum and the task's own wall clock.
     It is a key like any other — selecting it changes the digest, leaving it
     unset reproduces every historical one.
+
+    The six ``research_*``/``plan_*`` arguments are the same rule applied to the
+    two read-only roles (#2549). All six default to ``None``, which emits
+    neither an ``agents`` row nor a flat key, so a tree that merely carries this
+    code still returns byte-identical JSON — and therefore an identical digest —
+    for every arm registered before these roles were configurable. Selecting any
+    of them is a posture change that says so in the digest, which is the only
+    way the registered numbers keep describing the postures that produced them.
     """
     selected_model = model.strip()
     if not selected_model or "/" not in selected_model:
@@ -603,14 +845,20 @@ def _benchmark_engine_posture(
                 "effort": "xhigh",
                 "reasoning": "on",
             },
-            # Only the worker's tier moves with the arm. `default` stays at
-            # `xhigh` deliberately: it governs roles with no explicit entry
-            # below, and letting it track the worker would silently retune
-            # those roles too — a second, undeclared variable inside a digest
-            # that claims to describe one.
+            # Only the worker's tier moves with the arm, and `default` stays at
+            # `xhigh` rather than tracking it so the arm moves one variable.
+            #
+            # It does NOT stand in for the roles with no entry below, and that
+            # correction is the whole of #2549. `AgentEngineAgents::get` is a
+            # straight per-role lookup with no fallback, and `over_worker`
+            # (`crates/stella-cli/src/agent/engine.rs`) merges research and plan
+            # over the **worker** field by field. So the roles this row was
+            # believed to govern actually follow `worker` — and the arm's tier
+            # did silently retune them, which is exactly the undeclared second
+            # variable the old reading here claimed to prevent.
             "worker": {
                 "effort": selected_effort,
-                "reasoning": "on",
+                "reasoning": _WORKER_REASONING,
             },
             "verifier": {
                 "effort": "xhigh",
@@ -645,20 +893,35 @@ def _benchmark_engine_posture(
         # number this digest misdescribes.
         posture["pipeline_verifier_model"] = author
         posture["allowed_models"] = [selected_model, author]
-    if triage_model is not None:
-        # Same flat-key reasoning as the verifier pin above: `settings_check` and
-        # `stella config` report the flat key as the role's origin, so the
-        # disclosed posture and the engine's own account of its wiring name the
-        # same field. `allowed_models` has to widen with it — the vocabulary is
-        # a whitelist, and a triage pin outside it is refused at resolve time,
-        # which would drop triage back onto the worker and bill the expensive
-        # model for the cheap role while the digest claimed otherwise.
-        triage = _validated_role_model(selected_model, triage_model, "triage")
-        posture["pipeline_triage_model"] = triage
-        allowed = list(posture["allowed_models"])
-        if triage not in allowed:
-            allowed.append(triage)
-        posture["allowed_models"] = allowed
+    # Triage, research and plan pin identically — flat key plus a widened
+    # vocabulary — so they share `_pin_role_model` rather than three copies of
+    # it. The verifier above deliberately does not: it *replaces*
+    # `allowed_models` rather than appending to it, because the treatment arm's
+    # vocabulary is exactly the two models it names.
+    for role, pin in (
+        ("triage", triage_model),
+        ("research", research_model),
+        ("plan", plan_model),
+    ):
+        if pin is not None:
+            _pin_role_model(posture, model=selected_model, pin=pin, role=role)
+    # The read-only roles' tuning rows (#2549). Absent unless asked for: this is
+    # the one place in this function where a row that merely *exists* would
+    # re-hash arms registered years of runs ago, so "unset omits" is not a
+    # stylistic echo of the keys above it but the reason the digest still means
+    # what `bench/READINESS.md` §8.4.4 says it means.
+    for role, effort, reasoning in (
+        ("research", research_effort, research_reasoning),
+        ("plan", plan_effort, plan_reasoning),
+    ):
+        row = _role_row(
+            role=role,
+            effort=effort,
+            reasoning=reasoning,
+            worker_effort=selected_effort,
+        )
+        if row is not None:
+            posture["agents"][role] = row
     # The attempt-count knobs are omitted entirely when unselected rather than
     # written at their default value, and that is load-bearing: the digest is
     # taken over this dict, so emitting `"pipeline_max_revisions": 2` would
@@ -705,7 +968,22 @@ _FLAT_ROLE_MODEL_KEY = {
     "worker": "pipeline_worker_model",
     "verifier": "pipeline_verifier_model",
     "triage": "pipeline_triage_model",
+    "research": "pipeline_research_model",
+    "plan": "pipeline_plan_model",
 }
+
+#: The roles whose UNPINNED default is the worker's model, not ``default_model``.
+#:
+#: Every other role has a standing identity — unpinned, triage and the verifier
+#: still have a model of their own, and ``default_model`` is it. These two are
+#: documented as "run whatever the worker runs"
+#: (``own_model_spec_for``, ``crates/stella-cli/src/engine_config.rs``), so
+#: falling through to ``default_model`` for them would split them onto a
+#: different model the moment anything re-points the worker without touching
+#: settings. The two coincide in the frozen posture below, where the worker
+#: carries no pin of its own — which is exactly why a resolver that got this
+#: wrong would keep agreeing with reality until the first arm that pinned one.
+_WORKER_INHERITING_ROLES = frozenset({"research", "plan"})
 
 
 def _posture_model_value(value: Any, key: str) -> str | None:
@@ -754,7 +1032,10 @@ def resolve_posture_role_model(
 
     Mirrors ``AgentEngineConfig::model_for`` (``crates/stella-cli/src/settings.rs``)
     key for key: ``agents.<role>.model`` outranks the flat ``pipeline_<role>_model``,
-    which outranks ``default_model``. Mirroring it *exactly* is the whole point —
+    which outranks ``default_model`` — except for the two roles that inherit the
+    worker instead on that last rung (``_WORKER_INHERITING_ROLES``, which is the
+    engine's own split between ``model_spec_for`` and ``own_model_spec_for``, not
+    an approximation of it). Mirroring it *exactly* is the whole point —
     a declaration that resolves roles by a different rule than the engine does is
     free to disagree with the run it describes, which is the shape of #2134 and of
     #1147 before it.
@@ -778,6 +1059,15 @@ def resolve_posture_role_model(
     ):
         if value is not None:
             return value, key
+    # Unpinned, and the last rung differs by role (see
+    # `_WORKER_INHERITING_ROLES`). Recursing resolves the worker through the
+    # same two rungs above, so "research inherits the worker" reports the key
+    # that actually decided the worker's model rather than asserting
+    # `default_model` and being right only by coincidence.
+    if role in _WORKER_INHERITING_ROLES:
+        return resolve_posture_role_model(
+            posture, "worker", default_model=default_model
+        )
     return default_model, "default_model"
 
 
