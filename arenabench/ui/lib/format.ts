@@ -36,6 +36,28 @@ export function fmtPct(value: unknown): string {
   return (Number(value) || 0).toFixed(0) + "%";
 }
 
+/**
+ * A tool call's wall clock, in the Command Deck's exact vocabulary
+ * (`crates/stella-tui/src/render/row.rs::human_duration`): `84ms`, `4.2s`,
+ * `27s`, `2m05s`. Ported rather than approximated so the same call reads the
+ * same in the deck and on this page — the whole point of the transcript
+ * grammar is that a reader who lives in Stella does not relearn it here.
+ *
+ * Sub-10s keeps a decimal, because `4.2s` reads as distinct from `4.9s`; above
+ * that the tenth is noise beside the whole seconds.
+ */
+export function fmtDuration(value: unknown): string {
+  if (value == null) return "—";
+  const ms = Math.max(0, Math.round(Number(value) || 0));
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) {
+    const s = ms / 1000;
+    return s < 10 ? `${s.toFixed(1)}s` : `${Math.floor(ms / 1000)}s`;
+  }
+  const total = Math.floor(ms / 1000);
+  return `${Math.floor(total / 60)}m${String(total % 60).padStart(2, "0")}s`;
+}
+
 // A plain count of trials, drawn as absent when it was never measured — the
 // third time this discipline has had to be written down here, after fmtMoney
 // and fmtClock (#1599). It matters most for the proof dimensions: a seat with
