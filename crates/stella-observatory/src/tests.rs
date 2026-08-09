@@ -140,7 +140,13 @@ fn seeded_workspace() -> TempDir {
                produced_output INTEGER NOT NULL DEFAULT 0,
                wrote_files INTEGER NOT NULL DEFAULT 0,
                truncated INTEGER NOT NULL DEFAULT 0,
-               recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+               recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               -- Store schema v23 (#2175). Present but unpopulated here: the
+               -- populated case has its own fixture below, because a
+               -- parse-failure row in THIS one is also a reflection row, and
+               -- the ratings feed and the execution-detail route both count
+               -- them.
+               parse_error TEXT);
              INSERT INTO execution_reflection
                (execution_id, delivered, self_rating, what_to_improve)
              VALUES (1, 1, 8, 'read the failing test first');
@@ -403,6 +409,10 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
         "/api/explorations",
         "/api/rules",
         "/api/reflections",
+        // #2175: the lifecycle payload now also reads `store.db`'s
+        // `execution_reflection.parse_error`, a column that arrives in schema
+        // v23 — so an unmigrated store must blank that section, not 500.
+        "/api/context-lifecycle",
     ] {
         let response = respond(ws.path(), route);
         assert_eq!(response.status, "200 OK", "route {route}");
@@ -797,6 +807,57 @@ fn memories_rules_and_reflections_come_from_disk_and_db() {
     assert_eq!(ratings.len(), 1);
     assert_eq!(ratings[0]["self_rating"], 8);
     assert_eq!(ratings[0]["what_to_improve"], "read the failing test first");
+}
+
+/// #2175: the Improve tab must be able to tell a starved learning loop from a
+/// quiet one.
+///
+/// Both render an empty `proposals` list, and until this field existed that
+/// was the whole of what the dashboard knew — so a workspace whose reflection
+/// responses had been unparseable for nine days got the same "no proposals in
+/// the ledger" copy as one opened five minutes ago. Its own fixture rather
+/// than the shared one: a parse-failure row is also an `execution_reflection`
+/// row, which the ratings feed and the execution-detail route both count.
+#[test]
+fn the_lifecycle_payload_names_reflections_that_produced_no_readable_lessons() {
+    let ws = TempDir::new().unwrap();
+    let private = ws.path().join(".stella/private");
+    std::fs::create_dir_all(&private).unwrap();
+    let conn = Connection::open(private.join("store.db")).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE execution_reflection (
+           execution_id INTEGER PRIMARY KEY,
+           recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+           parse_error TEXT);
+         INSERT INTO execution_reflection (execution_id, parse_error) VALUES
+           (7, 'Let me analyze this turn step by step. First, I should'),
+           (9, NULL);",
+    )
+    .unwrap();
+
+    let body: serde_json::Value =
+        serde_json::from_slice(&respond(ws.path(), "/api/context-lifecycle").body).unwrap();
+    let starved = body["unreadable_reflections"].as_array().unwrap();
+    assert_eq!(
+        starved.len(),
+        1,
+        "a NULL parse_error is a turn that reflected cleanly, not a failure"
+    );
+    assert_eq!(starved[0]["execution_id"], 7);
+    assert!(
+        starved[0]["excerpt"]
+            .as_str()
+            .unwrap()
+            .starts_with("Let me analyze"),
+        "the excerpt is what tells an operator what shape the failure takes"
+    );
+    assert_eq!(
+        body["proposals"].as_array().unwrap().len(),
+        0,
+        "and the ledger is empty — which is exactly the ambiguity this field \
+         resolves: empty proposals PLUS a starved reflection is a broken loop, \
+         empty proposals alone is a new workspace"
+    );
 }
 
 #[test]

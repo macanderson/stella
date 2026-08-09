@@ -2301,6 +2301,12 @@ const EPISODE_OUTCOME = {
 function renderLifecycle(d) {
   if (!changed("lifecycle", d)) return;
   const proposals = d.proposals ?? [];
+  /* An empty ledger has two very different causes, and they used to render
+     identically: a workspace that has never learned anything, and a learning
+     loop whose reflection responses cannot be parsed. The second leaves
+     `parse_error` rows behind (#2175); say so instead of showing the fresh
+     workspace's copy to someone whose loop has been dead for nine days. */
+  const starved = d.unreadable_reflections ?? [];
   $("imp-proposals").innerHTML = proposals.length
     ? proposals.map(p => `<div class="feed-item">
         <b>${esc(p.candidate_id)}</b> ${lifecycleBadge(p.status)}
@@ -2310,6 +2316,12 @@ function renderLifecycle(d) {
         <div class="when">${fmtInt(p.distinct_tasks)} distinct task(s) ·
           ${fmtInt(p.occurrences)} observation(s) · confidence ${fmtInt(p.confidence)}</div>
       </div>`).join("")
+    : starved.length
+    ? `<div class="empty">No proposals — and ${fmtInt(starved.length)} reflection(s)
+       produced no readable lessons.<br>
+       The learning loop is running and its output cannot be parsed, so nothing
+       reaches the ledger. This is a starved loop, not a quiet one.
+       <div class="snip">${esc(starved[0].excerpt ?? "")}</div></div>`
     : `<div class="empty">No proposals in the ledger.<br>
        When a lesson recurs across distinct tasks, the loop files a durable
        proposal into <code>.stella/private/context.db</code> — the audit trail

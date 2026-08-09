@@ -59,6 +59,7 @@ mod prompt;
 pub(crate) mod resume;
 mod skill_usage;
 mod tools;
+mod turn_close;
 
 pub(crate) use engine::*;
 pub(crate) use goal::*;
@@ -571,32 +572,26 @@ async fn run_pipeline_one_shot(
     let persistence_complete = rendered.persistence_complete;
     let collected = rendered.events;
 
-    if let Some((store, id)) = &execution {
-        let (outcome_label, cost) = pipeline_execution_closeout(&result);
-        if !record_execution_end(
-            store,
-            *id,
-            &registry,
+    let (outcome_label, cost) = pipeline_execution_closeout(&result);
+    turn_close::close_turn(
+        cfg,
+        &store,
+        &execution,
+        &registry,
+        Some(presence.id()),
+        turn_close::TurnOutcomeRecord {
+            label: outcome_label,
+            cost_usd: cost + reflection_report.cost_usd,
             files_before,
-            outcome_label,
-            cost + reflection_report.cost_usd,
             persistence_complete,
-        ) {
-            warn_store_write_failed(
-                "the audit record (files touched / memory citations / outcome)",
-            );
-        }
-        // Trajectory trace (#1042, `trace_capture`, off by default): one
-        // training-ready record folded from what the closeout just settled.
-        if cfg.trace_capture {
-            crate::trace::capture_or_warn(
-                store,
-                *id,
-                &files,
-                &cfg.workspace_root,
-                &cfg.reward_policy,
-            );
-        }
+        },
+    );
+    // Trajectory trace (#1042, `trace_capture`, off by default): one
+    // training-ready record folded from what the closeout just settled.
+    if let Some((store, id)) = &execution
+        && cfg.trace_capture
+    {
+        crate::trace::capture_or_warn(store, *id, &files, &cfg.workspace_root, &cfg.reward_policy);
     }
 
     if let Some(set) = &mcp {
@@ -1777,11 +1772,11 @@ pub fn run_tools_listing() -> Result<(), String> {
         );
     }
 
-    let home = crate::paths::home();
+    let user_root = crate::paths::user_extension_root();
     // Gated: an ungated listing would advertise a withheld tool as available.
     let found = custom::discover_in_scopes(
         &workspace_root,
-        home.as_deref(),
+        user_root.as_deref(),
         settings.authority_policy.project_custom_tools_allowed,
     );
     let report = crate::tool_foundry::adopt::gate_discovery(found, &workspace_root);
@@ -2151,25 +2146,23 @@ async fn run_turn(
     // through it, MCP-wrapped or not), so it's read here regardless of which
     // executor the engine held.
     let files = registry.files_touched();
-    if let Some((store, id)) = &execution {
-        let (outcome_label, cost) = match &outcome {
-            TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
-            TurnOutcome::Aborted { cost_usd, .. } => ("aborted", *cost_usd),
-        };
-        if !record_execution_end(
-            store,
-            *id,
-            registry,
+    let (outcome_label, cost) = match &outcome {
+        TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
+        TurnOutcome::Aborted { cost_usd, .. } => ("aborted", *cost_usd),
+    };
+    turn_close::close_turn(
+        cfg,
+        store,
+        &execution,
+        registry,
+        session,
+        turn_close::TurnOutcomeRecord {
+            label: outcome_label,
+            cost_usd: cost,
             files_before,
-            outcome_label,
-            cost,
             persistence_complete,
-        ) {
-            warn_store_write_failed(
-                "the audit record (files touched / memory citations / outcome)",
-            );
-        }
-    }
+        },
+    );
 
     if format == OutputFormat::Json {
         // One final JSON object: the outcome summary plus the full event

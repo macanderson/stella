@@ -14,6 +14,10 @@ stella-core = { path = "../stella-core" }
 stella-graph = { path = "../stella-graph" }
 stella-store = { path = "../stella-store" }
 stella-media = { path = "../stella-media" }
+# The single implementation of `~/.stella` resolution, so the tracker and
+# web-auth secret files move with `STELLA_HOME` like every other user-tier
+# file (#2178).
+stella-home = { path = "../stella-home" }
 serde.workspace = true
 serde_json.workspace = true
 # `net` for the tracker-OAuth loopback-redirect listener (127.0.0.1 callback).

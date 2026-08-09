@@ -1097,18 +1097,18 @@ fn skill_usage_records_per_execution_version_rows() {
     // not a table, because the frame IS the manifest (ADR 0006 as amended).
     // v17 drops the never-wired graph seam and the query-less indexes. v18 turns
     // `tool_calls` into a LIVE projection — a `state` column ('running' |
-    // 'ok' | 'error') plus the two indexes the live writer reads through, so an
-    // in-flight turn's calls are visible while it runs and a crashed one's are
-    // recoverable from the log. v19 recounts every stored block cost under one
+    // 'ok' | 'error') plus the two indexes the live writer reads through, so
+    // an in-flight turn's calls are visible live and recoverable after a
+    // crash. v19 recounts every stored block cost under one
     // shared token rule, NULL when that block's preimage is gone (#925). v20
     // adds `foundry_tools` (#830): per self-authored tool, the witness that
     // proved it, the digests of the bytes it ran against, and the human
     // `enabled` flag adoption never sets. Additive. v21 adds
-    // `session_turn_diffs` (#1870): per (session, turn), the precomputed
-    // workspace diff the work journal's turn marks describe, so the
-    // observatory can replay file changes without opening the bare repo.
-    // Additive. v22 adds `executions.journal_era` (#1981) — see `JournalEra`.
-    assert_eq!(SCHEMA_VERSION, 22);
+    // `session_turn_diffs` (#1870): the precomputed per-turn workspace diff.
+    // Additive. v22 adds `executions.journal_era` (#1981). v23 adds nullable
+    // `execution_reflection.parse_error` (#2175): the unreadable excerpt a
+    // starved learning loop leaves behind.
+    assert_eq!(SCHEMA_VERSION, 23);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

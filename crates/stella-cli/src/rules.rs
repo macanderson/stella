@@ -230,8 +230,7 @@ pub(crate) fn load_workspace_rules(
     if crate::settings::filesystem_settings_disabled() {
         return ResolvedRules::default();
     }
-    let user_rules_dir =
-        crate::paths::user_extension_home().map(|home| home.join(".stella").join("rules"));
+    let user_rules_dir = crate::paths::user_extension_root().map(|root| root.join("rules"));
     let markdown = load_rules_from_with_authority(
         workspace_root,
         user_rules_dir,

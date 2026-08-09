@@ -352,21 +352,21 @@ impl fmt::Debug for CredentialsFile {
 }
 
 impl CredentialsFile {
-    /// The default path: `~/.stella/credentials.toml`. Returns `None`
-    /// if the platform has no resolvable home directory (never panics —
-    /// callers treat "no credentials file available" as just another
-    /// resolution step that falls through).
+    /// The default path: `$STELLA_HOME/credentials.toml`, else
+    /// `~/.stella/credentials.toml`. Returns `None` if the platform has no
+    /// resolvable home directory (never panics — callers treat "no credentials
+    /// file available" as just another resolution step that falls through).
     ///
-    /// "Resolvable" here means the `HOME` environment variable specifically,
-    /// not a platform home-directory API. On Windows, where `HOME` is usually
-    /// unset (`USERPROFILE` is the equivalent), this is always `None`: the
-    /// file step of the chain silently drops out and those users are on env
-    /// vars or `--api-key`. That is a known gap, not the intent — the
-    /// non-Unix half of `write_secret_file` exists for the day a home
-    /// lookup covers Windows too.
+    /// Resolution goes through `stella-home`, the workspace's single
+    /// implementation, for two reasons that used to be defects here. It
+    /// honours `STELLA_HOME`, so an isolated process reads the scratch home's
+    /// keys rather than the developer's real ones — this file was previously
+    /// unmovable by any environment variable at all (#2178). And it falls back
+    /// to `USERPROFILE`, so Windows, where `HOME` is usually unset, gets the
+    /// file step of the chain instead of silently dropping to env vars and
+    /// `--api-key`.
     pub fn default_path() -> Option<PathBuf> {
-        let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        Some(home.join(".stella").join("credentials.toml"))
+        Some(stella_home::stella_home()?.join("credentials.toml"))
     }
 
     /// Load from `path`. A missing file is not an error — it's the common

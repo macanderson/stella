@@ -88,6 +88,7 @@ async fn reflection_log_at(at: i64) -> (tempfile::TempDir, String) {
             true,
             true,
             None,
+            crate::memory::ReflectionPosture::default(),
         )
         .await;
     assert_eq!(report.recorded, 1, "the scripted lesson was mined");
@@ -200,6 +201,7 @@ async fn the_context_store_shares_the_session_clock() {
             true,
             true,
             None,
+            crate::memory::ReflectionPosture::default(),
         )
         .await;
     assert_eq!(report.recorded, 1, "the scripted lesson was mined");

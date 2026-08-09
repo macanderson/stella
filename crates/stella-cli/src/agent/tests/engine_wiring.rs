@@ -1217,9 +1217,13 @@ fn reflection_routes_to_the_configured_triage_model() {
     );
     let configured = vec![configured_provider("zai"), configured_provider("deepseek")];
 
-    let (model, provider) = reflection_route(&cfg, &configured)
+    let route = reflection_route(&cfg, &configured)
         .expect("a credentialed triage pin must route reflection off the worker");
-    assert_eq!(model, ModelRef::new("deepseek", "deepseek-chat"));
+    let (model, provider) = route
+        .provider
+        .as_ref()
+        .expect("a different model needs its own adapter");
+    assert_eq!(*model, ModelRef::new("deepseek", "deepseek-chat"));
     assert_eq!(
         provider.id(),
         "deepseek",
@@ -1227,12 +1231,54 @@ fn reflection_routes_to_the_configured_triage_model() {
     );
 }
 
+/// #2174 witness: the triage agent's configured thinking posture reaches the
+/// reflection request, on both axes.
+///
+/// Reflection dispatches on the model the triage pin selected (#1847) and then
+/// built its request with `reasoning: None`, so `agents.triage.reasoning: off`
+/// chose the model for a call it could not reach. On a reasoning model that
+/// meant a thinking stream billed against reflection's output cap — the
+/// mechanism behind execution 63's `finish_reason: length` at exactly 2,048
+/// tokens and a nine-day frozen learning plane.
+#[test]
+fn the_triage_posture_governs_the_reflection_request() {
+    let cfg = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_triage_model": "deepseek/deepseek-chat",
+             "agents": { "triage": { "reasoning": "off", "effort": "high" } } }"#,
+    );
+    let configured = vec![configured_provider("zai"), configured_provider("deepseek")];
+
+    let route = reflection_route(&cfg, &configured).expect("routable triage pin");
+    assert_eq!(
+        route.posture,
+        crate::memory::ReflectionPosture {
+            reasoning: Some(false),
+            effort: Some(stella_protocol::ReasoningEffort::High),
+        },
+        "the posture the pin declares must ride out with the route"
+    );
+
+    // And the same-model case, which builds no second adapter: the pin still
+    // selected this model, so its posture still governs the call.
+    let same_model = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_triage_model": "zai/glm-5.2",
+             "agents": { "triage": { "reasoning": "off" } } }"#,
+    );
+    let route = reflection_route(&same_model, &[configured_provider("zai")])
+        .expect("a pin naming the session default is still a triage pin");
+    assert!(
+        route.provider.is_none(),
+        "the worker adapter already serves that exact model — a duplicate \
+         instance would buy only a second connection pool"
+    );
+    assert_eq!(route.posture.reasoning, Some(false));
+}
+
 /// Every unroutable shape rides the worker — `None`, the exact pre-#1847
 /// dispatch — because reflection is best-effort by contract and a
-/// configuration problem must never cost the turn its learning. The
-/// same-model case is deliberate rather than degenerate: the worker adapter
-/// already serves that exact model, and a duplicate instance would buy only
-/// a second connection pool.
+/// configuration problem must never cost the turn its learning.
 #[test]
 fn reflection_rides_the_worker_when_the_triage_tier_is_unroutable() {
     // The stock posture: no engine settings at all.
@@ -1246,9 +1292,13 @@ fn reflection_rides_the_worker_when_the_triage_tier_is_unroutable() {
     );
     assert!(reflection_route(&uncredentialed, &[configured_provider("zai")]).is_none());
 
-    // A triage pin naming the session default model itself.
+    // A triage pin naming the session default model rides the worker ADAPTER
+    // and is still a route: no duplicate connection pool, but the pin's
+    // posture still governs the call (asserted above, #2174).
     let same_model = cfg_with_engine("zai", r#"{ "pipeline_triage_model": "zai/glm-5.2" }"#);
-    assert!(reflection_route(&same_model, &[configured_provider("zai")]).is_none());
+    let route = reflection_route(&same_model, &[configured_provider("zai")])
+        .expect("a pin naming the session default is still a triage pin");
+    assert!(route.provider.is_none());
 }
 
 /// #2416: `agents.worker.prompt` must reach the pipeline's worker row, which

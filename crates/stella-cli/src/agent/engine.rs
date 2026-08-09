@@ -1073,6 +1073,18 @@ pub(crate) fn resolve_cross_family_verifier(
     Some((verifier, decision.model_ref.provider))
 }
 
+/// Where post-turn reflection dispatches, and on what posture.
+///
+/// [`Self::provider`] is `None` in the one case that is still a route: the
+/// triage pin resolved to the model the worker adapter already serves. The
+/// call rides that adapter, and the posture below still applies.
+pub(crate) struct ReflectionRoute {
+    /// The dedicated adapter for the triage-pinned model, when one was built.
+    pub(crate) provider: Option<(ModelRef, Box<dyn Provider>)>,
+    /// The triage agent's configured thinking posture.
+    pub(crate) posture: crate::memory::ReflectionPosture,
+}
+
 /// Resolve where post-turn reflection dispatches (#1847): the configured
 /// triage model when it is routable, else `None` — ride the worker.
 ///
@@ -1088,14 +1100,24 @@ pub(crate) fn resolve_cross_family_verifier(
 /// `pin_role`: no engine settings, no triage spec, an uncredentialed
 /// provider, or an adapter that will not build all yield `None`, and the
 /// caller keeps dispatching on the worker exactly as every reflection call
-/// always has. A triage spec that resolves to the session default model also
-/// yields `None` — the worker adapter already serves that exact model, and a
-/// second instance would buy only a second connection pool (the same "no
-/// duplicate adapter" rule the wiring's `pin_role` applies).
+/// always has. A triage spec that resolves to the session default model is
+/// the one near-miss that is still a route: [`ReflectionRoute::provider`] is
+/// `None` because the worker adapter already serves that exact model and a
+/// second instance would buy only a second connection pool (the "no duplicate
+/// adapter" rule the wiring's `pin_role` applies) — but the pin still chose
+/// that model, so its posture still rides out.
+///
+/// Returns the triage agent's **posture** alongside the adapter, and returns
+/// it even in the same-model case where no adapter is needed. Reflection runs
+/// on the model this pin selected, so `agents.triage.reasoning` /
+/// `agents.triage.effort` are the settings that govern the call — before
+/// #2174 they chose the model and then could not reach it, so an operator who
+/// switched thinking off still paid for a reasoning stream billed against
+/// reflection's output cap.
 pub(crate) fn reflection_route(
     cfg: &Config,
     configured: &[crate::config::ConfiguredProvider],
-) -> Option<(ModelRef, Box<dyn Provider>)> {
+) -> Option<ReflectionRoute> {
     let engine = cfg.engine_settings.as_ref()?;
     let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
     let spec = crate::engine_config::model_spec_for(
@@ -1112,8 +1134,23 @@ pub(crate) fn reflection_route(
         spec.model
     };
     let routed = ModelRef::new(entry.config.id, slug.clone());
+    // The triage agent's own tuning, resolved through the same helper the
+    // worker path uses so the auto modes apply identically. It rides out even
+    // when no adapter is built below, because the posture is a fact about the
+    // pin, not about whether the pin needed a second connection pool.
+    let tuning = crate::engine_config::tuning_for(engine, crate::settings::EngineAgentKind::Triage);
+    let posture = crate::memory::ReflectionPosture {
+        reasoning: tuning.reasoning,
+        effort: tuning.effort,
+    };
     if routed == ModelRef::new(cfg.provider.id, cfg.model_id.clone()) {
-        return None;
+        // Same instance the primary resolver already serves: no new adapter
+        // (the "no duplicate adapter" rule `pin_role` applies), but this is
+        // still the model the triage pin chose, so its posture still governs.
+        return Some(ReflectionRoute {
+            provider: None,
+            posture,
+        });
     }
     let provider = build_provider_parts(
         &entry.config,
@@ -1127,5 +1164,8 @@ pub(crate) fn reflection_route(
         stella_model::CacheTtl::default(),
     )
     .ok()?;
-    Some((routed, provider))
+    Some(ReflectionRoute {
+        provider: Some((routed, provider)),
+        posture,
+    })
 }
