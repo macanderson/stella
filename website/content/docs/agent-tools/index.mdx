@@ -177,7 +177,7 @@ These 49 tools register in every session — no configuration, no prerequisites.
     Where the repository has *been*: recent commits, every branch with its ahead/behind vs the default, shelved changes (`git stash`), the working-position log (`git reflog`), and whether the position is currently detached. One call, no shell — and the first move when work seems to have gone missing after a branch switch.
   </ToolCard>
   <ToolCard name="repo_recover" access="read">
-    Find committed work no branch points at — the commits a checkout strands. Each carries `sits_on_target`, so a fast-forward is distinguishable from a merge that could conflict. Walks the whole object store, so it is the slower second move after `repo_history`; Stella's own candidate-workspace snapshot commits are excluded and counted separately.
+    Find committed work no branch points at — the commits a checkout strands. Each carries `sits_on_target`, so a fast-forward is distinguishable from a merge that could conflict. Walks the whole object store, so it is the slower second move after `repo_history`; stella's own candidate-workspace snapshot commits are excluded and counted separately.
   </ToolCard>
   <ToolCard name="repo_commit" access="mutating">
     Commit exactly the named paths — there is no stage-everything mode.
