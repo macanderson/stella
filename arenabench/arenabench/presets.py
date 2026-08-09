@@ -193,8 +193,8 @@ def _preset(key: str, worker: str, title: str, blurb: str) -> dict[str, Any]:
         "reasoning": True,
         "effort": _EFFORT,
         # No base_url: first-party Anthropic, authenticated by the
-        # subscription token. No budget_usd: Claude Code honours no spend cap,
-        # and on the plan the quota is the ceiling.
+        # subscription token. Claude Code honours no spend cap, and on the plan
+        # the quota is the ceiling.
     }
     stella_engine = {
         "api": "openrouter",
@@ -202,11 +202,11 @@ def _preset(key: str, worker: str, title: str, blurb: str) -> dict[str, Any]:
         # The parity invariant, by construction rather than by transcription.
         "reasoning": cc_engine["reasoning"],
         "effort": cc_engine["effort"],
-        # Fable-class output ceiling, same number on both routes (#1211 §6.2).
-        "max_tokens": 128000,
-        # Per-trial cap (becomes STELLA_BUDGET): one runaway trial cannot eat
-        # the other nine tasks' budget.
-        "budget_usd": 12.0,
+        # Neither seat carries a ceiling, and this preset is where that stopped
+        # being true by accident: the comparator above has never had one, while
+        # this seat used to declare `max_tokens = 128000` and
+        # `budget_usd = 12.0` — a handicap written three lines under the
+        # sentence explaining that the other side has none (#2411).
         "roles": {
             "verifier": {
                 "model": f"anthropic/{verifier}",

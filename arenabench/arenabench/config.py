@@ -41,6 +41,7 @@ from .model import (
     Engine,
     MatchSpec,
     RoleConfig,
+    declared_cap_keys,
     declared_flag,
     is_credential_name,
 )
@@ -121,6 +122,18 @@ def _declared_env(
 
 
 def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> Engine:
+    # A per-trial ceiling is refused outright, not dropped. Dropping it would
+    # run the match the author wanted UNCAPPED while their template still said
+    # otherwise, and the two would disagree about what was measured — the
+    # failure mode #2411 documents, in reverse. Name the key and say what to do
+    # instead, because the author had a real worry and it has a real answer.
+    for key in declared_cap_keys(raw):
+        problems.append(
+            f"{where}: engine.{key} is refused — a per-trial ceiling stops the "
+            "agent where the work finishes, so the score reports our limit as "
+            "its capability (#2411). Bound the spend at the provider key, "
+            "which fails a run visibly instead of truncating a trial into a loss"
+        )
     # Refused rather than coerced: a human wrote `bare_loop = "no"` and meant
     # something by it, and the one outcome a selector must never have is to
     # silently run the arm it was spelled to decline. `declared_flag` returns
@@ -151,6 +164,15 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
             if not isinstance(entry, dict):
                 problems.append(f"{where}: role {name!r} must be a table")
                 continue
+            # The same refusal one level down. A role table is the older way to
+            # spell an output ceiling and would otherwise be the hole left in
+            # the wall the engine-level check just built.
+            for key in declared_cap_keys(entry):
+                problems.append(
+                    f"{where}: engine.roles.{name}.{key} is refused for the same "
+                    "reason as the engine-level key — no role runs under a "
+                    "ceiling the comparator does not also run under (#2411)"
+                )
             role = RoleConfig.from_json(entry)
             if not role.is_empty:
                 roles[_role_key(name)] = role
@@ -161,12 +183,6 @@ def _engine_from_toml(raw: dict[str, Any], problems: list[str], where: str) -> E
         reasoning=reasoning,
         effort=str(raw.get("effort") or "high"),
         base_url=(str(raw["base_url"]).strip() or None) if raw.get("base_url") else None,
-        budget_usd=(
-            float(raw["budget_usd"]) if raw.get("budget_usd") not in (None, "") else None
-        ),
-        max_tokens=(
-            int(raw["max_tokens"]) if raw.get("max_tokens") not in (None, "") else None
-        ),
         bare_loop=bare_loop,
         roles=roles,
     )
@@ -484,10 +500,6 @@ def dump_match(spec: MatchSpec, env_by_seat: dict[str, list[str]] | None = None)
             # This agent *can* be routed off its default endpoint, so leave the
             # knob visible-but-commented rather than silently absent.
             out.append('  # base_url = "https://..."   # route this seat elsewhere')
-        if engine.max_tokens is not None:
-            out.append("  " + _line("max_tokens", engine.max_tokens))
-        if engine.budget_usd is not None:
-            out.append("  " + _line("budget_usd", engine.budget_usd))
         if engine.bare_loop:
             # Emitted only when true, so every existing template renders back
             # byte-identical and a saved match cannot gain an arm it never had.

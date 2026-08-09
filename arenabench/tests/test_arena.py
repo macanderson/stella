@@ -115,7 +115,7 @@ class TestEngine:
     def test_round_trips_through_json(self):
         engine = Engine(
             api="anthropic", model="claude-opus-5", effort="max", reasoning=False,
-            max_tokens=64000, roles={"worker": RoleConfig(model="claude-sonnet-5")},
+            roles={"worker": RoleConfig(model="claude-sonnet-5")},
         )
         assert Engine.from_json(engine.to_json()) == engine
 

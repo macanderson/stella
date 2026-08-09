@@ -80,10 +80,10 @@ color = "#FFB000"
   # tasks with every failure a wall-clock timeout at 13-22s per step. Medium ran
   # 3.8-7.1s per step and took the same set to 4/5.
   effort = "medium"
-  # The model's real output ceiling. 64000 was carried over from a stale
-  # constant that claimed to be "the model's own ceiling".
-  max_tokens = 128000
-  budget_usd = 6.0
+  # No output ceiling and no per-trial budget: both are refused now (#2411).
+  # Omitting the ceiling is what asks for the model's own, which the engine
+  # seeds from the catalog — a number written here could only match it or sit
+  # below it, and below it is a handicap this seat's opponent never carries.
   base_url = "https://api.z.ai/api/coding/paas/v4"
 
   # Per-role overrides — this is the "full pipeline" arm. Every model named
