@@ -73,6 +73,15 @@ Artifacts land at `s3://<bucket>/binaries/<ref>/<sha>/stella` with a
 --locked` at glibc floor 2.17 — the same recipe as `sut_build.py`, so the
 binary runs in any reasonable task container.
 
+`latest.json` is keyed by a ref *name* but is only ever valid for one
+*commit*, so `cloud run` reuses it on presence alone only for a full commit
+SHA. A moving ref — a branch or a tag — is resolved against the remote first
+(`git ls-remote`, using the build project's own `GIT_URL`) and the artifact is
+reused only if it was built from the commit that name points at now. Before
+#2388 the cache was consulted for presence alone, so `--ref main` reused
+whichever build ran last, forever, and recorded a real commit that was simply
+not the one asked for.
+
 Rebuild the runner image after changing `runner/`:
 
 ```bash
@@ -110,10 +119,11 @@ trial start from SSM parameters under `/arenabench/` (SecureString;
 `/arenabench/anthropic_api_key` → `ANTHROPIC_API_KEY`, etc.).
 
 `arenabench cloud run` automates all of the above — per-trial slice upload,
-SUT resolution from `binaries/<ref>/latest.json` (building via
-`arenabench-sut-build` on a miss), submit-time refusal of seats with no SSM
-credentials, one job per trial, progress streaming (queued trials surface as
-progress, not a hang), and results download:
+SUT resolution from `binaries/<ref>/latest.json` (rebuilding via
+`arenabench-sut-build` whenever that artifact is missing or behind the ref it
+is named for), submit-time refusal of seats with no SSM credentials, one job
+per trial, progress streaming (queued trials surface as progress, not a hang),
+and results download:
 
 ```bash
 pip install 'arenabench[cloud]'
@@ -121,6 +131,14 @@ arenabench cloud run match.toml --ref main        # submit + watch + fetch
 arenabench cloud status <run-id> [--follow]       # from any machine
 arenabench cloud fetch <run-id> [--artifacts]
 ```
+
+Submitting prints `sut : <ref> -> <commit>` so the log says which commit
+`main` meant on that run. A moving ref additionally needs `git` on the
+operator's `PATH`, reachability of the SUT remote, and the
+`codebuild:BatchGetProjects` permission (alongside the `StartBuild` /
+`BatchGetBuilds` the build path already uses). None of the three is needed
+when the ref is a full commit SHA — that path never consults the remote, which
+is also the way to submit from a machine that cannot reach it.
 
 ### Quotas (account limits, not template limits)
 
