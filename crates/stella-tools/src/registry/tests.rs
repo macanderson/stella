@@ -858,6 +858,7 @@ mod partial_belief;
 mod private_state;
 mod schema_gate;
 mod touch;
+mod verify_memo;
 
 /// The no-clobber guarantee, end to end and across two independent sessions.
 ///
