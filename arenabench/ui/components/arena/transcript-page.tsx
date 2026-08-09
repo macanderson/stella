@@ -139,7 +139,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
     if (at === -1) break;
     if (at > 0) parts.push(rest.slice(0, at));
     parts.push(
-      <mark key={key++} className="rounded-[2px] bg-gold/35 text-inherit">
+      <mark key={key++} className="bg-accent text-on-accent">
         {rest.slice(at, at + query.length)}
       </mark>,
     );
@@ -184,7 +184,7 @@ function Entry({
     // A section rule, not a row: the label is the stage.
     return (
       <div className="flex items-center gap-2 py-2" role="separator">
-        <span className="font-semibold lowercase text-muted">{entry.title || body}</span>
+        <span className="font-semibold text-muted">{entry.title || body}</span>
         <span className="h-px flex-1 bg-line" />
       </div>
     );
@@ -539,7 +539,7 @@ function TranscriptView({
         <select
           value={task}
           onChange={(event) => setTask(event.target.value)}
-          className="rounded-[7px] border border-line bg-panel px-2 py-1.5 font-mono text-[12px]"
+          className=" border border-line bg-panel px-2 py-1.5 font-mono text-[12px]"
           aria-label="task"
         >
           {tasks.map((option) => (
@@ -555,13 +555,13 @@ function TranscriptView({
             onClick={() => setSeatId(option.id)}
             style={seatStyle(option.color)}
             className={cn(
-              "flex cursor-pointer items-center gap-1.5 rounded-[7px] px-2.5 py-1.5 text-[12px]",
+              "flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-[12px]",
               option.id === seatId
                 ? "bg-(--seat)/16 font-semibold text-(--seat-fg)"
                 : "text-muted hover:bg-panel",
             )}
           >
-            <span className="size-[7px] rounded-full bg-(--seat)" />
+            <span className="size-[7px] bg-(--seat)" />
             {option.name}
             {row?.cells?.[option.id]?.resolved === true && <span className="text-ok">✓</span>}
             {row?.cells?.[option.id]?.resolved === false && <span className="text-bad">✗</span>}
@@ -605,9 +605,9 @@ function TranscriptView({
                 setEnabled((state) => ({ ...state, [group.key]: !state[group.key] }))
               }
               className={cn(
-                "cursor-pointer rounded-[6px] px-2 py-1 font-mono text-[11px]",
+                "cursor-pointer px-2 py-1 font-mono text-[11px]",
                 enabled[group.key]
-                  ? "bg-gold/15 text-accent"
+                  ? "bg-accent/15 text-accent"
                   : "text-dim line-through hover:bg-panel",
               )}
             >
@@ -642,9 +642,9 @@ function TranscriptView({
                     type="button"
                     onClick={() => setSpeed(option)}
                     className={cn(
-                      "cursor-pointer rounded-[6px] px-2 py-1 font-mono text-[11px]",
+                      "cursor-pointer px-2 py-1 font-mono text-[11px]",
                       speed === option
-                        ? "bg-gold font-semibold text-ink"
+                        ? "bg-accent font-semibold text-on-accent"
                         : "text-muted hover:bg-panel",
                     )}
                   >

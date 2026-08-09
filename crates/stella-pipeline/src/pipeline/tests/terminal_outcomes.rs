@@ -1,6 +1,7 @@
 //! Terminal-outcome witnesses: a red final verdict reports
 //! `VerificationFailed` rather than `Completed`, an enforced budget breach in
-//! triage settles its spend and starts no further paid stage, and an
+//! triage settles its spend and starts no further paid stage, an expired task
+//! deadline stops the run before it dispatches anything at all, and an
 //! unresolvable independent witness author degrades the run instead of
 //! aborting it.
 
@@ -283,6 +284,106 @@ async fn enforced_budget_breach_in_triage_stops_before_the_next_paid_stage() {
         provider.remaining().await,
         2,
         "the next paid stage must not start after triage crosses the cap"
+    );
+}
+
+/// #2238 witness: an already-expired task deadline stops the run before it
+/// dispatches a single paid stage call.
+///
+/// Fails on `main`, where `BudgetGuard::set_task_deadline` was honoured only
+/// by the engine's step loop (`driver::settlement::check_budget`): every raw
+/// stage went through `Pipeline::dispatch_raw`, whose one budget rung matched
+/// `BudgetOutcome::AbortTurn` — a dollar rung — so triage dispatched here
+/// regardless of the clock, and research, plan, scope, witness, verify and
+/// verdict followed it against a harness already about to SIGKILL the
+/// container.
+///
+/// The dollar axes are deliberately unarmed (`BudgetMode::Off`, no limits):
+/// the only ceiling in this fixture is the wall clock, so nothing but the
+/// clock can be what stopped it.
+#[tokio::test]
+async fn an_expired_task_deadline_stops_the_run_before_any_paid_stage() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("multi"),
+        text_result(r#"["plan must never run"]"#),
+        text_result("worker must never run"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            touches: &NoFileTouches,
+            diagnostics: &runner,
+            tests: &runner,
+            lint: None,
+            mutation: None,
+            coverage: None,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    budget.set_task_deadline(Some(
+        std::time::Instant::now() - std::time::Duration::from_secs(7),
+    ));
+
+    let outcome = pipeline
+        .run(
+            "Refactor the parser and update all callers",
+            &mut messages,
+            &mut budget,
+        )
+        .await
+        .expect("an expired deadline is a typed outcome, not a run error");
+
+    assert!(
+        matches!(
+            outcome.status,
+            PipelineStatus::Aborted {
+                kind: AbortKind::DeliberateStop,
+                ..
+            }
+        ),
+        "stopping on the clock is a deliberate stop, not a failure: {:?}",
+        outcome.status
+    );
+    assert_eq!(
+        outcome.total_cost_usd, 0.0,
+        "nothing was dispatched, so nothing was spent"
+    );
+    assert_eq!(
+        provider.remaining().await,
+        3,
+        "not one scripted completion may be consumed after the deadline has passed"
+    );
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, .. } if message.contains("task deadline exceeded by")
+        )),
+        "the stream must name the clock as the reason, not leave it to argv: {events:?}"
     );
 }
 

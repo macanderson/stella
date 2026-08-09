@@ -14,6 +14,26 @@ use super::*;
 use crate::triage::parse_research_questions;
 
 impl Pipeline<'_> {
+    /// Record that this turn's class came from the deterministic keyword floor
+    /// rather than from a model (#2414).
+    ///
+    /// Both channels, for the same reason [`Pipeline::unproven`] uses both:
+    /// the warning is the prose account a watching human reads, and the proof
+    /// step is the structured record a bench census can count. The fallback
+    /// this reports is correct and load-bearing — triage must never fail a
+    /// run — but it silently became the common case, and every downstream
+    /// decision keyed off the class then looked like a decision while being a
+    /// default.
+    fn triage_degraded(&self, reason: &str) {
+        self.warn(format!(
+            "triage did not answer, so this turn's class came from the deterministic keyword \
+             floor: {reason}"
+        ));
+        self.emit_proof(ProofStep::TriageDegraded {
+            reason: reason.to_string(),
+        });
+    }
+
     /// Classify the goal and resolve the turn's assurance plan.
     ///
     /// Returns the resolved assessment together with the research questions
@@ -93,10 +113,34 @@ impl Pipeline<'_> {
             .await
         {
             Ok(result) => Some(result.text),
-            Err(RawCallError::Budget(abort)) => return Err(abort),
-            Err(RawCallError::Provider | RawCallError::Timeout) => None,
+            // Triage is the run's first paid call: an expired clock here means
+            // nothing has been produced, so stopping is honest — there is no
+            // partial work a pivot could settle with.
+            Err(RawCallError::Budget(abort) | RawCallError::Deadline(abort)) => return Err(abort),
+            // Timeout and provider error are named apart, because the two cost
+            // the run very different things and only one of them is a bill for
+            // dead air. A census of these records is what turns "triage is
+            // slow" into a number (#2414).
+            Err(RawCallError::Timeout) => {
+                self.triage_degraded(&format!(
+                    "the triage call timed out at its {:?} ceiling",
+                    self.config.triage_latency_ceiling
+                ));
+                None
+            }
+            Err(RawCallError::Provider) => {
+                self.triage_degraded("the triage call failed at the provider");
+                None
+            }
         };
         let assessment = response.as_deref().and_then(parse_triage_response);
+        // A response that arrived and said nothing the protocol recognizes is
+        // the same outcome as no response — the class comes from the keyword
+        // floor either way — so it is the same record. Only reported when the
+        // call itself succeeded; a failure already reported above.
+        if response.is_some() && assessment.is_none() {
+            self.triage_degraded("the triage response did not follow the classification protocol");
+        }
         // The class still goes through `resolve_task_class` so a failed or
         // unparseable triage lands on the deterministic floor exactly as
         // before; a real assessment keeps its own assurance flags.
@@ -145,6 +189,22 @@ impl Pipeline<'_> {
         // class must genuinely plan, and a conversational turn does no work.
         // Everything cheaper degrades to the empty set — the stage that reads
         // this treats empty as "skip", so the fast paths (L-E2) never pay.
+        //
+        // #2415 asked whether `single` should be allowed to ask them too, and
+        // the answer here is **not yet**, deliberately. The case for widening
+        // is real — a `single` turn has no plan and, until #2415's other half,
+        // had no findings either, which is exactly where a worker is most
+        // exposed. But the ask is not free where it is made: the `RESEARCH:`
+        // line is what moved triage from ~17 output tokens to 330–778, and 27
+        // of 34 triage calls in the runs censused for #2414 then burned the
+        // full latency ceiling and returned nothing at all. Widening the class
+        // that pays for the ask would buy more of that before triage's own
+        // latency is back inside its ceiling — and a triage that times out
+        // supplies neither research questions nor a class.
+        //
+        // So the ordering is: fix what research already costs us (its findings
+        // now reach the worker, not the planner alone), then re-measure triage,
+        // then revisit this gate. Tracked as the follow-up on #2415.
         let research = if resolved.class.plans() && !resolved.conversational {
             response
                 .as_deref()

@@ -26,7 +26,10 @@ set -uo pipefail
 
 MODEL="${1:-claude-sonnet-5}"
 TIER="${2:-xhigh}"
-EXPECT_DIGEST="${3:-c8536200}"
+# The uncapped Sonnet posture (READINESS.md 8.4.5). Was `c8536200`, which is
+# the same arm still asking for a 64,000-token output cap; a rig pinned to that
+# fails preflight, which is the gate doing its job.
+EXPECT_DIGEST="${3:-6c7fc70c}"
 ENV_FILE="${TB_ANTHROPIC_ENV_FILE:-$HOME/.env.harbor-anthropic.local}"
 REPO="${TB_REPO:-$HOME/stella}"
 

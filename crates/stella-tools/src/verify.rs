@@ -59,18 +59,45 @@
 //! is a *compile error* (the test references symbols that don't exist on
 //! HEAD) is a much weaker witness than an assertion failure — the agent
 //! (and any verifier) should check the tail for WHY the old code failed.
+//!
+//! # Running the same proof twice
+//!
+//! The shadow half is a pure function of `(baseline, test files, command,
+//! timeout)` — nothing else in the working tree is visible from inside a
+//! fresh checkout — so an identical call inside one turn reuses its
+//! observation rather than rebuilding for it ([`ShadowMemo`], #2208). The
+//! working-tree half is never reused.
+
+mod memo;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::process::Command;
 
+use memo::{ShadowKey, ShadowObservation};
+pub use memo::{ShadowMemo, ShadowMemoHandle};
+
 use crate::registry::Tool;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 const TAIL_BYTES: usize = 4_000;
 
-pub struct VerifyDone;
+#[derive(Default)]
+pub struct VerifyDone {
+    /// This session's turn-scoped shadow-run memo, shared with the
+    /// [`crate::registry::ToolRegistry`] that brackets the turn. Default
+    /// (unshared, never armed) is inert, so a standalone instance behaves
+    /// exactly as it did before the memo existed.
+    memo: ShadowMemoHandle,
+}
+
+impl VerifyDone {
+    /// Register with the memo the owning registry brackets.
+    pub fn with_memo(memo: ShadowMemoHandle) -> Self {
+        Self { memo }
+    }
+}
 
 /// Run `command` via `bash -c` in `dir` with a process-group kill on
 /// timeout — the shared runner in [`crate::exec`]. Its 30k middle-out cap is
@@ -321,6 +348,85 @@ impl Drop for ShadowDirGuard {
     }
 }
 
+/// Run the witness test against the previous version of the code: a detached
+/// shadow worktree at `baseline_sha`, with `resolved`'s test files (and
+/// nothing else from the working tree) layered in.
+///
+/// This is the expensive half — a fresh checkout and a cold build — and it is
+/// a pure function of its arguments, which is exactly what makes [`memo`]
+/// sound. Keep it that way: a reader added here would silently widen what a
+/// memo key has to cover.
+///
+/// `Err` carries a complete, user-facing message; `Ok` is the run's
+/// `(exit code, output)`.
+async fn run_against_baseline(
+    root: &std::path::Path,
+    baseline_sha: &str,
+    resolved: &[(String, std::path::PathBuf, std::path::PathBuf)],
+    root_rel: &std::path::Path,
+    test_cmd: &str,
+    timeout_secs: u64,
+) -> Result<(i32, String), String> {
+    // Shadow names carry pid + a process-wide counter: two concurrent
+    // verify_done calls (parallel tools, parallel tests) must never collide on
+    // the same worktree path — a timestamp alone can.
+    static SHADOW_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let shadow = std::env::temp_dir().join(format!(
+        "stella_verify_{}_{}",
+        std::process::id(),
+        SHADOW_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    match git_in(root)
+        .args(["worktree", "add", "--detach"])
+        .arg(&shadow)
+        .arg(baseline_sha)
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            return Err(format!(
+                "could not create the shadow worktree for the previous version: {}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+        Err(e) => return Err(format!("could not run git worktree add: {e}")),
+    }
+    // Armed the instant the directory exists. Everything below awaits — the
+    // file copies, and above all the shadow test run, which is where a
+    // cancelled turn actually lands — and none of it is reached when this
+    // future is dropped.
+    let _shadow_dir = ShadowDirGuard {
+        shadow: shadow.clone(),
+    };
+
+    // Layer ONLY the test files onto the previous version.
+    for (rel, src, relpath) in resolved {
+        let dst = shadow.join(relpath);
+        if let Some(parent) = dst.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            cleanup_shadow(root, &shadow).await;
+            return Err(format!(
+                "could not stage test file `{rel}` in the shadow: {e}"
+            ));
+        }
+        if let Err(e) = tokio::fs::copy(src, &dst).await {
+            cleanup_shadow(root, &shadow).await;
+            return Err(format!(
+                "could not copy test file `{rel}` into the shadow: {e}"
+            ));
+        }
+    }
+
+    // Run in the shadow subdirectory matching the workspace root, so a
+    // relative `test_cmd` (e.g. `cargo test`) resolves the same package it
+    // would in the real working tree — not the repo toplevel.
+    let shadow_run = run(test_cmd, &shadow.join(root_rel), timeout_secs).await;
+    cleanup_shadow(root, &shadow).await;
+    shadow_run.map_err(|e| format!("shadow run against the previous version failed to run: {e}"))
+}
+
 #[async_trait]
 impl Tool for VerifyDone {
     fn schema(&self) -> ToolSchema {
@@ -517,78 +623,61 @@ impl Tool for VerifyDone {
             };
         }
 
-        // Half 2: the previous code (HEAD + your new tests) must fail.
-        // Shadow names carry pid + a process-wide counter: two concurrent
-        // verify_done calls (parallel tools, parallel tests) must never
-        // collide on the same worktree path — a timestamp alone can.
-        static SHADOW_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let shadow = std::env::temp_dir().join(format!(
-            "stella_verify_{}_{}",
-            std::process::id(),
-            SHADOW_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        let added = git_in(root)
-            .args(["worktree", "add", "--detach"])
-            .arg(&shadow)
-            .arg(&baseline.sha)
-            .output()
-            .await;
-        match added {
-            Ok(out) if out.status.success() => {}
-            Ok(out) => {
-                return ToolOutput::Error {
-                    message: format!(
-                        "could not create the shadow worktree for the previous version: {}",
-                        String::from_utf8_lossy(&out.stderr)
-                    ),
-                };
-            }
-            Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("could not run git worktree add: {e}"),
-                };
-            }
-        }
-        // Armed the instant the directory exists. Everything below awaits —
-        // the file copies, and above all the shadow test run, which is where
-        // a cancelled turn actually lands — and none of it is reached when
-        // this future is dropped.
-        let _shadow_dir = ShadowDirGuard {
-            shadow: shadow.clone(),
-        };
-
-        // Layer ONLY the test files onto the previous version.
-        for (rel, src, relpath) in &resolved {
-            let dst = shadow.join(relpath);
-            if let Some(parent) = dst.parent()
-                && let Err(e) = tokio::fs::create_dir_all(parent).await
-            {
-                cleanup_shadow(root, &shadow).await;
-                return ToolOutput::Error {
-                    message: format!("could not stage test file `{rel}` in the shadow: {e}"),
-                };
-            }
-            if let Err(e) = tokio::fs::copy(src, &dst).await {
-                cleanup_shadow(root, &shadow).await;
-                return ToolOutput::Error {
-                    message: format!("could not copy test file `{rel}` into the shadow: {e}"),
-                };
-            }
-        }
-
-        // Run in the shadow subdirectory matching the workspace root, so a
-        // relative `test_cmd` (e.g. `cargo test`) resolves the same package it
-        // would in the real working tree — not the repo toplevel.
-        let shadow_cwd = shadow.join(&root_rel);
-        let shadow_run = run(test_cmd, &shadow_cwd, timeout_secs).await;
-        cleanup_shadow(root, &shadow).await;
-        let (old_exit, old_output) = match shadow_run {
-            Ok(pair) => pair,
-            Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("shadow run against the previous version failed to run: {e}"),
-                };
-            }
+        // Half 2: the previous code (the baseline + your new tests) must fail.
+        // An identical call earlier in this turn already answered this: the
+        // shadow sees only the baseline commit, the copied test files, and the
+        // command, so a memo over exactly those is the whole determinant of
+        // the run rather than a guess at it (#2208 — 250s, 24% of a trial's
+        // budget, spent re-deriving one observation on `extract-elf`). No key
+        // means no memo: the run happens.
+        let memo_key = ShadowKey::compute(
+            &canon_toplevel,
+            &root_rel,
+            &baseline.sha,
+            test_cmd,
+            timeout_secs,
+            &resolved,
+        )
+        .await;
+        let (old_exit, old_output, reused) =
+            match memo_key.as_ref().and_then(|key| self.memo.get(key)) {
+                Some(observed) => (observed.exit, observed.output, true),
+                None => {
+                    let (exit, output) = match run_against_baseline(
+                        root,
+                        &baseline.sha,
+                        &resolved,
+                        &root_rel,
+                        test_cmd,
+                        timeout_secs,
+                    )
+                    .await
+                    {
+                        Ok(pair) => pair,
+                        Err(message) => return ToolOutput::Error { message },
+                    };
+                    if let Some(key) = memo_key {
+                        self.memo.insert(
+                            key,
+                            ShadowObservation {
+                                exit,
+                                output: output.clone(),
+                            },
+                        );
+                    }
+                    (exit, output, false)
+                }
+            };
+        // Every verdict below says whether the previous-code run behind it
+        // happened on this call. A reader auditing a proof must never have to
+        // guess that, and the truncated tail it is reading is now evidence
+        // from a run they cannot see in this call's wall clock.
+        let reuse_note = if reused {
+            "\n(previous-code observation REUSED from an identical verify_done call earlier in \
+             this turn — same baseline, same test files, same command, and nothing else in the \
+             working tree is visible from the shadow)"
+        } else {
+            ""
         };
 
         if old_exit == 0 {
@@ -598,7 +687,7 @@ impl Tool for VerifyDone {
                      (baseline {}, {}). It does not witness your change: either the behavior \
                      already existed, the test doesn't exercise the new behavior, or your \
                      change isn't wired in. Strengthen the test so it fails without your \
-                     change.\n--- previous-code output tail ---\n{}",
+                     change.{reuse_note}\n--- previous-code output tail ---\n{}",
                     baseline.short(),
                     baseline.provenance,
                     tail(&old_output)
@@ -624,7 +713,8 @@ impl Tool for VerifyDone {
                      import and fail on the assertion), so the old code fails on the \
                      assertion rather than the import.\n\
                      - new code:      `{test_cmd}` exit 0 (PASS)\n\
-                     - previous code: baseline {} ({}) → exit {old_exit}, before any test ran\n\
+                     - previous code: baseline {} ({}) → exit {old_exit}, before any test \
+                     ran{reuse_note}\n\
                      --- previous-code output tail ---\n{}",
                     baseline.short(),
                     baseline.provenance,
@@ -637,7 +727,8 @@ impl Tool for VerifyDone {
             content: format!(
                 "WITNESS CONFIRMED — deterministic definition of done met:\n\
                  - new code:      `{test_cmd}` exit 0 (PASS)\n\
-                 - previous code: baseline {} ({}) + your test files → exit {old_exit} (FAIL)\n\
+                 - previous code: baseline {} ({}) + your test files → exit {old_exit} \
+                 (FAIL){reuse_note}\n\
                  Check the tail below: an assertion failure is a strong witness; a compile \
                  error (test references symbols that don't exist on the baseline) is weaker \
                  — prefer behavioral assertions when possible.\n\
@@ -657,7 +748,7 @@ mod tests {
     /// Build a tiny git repo with a committed "previous version" and an
     /// uncommitted "new version" + witness test, both as shell scripts (no
     /// toolchain dependency: the "test" greps the implementation file).
-    async fn scaffold(tag: &str) -> std::path::PathBuf {
+    pub(super) async fn scaffold(tag: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
             "stella_verify_test_{tag}_{}_{}",
             std::process::id(),
@@ -710,7 +801,7 @@ mod tests {
         std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
         std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
 
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -740,7 +831,7 @@ mod tests {
         std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
 
         let _trace = crate::subprocess_env::test_support::ScopedEnvVar::set("GIT_TRACE", "1");
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -765,7 +856,7 @@ mod tests {
         // A test that passes on old AND new code witnesses nothing.
         std::fs::write(root.join("witness.sh"), "grep -q 'behavior' impl.txt\n").unwrap();
 
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -801,7 +892,7 @@ mod tests {
         scratch_git(&root, &["commit", "-q", "-m", "agent work, sealed"]);
         std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
 
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -835,7 +926,7 @@ mod tests {
         scratch_git(&root, &["commit", "-q", "-m", "trial work"]);
         std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
 
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -879,7 +970,7 @@ mod tests {
         );
         std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
 
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -934,7 +1025,7 @@ mod tests {
         );
         std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
 
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -971,7 +1062,7 @@ mod tests {
         )
         .unwrap();
 
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -1021,7 +1112,7 @@ mod tests {
         // Test demands behavior nobody implemented.
         std::fs::write(root.join("witness.sh"), "grep -q 'nonexistent' impl.txt\n").unwrap();
 
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({
                     "test_cmd": "bash witness.sh",
@@ -1041,7 +1132,7 @@ mod tests {
     #[tokio::test]
     async fn missing_inputs_and_missing_files_are_named_errors() {
         let root = scaffold("inputs").await;
-        let no_files = VerifyDone
+        let no_files = VerifyDone::default()
             .execute(
                 &serde_json::json!({"test_cmd": "true", "test_files": []}),
                 &root,
@@ -1049,7 +1140,7 @@ mod tests {
             .await;
         assert!(no_files.is_error());
 
-        let ghost = VerifyDone
+        let ghost = VerifyDone::default()
             .execute(
                 &serde_json::json!({"test_cmd": "true", "test_files": ["ghost.sh"]}),
                 &root,
@@ -1138,7 +1229,7 @@ mod tests {
             "test_files": ["witness.sh"],
             "timeout_secs": 60
         });
-        match VerifyDone.execute(&input, &root).await {
+        match VerifyDone::default().execute(&input, &root).await {
             ToolOutput::Error { message } => assert!(message.contains("NOT DONE"), "{message}"),
             other => panic!("expected NOT DONE, got {other:?}"),
         }
@@ -1150,7 +1241,12 @@ mod tests {
 
         // Idempotent: a second run over an already-clean repo prunes nothing
         // and reaches the same verdict.
-        assert!(VerifyDone.execute(&input, &root).await.is_error());
+        assert!(
+            VerifyDone::default()
+                .execute(&input, &root)
+                .await
+                .is_error()
+        );
         assert_eq!(registrations(&root), 0);
 
         std::fs::remove_dir_all(&root).ok();
@@ -1184,7 +1280,7 @@ mod tests {
 
         let run_root = root.clone();
         let handle = tokio::spawn(async move {
-            VerifyDone
+            VerifyDone::default()
                 .execute(
                     &serde_json::json!({
                         "test_cmd": "bash witness.sh",
@@ -1254,7 +1350,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("stella_verify_nogit_{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("witness.sh"), "true\n").unwrap();
-        let out = VerifyDone
+        let out = VerifyDone::default()
             .execute(
                 &serde_json::json!({"test_cmd": "true", "test_files": ["witness.sh"]}),
                 &root,

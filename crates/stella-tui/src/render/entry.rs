@@ -152,7 +152,7 @@ fn plural(n: u64, one: &str, many: &str) -> String {
 /// the same height whether it is following a live thought or previewing a
 /// settled one — the stream stopping must not resize the block under the
 /// reader.
-const THINKING_ROWS: usize = 5;
+pub const THINKING_ROWS: usize = 5;
 
 /// The fold marker on a collapsed reasoning block. Sits *below* a settled
 /// preview (there is more after what you can see) and *above* a live tail

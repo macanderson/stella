@@ -219,7 +219,7 @@ pub(crate) fn spawn_renderer(
                 OutputFormat::Text => match &event {
                     AgentEvent::ToolStart { call } => {
                         tool_names.insert(call.call_id.clone(), call.name.clone());
-                        tui::tool_call_card(&call.name, &call.input, "running");
+                        plain::tool_call_card(&call.name, &call.input, "running");
                     }
                     AgentEvent::ToolResult {
                         call_id,
@@ -235,14 +235,14 @@ pub(crate) fn spawn_renderer(
                             ToolOutput::Ok { content } => content.clone(),
                             ToolOutput::Error { message } => message.clone(),
                         };
-                        tui::tool_result_card(
+                        plain::tool_result_card(
                             name,
                             &content,
                             output.is_error(),
                             Duration::from_millis(*duration_ms),
                         );
                     }
-                    other => tui::render_event(other),
+                    other => plain::render_event(other),
                 },
             }
         }

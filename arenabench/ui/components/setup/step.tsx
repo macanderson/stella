@@ -18,7 +18,7 @@ export function Step({
     <section className={cn("mb-10", className)}>
       <h2 className="mb-[5px] flex items-center gap-[11px] text-base">
         {n !== undefined && (
-          <span className="grid size-[22px] place-items-center rounded-md border border-line bg-panel-2 font-mono text-[11px] text-accent">
+          <span className="grid size-[22px] place-items-center border border-line bg-panel-2 font-mono text-[11px] text-accent">
             {n}
           </span>
         )}
@@ -32,7 +32,7 @@ export function Step({
 
 export function ErrorBox({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-3.5 rounded-lg border border-bad/40 bg-bad/7 px-3.5 py-[11px] text-[13px] text-bad">
+    <div className="mt-3.5 border border-bad/40 bg-bad/7 px-3.5 py-[11px] text-[13px] text-bad">
       {children}
     </div>
   );

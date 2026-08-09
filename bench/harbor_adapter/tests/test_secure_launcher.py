@@ -187,7 +187,8 @@ def _claim_environment(binary: Path, **overrides: str) -> dict[str, str]:
         "OPENROUTER_MANAGEMENT_API_KEY": _TEST_MANAGEMENT_CREDENTIAL,
         "STELLA_BINARY": str(binary),
         "STELLA_SOURCE_COMMIT": _TEST_SOURCE_COMMIT,
-        "STELLA_BUDGET": "0.17",
+        # No `STELLA_BUDGET`. A claim run carries no per-trial spend cap, and
+        # the launcher refuses one rather than pinning it (#2411).
         "STELLA_DISABLE_REFLECTION": "1",
     }
     environment.update(overrides)
@@ -288,7 +289,7 @@ def _confirmatory_command(jobs_dir: Path, job_name: str) -> list[str]:
 
 
 class _FakeProviderKeyReader:
-    def __init__(self, *, usage: float = 0.0, credits: float = 200.0) -> None:
+    def __init__(self, *, usage: float = 0.0, credits: float = 700.0) -> None:
         self.key = {
             "data": {
                 "byok_usage": 0.0,
@@ -300,8 +301,8 @@ class _FakeProviderKeyReader:
                 "is_free_tier": False,
                 "is_management_key": False,
                 "label": "sk-or-v1-tes...cret",
-                "limit": 180.0,
-                "limit_remaining": 180.0 - usage,
+                "limit": 600.0,
+                "limit_remaining": 600.0 - usage,
                 "limit_reset": None,
                 "usage": usage,
                 "usage_daily": usage,
@@ -328,8 +329,8 @@ class _FakeProviderKeyReader:
                 "hash": "",
                 "include_byok_in_limit": True,
                 "label": "sk-or-v1-tes...cret",
-                "limit": 180.0,
-                "limit_remaining": 180.0 - usage,
+                "limit": 600.0,
+                "limit_remaining": 600.0 - usage,
                 "limit_reset": None,
                 "name": "stella-tb21-dedicated-key-v1",
                 "updated_at": "2026-07-21T00:00:00Z",
@@ -475,7 +476,9 @@ class _FakePublicIntentReader:
                 "attempts_per_task": attempts,
                 "n_concurrent_trials": concurrency,
                 "retry_max_retries": 0,
-                "per_trial_budget_usd": 0.17,
+                "per_trial_forecast_usd": (
+                    launcher_module._CANONICAL_PER_TRIAL_FORECAST_USD
+                ),
                 "artifacts": artifacts,
                 "execution": {
                     "base_url": "https://openrouter.ai/api/v1",
@@ -487,7 +490,7 @@ class _FakePublicIntentReader:
                         "provider_key_fingerprint_sha256"
                     ],
                     "label": "stella-tb21-dedicated-key-v1",
-                    "limit_usd": 180.0,
+                    "limit_usd": 600.0,
                     "usage_before_usd": 0.0,
                     "snapshot_at": declared_at.replace("10Z", "09Z"),
                 },
@@ -712,7 +715,7 @@ class _FakePublicIntentReader:
                     "attempts_per_task": None,
                     "n_concurrent_trials": None,
                     "retry_max_retries": None,
-                    "per_trial_budget_usd": None,
+                    "per_trial_forecast_usd": None,
                     "artifacts": {
                         "binary_sha256": None,
                         "source_commit": None,
@@ -808,7 +811,9 @@ class _FakePublicIntentReader:
                 "agent_version": runtime_identity["agent_version"],
                 "adapter_version": runtime_identity["adapter_version"],
                 "adapter_sha256": runtime_identity["adapter_sha256"],
-                "budget_usd": 0.17,
+                # `None`, not a number: the SUT declares that no trial ran
+                # under a spend cap (#2411).
+                "budget_usd": None,
                 "disable_reflection": True,
                 "base_url": runtime_identity["base_url"],
                 "provider_route_policy": runtime_identity["provider_route_policy"],
@@ -1925,7 +1930,10 @@ def test_claim_environment_rejects_runtime_assembled_version_literals(
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
-        ("STELLA_BUDGET", "0.170", "exact STELLA_BUDGET=0.17"),
+        # Inverted by #2411: the drift that matters is a cap being present at
+        # all, not one differing from a frozen value. `0.17` was that frozen
+        # value and is now refused like any other.
+        ("STELLA_BUDGET", "0.17", "STELLA_BUDGET to be unset"),
         (
             "STELLA_DISABLE_REFLECTION",
             "true",
@@ -2550,7 +2558,7 @@ def test_public_intent_waits_two_seconds_then_records_final_get(tmp_path: Path) 
         "available_credits_usd",
         "fetched_at_utc",
     }
-    assert provider_snapshot["limit_usd"] == 180.0
+    assert provider_snapshot["limit_usd"] == 600.0
 
 
 def test_public_intent_rejects_existing_but_mismatched_runtime_source(

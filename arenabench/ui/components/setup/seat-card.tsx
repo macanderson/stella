@@ -81,11 +81,11 @@ export function SeatCard({
 
   return (
     <div
-      className="rounded-[10px] border border-line border-l-[3px] bg-panel p-3 [border-left-color:var(--seat)]"
+      className=" border border-line border-l-[3px] bg-panel p-3 [border-left-color:var(--seat)]"
       style={seatStyle(seat.color)}
     >
       <div className="mb-3.5 flex items-center gap-2.5">
-        <div className="grid size-[26px] place-items-center rounded-[7px] bg-(--seat) font-mono text-xs font-bold text-ink">
+        <div className="grid size-[26px] place-items-center bg-(--seat) font-mono text-xs font-bold text-on-seat">
           {index + 1}
         </div>
         <input

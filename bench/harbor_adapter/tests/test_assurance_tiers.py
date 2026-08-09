@@ -165,7 +165,7 @@ class TestRolesConfigReachesTheDeclaration:
         nothing had examined — for a run whose engine had an independent author
         the whole time.
         """
-        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.delenv(_WITNESS_AUTHOR_ENV, raising=False)
 
@@ -191,7 +191,7 @@ class TestRolesConfigReachesTheDeclaration:
         was diagnosed by opening `stella_engine_posture` and
         `stella_assurance_tiers` side by side in one `result.json`.
         """
-        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.delenv(_WITNESS_AUTHOR_ENV, raising=False)
 
@@ -213,7 +213,7 @@ class TestRolesConfigReachesTheDeclaration:
         used to call the base builder's inputs — which for a roles-config run
         describes a posture the run would never have used.
         """
-        monkeypatch.setenv("STELLA_BUDGET", "0.17")
+        monkeypatch.delenv("STELLA_BUDGET", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-secret")
         monkeypatch.delenv(_WITNESS_AUTHOR_ENV, raising=False)
         (tmp_path / "stella-events.jsonl").write_text(

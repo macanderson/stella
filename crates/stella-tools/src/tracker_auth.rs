@@ -172,16 +172,20 @@ impl TrackerStore {
         Self { path: path.into() }
     }
 
-    /// The default store path, honoring the `STELLA_INTEGRATIONS_FILE`
-    /// override. `None` when no home directory is resolvable.
+    /// The default store path: `$STELLA_INTEGRATIONS_FILE`, else
+    /// `$STELLA_HOME/integrations.json`, else `~/.stella/integrations.json`.
+    /// `None` when no home directory is resolvable.
+    ///
+    /// The narrow per-file override still wins, exactly as it always has; the
+    /// fallback goes through `stella-home` so this file moves with the rest of
+    /// the user tier when `STELLA_HOME` redirects it (#2178).
     pub fn default_path() -> Option<PathBuf> {
         if let Ok(path) = std::env::var("STELLA_INTEGRATIONS_FILE")
             && !path.trim().is_empty()
         {
             return Some(PathBuf::from(path));
         }
-        let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        Some(home.join(".stella").join("integrations.json"))
+        Some(stella_home::stella_home()?.join("integrations.json"))
     }
 
     /// A store at the default path, or `None` when homeless (callers treat

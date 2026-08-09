@@ -70,7 +70,7 @@ clap.workspace = true
 clap_complete.workspace = true
 colored.workspace = true
 # Not for rendering — `stella-tui` owns every ratatui surface. This is here so
-# the two raw-truecolor banners in this crate (`tui.rs`'s wordmark,
+# the two raw-truecolor banners in this crate (`plain.rs`'s wordmark,
 # `init_fx.rs`'s cinematic) can read their stops OUT of `stella_tui::theme`
 # instead of hard-coding hexes beside it. Two recolours' worth of drift got in
 # through exactly that gap; a `Color::Rgb` match closes it.

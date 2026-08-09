@@ -138,8 +138,13 @@ def arena_posture(
                 "effort": resolved.effort or "high",
                 "reasoning": "on" if resolved.reasoning else "off",
             }
-        if resolved.max_tokens:
-            entry["params"] = {"max_tokens": int(resolved.max_tokens)}
+        # No `params.max_tokens`. Omitting it is what asks for the model's own
+        # ceiling: the engine seeds `max_output_tokens` from the catalog entry
+        # and an explicit cap is the only thing that can lower it
+        # (`stella-cli/src/agent/engine.rs`, `tuned_engine_config` — "the
+        # DEFAULT is always the model's maximum"). Sending a number instead
+        # would require knowing every booked model's real ceiling, and picking
+        # one without knowing it is exactly what #2128 was.
         agents[role] = entry
 
         override_model = engine.role(role).model

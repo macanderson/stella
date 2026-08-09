@@ -168,7 +168,6 @@ _TELEMETRY_INCOMPLETE = "stella-adapter: TELEMETRY-INCOMPLETE"
 
 # Defaults when neither Harbor nor the environment specify a value.
 _DEFAULT_MODEL = "anthropic/claude-fable-5"
-_DEFAULT_BUDGET = "5.0"
 
 # What a run with no per-trial spend cap discloses as its cap. A word rather
 # than an omission, because the metadata dict drops `None` values entirely and
@@ -1378,31 +1377,38 @@ class StellaAgent(BaseInstalledAgent):
         return value
 
     def _configured_budget(self) -> str | None:
-        """Resolve the per-trial spend cap, where **empty means no cap**.
+        """Always ``None`` — a benchmark trial runs under no spend cap.
 
-        ``--budget`` is ``Option<f64>`` in the CLI and is documented as "omit to
-        meter spend for the cost summary without ever blocking", so "no cap" is
-        a state the contract already has — reachable only by *omitting* the
-        flag. ``_configured_value`` cannot express it: ``os.environ.get`` treats
-        an exported empty string as a present value, so ``_DEFAULT_BUDGET``
-        never fires and the empty string is forwarded as though it were a
-        number. It then reaches clap's ``parse_budget``, which rejects it
-        (```` is not a number``) and exits 2 **before the turn starts** — a
-        failure Harbor can only record as ``NonZeroAgentExitCodeError``, which
-        is arithmetically indistinguishable from the agent failing the task.
+        This used to resolve a cap, defaulting to ``5.0`` when nothing was
+        exported, with "no cap" reachable only by exporting an empty string.
+        The reasoning for allowing that state was already correct and is now
+        simply the whole rule: *a head-to-head against a comparator that has no
+        spend ceiling has to say "no ceiling" on this side too, or the cap is a
+        difference between the agents that is not the one being measured.*
 
-        A head-to-head against a comparator that has no spend ceiling has to be
-        able to say "no ceiling" on this side too, or the cap is a difference
-        between the agents that is not the one being measured. Empty resolves to
-        ``None`` and every caller omits: the flag, the forwarded variable, and
-        the recorded value alike. ``None`` in the manifest reads as "no cap",
-        which is the truth; ``_DEFAULT_BUDGET`` there would be a number no run
-        ever enforced.
+        #2411 is what closed the argument. In match ``5292a68cdabf`` the capped
+        seat lost three trials, and every one was the guard firing rather than
+        the agent failing: at roughly a third of each task's 900s, each within a
+        step or four of finishing. The ``sqlite-with-gcov`` trial had already
+        proved its instrumented build decoded real coverage counters, and was
+        denied on the step that would have put the binary on ``PATH`` — the one
+        assertion the grader then failed it for.
+
+        A non-empty ``STELLA_BUDGET`` is refused rather than ignored. Ignoring
+        it would let an operator believe a run was bounded when it was not,
+        which is the same class of mistake pointed the other way.
         """
-        budget = self._configured_value("STELLA_BUDGET", _DEFAULT_BUDGET)
-        if budget is None or not str(budget).strip():
-            return None
-        return budget
+        declared = self._configured_value("STELLA_BUDGET", None)
+        if declared is not None and str(declared).strip():
+            raise RuntimeError(
+                f"STELLA_BUDGET={declared!r} is refused: a benchmark trial runs "
+                "under no spend cap, because a ceiling only one side carries "
+                "stops that agent where the work finishes and the score reads "
+                "it as the other agent being better (#2411). Bound spend at the "
+                "provider key, which fails a run visibly instead of truncating "
+                "a trial into a loss."
+            )
+        return None
 
     def _configured_turn_budget(self) -> str | None:
         """Resolve the turn deadline in seconds, or ``None`` for no deadline.

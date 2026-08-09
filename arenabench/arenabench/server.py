@@ -71,7 +71,7 @@ from .credentials import (
     credentials_path,
     missing_required_credentials,
 )
-from .model import EFFORTS, ROLES, MatchSpec
+from .model import EFFORTS, ROLES, MatchSpec, declared_cap_keys
 from .presets import preset_listing
 from .recorder import preflight as recorder_preflight
 from .registry import DEFAULT_REGISTRY, Registry, sample_tasks
@@ -113,6 +113,33 @@ LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1", "[:
 
 def is_loopback(host: str) -> bool:
     return host.strip().lower() in LOOPBACK_HOSTS
+
+
+def _declared_caps(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    """``(seat, key)`` for every per-trial ceiling a create payload declares.
+
+    Every seat and every role is reported rather than the first one found, so
+    an operator editing a two-seat match fixes both in one round trip instead
+    of discovering the second only after resubmitting.
+    """
+    found: list[tuple[str, str]] = []
+    raw_contestants = payload.get("contestants")
+    if not isinstance(raw_contestants, list):
+        return found
+    for index, contestant in enumerate(raw_contestants):
+        if not isinstance(contestant, dict):
+            continue
+        seat = str(contestant.get("name") or contestant.get("id") or f"seat {index}")
+        engine = contestant.get("engine")
+        found.extend((seat, f"engine.{key}") for key in declared_cap_keys(engine))
+        roles = engine.get("roles") if isinstance(engine, dict) else None
+        if isinstance(roles, dict):
+            for role_name, entry in roles.items():
+                found.extend(
+                    (seat, f"engine.roles.{role_name}.{key}")
+                    for key in declared_cap_keys(entry)
+                )
+    return found
 
 
 #: Ports `serve` sweeps looking for an arena that is already up. The default
@@ -334,6 +361,25 @@ class ArenaServer:
     def create_match(self, payload: dict[str, Any]) -> Any:
         payload = dict(payload)
         payload.setdefault("id", uuid.uuid4().hex[:12])
+        # Read off the raw payload, before `from_json`, which drops these keys
+        # silently so archived specs stay loadable. Creating a match is an
+        # authoring act, so here the silence would be the bug: the operator
+        # would be told the seat was configured and the run would ignore it.
+        capped = _declared_caps(payload)
+        if capped:
+            # The fourth refusal, and a sibling of the one below: both protect
+            # the meaning of the number rather than the apparatus. A ceiling
+            # only one seat carries stops that agent where the work finishes,
+            # and the scoreboard then reports our limit as its capability —
+            # measured in match 5292a68cdabf, where every one of the capped
+            # seat's three losses was the budget guard firing at roughly a
+            # third of the task's allowed wall clock (#2411).
+            raise ValueError(
+                "; ".join(f"{seat}: {key}" for seat, key in capped)
+                + " — per-trial ceilings are refused. Bound spend at the "
+                "provider key, which fails a run visibly instead of "
+                "truncating a trial into a loss"
+            )
         spec = MatchSpec.from_json(payload)
         # A seat's declared credential names resolve from the arena's own
         # environment first, then the saved credential set, then — for a seat

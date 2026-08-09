@@ -380,7 +380,7 @@ fn list_lines(file: &CredentialsFile, settings: &Settings) -> Vec<String> {
 
 fn run_list() -> Result<(), String> {
     let file = load_file()?;
-    crate::tui::section_header("Stored credentials");
+    crate::plain::section_header("Stored credentials");
     let lines = {
         // Best-effort: a malformed settings.json costs the provider-config
         // lookup its overrides, never the listing itself.

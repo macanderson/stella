@@ -527,7 +527,7 @@ from, `openrouter/` prefix and all. The prefix is part of the hashed dict, so
 different digests; an abbreviated label here is what let three rows pair a
 prefixed left column with a bare right one.
 
-| model | published as (`judge`) | now (`verifier`) |
+| model | published as (`judge`) | after the rename (`verifier`) |
 |---|---|---|
 | `openrouter/deepseek/deepseek-v4-pro` | `9d7ad135…` | `0d732c3e…` |
 | `openrouter/z-ai/glm-5.2` | `7e9da633…` | `41f9be3b…` |
@@ -538,9 +538,10 @@ prefixed left column with a bare right one.
 | `openrouter/anthropic/claude-fable-5` | `18a1ba22…` | `e5059092…` |
 
 Every left-column value reproduces from the pre-rename `_benchmark_engine_posture`
-for the model string on its row, and every right-column value from the current
-one. `bench/terminal-bench-2.1-protocol.md` records the same model strings for
-the first three.
+for the model string on its row, and every right-column value from the posture
+as it stood between that rename and 8.4.5 below — which moved them all again.
+`bench/terminal-bench-2.1-protocol.md` records the same model strings for the
+first three.
 
 What this does and does not invalidate:
 
@@ -557,6 +558,46 @@ What this does and does not invalidate:
   holding the old default will fail preflight — that is the gate working.
 
 Anyone re-freezing an arm across this boundary should quote both digests.
+
+#### 8.4.5 The output cap left the posture entirely (#2411)
+
+The third boundary, and the first where a digest moved because the arm actually
+changed rather than because a key was renamed.
+
+`params.max_tokens` is no longer sent for any role, on any model. Omitting it is
+what asks for the model's own ceiling: `tuned_engine_config` seeds
+`max_output_tokens` from the catalog entry, and only an explicit cap can lower
+it. The posture therefore stopped carrying a number whose sole correct value
+was a copy of one the engine already reads from the authority.
+
+What forced it was the dollar axis of the same rule. Match `5292a68cdabf` ran
+Stella under `budget_usd = 1.0` against a comparator configured `null`, and all
+three of Stella's losses were the budget guard firing — at roughly a third of
+each task's 900s allowance, every one of them within a step or four of done.
+The `sqlite-with-gcov` trial had already proved its instrumented build decoded
+real coverage counters and was denied on the step that would have put the
+binary on `PATH`; that missing binary is the single assertion the grader failed
+it for. ArenaBench now refuses `budget_usd` and `max_tokens` outright, and the
+frozen posture holds neither.
+
+| model | after the rename | now (uncapped) |
+|---|---|---|
+| `anthropic/claude-sonnet-5` | `c8536200…` | `6c7fc70c…` |
+| `anthropic/claude-fable-5` | `642746e4…` | `2099a1a4…` |
+| `openrouter/anthropic/claude-fable-5` | `e5059092…` | `b5755ccf…` |
+
+What this does and does not invalidate:
+
+- **No published number is wrong, and none becomes comparable.** Every recorded
+  run ran the posture its own digest describes. A Sonnet arm published under
+  `c8536200…` asked for 64,000 output tokens; one published under `6c7fc70c…`
+  asks for the model's 128,000. Those are different arms and the digests say so
+  — which is the mechanism working, not a wrinkle to smooth over.
+- **A re-run is not a regression test against an older number.** Comparing a
+  post-#2411 solve rate with a pre-#2411 one compares two configurations, so
+  quote both digests and say which is which.
+- `preflight_effort.sh` now defaults `EXPECT_DIGEST` to `6c7fc70c`. A rig still
+  holding `c8536200` will fail preflight — that is the gate working.
 
 ### 8.5 The measured baseline
 

@@ -123,13 +123,14 @@ fn parked_wait_events_roundtrip_under_their_own_tags() {
 }
 
 #[test]
-fn budget_tick_roundtrips_with_session_axis() {
+fn budget_tick_roundtrips_with_session_and_deadline_axes() {
     let event = AgentEvent::BudgetTick {
         spent_usd: 0.42,
         limit_usd: Some(2.5),
         mode: BudgetMode::Enforced,
         session_spent_usd: Some(1.75),
         session_limit_usd: Some(10.0),
+        deadline_remaining_ms: Some(842_137),
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
@@ -140,19 +141,23 @@ fn budget_tick_roundtrips_with_session_axis() {
             mode,
             session_spent_usd,
             session_limit_usd,
+            deadline_remaining_ms,
         } => {
             assert_eq!(spent_usd, 0.42);
             assert_eq!(limit_usd, Some(2.5));
             assert_eq!(mode, BudgetMode::Enforced);
             assert_eq!(session_spent_usd, Some(1.75));
             assert_eq!(session_limit_usd, Some(10.0));
+            // Byte-for-byte (invariant 4) — the reason the axis is a
+            // whole-millisecond integer and not a float of seconds.
+            assert_eq!(deadline_remaining_ms, Some(842_137));
         }
         other => panic!("unexpected variant: {other:?}"),
     }
 }
 
 #[test]
-fn budget_tick_without_session_fields_parses_with_none() {
+fn budget_tick_without_session_or_deadline_fields_parses_with_none() {
     // A stream recorded BEFORE the session axis existed must still parse,
     // with both new fields defaulting to `None` (not `0.0`, which would
     // read as a real "spent nothing").
@@ -161,10 +166,15 @@ fn budget_tick_without_session_fields_parses_with_none() {
         Ok(AgentEvent::BudgetTick {
             session_spent_usd,
             session_limit_usd,
+            deadline_remaining_ms,
             ..
         }) => {
             assert_eq!(session_spent_usd, None);
             assert_eq!(session_limit_usd, None);
+            // `None` is the honest decode for a pre-#2240 journal: it could
+            // not say whether a deadline was armed, and `Some(0)` would be
+            // this parser inventing "already out of time".
+            assert_eq!(deadline_remaining_ms, None);
         }
         other => panic!("old stream must parse: {other:?}"),
     }
@@ -1270,6 +1280,7 @@ fn type_tag_matches_the_serde_type_wire_tag() {
             mode: BudgetMode::Off,
             session_spent_usd: None,
             session_limit_usd: None,
+            deadline_remaining_ms: None,
         },
         AgentEvent::UsageIncomplete {
             role: ModelCallRole::Worker,

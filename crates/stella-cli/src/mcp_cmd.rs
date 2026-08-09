@@ -439,7 +439,7 @@ fn runtime() -> Result<tokio::runtime::Runtime, String> {
 }
 
 fn run_list(workspace_root: &Path) -> Result<(), String> {
-    crate::tui::section_header("Configured MCP servers");
+    crate::plain::section_header("Configured MCP servers");
     let cfg = load_config(workspace_root)?;
     if cfg.names().is_empty() {
         println!(
@@ -483,7 +483,7 @@ fn run_list(workspace_root: &Path) -> Result<(), String> {
 
 fn run_search(workspace_root: &Path, query: &str, limit: u32) -> Result<(), String> {
     let registry_url = resolve_registry_url(workspace_root);
-    crate::tui::section_header(&format!("MCP registry search — {registry_url}"));
+    crate::plain::section_header(&format!("MCP registry search — {registry_url}"));
     let query_opt = (!query.trim().is_empty()).then_some(query);
     let page = runtime()?.block_on(search(&registry_url, query_opt, None, limit))?;
     if page.entries.is_empty() {
@@ -559,7 +559,7 @@ fn run_remove(workspace_root: &Path, name: &str) -> Result<(), String> {
 }
 
 fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
-    crate::tui::section_header(&format!("OAuth login — {name}"));
+    crate::plain::section_header(&format!("OAuth login — {name}"));
     runtime()?.block_on(oauth_login(
         workspace_root,
         name,
@@ -596,7 +596,7 @@ fn run_logout(workspace_root: &Path, name: &str) -> Result<(), String> {
 }
 
 fn run_usage(workspace_root: &Path) -> Result<(), String> {
-    crate::tui::section_header("MCP tool usage (.stella/private/store.db)");
+    crate::plain::section_header("MCP tool usage (.stella/private/store.db)");
     let stats = usage_stats(workspace_root)?;
     if stats.is_empty() {
         println!(
