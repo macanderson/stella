@@ -39,6 +39,7 @@ use stella_protocol::{
 };
 
 use super::probe;
+use super::progress::Progress;
 
 /// One document to extract from: its workspace-relative path, its text, and the
 /// tier the scan assigned it (which sets the eligibility reason).
@@ -320,7 +321,7 @@ async fn call_model(
     rel: &str,
     content: &str,
 ) -> Result<(Vec<Claim>, f64), String> {
-    let bounded = bounded_content(content);
+    let (bounded, _skipped) = bounded_content(content);
     let user = format!(
         "Extract atomic context records from `{rel}`. Return ONLY the JSON array.\n\n\
          --- {rel} ---\n{bounded}"
@@ -343,7 +344,13 @@ async fn call_model(
             reasoning: None,
             params: None,
         };
-        match crate::accounted_call::complete_standalone(
+        // The wait is narrated because it is long: this is a paid call that
+        // runs for minutes on a real instruction file, and an unnarrated one
+        // reads as a wedged process. `finish` runs on the statement after the
+        // `await`, before the result is inspected, so none of the several error
+        // paths below can leave a ticker drawing over later output.
+        let progress = Progress::start(attempt_label(rel, attempt, ATTEMPTS));
+        let outcome = crate::accounted_call::complete_standalone(
             root,
             provider,
             ModelCallRole::DomainInference,
@@ -352,8 +359,9 @@ async fn call_model(
             None,
             request,
         )
-        .await
-        {
+        .await;
+        progress.finish().await;
+        match outcome {
             Ok(accounted) => {
                 total_cost += accounted.cost_usd;
                 let cut_off = accounted.result.finish_reason == Some(FinishReason::Length);
@@ -377,7 +385,18 @@ async fn call_model(
                     // just truncate at the same point — give it more room instead
                     // and repeat the same request rather than re-litigating it.
                     Err(_) if cut_off => {
-                        max_output_tokens = max_output_tokens.saturating_mul(2);
+                        let widened = max_output_tokens.saturating_mul(2);
+                        // Said out loud because it is the difference between a
+                        // one-call wait and a two-call one, at twice the spend.
+                        println!(
+                            "    {}",
+                            format!(
+                                "the reply filled its {max_output_tokens}-token budget before \
+                                 the record list ended — retrying with {widened}"
+                            )
+                            .yellow()
+                        );
+                        max_output_tokens = widened;
                     }
                     Err(_) => {
                         // Feed the failure back once.
@@ -733,12 +752,42 @@ fn digest_of(content: &str) -> String {
 
 /// Cap the document at [`MAX_PROMPT_CHARS`], marking a truncation so the model
 /// (and a later reader of the prompt) can see the tail was dropped.
-fn bounded_content(content: &str) -> String {
-    if content.chars().count() <= MAX_PROMPT_CHARS {
-        return content.to_string();
+///
+/// Returns the bounded text and how many characters were dropped, because the
+/// marker in the prompt only tells the *model* that the tail is missing. The
+/// person who typed `stella ingest AGENTS.md` was told nothing at all, and this
+/// repository's own `AGENTS.md` is 44,545 characters — 46% of it never reached
+/// the extractor, so the god-file rules, the glossary and the testing section
+/// could not have produced a record and no output said so.
+fn bounded_content(content: &str) -> (String, usize) {
+    let total = content.chars().count();
+    if total <= MAX_PROMPT_CHARS {
+        return (content.to_string(), 0);
     }
     let kept: String = content.chars().take(MAX_PROMPT_CHARS).collect();
-    format!("{kept}\n\n[... document truncated for extraction ...]")
+    (
+        format!("{kept}\n\n[... document truncated for extraction ...]"),
+        total - MAX_PROMPT_CHARS,
+    )
+}
+
+/// How many characters of `content` extraction will not read.
+///
+/// The cap belongs to this module, so the caller asks the question rather than
+/// holding a second copy of the number.
+pub(super) fn skipped_chars(content: &str) -> usize {
+    bounded_content(content).1
+}
+
+/// What the progress line says: the document, and which attempt this is once
+/// there has been more than one. A silent second attempt is the other half of
+/// why a cut-off document looked wedged — it doubles the wait and the spend.
+fn attempt_label(rel: &str, attempt: usize, attempts: usize) -> String {
+    if attempt == 0 {
+        format!("extracting {rel}")
+    } else {
+        format!("extracting {rel} (attempt {} of {attempts})", attempt + 1)
+    }
 }
 
 /// Lower-case, dash-separated slug keeping `[a-z0-9-]`; runs of other characters

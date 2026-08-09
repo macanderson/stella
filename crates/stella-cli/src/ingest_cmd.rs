@@ -27,6 +27,7 @@ use stella_core::ingest::{self, Candidate, Plan, Tier};
 
 mod extract;
 pub(crate) mod probe;
+mod progress;
 
 pub(crate) use extract::derive_set_id;
 
@@ -228,6 +229,51 @@ fn print_held_back(found: &[Found]) {
     }
 }
 
+/// Say how much of a document extraction will not read.
+///
+/// Only the head of a long document reaches the model. Nothing used to tell the
+/// person who named the file, so a 44,545-character `AGENTS.md` reported "688
+/// lines", extracted 54% of itself, and read as a complete success — the god
+/// files, the glossary and the testing section could not have produced a record
+/// and no output said why. Printed beside the line count so the two numbers a
+/// reader would compare sit together.
+fn report_truncation(content: &str) {
+    if let Some(notice) = truncation_notice(content) {
+        println!("    {}", notice.yellow());
+    }
+}
+
+/// The notice itself, or `None` when the whole document is extracted.
+///
+/// Separated from the printing so the sentence a person reads is a value a test
+/// can assert on, rather than something only a human running the command sees.
+fn truncation_notice(content: &str) -> Option<String> {
+    let skipped = extract::skipped_chars(content);
+    if skipped == 0 {
+        return None;
+    }
+    let total = content.chars().count();
+    Some(format!(
+        "heads up: only the first {} of {total} characters are extracted — {skipped} ({}%) are \
+         skipped, so nothing below that point can become a record",
+        total - skipped,
+        percent(skipped, total),
+    ))
+}
+
+/// `part` as a whole percentage of `whole`, rounded to nearest.
+///
+/// Widened to `u64` for the multiply: these are character counts of a
+/// user-named file, which no cap bounds, and a 32-bit `usize` would overflow
+/// on one of ~43 million characters.
+fn percent(part: usize, whole: usize) -> u64 {
+    if whole == 0 {
+        return 0;
+    }
+    let (part, whole) = (part as u64, whole as u64);
+    (part * 100 + whole / 2) / whole
+}
+
 /// `stella ingest <paths>` — the user named files, so tiering does not apply.
 ///
 /// Reads and displays each named file, then hands the readable ones to
@@ -263,6 +309,7 @@ fn run_named(
                     format!("{} lines", content.lines().count()).dimmed(),
                     note
                 );
+                report_truncation(&content);
                 docs.push(extract::NamedDoc {
                     rel,
                     content,
@@ -310,5 +357,49 @@ pub fn run(
         // refresh — not just the network-free half — is safe.
         crate::model_catalog::bootstrap();
         run_named(&root, &args.paths, model, api_key, base_url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A document the cap does not reach is extracted whole, and saying
+    /// anything about truncation would be a lie.
+    #[test]
+    fn a_short_document_gets_no_notice() {
+        assert_eq!(truncation_notice("# short\n\nnothing to drop.\n"), None);
+    }
+
+    /// The witness for the silent-truncation defect: a document over the cap
+    /// used to be extracted at 54% with no output saying so.
+    #[test]
+    fn an_oversized_document_says_how_much_is_skipped() {
+        // The shape that produced the defect: this repository's own AGENTS.md,
+        // 44,545 characters against a 24,000-character cap.
+        let content = "x".repeat(44_545);
+        let notice = truncation_notice(&content).expect("a document over the cap is truncated");
+        assert!(notice.contains("24000"), "kept count missing: {notice}");
+        assert!(notice.contains("44545"), "total missing: {notice}");
+        assert!(notice.contains("20545"), "skipped count missing: {notice}");
+        assert!(notice.contains("46%"), "skipped share missing: {notice}");
+    }
+
+    /// One character past the cap is still reported. A notice that appeared
+    /// only once the loss was large would be silent for exactly the documents
+    /// whose missing tail is hardest to notice.
+    #[test]
+    fn one_character_over_the_cap_is_still_reported() {
+        let notice = truncation_notice(&"x".repeat(24_001)).expect("one over the cap truncates");
+        assert!(notice.contains("1 (0%)"), "{notice}");
+    }
+
+    #[test]
+    fn percent_rounds_to_nearest_and_never_divides_by_zero() {
+        assert_eq!(percent(0, 0), 0);
+        assert_eq!(percent(20_545, 44_545), 46);
+        assert_eq!(percent(1, 3), 33);
+        assert_eq!(percent(2, 3), 67);
+        assert_eq!(percent(7, 7), 100);
     }
 }

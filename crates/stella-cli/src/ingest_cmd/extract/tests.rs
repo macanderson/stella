@@ -485,3 +485,53 @@ fn the_stamped_precedence_agrees_with_the_force_it_came_from() {
         );
     }
 }
+
+/// A document inside the cap reaches the model whole, and nothing is reported
+/// as dropped.
+#[test]
+fn a_document_within_the_cap_is_sent_whole_and_drops_nothing() {
+    let content = "# notes\n\nthe package manager is pnpm.\n";
+    let (bounded, skipped) = bounded_content(content);
+    assert_eq!(bounded, content);
+    assert_eq!(skipped, 0);
+    assert_eq!(skipped_chars(content), 0);
+}
+
+/// The witness for the silent-truncation defect: the cap was applied and the
+/// dropped tail was reported to the model in the prompt, but the count never
+/// left this function, so no caller could tell anyone.
+#[test]
+fn an_oversized_document_reports_the_characters_it_dropped() {
+    let content = "x".repeat(MAX_PROMPT_CHARS + 4_096);
+    let (bounded, skipped) = bounded_content(&content);
+    assert_eq!(skipped, 4_096);
+    assert_eq!(skipped_chars(&content), 4_096);
+    assert!(
+        bounded.starts_with(&"x".repeat(MAX_PROMPT_CHARS)),
+        "the head must survive intact"
+    );
+    assert!(
+        bounded.contains("[... document truncated for extraction ...]"),
+        "the model must still be told the tail is missing"
+    );
+}
+
+/// The cap counts characters, not bytes: a multi-byte document must not be cut
+/// early (or mid-codepoint) because its bytes outrun its characters.
+#[test]
+fn the_cap_counts_characters_not_bytes() {
+    let content = "é".repeat(MAX_PROMPT_CHARS);
+    assert_eq!(content.len(), MAX_PROMPT_CHARS * 2, "fixture is multi-byte");
+    assert_eq!(skipped_chars(&content), 0);
+}
+
+/// The first attempt is unadorned; a retry names itself, because the second
+/// silent call is what turned a two-minute wait into a five-minute one.
+#[test]
+fn only_a_retry_names_its_attempt() {
+    assert_eq!(attempt_label("AGENTS.md", 0, 2), "extracting AGENTS.md");
+    assert_eq!(
+        attempt_label("AGENTS.md", 1, 2),
+        "extracting AGENTS.md (attempt 2 of 2)"
+    );
+}
