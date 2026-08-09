@@ -348,6 +348,65 @@ that resolves each role also carries reliability machinery:
   no credential falls back to the worker with a notice. Configuration can
   never turn a runnable pipeline into an error.
 
+## Who does what: the responsibility roster
+
+Routing above answers *which model serves a role*. The roster answers the two
+questions underneath it — **who performs each responsibility**, and **whether
+it runs at all** — as configuration rather than as a literal at each call site.
+
+Keys are the same names the paid-call ledger uses (`triage`, `research`,
+`plan`, `witness_author`, `worker`, `distress_guidance`, `verdict`), so a row
+here and a line in your usage report spell the same job the same way:
+
+```json
+{
+  "agent_engine_config": {
+    "responsibilities": {
+      "triage":         { "enabled": false },
+      "witness_author": { "agent": "triage" },
+      "verdict":        { "agent": "worker" }
+    }
+  }
+}
+```
+
+`enabled: false` is a genuine **single-stage ablation**: the stage buys no
+call and emits no event frame, so a recorded session shows the ablation
+instead of leaving a reader to infer it from a missing call. That is what
+`--no-pipeline` cannot do — it removes triage, plan, scope, witness and verify
+together, so nothing measured against it can be attributed to one stage.
+
+Every stage stays on unless you turn it off, and an unconfigured roster is the
+pipeline exactly as it ships.
+
+### What it refuses, and what it merely reports
+
+A roster that cannot be honoured **refuses the run before any spend** rather
+than quietly running something else: an unknown responsibility, an agent name
+nothing resolves, or a disabled `worker` (a run that executes nothing gives
+every later stage an empty diff to grade). All problems are reported at once.
+
+Two things are legal but never silent:
+
+- **Turning the verdict off** does not downgrade the run to a claimed-done. The
+  deterministic ladder still runs — it is not the verifier — and the turn
+  reports that no model reviewed it, so a resulting pass means *nothing failed
+  this*, never *something proved it*.
+- **Binding a graded responsibility to the worker** — self-grading — is a
+  posture you may deliberately want to measure, and it is stated on the run as
+  a lost independence. A witness the worker wrote proves nothing about the
+  worker's diff, so that particular binding disables authoring rather than
+  producing a false proof.
+
+### What it deliberately cannot do
+
+The roster cannot **reorder** stages or rewire the graph. The ordering is not a
+workflow; it is what makes the witness a proof — the test is authored in a
+pristine snapshot of the pre-execution tree, by a model that is not the worker,
+and its fail→pass flip counts only if the worker never touched it. A config
+file that could move authoring after the diff would still report a flip; the
+flip would simply have stopped meaning anything.
+
 ## Budget enforcement
 
 `--budget <usd>` caps the whole run. The pipeline checks the meter **between**

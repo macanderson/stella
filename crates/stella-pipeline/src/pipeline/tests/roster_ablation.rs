@@ -18,51 +18,74 @@
 
 use super::*;
 
-/// Build the standard single-shot pipeline used by every case here, over a
-/// scripted provider whose responses are supplied by the caller.
+/// The scripted ports every case here shares, owned in one place so they
+/// outlive the [`Pipeline`] that borrows them.
 ///
-/// A local helper rather than a shared one: the point of each case is which
-/// calls the provider is asked for, so the script has to stay visible at the
-/// call site.
-fn pipeline_with<'p>(
-    provider: &'p ScriptedProvider,
-    resolver: &'p OneProvider<'p>,
-    runner: &'p ScriptedRunner,
-    tools: &'p EmptyTools,
-    recall: &'p NoContextRecall,
-    repo: &'p NoRepoStructure,
-    repo_status: &'p NoRepoStatus,
-    approvals: &'p AutoApproveGate,
-    sleeper: &'p NoopSleeper,
-    router: &'p Router,
-    tx: mpsc::UnboundedSender<AgentEvent>,
-    config: PipelineConfig,
-) -> Pipeline<'p> {
-    let _ = provider;
-    Pipeline::new(
-        PipelinePorts {
-            router,
-            providers: resolver,
-            tools,
-            recall,
-            repo,
-            repo_status,
-            touches: &NoFileTouches,
-            diagnostics: runner,
-            tests: runner,
-            lint: None,
-            mutation: None,
-            coverage: None,
-            approvals,
-            sleeper,
-            hooks: None,
-            candidate_workspaces: None,
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        config,
-    )
+/// A struct rather than a twelve-argument constructor: the doubles are
+/// identical in every case and only the *script* and the *roster* vary, so
+/// threading them through a parameter list would bury the two things each test
+/// is actually about.
+struct Fixture {
+    provider: ScriptedProvider,
+    runner: ScriptedRunner,
+    tools: EmptyTools,
+    recall: NoContextRecall,
+    repo: NoRepoStructure,
+    repo_status: NoRepoStatus,
+    approvals: AutoApproveGate,
+    sleeper: NoopSleeper,
+    router: Router,
+}
+
+impl Fixture {
+    /// `script` is the provider's queued responses, in call order — the part
+    /// of each case that carries its meaning, since a stage that was ablated
+    /// buys no call and so consumes no entry.
+    fn new(script: Vec<CompletionResult>) -> Self {
+        Self {
+            provider: ScriptedProvider::new(script),
+            runner: ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new"),
+            tools: EmptyTools,
+            recall: NoContextRecall,
+            repo: NoRepoStructure,
+            repo_status: NoRepoStatus,
+            approvals: AutoApproveGate,
+            sleeper: NoopSleeper,
+            router: router(),
+        }
+    }
+
+    fn pipeline<'p>(
+        &'p self,
+        resolver: &'p OneProvider<'p>,
+        tx: mpsc::UnboundedSender<AgentEvent>,
+        config: PipelineConfig,
+    ) -> Pipeline<'p> {
+        Pipeline::new(
+            PipelinePorts {
+                router: &self.router,
+                providers: resolver,
+                tools: &self.tools,
+                recall: &self.recall,
+                repo: &self.repo,
+                repo_status: &self.repo_status,
+                touches: &NoFileTouches,
+                diagnostics: &self.runner,
+                tests: &self.runner,
+                lint: None,
+                mutation: None,
+                coverage: None,
+                approvals: &self.approvals,
+                sleeper: &self.sleeper,
+                hooks: None,
+                candidate_workspaces: None,
+                mcp_prefetch: None,
+                steering: None,
+            },
+            tx,
+            config,
+        )
+    }
 }
 
 /// A config with `responsibilities` applied, as the CLI would build it.
@@ -101,28 +124,10 @@ async fn ablating_triage_removes_its_frame_and_leaves_execute_and_verify_running
     // classification call to answer, so a script sized for one would leave a
     // response unconsumed. That the run completes on exactly this script is
     // itself part of the assertion — it proves no triage call was bought.
-    let provider = ScriptedProvider::new(vec![text_result("done")]);
-    let resolver = OneProvider(&provider);
-    let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
-    let (tools, recall, repo) = (EmptyTools, NoContextRecall, NoRepoStructure);
-    let (repo_status, approvals, sleeper) = (NoRepoStatus, AutoApproveGate, NoopSleeper);
-    let router = router();
+    let fixture = Fixture::new(vec![text_result("done")]);
+    let resolver = OneProvider(&fixture.provider);
     let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let pipeline = pipeline_with(
-        &provider,
-        &resolver,
-        &runner,
-        &tools,
-        &recall,
-        &repo,
-        &repo_status,
-        &approvals,
-        &sleeper,
-        &router,
-        tx,
-        config_with(&[("triage", Some(false), None)]),
-    );
+    let pipeline = fixture.pipeline(&resolver, tx, config_with(&[("triage", Some(false), None)]));
 
     let mut messages = vec![CompletionMessage::system("sys")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -147,9 +152,9 @@ async fn ablating_triage_removes_its_frame_and_leaves_execute_and_verify_running
         "ablating triage must not take verification with it; got {stages:?}"
     );
     assert!(
-        provider.shapes().len() == 1,
+        fixture.provider.shapes().len() == 1,
         "exactly one paid call — the worker's — should have been bought; got {}",
-        provider.shapes().len()
+        fixture.provider.shapes().len()
     );
 }
 
@@ -161,25 +166,11 @@ async fn ablating_triage_removes_its_frame_and_leaves_execute_and_verify_running
 /// exactly the attribution #2374 wants.
 #[tokio::test]
 async fn ablating_the_verdict_leaves_the_deterministic_ladder_running() {
-    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
-    let resolver = OneProvider(&provider);
-    let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
-    let (tools, recall, repo) = (EmptyTools, NoContextRecall, NoRepoStructure);
-    let (repo_status, approvals, sleeper) = (NoRepoStatus, AutoApproveGate, NoopSleeper);
-    let router = router();
+    let fixture = Fixture::new(vec![text_result("single"), text_result("done")]);
+    let resolver = OneProvider(&fixture.provider);
     let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let pipeline = pipeline_with(
-        &provider,
+    let pipeline = fixture.pipeline(
         &resolver,
-        &runner,
-        &tools,
-        &recall,
-        &repo,
-        &repo_status,
-        &approvals,
-        &sleeper,
-        &router,
         tx,
         config_with(&[("verdict", Some(false), None)]),
     );
@@ -213,28 +204,10 @@ async fn ablating_the_verdict_leaves_the_deterministic_ladder_running() {
 /// the configuration almost every real run uses.
 #[tokio::test]
 async fn a_default_roster_runs_the_pipeline_that_shipped() {
-    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
-    let resolver = OneProvider(&provider);
-    let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
-    let (tools, recall, repo) = (EmptyTools, NoContextRecall, NoRepoStructure);
-    let (repo_status, approvals, sleeper) = (NoRepoStatus, AutoApproveGate, NoopSleeper);
-    let router = router();
+    let fixture = Fixture::new(vec![text_result("single"), text_result("done")]);
+    let resolver = OneProvider(&fixture.provider);
     let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let pipeline = pipeline_with(
-        &provider,
-        &resolver,
-        &runner,
-        &tools,
-        &recall,
-        &repo,
-        &repo_status,
-        &approvals,
-        &sleeper,
-        &router,
-        tx,
-        config_with(&[]),
-    );
+    let pipeline = fixture.pipeline(&resolver, tx, config_with(&[]));
 
     let mut messages = vec![CompletionMessage::system("sys")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -259,25 +232,11 @@ async fn a_default_roster_runs_the_pipeline_that_shipped() {
 /// asserting anything, which is the loudest way for that regression to land.
 #[tokio::test]
 async fn an_unhonourable_roster_refuses_before_spending_anything() {
-    let provider = ScriptedProvider::new(vec![]);
-    let resolver = OneProvider(&provider);
-    let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
-    let (tools, recall, repo) = (EmptyTools, NoContextRecall, NoRepoStructure);
-    let (repo_status, approvals, sleeper) = (NoRepoStatus, AutoApproveGate, NoopSleeper);
-    let router = router();
+    let fixture = Fixture::new(vec![]);
+    let resolver = OneProvider(&fixture.provider);
     let (tx, _rx) = mpsc::unbounded_channel();
-
-    let pipeline = pipeline_with(
-        &provider,
+    let pipeline = fixture.pipeline(
         &resolver,
-        &runner,
-        &tools,
-        &recall,
-        &repo,
-        &repo_status,
-        &approvals,
-        &sleeper,
-        &router,
         tx,
         config_with(&[("verdict", None, Some("verifer"))]),
     );
@@ -295,7 +254,7 @@ async fn an_unhonourable_roster_refuses_before_spending_anything() {
         error.cause
     );
     assert!(
-        provider.shapes().is_empty(),
+        fixture.provider.shapes().is_empty(),
         "the refusal must land before any paid call"
     );
 }
