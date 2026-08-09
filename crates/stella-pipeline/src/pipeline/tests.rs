@@ -2209,7 +2209,6 @@ mod verifier_evidence_demand;
 /// Verifier != worker for the verdict call (#1795): the opt-in refusal and
 /// the structured grader-independence fact on the snapshot. A child module,
 /// so it reaches the scripted ports above via `super::*`.
-mod verifier_independence;
 /// Proportionate verification: changes with nothing to prove complete with a
 /// stated reason rather than escalating. A child module, so it reaches the
 /// scripted ports above via `super::*`.

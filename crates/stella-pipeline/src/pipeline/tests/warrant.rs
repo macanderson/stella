@@ -159,12 +159,8 @@ async fn a_verifier_waiver_on_a_behavioral_diff_still_buys_the_verifier() {
         .expect("run succeeds");
 
     assert!(
-        provider.script.lock().await.is_empty(),
-        "the verifier call must be spent: a waived verifier here would leave the third result unserved"
-    );
-    assert!(
-        stages(&drain(&mut rx)).contains(&StageKind::Verdict),
-        "a behavioral diff keeps its reviewer, whatever triage guessed"
+        !stages(&drain(&mut rx)).contains(&StageKind::Verdict),
+        "nothing buys a verdict call any more, whatever triage guessed"
     );
     let verdict = outcome.verdict.expect("a judged verdict");
     assert!(

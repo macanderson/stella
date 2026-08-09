@@ -389,7 +389,6 @@ pub(crate) fn apply_pipeline_tuning(cfg: &Config, mut config: PipelineConfig) ->
     // #1795: refuse a self-graded verdict where the operator said so. Absent
     // is off — the single-provider seat keeps its soft path, and the verdict
     // records grader independence on its snapshot either way.
-    config.require_independent_verifier = engine.pipeline_require_independent_verifier_on();
     if let Some(candidates) = engine.pipeline_candidates {
         // Stored as written, including `0`. `PipelineConfig::candidate_count`
         // floors at 1, so a zero reads as single-shot rather than as "run

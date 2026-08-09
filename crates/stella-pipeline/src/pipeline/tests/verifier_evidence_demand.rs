@@ -112,9 +112,9 @@ async fn a_standalone_verifier_pass_buys_one_revision_when_a_command_can_answer(
         "exactly one revision — the ask — should have been spent"
     );
     assert_eq!(
-        calls, 4,
-        "triage, worker, verifier, and the one demanded revision; a second verifier \
-         call would mean the deterministic rung did not take"
+        calls, 3,
+        "triage, worker, and the one demanded revision — the ask is the only thing \
+         the verification side spends, and it spends no model of its own"
     );
 }
 
@@ -153,8 +153,8 @@ async fn no_tracked_command_means_no_ask_at_all() {
          the feature was switched off the first time"
     );
     assert_eq!(
-        calls, 3,
-        "triage, worker, verifier — and nothing else: no revision turn"
+        calls, 2,
+        "triage and worker — and nothing else: an unanswerable ask buys no turn"
     );
 }
 
@@ -189,19 +189,18 @@ async fn the_ask_is_spent_once_even_when_the_evidence_never_arrives() {
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(
         verdict.passed && !verdict.deterministic,
-        "an unanswered ask still records the verifier's pass — as unverified, \
-         never as a failure"
+        "an unanswered ask still ends as unverified — never as a failure"
     );
-    assert_eq!(outcome.revisions, 1, "one ask, not one per verifier pass");
+    assert_eq!(outcome.revisions, 1, "one ask, not one per round");
     assert_eq!(
-        calls, 4,
-        "triage, worker, verifier, and the single ask. The revised turn changed \
-         nothing the verdict depends on, so the verifier's re-read is the CACHED \
-         pass (#1431) — no fifth call"
+        calls, 3,
+        "triage, worker, and the single ask. The re-observed tree lands back on the \
+         same abstention with the ask already spent, and nothing re-reads it"
     );
     assert!(
-        verdict.summary.contains("verdict reused"),
-        "the reused verdict says so, so the transcript stays honest: {}",
+        verdict.summary.starts_with("UNVERIFIED"),
+        "the ask went unanswered, so the turn ends on the abstention and says so in \
+         its first word: {}",
         verdict.summary
     );
 }
@@ -233,7 +232,7 @@ async fn the_demand_can_be_switched_off() {
     let verdict = outcome.verdict.expect("a verdict was produced");
     assert!(verdict.passed && !verdict.deterministic);
     assert_eq!(outcome.revisions, 0, "off means no ask");
-    assert_eq!(calls, 3, "triage, worker, verifier");
+    assert_eq!(calls, 2, "triage and worker");
 }
 
 /// #1509's witness: the demand and a repair are not substitutes, so buying
@@ -302,8 +301,8 @@ async fn an_evidence_demand_does_not_spend_a_repair_round() {
          main the demand eats a repair and this reads 2 with the run refused"
     );
     assert_eq!(
-        calls, 6,
-        "triage, worker, verifier, the demand, and two repair rounds"
+        calls, 5,
+        "triage, worker, the demand, and two repair rounds"
     );
 }
 

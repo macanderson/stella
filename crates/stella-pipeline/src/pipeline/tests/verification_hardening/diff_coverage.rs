@@ -140,7 +140,10 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
         "no-overlap is 'unproven', never a deterministic failure"
     );
     let verdict = outcome.verdict.expect("a verdict was produced");
-    assert!(verdict.passed, "the verifier's PASS still stands");
+    assert!(
+        verdict.passed,
+        "a coincidental pass is not a failure — nothing found a defect"
+    );
     assert!(
         !verdict.deterministic,
         "what it lost is the DETERMINISTIC credit"
@@ -154,13 +157,11 @@ async fn a_flip_whose_test_never_ran_the_changed_lines_is_unproven_not_failed() 
         Some("not_covered"),
         "the result must say plainly what was found"
     );
-    let asked = provider
-        .prompts()
-        .iter()
-        .any(|prompt| prompt.contains("not a finding that the change is wrong"));
     assert!(
-        asked,
-        "the verifier must be told this is an unproven overlap, not a defect"
+        verdict.summary.contains("NOT a finding that the work is absent or wrong"),
+        "an unproven overlap must SAY it is unproven rather than leaving a reader to \
+         infer a defect from a missing badge: {}",
+        verdict.summary
     );
 }
 
@@ -192,29 +193,15 @@ async fn management_calls_ship_a_stable_system_prefix_before_the_volatile_payloa
         triage[1].1
     );
 
-    let verdict = shapes.last().expect("the verdict call was made");
+    // The instruction block is byte-equal whatever the call was about — the
+    // property the cache machinery depends on. Asserted against a reference
+    // built from unrelated inputs, so a builder that leaked any per-call text
+    // into the system block fails here.
+    let reference = crate::triage::triage_prompt("an unrelated task", "an unrelated structure");
     assert_eq!(
-        verdict.len(),
-        2,
-        "the verdict ships [system, user]: {verdict:#?}"
-    );
-    assert_eq!(verdict[0].0, stella_protocol::MessageRole::System);
-    let reference = crate::verify::verifier_prompt(
-        "an unrelated goal",
-        "+an unrelated diff\n",
-        "unrelated evidence",
-        &crate::verify::diff_render::DiffContext::default(),
-    );
-    assert_eq!(
-        verdict[0].1, reference.instructions,
+        triage[0].1, reference.instructions,
         "the system block is the input-independent instruction constant — \
          byte-equal whatever the call was about"
-    );
-    assert_eq!(verdict[1].0, stella_protocol::MessageRole::User);
-    assert!(
-        verdict[1].1.starts_with("## Goal\n"),
-        "the payload leads with the volatile sections: {}",
-        verdict[1].1
     );
 }
 

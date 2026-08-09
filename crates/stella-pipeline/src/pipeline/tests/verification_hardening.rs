@@ -846,8 +846,9 @@ async fn a_persistent_memory_kill_is_never_a_deterministic_test_failure() {
         "a memory kill must never be reported as a deterministic test failure"
     );
     assert!(
-        stages(&events).contains(&StageKind::Verdict),
-        "an unobservable suite is inconclusive — verifier, not revise"
+        !stages(&events).contains(&StageKind::Verdict),
+        "an unobservable suite is inconclusive, and inconclusive is the answer: no \
+         verdict call, and deliberately not a revision either"
     );
     let verdict = outcome.verdict.expect("a verdict was produced");
     let snapshot = verdict

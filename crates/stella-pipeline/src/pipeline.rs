@@ -468,18 +468,6 @@ pub struct PipelineConfig {
     /// number at all: the arm's own digest describes a configuration the run
     /// did not have (#1147).
     pub require_independent_witness: bool,
-    /// Refuse the run when the VERDICT call would resolve to the worker's own
-    /// model (#1795) — the "independent code reviewer" grading the code it
-    /// wrote — instead of proceeding with the once-per-run prose caveat.
-    ///
-    /// Off by default for the same reason its witness sibling above is: a
-    /// single-provider BYOK seat is the common case and must keep working.
-    /// On or off, the verdict's ladder snapshot records grader independence
-    /// as a structured fact (`LadderSnapshot::verifier_independent`), so a
-    /// stored verdict states it without the transcript. Checked before spend,
-    /// like the witness gate: a refusal after the trajectory is bought is a
-    /// trajectory the caller must throw away.
-    pub require_independent_verifier: bool,
     /// Best-of-N (L-E7). `None` or `Some(1)` is single-shot (the default);
     /// `Some(n)` generates n candidate executions — each in an isolated
     /// snapshot of the current tree state when a
@@ -558,7 +546,6 @@ impl Default for PipelineConfig {
             // evidence-demand-1295/README.md` for the measurement.
             verifier_evidence_demand: true,
             require_independent_witness: false,
-            require_independent_verifier: false,
             candidates: None,
             candidate_concurrency: None,
             create_worktrees: crate::ports::WorktreePolicy::default(),
@@ -1010,22 +997,16 @@ impl<'a> Pipeline<'a> {
                 total_cost,
             ));
         }
-        // The same probe, asked about a DIFFERENT responsibility (#1795,
-        // #2467). The VERDICT grader must be independent too when the caller
-        // says so — and until #2381 that was the same question as the witness
-        // author's, because both were served by `Role::Verifier` and neither
-        // could be moved. Asking about `Verdict` by name is what keeps the two
-        // answers correct once a roster can bind them apart; reusing the
-        // witness author's answer here would refuse, or fail to refuse, on the
-        // strength of a row the caller did not ask about.
-        if self.config.require_independent_verifier
-            && let Some(reason) = self.independence_shortfall(ModelCallRole::Verdict)
-        {
-            return Err(PipelineRunError::new(
-                PipelineError::VerifierNotIndependent(reason),
-                total_cost,
-            ));
-        }
+        // There was a second refusal here, asking the same probe about
+        // `ModelCallRole::Verdict` (#1795, #2467). It is gone with the verdict
+        // call: a grader that does not exist cannot fail to be independent of
+        // the worker, and left in place the check refused runs outright,
+        // reporting that "the `verdict` responsibility is disabled by
+        // configuration" as though the operator had done something wrong.
+        //
+        // Independence is now a property of the witness author alone, which is
+        // the check above.
+        //
         // Before triage, before recall, before a single paid call — for the
         // same reason the two independence refusals above sit here.
         if let Err(error) = self.roster_refusal() {
