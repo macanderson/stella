@@ -289,18 +289,58 @@ pub(super) fn normalized_candidate_path(raw: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
+/// The `.git` entries a witness author may read, given the path components
+/// that follow the `.git` component itself.
+///
+/// `.git` used to sit on the blanket denylist below. That is right for
+/// `.git/config` (a remote URL can carry a token), right for `.git/hooks`
+/// (executable code), and useless for `.git/HEAD`. On a git-shaped goal it
+/// was worse than useless: it withheld the *entire* evidence surface from
+/// the one role whose job is to assert something true about the repository.
+/// A `fix-git` bench trial recorded the result — the author's `read_file`
+/// calls on `.git/HEAD` and `.git/logs/HEAD` were both refused as
+/// "credential and private-state paths", so it reasoned counterfactually
+/// about a repository it was forbidden to look at, and insured against its
+/// own uncertainty by writing a universally quantified assertion far
+/// stronger than the goal. The witness then failed on work that was correct.
+///
+/// An allowlist, not a narrowed denylist: a `.git` entry added by a future
+/// git version is denied until someone decides it is safe, which is the
+/// direction this predicate should fail in.
+fn is_readable_git_metadata(rest: &[String]) -> bool {
+    match rest.first().map(String::as_str) {
+        // Ref storage and the position log — the "where has this been?"
+        // evidence. `worktrees/` carries a linked worktree's own HEAD/refs.
+        Some("refs" | "logs" | "worktrees") => true,
+        Some(name) => matches!(
+            name,
+            "head" | "orig_head" | "merge_head" | "fetch_head" | "cherry_pick_head" | "packed-refs"
+        ),
+        // `.git` itself: a directory, never a file to read.
+        None => false,
+    }
+}
+
 fn is_credential_path(path: &str) -> bool {
     let components: Vec<_> = path
         .split('/')
         .map(|component| component.to_ascii_lowercase())
         .collect();
-    components
+    if components
         .windows(2)
         .any(|pair| pair == [".stella", "private"])
-        || components.iter().any(|component| {
+    {
+        return true;
+    }
+    // `.git` is judged POSITIONALLY — what follows it decides — so it is
+    // resolved before the component-wise denylist rather than inside it.
+    if let Some(idx) = components.iter().position(|component| component == ".git") {
+        return !is_readable_git_metadata(&components[idx + 1..]);
+    }
+    components.iter().any(|component| {
             matches!(
                 component.as_str(),
-                ".git" | ".ssh" | ".aws" | ".azure" | ".config" | ".kube"
+                ".ssh" | ".aws" | ".azure" | ".config" | ".kube"
             ) || component == ".env"
                 || component.starts_with(".env.")
                 || matches!(

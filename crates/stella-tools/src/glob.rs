@@ -96,7 +96,8 @@ impl Tool for Glob {
         // this tool's advertised contract.
         let canon_root = root.canonicalize().ok();
 
-        let fd = fd_command(&search_dir, pattern);
+        let keep_git = names_git_dir(search_path, pattern);
+        let fd = fd_command(&search_dir, pattern, keep_git);
         // `run_captured` sets `kill_on_drop` (a cancelled turn must not leave a
         // full-tree walk burning IO) and bounds the wait.
         match crate::exec::run_captured(fd, crate::grep::SEARCH_TIMEOUT_SECS).await {
@@ -129,7 +130,7 @@ impl Tool for Glob {
             }
             crate::exec::Captured::Unavailable => {
                 // fd not installed — fall back to find (same pinned dir).
-                let find = find_command(&search_dir, pattern);
+                let find = find_command(&search_dir, pattern, keep_git);
                 // Same cancellation backstop as the fd arm above.
 
                 match crate::exec::run_captured(find, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
@@ -183,6 +184,21 @@ impl Tool for Glob {
 /// to the `find` fallback ([`find_command`]) so both backends answer alike.
 /// `.gitignore` pruning stays on — that one is a feature, and it is the
 /// documented difference between the two backends.
+///
+/// The `.git` prune is CONDITIONAL, and the condition is the whole point:
+/// it applies only while the caller has not named `.git` themselves
+/// ([`names_git_dir`]). Unconditional, it re-created for `.git` the exact
+/// defect `--hidden` was added to fix one paragraph above — an agent asking
+/// `glob ".git/refs/heads/*"` was told "(no files found)", which is not a
+/// refusal it can act on but a false statement about the tree. A `fix-git`
+/// bench trial burned eight calls on that lie, and the tell was the
+/// asymmetry it produced: `{path: ".git/refs/heads", pattern: "*"}` worked,
+/// because a prune keyed on a path COMPONENT never fires when the walk
+/// starts below that component. `read_file` on the very path glob denied
+/// returned its contents, so the two read tools disagreed about what
+/// existed. When the caller does reach in, `objects` is still pruned — that
+/// is the bulk subtree the perf argument was ever really about, and it is
+/// never what someone asking about `.git` wants.
 /// A zero-match result that is really a backend failure: non-zero exit with
 /// nothing on stdout and a reason on stderr. `None` for the benign shape
 /// (a genuine empty result, or noise-free non-zero exits from unreadable
@@ -210,11 +226,28 @@ fn backend_failure(program: &str, output: &std::process::Output) -> Option<Strin
     Some(format!("{program} error: {first}"))
 }
 
-fn fd_command(search_dir: &std::path::Path, pattern: &str) -> Command {
+/// Whether the caller explicitly reached into `.git`, in either half of the
+/// request. A `.git` component in the pinned `path` or anywhere in the glob
+/// is an explicit ask, and an explicit ask is answered rather than pruned.
+///
+/// Matched on path COMPONENTS, not as a substring, so a file that merely
+/// contains the letters (`.gitignore`, `dot.github`) does not disable the
+/// prune for an ordinary walk.
+pub(crate) fn names_git_dir(search_path: &str, pattern: &str) -> bool {
+    let component = |s: &str| {
+        s.split(['/', '\\'])
+            .any(|part| part == ".git" || part.starts_with(".git/"))
+    };
+    component(search_path) || component(pattern)
+}
+
+fn fd_command(search_dir: &std::path::Path, pattern: &str, keep_git: bool) -> Command {
     let mut fd = Command::new("fd");
     fd.arg("--glob");
     fd.arg("--hidden");
-    fd.arg("--exclude").arg(".git");
+    // See the doc above: prune `.git` wholesale only while nobody asked
+    // about it; once they have, prune just the bulk object store.
+    fd.arg("--exclude").arg(if keep_git { "objects" } else { ".git" });
     fd.arg("--type").arg("f");
     fd.arg("--color").arg("never");
     // Single-threaded, for the same reason `grep` passes `--sort path`: `fd`
@@ -247,16 +280,24 @@ fn fd_command(search_dir: &std::path::Path, pattern: &str) -> Command {
 /// mid-pattern `a/**/b.rs` also match `a/xb.rs` — in a search tool a
 /// slightly wide match beats silently missing files.
 ///
-/// `.git` is pruned to match [`fd_command`]'s `--exclude .git`: without it the
-/// fallback answered `**/*` with thousands of loose-object paths, and the two
-/// backends disagreed wildly depending on which was installed. The explicit
+/// `.git` is pruned to match [`fd_command`]'s `--exclude`, under the same
+/// condition and for the same reason (see that function): without any prune
+/// the fallback answered `**/*` with thousands of loose-object paths, and the
+/// two backends disagreed wildly depending on which was installed; with an
+/// unconditional one, a caller who explicitly asked about `.git` was told it
+/// was empty. `keep_git` narrows the prune to `objects`. The explicit
 /// `-print` is required once `-prune -o` is in the expression — `find`'s
 /// implicit print would otherwise apply to the whole expression and emit the
 /// pruned directory itself.
-fn find_command(search_dir: &std::path::Path, pattern: &str) -> Command {
+fn find_command(search_dir: &std::path::Path, pattern: &str, keep_git: bool) -> Command {
     let mut find = Command::new("find");
     find.arg(search_dir);
-    find.arg("-name").arg(".git").arg("-prune").arg("-o");
+    // Same conditional prune as `fd_command`, so the two backends still
+    // answer alike — the parity the module doc requires of every prune.
+    find.arg("-name")
+        .arg(if keep_git { "objects" } else { ".git" })
+        .arg("-prune")
+        .arg("-o");
     find.arg("-type").arg("f");
     if pattern.contains('/') {
         let mut translated = pattern.replace("**/", "*");
@@ -414,7 +455,7 @@ mod tests {
     fn find_fallback_routes_slash_globs_through_path_matching() {
         let dir = std::path::Path::new("/ws");
         let args = |pattern: &str| -> Vec<String> {
-            find_command(dir, pattern)
+            find_command(dir, pattern, false)
                 .as_std()
                 .get_args()
                 .map(|a| a.to_string_lossy().into_owned())
@@ -440,7 +481,7 @@ mod tests {
     /// with `fd` installed — and visible on every machine without it.
     #[test]
     fn fd_sees_hidden_files_and_prunes_git_like_the_find_fallback() {
-        let args: Vec<String> = fd_command(std::path::Path::new("/ws"), "*.yml")
+        let args: Vec<String> = fd_command(std::path::Path::new("/ws"), "*.yml", false)
             .as_std()
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
@@ -455,6 +496,94 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--", "*.yml"]), "{args:?}");
     }
 
+    /// The prune fires on a path COMPONENT, so an ordinary walk still skips
+    /// `.git` while a file that merely spells it does not disable it.
+    #[test]
+    fn names_git_dir_matches_components_not_substrings() {
+        assert!(names_git_dir(".", ".git/refs/heads/*"));
+        assert!(names_git_dir(".git/refs/heads", "*"));
+        assert!(names_git_dir(".", ".git/**"));
+        assert!(names_git_dir("nested/.git", "*"));
+
+        assert!(!names_git_dir(".", "**/*.rs"));
+        assert!(!names_git_dir(".", ".gitignore"));
+        assert!(!names_git_dir(".", "**/.github/workflows/*.yml"));
+        assert!(!names_git_dir("src", "*.rs"));
+    }
+
+    /// Narrowed, not dropped: a caller who asked about `.git` still does not
+    /// get the loose-object store, and one who did not still gets the old
+    /// wholesale prune.
+    #[test]
+    fn the_git_prune_narrows_to_objects_only_once_the_caller_asks() {
+        let args = |keep_git: bool| -> Vec<String> {
+            fd_command(std::path::Path::new("/ws"), ".git/refs/*", keep_git)
+                .as_std()
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert!(
+            args(true).windows(2).any(|w| w == ["--exclude", "objects"]),
+            "{:?}",
+            args(true)
+        );
+        assert!(
+            args(false).windows(2).any(|w| w == ["--exclude", ".git"]),
+            "{:?}",
+            args(false)
+        );
+    }
+
+    /// Witness for the false negative a `fix-git` trial burned eight calls
+    /// on: asking for a path inside `.git` answered "(no files found)" while
+    /// `read_file` on the very same path returned its contents. Fails before
+    /// the prune became conditional; passes after. Runs through `execute`, so
+    /// whichever backend is installed has to agree.
+    #[tokio::test]
+    async fn glob_finds_an_explicitly_requested_git_metadata_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".git/refs/heads")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join(".git/objects/ab")).expect("mkdir");
+        std::fs::write(dir.path().join(".git/refs/heads/master"), "deadbeef\n").expect("write");
+        std::fs::write(dir.path().join(".git/HEAD"), "ref: refs/heads/master\n").expect("write");
+        std::fs::write(dir.path().join(".git/objects/ab/cdef"), "").expect("write");
+
+        let out = Glob::bare()
+            .execute(
+                &serde_json::json!({ "pattern": ".git/refs/heads/*" }),
+                dir.path(),
+            )
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("glob must succeed: {out:?}");
+        };
+        assert!(
+            content.contains(".git/refs/heads/master"),
+            "an explicitly requested `.git` path must be found, not denied: {content}"
+        );
+        // The bulk object store stays pruned even then.
+        assert!(!content.contains("objects/ab/cdef"), "{content}");
+    }
+
+    /// The other half: a walk that never mentions `.git` is unchanged.
+    #[tokio::test]
+    async fn an_ordinary_walk_still_skips_the_git_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".git/refs/heads")).expect("mkdir");
+        std::fs::write(dir.path().join(".git/refs/heads/master"), "x\n").expect("write");
+        std::fs::write(dir.path().join("top.txt"), "").expect("write");
+
+        let out = Glob::bare()
+            .execute(&serde_json::json!({ "pattern": "**/*" }), dir.path())
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("glob must succeed: {out:?}");
+        };
+        assert!(content.contains("top.txt"), "{content}");
+        assert!(!content.contains(".git/refs"), "{content}");
+    }
+
     /// Both backends must answer a dotted path the same way, and neither may
     /// flood the result with `.git` internals.
     #[tokio::test]
@@ -465,7 +594,7 @@ mod tests {
         std::fs::write(dir.path().join(".github/workflows/ci.yml"), "").expect("write");
         std::fs::write(dir.path().join(".git/objects/deadbeef.yml"), "").expect("write");
 
-        let cmd = find_command(dir.path(), "**/*.yml");
+        let cmd = find_command(dir.path(), "**/*.yml", false);
         let out = match crate::exec::run_captured(cmd, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
             .await
         {
@@ -495,7 +624,7 @@ mod tests {
         std::fs::write(dir.path().join("stray.ts"), "").expect("write");
 
         let run = |pattern: &str| {
-            let cmd = find_command(dir.path(), pattern);
+            let cmd = find_command(dir.path(), pattern, false);
             async move {
                 match crate::exec::run_captured(cmd, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
                     .await

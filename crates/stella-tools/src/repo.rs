@@ -1,5 +1,9 @@
 //! Vendor-neutral repository tools: `repo_status`, `repo_diff`,
-//! `repo_commit`, `repo_push`, `repo_pull`, `repo_rollback`.
+//! `repo_commit`, `repo_push`, `repo_pull`, `repo_rollback`. The
+//! read-only history surface (`repo_history`, `repo_recover`) lives in
+//! [`history`] — a sibling submodule because this file sits against the
+//! 1500-line ceiling, and because history is a separate port ([`history::
+//! HistoryBackend`]) with a different cost profile.
 //!
 //! Nothing here says "git" — not the tool names, not the argument names.
 //! The tools speak in repository concepts (branch, paths, message) through
@@ -26,6 +30,8 @@
 //! - `repo_diff` caps its patch payload at `MAX_PATCH_BYTES` with a
 //!   **loud elision marker**, so a capped review can never be mistaken
 //!   for a complete one.
+
+pub mod history;
 
 use std::path::Path;
 use std::sync::Arc;
