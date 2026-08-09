@@ -14,6 +14,7 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::ansi::AnsiPalette;
 use crate::syntax;
 use crate::theme;
 
@@ -122,6 +123,24 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
     }
 
     out
+}
+
+/// [`render`] dressed as ANSI strings, for a surface that writes bytes into a
+/// scrollback rather than cells into a frame (#2421).
+///
+/// The *parse* is the valuable part and there is exactly one of it: the plain
+/// surface in `stella-cli` used to print agent prose with a bare `println!`,
+/// so a reader of `stella run` — or of any supervised run's console log, which
+/// is the only transcript such a run ever has — saw literal `**asterisks**`
+/// and fence backticks. Reimplementing markdown there would have been a second
+/// parser to keep in step; this is the same one, differently dressed.
+///
+/// Callers pass [`AnsiPalette::transparent_fg`]`(`[`theme::INK`]`)` when their
+/// surface does not paint its own ground — see that field for why prose in
+/// particular must not be given an explicit colour.
+#[must_use]
+pub fn render_ansi(text: &str, palette: &AnsiPalette) -> Vec<String> {
+    crate::ansi::lines_to_ansi(&render(text), palette)
 }
 
 // ── Inline parsing ─────────────────────────────────────────────────────────
